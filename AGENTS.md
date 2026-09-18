@@ -6,6 +6,11 @@
   Fristbeziehungen verständlich erklären, statt einzelne Zustände aufzuzählen.
   Bereits geklärte Grundlagen nicht erneut abfragen. Vorschläge und ausdrücklich
   vereinbarte Regeln voneinander unterscheiden; keine plausiblen Defaults erfinden.
+- Die Session ist das übergeordnete Laufzeitobjekt. Nach Ablauf der Frist seit
+  Betrieb-Aus wird beim nächsten Einschalten eine neue Session mit sämtlichen
+  neu initialisierten sessionbezogenen Unterobjekten angelegt. Dies nicht auf
+  die Rücksetzung einer Heizzeitsumme verengen. Übergreifende Konfiguration,
+  historische Daten und Schutzfunktionen sind vom Sessionwechsel getrennt.
 - Personenfrüherkennung erzeugt einen vorläufigen Gang, Aufguss bestätigt ihn.
   Beide zeigen Saunagang mit derselben ID und Startzeit. Bestätigungsstand aus
   Aufgüssen ableiten, nicht parallel als schreibbaren Merker führen.
@@ -14,6 +19,11 @@
   niemals den dadurch beendeten Gang. Normale Heizpausen sind kein Betrieb aus.
 - Heizlaufzeit enthält nur tatsächliche Heizzeiten. Erst genügend lange
   zusammenhängende Auszeit setzt die Summe zurück. Ausschaltzeiten nicht mitzählen.
+  Diese lokale Rücksetzung während einer Session ist kein Sessionwechsel.
+- Session-Unterbrechungsfrist, Thermostat-Cooldown und laufzeitbedingte
+  Zwangskühlung haben unterschiedliche Bedeutung und eigene Parameter. Keine
+  Zusammenlegung oder unbegründete Ableitung aus gleichen Zeiteinheiten; auch
+  die Heizzeit-Rücksetz-Auszeit ist keine gemeinsame Dauer der Zwangskühlung.
 - Parameter in der Integration konfigurierbar machen; genau eine Quelle je Wert.
   Sinnvolle Beziehungen im Code, veränderliche Grundwerte/Faktoren in der
   Parameterverwaltung. Ergebnisse und Restzeiten nicht unabhängig einstellen.

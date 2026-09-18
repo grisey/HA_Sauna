@@ -38,6 +38,24 @@ ein fester Ausgangswert ist noch nicht ausgewählt. Die ungefähre Gangdauer von
 15 Minuten ist kein automatisches Gangende. Die konkreten Folgen eines
 unbestätigten Fristablaufs bleiben als Vorschlag gekennzeichnet.
 
+**Session und Sessiongrenze:** Die Session ist das übergeordnete Objekt für alle
+sessionbezogenen Laufzeitobjekte. Nach Ablauf der konfigurierten Frist seit dem
+Ausschalten des Saunabetriebs beginnt beim nächsten Einschalten eine vollständig
+neue Session mit neu initialisierten Unterobjekten. Das ist keine bloße
+Heizzeit-Rücksetzung. Bei früherem Wiedereinschalten bleibt dieselbe Session
+bestehen. Konfiguration, archivierte Daten und übergeordnete Schutzfunktionen
+bleiben vom Sessionwechsel getrennt. Normale Heizpausen und Zwangskühlung sind
+kein Ausschalten des Saunabetriebs und lösen keinen Sessionwechsel aus.
+
+**Ausschalten im Gang:** Ein ausdrücklicher Ausschaltbefehl beendet den Gang
+sofort, auch wenn er bereits bestätigt ist. Ende und Grund „ausgeschaltet“
+werden festgehalten. Bei rechtzeitigem Wiedereinschalten wird ausschließlich
+die Session fortgesetzt, nicht der ausgeschaltete Gang.
+
+**Physischer Schalter:** Der Shelly-Schalter soll sich wie ein einfacher
+An-/Ausschalter für den Saunabetrieb anfühlen. Maßgeblich ist die Betriebsfreigabe,
+nicht der momentane Heizrelaiszustand oder die noch fortsetzbare Session.
+
 **Heizung:** engere Hysterese im eigenen Thermostat. Bereits im vorläufigen
 Gang werden reguläre Hysterese- und betriebliche Ablaufabschaltungen unterdrückt.
 Sicherheitsabschaltung und ausdrückliches Ausschalten bleiben übergeordnet.
@@ -50,30 +68,26 @@ Session beibehalten. Die wirksame Heizdauer wird aus Anheizdauer (Ausgangspunkt
 
 **Heizlaufzeit:** Nur tatsächliches Heizen wird seit der letzten Rücksetzung
 aufsummiert. Kurze Auszeiten zählen nicht mit und setzen die Summe nicht zurück.
-Eine zusammenhängende Ausschaltpause von mindestens der konfigurierten
-Rücksetzdauer setzt die Summe zurück. Zwangskühlung hängt an der Heizlaufzeit,
-nicht an jedem normalen Thermostatstopp. Die Zeitrechnung ist damit geklärt.
+Eine zusammenhängende Ausschaltpause des Ofens von mindestens der konfigurierten
+Rücksetzdauer setzt diese Summe zurück. Diese lokale Rücksetzung innerhalb einer
+Session ist vom Wechsel des gesamten Sessionobjekts getrennt. Die Zeitrechnung
+ist damit geklärt.
 
-**Sessiongrenze:** Nach Ablauf der konfigurierten Frist seit dem Ausschalten
-des Saunabetriebs beginnt beim nächsten Einschalten eine vollständig neue
-Session. Bei früherem Wiedereinschalten bleibt es dieselbe Session. Normale
-Heizpausen sind kein Ausschalten des Saunabetriebs.
-
-**Ausschalten im Gang:** Ein ausdrücklicher Ausschaltbefehl beendet den Gang
-sofort, auch wenn er bereits bestätigt ist. Ende und Grund „ausgeschaltet“
-werden festgehalten. Bei rechtzeitigem Wiedereinschalten wird ausschließlich
-die Session fortgesetzt, nicht der ausgeschaltete Gang.
-
-**Physischer Schalter:** Der Shelly-Schalter soll sich wie ein einfacher
-An-/Ausschalter für den Saunabetrieb anfühlen. Maßgeblich ist die Betriebsfreigabe,
-nicht der momentane Heizrelaiszustand oder die noch fortsetzbare Session.
+**Getrennte Zeitmechanismen:** Die Session-Unterbrechungsfrist gehört zum
+Lebenszyklus der Session. Der Thermostat-Cooldown gehört zur normalen
+Wiederanlaufhemmung nach temperaturbedingter Abschaltung. Die Zwangskühlung
+ist ein eigenständiger Ablauf nach ausgeschöpfter Heizlaufzeit. Auslöser,
+Bedeutung und Parameter bleiben getrennt. Die Zwangskühlungsdauer wird weder
+mit der Sessionfrist noch mit Thermostat-Cooldown oder Rücksetz-Auszeit der
+Heizzeitführung gleichgesetzt oder aus ihnen abgeleitet.
 
 **Parameter und Anzeige:** notwendige Werte direkt in der Integration
 konfigurierbar machen. Genau eine konsumierte Quelle je Einstellung, gemeinsame
 Validierung und Speicherung. Sinnvolle Relationen statt unnötiger unabhängiger
-Absolutwerte verwenden; abgeleitete Werte und Restzeiten nur lesbar anzeigen.
-Phase und Bestätigungsstand stammen aus dem Ablaufkern. Die automatische
-relative Erkennungsanpassung ist noch kein freigegebener Ersatzdetektor.
+Absolutwerte verwenden; fachlich verschiedene Fristen nicht zusammenlegen.
+Abgeleitete Werte und Restzeiten nur lesbar anzeigen. Phase und Bestätigungsstand
+stammen aus dem Ablaufkern. Die automatische relative Erkennungsanpassung ist
+noch kein freigegebener Ersatzdetektor.
 
 **Daten:** gesicherter Betriebszustand und Sessionarchiv unabhängig vom Recorder.
 Speicherverfahren und Datenumfang werden gesondert besprochen.
@@ -91,14 +105,20 @@ fortzusetzen, gilt nicht mehr. Fortgesetzt werden kann nur die Session.
 Ausschaltzeiten sind keine Heizzeiten. Diese beiden Fragen sind entschieden
 und werden nicht erneut als Varianten angeboten.
 
+Die vorgeschlagene Kopplung von Zwangskühlungsdauer und Rücksetz-Auszeit ist
+verworfen. Die Frist nach dem Ausschalten des Saunabetriebs bestimmt die
+Sessiongrenze und damit die Neuinitialisierung aller sessionbezogenen
+Unterobjekte, nicht lediglich die Heizzeitsumme. Session-Unterbrechung,
+Thermostat-Cooldown und Zwangskühlung sind keine Varianten derselben Pause.
+
 ## Noch zu klären, in Besprechungsreihenfolge
 
-1. **Heizregelung – nächster Punkt:** Verhältnis von Zwangskühlungsdauer und
-   Rücksetz-Auszeit; mögliche gemeinsame Zeitvorgabe. Danach Wechsel der
-   Heizzeitgrenze beim bereits begonnenen Abschnitt, Gangbeginn bei bestehender
-   Kühlsperre und Verhalten nach Gangende. Hysterese, spätere Heizdauer,
-   Rücksetz-Auszeit, Nachlauf, Schutzgrenzen und Ersatztemperatur für Kanal 3
-   bleiben zu konkretisieren.
+1. **Heizregelung:** eigenständige Dauer und noch offene Ablaufdetails der
+   Zwangskühlung; Wechsel der Heizzeitgrenze beim bereits begonnenen Abschnitt,
+   Gangbeginn bei bestehender Kühlsperre und Verhalten nach Gangende. Hysterese,
+   spätere Heizdauer, lokale Rücksetz-Auszeit, Thermostat-Cooldown, Nachlauf,
+   Schutzgrenzen und Ersatztemperatur für Kanal 3 bleiben zu konkretisieren.
+   Die verworfene Zusammenlegung der Fristen ist kein offener Vorschlag mehr.
 2. **Verbleibende Gang-/Sessiondetails:** Folgen eines unbestätigten
    Fristablaufs beziehungsweise erneuten Durchlüftens, Behandlung eines danach
    erkannten Aufgusses, rückwirkende Abschlusszeit, Zählung eines durch
