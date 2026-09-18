@@ -1,8 +1,9 @@
 # Sessionarchiv, HA-Backup und Export
 
 Stand: 18.09.2026. Anforderungen an Auflösung, Aufbewahrung, Backup, Export und
-Neustartverhalten sind festgelegt. Der technische Speicheransatz unten ist ein
-Vorschlag, noch keine ausgewählte oder implementierte Datenbank.
+Neustartverhalten sind festgelegt. Mit der Zustimmung zu den Ausführungen sind
+auch SQLite unter dem HA-Konfigurationsverzeichnis und der ZIP-Export als
+technische Richtung angenommen. Die Umsetzung und Backup-Abnahme stehen aus.
 
 ## Verbindliche Anforderungen
 
@@ -17,6 +18,9 @@ Sensorstatus, erkannte Tür-, Personen- und Aufgussereignisse, Gangzuordnungen,
 Heizintervalle, Nachlauf und Kühlvorgänge sowie Entscheidungsgründe und die
 jeweils verwendeten Parameterstände. Parameterschnappschüsse belegen vergangene
 Entscheidungen; sie sind keine zweite aktuelle Parameterquelle.
+Die Zuordnung der jeweils verwendeten Entitäten zu Messpositionen und Aktoren
+gehört zur Herkunft dieser Daten. Eine spätere Neuzuordnung in der Konfiguration
+verändert nicht die Herkunft bereits archivierter Messungen oder Schaltungen.
 
 Beginn, erste Erkennung und Aufgussbestätigung bleiben getrennt erhalten und
 über Ereignisreferenzen verbunden. Eine spätere Zuordnung überschreibt nicht
@@ -53,7 +57,8 @@ versehentlich auch das unabhängige Saunaarchiv ausschließen.
 
 **Automatische Wiederaufnahme eines laufenden Saunabetriebs nach HA-Neustart
 ist nicht erforderlich, außer sie lässt sich sehr einfach umsetzen.** Dafür
-wird keine zusätzliche komplexe Wiederanlaufmaschine vorausgesetzt.
+wird keine zusätzliche komplexe Wiederanlaufmaschine vorausgesetzt. Für die
+Erstfassung ist keine zusätzliche automatische Betriebsfortsetzung vorgesehen.
 
 Das Archiv und die Konfiguration bleiben trotzdem dauerhaft erhalten. Ein
 abgebrochener Verlauf muss als unterbrochen nachvollziehbar sein; unbeobachtete
@@ -64,7 +69,8 @@ Nachlauf ist davon getrennt und bleibt wie im [Betriebsmodell](betrieb.md) beste
 
 ## Export
 
-Ein **Downloadbutton im Einstellungsbereich** stellt die Sessiondaten bereit.
+Ein **Downloadbutton im Einstellungsbereich** stellt die Sessiondaten als ZIP
+mit Messreihen und maschinenlesbaren Session-/Ereignisdaten bereit.
 Der Download muss vollständig sein und vorhandene Zeitauflösung und Zuordnungen
 erhalten. Ein authentifizierter Abruf aus der eigenen Oberfläche ist vorgesehen;
 private Archivdaten werden nicht als frei zugängliche Dateien unter `www` abgelegt.
@@ -73,26 +79,28 @@ Export und HA-Backup haben verschiedene Aufgaben: Der Export ermöglicht die
 Datenauswertung, das HA-Backup sichert das Archiv zusammen mit der Installation.
 Beide benötigen einen konsistenten Datenstand. Ein Export startet oder verändert
 keine Session und ist keine zweite Speicherung laufender Parameter.
+Die genaue Dateiaufteilung und das Schema innerhalb des ZIP werden bei der
+Umsetzung beschrieben; die Zustimmung legt noch keine einzelnen CSV-/JSON-Felder fest.
 
-## Technischer Vorschlag zur Besprechung
+## Angenommener technischer Aufbau
 
 Eine lokale SQLite-Datenbank im eigenen Datenverzeichnis unter dem
-HA-Konfigurationspfad, beispielsweise `ha_sauna/sessions.sqlite`, kann Sessions,
-Originalmessungen und Ereignisbezüge gemeinsam aufnehmen. Der Pfad wird aus dem
+HA-Konfigurationspfad nimmt Sessions, Originalmessungen und Ereignisbezüge
+auf, beispielsweise unter `ha_sauna/sessions.sqlite`. Der Pfad wird aus dem
 HA-Konfigurationsverzeichnis abgeleitet, nicht aus einem fest angenommenen
 SSH-Containerpfad. Daten werden außerhalb von `custom_components` und `www` gehalten.
+Die Ablage benötigt keinen zusätzlich zu betreibenden Datenbankdienst.
 
 Für laufende SQLite-Datenbanken bietet die SQLite-Backup-API konsistente Kopien;
 Python stellt sie als `Connection.backup()` bereit [3]. Ein solcher stabiler
-Sicherungsstand könnte über die HA-Backup-Hooks vorbereitet werden. Der eigentliche
+Sicherungsstand soll über die HA-Backup-Hooks vorbereitet werden. Der eigentliche
 Archivschreiber, die Behandlung gleichzeitig eintreffender Messungen und das
 Wiederherstellungsverfahren müssen dazu gemeinsam implementiert und getestet
 werden. Ein Checkpoint allein ersetzt keine Absicherung gegen spätere Schreibzugriffe.
 
-Als Exportformat wird ein ZIP mit maschinenlesbaren Session-/Ereignisdaten und
-Messreihen vorgeschlagen, etwa JSON/JSONL und CSV. Das konkrete Format ist noch
-nicht beschlossen. Die gewählte Ablage soll ohne zusätzlich zu betreibenden
-Datenbankdienst auskommen; SQLite bleibt bis zur Auswahl ein Vorschlag.
+Die historische Oberfläche liest die eigenen Sessionintervalle und Messreihen.
+Eine vereinfachte Darstellung bei großen Zeitbereichen darf die archivierten
+Originalwerte nicht verdichten oder ersetzen.
 
 ## Stand und Quellen
 

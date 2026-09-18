@@ -1,4 +1,4 @@
-# Konfigurierbare Parameter und abgeleitete Werte
+# Konfigurierbare Parameter und verknüpfte Entitäten
 
 Stand: 18.09.2026. Fachliche Vorgabe für die eigene Integration; die
 Konfigurationsoberfläche ist noch nicht implementiert.
@@ -15,10 +15,67 @@ Ablaufsteuerung und Timer erhalten ihre Eingaben daraus. Werden dieselben Werte
 in einem Konfigurationsdialog und als Entitäten angezeigt, bearbeiten beide
 Zugänge denselben Eintrag; sie erzeugen keine zweite Parametrierung.
 
-Die Bedienung gliedert sich in Gangablauf, Heizregelung und Erkennung.
-Kalibrierungsdetails bleiben in einem erweiterten Bereich zugänglich. Namen,
-Einheiten, zulässige Bereiche und Schrittweiten werden bei der Umsetzung
+Die Bedienung gliedert sich in Entitätszuordnung, Gangablauf, Heizregelung und
+Erkennung. Kalibrierungsdetails bleiben in einem erweiterten Bereich zugänglich.
+Namen, Einheiten, zulässige Bereiche und Schrittweiten werden bei der Umsetzung
 verbindlich festgelegt, ohne notwendige Größen im Code zu verstecken.
+
+## Verknüpfte Entitäten auswählen
+
+**Alle externen Entitätsverknüpfungen werden im Konfigurationsbereich ausgewählt,
+nicht als konkrete Entity-IDs im Programm hinterlegt.** Die Zuordnung erfolgt
+bei der Einrichtung und bleibt später im selben Konfigurationsbereich änderbar.
+Dafür werden passende Auswahlfelder verwendet, keine vorausgefüllten privaten
+Entity-Namen aus der Referenzinstallation.
+
+| Funktion | Auszuwählende Quelle beziehungsweise Ziel |
+|---|---|
+| Obere Messposition | Je eine Temperatur- und Luftfeuchteentität. |
+| Untere Messposition | Je eine Temperatur- und Luftfeuchteentität. |
+| Heizung | Schaltbare Entität des Heizaktors; zusätzliche Rückmeldungsquelle, sofern die Geräteanbindung sie verwendet. |
+| Physische Bedienung | Eingangs-/Ereignisquelle des Schalters oder Tasters, getrennt vom Heizaktor. |
+| Saunalicht | Dimmbare Lichtentität für die vereinbarte Zustandsanzeige. |
+| Ergänzende Anbindungen | Statusquellen, Medien- und Benachrichtigungsziele ebenfalls auswählbar, soweit die jeweiligen Funktionen angebunden werden. |
+
+Die obere und untere Position sind fachliche Rollen. K3 und K6 bezeichnen die
+Sensoren des festgehaltenen Kalibrierungsbestands, keine im Produkt fest
+verdrahteten Kanalnummern. Der HA-Adapter ordnet die ausgewählten Quellen den
+Rollen zu; der Ablaufkern verarbeitet Rollen und Messdaten. Eine andere
+Entitätsauswahl verändert nicht automatisch die Erkennungsparameter oder den
+Temperaturbezug. Der eingefrorene Replay samt Referenznamen bleibt unverändert.
+
+Die Auswahl wird nach benötigtem Entitätstyp und Geräteklasse eingegrenzt.
+Zusätzlich sind Messgröße, Einheit und benötigte Funktionen zu prüfen, etwa
+Dimmbarkeit beim Saunalicht. Ein passender Anzeigename allein belegt keine
+Eignung. Dieselbe Temperatur- oder Feuchtequelle darf nicht beide Messpositionen
+als scheinbar unabhängige Sensoren belegen. Beide Positionen werden für den
+Normalbetrieb konfiguriert; die vereinbarte Ausfallbehandlung ist kein Ersatz
+für eine fehlende Zuordnung.
+
+Die gespeicherte Zuordnung ist die einzige aktuelle Quelle für das Lesen und
+Schalten externer Entitäten. Bei fehlender oder ungültiger Zuordnung wird keine
+Entität anhand ihres Namens erraten. Der bekannte Ausfall eines konfigurierten
+Sensors führt zum vereinbarten Ein-Sensor-Betrieb mit Fehlermeldung. Technische
+Umbenennung und Geräteersatz sind bei der späteren Adapterimplementierung
+nachvollziehbar zu behandeln; Messhistorien verschiedener Quellen dürfen nicht
+unbemerkt vermischt werden.
+
+Eigene Ausgaben der Integration – Thermostat, Phasenanzeige, Gangdauer und
+Zähler – werden aus dem eigenen Modell erzeugt. Dafür müssen nicht die alten
+Helfer und Automationen als zweite Steuerungsquelle verknüpft werden. Auch eine
+eigene Oberfläche darf keine konkreten Entity-IDs der Referenzinstallation
+voraussetzen. Die historische Herkunft einer Messung bleibt beim Archivdatum
+und wird nicht durch eine spätere Neuzuordnung umgeschrieben.
+
+Technische Grundlage der vorgesehenen Auswahloberfläche, eingesehen am 18.09.2026:
+
+- https://www.home-assistant.io/docs/blueprint/selectors/#entity-selector
+- https://developers.home-assistant.io/docs/core/integration/config_flow/
+- https://developers.home-assistant.io/docs/core/integration/options_flow/
+
+Diese Quellen beschreiben HA-Oberflächen und Konfigurationsmechanismen. Die
+Zuordnungsregeln sind Anforderungen dieser Integration, noch kein vorhandener
+Config Flow oder bereits getesteter Live-Adapter.
 
 ## Grundwerte, Relationen und Ergebnisse
 

@@ -45,6 +45,13 @@
 - Parameter in der Integration konfigurierbar machen; genau eine Quelle je Wert.
   Sinnvolle Beziehungen im Code, veränderliche Grundwerte/Faktoren in der
   Parameterverwaltung. Ergebnisse und Restzeiten nicht unabhängig einstellen.
+- Sämtliche extern verknüpften Entitäten werden im Konfigurationsbereich nach
+  ihrer Funktion ausgewählt und können dort später neu zugeordnet werden.
+  Keine konkreten Entity-IDs, Gerätenamen oder Kanalnummern im produktiven
+  Ablaufkern hinterlegen. Obere und untere Messposition bleiben feste Rollen;
+  deren reale Temperatur-/Feuchtequellen, Heizaktor, Bedienquelle und Licht sind
+  Konfiguration. Die Referenzbezeichnungen K3/K6 im eingefrorenen Replay bleiben
+  unverändert. Einzelheiten und Auswahlprüfung: `docs/parameter.md`.
 - Erkennung, Einordnung und Aktorsteuerung trennen. Rückwirkende Zeitzuordnung
   erzeugt weder historische Heizbefehle noch umgeschriebene HA-Zustandswechsel.
 - Eigener Thermostat: Bereits im vorläufigen Gang werden reguläre Hysterese-
@@ -61,9 +68,11 @@
   Historienpersistenz ist erforderlich, automatische Betriebsfortsetzung nach
   HA-Neustart nicht. Letztere nur bei sehr einfacher Umsetzung, nicht als
   zusätzliche zwingende Zustands-/Wiederanlaufmaschine einführen.
-- Export als authentifizierter Download aus dem Einstellungsbereich vorsehen.
-  Archiv und Exporte nicht ungeschützt unter `www` veröffentlichen. Backend und
-  Exportformat als Vorschlag kennzeichnen, solange sie nicht gewählt sind.
+- SQLite unter dem HA-Konfigurationsverzeichnis und ZIP-Export mit Messreihen
+  sowie maschinenlesbaren Session-/Ereignisdaten sind als technische Richtung
+  angenommen. Export als authentifizierter Download im Einstellungsbereich;
+  Archiv und Exporte nicht ungeschützt unter `www` veröffentlichen. Zustimmung
+  zu diesem Aufbau ist kein Nachweis eines implementierten oder getesteten Backups.
 - Replay- und Archiv-Schnappschüsse sind keine konkurrierenden Laufzeitwerte.
   Den eingefrorenen Kandidaten nicht beiläufig ändern. Eine adaptive Erkennung
   ist noch ein Prüfvorschlag, keine bereits freigegebene Änderung der Messlogik.

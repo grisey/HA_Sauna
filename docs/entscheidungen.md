@@ -19,6 +19,16 @@ Sensors erfolgt Weiterbetrieb mit dem verbleibenden Kanal und Fehlermeldung.
 Die Temperaturen werden weder gleichgesetzt noch mit einem erfundenen festen
 Höhenoffset umgerechnet. IBS wird nicht verwendet.
 
+**Entitätszuordnung:** sämtliche verknüpften externen Entitäten sind im
+Konfigurationsbereich auswählbar und später neu zuordenbar. Obere und untere
+Messposition, Heizaktor, physische Bedienquelle und Saunalicht werden als Rollen
+mit geeigneten Entitäten verbunden; konkret installierte Entity-IDs gehören
+nicht in den Ablaufcode. Gleiches gilt für ergänzende Status-, Medien- oder
+Benachrichtigungsanbindungen, soweit sie verwendet werden. Die Zuordnung ist
+zentral gespeichert; Auswahleignung wird geprüft. K3/K6 bleiben Referenznamen
+des eingefrorenen Kandidaten, keine fest vorgegebenen produktiven Quellnamen.
+Einzelheiten: [Entitätszuordnung](parameter.md#verknüpfte-entitäten-auswählen).
+
 **Vorbereitung und Gang:** Durchlüften und anschließende Schließung können die
 Personenfrüherkennung stützen. Das Personenmuster legt einen vorläufigen Gang
 an, der bereits als Saunagang angezeigt und behandelt wird. Ausschließlich
@@ -115,17 +125,22 @@ Fehlerhinweise. Vorläufiger und bestätigter Gang sind Kennzeichnungen desselbe
 Intervalls. Einstellungen und Kalibrierung sind getrennt zugänglich.
 Einzelheiten: [Darstellung](darstellung.md).
 
-**Archiv:** Sessiondaten werden langfristig in voller empfangener Auflösung
-unabhängig vom Recorder gespeichert. Keine automatische Verdichtung oder
-altersbedingte Löschung der Originalmessungen. Das Archiv muss im HA-Backup
-konsistent enthalten und wiederherstellbar sein. Export erfolgt über einen
-Downloadbutton im Einstellungsbereich.
+**Archiv und Export:** Sessiondaten werden langfristig in voller empfangener
+Auflösung unabhängig vom Recorder gespeichert. Keine automatische Verdichtung
+oder altersbedingte Löschung der Originalmessungen. Der technische Vorschlag
+ist angenommen: eigene SQLite-Datenbank unter dem HA-Konfigurationsverzeichnis,
+konsistente Einbeziehung ins HA-Backup und ZIP-Export mit Messreihen sowie
+maschinenlesbaren Session-/Ereignisdaten über den Downloadbutton im
+Einstellungsbereich. Die historische Entitätszuordnung bleibt nachvollziehbar.
+Konkretes Schema, Archivschreiber und Backup-/Restore-Abnahme folgen in der
+Umsetzung; die Zustimmung ist kein bereits bestandener Funktionstest.
 
 **HA-Neustart:** Automatische Wiederaufnahme des laufenden Betriebs ist nicht
-notwendig; sie soll nur bei sehr einfacher Umsetzung ergänzt werden. Dauerhaft
-lesbare Sessiondaten bleiben verpflichtend. Historienwiederherstellung und
-Fortsetzung einer Heizregelung sind unterschiedliche Aufgaben. Ein zusätzlicher
-komplexer Wiederanlaufautomat wird nicht zur Pflicht gemacht.
+notwendig; sie soll nur bei sehr einfacher Umsetzung ergänzt werden. Die
+Erstfassung kommt ohne zusätzliche automatische Betriebsfortsetzung aus.
+Dauerhaft lesbare Sessiondaten bleiben verpflichtend. Historienwiederherstellung
+und Fortsetzung einer Heizregelung sind unterschiedliche Aufgaben. Ein
+zusätzlicher komplexer Wiederanlaufautomat wird nicht zur Pflicht gemacht.
 
 ## Korrekturen früherer Annahmen
 
@@ -152,12 +167,12 @@ verarbeitet; dessen Anrechnung verhindert eine doppelte volle Kühlpause.
 
 ## Verbleibende Umsetzung
 
-Darstellungsaufbau, langfristige Vollauflösung, Einbeziehung ins HA-Backup,
-Downloadbedienung und der Verzicht auf eine zwingende Neustartfortsetzung sind
-festgelegt. Sie werden nicht erneut als offene Varianten angeboten.
-Der konkrete Speicheransatz und das Exportformat stehen als technische
-Vorschläge im [Speicherblock](speicherung.md); ihre Dokumentation behauptet
-keine bereits implementierte Ablage, Backup-Prüfung oder Benutzeroberfläche.
+Darstellungsaufbau, auswählbare Entitätsverknüpfungen, langfristige Vollauflösung,
+SQLite-Ablage, konsistentes HA-Backup, ZIP-Download und der Verzicht auf eine
+zwingende Neustartfortsetzung sind festgelegt. Sie werden nicht erneut als
+offene Varianten angeboten. Details zur vorgesehenen Ablage stehen im
+[Speicherblock](speicherung.md); ihre Dokumentation behauptet keine bereits
+implementierte Datenbank, Backup-Prüfung oder Benutzeroberfläche.
 
 Konkrete Einstellungswerte werden über die Parameterverwaltung festgelegt.
 Die technische Umsetzung muss weiterhin ihre Voraussetzungen, insbesondere
