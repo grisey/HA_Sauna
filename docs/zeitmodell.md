@@ -56,21 +56,33 @@ keine rekonstruierte Schließung und keine Neustartentscheidung.
 | Angezeigte Gangdauer | Zeit seit `started_at`. |
 | Aufgussbestätigungsfrist | `started_at` plus konfigurierter Fristwert; Orientierung 12 oder 13 Minuten. |
 | Sessiongrenze nach Betrieb aus | Ausschaltzeitpunkt des Betriebs plus konfigurierte Sessionfrist. |
-| Heizlaufzeit | Summe tatsächlicher Heizintervalle seit der letzten Rücksetzung. |
+| Heizlaufzeit | Summe tatsächlicher Heizintervalle seit der letzten Rücksetzung; bei idle pausiert. |
+| Heizzeitgrenze | Ein einstellbarer Wert für sämtliche Heizabschnitte, ohne eigene Anheiz- und Folgedauer. |
 | Rücksetzung der Heizlaufzeit | Zusammenhängende tatsächliche Auszeit erreicht die konfigurierte Rücksetzdauer. |
+| Laufender Nachlauf | Behält bei Betriebsunterbrechung seinen ursprünglichen Endzeitpunkt. |
+| Nachlaufanrechnung | Bereits verstrichene Nachlaufzeit wird vollständig auf die zugehörige Zwangskühlungsdauer angerechnet. |
 
 Personenerkennung, weitere Personenmeldungen oder kurze Türbetätigung desselben
 Gangs gewähren keine neue volle Bestätigungsfrist. Die Folgen eines Fristablaufs
 sind im Gangmodell nach ihrem Entscheidungsstatus ausgewiesen.
 
 Bei Wiedereinschalten vor Ablauf der Sessionfrist bleibt es dieselbe Session;
-bei Wiedereinschalten nach deren Ablauf beginnt eine vollständig neue Session.
-Ein durch Ausschalten beendeter Gang wird in beiden Fällen nicht wieder aktiviert.
-Normale Thermostatpausen bestimmen diese Sessionfrist nicht.
+bei Wiedereinschalten nach deren Ablauf beginnt eine vollständig neue Session
+mit neu initialisierten Unterobjekten. Ein durch Ausschalten beendeter Gang
+wird in beiden Fällen nicht wieder aktiviert. Normale Thermostatpausen und
+Zwangskühlung bestimmen diese Sessionfrist nicht.
 
 Eine kurze tatsächliche Auszeit pausiert die Heizzeitsumme. Eine ausreichend
 lange zusammenhängende Auszeit setzt sie zurück. Die bloße verstrichene Zeit
-seit dem ersten Einschalten ist damit keine Heizlaufzeit.
+seit dem ersten Einschalten ist keine Heizlaufzeit. Idle verlängert nicht
+zusätzlich das Heizbudget und begründet keine weitere prozentuale Kühlgutschrift.
+
+Nachlauf und Zwangskühlung bleiben getrennt. Für den zugehörigen Kühlvorgang
+wird jeder bereits verstrichene Nachlaufzeitabschnitt nur einmal angerechnet;
+noch zukünftige Nachlaufzeit wird nicht vorweggenommen. Die Anrechnung kann
+die verbleibende Kühlzeit bis auf null vermindern, aber nicht negativ machen.
+Die Betriebsunterbrechung selbst verschiebt den Nachlaufendzeitpunkt nicht.
+Eine neue Session übernimmt keine Nachlaufobjekte der alten Session.
 
 Diese Fristen und Summen sind Vorgaben für die nächste Implementierung, nicht
 bereits hinzugefügte Timer des vorhandenen Fachkerns. Parameteränderungen bei
@@ -89,13 +101,17 @@ Die native HA-Zustandshistorie wird nicht umgeschrieben. Die historische
 Gangdarstellung verwendet eigene zugeordnete Intervalle. Fachliche Gangdauer
 und tatsächliche Heizdauer bleiben unterschiedliche Größen.
 
-## Abschlusszeiten
+## Abschlusszeiten und Zählung
 
 Beim regulären Abschluss verwendet der bestehende Kern den Zeitpunkt der
 Durchlüftungsbestätigung. Rückzuordnung des Gangendes zur Türöffnung bleibt
-offen. Beim ausdrücklich ausgeschalteten Gang ist dagegen der Ausschaltzeitpunkt
-als Ende vereinbart, mit dem eigenen Beendigungsgrund „ausgeschaltet“.
-Dessen Codeumsetzung folgt noch. Einzelheiten: [Betrieb](betrieb.md).
+offen. Beim ausdrücklich ausgeschalteten Gang ist der Ausschaltzeitpunkt
+als Ende vereinbart, mit dem Beendigungsgrund „ausgeschaltet“.
+
+Unabhängig vom Endgrund zählt jeder beendete Gang mit zugeordnetem Aufguss
+genau einmal. Die Bestätigungszuordnung, nicht die Art des Endereignisses,
+entscheidet über die Zählung. Die Erweiterung des bisherigen regulären
+Abschlussmodells folgt noch. Einzelheiten: [Betrieb](betrieb.md).
 
 Referenz zur HA-Zustandszeit, in der Erstfassung am 18.09.2026 eingesehen:
 https://www.home-assistant.io/docs/configuration/state_object/

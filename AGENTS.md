@@ -6,6 +6,7 @@
   Fristbeziehungen verständlich erklären, statt einzelne Zustände aufzuzählen.
   Bereits geklärte Grundlagen nicht erneut abfragen. Vorschläge und ausdrücklich
   vereinbarte Regeln voneinander unterscheiden; keine plausiblen Defaults erfinden.
+  Als nächste Besprechungsblöcke folgen Darstellung und danach Speicherung.
 - Die Session ist das übergeordnete Laufzeitobjekt. Nach Ablauf der Frist seit
   Betrieb-Aus wird beim nächsten Einschalten eine neue Session mit sämtlichen
   neu initialisierten sessionbezogenen Unterobjekten angelegt. Dies nicht auf
@@ -17,9 +18,23 @@
 - Kurze Türbetätigung erhält den Gang. Ausdrückliches Ausschalten beendet ihn
   hingegen sofort. Rechtzeitiges Wiedereinschalten kann nur die Session fortsetzen,
   niemals den dadurch beendeten Gang. Normale Heizpausen sind kein Betrieb aus.
-- Heizlaufzeit enthält nur tatsächliche Heizzeiten. Erst genügend lange
-  zusammenhängende Auszeit setzt die Summe zurück. Ausschaltzeiten nicht mitzählen.
-  Diese lokale Rücksetzung während einer Session ist kein Sessionwechsel.
+- Jeder beendete Gang mit zugeordnetem Aufguss zählt genau einmal, unabhängig
+  vom Beendigungsgrund. Die Zählberechtigung folgt aus den Gang-/Aufgussobjekten;
+  keine Sonderregel nur für ausgeschaltete Gänge und kein paralleler Merker.
+- Es gilt eine einstellbare Heizzeitgrenze für sämtliche Heizabschnitte, ohne
+  eigene Anheiz- und Folgedauer. Der Heizzeittimer zählt nur tatsächliches Heizen
+  und pausiert bei idle. Keine zusätzliche prozentuale Idle-Gutschrift und kein
+  durch Idle-Zeiten vergrößertes Heizbudget. Die zuvor vereinbarte lokale
+  Rücksetzung nach genügend langer zusammenhängender Auszeit bleibt davon
+  getrennt und ist kein Sessionwechsel.
+- Eine bereits laufende Zwangskühlung sperrt neue Gangstarts. Ein bereits
+  laufender Gang wird dagegen nicht durch Zwangskühlung unterbrochen; eine
+  währenddessen fällige Kühlung bleibt bis zu seinem Ende ausstehend. Stark
+  gedimmtes Licht kennzeichnet die laufende Zwangskühlung, nicht bloß ihre Fälligkeit.
+- Ein laufender Nachlauf behält bei Betriebsunterbrechung seinen Endzeitpunkt.
+  Seine verstrichene Dauer wird vollständig und ohne Doppelzählung auf die
+  zugehörige Zwangskühlungsdauer angerechnet. Nachlauf und Zwangskühlung bleiben
+  verschiedene Abläufe; eine neue Session übernimmt keine alten Laufzeitobjekte.
 - Session-Unterbrechungsfrist, Thermostat-Cooldown und laufzeitbedingte
   Zwangskühlung haben unterschiedliche Bedeutung und eigene Parameter. Keine
   Zusammenlegung oder unbegründete Ableitung aus gleichen Zeiteinheiten; auch

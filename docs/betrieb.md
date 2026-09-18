@@ -1,8 +1,9 @@
 # Betrieb, Sessiongrenze und Heizlaufzeit
 
-Stand: 18.09.2026, einschließlich der Korrektur zur übergeordneten Session.
-Diese Festlegungen ergänzen das [Gangmodell](gangmodell.md). Sie dokumentieren
-die Besprechung; der Session- und Heizzeitautomat ist damit noch nicht implementiert.
+Stand: 18.09.2026, fortgeschrieben nach der Klärung von Zwangskühlung,
+Gangzählung und Nachlauf. Diese Festlegungen ergänzen das [Gangmodell](gangmodell.md).
+Sie dokumentieren die Besprechung; Session-, Heizzeit- und Kühlungssteuerung
+sind damit noch nicht implementiert.
 
 ## Saunabetrieb und Bedienung
 
@@ -37,75 +38,96 @@ bereits durch Ausschalten beendeter Gang wird dadurch nicht wieder aktiviert.
 
 Die Dauer der Session-Unterbrechungsfrist ist ein konfigurierbarer Parameter;
 es wurde noch kein fester Minutenwert ausgewählt. Eine Wiederaufnahme nach
-HA-Neustart ist damit nicht entschieden.
+HA-Neustart wird im Speicherblock behandelt.
 
-## Ausschalten während eines Gangs
+## Ausschalten und Gangzählung
 
 **Ausdrückliches Ausschalten beendet jeden laufenden Gang sofort**, unabhängig
 davon, ob er vorläufig erkannt oder durch einen Aufguss bestätigt ist. Der
 Ausschaltzeitpunkt ist sein Ende, der Beendigungsgrund lautet „ausgeschaltet“.
 Beginn, Bestätigungsstand und bereits erkannte Aufgüsse bleiben dokumentiert.
 Eine noch laufende Aufgussbestätigungsfrist dieses Gangs endet ebenfalls.
+Ein solcher Gang wird beim Wiedereinschalten nicht wieder aktiviert.
 
-Ein solcher Gang wird beim Wiedereinschalten innerhalb der Sessionfrist nicht
-wieder aktiviert. Fortsetzbar ist die übergeordnete Session, nicht der durch
-Ausschalten beendete Gang. Die seltene Nutzung dieses Bedienwegs ändert die Regel
-nicht. Es wird daraus kein regulärer, durch Aufguss und Durchlüften festgestellter
-Gangabschluss abgeleitet. Die Anrechnung auf Gangzähler und Temperaturstufen wird
-nicht durch eine neue stillschweigende Regel ergänzt.
+**Jeder beendete Gang mit mindestens einem zugeordneten Aufguss zählt genau
+einmal, unabhängig vom Beendigungsgrund.** Das gilt auch beim Ausschalten,
+folgt aber aus derselben allgemeinen Bestätigungszuordnung. Ein zusätzlicher
+Sonderzähler oder ein unabhängig gesetzter Zählberechtigungsmerker ist nicht
+vorgesehen. Ende und Bestätigung sind getrennte Voraussetzungen der Zählung;
+weder ein vorläufiger Gang noch ein weiterer Aufguss erhöht allein den Zähler.
+
+## Einheitliche Heizzeitgrenze
+
+**Für sämtliche Heizabschnitte gilt dieselbe einstellbare Heizzeitgrenze.**
+Die frühere Aufteilung in Anheizdauer und kürzere Folgedauer entfällt. Die
+Heizzeitwahl benötigt deshalb keinen Aufheizmerker. Eine etwaige Anzeige des
+erstmaligen Aufheizens ist hiervon getrennt und ändert die Heizzeitgrenze nicht.
+
+Hysterese und normaler Thermostat-Cooldown sind unmittelbar konfigurierbare
+Variablen. Weder dafür noch für die einheitliche Heizzeit oder die
+Zwangskühlungsdauer wird mit dieser Dokumentation ein neuer Zahlenwert festgelegt.
 
 ## Heizlaufzeit innerhalb der Session
 
-**Heizlaufzeit ist die Summe der tatsächlichen Heizzeiten seit der letzten
-Rücksetzung. Eine zusammenhängende Ausschaltpause des Ofens von mindestens der
-konfigurierten Rücksetzdauer setzt diese Summe zurück.**
+**Der Heizzeittimer läuft ausschließlich während tatsächlichen Heizens und
+pausiert bei idle.** Normale Idle-Zeiten sind damit vollständig berücksichtigt.
+Sie verlängern nicht zusätzlich das zulässige Heizbudget und werden auch nicht
+zu einem weiteren Prozentsatz auf die Zwangskühlungsdauer gutgeschrieben.
+Die diskutierte 50-Prozent-Anrechnung wird nicht eingeführt.
 
-Kurze Ausschaltzeiten werden nicht mitgezählt und löschen die bereits angefallene
-Heizzeit nicht. Es zählt die bestätigte Heizaktivität, nicht allein eine
-Heizanforderung, eine GUI-Phase oder die verstrichene Sessionzeit. Die technische
-Rückmeldungs- und Fehlerdiagnose wird bei der Aktoranbindung festgelegt.
+Es zählt die bestätigte Heizaktivität, nicht allein eine Heizanforderung, eine
+GUI-Phase oder die verstrichene Sessionzeit. Die technische Rückmeldungs- und
+Fehlerdiagnose wird bei der Aktoranbindung festgelegt.
 
-Die Rücksetzung dieser Summe während einer Session ist eine lokale Regel der
-Heizzeitführung. Sie setzt weder das übergeordnete Sessionobjekt noch dessen
-übrige Laufzeitobjekte zurück. Sie legt auch keine Dauer der Zwangskühlung fest.
-Eine neue Session initialisiert dagegen sämtliche zu ihr gehörenden Laufzeitobjekte.
+Die zuvor vereinbarte lokale Rücksetzung bleibt erhalten: Eine zusammenhängende
+Ausschaltpause des Ofens von mindestens der konfigurierten Rücksetzdauer setzt
+die Heizzeitsumme zurück. Kürzere Pausen löschen die bisher angefallene Heizzeit
+nicht. Diese Regel betrifft nur die Heizzeitführung innerhalb der Session;
+sie setzt weder die Session noch deren übrige Laufzeitobjekte zurück und legt
+keine Dauer der Zwangskühlung fest.
 
-## Anheizen und spätere Heizzeitgrenze
+## Zwangskühlung und Gangstart
 
-Vereinbart ist der Sessionmerker `aufgeheizt`: Er wird beim temperaturbedingten
-Übergang zu `idle` an der oberen Hysteresegrenze gesetzt. Innerhalb derselben
-Session bleibt er gesetzt. Für die Heizzeitbegrenzung stehen eine Anheizdauer
-(Ausgangspunkt 100 Minuten) und eine spätere kürzere Dauer zur Verfügung.
-Die wirksame Dauer wird daraus abgeleitet, nicht unabhängig nochmals eingestellt.
+**Eine laufende Zwangskühlung verhindert den Start eines neuen Saunagangs.
+Ein bereits laufender Saunagang wird dagegen nicht durch Zwangskühlung
+unterbrochen.** Das gilt bereits für einen vorläufig erkannten Gang mit der
+vereinbarten Gang-Heizbehandlung.
 
-Der genaue Wechsel auf die kürzere Grenze bei einem bereits begonnenen, noch
-nicht zurückgesetzten Heizzeitabschnitt bleibt zu besprechen. Tatsächliche
-Heizzeiten weiterzuzählen ist bereits entschieden und wird nicht erneut zur
-Auswahl gestellt.
+Erreicht die tatsächliche Heizlaufzeit ihre Grenze während eines Gangs, bleibt
+die Zwangskühlung bis zu seinem Ende ausstehend. Eine neue Gangerkennung hebt
+eine bereits laufende Zwangskühlung nicht auf. Ausstehende und tatsächlich
+laufende Kühlung sind daher zu unterscheiden.
+
+**Stark gedimmtes Licht kennzeichnet die laufende Zwangskühlung.** Daraus wird
+kein unbedingter Vorrang gegenüber einem schon laufenden Gang abgeleitet.
+Schutzabschaltungen und ausdrückliches Ausschalten bleiben übergeordnet.
+
+## Nachlauf und Anrechnung
+
+**Ein bereits laufender Nachlauf wird durch eine Betriebsunterbrechung nicht
+verändert.** Sein ursprünglicher Endzeitpunkt bleibt erhalten; Aus- und
+Wiedereinschalten pausiert ihn nicht und startet ihn nicht neu. Diese Fortführung
+betrifft das Laufzeitobjekt seiner Session. Bei einem echten Sessionwechsel
+werden keine alten Nachlaufobjekte in die neue Session übernommen.
+
+**Die verstrichene Nachlaufdauer wird vollständig auf die zugehörige
+Zwangskühlungsdauer angerechnet.** Angerechnet wird bereits vergangene Zeit,
+nicht eine noch ausstehende geplante Nachlaufdauer. Die Restdauer wird mindestens
+auf null begrenzt. Derselbe Zeitabschnitt darf im selben Kühlvorgang nicht
+zweimal angerechnet werden.
+
+Nachlauf und Zwangskühlung bleiben eigenständige Abläufe mit eigenen Parametern.
+Die ausdrücklich vereinbarte Anrechnung ersetzt keine Sessionregel und begründet
+keine zusätzliche Anrechnung normaler Idle-Zeiten.
 
 ## Eigenständige Bedeutung der Zeitmechanismen
 
-**Session-Unterbrechungsfrist:** bestimmt nach dem Ausschalten des Betriebs,
-ob beim nächsten Einschalten dieselbe oder eine vollständig neue Session gilt.
-Ihr Wirkungsbereich ist das gesamte Sessionobjekt mit seinen Unterobjekten.
+Die Session-Unterbrechungsfrist bestimmt den Lebenszyklus des übergeordneten
+Sessionobjekts. Der Thermostat-Cooldown gehört zur normalen Wiederanlaufhemmung
+nach temperaturbedingter Abschaltung. Die Zwangskühlung ist ein eigenständiger
+Ablauf nach ausgeschöpfter Heizlaufzeit; sie ist kein Ausschalten des Betriebs.
 
-**Thermostat-Cooldown:** Wiederanlaufhemmung im Zusammenhang mit der normalen
-temperaturbedingten Abschaltung an der Hysteresegrenze. Er gehört zur laufenden
-Temperaturregelung und beendet keine Session.
-
-**Zwangskühlung:** eigenständiger Ablauf bei ausgeschöpfter zulässiger
-Heizlaufzeit innerhalb einer Session. Sie hat eigene Auslöse-, Dauer- und
-Beendigungsregeln. Sie ist weder ein Ausschalten des Saunabetriebs noch ein
-Cooldown nach Erreichen der Solltemperatur und setzt die Session nicht zurück.
-Laufzeitbedingte Zwangskühlung darf einen erkannten Saunagang nicht unterbrechen;
-Schutzabschaltungen und ausdrückliches Ausschalten bleiben übergeordnet.
-
-Diese fachlich verschiedenen Fristen bleiben getrennt parametriert. Auch die
-lokale Rücksetz-Auszeit der Heizzeitführung ist kein Ersatz für eine dieser
-Fristen. Der Vorschlag, Zwangskühlungsdauer und Rücksetz-Auszeit zusammenzulegen,
-ist vom Nutzer ausdrücklich verworfen. Gleiche Zeitwerte würden keine gemeinsame
-Bedeutung und keine automatische Anrechnung begründen.
-
-Die konkrete Zwangskühlungsdauer und noch offene Ablaufdetails werden als
-eigenständiges Thema besprochen. Eine gemeinsame Kühl-/Ausschalt-/Sessionfrist
-wird nicht eingeführt.
+Diese Fristen bleiben getrennt parametriert. Die lokale Heizzeit-Rücksetz-Auszeit
+wird mit keiner von ihnen gleichgesetzt. Die Nachlaufanrechnung ist eine konkret
+vereinbarte Beziehung zwischen Abläufen, keine Zusammenlegung ihrer Bedeutung.
+Die nächsten Besprechungsblöcke sind Darstellung und anschließend Speicherung.
