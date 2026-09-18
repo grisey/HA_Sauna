@@ -1,13 +1,22 @@
 # Arbeitsregeln
 
-- Maßgeblich sind `docs/entscheidungen.md`, `docs/gangmodell.md`, das Zeitmodell
-  und der festgehaltene Kandidat. Ausdrückliche spätere Nutzerkorrekturen gehen vor.
-- Die Besprechung bleibt schrittweise: Gang/Session, Heizregelung, Bedienung,
-  Datenerfassung/Speicherung. Offene Regeln nicht durch plausible Defaults ersetzen.
-- Durchlüften ist Vorbereitung; Personenfrüherkennung erzeugt einen vorläufigen
-  Gang. Nur ein Aufguss bestätigt ihn. Beide Stände zeigen dieselbe Phase
-  Saunagang und verwenden dieselbe ID und Startzeit. Der Bestätigungsstand wird
-  aus den Aufgüssen abgeleitet, nicht parallel als schreibbarer Merker geführt.
+- Maßgeblich sind `docs/entscheidungen.md`, Gang-, Betriebs-, Parameter- und
+  Zeitmodell sowie der festgehaltene Kandidat. Spätere Nutzerkorrekturen gehen vor.
+- Die Besprechung bleibt schrittweise und jeweils bei einem Thema. Regeln und
+  Fristbeziehungen verständlich erklären, statt einzelne Zustände aufzuzählen.
+  Bereits geklärte Grundlagen nicht erneut abfragen. Vorschläge und ausdrücklich
+  vereinbarte Regeln voneinander unterscheiden; keine plausiblen Defaults erfinden.
+- Personenfrüherkennung erzeugt einen vorläufigen Gang, Aufguss bestätigt ihn.
+  Beide zeigen Saunagang mit derselben ID und Startzeit. Bestätigungsstand aus
+  Aufgüssen ableiten, nicht parallel als schreibbaren Merker führen.
+- Kurze Türbetätigung erhält den Gang. Ausdrückliches Ausschalten beendet ihn
+  hingegen sofort. Rechtzeitiges Wiedereinschalten kann nur die Session fortsetzen,
+  niemals den dadurch beendeten Gang. Normale Heizpausen sind kein Betrieb aus.
+- Heizlaufzeit enthält nur tatsächliche Heizzeiten. Erst genügend lange
+  zusammenhängende Auszeit setzt die Summe zurück. Ausschaltzeiten nicht mitzählen.
+- Parameter in der Integration konfigurierbar machen; genau eine Quelle je Wert.
+  Sinnvolle Beziehungen im Code, veränderliche Grundwerte/Faktoren in der
+  Parameterverwaltung. Ergebnisse und Restzeiten nicht unabhängig einstellen.
 - Erkennung, Einordnung und Aktorsteuerung trennen. Rückwirkende Zeitzuordnung
   erzeugt weder historische Heizbefehle noch umgeschriebene HA-Zustandswechsel.
 - Eigener Thermostat: Bereits im vorläufigen Gang werden reguläre Hysterese-
@@ -16,15 +25,16 @@
   Wiederanlauf- und Ersatztemperaturregeln offen sind.
 - Beide Sensoren im Normalbetrieb; Ein-Sensor-Betrieb mit Fehleranzeige. Keine
   Mittelung, kein erfundener fester Höhenoffset, keine IBS-Sensoren.
-- Eine Quelle je produktivem Parameter in den eigenen Parameterentitäten.
-  Replay- und Archiv-Schnappschüsse sind keine konkurrierenden Laufzeitwerte.
-  Der eingefrorene Kandidat wird nicht beiläufig geändert.
-- Anforderungen, Implementierungsstand und Messbefunde unterscheiden. Ergebnisse
-  derselben Kalibrierungssession sind keine unabhängige Validierung.
+- Replay- und Archiv-Schnappschüsse sind keine konkurrierenden Laufzeitwerte.
+  Den eingefrorenen Kandidaten nicht beiläufig ändern. Eine adaptive Erkennung
+  ist noch ein Prüfvorschlag, keine bereits freigegebene Änderung der Messlogik.
+- Anforderungen, Implementierungsstand und Messbefunde unterscheiden. Eine
+  Dokumentationsfortschreibung behauptet keine zugehörige Codeumsetzung.
+  Ergebnisse derselben Kalibrierungssession sind keine unabhängige Validierung.
 - Keine Roh-Recorderdaten, Zugangsdaten, HA-Konfigurationen oder persönlichen
   Nutzungsdetails veröffentlichen. Beispiele nur synthetisch oder freigegeben.
 - Keine Versionen erhöhen, keine Lizenz wählen, keine Releases oder Deployments
   ohne Auftrag. Vor Änderungen den aktuellen Repo- und Dateistand lesen.
-- Synthetische Tests und optionales lokales Replay ausführen. Keine parallelen
-  produktiven Detektorimplementierungen. Beschreibung und Code müssen dieselben
-  Begriffe und Zustandsübergänge verwenden.
+- Bei Codeänderungen synthetische Tests und optionales lokales Replay ausführen.
+  Bei reiner Dokumentation Links, Entscheidungsstatus und Unverändertheit der
+  Code-/Kandidatenartefakte prüfen. Keine parallelen produktiven Detektoren.

@@ -8,38 +8,54 @@ Thermostat, Zwei-Sensor-Erkennung und Sessiondaten unabhängig vom Recorder.
 **Vorbereitendes Durchlüften → vorläufig erkannter Saunagang → Bestätigung durch Aufguss.**
 
 Die Personenfrüherkennung zeigt bereits einen Saunagang an. Erst ein erkannter
-Aufguss bestätigt ihn. Beginn, Erkennungszeit und Bestätigungszeit bleiben
-getrennt: Ein später erkanntes Personenmuster kann den Gangbeginn der
-zugehörigen Türschließung zuordnen. Ein Aufguss kann einen vorher verpassten
-Gang auch unmittelbar bestätigt anlegen.
+Aufguss bestätigt ihn. Zugeordneter Beginn bei der Türschließung, erste Erkennung
+und Bestätigung bleiben getrennt. Ein Aufguss kann einen vorher verpassten Gang
+auch unmittelbar bestätigt anlegen.
 
 Durchlüften allein startet keinen Gang. Kurze Türbetätigung erhält einen
-laufenden Gang. Der reguläre Abschluss setzt einen Aufguss und anschließendes
-bestätigtes Durchlüften voraus. Die genaue Bedeutung der Vorstufen und die
-unveränderten Zulassungsregeln stehen im [Gangmodell](docs/gangmodell.md).
+laufenden Gang; der reguläre Abschluss benötigt Aufguss und anschließendes
+bestätigtes Durchlüften. Ausdrückliches Ausschalten beendet den Gang sofort.
+Eine konfigurierbare Bestätigungsfrist bezieht sich auf den zugeordneten
+Beginn, nicht auf die spätere Personenfrüherkennung. Details und offene
+Fristfolgen stehen im [Gangmodell](docs/gangmodell.md).
+
+## Betrieb und Zeitrechnung
+
+Nach Ablauf der konfigurierten Frist seit dem Ausschalten beginnt beim
+nächsten Einschalten eine vollständig neue Session. Bei früherem Einschalten
+bleibt es dieselbe Session; ein ausgeschalteter Gang bleibt beendet.
+Der Shelly-Schalter bedient den Saunabetrieb, nicht die momentane Heizaktivität.
+
+Heizlaufzeit ist ausschließlich die Summe tatsächlicher Heizzeiten seit der
+letzten Rücksetzung. Eine genügend lange zusammenhängende Auszeit setzt diese
+Summe zurück; kurze Pausen zählen nicht mit und schenken keine neue Heizdauer.
 
 ## Bearbeitungsstand
 
-Vorhanden sind ein eingefrorener Erkennungskandidat, dessen Offline-Replay und
-ein getestetes Python-Modell für Gangzuordnung und Bestätigungsstand. Die
-Dokumentation unterscheidet vereinbarte Regeln, Messbefunde und offene Fragen.
-Thermostat, HA-Anbindung und dauerhafte Speicherung sind noch umzusetzen;
-der aktuelle Code schaltet keine Geräte.
+Implementiert sind der eingefrorene Erkennungskandidat und ein getesteter
+Python-Kern für Vorbereitung, vorläufigen/bestätigten Gang, Zeitzuordnung und
+regulären Abschluss. Die jüngsten Vereinbarungen zu Bestätigungsfrist,
+Ausschalten, Sessiongrenze, Heizzeitsumme und Parametrierung sind dokumentiert,
+noch nicht als zusätzliche Funktionen umgesetzt. Thermostat, HA-Anbindung und
+dauerhafte Speicherung folgen; der aktuelle Code schaltet keine Geräte.
 
 | Dokument | Inhalt |
 |---|---|
-| [Gangmodell](docs/gangmodell.md) | Vorbereitung, vorläufiger Gang, Aufgussbestätigung und Abschluss. |
-| [Zeitmodell](docs/zeitmodell.md) | Beginn, Erkennungszeit, Bestätigungszeit und historische Darstellung. |
-| [Entscheidungen](docs/entscheidungen.md) | Vereinbarte Anforderungen und verbleibende Besprechungspunkte. |
-| [Architektur](docs/architektur.md) | Zuständigkeiten und Stand der Implementierung. |
+| [Gangmodell](docs/gangmodell.md) | Vorstufen, Bestätigung, Frist und Gangende. |
+| [Betrieb](docs/betrieb.md) | Shelly-Bedienung, Sessiongrenze, Ausschalten und Heizlaufzeit. |
+| [Parameter](docs/parameter.md) | Einheitliche Konfiguration, Relationen und abgeleitete Werte. |
+| [Zeitmodell](docs/zeitmodell.md) | Zeitbezüge, Fristen und historische Darstellung. |
+| [Entscheidungen](docs/entscheidungen.md) | Vereinbarungen, Vorschläge und nächste Besprechungspunkte. |
+| [Architektur](docs/architektur.md) | Zuständigkeiten und Implementierungsstand. |
 | [Speicherung](docs/speicherung.md) | Betriebswiederaufnahme und Sessionarchiv als eigener Besprechungsblock. |
-| [Erkennungskandidat](docs/kandidat.md) | Unveränderte Kalibrierung mit Messbefunden und Prüfgrenzen. |
+| [Erkennungskandidat](docs/kandidat.md) | Unveränderte Kalibrierung und Prüfgrenzen. |
 | [Arbeitsregeln](AGENTS.md) | Vorgaben für Änderungen. |
 
-Der Ablaufkern liegt in `custom_components/ha_sauna/core/timeline.py` und
-benötigt kein Home Assistant. `candidate/replay.py` und `candidate/parameter.json`
-sind die unveränderten Ausgangsartefakte. Ihr Parameterschnappschuss ist eine
-Testeingabe, keine zweite produktive Einstellungsquelle.
+Der Fachkern liegt in `custom_components/ha_sauna/core/timeline.py` und benötigt
+kein Home Assistant. `candidate/replay.py` und `candidate/parameter.json`
+bleiben unveränderte Ausgangsartefakte. Der Parameterschnappschuss ist eine
+Testeingabe, keine zweite produktive Einstellungsquelle. Relative, automatisch
+angepasste Erkennungsgrenzen sind bislang ein besprochener Prüfansatz.
 
 ## Tests
 

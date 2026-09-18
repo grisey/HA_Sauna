@@ -1,17 +1,17 @@
-# Gangbeginn, Erkennung und Bestätigung
+# Gangbeginn, Erkennung, Bestätigung und Fristen
 
 ## Drei unterschiedliche Zeitpunkte
 
 | Feld | Bedeutung |
 |---|---|
 | `Gang.started_at` | Zugeordneter Beginn bei der Türschließung derselben Episode und Session. |
-| `Gang.detected_at` | Zeitpunkt, an dem der Gang erstmals erkannt wurde: durch Personenmuster oder direkt durch Aufguss. |
+| `Gang.detected_at` | Erste Erkennung durch Personenmuster oder direkt durch Aufguss. |
 | `Gang.confirmed_at` | Erkennungszeit des ersten zugeordneten Aufgusses; zuvor nicht gesetzt. |
 
-Die Phase **Saunagang** wird bereits bei der ersten Erkennung angezeigt, zunächst
-gegebenenfalls vorläufig. Der spätere Aufguss bestätigt dasselbe Intervall. Er
-überschreibt weder `started_at` noch `detected_at`. Die Bestätigungszeit wird aus
-dem ersten Aufgussereignis abgeleitet. Fachliche Übergänge: [Gangmodell](gangmodell.md).
+Die Phase Saunagang wird bereits bei der ersten Erkennung angezeigt,
+gegebenenfalls vorläufig. Der spätere Aufguss bestätigt dasselbe Intervall,
+ohne `started_at` oder `detected_at` zu überschreiben. Seine Zeit stammt aus
+dem ersten Aufgussereignis. Fachliche Übergänge: [Gangmodell](gangmodell.md).
 
 ## Beispiel aus dem festgehaltenen Kandidaten
 
@@ -19,60 +19,83 @@ Für Gang 2 ergibt sich im Zwei-Sensor-Replay:
 
 | Ereignis | Zeitpunkt am 17.09.2026, MESZ | Einordnung |
 |---|---|---|
-| Vorbereitendes Durchlüften bestätigt | 21:15:20 | Vorbereitung; noch kein Gang. |
-| Türschließung erkannt | 21:15:51 | Möglicher zeitlicher Bezug für den folgenden Gang. |
-| Personenmuster erkannt | 21:19:15 | Gang vorläufig aktiv; Beginn 21:15:51, angezeigte Dauer 3:24 Minuten. |
-| Erster Aufguss erkannt | 21:22:52 | Derselbe Gang bestätigt; Dauer inzwischen 7:01 Minuten. |
+| Durchlüften bestätigt | 21:15:20 | Vorbereitung, noch kein Gang. |
+| Türschließung erkannt | 21:15:51 | Zeitlicher Bezug des folgenden Gangs. |
+| Personenmuster erkannt | 21:19:15 | Vorläufig aktiv; Beginn 21:15:51, Dauer 3:24 Minuten. |
+| Erster Aufguss erkannt | 21:22:52 | Derselbe Gang bestätigt; Dauer 7:01 Minuten. |
 
-Quelle der Messentscheidungen: [gemeinsames Replay](kandidat.md#7-ergebnisse-des-gemeinsamen-replay).
-Die Einordnung als vorläufig beziehungsweise bestätigt ist die darauf angewandte
-Ablaufregel, kein zusätzlicher unabhängig gemessener Personenzeitpunkt.
+Quelle: [gemeinsames Replay](kandidat.md#7-ergebnisse-des-gemeinsamen-replay).
+Vorläufige beziehungsweise bestätigte Zuordnung ist die darauf angewandte
+Ablaufregel, kein unabhängig gemessener Personenzeitpunkt.
 
-Bleibt die Personenfrüherkennung aus, wird der Gang um 21:22:52 unmittelbar
-bestätigt angelegt. Dann sind `detected_at` und `confirmed_at` gleich; der
-zugeordnete Beginn bleibt 21:15:51.
+Ohne Personenfrüherkennung wird der Gang um 21:22:52 unmittelbar bestätigt
+angelegt. Dann sind `detected_at` und `confirmed_at` gleich; der Beginn
+bleibt 21:15:51.
 
 ## Ereigniszeit und Herkunft
 
-Am Eingang führt jedes Ereignis `effective_at` und `detected_at`. Ersteres ist
-der vom Detektor zugeordnete Ereigniszeitpunkt, Letzteres dessen tatsächliche
-Entscheidungszeit. Im eingefrorenen Kandidaten sind beide gleich. Ereignisse
-werden in Erkennungsreihenfolge verarbeitet; Zeitstempel tragen eine Zeitzone
-und werden intern nach UTC umgerechnet.
+Eingangsereignisse führen `effective_at` und `detected_at`: zugeordneten
+Ereigniszeitpunkt und tatsächliche Entscheidungszeit. Im eingefrorenen
+Kandidaten sind beide gleich. Die Verarbeitung erfolgt in Erkennungsreihenfolge;
+Zeitstempel tragen eine Zeitzone und werden intern nach UTC umgerechnet.
 
-`start_source_event_id` verweist auf die konkret verwendete Schließung. Eine
-neue Öffnung ersetzt einen noch ungenutzten Zeitbezug. Ein bereits angelegter
-Gang behält dagegen seinen ursprünglichen Beginn auch bei kurzer Türbetätigung.
-Eine beliebige frühere Schließung oder ein Zeitpunkt vor der Session wird nicht
-als Ersatz gewählt.
+`start_source_event_id` verweist auf die verwendete Schließung. Neue Öffnung
+ersetzt einen ungenutzten Bezug; ein angelegter Gang behält seinen Beginn
+bei kurzer Türbetätigung. Es wird keine beliebige ältere Schließung und kein
+Zeitpunkt vor Sessionbeginn als Ersatz gewählt.
 
-Bei bekannt geschlossenem Türzustand ohne Schließungshistorie verwendet das
-Modell `detected_at` als Beginn und kennzeichnet `start_basis=recognition_only`.
-Das ist eine eingeschränkte Zeitzuordnung, keine rekonstruierte Schließung und
-keine Entscheidung über den Wiederanlauf nach einem Neustart.
+Bei bekannt geschlossenem Türzustand ohne Schließungshistorie verwendet der
+vorhandene Kern `detected_at` als Beginn und kennzeichnet
+`start_basis=recognition_only`. Das ist eine eingeschränkte Zeitzuordnung,
+keine rekonstruierte Schließung und keine Neustartentscheidung.
+
+## Zeitliche Beziehungen der vereinbarten Regeln
+
+| Größe | Bezug |
+|---|---|
+| Angezeigte Gangdauer | Zeit seit `started_at`. |
+| Aufgussbestätigungsfrist | `started_at` plus konfigurierter Fristwert; Orientierung 12 oder 13 Minuten. |
+| Sessiongrenze nach Betrieb aus | Ausschaltzeitpunkt des Betriebs plus konfigurierte Sessionfrist. |
+| Heizlaufzeit | Summe tatsächlicher Heizintervalle seit der letzten Rücksetzung. |
+| Rücksetzung der Heizlaufzeit | Zusammenhängende tatsächliche Auszeit erreicht die konfigurierte Rücksetzdauer. |
+
+Personenerkennung, weitere Personenmeldungen oder kurze Türbetätigung desselben
+Gangs gewähren keine neue volle Bestätigungsfrist. Die Folgen eines Fristablaufs
+sind im Gangmodell nach ihrem Entscheidungsstatus ausgewiesen.
+
+Bei Wiedereinschalten vor Ablauf der Sessionfrist bleibt es dieselbe Session;
+bei Wiedereinschalten nach deren Ablauf beginnt eine vollständig neue Session.
+Ein durch Ausschalten beendeter Gang wird in beiden Fällen nicht wieder aktiviert.
+Normale Thermostatpausen bestimmen diese Sessionfrist nicht.
+
+Eine kurze tatsächliche Auszeit pausiert die Heizzeitsumme. Eine ausreichend
+lange zusammenhängende Auszeit setzt sie zurück. Die bloße verstrichene Zeit
+seit dem ersten Einschalten ist damit keine Heizlaufzeit.
+
+Diese Fristen und Summen sind Vorgaben für die nächste Implementierung, nicht
+bereits hinzugefügte Timer des vorhandenen Fachkerns. Parameteränderungen bei
+laufenden Fristen und HA-Neustarts werden gesondert festgelegt.
 
 ## Gegenwart und rückwirkende Darstellung
 
 Die eigene Sessionansicht kann den vorläufigen Gang ab `started_at` darstellen
-und nach dem Aufguss dasselbe Intervall als bestätigt kennzeichnen. Die
-ursprüngliche Erkennungszeit und der damalige Bestätigungsstand bleiben im
-Ereignisverlauf nachvollziehbar.
+und später dasselbe Intervall als bestätigt kennzeichnen. Ursprüngliche
+Erkennungszeit und damaliger Bestätigungsstand bleiben nachvollziehbar.
+Heizentscheidungen wirken erst ab tatsächlicher Erkennung. Eine frühere
+Abschaltung wird nicht rückwirkend verändert. Eine vorsorgliche Heizbehandlung
+allein nach Türschließung wurde nicht vereinbart.
 
-Heizentscheidungen wirken erst ab der tatsächlichen Erkennung. Eine zuvor
-ausgeführte Abschaltung wird nicht rückwirkend verändert. Eine vorsorgliche
-Heizbehandlung allein nach Türschließung wurde nicht vereinbart.
+Die native HA-Zustandshistorie wird nicht umgeschrieben. Die historische
+Gangdarstellung verwendet eigene zugeordnete Intervalle. Fachliche Gangdauer
+und tatsächliche Heizdauer bleiben unterschiedliche Größen.
 
-Die native HA-Zustandshistorie wird nicht umgeschrieben. Die gewünschte
-historische Gangdarstellung liest deshalb die eigenen zugeordneten Intervalle.
-Fachliche Dauern verwenden `started_at`; Heiz- und Schutzfristen verwenden die
-tatsächlichen Schaltzeiten. Für noch offene Gangfristen ist die Zeitbasis
-zusammen mit der jeweiligen Regel festzulegen.
+## Abschlusszeiten
 
-## Abschlusszeit
-
-Das bestehende Modell verwendet beim regulären Gangabschluss die Erkennungszeit
-des bestätigten Durchlüftens. Eine Rückzuordnung des Gangendes zur Türöffnung
-ist weiterhin offen. Die nachträgliche Startzuordnung entscheidet diese Frage nicht.
+Beim regulären Abschluss verwendet der bestehende Kern den Zeitpunkt der
+Durchlüftungsbestätigung. Rückzuordnung des Gangendes zur Türöffnung bleibt
+offen. Beim ausdrücklich ausgeschalteten Gang ist dagegen der Ausschaltzeitpunkt
+als Ende vereinbart, mit dem eigenen Beendigungsgrund „ausgeschaltet“.
+Dessen Codeumsetzung folgt noch. Einzelheiten: [Betrieb](betrieb.md).
 
 Referenz zur HA-Zustandszeit, in der Erstfassung am 18.09.2026 eingesehen:
 https://www.home-assistant.io/docs/configuration/state_object/

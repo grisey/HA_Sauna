@@ -1,8 +1,10 @@
 # Entscheidungen und offene Punkte
 
-Grundlage: Nutzerfestlegungen der Besprechung, Stand 18.09.2026. Der
-[Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung; das
-[Gangmodell](gangmodell.md) präzisiert ihre fachliche Verarbeitung.
+Grundlage: Nutzerfestlegungen der Besprechung, fortgeschrieben am 18.09.2026.
+Der [Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung.
+[Gangmodell](gangmodell.md), [Betrieb](betrieb.md) und
+[Parameter](parameter.md) halten die fachlichen Regeln und deren Status fest.
+Diese Fortschreibung betrifft die Dokumentation, nicht die Implementierung.
 
 ## Vereinbart
 
@@ -17,42 +19,61 @@ Die Temperaturen werden weder gleichgesetzt noch mit einem erfundenen festen
 Höhenoffset umgerechnet. IBS wird nicht verwendet.
 
 **Vorbereitung und Gang:** Durchlüften und anschließende Schließung können die
-Personenfrüherkennung stützen. Erst das Personenmuster legt einen **vorläufigen
-Gang** an, der bereits als Saunagang angezeigt und behandelt wird. Ausschließlich
-ein Aufguss bestätigt den Gang. Er kann einen verpassten Start auch unmittelbar
-bestätigt nachholen. Die starke/schwache Erkennung bleibt wie im Kandidaten
-parametriert; nur der schwache Startpfad benötigt vorbereitendes Durchlüften.
+Personenfrüherkennung stützen. Das Personenmuster legt einen vorläufigen Gang
+an, der bereits als Saunagang angezeigt und behandelt wird. Ausschließlich
+ein Aufguss bestätigt den Gang. Er kann einen verpassten Start unmittelbar
+bestätigt nachholen. Im unveränderten Kandidaten benötigt nur der schwache
+Personenpfad vorbereitendes Durchlüften.
 
 **Türereignisse:** schnelle Türmeldungen, Durchlüftungseinordnung und Gangablauf
-bleiben getrennt. Kurze Türbetätigung erhält den laufenden Gang, seine Zeitbasis
-und vorhandene Aufgüsse. Erst bestätigtes Durchlüften nach Aufguss ermöglicht
-den regulären Abschluss. Ein Türereignis allein belegt keinen Öffnungszweck
-und keine Personenzahl.
+bleiben getrennt. Kurze Türbetätigung erhält Gang, Zeitbasis und Aufgüsse.
+Bestätigtes Durchlüften nach Aufguss ermöglicht den regulären Abschluss.
+Ein Türereignis allein belegt keinen Öffnungszweck und keine Personenzahl.
 
-**Zeitbezug:** Beginn ab zugeordneter Türschließung, erste Erkennung und
-Aufgussbestätigung werden getrennt geführt. Der Aufguss bestätigt denselben
-Gang, ohne einen neuen Beginn zu setzen. Reale Heizentscheidungen wirken ab
-Erkennung; die rückwirkende Zuordnung dient Dauer und eigener Historie.
+**Zeitbezug und Bestätigungsfrist:** zugeordneter Beginn bei der Türschließung,
+erste Erkennung und Aufgussbestätigung bleiben getrennt. Für die vorläufige
+Gangerkennung ist eine konfigurierbare Bestätigungsfrist vorgesehen. Als
+angemessen wurden 12 oder 13 Minuten ab der zugehörigen Türschließung benannt;
+ein fester Ausgangswert ist noch nicht ausgewählt. Die ungefähre Gangdauer von
+15 Minuten ist kein automatisches Gangende. Die konkreten Folgen eines
+unbestätigten Fristablaufs bleiben als Vorschlag gekennzeichnet.
 
 **Heizung:** engere Hysterese im eigenen Thermostat. Bereits im vorläufigen
 Gang werden reguläre Hysterese- und betriebliche Ablaufabschaltungen unterdrückt.
 Sicherheitsabschaltung und ausdrückliches Ausschalten bleiben übergeordnet.
 Dynamische Solltemperaturnachführung innerhalb eines Gangs ist verworfen.
 
-**Anheizen und Heizlaufzeit:** Der Sessionmerker `aufgeheizt` wird beim
-temperaturbedingten Übergang zu `idle` gesetzt und innerhalb derselben Session
-beibehalten. Die Heizdauer wird aus Anheizdauer (Ausgangspunkt 100 Minuten)
-und späterer kürzerer Dauer gewählt. Ausreichend lange Auszeit setzt den
-Heizzeitabschnitt zurück, eine kurze Unterbrechung nicht. Zwangskühlung hängt
-an der Heizlaufzeit statt an jedem normalen Thermostatstopp.
+**Anheizen:** Der Sessionmerker `aufgeheizt` wird beim temperaturbedingten
+Übergang zu `idle` an der oberen Hysteresegrenze gesetzt und innerhalb derselben
+Session beibehalten. Die wirksame Heizdauer wird aus Anheizdauer (Ausgangspunkt
+100 Minuten) und späterer kürzerer Dauer gewählt.
 
-**Session:** Kurzes Aus-/Wiedereinschalten erhält dieselbe Session. Ausschalten
-wirkt sofort auf den Betrieb; der endgültige Sessionabschluss ist eine eigene
-Entscheidung. Normale Hysteresepausen unterbrechen keine Session.
+**Heizlaufzeit:** Nur tatsächliches Heizen wird seit der letzten Rücksetzung
+aufsummiert. Kurze Auszeiten zählen nicht mit und setzen die Summe nicht zurück.
+Eine zusammenhängende Ausschaltpause von mindestens der konfigurierten
+Rücksetzdauer setzt die Summe zurück. Zwangskühlung hängt an der Heizlaufzeit,
+nicht an jedem normalen Thermostatstopp. Die Zeitrechnung ist damit geklärt.
 
-**Parameter und Anzeige:** eigene einheitliche Parameterentitäten, eine
-konsumierte Quelle je Einstellungswert. Abgeleitete Werte, Dauer und Restzeiten
-sind lesbare Ergebnisse. Phase und Bestätigungsstand stammen aus dem Ablaufkern.
+**Sessiongrenze:** Nach Ablauf der konfigurierten Frist seit dem Ausschalten
+des Saunabetriebs beginnt beim nächsten Einschalten eine vollständig neue
+Session. Bei früherem Wiedereinschalten bleibt es dieselbe Session. Normale
+Heizpausen sind kein Ausschalten des Saunabetriebs.
+
+**Ausschalten im Gang:** Ein ausdrücklicher Ausschaltbefehl beendet den Gang
+sofort, auch wenn er bereits bestätigt ist. Ende und Grund „ausgeschaltet“
+werden festgehalten. Bei rechtzeitigem Wiedereinschalten wird ausschließlich
+die Session fortgesetzt, nicht der ausgeschaltete Gang.
+
+**Physischer Schalter:** Der Shelly-Schalter soll sich wie ein einfacher
+An-/Ausschalter für den Saunabetrieb anfühlen. Maßgeblich ist die Betriebsfreigabe,
+nicht der momentane Heizrelaiszustand oder die noch fortsetzbare Session.
+
+**Parameter und Anzeige:** notwendige Werte direkt in der Integration
+konfigurierbar machen. Genau eine konsumierte Quelle je Einstellung, gemeinsame
+Validierung und Speicherung. Sinnvolle Relationen statt unnötiger unabhängiger
+Absolutwerte verwenden; abgeleitete Werte und Restzeiten nur lesbar anzeigen.
+Phase und Bestätigungsstand stammen aus dem Ablaufkern. Die automatische
+relative Erkennungsanpassung ist noch kein freigegebener Ersatzdetektor.
 
 **Daten:** gesicherter Betriebszustand und Sessionarchiv unabhängig vom Recorder.
 Speicherverfahren und Datenumfang werden gesondert besprochen.
@@ -62,25 +83,36 @@ Speicherverfahren und Datenumfang werden gesondert besprochen.
 Die Gefäßentnahme um 22:39:40 ist das zusätzlich bestätigte 15. Türereignis der
 Referenzsession. Nicht jede Öffnung nach Aufguss beendet einen Gang. Manuelle
 Eingriffe waren einmalige Reparaturversuche, keine konkurrierenden Sollvorgaben
-für die Automatik. Die frühere Zulassung normaler Hystereseabschaltungen im
-Gang wurde durch die eigene zustandsabhängige Thermostatregelung ersetzt.
+für die Automatik. Normale Hystereseabschaltungen im Gang wurden durch die
+vereinbarte zustandsabhängige Heizbehandlung ersetzt.
+
+Die frühere Überlegung, einen Gang über ausdrückliches Aus-/Wiedereinschalten
+fortzusetzen, gilt nicht mehr. Fortgesetzt werden kann nur die Session.
+Ausschaltzeiten sind keine Heizzeiten. Diese beiden Fragen sind entschieden
+und werden nicht erneut als Varianten angeboten.
 
 ## Noch zu klären, in Besprechungsreihenfolge
 
-1. **Gang und Session:** Aufhebung eines vorläufigen Gangs ohne Aufguss bei
-   erneutem Durchlüften oder Fristablauf; Bestand und Zeitbasis der alten
-   Zwölf-Minuten-Frist; möglicher rückwirkender Gangabschluss; Dauer einer
-   zulässigen Betriebsunterbrechung und Wiederaufnahme von Gang/Nachlauf.
-2. **Heizregelung:** Hysterese, kürzere Heizdauer, Rücksetz-Auszeit und Kühlpause;
-   Zeitrechnung kurzer Auszeiten, Umschaltpunkt des Dauerlimits, Gangbeginn bei
-   bereits laufender Kühlsperre, Nachlauf, Schutzgrenzen und Ersatztemperatur
-   bei Ausfall von Kanal 3.
-3. **Bedienung:** Bedeutung von `bereit`, Parametergrenzen und Einheiten,
-   Änderungen bei laufender Frist, Start-/Endstufen sowie Taster, Licht, Musik
-   und Benachrichtigungen.
-4. **Speicherung:** Messauflösung, Speicherverfahren, Wiederanlauf nach HA-Neustart,
+1. **Heizregelung – nächster Punkt:** Verhältnis von Zwangskühlungsdauer und
+   Rücksetz-Auszeit; mögliche gemeinsame Zeitvorgabe. Danach Wechsel der
+   Heizzeitgrenze beim bereits begonnenen Abschnitt, Gangbeginn bei bestehender
+   Kühlsperre und Verhalten nach Gangende. Hysterese, spätere Heizdauer,
+   Rücksetz-Auszeit, Nachlauf, Schutzgrenzen und Ersatztemperatur für Kanal 3
+   bleiben zu konkretisieren.
+2. **Verbleibende Gang-/Sessiondetails:** Folgen eines unbestätigten
+   Fristablaufs beziehungsweise erneuten Durchlüftens, Behandlung eines danach
+   erkannten Aufgusses, rückwirkende Abschlusszeit, Zählung eines durch
+   Ausschalten beendeten Gangs, Wert der Sessionfrist und Wiederaufnahme eines
+   Nachlaufs. Bereits beendete Gänge werden nicht wieder aufgenommen.
+3. **Bedienung und Parameter:** Bedeutung von `bereit`, endgültige
+   Parametergrenzen und Einheiten, Änderungen während laufender Fristen,
+   geprüfte Relationen, Start-/Endstufen, Shelly-Eingangsanbindung, Licht,
+   Musik und Benachrichtigungen.
+4. **Speicherung:** Messauflösung, Verfahren, Wiederanlauf nach HA-Neustart,
    Aufbewahrung, Export und Sicherung; siehe [Speicherblock](speicherung.md).
 
-Bestandswerte der alten Automationen werden nicht stillschweigend als neue
-Produktivregeln übernommen. Ein-Sensor-Tests des Kandidaten belegen keine
-bereits getestete automatische Hardwarediagnose oder dynamische Umschaltung.
+Die Besprechung erfolgt anhand zusammenhängender Regeln und Fristen, jeweils
+zu einem Thema. Bereits geklärte Selbstverständlichkeiten werden nicht erneut
+abgefragt. Bestandswerte der alten Automationen sind keine automatisch
+beschlossenen neuen Produktivwerte. Die Dokumentation kennzeichnet weiterhin
+Vereinbarung, Vorschlag, Messbefund und tatsächlichen Implementierungsstand.
