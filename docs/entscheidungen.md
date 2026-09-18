@@ -1,89 +1,86 @@
-# Entscheidungen und Bearbeitungsstand
+# Entscheidungen und offene Punkte
 
-Quelle: ausdrueckliche Nutzerfestlegungen dieser Besprechung, Stand 18.09.2026.
-Der eingefrorene Messkandidat steht separat in `kandidat.md`.
+Grundlage: Nutzerfestlegungen der Besprechung, Stand 18.09.2026. Der
+[Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung; das
+[Gangmodell](gangmodell.md) präzisiert ihre fachliche Verarbeitung.
 
 ## Vereinbart
 
-**Aufbau:** eigene Home-Assistant-Integration mit eigenem Thermostat. Ein
-zusammenhaengender Python-Fachkern fuehrt die Ablaufentscheidungen. Erkennung,
-Gang/Session, Temperaturregelung, Entitaeten und Speicherung sind getrennte Aufgaben.
+**Aufbau:** eigene Home-Assistant-Integration mit eigenem Thermostat und einem
+zentralen Python-Ablaufkern. Messung, Erkennung, Gang/Session, Temperaturregelung,
+Bedienung und Speicherung haben getrennte Zuständigkeiten.
 
-**Sensoren:** K3 auf Kopfhoehe der obersten Bank; K6 etwa 20–30 cm darunter.
-Beide im Normalbetrieb fest einbinden. Faellt einer aus, arbeitet die Steuerung
-mit dem anderen weiter und meldet den betroffenen Kanal. Hoehentemperaturen
-werden nicht gleichgesetzt. IBS wird nicht verwendet.
+**Sensoren:** Kanal 3 auf Kopfhöhe der obersten Bank, Kanal 6 etwa 20–30 cm
+darunter. Beide sind im Normalbetrieb fest eingebunden. Bei Ausfall eines
+Sensors erfolgt Weiterbetrieb mit dem verbleibenden Kanal und Fehlermeldung.
+Die Temperaturen werden weder gleichgesetzt noch mit einem erfundenen festen
+Höhenoffset umgerechnet. IBS wird nicht verwendet.
 
-**Erkennung:** schnelle Tuerereignisse sind von Durchlueftungseinordnung und
-Gangentscheidung getrennt. Personenfrueherkennung ist weniger spezifisch als
-Aufguss. Aufguss kann einen verpassten Gangstart nachtraeglich herstellen und
-zugleich bestaetigen. Jeder tatsaechliche Gang beinhaltet nach Nutzerangabe Aufguss.
+**Vorbereitung und Gang:** Durchlüften und anschließende Schließung können die
+Personenfrüherkennung stützen. Erst das Personenmuster legt einen **vorläufigen
+Gang** an, der bereits als Saunagang angezeigt und behandelt wird. Ausschließlich
+ein Aufguss bestätigt den Gang. Er kann einen verpassten Start auch unmittelbar
+bestätigt nachholen. Die starke/schwache Erkennung bleibt wie im Kandidaten
+parametriert; nur der schwache Startpfad benötigt vorbereitendes Durchlüften.
 
-**Tuergebrauch:** kurze Oeffnung, beispielsweise Austritt einzelner Personen,
-erhaelt den laufenden Gang, seine Aufgussbestaetigung und Heizbehandlung. Erst
-bestaetigtes Durchlueften nach Aufguss qualifiziert einen Gangabschluss.
-Vor jedem der vier Referenzgaenge wurde ausgiebig gelueftet; dieser Verlauf
-stuetzt im Kandidaten den schwachen Personenpfad. Tuerereignisse allein starten
-keinen Gang. Aus Messkurven werden keine Personenzahl und kein Oeffnungszweck abgeleitet.
+**Türereignisse:** schnelle Türmeldungen, Durchlüftungseinordnung und Gangablauf
+bleiben getrennt. Kurze Türbetätigung erhält den laufenden Gang, seine Zeitbasis
+und vorhandene Aufgüsse. Erst bestätigtes Durchlüften nach Aufguss ermöglicht
+den regulären Abschluss. Ein Türereignis allein belegt keinen Öffnungszweck
+und keine Personenzahl.
 
-**Zeitliche Zuordnung:** Nach Erkennung beginnt die fachliche Gangzeit bei der
-zugeordneten Tuerschliessung. Der Erkennungszeitpunkt bleibt separat. Die reale
-Steuerung kann erst bei Erkennung reagieren. Eine spaetere kurze Oeffnung
-verschiebt den bereits bekannten Gangbeginn nicht. Details: `zeitmodell.md`.
+**Zeitbezug:** Beginn ab zugeordneter Türschließung, erste Erkennung und
+Aufgussbestätigung werden getrennt geführt. Der Aufguss bestätigt denselben
+Gang, ohne einen neuen Beginn zu setzen. Reale Heizentscheidungen wirken ab
+Erkennung; die rückwirkende Zuordnung dient Dauer und eigener Historie.
 
-**Heizung:** eigener Thermostat ermoeglicht engere Hysterese; bei erkanntem Gang
-wird auch der regulaere Wechsel von `heating` nach `idle` zustandsbedingt
-verhindert. Dynamische Solltemperaturnachfuehrung innerhalb eines Gangs ist verworfen.
-Uebergeordnete Sicherheitsabschaltung und ausdrueckliches Ausschalten bleiben wirksam.
+**Heizung:** engere Hysterese im eigenen Thermostat. Bereits im vorläufigen
+Gang werden reguläre Hysterese- und betriebliche Ablaufabschaltungen unterdrückt.
+Sicherheitsabschaltung und ausdrückliches Ausschalten bleiben übergeordnet.
+Dynamische Solltemperaturnachführung innerhalb eines Gangs ist verworfen.
 
-**Anheizen/Laufzeit:** Sessionmerker `aufgeheizt` beim temperaturbedingten Uebergang
-zu `idle`. Dieser Merker wird innerhalb derselben Session nicht zurueckgenommen.
-Heizdauer aus Anheizdauer (Ausgangspunkt 100 Minuten) und spaeterer kuerzerer
-Dauer waehlen. Eine ausreichend lange Auszeit setzt den Heizzeitabschnitt zurueck;
-kurze Unterbrechungen schenken keine neue volle Heizdauer. Zwangskuehlung aus
-Heizlaufzeit, nicht nach jedem regulaeren Thermostatstopp. Betriebsbedingte
-Abschaltungen duerfen einen laufenden Gang nicht unterbrechen.
+**Anheizen und Heizlaufzeit:** Der Sessionmerker `aufgeheizt` wird beim
+temperaturbedingten Übergang zu `idle` gesetzt und innerhalb derselben Session
+beibehalten. Die Heizdauer wird aus Anheizdauer (Ausgangspunkt 100 Minuten)
+und späterer kürzerer Dauer gewählt. Ausreichend lange Auszeit setzt den
+Heizzeitabschnitt zurück, eine kurze Unterbrechung nicht. Zwangskühlung hängt
+an der Heizlaufzeit statt an jedem normalen Thermostatstopp.
 
-**Session:** kurzes Aus-/Wiedereinschalten erhaelt dieselbe Session. Ausschalten
-wirkt sofort auf den Betrieb; Sessionabschluss ist eine gesonderte Entscheidung.
-Normale Hysteresepausen sind kein Session-Aus-/Wiedereinschalten.
+**Session:** Kurzes Aus-/Wiedereinschalten erhält dieselbe Session. Ausschalten
+wirkt sofort auf den Betrieb; der endgültige Sessionabschluss ist eine eigene
+Entscheidung. Normale Hysteresepausen unterbrechen keine Session.
 
-**Parameter/GUI:** eigene einheitliche Parameterentitaeten, genau eine konsumierte
-Quelle je Einstellungswert. Abgeleitete Werte und Restzeiten sind lesbare Zustaende.
-GUI-Phase aus dem Fachzustand ableiten; Bedienaktionen durch denselben Kern fuehren.
+**Parameter und Anzeige:** eigene einheitliche Parameterentitäten, eine
+konsumierte Quelle je Einstellungswert. Abgeleitete Werte, Dauer und Restzeiten
+sind lesbare Ergebnisse. Phase und Bestätigungsstand stammen aus dem Ablaufkern.
 
-**Daten:** Betriebszustand und Sessionarchiv unabhaengig vom Recorder vorsehen.
-Speicherverfahren, Aufloesung und Wiederaufnahme sind ein eigener Besprechungsblock.
+**Daten:** gesicherter Betriebszustand und Sessionarchiv unabhängig vom Recorder.
+Speicherverfahren und Datenumfang werden gesondert besprochen.
 
-## Ueberholte Annahmen
+## Korrekturen früherer Annahmen
 
-- Nicht jede Tueröffnung nach Aufguss beendet einen Gang.
-- Nicht alle urspruenglichen Tuerereignisse waren erfasst: die kurze Gefaessentnahme
-  um 22:39:40 ist das bestaetigte 15. Referenzereignis.
-- Die frueher erlaubte normale Hystereseabschaltung waehrend des Gangs wurde durch
-  die eigene zustandsabhaengige Thermostatregelung ersetzt.
-- Manuelle Eingriffe in der Referenzsession waren einmalige Reparaturversuche,
-  keine konkurrierenden Sollvorgaben fuer die neue Automatik.
-- Ein-Sensor-Tests des aelteren konservativen Detektors belegen nicht das Verhalten
-  dynamischer Sensorausfaelle des neuen Kandidaten.
+Die Gefäßentnahme um 22:39:40 ist das zusätzlich bestätigte 15. Türereignis der
+Referenzsession. Nicht jede Öffnung nach Aufguss beendet einen Gang. Manuelle
+Eingriffe waren einmalige Reparaturversuche, keine konkurrierenden Sollvorgaben
+für die Automatik. Die frühere Zulassung normaler Hystereseabschaltungen im
+Gang wurde durch die eigene zustandsabhängige Thermostatregelung ersetzt.
 
-## Noch zu klaeren, in Besprechungsreihenfolge
+## Noch zu klären, in Besprechungsreihenfolge
 
-1. **Gang/Session:** Verarbeitung eines erkannten Gangs, dem noch kein Aufguss
-   folgt, bei laengerem Durchlueften oder Fristablauf; Bestand der alten
-   Zwoelf-Minuten-Frist; exakte Session-Unterbrechungsfrist und Wiederaufnahme
-   von Gang/Nachlauf bei Betriebsunterbrechung beziehungsweise HA-Neustart.
-2. **Heizregelung:** Hysteresewerte, kuerzere Heizdauer, Auszeit fuer Ruecksetzung,
-   Zwangskuehlungsdauer, Behandlung kurzer Auszeiten in der Zeitrechnung,
-   Umschaltpunkt des Dauerlimits, Gangbeginn bei bereits laufender Kuehlsperre,
-   Nachlauf-/Lueftungsheizverhalten, Sicherheitsgrenzen und Rueckmeldungsdiagnose.
-   Ersatztemperatur bei Ausfall von K3 gesondert bestimmen; kein fixer Offset.
-3. **Bedienung:** Bedeutung von `bereit`, endgueltige Parametergrenzen/Einheiten,
-   Verhalten einer Parameteraenderung bei laufender Frist, Start-/Endstufen,
-   Taster-/Licht-/Musik-/Benachrichtigungsfunktionen.
-4. **Speicherung:** siehe `speicherung.md`; Messaufloesung, Backend, Aufbewahrung,
-   Export, Sicherung und Wiederanlauf. Keine Auswahl allein aus technischer Bequemlichkeit.
+1. **Gang und Session:** Aufhebung eines vorläufigen Gangs ohne Aufguss bei
+   erneutem Durchlüften oder Fristablauf; Bestand und Zeitbasis der alten
+   Zwölf-Minuten-Frist; möglicher rückwirkender Gangabschluss; Dauer einer
+   zulässigen Betriebsunterbrechung und Wiederaufnahme von Gang/Nachlauf.
+2. **Heizregelung:** Hysterese, kürzere Heizdauer, Rücksetz-Auszeit und Kühlpause;
+   Zeitrechnung kurzer Auszeiten, Umschaltpunkt des Dauerlimits, Gangbeginn bei
+   bereits laufender Kühlsperre, Nachlauf, Schutzgrenzen und Ersatztemperatur
+   bei Ausfall von Kanal 3.
+3. **Bedienung:** Bedeutung von `bereit`, Parametergrenzen und Einheiten,
+   Änderungen bei laufender Frist, Start-/Endstufen sowie Taster, Licht, Musik
+   und Benachrichtigungen.
+4. **Speicherung:** Messauflösung, Speicherverfahren, Wiederanlauf nach HA-Neustart,
+   Aufbewahrung, Export und Sicherung; siehe [Speicherblock](speicherung.md).
 
-Die Vorbereitung implementiert nur den geklaerten Teil. Insbesondere sind alte
-Bestandswerte (z.B. Nachlauf 10 Minuten, Lueftungssoll 60 °C) keine automatisch
-beschlossenen neuen Produktivwerte.
+Bestandswerte der alten Automationen werden nicht stillschweigend als neue
+Produktivregeln übernommen. Ein-Sensor-Tests des Kandidaten belegen keine
+bereits getestete automatische Hardwarediagnose oder dynamische Umschaltung.

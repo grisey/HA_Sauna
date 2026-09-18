@@ -1,45 +1,55 @@
 # HA Sauna
 
-Vorbereitung einer eigenen Home-Assistant-Integration mit eigenem Thermostat,
-Zwei-Sensor-Erkennung und Recorder-unabhaengigen Sessiondaten.
+Entwicklungsgrundlage für eine eigene Home-Assistant-Integration mit eigenem
+Thermostat, Zwei-Sensor-Erkennung und Sessiondaten unabhängig vom Recorder.
 
-**Stand:** festgehaltener Erkennungskandidat, reproduzierbares Offline-Replay und
-getesteter Fachkern fuer die zeitliche Gangzuordnung. Noch keine installierbare
-Heizungssteuerung. Es gibt keinen Aktorzugriff, kein Deployment und keinen
-implizit ausgewaehlten Sessiondatenspeicher.
+## Gangablauf
 
-## Einstieg
+**Vorbereitendes Durchlüften → vorläufig erkannter Saunagang → Bestätigung durch Aufguss.**
 
-| Datei | Inhalt |
+Die Personenfrüherkennung zeigt bereits einen Saunagang an. Erst ein erkannter
+Aufguss bestätigt ihn. Beginn, Erkennungszeit und Bestätigungszeit bleiben
+getrennt: Ein später erkanntes Personenmuster kann den Gangbeginn der
+zugehörigen Türschließung zuordnen. Ein Aufguss kann einen vorher verpassten
+Gang auch unmittelbar bestätigt anlegen.
+
+Durchlüften allein startet keinen Gang. Kurze Türbetätigung erhält einen
+laufenden Gang. Der reguläre Abschluss setzt einen Aufguss und anschließendes
+bestätigtes Durchlüften voraus. Die genaue Bedeutung der Vorstufen und die
+unveränderten Zulassungsregeln stehen im [Gangmodell](docs/gangmodell.md).
+
+## Bearbeitungsstand
+
+Vorhanden sind ein eingefrorener Erkennungskandidat, dessen Offline-Replay und
+ein getestetes Python-Modell für Gangzuordnung und Bestätigungsstand. Die
+Dokumentation unterscheidet vereinbarte Regeln, Messbefunde und offene Fragen.
+Thermostat, HA-Anbindung und dauerhafte Speicherung sind noch umzusetzen;
+der aktuelle Code schaltet keine Geräte.
+
+| Dokument | Inhalt |
 |---|---|
-| [Entscheidungen](docs/entscheidungen.md) | Vereinbarte Anforderungen und ausdruecklich offene Punkte. |
-| [Architektur](docs/architektur.md) | Trennung von Messung, Erkennung, Gangablauf, Thermostat und HA-Anbindung. |
-| [Zeitmodell](docs/zeitmodell.md) | Nachtraegliche Gangzuordnung zur passenden Tuerschliessung. |
-| [Speicherung](docs/speicherung.md) | Eigener Besprechungsblock: Betriebszustand, Sessionarchiv, GUI. |
-| [Erkennungskandidat](docs/kandidat.md) | Unveraenderter festgehaltener Kandidat mit Messbefunden und Grenzen. |
-| [Arbeitsregeln](AGENTS.md) | Vorgaben fuer die weitere Umsetzung. |
+| [Gangmodell](docs/gangmodell.md) | Vorbereitung, vorläufiger Gang, Aufgussbestätigung und Abschluss. |
+| [Zeitmodell](docs/zeitmodell.md) | Beginn, Erkennungszeit, Bestätigungszeit und historische Darstellung. |
+| [Entscheidungen](docs/entscheidungen.md) | Vereinbarte Anforderungen und verbleibende Besprechungspunkte. |
+| [Architektur](docs/architektur.md) | Zuständigkeiten und Stand der Implementierung. |
+| [Speicherung](docs/speicherung.md) | Betriebswiederaufnahme und Sessionarchiv als eigener Besprechungsblock. |
+| [Erkennungskandidat](docs/kandidat.md) | Unveränderte Kalibrierung mit Messbefunden und Prüfgrenzen. |
+| [Arbeitsregeln](AGENTS.md) | Vorgaben für Änderungen. |
 
-## Vorbereiteter Code
-
-`custom_components/ha_sauna/core/timeline.py` verarbeitet erkannte Ereignisse
-ohne HA-Abhaengigkeit und ohne Nebenwirkungen. Ein spaeter erkannter Gang kann
-seine Startzeit aus der zugehoerigen Tuerschliessung erhalten. Erkennung,
-Aufgussbestaetigung und Gangabschluss bleiben getrennt. Kurze Tuerbetätigungen
-setzen den Gangbeginn nicht zurueck.
-
-`candidate/replay.py` und `candidate/parameter.json` sind unveraenderte Kopien
-des akzeptierten Offline-Kandidaten. Der Parameterstand ist ein Testartefakt,
-keine zweite produktive Einstellungsquelle.
+Der Ablaufkern liegt in `custom_components/ha_sauna/core/timeline.py` und
+benötigt kein Home Assistant. `candidate/replay.py` und `candidate/parameter.json`
+sind die unveränderten Ausgangsartefakte. Ihr Parameterschnappschuss ist eine
+Testeingabe, keine zweite produktive Einstellungsquelle.
 
 ## Tests
 
-Fachkern und Artefaktintegritaet, ohne HA und ohne Recorderdaten:
+Gangmodell und Integrität der eingefrorenen Artefakte:
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
 
-Zusaetzliche lokale Rueckpruefung mit dem privaten Originalexport:
+Zusätzliche lokale Prüfung mit dem privaten Originalexport:
 
 ```sh
 python3 -m pip install -r requirements-replay.txt
@@ -47,7 +57,7 @@ SAUNA_RECORDER_ARCHIVE=/pfad/sauna-recorder-2026-09-17.zip \
   python3 -m unittest discover -s tests -v
 ```
 
-Vollstaendiges Erkennungsreplay mit Ergebnisdatei:
+Vollständiges Erkennungsreplay mit Ergebnisdatei:
 
 ```sh
 mkdir -p .local
@@ -55,6 +65,5 @@ python3 candidate/replay.py /pfad/sauna-recorder-2026-09-17.zip \
   --parameters candidate/parameter.json --out .local/ergebnis.json --tests
 ```
 
-Die Ausgangsdaten bleiben ausserhalb dieses oeffentlichen Repositorys.
-`candidate/provenienz.json` dokumentiert Hashes und Reproduktionsumfang.
-Eine Lizenzentscheidung und der produktive Integrationsstand sind noch offen.
+Die Ausgangsdaten bleiben außerhalb des öffentlichen Repositorys.
+`candidate/provenienz.json` enthält die Prüfsummen und den Reproduktionsumfang.

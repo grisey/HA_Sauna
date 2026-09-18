@@ -1,46 +1,47 @@
-# Datenerfassung und Speicherung – eigener Besprechungsblock
+# Datenerfassung und Speicherung
 
-## Bereits vereinbart
+Eigener Besprechungsblock; Speicherverfahren und Datenumfang sind noch offen.
 
-Sessiondaten sollen unabhaengig vom Recorder gespeichert werden. Fachlicher
-Beginn und spaetere Erkennung bleiben getrennte Zeiten. Die GUI soll dadurch
-nachtraeglich erkannte Gangintervalle zutreffend darstellen koennen.
-Der Speicher soll keine zweite Quelle produktiver Parameter oder Aktorbefehle sein.
+## Vereinbartes Ziel
 
-## Zwei getrennte Aufgaben
+Sessiondaten werden unabhängig vom Recorder geführt. Die Darstellung soll einen
+zunächst vorläufig erkannten und später durch Aufguss bestätigten Gang demselben
+Zeitintervall zuordnen können. Der jeweilige Erkenntnisstand bleibt nachvollziehbar.
 
-**Betriebszustand fuer Wiederaufnahme:** Session-/Gangidentitaet, letzter
-bekannter Tuerzustand, Bezug der Startanker, Aufgussbestaetigung, Aufheizmerker,
-Fristen und offene Entscheidungen. Die technische Ablage allein legt noch
-nicht fest, ob nach einem Neustart weitergeheizt werden darf.
+Dabei sind drei Zeiten getrennt zu erhalten: zugeordneter Beginn, erste Erkennung
+und erste Aufgussbestätigung. Vorbereitung, Schließung und bestätigender Aufguss
+werden über ihre Ereignisreferenzen verbunden. Ein später bestätigtes Intervall
+löscht nicht die Information, dass es zuvor nur vorläufig erkannt war.
 
-**Sessionarchiv:** Messreihen beider Hoehen, erkannte Ereignisse, zugeordnete
-Intervalle, Entscheidungsgruende, Sensorqualitaet und dokumentierte Ausfaelle.
-Fachliche Rueckzuordnung soll nachvollziehbar bleiben; ein urspruenglicher
-Erkennungszeitpunkt darf nicht durch die spaetere Interpretation verschwinden.
+## Zwei Speicheraufgaben
 
-Das konkrete Datenschema wird hier nur fachlich vorbereitet. Dateiformat,
-Datenbank, Schreibverfahren und Aufbewahrungsregeln sind noch nicht ausgewaehlt.
+**Betriebszustand für Wiederaufnahme:** Session und Gang mit ihren Identitäten,
+Türzustand und Episodenbezügen, Vorbereitung, Aufgussereignissen, Aufheizmerker,
+Fristen und offenen Entscheidungen. Der Gang-Bestätigungsstand ist aus den
+Aufgüssen ableitbar und wird nicht als unabhängige zweite Wahrheit gepflegt.
+Eine technische Wiederherstellung entscheidet noch nicht über eine Heizfreigabe.
 
-## In diesem Block zu entscheiden
+**Sessionarchiv:** Messreihen beider Höhen, erkannte Ereignisse, zugeordnete
+Intervalle, Entscheidungsgründe, Sensorqualität und Ausfälle. Vorläufige Erkennung,
+Bestätigung und regulärer Abschluss bleiben unterscheidbar. Die spätere Anzeige
+kann das Intervall neu einordnen, ohne ursprüngliche Ereigniszeiten umzuschreiben.
 
-- Zu speichernde Roh-/gefilterte Messwerte und Merkmale, Messaufloesung und Umgang
-  mit Ereignisspitzen sowie Messluecken.
-- Ereignisjournal und daraus abgeleitete Gang-/Sessionansicht; Korrekturen und
-  eindeutige Referenzen zwischen Messung, Erkennung und Handlung.
-- Backend, atomare Schreibvorgaenge, Absturzverhalten, Migration und Groessenlimit.
-- Aufbewahrung, Loeschen, Exportformat, Sicherung und Wiederherstellung.
-- Historische GUI-Abfrage und Aktualisierung nach spaeterer Gangzuordnung.
-- Parameter-Schnappschuss pro Mess-/Entscheidungsabschnitt als Auditinformation,
-  nicht als alternative aktuell konsumierte Konfiguration.
+## In diesem Block festzulegen
 
-## Vorbereitung im Repository
+- Messwerte und Merkmale, Auflösung, Ereignisspitzen und Messlücken.
+- Ereignisjournal und abgeleitete Sessionansicht, Korrekturen und Referenzen.
+- Speicherverfahren, atomare Schreibvorgänge, Absturzverhalten und Migration.
+- Aufbewahrung, Größenlimit, Löschen, Export, Sicherung und Wiederherstellung.
+- Historische GUI-Abfrage und Aktualisierung nach späterer Bestätigung.
+- Parameterschnappschüsse als Entscheidungsbeleg, nicht als zweite aktuelle
+  Konfiguration.
 
-Der Fachkern enthaelt explizite Ereignis- und Zeitreferenzen. Sein unveraenderlicher
-In-Memory-Zustand und die Testausgaben sind **kein implementiertes Sessionarchiv**.
-Die `processed`-Liste ist eine Test-/Referenzprojektion innerhalb einer Session;
-ihre Persistenz, Indexierung und Begrenzung gehoeren zur Speicherumsetzung.
+## Stand der Vorbereitung
 
-Das Repository ist oeffentlich. Der private Recorderexport, seine Zugangsdaten-
-und Kontextfelder sowie das komplette HA-Systeminventar werden nicht hochgeladen.
-Reproduktion erfolgt mit lokal angegebener Originaldatei und geprueftem Hash.
+Das Gangmodell enthält Ereignis- und Zeitreferenzen. Sein unveränderlicher
+In-Memory-Zustand ist noch kein dauerhaftes Archiv. Die `processed`-Liste dient
+dem Offline-Modell; Speicherung, Indexierung und Begrenzung werden hier geklärt.
+
+Roh-Recorderdaten, Zugangsdaten und das vollständige HA-Inventar bleiben außerhalb
+des öffentlichen Repositorys. Das Replay verwendet eine lokal bereitgestellte
+Originaldatei mit geprüfter Prüfsumme.

@@ -1,68 +1,78 @@
-# Fachlicher Beginn und Erkennungszeit
+# Gangbeginn, Erkennung und Bestätigung
 
-## Regel
-
-Bei Personen- oder Aufgusserkennung wird ein Gang angelegt, sofern noch keiner
-aktiv ist. Sein fachlicher Beginn ist die zugeordnete Tuerschliessung der
-aktuellen Episode innerhalb derselben Session. Der Zeitpunkt der Erkenntnis
-wird separat gespeichert. Es wird keine beliebige alte Schliessung gesucht.
+## Drei unterschiedliche Zeitpunkte
 
 | Feld | Bedeutung |
 |---|---|
-| `effective_at` am Eingangsereignis | Vom Detektor gelieferter Ereigniszeitpunkt. Beim eingefrorenen Kandidaten gleich `detected_at`. |
-| `detected_at` | Zeitpunkt, ab dem die Entscheidung tatsaechlich vorlag. |
-| `Gang.started_at` | Der nachtraeglich zugeordnete fachliche Beginn. |
-| `start_source_event_id` | Nachpruefbarer Verweis auf genau die verwendete Tuerschliessung. |
-| `recognition_event_id` | Personen- oder Aufgussereignis, das die Erkennung ausloeste. |
-| `start_basis` | `door_close` oder bei fehlender Historie `recognition_only`. |
+| `Gang.started_at` | Zugeordneter Beginn bei der Türschließung derselben Episode und Session. |
+| `Gang.detected_at` | Zeitpunkt, an dem der Gang erstmals erkannt wurde: durch Personenmuster oder direkt durch Aufguss. |
+| `Gang.confirmed_at` | Erkennungszeit des ersten zugeordneten Aufgusses; zuvor nicht gesetzt. |
 
-Es werden Zeitzonen tragende Zeitstempel angenommen und intern nach UTC
-normalisiert. Messreaktion, Detektionsentscheidung und mechanischer Kontakt
-sind unterschiedliche Sachverhalte. Ohne zusaetzlichen Nachweis wird keine
-mechanische Schliesszeit aus dem Temperaturminimum erfunden.
+Die Phase **Saunagang** wird bereits bei der ersten Erkennung angezeigt, zunächst
+gegebenenfalls vorläufig. Der spätere Aufguss bestätigt dasselbe Intervall. Er
+überschreibt weder `started_at` noch `detected_at`. Die Bestätigungszeit wird aus
+dem ersten Aufgussereignis abgeleitet. Fachliche Übergänge: [Gangmodell](gangmodell.md).
 
 ## Beispiel aus dem festgehaltenen Kandidaten
 
-Gang 2: Tuerschliessung erkannt 21:15:51 MESZ, Personenmuster erkannt 21:19:15.
-Ab 21:19:15 existiert der erkannte Gang; `started_at` lautet 21:15:51.
-Die Daueranzeige beginnt bei 3 Minuten 24 Sekunden. Erkennt erst der Aufguss
-um 21:22:52 den Gang, wird derselbe Anker benutzt; die angezeigte Dauer ist
-dann 7 Minuten 1 Sekunde. Quelle: `kandidat.md`, gemeinsames Replay.
+Für Gang 2 ergibt sich im Zwei-Sensor-Replay:
 
-Die reale Heizbehandlung kann fruehestens ab Erkennung greifen. Eine vorher
-bereits ausgefuehrte Abschaltung wird durch diese Zuordnung nicht rueckgaengig
-oder nachtraeglich verhindert. Eine vorsorgliche Heizbehandlung zwischen
-Tuerschliessung und Personenerkennung waere eine eigene, bisher nicht
-vereinbarte Regel und wird nicht eingefuehrt.
+| Ereignis | Zeitpunkt am 17.09.2026, MESZ | Einordnung |
+|---|---|---|
+| Vorbereitendes Durchlüften bestätigt | 21:15:20 | Vorbereitung; noch kein Gang. |
+| Türschließung erkannt | 21:15:51 | Möglicher zeitlicher Bezug für den folgenden Gang. |
+| Personenmuster erkannt | 21:19:15 | Gang vorläufig aktiv; Beginn 21:15:51, angezeigte Dauer 3:24 Minuten. |
+| Erster Aufguss erkannt | 21:22:52 | Derselbe Gang bestätigt; Dauer inzwischen 7:01 Minuten. |
 
-## Fortsetzung und Abschluss
+Quelle der Messentscheidungen: [gemeinsames Replay](kandidat.md#7-ergebnisse-des-gemeinsamen-replay).
+Die Einordnung als vorläufig beziehungsweise bestätigt ist die darauf angewandte
+Ablaufregel, kein zusätzlicher unabhängig gemessener Personenzeitpunkt.
 
-Ein bereits aktiver Gang behaelt ID und Beginn ueber eine kurze Tuerbetätigung
-hinweg. Aufguesse bestaetigen beziehungsweise ergaenzen denselben Gang.
-Bestaetigtes Durchlueften bei bereits erfasstem Aufguss schliesst genau einmal ab.
-Der jetzige Fachkern setzt den Abschluss auf den Bestätigungszeitpunkt; eine
-rueckwirkende Verschiebung des Endes ist nicht Gegenstand der Startzeitentscheidung.
-Durchlueften im unbestaetigten Gang ist ausdrücklich noch offen.
+Bleibt die Personenfrüherkennung aus, wird der Gang um 21:22:52 unmittelbar
+bestätigt angelegt. Dann sind `detected_at` und `confirmed_at` gleich; der
+zugeordnete Beginn bleibt 21:15:51.
 
-Ein neuer Oeffnungsvorgang ersetzt den ungenutzten Startanker. Ein bestehender
-Gang behaelt seinen bereits zugeordneten Anker. Fehlt bei bekannt geschlossenem
-Tuerzustand eine Schliessungshistorie, wird der Erkennungszeitpunkt verwendet und
-diese eingeschraenkte Zeitbasis gekennzeichnet. Keine Rueckdatierung ueber die
-Sessiongrenze. Eine Wiederaufnahme nach Neustart benoetigt gesonderte gespeicherte
-Ereignis-/Sessionzuordnung; der Fallback bestimmt keine Neustartpolitik.
+## Ereigniszeit und Herkunft
 
-## GUI, Historie und Timer
+Am Eingang führt jedes Ereignis `effective_at` und `detected_at`. Ersteres ist
+der vom Detektor zugeordnete Ereigniszeitpunkt, Letzteres dessen tatsächliche
+Entscheidungszeit. Im eingefrorenen Kandidaten sind beide gleich. Ereignisse
+werden in Erkennungsreihenfolge verarbeitet; Zeitstempel tragen eine Zeitzone
+und werden intern nach UTC umgerechnet.
 
-Die eigene Sessiondarstellung kann nach Erkennung das Intervall ab `started_at`
-als Gang anzeigen. Die native HA-Zustandshistorie bleibt ein Protokoll realer
-Zustandsaenderungen: ein heute gesetztes Attribut aendert keine schon erfassten
-historischen `last_changed`-Werte. Fuer die gewuenschte historische Flaeche muss
-die Anzeige die fachlichen Sessionintervalle statt nur den HA-Zustandsverlauf lesen.
+`start_source_event_id` verweist auf die konkret verwendete Schließung. Eine
+neue Öffnung ersetzt einen noch ungenutzten Zeitbezug. Ein bereits angelegter
+Gang behält dagegen seinen ursprünglichen Beginn auch bei kurzer Türbetätigung.
+Eine beliebige frühere Schließung oder ein Zeitpunkt vor der Session wird nicht
+als Ersatz gewählt.
 
-Fachliche Dauern werden ab `started_at` berechnet. Aktor-/Schutzfristen verwenden
-weiterhin die tatsaechlichen Heiz-/Schaltzeiten. Welche noch offenen Gangfristen
-ab fachlichem Beginn und welche ab Erkennung laufen, wird separat festgelegt;
-der Code startet noch keine solchen Timer.
+Bei bekannt geschlossenem Türzustand ohne Schließungshistorie verwendet das
+Modell `detected_at` als Beginn und kennzeichnet `start_basis=recognition_only`.
+Das ist eine eingeschränkte Zeitzuordnung, keine rekonstruierte Schließung und
+keine Entscheidung über den Wiederanlauf nach einem Neustart.
 
-Quelle zur HA-Zustandszeit, eingesehen am 18.09.2026:
+## Gegenwart und rückwirkende Darstellung
+
+Die eigene Sessionansicht kann den vorläufigen Gang ab `started_at` darstellen
+und nach dem Aufguss dasselbe Intervall als bestätigt kennzeichnen. Die
+ursprüngliche Erkennungszeit und der damalige Bestätigungsstand bleiben im
+Ereignisverlauf nachvollziehbar.
+
+Heizentscheidungen wirken erst ab der tatsächlichen Erkennung. Eine zuvor
+ausgeführte Abschaltung wird nicht rückwirkend verändert. Eine vorsorgliche
+Heizbehandlung allein nach Türschließung wurde nicht vereinbart.
+
+Die native HA-Zustandshistorie wird nicht umgeschrieben. Die gewünschte
+historische Gangdarstellung liest deshalb die eigenen zugeordneten Intervalle.
+Fachliche Dauern verwenden `started_at`; Heiz- und Schutzfristen verwenden die
+tatsächlichen Schaltzeiten. Für noch offene Gangfristen ist die Zeitbasis
+zusammen mit der jeweiligen Regel festzulegen.
+
+## Abschlusszeit
+
+Das bestehende Modell verwendet beim regulären Gangabschluss die Erkennungszeit
+des bestätigten Durchlüftens. Eine Rückzuordnung des Gangendes zur Türöffnung
+ist weiterhin offen. Die nachträgliche Startzuordnung entscheidet diese Frage nicht.
+
+Referenz zur HA-Zustandszeit, in der Erstfassung am 18.09.2026 eingesehen:
 https://www.home-assistant.io/docs/configuration/state_object/

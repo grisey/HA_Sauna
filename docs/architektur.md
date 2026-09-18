@@ -1,72 +1,72 @@
-# Architektur und Umsetzungsschnitt
+# Architektur und Implementierungsstand
 
 ## Vorhanden
 
-- `candidate/`: eingefrorenes Offline-Replay samt Parameterschnappschuss.
-- `custom_components/ha_sauna/core/timeline.py`: reiner Zustandsuebergang fuer
-  zeitliche Gangzuordnung, Aufguss und bestaetigten Abschluss.
-- `tests/`: synthetische Zeitmodelltests, Integritaetspruefung des Kandidaten
-  und optionaler Reproduktionstest mit externem Recorderexport.
+| Bereich | Implementiert |
+|---|---|
+| `candidate/` | Eingefrorenes Offline-Replay und Parameterschnappschuss. |
+| `custom_components/ha_sauna/core/timeline.py` | Vorbereitungskontext, vorläufiger beziehungsweise bestätigter Gang, Zeitzuordnung und regulärer Abschluss. |
+| `tests/` | Synthetische Übergangstests, Artefaktprüfung und optionales Replay mit lokalem Recorderexport. |
 
-Es gibt noch keinen HA-Setup-Code, kein Manifest mit Releaseversion, keinen
-Config Flow, keinen Thermostat-Aktorzugriff und keinen gewaehlten Datenspeicher.
-Das Verzeichnis ist eine Entwicklungsgrundlage, keine installierbare Integration.
+Der Fachkern verarbeitet erkannte Ereignisse. Live-Messadapter, Thermostat,
+HA-Setup, Entitäten und dauerhafter Datenspeicher sind noch nicht implementiert.
 
 ## Zielaufteilung
 
-| Modul | Verantwortung |
+| Baustein | Verantwortung |
 |---|---|
-| Messadapter | Vorhandene Sensorentitaeten lesen; Messzeit, Empfangszeit, Kanal und Gueltigkeit erhalten. |
-| Signalverarbeitung | Kausale Fenster und getrennte Temperatur-/Feuchtemerkmale beider Hoehen. |
-| Erkennung | Tuerereignisse, bestaetigtes Durchlueften, Personenmuster, Aufguss; keine Aktorbefehle. |
-| Ablaufkern | Session, Gang, Aufgussbestaetigung, Fristen und zeitliche Zuordnung; einmalige Entscheidungen. |
-| Thermostatkern | Hysterese, Heizlaufzeit und Schaltfreigabe unter Gang-/Schutzbedingungen. |
-| HA-Adapter | Entitaeten, Aktionen, geordnete Ereignisverarbeitung, Timeranbindung und Aktorrueckmeldungen. |
-| Speicherung | Betriebswiederaufnahme und Sessionauswertung; Verfahren noch offen. |
+| Messadapter | Messwerte beider Kanäle mit Messzeit, Empfangszeit und Gültigkeit übernehmen. |
+| Signalverarbeitung | Kausale Zeitfenster und getrennte Temperatur-/Feuchtemerkmale bilden. |
+| Erkennung | Türereignisse, Durchlüften, Personenmuster und Aufguss erkennen. |
+| Ablaufkern | Session, Gang, Bestätigungsstand, Fristen und Zeitzuordnung verwalten. |
+| Thermostatkern | Hysterese, Heizlaufzeit und zulässige Schaltungen unter Gang- und Schutzbedingungen bestimmen. |
+| HA-Adapter | Parameter und Bedienaktionen entgegennehmen, Entitäten anzeigen, Aktorbefehle ausführen und Rückmeldungen verarbeiten. |
+| Speicherung | Betriebswiederaufnahme und Sessionauswertung; Verfahren im eigenen Besprechungsblock festlegen. |
 
-Das spaetere `climate` stellt die Temperaturregelung dar; `number` stellt
-veraenderliche numerische Parameter bereit. Sensor-/Binaersensorentitaeten sind
-Projektionen des Fachzustands. Ihre Anzeige ist keine zweite Steuerungswahrheit.
-Entitaetsnamen fuer eine installierte Integration werden noch nicht vorausgesetzt.
+Die fachliche Bedeutung der Ereignisse steht im [Gangmodell](gangmodell.md).
+Die Detektoren entscheiden nicht über Heizbefehle. Insbesondere ist ein starkes
+Personensignal eine vorläufige Gangerkennung, keine Aufgussbestätigung.
 
-## Parametrierung
+## Eine Quelle je Zustand und Parameter
 
-Genau ein validierter Parametersatz wird durch die eigenen Parameterentitaeten
-veraendert und vom Kern konsumiert. Numerische Zeitwerte werden als Eingaben
-uebergeben, nicht in Automationen und Code nochmals hinterlegt. Abgeleitete
-Heizdauer und Fristrestzeit sind keine unabhaengig editierbaren Parameter.
-Der `candidate/parameter.json`-Stand ist nur eine reproduzierbare Testeingabe.
+Die GUI leitet die Phase **Saunagang** aus dem laufenden Gang ab und ergänzt
+dessen Bestätigungsstand. Im Datenmodell wird dieser Stand ausschließlich aus
+den zugeordneten Aufgüssen berechnet. Ein zweiter schreibbarer Bestätigungsmerker
+oder ein eigenständig geführter GUI-Phasenzustand ist nicht vorgesehen.
 
-## Ereignisse und Nebenwirkungen
+Ein validierter Parametersatz wird über die eigenen Parameterentitäten geändert
+und vom Kern konsumiert. Abgeleitete Heizdauer und Restzeiten sind lesbare
+Ergebnisse. Die JSON-Datei des eingefrorenen Replays ist nur eine Testeingabe.
 
-Fachkern: bisheriger Zustand + Ereignis + gueltige Parameter -> neuer Zustand.
-Aktoraktionen laufen erst ueber den HA-Adapter und werden getrennt von ihrer
-Rueckmeldung protokolliert. Rueckdatierte Zuordnung erzeugt keine nachtraeglichen
-Serviceaufrufe. Duplikate sind anhand von Ereignis-IDs idempotent; abweichender
-Inhalt unter derselben ID wird zurueckgewiesen.
+## Ereignisse und Wirkungen
 
-Die Aufguss- und Gangzeitlogik wird nicht parallel in HA-Automationen nachgebaut.
-Licht, Musik und Meldungen koennen auf abgeleitete Ereignisse reagieren.
+Der Fachkern berechnet aus Zustand und Ereignis einen neuen Zustand, ohne den
+alten zu verändern. Ereignis-IDs verhindern Doppelverarbeitung; abweichender
+Inhalt unter derselben ID wird zurückgewiesen. Die Vorbereitung ist konkret der
+letzten abgeschlossenen Öffnungsepisode zugeordnet, nicht nur als beliebiger
+früherer Merker gespeichert.
 
-## Weiteres Vorgehen
+Aktorbefehle und tatsächliche Rückmeldungen werden getrennt behandelt. Eine
+rückwirkende Gangzuordnung erzeugt keine historischen Schaltbefehle. Licht,
+Musik und Meldungen können auf abgeleitete Ereignisse reagieren; sie führen
+keine parallele Gang- oder Aufgusslogik.
 
-Zuerst die verbleibenden fachlichen Entscheidungen abschliessen, danach den
-Offline-Detektor in eine schrittweise arbeitende Implementierung ueberfuehren
-und gegen den eingefrorenen Replay pruefen. Kein Code, der bereits anliegende
-Messwerte aus der Zukunft, fest bekannte Gangfenster oder Recorderphasen fuer
-seine Detektionsentscheidung verwendet. Die alten Phasen sind nur Vergleichsdaten.
+## Weitere Umsetzung
 
-Vor einem Betrieb muessen unter anderem ungueltige/fehlende Messwerte,
-dynamischer Kanalwechsel, Wiederbeitritt mit frischer Historie, Neustart,
-veraltete Timer und Aktorrueckmeldungen getestet werden. Ein fester Kanaloffset
-und ein veraenderter Regeltemperaturbezug werden nicht stillschweigend eingesetzt.
+Zunächst werden die noch offenen Ablaufregeln geklärt. Danach wird der
+Offline-Detektor in eine schrittweise arbeitende Implementierung übertragen
+und gegen den unveränderten Kandidaten geprüft. Die Erkennung verwendet nur
+bereits vorliegende Messungen; bekannte Gangfenster dienen allein dem Vergleich.
 
-## Technische Referenzen
+Vor dem Betrieb sind insbesondere Messausfälle, dynamischer Kanalwechsel,
+Wiederbeitritt mit frischer Historie, Neustart, veraltete Timer und
+Aktorrückmeldungen zu prüfen. Die andere Einbauhöhe von Kanal 6 erfordert einen
+gesondert festzulegenden Regeltemperaturbezug bei Ersatz von Kanal 3.
 
-Am 18.09.2026 eingesehene offizielle HA-Dokumentation, als Adaptergrundlage:
+Referenzen der Erstfassung zur HA-Anbindung, eingesehen am 18.09.2026:
 
 - https://developers.home-assistant.io/docs/creating_integration_file_structure/
 - https://developers.home-assistant.io/docs/core/entity/number/
 - https://developers.home-assistant.io/docs/integration_listen_events/
 
-Diese Quellen beschreiben HA-Schnittstellen, nicht die vereinbarten Saunaregeln.
+Diese Quellen beschreiben Schnittstellen; die Saunaregeln stammen aus der Besprechung.

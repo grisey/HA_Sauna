@@ -1,8 +1,8 @@
-"""Zuordnung erkannter Gaenge zu Tuerschliessungen; keine Heizungssteuerung.
+"""Gangzuordnung: Vorbereitung, vorläufige Erkennung und Aufgussbestätigung.
 
-Eingaben werden in Erkennungsreihenfolge verarbeitet. Ein fachlicher Beginn
-kann davor liegen. Nur der nachtraeglich zugeordnete Beginn wird vorverlegt,
-nicht die Entscheidung, ein Aktorbefehl oder ein HA-Zustandswechsel.
+Der Zustand enthält beobachtete Ereignisse und daraus abgeleitete Gangintervalle.
+Ein rückwirkend zugeordneter Beginn ändert weder die Erkennungszeit noch einen
+bereits ausgeführten Schaltvorgang. Dieses Modul steuert keine Aktoren.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from enum import StrEnum
 
 
 def utc(value: datetime) -> datetime:
-    """Require a timezone-aware instant and normalize it to UTC."""
+    """Einen Zeitpunkt mit Zeitzone verlangen und nach UTC umrechnen."""
     if not isinstance(value, datetime) or value.utcoffset() is None:
         raise ValueError("Ein Zeitstempel mit Zeitzone ist erforderlich")
     return value.astimezone(UTC)
@@ -33,8 +33,15 @@ class Door(StrEnum):
     CLOSED = "closed"
 
 
+class Confirmation(StrEnum):
+    """Bestätigungsstand eines Gangs, unabhängig von dessen Abschluss."""
+
+    PROVISIONAL = "provisional"
+    CONFIRMED = "confirmed"
+
+
 class UnresolvedTransition(ValueError):
-    """A policy not yet agreed by the owner must not be silently invented."""
+    """Für diesen Übergang fehlt noch eine fachliche Festlegung."""
 
 
 @dataclass(frozen=True)
@@ -47,7 +54,7 @@ class Event:
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.session_id or not isinstance(self.kind, Kind):
-            raise ValueError("Ereignis-ID, Session-ID und gueltiger Typ erforderlich")
+            raise ValueError("Ereignis-ID, Session-ID und gültiger Typ erforderlich")
         object.__setattr__(self, "effective_at", utc(self.effective_at))
         object.__setattr__(self, "detected_at", utc(self.detected_at))
         if self.effective_at > self.detected_at:
@@ -62,17 +69,34 @@ class Gang:
     detected_at: datetime
     start_source_event_id: str
     recognition_event_id: str
+    recognition_kind: Kind
     start_basis: str
+    preparation_event_id: str | None = None
     infusion_events: tuple[Event, ...] = ()
     ended_at: datetime | None = None
     end_event_id: str | None = None
 
+    @property
+    def confirmation(self) -> Confirmation:
+        """Nur ein Aufguss bestätigt den Gang; kein zweiter schreibbarer Merker."""
+        return Confirmation.CONFIRMED if self.infusion_events else Confirmation.PROVISIONAL
+
+    @property
+    def confirmed_at(self) -> datetime | None:
+        """Tatsächliche Erkennungszeit des ersten zugeordneten Aufgusses."""
+        return self.infusion_events[0].detected_at if self.infusion_events else None
+
+    @property
+    def confirmation_event_id(self) -> str | None:
+        return self.infusion_events[0].event_id if self.infusion_events else None
+
     def elapsed_seconds(self, now: datetime) -> float:
-        """Duration is available only after recognition, from attributed start."""
+        """Dauer ab zugeordnetem Beginn, verfügbar ab vorläufiger Erkennung."""
         now = utc(now)
         if now < self.detected_at:
             raise ValueError("Vor Erkennung existiert kein aktiver Gangzustand")
-        return ((min(now, self.ended_at) if self.ended_at else now) - self.started_at).total_seconds()
+        end = min(now, self.ended_at) if self.ended_at else now
+        return (end - self.started_at).total_seconds()
 
 
 @dataclass(frozen=True)
@@ -81,25 +105,29 @@ class Timeline:
     session_started_at: datetime
     door: Door = Door.UNKNOWN
     anchor: Event | None = None
+    opening: Event | None = None
+    open_ventilation: Event | None = None
+    preparation: Event | None = None
     active: Gang | None = None
     completed: tuple[Gang, ...] = ()
     processed: tuple[Event, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.session_id or not isinstance(self.door, Door):
-            raise ValueError("Session-ID und gueltiger Tuerzustand erforderlich")
+            raise ValueError("Session-ID und gültiger Türzustand erforderlich")
         object.__setattr__(self, "session_started_at", utc(self.session_started_at))
 
 
 def apply(state: Timeline, event: Event) -> Timeline:
-    """Pure reducer for the agreed recognition/attribution subset.
+    """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
-    `anchor` belongs to the current closed-door episode, never to a previous
-    session. An existing gang keeps its original start across short door use.
-    Detection source/strength and each infusion remain explicit input events.
+    `active` umfasst vorläufige und bestätigte Gänge. Vorbereitung gehört zur
+    letzten abgeschlossenen Türöffnungsepisode. Beim schwachen Startsignal ist
+    sie erforderlich; der starke Pfad und Aufguss bleiben davon unabhängig.
+    Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
     """
     if event.session_id != state.session_id:
-        raise ValueError("Ereignis gehoert zu einer anderen Session")
+        raise ValueError("Ereignis gehört zu einer anderen Session")
     for previous in state.processed:
         if previous.event_id == event.event_id:
             if previous != event:
@@ -108,22 +136,30 @@ def apply(state: Timeline, event: Event) -> Timeline:
     if event.effective_at < state.session_started_at:
         raise ValueError("Ereignis liegt vor dem Sessionbeginn")
     if state.processed and event.detected_at < state.processed[-1].detected_at:
-        raise ValueError("Ereignisse muessen in Erkennungsreihenfolge eintreffen")
+        raise ValueError("Ereignisse müssen in Erkennungsreihenfolge eintreffen")
 
     result = state
     if event.kind == Kind.DOOR_OPEN:
         if state.door == Door.OPEN:
-            raise ValueError("Doppelte Oeffnung mit unterschiedlicher Ereignis-ID")
-        result = replace(state, door=Door.OPEN, anchor=None)
+            raise ValueError("Doppelte Öffnung mit unterschiedlicher Ereignis-ID")
+        result = replace(
+            state, door=Door.OPEN, anchor=None, opening=event,
+            open_ventilation=None, preparation=None,
+        )
     elif event.kind == Kind.DOOR_CLOSE:
         if state.door == Door.CLOSED:
-            raise ValueError("Doppelte Schliessung mit unterschiedlicher Ereignis-ID")
-        result = replace(state, door=Door.CLOSED, anchor=event)
+            raise ValueError("Doppelte Schließung mit unterschiedlicher Ereignis-ID")
+        result = replace(
+            state, door=Door.CLOSED, anchor=event, opening=None,
+            preparation=state.open_ventilation, open_ventilation=None,
+        )
     elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
         if state.door != Door.CLOSED:
-            raise ValueError("Gangerkennung benoetigt einen geschlossenen Tuerzustand")
+            raise ValueError("Gangerkennung benötigt einen geschlossenen Türzustand")
         gang = state.active
         if gang is None:
+            if event.kind == Kind.PERSON_WEAK and state.preparation is None:
+                raise ValueError("Schwacher Gangstart benötigt vorheriges Durchlüften")
             anchor = state.anchor
             gang = Gang(
                 gang_id=f"{state.session_id}:{event.event_id}",
@@ -132,17 +168,31 @@ def apply(state: Timeline, event: Event) -> Timeline:
                 detected_at=event.detected_at,
                 start_source_event_id=anchor.event_id if anchor else event.event_id,
                 recognition_event_id=event.event_id,
+                recognition_kind=event.kind,
                 start_basis="door_close" if anchor else "recognition_only",
+                preparation_event_id=(
+                    state.preparation.event_id if state.preparation else None
+                ),
             )
         if event.kind == Kind.INFUSION:
             gang = replace(gang, infusion_events=gang.infusion_events + (event,))
         result = replace(state, active=gang)
     elif event.kind == Kind.VENTILATION:
         if state.door != Door.OPEN:
-            raise ValueError("Durchlueftungsbestaetigung benoetigt eine offene Episode")
+            raise ValueError("Durchlüftungsbestätigung benötigt eine offene Episode")
+        if state.opening is None:
+            raise UnresolvedTransition("Durchlüften ohne zugeordnete Öffnung")
+        # Mehrere Bestätigungen derselben Episode ändern deren ersten Beleg nicht.
+        result = replace(state, open_ventilation=state.open_ventilation or event)
         if state.active is not None:
-            if not state.active.infusion_events:
-                raise UnresolvedTransition("Durchlueften im Gang ohne Aufguss: Regel noch offen")
-            finished = replace(state.active, ended_at=event.detected_at, end_event_id=event.event_id)
-            result = replace(state, active=None, completed=state.completed + (finished,))
+            if state.active.confirmation == Confirmation.PROVISIONAL:
+                raise UnresolvedTransition(
+                    "Durchlüften bei vorläufigem Gang: Aufhebung noch festzulegen"
+                )
+            finished = replace(
+                state.active, ended_at=event.detected_at, end_event_id=event.event_id,
+            )
+            result = replace(
+                result, active=None, completed=state.completed + (finished,),
+            )
     return replace(result, processed=state.processed + (event,))
