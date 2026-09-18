@@ -6,7 +6,8 @@
   Fristbeziehungen verständlich erklären, statt einzelne Zustände aufzuzählen.
   Bereits geklärte Grundlagen nicht erneut abfragen. Vorschläge und ausdrücklich
   vereinbarte Regeln voneinander unterscheiden; keine plausiblen Defaults erfinden.
-  Als nächste Besprechungsblöcke folgen Darstellung und danach Speicherung.
+  Die Sessionansicht ist in `docs/darstellung.md` vereinbart. Die Anforderungen
+  an Vollauflösung, HA-Backup und Export stehen in `docs/speicherung.md`.
 - Die Session ist das übergeordnete Laufzeitobjekt. Nach Ablauf der Frist seit
   Betrieb-Aus wird beim nächsten Einschalten eine neue Session mit sämtlichen
   neu initialisierten sessionbezogenen Unterobjekten angelegt. Dies nicht auf
@@ -28,9 +29,11 @@
   Rücksetzung nach genügend langer zusammenhängender Auszeit bleibt davon
   getrennt und ist kein Sessionwechsel.
 - Eine bereits laufende Zwangskühlung sperrt neue Gangstarts. Ein bereits
-  laufender Gang wird dagegen nicht durch Zwangskühlung unterbrochen; eine
-  währenddessen fällige Kühlung bleibt bis zu seinem Ende ausstehend. Stark
-  gedimmtes Licht kennzeichnet die laufende Zwangskühlung, nicht bloß ihre Fälligkeit.
+  laufender Gang wird dagegen nicht durch Zwangskühlung unterbrochen. Wird die
+  Heizzeitgrenze dabei erreicht, folgt nach Gangende zuerst der Nachlauf und
+  anschließend nur die um diesen Nachlauf reduzierte Restkühlzeit. Bei Restzeit
+  null entfällt der zusätzliche Kühlabschnitt. Dafür keinen parallelen Sonderablauf
+  anlegen. Stark gedimmtes Licht kennzeichnet die laufende Zwangskühlung.
 - Ein laufender Nachlauf behält bei Betriebsunterbrechung seinen Endzeitpunkt.
   Seine verstrichene Dauer wird vollständig und ohne Doppelzählung auf die
   zugehörige Zwangskühlungsdauer angerechnet. Nachlauf und Zwangskühlung bleiben
@@ -47,9 +50,20 @@
 - Eigener Thermostat: Bereits im vorläufigen Gang werden reguläre Hysterese-
   und Ablaufabschaltungen unterdrückt; Schutzabschaltung und ausdrückliches
   Ausschalten bleiben übergeordnet. Keine Live-Aktorfreigabe, solange Schutz-,
-  Wiederanlauf- und Ersatztemperaturregeln offen sind.
+  sichere Start- und Ersatztemperaturregeln offen sind.
 - Beide Sensoren im Normalbetrieb; Ein-Sensor-Betrieb mit Fehleranzeige. Keine
   Mittelung, kein erfundener fester Höhenoffset, keine IBS-Sensoren.
+- Sessiondaten langfristig in voller empfangener Auflösung archivieren. Keine
+  automatische altersbedingte Verdichtung oder Löschung der Originalmessungen.
+  Ereignisse, Zuordnungen und Parameterstände nachvollziehbar erhalten.
+- Das Archiv muss im HA-Backup konsistent enthalten und daraus wiederherstellbar
+  sein. Dateipfad allein ist kein Konsistenznachweis; Backup und Restore testen.
+  Historienpersistenz ist erforderlich, automatische Betriebsfortsetzung nach
+  HA-Neustart nicht. Letztere nur bei sehr einfacher Umsetzung, nicht als
+  zusätzliche zwingende Zustands-/Wiederanlaufmaschine einführen.
+- Export als authentifizierter Download aus dem Einstellungsbereich vorsehen.
+  Archiv und Exporte nicht ungeschützt unter `www` veröffentlichen. Backend und
+  Exportformat als Vorschlag kennzeichnen, solange sie nicht gewählt sind.
 - Replay- und Archiv-Schnappschüsse sind keine konkurrierenden Laufzeitwerte.
   Den eingefrorenen Kandidaten nicht beiläufig ändern. Eine adaptive Erkennung
   ist noch ein Prüfvorschlag, keine bereits freigegebene Änderung der Messlogik.

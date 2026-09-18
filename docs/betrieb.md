@@ -1,7 +1,7 @@
 # Betrieb, Sessiongrenze und Heizlaufzeit
 
-Stand: 18.09.2026, fortgeschrieben nach der Klärung von Zwangskühlung,
-Gangzählung und Nachlauf. Diese Festlegungen ergänzen das [Gangmodell](gangmodell.md).
+Stand: 18.09.2026, einschließlich der präzisierten Reihenfolge Nachlauf und
+Restzwangskühlung. Diese Festlegungen ergänzen das [Gangmodell](gangmodell.md).
 Sie dokumentieren die Besprechung; Session-, Heizzeit- und Kühlungssteuerung
 sind damit noch nicht implementiert.
 
@@ -37,8 +37,10 @@ rechtzeitiger Fortsetzung bleibt das bisherige Sessionobjekt bestehen; ein
 bereits durch Ausschalten beendeter Gang wird dadurch nicht wieder aktiviert.
 
 Die Dauer der Session-Unterbrechungsfrist ist ein konfigurierbarer Parameter;
-es wurde noch kein fester Minutenwert ausgewählt. Eine Wiederaufnahme nach
-HA-Neustart wird im Speicherblock behandelt.
+es wurde noch kein fester Minutenwert ausgewählt. Automatische Fortsetzung nach
+HA-Neustart ist keine Pflichtanforderung und soll nur bei sehr einfacher
+Umsetzung ergänzt werden. Die dauerhafte Historie bleibt davon unabhängig;
+siehe [Speicherung](speicherung.md).
 
 ## Ausschalten und Gangzählung
 
@@ -93,10 +95,15 @@ Ein bereits laufender Saunagang wird dagegen nicht durch Zwangskühlung
 unterbrochen.** Das gilt bereits für einen vorläufig erkannten Gang mit der
 vereinbarten Gang-Heizbehandlung.
 
-Erreicht die tatsächliche Heizlaufzeit ihre Grenze während eines Gangs, bleibt
-die Zwangskühlung bis zu seinem Ende ausstehend. Eine neue Gangerkennung hebt
-eine bereits laufende Zwangskühlung nicht auf. Ausstehende und tatsächlich
-laufende Kühlung sind daher zu unterscheiden.
+Wird die Heizzeitgrenze während eines Gangs erreicht, bleibt die Kühlung bis
+zum Gangende ausstehend. Anschließend gilt die reguläre Folge:
+
+**Gangende → Nachlauf → gegebenenfalls verbleibende Zwangskühlzeit.**
+
+Es wird weder schon während des Gangs gekühlt noch nach dem Nachlauf nochmals
+eine vollständige Kühlfrist angesetzt. Der Ablauf verwendet die unten beschriebene
+Nachlaufanrechnung; ein zusätzlicher Sondertimer für diesen Fall ist nicht nötig.
+Eine neue Gangerkennung hebt eine bereits laufende Zwangskühlung nicht auf.
 
 **Stark gedimmtes Licht kennzeichnet die laufende Zwangskühlung.** Daraus wird
 kein unbedingter Vorrang gegenüber einem schon laufenden Gang abgeleitet.
@@ -112,9 +119,15 @@ werden keine alten Nachlaufobjekte in die neue Session übernommen.
 
 **Die verstrichene Nachlaufdauer wird vollständig auf die zugehörige
 Zwangskühlungsdauer angerechnet.** Angerechnet wird bereits vergangene Zeit,
-nicht eine noch ausstehende geplante Nachlaufdauer. Die Restdauer wird mindestens
-auf null begrenzt. Derselbe Zeitabschnitt darf im selben Kühlvorgang nicht
-zweimal angerechnet werden.
+nicht eine noch ausstehende geplante Nachlaufdauer. Nach Ende des Nachlaufs gilt:
+
+`Restkühlzeit = max(0, konfigurierte Zwangskühlungsdauer − angerechnete Nachlaufdauer)`
+
+Nur eine positive Restzeit ergibt einen anschließenden Zwangskühlungsabschnitt.
+Deckt der Nachlauf die Kühlvorgabe bereits ab, entfällt dieser Abschnitt.
+Derselbe Zeitabschnitt darf im selben Kühlvorgang nicht zweimal angerechnet werden.
+Eine ausstehende Kühlanforderung ist dabei von einer tatsächlich laufenden
+Zwangskühlungsphase zu unterscheiden.
 
 Nachlauf und Zwangskühlung bleiben eigenständige Abläufe mit eigenen Parametern.
 Die ausdrücklich vereinbarte Anrechnung ersetzt keine Sessionregel und begründet
@@ -130,4 +143,5 @@ Ablauf nach ausgeschöpfter Heizlaufzeit; sie ist kein Ausschalten des Betriebs.
 Diese Fristen bleiben getrennt parametriert. Die lokale Heizzeit-Rücksetz-Auszeit
 wird mit keiner von ihnen gleichgesetzt. Die Nachlaufanrechnung ist eine konkret
 vereinbarte Beziehung zwischen Abläufen, keine Zusammenlegung ihrer Bedeutung.
-Die nächsten Besprechungsblöcke sind Darstellung und anschließend Speicherung.
+Darstellung und Archivierung: [Sessionansicht](darstellung.md),
+[Speicherung](speicherung.md).

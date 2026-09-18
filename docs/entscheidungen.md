@@ -1,10 +1,11 @@
-# Entscheidungen und nächste Besprechungspunkte
+# Entscheidungen und Umsetzungsstand
 
 Grundlage: Nutzerfestlegungen der Besprechung, fortgeschrieben am 18.09.2026.
 Der [Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung.
-[Gangmodell](gangmodell.md), [Betrieb](betrieb.md) und
-[Parameter](parameter.md) halten die fachlichen Regeln und deren Status fest.
-Diese Fortschreibung betrifft die Dokumentation, nicht die Implementierung.
+[Gangmodell](gangmodell.md), [Betrieb](betrieb.md), [Parameter](parameter.md),
+[Darstellung](darstellung.md) und [Speicherung](speicherung.md) halten die
+fachlichen Regeln und deren Status fest. Diese Fortschreibung betrifft die
+Dokumentation, nicht die Implementierung.
 
 ## Vereinbart
 
@@ -83,10 +84,11 @@ Ofen-Auszeit bleibt eine lokale Regel innerhalb der Session und ist kein
 Sessionwechsel.
 
 **Zwangskühlung:** Eine bereits laufende Zwangskühlung sperrt neue Gangstarts.
-Ein bereits laufender Gang wird nicht unterbrochen; eine währenddessen fällige
-Zwangskühlung bleibt bis zu seinem Ende ausstehend. Stark gedimmtes Licht zeigt
-die laufende Zwangskühlung an. Die zwischenzeitliche Interpretation, Zwangskühlung
-würde einen laufenden Gang unterbrechen, ist ausdrücklich verworfen.
+Ein bereits laufender Gang wird nicht unterbrochen. Wird seine Heizzeitgrenze
+erreicht, folgt nach Gangende zuerst der Nachlauf und danach nur noch die um
+diesen Nachlauf reduzierte Restkühlzeit. Bei Restzeit null entfällt der zusätzliche
+Kühlabschnitt. Dies verwendet die allgemeine Nachlaufanrechnung, keine weitere
+Sonderlogik. Stark gedimmtes Licht zeigt die laufende Zwangskühlung an.
 
 **Nachlauf:** Betriebsunterbrechungen verändern einen laufenden Nachlauf nicht.
 Er behält seinen ursprünglichen Endzeitpunkt. Seine verstrichene Dauer wird
@@ -99,16 +101,31 @@ Zwangskühlung und lokale Rücksetz-Auszeit behalten ihre jeweilige Bedeutung
 und eigene Parameter. Die vereinbarte Nachlaufanrechnung ist eine Beziehung
 zwischen Abläufen, keine Gleichsetzung ihrer Fristen.
 
-**Parameter und Anzeige:** notwendige Werte direkt in der Integration
-konfigurierbar machen. Genau eine konsumierte Quelle je Einstellung, gemeinsame
-Validierung und Speicherung. Sinnvolle Relationen statt unnötiger unabhängiger
-Absolutwerte verwenden; fachlich verschiedene Fristen nicht zusammenlegen.
-Abgeleitete Werte und Restzeiten nur lesbar anzeigen. Phase und Bestätigungsstand
-stammen aus dem Ablaufkern. Die automatische relative Erkennungsanpassung ist
-noch kein freigegebener Ersatzdetektor.
+**Parameter:** notwendige Werte direkt in der Integration konfigurierbar machen.
+Genau eine konsumierte Quelle je Einstellung, gemeinsame Validierung und
+Speicherung. Sinnvolle Relationen statt unnötiger unabhängiger Absolutwerte;
+fachlich verschiedene Fristen nicht zusammenlegen. Abgeleitete Werte und
+Restzeiten nur lesbar anzeigen. Die automatische relative Erkennungsanpassung
+ist noch kein freigegebener Ersatzdetektor.
 
-**Daten:** gesicherter Betriebszustand und Sessionarchiv unabhängig vom Recorder.
-Speicherverfahren und Datenumfang werden gesondert besprochen.
+**Darstellung:** Der vorgeschlagenen Sessionansicht wurde zugestimmt. Sie
+verbindet aktuellen Ablauf und Zeitverlauf, trennt Heizaktivität von der Phase
+und zeigt Messwerte beider Höhen, Türereignisse, Aufgüsse, Gangintervalle sowie
+Fehlerhinweise. Vorläufiger und bestätigter Gang sind Kennzeichnungen desselben
+Intervalls. Einstellungen und Kalibrierung sind getrennt zugänglich.
+Einzelheiten: [Darstellung](darstellung.md).
+
+**Archiv:** Sessiondaten werden langfristig in voller empfangener Auflösung
+unabhängig vom Recorder gespeichert. Keine automatische Verdichtung oder
+altersbedingte Löschung der Originalmessungen. Das Archiv muss im HA-Backup
+konsistent enthalten und wiederherstellbar sein. Export erfolgt über einen
+Downloadbutton im Einstellungsbereich.
+
+**HA-Neustart:** Automatische Wiederaufnahme des laufenden Betriebs ist nicht
+notwendig; sie soll nur bei sehr einfacher Umsetzung ergänzt werden. Dauerhaft
+lesbare Sessiondaten bleiben verpflichtend. Historienwiederherstellung und
+Fortsetzung einer Heizregelung sind unterschiedliche Aufgaben. Ein zusätzlicher
+komplexer Wiederanlaufautomat wird nicht zur Pflicht gemacht.
 
 ## Korrekturen früherer Annahmen
 
@@ -130,19 +147,17 @@ verworfenen Varianten wird über eine Parametrierung wieder eingeführt.
 
 Der Vorrang laufender Zwangskühlung betrifft neue Gangstarts. Er bedeutet nicht,
 dass eine erst während eines Gangs fällige Kühlung diesen Gang beenden oder
-seine Heizbehandlung unterbrechen darf.
+seine Heizbehandlung unterbrechen darf. Nach dem Gang wird zuerst der Nachlauf
+verarbeitet; dessen Anrechnung verhindert eine doppelte volle Kühlpause.
 
-## Nächste Besprechungsblöcke
+## Verbleibende Umsetzung
 
-1. **Darstellung:** aktuelle Sessionansicht, sichtbare Phase und Bestätigungsstand,
-   zugeordnete Gangdauer und Anzahl, getrennte Heizaktivität und Restzeiten,
-   Messkurven beider Höhen mit Tür-, Aufguss- und Gangereignissen sowie
-   Fehlerhinweise. Die konkrete Anordnung und Benennung werden besprochen;
-   hier wird noch kein neues GUI-Konzept als beschlossen festgelegt.
-2. **Datenerfassung und Speicherung:** Messauflösung und Datenumfang,
-   Ereignis- und Entscheidungsprotokoll, Sessionarchiv und historische Ansicht,
-   gesicherter Betriebszustand und Wiederanlauf nach HA-Neustart,
-   Aufbewahrung, Export und Sicherung; siehe [Speicherblock](speicherung.md).
+Darstellungsaufbau, langfristige Vollauflösung, Einbeziehung ins HA-Backup,
+Downloadbedienung und der Verzicht auf eine zwingende Neustartfortsetzung sind
+festgelegt. Sie werden nicht erneut als offene Varianten angeboten.
+Der konkrete Speicheransatz und das Exportformat stehen als technische
+Vorschläge im [Speicherblock](speicherung.md); ihre Dokumentation behauptet
+keine bereits implementierte Ablage, Backup-Prüfung oder Benutzeroberfläche.
 
 Konkrete Einstellungswerte werden über die Parameterverwaltung festgelegt.
 Die technische Umsetzung muss weiterhin ihre Voraussetzungen, insbesondere
