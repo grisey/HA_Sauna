@@ -1,0 +1,4 @@
+# Fuer das eingefrorene Offline-Replay lokal verifizierte Umgebung.
+# Keine Festlegung der spaeteren Integrations-Runtime.
+numpy==2.3.5
+pandas==2.2.3

@@ -1,0 +1,143 @@
+{
+  "status": "Vorbereitung; Offline-Kalibrierung, keine produktive Integration",
+  "source_archive": "sauna-recorder-2026-09-17.zip",
+  "source_sha256": "0a99e8421674561620ce9c278664822a85c896f125a4c82edc5b6564d5cc791d",
+  "raw_archive_committed": false,
+  "candidate_files_sha256": {
+    "docs/kandidat.md": "487297a24e2c152d9b15ce330c0bbe35933d4be2ff4e2d98f298cae5055e28dd",
+    "candidate/replay.py": "7d42219f24e8eccb4ad87e04386d886d927a883b45466b637c2f2d6b287b1a60",
+    "candidate/parameter.json": "6d7898fe95340d639e84b4c7ee19ec5ad24b89ee27de6da0543328e56a018e73"
+  },
+  "full_replay_result_sha256": "593ab8f604a66c9cbecaf647fa211372c7ea98558748308ac11715f72f035373",
+  "verification": "Erneut mit unveraendertem Original gerechnet; vollstaendiges JSON-Ergebnis identisch.",
+  "modes": {
+    "beide": {
+      "reference_opening_episodes": 15,
+      "detected_openings": 15,
+      "detected_closures": 15,
+      "matched_openings": 15,
+      "extra_openings": [],
+      "missing_opening_anchors": [],
+      "gangs": [
+        {
+          "gang": 1,
+          "person_detected_at": "2026-09-17T20:46:05+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T20:56:11+02:00",
+          "lead_to_infusion_s": 606.0
+        },
+        {
+          "gang": 2,
+          "person_detected_at": "2026-09-17T21:19:15+02:00",
+          "route": "schwach",
+          "infusion_detected_at": "2026-09-17T21:22:52+02:00",
+          "lead_to_infusion_s": 217.0
+        },
+        {
+          "gang": 3,
+          "person_detected_at": "2026-09-17T21:58:25+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T22:03:07+02:00",
+          "lead_to_infusion_s": 282.0
+        },
+        {
+          "gang": 4,
+          "person_detected_at": "2026-09-17T22:51:00+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T22:57:34+02:00",
+          "lead_to_infusion_s": 394.0
+        }
+      ],
+      "person_background_positive_checks": 0,
+      "infusion_background_positive_seconds": 0,
+      "closed_background_seconds": 10270
+    },
+    "nur_k3": {
+      "reference_opening_episodes": 15,
+      "detected_openings": 15,
+      "detected_closures": 15,
+      "matched_openings": 15,
+      "extra_openings": [],
+      "missing_opening_anchors": [],
+      "gangs": [
+        {
+          "gang": 1,
+          "person_detected_at": "2026-09-17T20:45:50+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T20:56:10+02:00",
+          "lead_to_infusion_s": 620.0
+        },
+        {
+          "gang": 2,
+          "person_detected_at": "2026-09-17T21:18:35+02:00",
+          "route": "schwach",
+          "infusion_detected_at": "2026-09-17T21:22:51+02:00",
+          "lead_to_infusion_s": 256.0
+        },
+        {
+          "gang": 3,
+          "person_detected_at": "2026-09-17T21:58:10+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T22:03:06+02:00",
+          "lead_to_infusion_s": 296.0
+        },
+        {
+          "gang": 4,
+          "person_detected_at": "2026-09-17T22:50:50+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T22:57:34+02:00",
+          "lead_to_infusion_s": 404.0
+        }
+      ],
+      "person_background_positive_checks": 0,
+      "infusion_background_positive_seconds": 0,
+      "closed_background_seconds": 10271
+    },
+    "nur_k6": {
+      "reference_opening_episodes": 15,
+      "detected_openings": 15,
+      "detected_closures": 15,
+      "matched_openings": 15,
+      "extra_openings": [],
+      "missing_opening_anchors": [],
+      "gangs": [
+        {
+          "gang": 1,
+          "person_detected_at": "2026-09-17T20:46:05+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T20:56:11+02:00",
+          "lead_to_infusion_s": 606.0
+        },
+        {
+          "gang": 2,
+          "person_detected_at": "2026-09-17T21:19:15+02:00",
+          "route": "schwach",
+          "infusion_detected_at": "2026-09-17T21:22:52+02:00",
+          "lead_to_infusion_s": 217.0
+        },
+        {
+          "gang": 3,
+          "person_detected_at": "2026-09-17T21:58:25+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T22:03:07+02:00",
+          "lead_to_infusion_s": 282.0
+        },
+        {
+          "gang": 4,
+          "person_detected_at": "2026-09-17T22:51:00+02:00",
+          "route": "stark",
+          "infusion_detected_at": "2026-09-17T22:57:34+02:00",
+          "lead_to_infusion_s": 394.0
+        }
+      ],
+      "person_background_positive_checks": 0,
+      "infusion_background_positive_seconds": 0,
+      "closed_background_seconds": 10279
+    }
+  },
+  "caveats": [
+    "Kalibrierung und Pruefung derselben Session.",
+    "Keine unabhaengigen mechanischen Tuerzeiten.",
+    "Dynamischer Sensorwechsel im neuen Kandidaten noch nicht getestet."
+  ]
+}

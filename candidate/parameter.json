@@ -1,0 +1,58 @@
+{
+  "raster_s": 1,
+  "median_s": 5,
+  "tuer": {
+    "trendfenster_s": 8,
+    "feuchtefenster_s": 10,
+    "oeffnung_trend_max_c_min": -1.8,
+    "oeffnung_feuchteabfall_pp": {
+      "3": 0.45,
+      "6": 0.3
+    },
+    "oeffnung_bestaetigung_s": 2,
+    "schliessung_trend_min_c_min": 0.15,
+    "schliessung_bestaetigung_s": 3
+  },
+  "lueftung": {
+    "basis_rueckblick_s": 60,
+    "mindestens_s": 60,
+    "mindestabfall_c": {
+      "3": 3.0,
+      "6": 3.0
+    }
+  },
+  "person": {
+    "pruefraster_s": 5,
+    "stark": {
+      "fenster_s": 60,
+      "feuchtetrend_pp_min": {
+        "3": 0.5,
+        "6": 0.5
+      },
+      "temperaturtrend_c_min": {
+        "3": 0.0,
+        "6": 0.0
+      },
+      "bestaetigung_s": 10
+    },
+    "schwach": {
+      "fenster_s": 120,
+      "feuchtetrend_pp_min": {
+        "3": 0.14,
+        "6": 0.14
+      },
+      "temperaturtrend_c_min": {
+        "3": 1.0,
+        "6": 0.8
+      },
+      "bestaetigung_s": 30
+    },
+    "schwach_nur_nach_bestaetigter_lueftung": true
+  },
+  "aufguss": {
+    "fenster_s": 10,
+    "feuchteanstieg_pp": 2.0,
+    "temperaturaenderung_min_c": -0.3,
+    "bestaetigung_s": 3
+  }
+}

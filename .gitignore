@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.local/
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite*
+*.zip
+states.jsonl
+events.jsonl
+ergebnis.json
+secrets.yaml
+.DS_Store
