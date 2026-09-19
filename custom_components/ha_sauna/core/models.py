@@ -154,6 +154,9 @@ class Session:
     cooling: CoolingCycle | None = None
     cooling_history: tuple[CoolingCycle, ...] = ()
     ready_at: datetime | None = None
+    # Laufzeitanker nach manuellen Temperaturänderungen, keine zweite Einstellung.
+    temperature_base_c: float | None = None
+    temperature_base_gang_count: int = 0
 
     def __post_init__(self) -> None:
         purposes = set()

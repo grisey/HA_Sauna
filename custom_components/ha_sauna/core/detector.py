@@ -55,6 +55,15 @@ class Detector:
         self.rejected = 0
         self.observer = observer
         self.diagnostic = None
+        self.heating_since = None
+
+    def report_heating(self, heating, at):
+        """Zusatzregel nur bei durchgehend bestätigtem Heizbetrieb verwenden."""
+        if heating is not True:
+            self.heating_since = None
+            self.counts["door_heating"] = 0
+        elif self.heating_since is None:
+            self.heating_since = utc(at)
 
     def accept(self, measurement: Measurement):
         if measurement.position not in self.positions:
@@ -178,15 +187,24 @@ class Detector:
             observe()
             return output
         opening, closing = True, True
+        temperature_opening = bool(enabled and self.heating_since is not None
+            and (now - self.heating_since).total_seconds() >= p["door_window_seconds"] + p["median_seconds"]
+            and set(channels) == {Position.UPPER, Position.LOWER})
         for c in channels:
             trend = self._slope(c, "Tm", p["door_window_seconds"])
             dh = self._difference(c, "Hm", p["door_humidity_seconds"])
             trace["metrics"][c.value].update(door_temperature_slope=trend, door_humidity_delta=dh)
             opening &= trend is not None and trend < p["door_open_slope"] and dh is not None and dh <= -p[f"door_open_humidity_{c.value}"]
             closing &= trend is not None and trend > p["door_close_slope"]
+            temperature_opening &= trend is not None and trend < p["door_heating_slope"]
+            current = self.frames[c][-1]["Tm"]
+            temperature_opening &= (p["door_heating_max_temperature_c"] > 0 and current is not None
+                and current < p["door_heating_max_temperature_c"])
+        temperature_toggle = self._sustain("door_heating", temperature_opening and not self.open,
+            p["door_heating_hold_seconds"])
         toggle = self._sustain("door", closing if self.open else opening,
             p["door_close_hold_seconds"] if self.open else p["door_open_hold_seconds"])
-        trace["conditions"].update(door_open=opening, door_close=closing)
+        trace["conditions"].update(door_open=opening, door_heating=temperature_opening, door_close=closing)
         # Eine Lüftung kann am selben Rasterpunkt wie die Schließung belegt sein.
         # Dann wird zuerst ihr noch offener Kontext abgeschlossen.
         if self.open and not self.ventilated and (now - self.opened_at).total_seconds() >= p["vent_hold_seconds"]:
@@ -194,9 +212,10 @@ class Detector:
                    and self.baseline[c] - self.frames[c][-1]["Tm"] >= p[f"vent_drop_{c.value}"] for c in channels):
                 self.ventilated = True
                 emit(Kind.VENTILATION)
-        if toggle:
+        if toggle or temperature_toggle:
             self.open = not self.open
             self.counts["door"] = 0
+            self.counts["door_heating"] = 0
             if self.open:
                 self.opened_at, self.context, self.ventilated = now, False, False
                 self.baseline = {}

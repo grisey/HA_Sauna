@@ -73,6 +73,7 @@ class SaunaRuntime:
         self._cleanup: list[Callable[[], None]] = []
         self._subscribers: set[Callable[[], None]] = set()
         self.closed = False
+        self.reconfiguring = False
         self.archive = None
         self._archived_completed = 0
         self.device = None
@@ -110,6 +111,10 @@ class SaunaRuntime:
     async def _cycle(self, *, sample=False):
         now = self._clock()
         self._sync_detector()
+        if self.detector:
+            heating = bool(self.device and self.device.command is True and not self.device.command_error
+                and self.device.feedback() is True and self.session.operation_enabled)
+            self.detector.report_heating(heating, now)
         if sample and self.detector:
             detections = self.detector.advance(now, enabled=self.session.operation_enabled)
             if self.session.timeline.door == Door.UNKNOWN and self.detector.active_positions:
@@ -219,7 +224,7 @@ class SaunaRuntime:
         faults = dict(self.device.faults) if self.device else {}
         for key, value in faults.items():
             if self._logged_faults.get(key) != value:
-                level = logging.ERROR if value == "confirmed" or key in ("archive", "cooling_light", "heater_service_unavailable") else logging.WARNING
+                level = logging.ERROR if value == "confirmed" or key in ("archive", "cooling_light", "operation_light", "after_run_light", "heater_service_unavailable") else logging.WARNING
                 self.log.logger.log(level, "%s", fault_message(key, value), extra={"sauna_event": key})
         for key in self._logged_faults.keys() - faults.keys():
             self.log.info("fault_cleared", "%s", fault_resolved(key))
@@ -234,6 +239,8 @@ class SaunaRuntime:
             raise ValueError("Einstellungen können erst nach Ende der Saunasitzung geändert werden")
 
     def _set_operation(self, enabled):
+        if enabled and self.reconfiguring:
+            raise ValueError("Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten.")
         if self.device:
             self.device.refresh(self._clock())
             if enabled and not (self.session and self.session.operation_enabled):

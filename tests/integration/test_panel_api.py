@@ -40,7 +40,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
                 self.assertEqual(state["session"]["timeline"]["session_id"], identity)
                 self.assertTrue(state["configuration_locked"])
-            async with client.post(url + "/parameters", json=values) as response:
+            async with client.post(url + "/parameters", json={**values,"heating_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
             async with client.post(url + "/control", json={"enabled": False}) as response:
                 self.assertEqual(response.status, 200)
@@ -48,7 +48,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
                 self.assertEqual(state["mechanical_timer"]["state"], "paused")
                 self.assertIsNone(state["mechanical_timer_ends_at"])
-            async with client.post(url + "/parameters", json=values) as response:
+            async with client.post(url + "/parameters", json={**values,"heating_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
 
     async def test_unauthenticated_and_non_admin_writes_are_rejected(self):
@@ -85,29 +85,79 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/logging", json={"level": []}) as response:
                 self.assertEqual(response.status, 400)
 
-    async def test_missing_configuration_blocks_start_without_locking_settings(self):
+    async def test_old_incomplete_settings_receive_defaults_and_can_start(self):
         url = self.base + "/" + self.entry.entry_id
         values = dict(self.entry.options["parameters"])
         for key in ("sensor_timeout_seconds", "feedback_timeout_seconds", "fault_confirmation_seconds"):
             values.pop(key)
         self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options,"parameters":values})
         await self.hass.async_block_till_done()
+        self.assertEqual(self.entry.options["parameters"]["sensor_timeout_seconds"],180)
+        self.assertEqual(self.entry.options["parameters"]["feedback_timeout_seconds"],10)
+        self.assertEqual(self.entry.options["parameters"]["fault_confirmation_seconds"],60)
         async with ClientSession(headers=self.headers) as client:
-            async with client.post(url + "/control", json={"enabled": True}) as response:
-                self.assertEqual(response.status, 409)
-                message = (await response.json())["error"]
-                self.assertIn("Höchstalter eines Messwerts", message)
-                self.assertNotIn("sensor_timeout_seconds", message)
             async with client.get(url + "/state") as response:
                 state = await response.json()
                 self.assertIsNone(state["session"])
                 self.assertFalse(state["configuration_locked"])
-                self.assertTrue(all(v["state"]=="validity_unconfigured" for v in state["measurement_status"].values()))
-                self.assertEqual([i["key"] for i in state["issues"]], ["configuration"])
-            async with client.post(url + "/parameters", json={**values,"sensor_timeout_seconds":60,"feedback_timeout_seconds":2,"fault_confirmation_seconds":5}) as response:
-                self.assertEqual(response.status, 200)
-            await self.hass.async_block_till_done()
-            self.assertEqual(self.entry.runtime_data.device.missing_configuration, [])
+                self.assertEqual(state["start_errors"],[])
             async with client.post(url + "/control", json={"enabled": True}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             self.assertTrue(self.entry.runtime_data.session.operation_enabled)
+
+    async def test_stale_measurement_rejects_start_with_useful_german_reason(self):
+        from datetime import UTC, datetime, timedelta
+        runtime=self.entry.runtime_data
+        now=datetime.now(UTC)+timedelta(seconds=61)
+        runtime._clock=lambda:now
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(self.base+"/"+self.entry.entry_id+"/control",json={"enabled":True}) as response:
+                self.assertEqual(response.status,409)
+                error=(await response.json())["error"]
+                self.assertIn("Start nicht möglich",error)
+                self.assertIn("Temperaturwert",error)
+                self.assertNotIn("upper_temperature",error)
+        self.assertIsNone(runtime.session)
+
+    async def test_live_temperature_api_preserves_session_detector_and_deadlines(self):
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        runtime=self.entry.runtime_data
+        await runtime.set_operation(True)
+        session_id=runtime.session.session_id
+        now=runtime._clock()
+        await runtime.receive(Event("infusion",session_id,Kind.INFUSION,now,now))
+        gang=runtime.session.timeline.active
+        detector=runtime.detector
+        timer=runtime.controller.mechanical_timer
+        url=self.base+"/"+self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            for values in ({"target_temperature_c":81,"final_temperature_c":95}, {"temperature_increase_c":2}, {"final_temperature_c":None}):
+                async with client.post(url+"/temperature",json=values) as response:
+                    self.assertEqual(response.status,200,await response.text())
+                await self.hass.async_block_till_done()
+                self.assertIs(self.entry.runtime_data,runtime)
+                self.assertIs(runtime.detector,detector)
+                self.assertEqual(runtime.session.timeline.active,gang)
+                self.assertEqual(runtime.controller.mechanical_timer,timer)
+                self.assertEqual(runtime.controller.target_temperature,81)
+                self.assertTrue(runtime.session.operation_enabled)
+            async with client.post(url+"/temperature",json={"forced_cooling_minutes":0}) as response:
+                self.assertEqual(response.status,400)
+            await runtime.set_operation(False)
+            deadline=runtime.session.after_run
+            async with client.post(url+"/temperature",json={"target_temperature_c":95}) as response:
+                self.assertEqual(response.status,200,await response.text())
+            self.assertEqual(runtime.session.after_run,deadline)
+            self.assertFalse(runtime.controller.last_decision.heat)
+            self.assertFalse(runtime.session.operation_enabled)
+
+    async def test_external_options_writer_cannot_reload_away_active_session(self):
+        runtime=self.entry.runtime_data
+        await runtime.set_operation(True)
+        identity=runtime.session.session_id
+        options=dict(self.entry.options)
+        self.hass.config_entries.async_update_entry(self.entry,options={**options,"parameters":{**options["parameters"],"heating_minutes":999}})
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data,runtime)
+        self.assertEqual(runtime.session.session_id,identity)
+        self.assertEqual(dict(self.entry.options),options)

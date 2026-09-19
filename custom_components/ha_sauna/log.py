@@ -27,3 +27,6 @@ class SaunaLog:
 
     def debug(self, event, message, *args):
         self.logger.debug(message, *args, extra={"sauna_event": event})
+
+    def error(self, event, message, *args):
+        self.logger.error(message, *args, extra={"sauna_event": event})

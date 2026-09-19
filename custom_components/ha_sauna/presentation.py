@@ -17,6 +17,8 @@ FAULTS = {
     "heater_service_unavailable": "Der Heizschütz konnte nicht geschaltet werden.",
     "heater_no_power": "Der Heizschütz ist eingeschaltet, es wird jedoch keine Heizleistung gemessen.",
     "archive": "Das Sitzungsarchiv konnte nicht geschrieben werden.",
+    "operation_light": "Das Saunalicht konnte beim Start des Saunabetriebs nicht eingeschaltet werden.",
+    "after_run_light": "Das Saunalicht konnte für den Nachlauf nicht gedimmt werden.",
     "start_rejected": "Der Start wurde verhindert. Bitte die fehlenden Einstellungen und Messwerte prüfen.",
 }
 REASONS = {"operation_off": "Der Saunabetrieb ist ausgeschaltet.",
@@ -41,7 +43,7 @@ def fault_resolved(key):
         "configuration":"Einrichtung", "regulation_temperature_unavailable":"Regeltemperatur",
         "heater_feedback_unavailable":"Schützrückmeldung", "heater_feedback_mismatch":"Schaltbestätigung",
         "heater_service_unavailable":"Ansteuerung des Heizschützes", "heater_still_heating":"Heizabschaltung",
-        "heater_no_power":"Heizleistung", "archive":"Sitzungsarchiv", "cooling_light":"Saunalicht",
+        "heater_no_power":"Heizleistung", "archive":"Sitzungsarchiv", "cooling_light":"Saunalicht", "operation_light":"Saunalicht", "after_run_light":"Saunalicht",
         "start_rejected":"Startvoraussetzungen"}.get(key, "Gerätediagnose")
     return subject + ": Der vorherige Fehlerhinweis ist nicht mehr aktiv."
 

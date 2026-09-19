@@ -44,18 +44,27 @@ class TestLight(LightEntity):
     _attr_name = "Test light"
     _attr_unique_id = "isolated-light"
     _attr_should_poll = False
-    _attr_is_on = True
+    _attr_is_on = False
     _attr_brightness = 180
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
     _attr_color_mode = ColorMode.BRIGHTNESS
     entity_id = "light.test_light"
 
+    def __init__(self):
+        self.calls = []
+        self.fail_commands = False
+
     async def async_turn_on(self, **kwargs):
+        self.calls.append(("on", kwargs))
+        if self.fail_commands:
+            from homeassistant.exceptions import HomeAssistantError
+            raise HomeAssistantError("Synthetic light failure")
         self._attr_is_on = True
         self._attr_brightness = kwargs.get("brightness", self._attr_brightness)
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs):
+        self.calls.append(("off", kwargs))
         self._attr_is_on = False
         self.async_write_ha_state()
 
@@ -108,7 +117,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.heater.calls)
         self.assertFalse(any(self.heater.calls))
         self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.light.is_on)
         await self.set_source("control_input", "on")
+        self.assertTrue(self.light.is_on)
+        self.assertAlmostEqual(self.light.brightness, 255*.35, delta=1)
+        normal_brightness = self.light.brightness
         session_id = self.runtime.session.session_id
         provisional = None
         confirmed = None
@@ -153,7 +166,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         await self.hass.async_block_till_done()
         self.assertIsNone(self.runtime.session.cooling)
-        self.assertEqual(self.light.brightness, 180)
+        self.assertEqual(self.light.brightness, normal_brightness)
+        self.assertTrue(self.light.is_on)
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, 0)
         await self.runtime.archive.flush()
@@ -164,6 +178,99 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(r["kind"] == "command" and r["payload"]["heat"] for r in archived["records"]))
         self.assertTrue(any(r["kind"] == "detection" for r in archived["records"]))
         self.assertGreater(self.runtime.session.heating.intervals[0].ended_at.timestamp() - self.base.timestamp(), 240)
+
+    async def test_light_start_after_run_cooling_and_restore_use_real_light_service(self):
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.assertAlmostEqual(self.light.brightness, 255*.35, delta=1)
+        # Manuelle Helligkeit vor dem Nachlauf muss später zurückkehren.
+        await self.hass.services.async_call("light", "turn_on", {"entity_id":self.light.entity_id,"brightness":160}, blocking=True)
+        await self.hass.async_block_till_done()
+        session_id = self.runtime.session.session_id
+        async def signal(kind, seconds):
+            self.now=self.base+timedelta(seconds=seconds)
+            await self.runtime.receive(Event(str(seconds),session_id,kind,self.now,self.now))
+            await self.hass.async_block_till_done()
+        await signal(Kind.DOOR_CLOSE,1)
+        await signal(Kind.INFUSION,2)
+        self.now=self.base+timedelta(seconds=241)
+        await self.set_source("upper_temperature",70)
+        await self.runtime.tick()
+        await signal(Kind.DOOR_OPEN,242)
+        await signal(Kind.VENTILATION,243)
+        self.assertFalse(self.heater.is_on)
+        self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
+        await self.time(273)
+        self.assertEqual(self.runtime.controller.phase,"zwangskühlung")
+        self.assertAlmostEqual(self.light.brightness,255*.05,delta=1)
+        await self.time(274)
+        self.assertAlmostEqual(self.light.brightness,255*.05,delta=1)
+        self.now=self.base+timedelta(seconds=303)
+        await self.set_source("upper_temperature",70)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.light.brightness,160)
+        brightness=[call[1].get("brightness") for call in self.light.calls if call[0]=="on"]
+        self.assertEqual(len(brightness),5)  # Start, manuell, Nachlauf, Kühlung, zurück.
+
+    async def test_light_failure_is_reported_and_does_not_disable_heating(self):
+        self.light.fail_commands=True
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.assertIn("operation_light",self.runtime.device.faults)
+        self.assertTrue(self.heater.is_on)
+        self.assertFalse(self.light.is_on)
+        await self.time(1)
+        self.assertEqual(len(self.light.calls),1)
+        await self.runtime.set_operation(False)
+        self.light.fail_commands=False
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.assertNotIn("operation_light",self.runtime.device.faults)
+        self.assertTrue(self.light.is_on)
+
+    async def test_additional_door_signal_updates_timeline_and_cooling_wait(self):
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        for second in range(70):
+            self.now=self.base+timedelta(seconds=second)
+            temperature=50 if second<20 else 50-.02*min(20,second-20)+max(0,second-40)*.03
+            for position in ("upper","lower"):
+                await self.set_source(f"{position}_temperature",temperature)
+                await self.set_source(f"{position}_humidity",30)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+        from custom_components.ha_sauna.core.timeline import Kind
+        doors=[e for e in self.runtime.session.timeline.processed if e.kind in (Kind.DOOR_OPEN,Kind.DOOR_CLOSE)]
+        self.assertEqual([e.kind for e in doors],[Kind.DOOR_OPEN,Kind.DOOR_CLOSE])
+        self.assertEqual(self.runtime.controller.cooling_wait_until,doors[-1].effective_at+timedelta(minutes=4))
+        self.assertTrue(self.heater.is_on)
+
+    async def test_temperature_entities_cannot_override_running_cooling(self):
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.now=self.base+timedelta(seconds=240)
+        await self.set_source("upper_temperature",70)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.runtime.controller.phase,"zwangskühlung")
+        self.assertFalse(self.heater.is_on)
+        cycle=self.runtime.session.cooling
+        deadlines=self.runtime.session.deadlines
+        self.heater.calls.clear()
+        await self.hass.services.async_call("climate","set_temperature",{"entity_id":self.climate,"temperature":95},blocking=True)
+        entities=er.async_entries_for_config_entry(er.async_get(self.hass),self.entry.entry_id)
+        end=next(e.entity_id for e in entities if e.unique_id.endswith("_final_temperature_c"))
+        await self.hass.services.async_call("number","set_value",{"entity_id":end,"value":100},blocking=True)
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data,self.runtime)
+        self.assertEqual(self.runtime.session.cooling,cycle)
+        self.assertEqual(self.runtime.session.deadlines,deadlines)
+        self.assertFalse(self.heater.is_on)
+        self.assertNotIn(True,self.heater.calls)
+        self.assertEqual(self.hass.states.get(self.climate).attributes["temperature"],95)
+        self.assertEqual(float(self.hass.states.get(end).state),100)
 
     async def test_normal_idle_keeps_operation_and_ui_physical_input_share_control(self):
         await self.hass.services.async_call("climate", "set_hvac_mode", {"entity_id": self.climate, "hvac_mode": "heat"}, blocking=True)

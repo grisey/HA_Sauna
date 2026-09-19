@@ -17,6 +17,8 @@ beendeten Sitzung ohne gezählte Gänge. Erst nach einer beendeten Sitzung mit
 gezählten Gängen startet sie beim nächsten Einschalten neu.
 Die Temperatursteigerung folgt gezählten Gängen: Startwert plus Gangzahl mal
 Schrittweite, begrenzt durch eine optionale Endtemperatur. Ohne Endwert konstant.
+Solltemperatur, Erhöhung je Gang und Endtemperatur sind während der Sitzung änderbar. Eine neue Solltemperatur gilt sofort als Ausgangspunkt weiterer Steigerungen; keine Änderung darf Gang, Fristen, Heizsperren oder Schutz zurücksetzen. Andere Einstellungen und Geräte bleiben während einer Sitzung gesperrt.
+Standardlicht: Betrieb 35 %, Nachlauf 15 %, Zwangskühlung 5 %, jeweils einstellbar. In der Übersicht steht nur die jeweils relevante Phasenzeit; Heizsumme und mechanischer Timer stehen in den Details.
 Der entkoppelte Taster steuert den Saunabetrieb, nie unmittelbar den Schütz.
 Tasterimpuls und dauerhafter Betriebsschalter sind getrennt konfigurierbar.
 Übersicht, separates Verlaufsblatt und sortierte Detailansicht folgen der
@@ -27,7 +29,7 @@ Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.
 - Die Besprechung bleibt schrittweise und jeweils bei einem Thema. Regeln und
   Fristbeziehungen verständlich erklären, statt einzelne Zustände aufzuzählen.
   Bereits geklärte Grundlagen nicht erneut abfragen. Vorschläge und ausdrücklich
-  vereinbarte Regeln voneinander unterscheiden; keine plausiblen Defaults erfinden.
+  vereinbarte Regeln voneinander unterscheiden; Die jüngste Nutzeranweisung verlangt Standardwerte für alle notwendigen Einstellungen; vorhandene gespeicherte Werte bleiben erhalten.
   Die Sessionansicht ist in `docs/darstellung.md` vereinbart. Die Anforderungen
   an Vollauflösung, HA-Backup und Export stehen in `docs/speicherung.md`.
 - Die Session ist das übergeordnete Laufzeitobjekt. Nach Ablauf der Frist seit

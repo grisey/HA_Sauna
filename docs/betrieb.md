@@ -71,9 +71,7 @@ verstrichene Nachlaufdauer wird genau einmal vollständig angerechnet:
 `Restkühlzeit = max(0, Kühlvorgabe − angerechneter Nachlauf)`
 
 Standard-Kühlvorgabe: einstellbare 15 Minuten. Bei Restzeit null entfällt ein
-weiterer Kühlabschnitt. Laufende Zwangskühlung sperrt neue Gänge und dimmt das
-zugeordnete Licht auf den eingestellten Wert; anschließend wird dessen vorheriger
-Zustand wiederhergestellt. Alte Startanker aus gesperrten Phasen werden verworfen.
+weiterer Kühlabschnitt. Laufende Zwangskühlung sperrt neue Gänge. Betriebsstart schaltet das Licht auf standardmäßig 35 %, Nachlauf dimmt auf 15 %, Zwangskühlung auf 5 %. Alle Werte sind einstellbar. Beim Übergang vom Nachlauf zur Kühlung bleibt es gedimmt; erst anschließend wird der zuvor bestehende Lichtzustand wiederhergestellt. Ein reiner Lichtfehler wird gemeldet und beendet nicht den Heizbetrieb. Alte Startanker aus gesperrten Phasen werden verworfen.
 
 Eine Türöffnung beim Aufheizen/in Bereitschaft hält eine fällige Kühlung zurück:
 bei offener Tür maximal standardmäßig 10 Minuten ab Öffnung; bei rechtzeitiger

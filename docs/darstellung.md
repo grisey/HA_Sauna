@@ -5,15 +5,15 @@ Das native HA-Custom-Panel ist unter `/ha-sauna` registriert. Es verwendet die
 vorhandene HA-Anmeldung und authentifizierte APIs; es führt keinen eigenen
 Regelungszustand. Browsernachweise stehen im [Abnahmebericht](abnahme.md).
 
-## Normal
+## Übersicht
 
-Einfache Steuerung mit Status, Betrieb-An/Aus, Temperaturwahl vor einer Session,
+Einfache Steuerung mit Status, Betrieb-An/Aus, Temperaturwahl auch während einer Sitzung,
 Temperatur, Feuchte und Sessionenergie mit Kennzeichnung der Mess-/Schätzquelle.
 Temperaturkacheln verwenden zentral konfigurierte
 Ausgangstemperatur, Abstand und Anzahl; Vorlage: 70 bis 95 °C in 5-Grad-Schritten.
 Die Kacheln setzen die Solltemperatur und starten über denselben Backendpfad.
 Gemischte alte Start-/Endtemperatur-Szenen werden nicht übernommen: Die aktuelle
-Grundkonfiguration bleibt während der Session unverändert.
+Grundkonfiguration bleibt während der Sitzung bis auf Solltemperatur, Erhöhung je Gang und Endtemperatur unverändert.
 
 Auf dem eigenen Blatt **Sessionverlauf & Archiv** sind die laufende Session und
 historische Sessions auswählbar. Gestaltung aus der gelieferten Vorlage:
@@ -53,7 +53,7 @@ ursprünglichen Erkennungszeiten stehen hier getrennt vom normalen Verlauf.
 
 **Einstellungen & Export:** zentrale Parameter, eingeklappte Expertenwerte,
 Verweis zum HA-Zuordnungsdialog und ZIP-Download des Archivs. Während einer
-Session sind Änderungen im Frontend und im Backend gesperrt. Steuerung und
+Session sind nur Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar. Alle anderen Felder sind einzeln im Frontend und im Backend gesperrt. Steuerung und
 Parameteränderung verlangen HA-Administratorrechte, auch bei direktem API-Aufruf.
 
 ## Grenzen
@@ -68,9 +68,7 @@ Fristen werden mit ihrem tatsächlichen Zeitbezug angezeigt.
 ## Präzisierung nach der ersten Testinstallation
 
 Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht hat die
-Blätter **Steuerung** und **Verlauf und Archiv**. Zustand, gezählte Heizzeit,
-angehaltener/laufender mechanischer Ofentimer und die jeweils aktive Gang-,
-Nachlauf- oder Kühlzeit erscheinen kompakt. Bereitschaftstemperatur und interne
+Blätter **Steuerung** und **Verlauf und Archiv**. Neben dem Zustand erscheint genau die relevante Phasenzeit: Gangdauer, Nachlauf, Kühlung, Türwartefrist, Heizpause, Mindestheizzeit, Bereitschafts-/Aufheizdauer oder Frist bis zum Sitzungsende. Heizzeitsumme und mechanischer Timer stehen ausschließlich in Details. Bereitschaftstemperatur und interne
 Regelungswerte stehen ausschließlich in den Details. Gesperrte Temperaturtasten
 bleiben sichtbar; der Grund der Sperre wird erklärt. Nach Sitzungsende bleibt
 der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar.

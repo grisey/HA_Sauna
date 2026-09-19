@@ -55,6 +55,25 @@ async def async_options_updated(hass, entry):
         if before == after:
             runtime.set_log_level(updated.log_level)
             return
+        from .core.parameters import LIVE_TEMPERATURE_KEYS
+        from .settings import apply_temperature_parameters
+        before_parameters = before.pop("parameters")
+        after_parameters = after.pop("parameters")
+        changed = {k for k in before_parameters.keys() | after_parameters.keys()
+                   if before_parameters.get(k) != after_parameters.get(k)}
+        if before == after and not changed - LIVE_TEMPERATURE_KEYS:
+            async with runtime._lock:
+                await apply_temperature_parameters(runtime, updated.parameters,
+                    explicit_target="target_temperature_c" in changed)
+                runtime.set_log_level(updated.log_level)
+            return
+        if runtime.session:
+            # Auch externe Optionsschreiber dürfen keine laufende Sitzung durch
+            # einen Reload und damit gelöschte Fristen umgehen.
+            runtime.log.error("configuration_locked", "Änderung der Grundeinstellungen während einer Saunasitzung abgelehnt.")
+            hass.config_entries.async_update_entry(entry, options=runtime.configuration.as_options())
+            return
+        runtime.reconfiguring = True
     timer = runtime.controller.mechanical_timer.pause(runtime._clock()) if runtime and not runtime.closed else None
     await hass.config_entries.async_reload(entry.entry_id)
     if timer is not None and getattr(entry, "runtime_data", None) and not entry.runtime_data.closed:

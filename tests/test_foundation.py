@@ -21,7 +21,7 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
     return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
-                       "heating_minutes": 2.5, "heating_reduction_minutes": 0.5})
+                       "heating_minutes": 2.5, "heating_reduction_minutes": 0.5, "session_gap_minutes": 2.5})
 
 
 def bindings():
@@ -51,9 +51,14 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(len(DEFINITIONS), len({d.key for d in DEFINITIONS}))
         self.assertTrue(all(d.label and d.unit for d in DEFINITIONS))
 
-    def test_values_are_explicit_and_missing_values_fail(self):
-        with self.assertRaises(ParameterError):
-            Parameters({})
+    def test_required_values_have_defaults_and_saved_values_take_precedence(self):
+        defaults = Parameters({})
+        self.assertTrue(all(d.optional or d.key in defaults.values for d in DEFINITIONS))
+        self.assertEqual(defaults.values["operation_brightness_percent"], 35)
+        self.assertEqual(defaults.values["after_run_brightness_percent"], 15)
+        self.assertEqual(defaults.values["cooling_brightness_percent"], 5)
+        self.assertEqual(defaults.values["sensor_timeout_seconds"], 180)
+        self.assertEqual(Parameters({"sensor_timeout_seconds": 7}).values["sensor_timeout_seconds"], 7)
 
     def test_unknown_parameter_fails(self):
         with self.assertRaises(ParameterError):

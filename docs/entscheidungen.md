@@ -85,10 +85,7 @@ Schreibquelle für Bestätigung oder Zählbarkeit. Keine adaptive Erkennung als
 unbesprochener Ersatz des eingefrorenen Kandidaten. Keine voreilige rückwirkende
 Zuordnung des Gangendes zur Türöffnung.
 
-Noch nicht vereinbarte Ausgangswerte werden bei Einrichtung verlangt. Dazu zählen
-Session-, Bestätigungs-, Heizzeit-Rücksetz- und Nachlaufdauer; erforderliche
-Mess-/Aktor-/Ausfallfristen sind an der Installation zu bestimmen. Prognosen der
-Aufheizzeit sind nicht aus Softwaretests als zuverlässige Regel abzuleiten.
+Auf spätere Nutzeranweisung erhalten alle notwendigen Einstellungen Standardwerte. Bereits gespeicherte örtliche Einstellungen bleiben erhalten. Prognosen der Aufheizzeit sind nicht aus Softwaretests als zuverlässige Regel abzuleiten.
 
 Der Auftrag autorisiert Repositoryarbeit und isolierte Tests, keine reale
 Ofenaktivierung, keine Produktionsinstallation, keine Versionserhöhung, kein
@@ -112,3 +109,11 @@ Die Protokollierung ist in den Einstellungen als ERROR, INFO (Standard) oder DEB
 wählbar und wirkt sofort. Gerätezuordnungen sind nachträglich änderbar, sobald keine
 Sitzung offen ist. Entkoppelter Taster und Schütz sind getrennte Rollen; Loslassen
 eines Tasters darf nicht ausschalten.
+
+## Weitere Korrekturen im laufenden Test
+
+Solltemperatur, Steigerungsrate und Endtemperatur sind live änderbar. Eine manuelle Solltemperatur ersetzt sofort das aktuelle Ziel; weitere gezählte Gänge erhöhen ab diesem neuen Ausgangspunkt. Historische Gangzählungen werden nicht erneut addiert. Gang-, Nachlauf-, Kühl- und Heizsperren behalten immer Vorrang; keine Änderung lädt die Integration neu.
+
+Die Übersicht zeigt nur eine zur Phase passende Zeit. Die Lichtvorgaben sind einstellbare 35 % beim Start, 15 % im Nachlauf und 5 % bei Zwangskühlung. Alle erforderlichen Parameter erhalten Standardwerte.
+
+Nach zwei nicht erkannten Testöffnungen erlaubt der Nutzer die Prüfung einer zusätzlichen Türregel ohne Feuchteabfall und betont die Priorität des heißen Betriebs. Die unbeschränkte Zusatzregel erzeugte im privaten Referenzreplay zusätzliche Ereignisse und wird deshalb nicht verwendet. Die Ergänzung wird auf niedrigere Temperaturen und durchgehend eingeschaltete Heizung mit zwei verfügbaren Messpositionen begrenzt; die Erkennung im heißen Zustand bleibt vorerst unverändert.

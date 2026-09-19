@@ -7,7 +7,7 @@ const num = (v,d=1) => v == null ? "–" : Number(v).toLocaleString("de-DE",{max
 const duration = v => v == null ? "–" : `${Math.floor(Math.max(0,v)/60)}:${String(Math.floor(Math.max(0,v)%60)).padStart(2,"0")} min`;
 const phases = {aus:"Aus",aufheizen:"Aufheizen",bereit:"Bereit",saunagang:"Saunagang",nachlauf:"Nachlauf",zwangskühlung:"Zwangskühlung"};
 const events = {door_open:"Tür geöffnet",door_close:"Tür geschlossen",person_strong:"Person erkannt",person_weak:"Person erkannt (schwach)",infusion:"Aufguss",ventilation_confirmed:"Durchlüften bestätigt",operation_off:"Betrieb ausgeschaltet",confirmation_expired:"Vorläufigen Gang aufgehoben"};
-const signalText = {door_open:"Türöffnung",door_close:"Türschließung",door:"Tür",infusion:"Aufguss",strong:"Deutliches Personensignal",weak:"Schwaches Personensignal"};
+const signalText = {door_heating:"Temperaturabfall trotz Heizen",door_close:"Türschließung",door_open:"Türöffnung",door_close:"Türschließung",door:"Tür",infusion:"Aufguss",strong:"Deutliches Personensignal",weak:"Schwaches Personensignal"};
 const errorText = error => {
   // hass.callApi legt die Antwort der Integration in body ab; error enthält
   // lediglich den allgemeinen HTTP-Fehler (etwa „Response error: 409“).
@@ -58,7 +58,7 @@ class SaunaPanel extends HTMLElement {
       if(e.target.id==="instance"){this.entry=e.target.value;this.generation++;this.selected="live";this.cache.clear();this.settingsEntry=null;this.draft=null;this.zoom=1;this.refresh();}
       if(e.target.id==="session"){this.selected=e.target.value;this.zoom=1;this.pan=100;this.refresh();}
     });
-    this.shadowRoot.addEventListener("input",e=>{if(e.target.closest("#current"))this.draft={...this.draft,[e.target.id]:e.target.value};if(e.target.id==="pan"){this.pan=Number(e.target.value);this.drawHistory();}});
+    this.shadowRoot.addEventListener("input",e=>{if(e.target.closest("#parameters"))e.target.dataset.edited="true";if(e.target.closest("#current"))this.draft={...this.draft,[e.target.id]:e.target.value};if(e.target.id==="pan"){this.pan=Number(e.target.value);this.drawHistory();}});
     this.shadowRoot.addEventListener("pointermove",e=>{if(e.target.closest("svg.session-chart"))this.hoverChart(e);});
     this.shadowRoot.addEventListener("pointerout",e=>{if(e.target.closest("svg.session-chart")&&!e.relatedTarget?.closest?.("svg.session-chart")){this.$("#tooltip")?.setAttribute("hidden","");this.$("#cursor")?.setAttribute("visibility","hidden");}});
     this.shadowRoot.addEventListener("wheel",e=>{if(!e.target.closest("svg.session-chart"))return;e.preventDefault();this.zoom=Math.max(1,Math.min(256,this.zoom*(e.deltaY<0?1.25:.8)));this.drawHistory();},{passive:false});
@@ -124,18 +124,20 @@ class SaunaPanel extends HTMLElement {
     const energyText=`${num(session?s.energy_kwh:energy?energy.measured_kwh+energy.estimated_kwh:0,3)} kWh · ${energyLabel[session?s.energy_source:energy?.unknown_seconds?"incomplete":energy?.measured_seconds?(energy.estimated_seconds?"mixed":"measured"):"estimated"]}`;
     const heatCaption=s.heating_feedback===true?(s.heating_observation?.estimated?"Heizschütz ein":"Ofen heizt"):s.heating_feedback===false?"Ofen aus":"Heizzustand unbekannt";
     const heatSource={power:"Aus gemessener Leistung",independent_feedback:"Unabhängige Heizrückmeldung",contactor:"Nach Schützstellung geschätzt",unknown:"Rückmeldung fehlt"}[s.heating_observation?.source]||"Rückmeldung fehlt";
-    const disabled=s.configuration_locked||!this.hass.user?.is_admin;
+    const disabled=!this.hass.user?.is_admin;
+    const presetsDisabled=disabled||s.configuration_locked;
     const canStart=this.hass.user?.is_admin&&(s.operation_enabled||!s.start_errors.length);
     const presets=Array.from({length:p.preset_count},(_,i)=>p.preset_start_c+i*p.preset_step_c);
     const end=session?.deadlines.find(d=>d.purpose==="session_gap")?.due_at;
-    const lock=s.configuration_locked?`Temperaturwahl nach Ende der Sitzung wieder verfügbar.${end?` Voraussichtlich um ${clock(end)} Uhr.`:""}`:"Eine Temperaturtaste stellt die Solltemperatur ein und startet die Sauna.";
+    const lock=s.configuration_locked?"Solltemperatur und Steigerung sind rechts auch während der Sitzung änderbar. Laufende Heizpausen und Kühlzeiten bleiben wirksam.":"Eine Temperaturtaste stellt die Solltemperatur ein und startet die Sauna.";
     const notices=s.issues.map(i=>`<p>${esc(i.message)}${i.action==="settings"?'<br><button data-action="configure">Einstellungen öffnen</button>':""}</p>`).join("");
     const alert=notices?`<div class="notice" role="alert">${notices}</div>`:"";
     const operation=`<button class="tile full ${s.operation_enabled?"stop":"primary"}" data-action="operation" ${canStart?"":"disabled"}>${s.operation_enabled?"Sauna ausschalten":"Sauna einschalten"}</button>`;
     const stateLine=`<div class="state-line"><strong class="phase" data-phase="${esc(s.phase)}">${phases[s.phase]||"Unbekannt"}</strong><span class="badge">${count} ${count===1?"Saunagang":"Saunagänge"}</span></div><p id="phase-detail" class="muted">${esc(activity)}</p>`;
     const dial=(reading,unit,caption,color,maximum,valid)=>`<svg class="dial" viewBox="0 0 300 235" role="img" aria-label="${esc(caption)}"><path d="M 54 195 A 120 120 0 1 1 246 195" fill="none" stroke="var(--divider-color,#444)" stroke-width="16" stroke-linecap="round"/><path d="M 54 195 A 120 120 0 1 1 246 195" fill="none" stroke="${valid?color:'#888'}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0,Math.min(100,(reading??0)/maximum*100))} 100"/><text class="reading" x="150" y="128" text-anchor="middle">${num(reading,1)} ${unit}</text><text class="caption" x="150" y="160" text-anchor="middle">${esc(caption)}</text></svg>`;
     const timers=`<div class="timer-strip"><div><small>Gezählte Heizzeit</small><strong>${duration(session?.heating.elapsed_seconds||0)}</strong><small>Grenze ${duration(s.heating_limit_seconds)}</small></div><div data-mechanical-timer="${timer.state}"><small>Mechanischer Ofentimer</small><strong>${timerText}</strong><small>${timerStatus}</small></div></div>`;
-    this.$("#current").innerHTML=`<h2 class="greeting">Servus ${esc(this.hass.user?.name||"")}</h2><div class="dashboard"><div class="card">${stateLine}<div class="row muted"><span>${heatCaption}</span><span>Tür ${{open:"offen",closed:"geschlossen"}[session?.timeline.door]||"unbekannt"}</span><span data-energy>${energyText}</span></div>${timers}<div class="tiles">${operation}${presets.map(v=>`<button class="tile" data-action="preset:${v}" ${disabled?"disabled":""}>Sauna ${num(v,1)} °C</button>`).join("")}</div><p class="muted">${lock}</p>${alert}</div><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur oben</h2>${dial(value("upper","temperature"),"°C",heatCaption,"#ff6b4a",120,quality("upper","temperature")==="current")}<p class="muted">${qualityText("upper","temperature")}</p></div><div><h2>Luftfeuchte oben</h2>${dial(value("upper","humidity"),"%","Relative Luftfeuchte","#42a5ff",100,quality("upper","humidity")==="current")}<p class="muted">${qualityText("upper","humidity")}</p></div></div><div class="temperature-choice"><label for="target">Solltemperatur</label><input id="target" aria-label="Solltemperatur" type="number" step="0.5" value="${p.target_temperature_c??""}" ${disabled?"disabled":""}><span>°C</span><button data-action="target" ${disabled?"disabled":""}>Übernehmen</button></div><p class="muted center">${p.final_temperature_c!=null?`Aktuelle Solltemperatur: ${num(s.target_temperature)} °C · Steigerung bis ${num(p.final_temperature_c)} °C`:'Gewünschte Temperatur während des Saunagangs.'}</p><details><summary>Temperatur von Gang zu Gang steigern</summary><p class="muted">Die Solltemperatur oben ist der Startwert. Nach jedem gezählten Saunagang wird die Temperatur bis zur Endtemperatur erhöht.</p><div class="row"><label class="field">Endtemperatur (°C)<input id="progression-end" type="number" step="any" value="${p.final_temperature_c??''}" ${disabled?'disabled':''}></label><label class="field">Erhöhung je Gang (°C)<input id="progression-step" type="number" step="any" value="${p.temperature_increase_c}" ${disabled?'disabled':''}></label><button data-action="progression" ${disabled?'disabled':''}>Steigerung übernehmen</button></div><p class="muted">Endtemperatur leer lassen, um wieder konstant zu heizen.</p></details></div></div>`;
+    const phaseTimer=s.phase_timer?`<div class="timer-strip" data-phase-timer="${esc(s.phase_timer.kind)}"><div><small>${esc(s.phase_timer.label)}</small><strong>${duration(s.phase_timer.seconds)}</strong></div></div>`:"";
+    this.$("#current").innerHTML=`<h2 class="greeting">Servus ${esc(this.hass.user?.name||"")}</h2><div class="dashboard"><div class="card">${stateLine}<div class="row muted"><span>${heatCaption}</span><span>Tür ${{open:"offen",closed:"geschlossen"}[session?.timeline.door]||"unbekannt"}</span><span data-energy>${energyText}</span></div>${phaseTimer}<div class="tiles">${operation}${presets.map(v=>`<button class="tile" data-action="preset:${v}" ${presetsDisabled?"disabled":""}>Sauna ${num(v,1)} °C</button>`).join("")}</div><p class="muted">${lock}</p>${alert}</div><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur oben</h2>${dial(value("upper","temperature"),"°C",heatCaption,"#ff6b4a",120,quality("upper","temperature")==="current")}<p class="muted">${qualityText("upper","temperature")}</p></div><div><h2>Luftfeuchte oben</h2>${dial(value("upper","humidity"),"%","Relative Luftfeuchte","#42a5ff",100,quality("upper","humidity")==="current")}<p class="muted">${qualityText("upper","humidity")}</p></div></div><div class="temperature-choice"><label for="target">Solltemperatur</label><input id="target" aria-label="Solltemperatur" type="number" step="0.5" value="${s.target_temperature??""}" ${disabled?"disabled":""}><span>°C</span><button data-action="target" ${disabled?"disabled":""}>Übernehmen</button></div><p class="muted center">${p.final_temperature_c!=null?`Aktuelle Solltemperatur: ${num(s.target_temperature)} °C · Steigerung bis ${num(p.final_temperature_c)} °C`:'Gewünschte Temperatur während des Saunagangs.'}</p><details><summary>Temperatur von Gang zu Gang steigern</summary><p class="muted">Nach jedem gezählten Saunagang wird die aktuelle Solltemperatur um die gewählte Schrittweite erhöht. Eine neue Solltemperatur gilt sofort als Ausgangspunkt für weitere Steigerungen; alle Ablauf- und Heizsperren bleiben wirksam.</p><div class="row"><label class="field">Endtemperatur (°C)<input id="progression-end" type="number" step="any" value="${p.final_temperature_c??''}" ${disabled?'disabled':''}></label><label class="field">Erhöhung je Gang (°C)<input id="progression-step" type="number" step="any" value="${p.temperature_increase_c}" ${disabled?'disabled':''}></label><button data-action="progression" ${disabled?'disabled':''}>Steigerung übernehmen</button></div><p class="muted">Endtemperatur leer lassen, um wieder konstant zu heizen.</p></details></div></div>`;
     const deadlines={confirmation:"Aufgussbestätigung",person_opportunity:"Wartezeit auf Personenerkennung",after_run:"Nachlauf",forced_cooling:"Zwangskühlung",session_gap:"Ende der Saunasitzung"};
     this.$("#details").innerHTML=`<div class="card hero">${stateLine}${operation}${timers}${alert}</div><div class="detail-grid"><div class="card"><h2>Temperatur und Heizregelung</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${num(s.target_temperature,1)} °C</dd><dt>Temperaturprogramm</dt><dd>${p.final_temperature_c!=null?`${num(p.target_temperature_c)} → ${num(p.final_temperature_c)} °C · ${num(p.temperature_increase_c)} °C je Gang`:"Konstant"}</dd><dt>Bereitschaftstemperatur</dt><dd data-readiness>${num(s.readiness_target,1)} °C</dd><dt>Wieder einschalten unter</dt><dd>${num(s.readiness_target==null?null:s.readiness_target-p.readiness_hysteresis_c,1)} °C</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd></dl><p>${esc(s.decision_text)}</p></div><div class="card"><h2>Messwerte und Verfügbarkeit</h2>${["upper","lower"].map(pos=>`<h3>${pos==="upper"?"Obere":"Untere"} Messposition</h3><p>${formatValue(pos,"temperature","°C")} · ${qualityText(pos,"temperature")}</p><p>${formatValue(pos,"humidity","% relative Luftfeuchte")} · ${qualityText(pos,"humidity")}</p>`).join("")}<p class="muted">Erkennung mit: ${s.detection_channels.map(p=>p==="upper"?"oberer Messposition":"unterer Messposition").join(" und ")||"noch keiner Messposition"}.</p></div><div class="card"><h2>Zeiten und Fristen</h2><dl>${(session?.deadlines||[]).map(d=>`<dt>${esc(deadlines[d.purpose]||"Laufende Frist")}</dt><dd>${remaining(d.due_at)} · bis ${when(d.due_at)}</dd>`).join("")}</dl><p>Mechanischer Ofentimer: ${timerText} · ${timerStatus}</p><p class="muted">${timer.ends_at?`Voraussichtlicher Ablauf: ${when(timer.ends_at)}. `:""}Die tatsächliche Stellung des Drehschalters wird nicht gemessen. Die Anzeige löst keine Steuerung aus.${timer.reset_pending?" Beim nächsten Start beginnt die Anzeige neu.":""}</p></div><div class="card"><h2>Energieverbrauch der Saunasitzung</h2><p data-energy>${energyText}</p><p>Ofenleistung für die Schätzung: ${num(p.nominal_power_kw,2)} kW</p><p class="muted">Gültige Leistungsmessungen ersetzen die Schätzung. Messlücken werden als geschätzter Anteil berücksichtigt.</p></div></div>`;
     if(progressionOpen)this.$("#current details").open=true;
@@ -143,13 +145,12 @@ class SaunaPanel extends HTMLElement {
   }
   async changeTarget(value,start=false) {
     if(!Number.isFinite(value))throw Error("Gültige Solltemperatur eingeben");
-    const parameters={...this.state.configuration.parameters,target_temperature_c:value};
-    delete parameters.final_temperature_c;
-    return this.updateParameters(parameters,start);
+    return this.updateParameters({target_temperature_c:value},start,true);
   }
-  async updateParameters(parameters,start=false) {
+  async updateParameters(parameters,start=false,partial=false) {
     const entry=this.entry;
-    await this.api(`/${entry}/parameters`,"POST",parameters);
+    const saved=await this.api(`/${entry}/${partial?"temperature":"parameters"}`,"POST",parameters);
+    parameters=saved.parameters;
     // A saved parameter is loaded by HA's single options listener. Do not start
     // against the previous runtime while reload is still in progress.
     let loaded=false;
@@ -239,7 +240,7 @@ class SaunaPanel extends HTMLElement {
       ["Aufgusserkennung","infusion_temperature_delta","Temperaturänderung · °C"]];
     const parameters=this.shown.session.configuration?.parameters||this.state.configuration.parameters;
     const thresholds=(metric,position)=>{
-      if(metric==="door_temperature_slope")return [parameters.door_open_slope,parameters.door_close_slope];
+      if(metric==="door_temperature_slope")return [parameters.door_open_slope,parameters.door_heating_slope,parameters.door_close_slope];
       if(metric==="door_humidity_delta")return [-parameters[`door_open_humidity_${position}`]];
       if(metric.startsWith("infusion_"))return [parameters[metric.replace("_delta","")]];
       return [parameters[metric.replace("_slope",`_${position}`)]];
@@ -274,14 +275,15 @@ class SaunaPanel extends HTMLElement {
       this.$("#log-level").value=state.configuration.log_level;
       this.settingsEntry=this.entry;
     }
-    this.$("#parameters").disabled=state.configuration_locked||!this.hass.user?.is_admin;
+    this.$("#parameters").disabled=!this.hass.user?.is_admin;
+    for(const d of state.parameters){const input=this.$(`#parameters input[name="${d.key}"]`);input.disabled=!this.hass.user?.is_admin||(state.configuration_locked&&!d.live_editable);if(d.key==="target_temperature_c"&&!input.dataset.edited&&this.shadowRoot.activeElement!==input)input.value=state.target_temperature;}
     this.$("#log-level").disabled=!this.hass.user?.is_admin;
     this.$('[data-action="logging"]').disabled=!this.hass.user?.is_admin;
-    this.$("#configuration-lock").textContent=state.configuration_locked?"Temperatur- und Ablaufeinstellungen bleiben bis zum Ende der Saunasitzung gesperrt, auch während einer kurzen Unterbrechung.":"Änderungen gelten für die nächste Saunasitzung. Felder ohne Vorgabe bitte passend zur Anlage einstellen.";
+    this.$("#configuration-lock").textContent=state.configuration_locked?"Solltemperatur, Erhöhung je Gang und Endtemperatur sind änderbar. Andere Einstellungen bleiben bis zum Ende der Saunasitzung gesperrt. Laufende Fristen und Heizsperren bleiben immer wirksam.":"Alle erforderlichen Einstellungen haben Standardwerte. Änderungen der Grundeinstellungen gelten für die nächste Saunasitzung.";
   }
   async saveSettings() {
     this.message(null);
-    const values={};for(const [key,value] of new FormData(this.$("form")))if(value!=="")values[key]=Number(value);
+    const values={...this.state.configuration.parameters};for(const [key,value] of new FormData(this.$("form"))){if(value!=="")values[key]=Number(value);else delete values[key];}
     await this.updateParameters(values);
   }
   async action(action) {
@@ -304,10 +306,9 @@ class SaunaPanel extends HTMLElement {
     }
     if(action.startsWith("preset:"))return this.changeTarget(Number(action.slice(7)),true);
     if(action==="progression"){
-      const parameters={...this.state.configuration.parameters,target_temperature_c:Number(this.$("#target").value),temperature_increase_c:Number(this.$("#progression-step").value)};
-      if(this.$("#progression-end").value==="")delete parameters.final_temperature_c;
-      else parameters.final_temperature_c=Number(this.$("#progression-end").value);
-      await this.updateParameters(parameters);return;
+      const parameters={temperature_increase_c:Number(this.$("#progression-step").value),final_temperature_c:this.$("#progression-end").value===""?null:Number(this.$("#progression-end").value)};
+      if(this.draft&&Object.hasOwn(this.draft,"target"))parameters.target_temperature_c=Number(this.$("#target").value);
+      await this.updateParameters(parameters,false,true);return;
     }
     if(action==="target")return this.changeTarget(Number(this.$("#target").value));
     if(action==="operation"){await this.api(`/${this.entry}/control`,"POST",{enabled:!this.state.operation_enabled});await this.refresh();}

@@ -2,8 +2,8 @@
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.const import UnitOfTemperature
 from .entity import SaunaEntity
-from .core.parameters import BY_KEY, Parameters, ParameterError
-from .presentation import parameter_error
+from .core.parameters import BY_KEY
+from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -59,10 +59,4 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         await self.runtime.set_operation(False)
 
     async def async_set_temperature(self, **kwargs):
-        self.runtime.check_configuration_change()
-        try:
-            parameters = Parameters({**self.entry.options["parameters"], "target_temperature_c": kwargs["temperature"]})
-        except ParameterError as error:
-            raise ValueError(parameter_error(error)) from None
-        self.hass.config_entries.async_update_entry(self.entry, options={
-            **self.entry.options, "parameters": parameters.as_dict()})
+        await async_set_entity_parameter(self.hass, self.entry, "target_temperature_c", kwargs["temperature"])
