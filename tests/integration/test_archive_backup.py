@@ -88,6 +88,9 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "restore_homeassistant": True}
             (Path(separate) / ".HA_RESTORE").write_text(json.dumps(instruction))
             self.assertTrue(await asyncio.to_thread(restore_backup, separate))
+            # Die wiederhergestellte HTTP-Konfiguration enthält denselben Port.
+            # Die Quellinstallation gibt ihn vor Start der getrennten Instanz frei.
+            await self.hass.async_stop(force=True)
             restored_hass, _ = await start_hass(separate)
             try:
                 entry = restored_hass.config_entries.async_get_entry(self.entry.entry_id)

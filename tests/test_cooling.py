@@ -26,6 +26,88 @@ def controller(**overrides):
 
 
 class CoolingTests(unittest.TestCase):
+    def test_door_opening_at_budget_boundary_waits_for_person_after_close(self):
+        for ready in (False, True):
+            with self.subTest(ready=ready):
+                c = controller(confirmation_minutes=20)
+                c.report_heating(True, T0)
+                if ready:
+                    c.set_temperature(85, at(1))
+                c.process(event("open-wait", Kind.DOOR_OPEN, 60))
+                self.assertIsNone(c.session.cooling.started_at)
+                self.assertEqual(c.cooling_wait_until, at(660))
+                c.process(event("close-wait", Kind.DOOR_CLOSE, 90))
+                self.assertEqual(c.cooling_wait_until, at(330))
+                c.advance(at(329))
+                self.assertIsNone(c.session.cooling.started_at)
+                # Ein Signal genau an der Grenze wird noch berücksichtigt.
+                c.process(event("person-wait", Kind.PERSON_STRONG, 330))
+                self.assertEqual(c.phase, "saunagang")
+                self.assertIsNone(c.cooling_wait_until)
+                self.assertIsNone(c.session.cooling.started_at)
+                self.assertEqual(c.session.timeline.active.started_at, at(90))
+
+    def test_no_person_starts_cooling_after_four_minutes_and_open_door_after_ten(self):
+        for close_at, deadline in ((90, 330), (None, 660)):
+            with self.subTest(close_at=close_at):
+                c = controller()
+                c.report_heating(True, T0)
+                c.process(event("open-wait", Kind.DOOR_OPEN, 60))
+                if close_at:
+                    c.process(event("close-wait", Kind.DOOR_CLOSE, close_at))
+                c.advance(at(deadline - 1))
+                self.assertIsNone(c.session.cooling.started_at)
+                c.advance(at(deadline))
+                self.assertEqual(c.phase, "zwangskühlung")
+                self.assertEqual(c.session.cooling.started_at, at(deadline))
+                self.assertIsNone(c.cooling_wait_until)
+                self.assertIsNone(c.session.timeline.active)
+                self.assertEqual(c.session.timeline.gang_count, 0)
+
+    def test_wait_is_configurable_and_does_not_create_cooling_before_budget(self):
+        c = controller(heating_minutes=20, person_wait_minutes=0.5, open_door_wait_minutes=1)
+        c.process(event("open-wait", Kind.DOOR_OPEN, 10))
+        self.assertEqual(c.cooling_wait_until, at(70))
+        c.process(event("close-wait", Kind.DOOR_CLOSE, 20))
+        self.assertEqual(c.cooling_wait_until, at(50))
+        c.advance(at(50))
+        self.assertIsNone(c.session.cooling)
+        self.assertIsNone(c.cooling_wait_until)
+
+    def test_running_cooling_is_not_retracted_by_door_or_late_person(self):
+        c = controller()
+        c.report_heating(True, T0)
+        c.advance(at(60))
+        c.process(event("open-too-late", Kind.DOOR_OPEN, 61))
+        c.process(event("close-too-late", Kind.DOOR_CLOSE, 62))
+        result = c.process(event("person-too-late", Kind.PERSON_STRONG, 63))
+        self.assertEqual(result.reason, "forced_cooling")
+        self.assertEqual(c.session.cooling.started_at, at(60))
+        self.assertIsNone(c.cooling_wait_until)
+
+    def test_retracted_person_releases_pending_cooling_without_another_wait(self):
+        c = controller(confirmation_minutes=1)
+        c.report_heating(True, T0)
+        c.process(event("open-wait", Kind.DOOR_OPEN, 59))
+        c.process(event("close-wait", Kind.DOOR_CLOSE, 60))
+        c.process(event("person-wait", Kind.PERSON_STRONG, 61))
+        c.advance(at(120))
+        self.assertEqual(c.phase, "zwangskühlung")
+        self.assertEqual(c.session.timeline.gang_count, 0)
+        self.assertEqual(c.session.timeline.completed, ())
+        self.assertIsNone(c.session.after_run)
+
+    def test_explicit_off_cancels_wait_and_duplicate_open_does_not_extend_it(self):
+        c = controller()
+        e = event("open-wait", Kind.DOOR_OPEN, 20)
+        c.process(e)
+        original = c.cooling_wait_until
+        c.process(e)
+        self.assertEqual(c.cooling_wait_until, original)
+        c.set_operation(False, at(30))
+        self.assertIsNone(c.cooling_wait_until)
+        self.assertFalse(c.last_decision.heat)
+
     def start(self, c):
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))

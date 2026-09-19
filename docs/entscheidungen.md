@@ -260,3 +260,19 @@ oder fehlende belastbare Temperatur unterbrechen den Kontinuitätsnachweis.
 Eine bereits angeforderte Kühlung wird auf die doppelte Gesamtvorgabe erweitert,
 nicht bei jeder Auswertung erneut verdoppelt. Die Mindestheizzeit sperrt diese
 Kühlung nicht. Technische Dauerausfälle bleiben ein gesonderter Schutzgrund.
+# Ergänzung 19.09.2026: Türöffnung vor fälliger Kühlung
+
+Eine erkannte Türöffnung beim Aufheizen oder in Bereitschaft hält eine fällige
+Zwangskühlung zurück. Bleibt die Tür offen, endet die Wartefrist standardmäßig
+10 Minuten nach der Öffnung. Bei rechtzeitiger Schließung läuft stattdessen die
+Personenerkennungsfrist von standardmäßig 4 Minuten ab Türschließung. Beide Werte
+sind zentral einstellbar und während der Session gesperrt. Weitere echte
+Türöffnungen werden erneut berücksichtigt; doppelt gelieferte Ereignisse
+verlängern keine Frist. Ohne Erkennung beginnt nach Ablauf die fällige Kühlung.
+Ohne fällige Kühlung hat der Fristablauf keine Schaltwirkung.
+
+Ein noch rechtzeitig erkanntes Personensignal erzeugt den üblichen vorläufigen
+Gang; ab dann gelten dessen Bestätigungs- und Kühlaufschubregeln. Wird dieser
+Gang aufgehoben, entfällt die Wartefrist und die ausstehende Kühlung beginnt.
+Eine laufende Kühlung oder ein Nachlauf werden durch Türereignisse nicht
+abgebrochen. Ausdrückliches Ausschalten hebt den Warteaufschub auf.

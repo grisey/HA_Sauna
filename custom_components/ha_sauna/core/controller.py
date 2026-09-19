@@ -62,6 +62,13 @@ class Controller:
         return self._session.started_at + timedelta(seconds=self.parameters.seconds("mechanical_timer_minutes"))
 
     @property
+    def cooling_wait_until(self):
+        if self._session is None:
+            return None
+        return next((d.due_at for d in self._session.deadlines
+                     if d.purpose == "person_opportunity"), None)
+
+    @property
     def phase(self) -> str:
         session = self._session
         if session is None or not session.operation_enabled:
@@ -146,7 +153,8 @@ class Controller:
             raise ValueError("Laufzeituhr darf nicht rückwärts laufen")
         while self._session is not None:
             due = sorted((d for d in self._session.deadlines if d.due_at <= at
-                          and (inclusive_confirmation or d.purpose != "confirmation" or d.due_at < at)),
+                          and (inclusive_confirmation or d.purpose not in
+                               ("confirmation", "person_opportunity") or d.due_at < at)),
                          key=lambda d: (d.due_at, d.purpose))
             if not due:
                 break
@@ -176,6 +184,20 @@ class Controller:
         # Fehlerhafte Eingänge dürfen nicht beiläufig Timer oder Zustand verändern.
         if event.effective_at < previous.started_at:
             raise ValueError("Ereignis liegt vor dem Sessionbeginn")
+        # Eine gerade erkannte Öffnung hat am gleichen Zeitpunkt Vorrang vor
+        # dem Heizbudget. Bereits laufende Kühlung wird niemals zurückgenommen.
+        if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+            apply(previous.timeline, event)  # Erst prüfen, dann Fristen ändern.
+            if self.phase in ("aufheizen", "bereit"):
+                parameter = None
+                if event.kind == Kind.DOOR_OPEN:
+                    parameter = "open_door_wait_minutes"
+                elif self.cooling_wait_until is not None and self.cooling_wait_until >= event.detected_at:
+                    parameter = "person_wait_minutes"
+                if parameter:
+                    due_at = event.effective_at + timedelta(seconds=self.parameters.seconds(parameter))
+                    if due_at > event.detected_at:
+                        self._schedule("person_opportunity", due_at, event.event_id)
         self.advance(event.detected_at, evaluate=False, inclusive_confirmation=False)
         previous = self._session
         if previous is None:
@@ -196,6 +218,8 @@ class Controller:
         timeline = apply(previous.timeline, event)
         self._session = replace(previous, timeline=timeline)
         active = timeline.active
+        if active is not None or event.kind == Kind.OPERATION_OFF:
+            self._cancel("person_opportunity")
         if active is None or active.infusion_events:
             self._cancel("confirmation")
         elif previous.timeline.active is None:
@@ -222,7 +246,8 @@ class Controller:
             self._session = replace(session, cooling=cycle)
         session = self._session
         if (session.cooling is not None and session.cooling.started_at is None
-                and session.timeline.active is None and session.after_run is None):
+                and session.timeline.active is None and session.after_run is None
+                and self.cooling_wait_until is None):
             self._start_cooling(at)
 
     def _ensure_temperature_cooling(self, at):

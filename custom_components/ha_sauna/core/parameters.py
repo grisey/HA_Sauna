@@ -62,6 +62,8 @@ DEFINITIONS = (
     ParameterDefinition("mechanical_timer_minutes", "Mechanischer Ofentimer", "min", default=240),
     ParameterDefinition("mechanical_timer_warning_minutes", "Vorwarnung Ofentimer", "min", optional=True),
     ParameterDefinition("forced_cooling_minutes", "Zwangskühlungsdauer", "min", default=15),
+    ParameterDefinition("person_wait_minutes", "Personenerkennung nach Türschließung abwarten", "min", default=4),
+    ParameterDefinition("open_door_wait_minutes", "Kühlaufschub bei offener Tür", "min", default=10),
     ParameterDefinition("after_run_minutes", "Nachlaufdauer", "min"),
     ParameterDefinition("readiness_offset_c", "Bereitschaftsaufschlag", "°C", True, default=5),
     ParameterDefinition("readiness_hysteresis_c", "Bereitschaftshysterese", "°C", default=3),

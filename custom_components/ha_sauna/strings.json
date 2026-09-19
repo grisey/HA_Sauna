@@ -74,7 +74,9 @@
           "infusion_window_seconds": "Experte: Aufgussfenster",
           "infusion_humidity": "Experte: Aufgussfeuchteanstieg",
           "infusion_temperature": "Experte: Aufgusstemperaturänderung",
-          "infusion_hold_seconds": "Experte: Aufgussbestätigung"
+          "infusion_hold_seconds": "Experte: Aufgussbestätigung",
+          "person_wait_minutes": "Personenerkennung nach Türschließung abwarten",
+          "open_door_wait_minutes": "Kühlaufschub bei offener Tür"
         }
       }
     },
@@ -187,7 +189,9 @@
           "infusion_window_seconds": "Experte: Aufgussfenster",
           "infusion_humidity": "Experte: Aufgussfeuchteanstieg",
           "infusion_temperature": "Experte: Aufgusstemperaturänderung",
-          "infusion_hold_seconds": "Experte: Aufgussbestätigung"
+          "infusion_hold_seconds": "Experte: Aufgussbestätigung",
+          "person_wait_minutes": "Personenerkennung nach Türschließung abwarten",
+          "open_door_wait_minutes": "Kühlaufschub bei offener Tür"
         }
       }
     },
