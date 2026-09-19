@@ -54,6 +54,7 @@ async def create_sauna(hass):
     flow = await hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Testsauna", **bindings})
     assert flow["step_id"] == "parameters", flow
     values = {d.key: 2.5 for d in DEFINITIONS}
+    values["heating_reduction_minutes"] = 0.5
     result = await hass.config_entries.flow.async_configure(flow["flow_id"], values)
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()

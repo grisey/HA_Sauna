@@ -15,10 +15,7 @@ class SaunaPhase(SaunaEntity, SensorEntity):
 
     @property
     def native_value(self):
-        session = self.runtime.session
-        if session is None or not session.operation_enabled:
-            return "aus"
-        return "saunagang" if session.timeline.active else "bereit"
+        return self.runtime.controller.phase
 
     @property
     def extra_state_attributes(self):
@@ -29,4 +26,9 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "gang_id": active.gang_id if active else None,
             "confirmation": active.confirmation if active else None,
             "gang_count": session.timeline.gang_count if session else 0,
+            "heating_seconds": session.heating.elapsed_seconds if session else 0,
+            "heating_limit_seconds": self.runtime.controller.heating_limit_seconds,
+            "readiness_target": self.runtime.controller.readiness_target,
+            "after_run_ends_at": session.after_run.ends_at.isoformat() if session and session.after_run else None,
+            "cooling_ends_at": session.cooling.ends_at.isoformat() if session and session.cooling and session.cooling.ends_at else None,
         }

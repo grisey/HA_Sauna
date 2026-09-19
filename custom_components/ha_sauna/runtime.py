@@ -23,7 +23,14 @@ class Configuration:
     def from_options(cls, options: Mapping) -> Configuration:
         if not isinstance(options, Mapping) or set(options) != {CONF_BINDINGS, CONF_PARAMETERS}:
             raise ValueError("Vollständige Entitäts- und Parameterkonfiguration erforderlich")
-        return cls(Bindings(options[CONF_BINDINGS]), Parameters(options[CONF_PARAMETERS]))
+        values = dict(options[CONF_PARAMETERS])
+        # Einmalige Übernahme der alten beidseitigen Bandbreite. Danach werden
+        # ausschließlich die neuen, gemeinsam gespeicherten Parameter konsumiert.
+        if "cold_tolerance_c" in values or "hot_tolerance_c" in values:
+            cold = values.pop("cold_tolerance_c", 0)
+            hot = values.pop("hot_tolerance_c", 0)
+            values.setdefault("readiness_hysteresis_c", cold + hot)
+        return cls(Bindings(options[CONF_BINDINGS]), Parameters(values))
 
     def as_options(self) -> dict:
         return {

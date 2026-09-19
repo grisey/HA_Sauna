@@ -22,10 +22,11 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         self.definition = definition
         self._attr_name = definition.label
         self._attr_native_unit_of_measurement = definition.unit
+        self._attr_native_max_value = definition.maximum
 
     @property
     def native_value(self):
-        return self.runtime.configuration.parameters.values[self.definition.key]
+        return self.runtime.configuration.parameters.values.get(self.definition.key)
 
     async def async_set_native_value(self, value):
         parameters = Parameters({

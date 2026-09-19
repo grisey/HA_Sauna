@@ -25,13 +25,19 @@
         "data": {
           "session_gap_minutes": "Session-Unterbrechungsfrist",
           "confirmation_minutes": "Aufgussbestätigungsfrist",
-          "heating_minutes": "Heizzeitgrenze",
+          "heating_minutes": "Heizzeit vor erster Kühlung",
           "heat_reset_minutes": "Heizzeit-Rücksetz-Auszeit",
           "thermostat_cooldown_minutes": "Thermostat-Cooldown",
           "forced_cooling_minutes": "Zwangskühlungsdauer",
           "after_run_minutes": "Nachlaufdauer",
-          "cold_tolerance_c": "Untere Hysterese",
-          "hot_tolerance_c": "Obere Hysterese"
+          "target_temperature_c": "Solltemperatur oben",
+          "safety_temperature_c": "Abschalttemperatur oben",
+          "sensor_timeout_seconds": "Messwert-Gültigkeitsdauer",
+          "feedback_timeout_seconds": "Rückmeldungsfrist",
+          "cooling_brightness_percent": "Licht bei Zwangskühlung",
+          "heating_reduction_minutes": "Einmalige Heizzeitverkürzung",
+          "readiness_offset_c": "Bereitschaftsaufschlag",
+          "readiness_hysteresis_c": "Bereitschaftshysterese"
         }
       }
     },
@@ -51,7 +57,9 @@
       "unknown_parameter": "Unbekannter Parameter.",
       "unknown_binding": "Unbekannte Entitätsrolle.",
       "invalid_parameters": "Die Parameter sind unvollständig oder ungültig.",
-      "invalid_bindings": "Die Entitätszuordnung ist ungültig."
+      "invalid_bindings": "Die Entitätszuordnung ist ungültig.",
+      "too_large": "Wert überschreitet die technische Eingabegrenze.",
+      "reduction_too_large": "Die Verkürzung muss kleiner als die anfängliche Heizzeit sein."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
@@ -90,13 +98,19 @@
         "data": {
           "session_gap_minutes": "Session-Unterbrechungsfrist",
           "confirmation_minutes": "Aufgussbestätigungsfrist",
-          "heating_minutes": "Heizzeitgrenze",
+          "heating_minutes": "Heizzeit vor erster Kühlung",
           "heat_reset_minutes": "Heizzeit-Rücksetz-Auszeit",
           "thermostat_cooldown_minutes": "Thermostat-Cooldown",
           "forced_cooling_minutes": "Zwangskühlungsdauer",
           "after_run_minutes": "Nachlaufdauer",
-          "cold_tolerance_c": "Untere Hysterese",
-          "hot_tolerance_c": "Obere Hysterese"
+          "target_temperature_c": "Solltemperatur oben",
+          "safety_temperature_c": "Abschalttemperatur oben",
+          "sensor_timeout_seconds": "Messwert-Gültigkeitsdauer",
+          "feedback_timeout_seconds": "Rückmeldungsfrist",
+          "cooling_brightness_percent": "Licht bei Zwangskühlung",
+          "heating_reduction_minutes": "Einmalige Heizzeitverkürzung",
+          "readiness_offset_c": "Bereitschaftsaufschlag",
+          "readiness_hysteresis_c": "Bereitschaftshysterese"
         }
       }
     },
@@ -116,7 +130,9 @@
       "unknown_parameter": "Unbekannter Parameter.",
       "unknown_binding": "Unbekannte Entitätsrolle.",
       "invalid_parameters": "Die Parameter sind unvollständig oder ungültig.",
-      "invalid_bindings": "Die Entitätszuordnung ist ungültig."
+      "invalid_bindings": "Die Entitätszuordnung ist ungültig.",
+      "too_large": "Wert überschreitet die technische Eingabegrenze.",
+      "reduction_too_large": "Die Verkürzung muss kleiner als die anfängliche Heizzeit sein."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",

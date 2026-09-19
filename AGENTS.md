@@ -1,5 +1,32 @@
 # Arbeitsregeln
 
+## Vorrangige Nutzerpräzisierung vom 19.09.2026
+
+Diese Regeln ersetzen die älteren Aussagen zur einheitlichen Heizzeit und zur
+Thermostatbandbreite weiter unten:
+
+- Solltemperatur bezieht sich auf den oberen Sensor während des Gangs.
+  Bereitschaftsziel = Solltemperatur + einstellbarer Aufschlag (Standard 5 °C).
+  Erst beim Erreichen dieses Ziels wird Bereitschaft gemeldet. Ausschalten am
+  Bereitschaftsziel, Wiedereinschalten um die einstellbare Hysterese darunter
+  (Standard 3 °C), unter Beachtung des separaten Thermostat-Cooldowns.
+- Tatsächliches Heizbudget zunächst standardmäßig 90 Minuten. Nach dem ersten
+  abgeschlossenen Kühlvorgang derselben Session wird der eingestellte Wert
+  einmalig um standardmäßig 30 Minuten reduziert. Danach bleibt er konstant;
+  eine neue Session beginnt wieder mit dem ursprünglichen Wert. Die verbrauchte
+  Heizzeit des nächsten Intervalls beginnt bei null. Eine reine lokale
+  Rücksetzung nach Ofen-Auszeit gilt nicht als abgeschlossene Kühlung.
+- Zwangskühlung dauert standardmäßig 15 Minuten. Nachlauf hält den Ofen aus
+  und sperrt alle neuen Gangstarts. Nachlaufanrechnung bleibt vollständig und
+  einmalig, sein Endzeitpunkt bleibt auch bei Betrieb-Aus unverändert.
+- Alle genannten Zahlen sind änderbare Ausgangswerte in der zentralen
+  Parameterverwaltung. Die Grundkonfiguration bleibt während einer gesamten
+  Session einschließlich kurzer Betriebsunterbrechungen gesperrt.
+- Fehlende Schutzwerte werden nicht durch vermeintlich sichere Defaults ersetzt.
+  Ohne gültige obere Temperatur und konfigurierte Abschalttemperatur bleibt
+  die Heizentscheidung aus; Ein-Sensor-Erkennung ist davon getrennt.
+
+
 - Maßgeblich sind `docs/entscheidungen.md`, Gang-, Betriebs-, Parameter- und
   Zeitmodell sowie der festgehaltene Kandidat. Spätere Nutzerkorrekturen gehen vor.
 - Die Besprechung bleibt schrittweise und jeweils bei einem Thema. Regeln und

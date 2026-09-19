@@ -67,16 +67,51 @@ class Deadline:
 
 
 @dataclass(frozen=True)
+class HeatingInterval:
+    started_at: datetime
+    ended_at: datetime | None = None
+    end_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class HeatingTime:
     """Anfangsdaten, noch keine Heizzeit- oder Kühlungsberechnung."""
 
     elapsed_seconds: float = 0.0
+    reported_heating: bool | None = None
+    accounted_at: datetime | None = None
+    off_since: datetime | None = None
+    last_reset_at: datetime | None = None
+    intervals: tuple[HeatingInterval, ...] = ()
 
     def __post_init__(self) -> None:
         if (isinstance(self.elapsed_seconds, bool)
                 or not isinstance(self.elapsed_seconds, (int, float))
                 or not isfinite(self.elapsed_seconds) or self.elapsed_seconds < 0):
             raise ValueError("Heizzeit muss endlich und nicht negativ sein")
+
+
+@dataclass(frozen=True)
+class TimedPhase:
+    phase_id: str
+    started_at: datetime
+    ends_at: datetime
+
+
+@dataclass(frozen=True)
+class CoolingCycle:
+    cycle_id: str
+    requested_at: datetime
+    duration_seconds: float
+    credited_seconds: float = 0
+    started_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ThermostatState:
+    demand: bool = False
+    cooldown_until: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +124,12 @@ class Session:
     operation_enabled: bool = False
     operation_off_at: datetime | None = None
     ended_at: datetime | None = None
+    thermostat: ThermostatState = field(default_factory=ThermostatState)
+    after_run: TimedPhase | None = None
+    after_run_history: tuple[TimedPhase, ...] = ()
+    cooling: CoolingCycle | None = None
+    cooling_history: tuple[CoolingCycle, ...] = ()
+    ready_at: datetime | None = None
 
     def __post_init__(self) -> None:
         purposes = set()

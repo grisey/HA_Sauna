@@ -29,8 +29,11 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
 
 def parameter_schema() -> vol.Schema:
     return vol.Schema({
-        vol.Required(definition.key): selector.NumberSelector({
+        (vol.Optional if definition.optional else vol.Required)(
+            definition.key, default=definition.default if definition.default is not None else vol.UNDEFINED,
+        ): selector.NumberSelector({
             "min": 0,
+            "max": definition.maximum,
             "step": "any",
             "mode": selector.NumberSelectorMode.BOX,
             "unit_of_measurement": definition.unit,

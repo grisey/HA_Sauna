@@ -84,3 +84,24 @@ Episode starten keine neue Frist; Aufguss bleibt unabhängig verwertbar.
 Grundkonfiguration ist während der gesamten Session zentral gesperrt.
 `tests/test_operation.py` und der zusätzliche echte HA-Betriebsschaltertest
 prüfen diese Ketten. Der CI-Abschluss dieses Pakets wird separat nachgetragen.
+
+## Paket B2: Heizzeit, Bereitschaft, Nachlauf und Kühlung
+
+`core/heating.py` zählt ausschließlich rückgemeldetes Heizen, trennt unbekannt
+von nachgewiesen aus und erhält Heizintervalle bei lokaler Rücksetzung.
+`core/thermostat.py` verwendet Solltemperatur plus Bereitschaftsaufschlag,
+Hysterese und separaten Cooldown. Sicherheitsgrenze und Betrieb-Aus bleiben
+auch im Gang wirksam. Fehlende Temperaturkonfiguration sperrt die Heizung.
+
+`tests/test_cooling.py` führt vollständige Gang-/Fristketten aus: fortgesetzter
+Gang bei Budgetende, Nachlauf kürzer/gleich/länger als Kühlung, einmalige
+Gutschrift, Sperre neuer Gänge einschließlich rückwirkender Startzuordnung,
+unveränderter Nachlauf bei Aus/Ein, einmalige Budgetreduktion und neue Session.
+`test_heating.py` und `test_thermostat.py` prüfen Rückmeldung und Regellogik.
+
+Lokaler reiner Standardbibliothek-Lauf mit `python3.14 -S -m unittest discover
+-s tests -v`: 109 gesammelt, 108 bestanden, privates Replay in diesem Lauf
+nicht aktiviert (ein Skip), Prozess beendet mit Exit 0. Kein HA-Import und
+keine nativen HA-Abhängigkeiten geladen. HA-Nachweis ausschließlich Linux-CI;
+deren Ergebnis wird erst nach tatsächlichem Abschluss ergänzt.
+Noch kein Aktorpfad, Messdetektor, Archiv oder Browsernachweis in diesem Paket.

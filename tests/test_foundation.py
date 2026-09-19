@@ -20,7 +20,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({definition.key: 2.5 for definition in DEFINITIONS})
+    return Parameters({**{definition.key: 2.5 for definition in DEFINITIONS},
+                       "heating_reduction_minutes": 0.5})
 
 
 def bindings():
@@ -77,7 +78,7 @@ class ParameterTests(unittest.TestCase):
     def test_seconds_are_derived_from_the_only_value(self):
         self.assertEqual(parameters().seconds("heating_minutes"), 150)
         with self.assertRaises(ParameterError):
-            parameters().seconds("cold_tolerance_c")
+            parameters().seconds("readiness_hysteresis_c")
 
     def test_caller_cannot_mutate_parameters(self):
         original = parameters().as_dict()

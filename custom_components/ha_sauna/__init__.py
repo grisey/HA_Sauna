@@ -21,6 +21,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime
     except (ValueError, TypeError) as error:
         raise ConfigEntryError("Ungültige HA-Sauna-Konfiguration") from error
     entry.runtime_data = SaunaRuntime(configuration)
+    if entry.options != configuration.as_options():
+        hass.config_entries.async_update_entry(entry, options=configuration.as_options())
     await hass.config_entries.async_forward_entry_setups(entry, ["number", "sensor", "switch"])
     entry.runtime_data.on_close(async_track_time_interval(hass, entry.runtime_data.tick, timedelta(seconds=1)))
     entry.async_on_unload(entry.add_update_listener(async_options_updated))
