@@ -18,8 +18,7 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
              temperature: float | None, enabled: bool, gang: bool,
              cooling: bool, after_run: bool, protection: tuple[str, ...] = (),
              inhibits: tuple[str, ...] = (),
-             heating_since: datetime | None = None, target_temperature: float | None = None,
-             pending_regulation_failure: bool = False):
+             heating_since: datetime | None = None, target_temperature: float | None = None):
     values = parameters.values
     def result(demand, reason, cooldown=state.cooldown_until):
         return replace(state, demand=demand, cooldown_until=cooldown), Decision(now, demand, reason)
@@ -39,12 +38,6 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
     if after_run:
         return result(False, "after_run")
     if temperature is None or not isfinite(temperature):
-        # Während der bestehenden Bestätigungsfrist darf nur ein tatsächlich
-        # rückgemeldetes, bereits laufendes Heizen weiterlaufen. Ein Start,
-        # eine Wiederaufnahme nach AUS oder eine unbestätigte Rückmeldung bleibt
-        # ohne gültige Regeltemperatur ausgeschlossen.
-        if pending_regulation_failure and state.demand and heating_since is not None:
-            return result(True, "pending_regulation_temperature")
         return result(False, "upper_temperature_unavailable")
     if gang:
         return result(True, "gang")

@@ -445,10 +445,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("upper_temperature", self.runtime.device.faults)
         self.assertEqual(len(self.runtime.detector.active_positions), 2)
 
-    async def test_expired_temperature_does_not_restart_completed_minimum_heating(self):
+    async def prepare_temperature_reporting_gap(self, validity_seconds):
         from custom_components.ha_sauna.core.display import phase_timer
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
-            "sensor_timeout_seconds": 5, "fault_confirmation_seconds": 120,
+            "sensor_timeout_seconds": validity_seconds, "fault_confirmation_seconds": 120,
             "minimum_heating_minutes": 10, "heating_minutes": 90}}
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.hass.async_block_till_done()
@@ -457,18 +457,20 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        started_at = self.runtime.session.heating.intervals[0].started_at
         self.now = self.base + timedelta(seconds=610)
         await self.set_source("upper_temperature", 70)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "heating")
         self.heater.calls.clear()
 
+    async def test_suitable_validity_preserves_completed_minimum_heating_across_reporting_gap(self):
+        from custom_components.ha_sauna.core.display import phase_timer
+        await self.prepare_temperature_reporting_gap(30)
+        started_at = self.runtime.session.heating.intervals[0].started_at
         await self.time(616)
-        self.assertIsNone(self.runtime.controller.temperature)
-        self.assertEqual(self.runtime.device.faults["regulation_temperature_unavailable"], "pending")
+        self.assertEqual(self.runtime.controller.temperature, 70)
+        self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
         self.assertFalse(self.runtime.controller.protection)
-        self.assertEqual(self.runtime.controller.last_decision.reason, "pending_regulation_temperature")
         self.now = self.base + timedelta(seconds=616.2)
         await self.set_source("upper_temperature", 71)
         self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
@@ -480,16 +482,33 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "heating")
         self.assertAlmostEqual(self.runtime.session.heating.elapsed_seconds, 616.2, places=3)
 
-    async def test_persistent_temperature_failure_stops_and_latches_after_confirmation(self):
+    async def test_too_short_validity_causes_real_switching_and_new_minimum_heating(self):
+        from custom_components.ha_sauna.core.display import phase_timer
+        await self.prepare_temperature_reporting_gap(5)
+        await self.time(616)
+        self.assertIsNone(self.runtime.controller.temperature)
+        self.assertFalse(self.heater.is_on)
+        self.assertEqual(self.runtime.controller.last_decision.reason, "upper_temperature_unavailable")
+        self.assertFalse(self.runtime.controller.protection)
+        self.now = self.base + timedelta(seconds=616.2)
+        await self.set_source("upper_temperature", 71)
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.heater.calls, [False, True])
+        self.assertEqual(len(self.runtime.session.heating.intervals), 2)
+        self.assertEqual(self.runtime.session.heating.intervals[-1].started_at, self.now)
+        self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "minimum_heating")
+        self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
+
+    async def test_expired_temperature_stops_immediately_and_persistent_failure_latches(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         await self.set_source("upper_temperature", "unavailable")
         await self.time(31)
         self.assertIsNone(self.runtime.controller.temperature)
         self.assertEqual(self.runtime.device.faults["regulation_temperature_unavailable"], "pending")
-        self.assertTrue(self.heater.is_on)
+        self.assertFalse(self.heater.is_on)
         await self.time(35.9)
-        self.assertTrue(self.heater.is_on)
+        self.assertFalse(self.heater.is_on)
         await self.time(36)
         self.assertFalse(self.heater.is_on)
         self.assertIn("regulation_temperature_unavailable", self.runtime.controller.protection)
@@ -502,28 +521,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(True, self.heater.calls)
         self.assertEqual(len(self.runtime.session.heating.intervals), 1)
 
-    async def test_pending_temperature_failure_cannot_override_off_or_restart_without_value(self):
-        await self.runtime.set_operation(True)
-        await self.hass.async_block_till_done()
-        await self.set_source("upper_temperature", "unavailable")
-        await self.time(31)
-        self.assertTrue(self.heater.is_on)
-        await self.runtime.set_operation(False)
-        await self.hass.async_block_till_done()
-        self.assertFalse(self.heater.is_on)
-        self.heater.calls.clear()
-        with self.assertRaisesRegex(ValueError, "Temperaturwert"):
-            await self.runtime.set_operation(True)
-        self.assertFalse(self.runtime.session.operation_enabled)
-        self.assertFalse(self.heater.is_on)
-        self.assertNotIn(True, self.heater.calls)
-        await self.set_source("upper_temperature", 70)
-        await self.runtime.set_operation(True)
-        await self.hass.async_block_till_done()
-        self.assertTrue(self.heater.is_on)
-        self.assertEqual(len(self.runtime.session.heating.intervals), 2)
-
-    async def test_pending_temperature_cannot_restart_idle_heater_after_target_change(self):
+    async def test_expired_temperature_cannot_restart_idle_heater_after_target_change(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         self.now = self.base + timedelta(seconds=1)

@@ -33,7 +33,6 @@ class Controller:
         self._last_at: datetime | None = None
         # Reale Messlage und Schutz bleiben außerhalb der Session-Rücksetzung.
         self.temperature: float | None = None
-        self.pending_regulation_failure = False
         self.feedback: bool | None = None
         self.contactor: bool | None = None
         self.power_w: float | None = None
@@ -173,10 +172,9 @@ class Controller:
         self._evaluate(at)
         return self._session
 
-    def set_temperature(self, value: float | None, at: datetime, *, pending_regulation_failure=False):
+    def set_temperature(self, value: float | None, at: datetime):
         self.advance(at, evaluate=False)
         self.temperature = value
-        self.pending_regulation_failure = pending_regulation_failure
         limit = self.parameters.values.get("safety_temperature_c")
         if value is not None and limit is not None and value > limit:
             if self.overtemperature_since is None:
@@ -435,8 +433,7 @@ class Controller:
                 after_run=session.after_run is not None, protection=tuple(sorted(self.protection)),
                 inhibits=tuple(sorted(self.inhibits)),
                 heating_since=(session.heating.intervals[-1].started_at
-                    if session.heating.reported_heating is True else None),
-                pending_regulation_failure=self.pending_regulation_failure)
+                    if session.heating.reported_heating is True else None))
             self._session = replace(session, thermostat=state)
         if self.last_decision is None or (decision.heat, decision.reason) != (self.last_decision.heat, self.last_decision.reason):
             self.decisions.append(decision)

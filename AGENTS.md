@@ -11,11 +11,12 @@ Sessionabbruch. Die jüngste Türwartefrist beträgt standardmäßig 4 Minuten n
 Schließung beziehungsweise 10 Minuten bei offen bleibender Tür.
 Für die erste Testinstallation zählt der Heizzähler ohne optionalen Leistungsmesser
 bei Schütz EIN. Die Temperaturkrümmungs-Erkennung ist ausdrücklich zurückgestellt.
-Bei kurz fehlender oberer Regeltemperatur bleibt nur bereits tatsächlich laufendes
-Heizen bis zum Ende der bestehenden Ausfall-Bestätigungsfrist erhalten. Der Wert
-bleibt ungültig; ohne gültigen Wert darf kein neuer Heizvorgang starten. Anhaltender
-Ausfall schaltet nach der Frist aus und verriegelt. Betrieb-Aus, Nachlauf, laufende
-Kühlung und andere Heizsperren haben Vorrang. Ausdrücklich am 20.09.2026 freigegeben.
+Die Messwert-Gültigkeit muss die normalen Meldeabstände abdecken. Eine zu kurze
+Frist verursacht reale Heizunterbrechungen und danach eine neue Mindestheizzeit.
+Keine zusätzliche Überbrückung nach Ablauf der Gültigkeit: Der Nutzer hat diesen
+Ansatz nach Klärung der zu kurzen lokalen Frist verworfen. Gespeicherte Werte
+nicht stillschweigend überschreiben. Bereits gestartete Kühlung und Nachlauf
+gehen auch bei widersprüchlichem Gangsignal vor.
 Leistungsmessung bleibt optional; der mechanische Timer ist reine Anzeige.
 Die Timeranzeige zählt nur bei Betrieb-Ein und bestätigtem Schütz-Ein. Bei
 Schütz-Aus oder unbekannter Schützstellung hält sie auch während Heizpause,

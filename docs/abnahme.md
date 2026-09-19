@@ -2,27 +2,24 @@
 
 ## Messlücken und Mindestheizzeit vom 20.09.2026
 
-Eine kurz überschrittene Messwertgültigkeit führte bisher zum Ausschalten und
-sofortigen Wiedereinschalten bei Rückkehr des Messwerts. Damit entstand ein neuer
-Heizintervallstart einschließlich neuer Mindestheizzeit. Die ausdrücklich
-freigegebene Korrektur erhält bereits laufendes, rückgemeldetes Heizen während
-der bestehenden Fehler-Bestätigungsfrist. Fehlende Regeltemperatur bleibt als
-solche sichtbar. Neue Heizstarts bleiben gesperrt; bestätigter Dauerausfall,
-Nachlauf, gestartete Kühlung, Betrieb-Aus und andere Sperren gehen vor.
+Der untersuchte Aus-/Ein-Zyklus entstand durch eine zu kurze gespeicherte
+Messwert-Gültigkeit, obwohl gültige Sensormeldungen weiter eintrafen. Eine passende
+Gültigkeitsfrist genügt; die zwischenzeitlich geprüfte zusätzliche Überbrückung
+nach Gültigkeitsende wurde auf Nutzerhinweis wieder entfernt. Der Standard von
+180 Sekunden bleibt erhalten, ebenso vorhandene abweichende Einstellungen.
+Die Feldhilfe erklärt den Unterschied zur späteren Fehlerverriegelung.
 
-Lokal **177 Kerntests bestanden, 2 private Replay-Skips**, 179 gesammelt.
-Python-/JavaScript-Syntax, Sprachdateien und `git diff --check` sind geprüft.
-Die HA-Regressionen prüfen die kurze Messlücke nach bereits abgelaufener
-Mindestheizzeit, die verriegelte Abschaltung nach anhaltendem Ausfall,
-ausdrückliches Ausschalten mit anschließend blockiertem Neustart und eine
-Sollwerterhöhung bei fehlender Temperatur und zuvor ausgeschaltetem Ofen.
-Geprüfter Code:
-[`16b5f23`](https://github.com/grisey/HA_Sauna/commit/16b5f23fe8aa52f321db381d91ac7a957b64a0b2).
-[CI 35477051428](https://github.com/grisey/HA_Sauna/actions/runs/35477051428)
-und der zugehörige PR-Lauf sind vollständig erfolgreich: **177 Kerntests
-bestanden, 2 private Replay-Skips; 11 HA-API-Smokes; 36 echte HA-Integrationstests;
-4 Browserabläufe**. Alle vier neuen Gerätepfade bestehen. Keine reale Installation
-oder Gerätebetätigung durch den Entwicklungszugriff.
+Die HA-Regressionen vergleichen denselben synthetischen Meldeabstand mit
+5 Sekunden und 30 Sekunden Gültigkeit: zu kurze Gültigkeit erzeugt einen echten
+Aus-/Ein-Zyklus samt neuer Mindestheizzeit; passende Gültigkeit erhält den
+Heizintervallstart auch nach bereits abgelaufener Mindestheizzeit. Weitere
+Gerätepfade prüfen sofortiges Pausieren nach tatsächlichem Gültigkeitsende,
+spätere Verriegelung bei Dauerausfall und den gesperrten Neustart nach einer
+Sollwerterhöhung ohne gültige Temperatur. Bereits gestartete Kühlung und Nachlauf
+gehen auch bei widersprüchlichem Gangsignal vor; noch nicht gestartete Kühlung
+wartet weiterhin auf das Gangende. Nachweise für den abschließenden Stand folgen
+aus der Linux-CI. Keine reale Installation oder Gerätebetätigung durch den
+Entwicklungszugriff.
 
 ## Zustandsabhängige Erkennung vom 20.09.2026
 

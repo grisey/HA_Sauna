@@ -71,13 +71,13 @@ Keine Rückdatierung realer Schaltbefehle. Konfiguration, Schutzgründe und Arch
 Erkennung verwendet beide Messhöhen getrennt. Ein-Sensor-Erkennung bleibt möglich
 mit Fehleranzeige. Keine Temperaturmittelung oder erfundener Höhenoffset, keine
 IBS-Sensoren. Die Heizregelung benötigt einen gültigen oberen Wert; eine sichere
-untere Ersatztemperatur wurde nicht festgelegt und wird nicht angenommen. Die
-ausdrücklich freigegebene Überbrückung kurzer Messlücken erhält ausschließlich
-bereits laufendes Heizen während der bestehenden Ausfall-Bestätigungsfrist;
-der Messwert bleibt ungültig und ein neuer Heizstart gesperrt. Anhaltender Ausfall
-schaltet anschließend aus und verriegelt. Nachlauf, laufende Kühlung, Betrieb-Aus
-und andere Heizsperren behalten ihren Vorrang. Dadurch entsteht bei einer kurzen
-Messlücke kein Aus-/Ein-Zyklus mit neu beginnender Mindestheizzeit.
+untere Ersatztemperatur wurde nicht festgelegt und wird nicht angenommen.
+Die normale Messwertgültigkeit muss zum Meldeabstand passen. Nach Klärung einer
+zu kurzen lokalen Gültigkeitsfrist wurde die zusätzliche Überbrückung nach
+Gültigkeitsende verworfen. Die Fehler-Bestätigungsfrist betrifft ausschließlich
+die spätere Verriegelung. Bei fehlender gültiger Regeltemperatur pausiert die
+Heizung sofort. Bereits gestartete Kühlung und Nachlauf haben auch bei einem
+widersprüchlichen Gangsignal Vorrang.
 
 Vollauflösung und Ereignisrevisionen in SQLite unter HA-Konfiguration. Echte
 HA-Backup-Einbindung mit Restore-Prüfung. Authentifizierter ZIP-Download in den
