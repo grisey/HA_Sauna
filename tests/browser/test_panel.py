@@ -1,6 +1,5 @@
 """Chromium inside the real HA frontend; no mock hass object or fake API."""
 import base64
-import asyncio
 from datetime import timedelta
 import io
 import json
@@ -17,13 +16,15 @@ from homeassistant.components.onboarding import OnboardingStorage
 from homeassistant.components.onboarding.const import STEPS
 from homeassistant.setup import async_setup_component
 from homeassistant.helpers.service import async_get_all_descriptions
-from homeassistant.helpers import recorder as recorder_helper
 from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
+    # HA's shell queries recorder/info even on a custom panel. Start the real
+    # Recorder before entity platforms; never suppress or stub its WS response.
+    with_recorder = True
     set_source = device_tests.DevicePathTests.set_source
 
     async def asyncSetUp(self):
@@ -35,12 +36,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         if http_store.pending:
             await http_store.async_promote_pending()
         await OnboardingStorage(self.hass, 4, "onboarding", private=True).async_save({"done": STEPS})
-        # HA's shell queries recorder/info even on a custom panel. Use the real
-        # bootstrap initialization and a real isolated database; never suppress
-        # an unknown-command rejection or replace the endpoint with a stub.
-        recorder_helper.async_initialize_recorder(self.hass)
-        self.assertTrue(await async_setup_component(self.hass, "recorder", {"recorder": {}}))
-        await asyncio.wait_for(recorder_helper.get_instance(self.hass).async_recorder_ready.wait(), 30)
         for component in ("labs", "brands"):
             self.assertTrue(await async_setup_component(self.hass, component, {}))
         self.assertTrue(await async_setup_component(self.hass, "frontend", {}))

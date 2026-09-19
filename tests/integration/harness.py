@@ -14,7 +14,7 @@ from custom_components.ha_sauna.core.parameters import DEFINITIONS
 ROOT = Path(__file__).resolve().parents[2]
 
 
-async def start_hass(directory=None):
+async def start_hass(directory=None, *, with_recorder=False):
     temp = tempfile.TemporaryDirectory(prefix="ha-sauna-test-") if directory is None else None
     path = Path(temp.name if temp else directory)
     path.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,16 @@ async def start_hass(directory=None):
         "server_host": "127.0.0.1", "server_port": port}})
     assert await async_setup_component(hass, "homeassistant", {})
     assert await async_setup_component(hass, "persistent_notification", {})
+    if with_recorder:
+        # As in HA bootstrap, install Recorder before entity platforms register
+        # their entity-registry listeners. Its database stays in the temp path.
+        from homeassistant.helpers import recorder as recorder_helper
+        recorder_helper.async_initialize_recorder(hass)
+        assert await async_setup_component(hass, "recorder", {"recorder": {}})
     await hass.async_start()
+    if with_recorder:
+        import asyncio
+        await asyncio.wait_for(recorder_helper.get_instance(hass).async_recorder_ready.wait(), 30)
     return hass, temp
 
 
