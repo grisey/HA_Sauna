@@ -8,6 +8,15 @@ const duration = v => v == null ? "–" : `${Math.floor(Math.max(0,v)/60)}:${Str
 const phases = {aus:"Aus",aufheizen:"Aufheizen",bereit:"Bereit",saunagang:"Saunagang",nachlauf:"Nachlauf",zwangskühlung:"Zwangskühlung"};
 const events = {door_open:"Tür geöffnet",door_close:"Tür geschlossen",person_strong:"Person erkannt",person_weak:"Person erkannt (schwach)",infusion:"Aufguss",ventilation_confirmed:"Durchlüften bestätigt",operation_off:"Betrieb ausgeschaltet",confirmation_expired:"Vorläufigen Gang aufgehoben"};
 const signalText = {door_open:"Türöffnung",door_close:"Türschließung",door:"Tür",infusion:"Aufguss",strong:"Deutliches Personensignal",weak:"Schwaches Personensignal"};
+const errorText = error => {
+  // hass.callApi legt die Antwort der Integration in body ab; error enthält
+  // lediglich den allgemeinen HTTP-Fehler (etwa „Response error: 409“).
+  const detail=error?.body?.error||error?.body?.message;
+  if(typeof detail==="string"&&detail.trim())return detail;
+  if(error?.status_code)return ({401:"Die Anmeldung ist abgelaufen. Bitte Home Assistant neu laden.",403:"Für diese Änderung sind Administratorrechte erforderlich.",409:"Die Aktion ist im aktuellen Zustand nicht möglich. Bitte die Hinweise zur Einrichtung prüfen.",503:"Die Sauna-Integration wird gerade neu geladen. Bitte kurz warten."})[error.status_code]||`Die Anfrage konnte nicht verarbeitet werden (HTTP ${error.status_code}).`;
+  if(error?.error==="Request error")return "Home Assistant ist zurzeit nicht erreichbar. Bitte die Verbindung prüfen.";
+  return error?.message||error?.error||String(error);
+};
 
 class SaunaPanel extends HTMLElement {
   constructor() {
@@ -55,7 +64,11 @@ class SaunaPanel extends HTMLElement {
     this.shadowRoot.addEventListener("wheel",e=>{if(!e.target.closest("svg.session-chart"))return;e.preventDefault();this.zoom=Math.max(1,Math.min(256,this.zoom*(e.deltaY<0?1.25:.8)));this.drawHistory();},{passive:false});
     this.shadowRoot.addEventListener("submit",e=>{e.preventDefault();this.saveSettings().catch(err=>this.message(err));});
   }
-  message(error) { const node=this.$("#message"); node.className=error?"notice error":"";node.textContent=error?(error.message||error.error||String(error)):""; }
+  message(error,source="action") {
+    this.messages??={};this.messages[source]=error;
+    const shown=this.messages.action||this.messages.refresh;
+    const node=this.$("#message");node.className=shown?"notice error":"";node.textContent=shown?errorText(shown):"";
+  }
   async refresh() {
     if(this.busy || !this.isConnected)return;
     this.busy=true; const generation=this.generation;
@@ -89,8 +102,8 @@ class SaunaPanel extends HTMLElement {
         this.shown={session:this.selected==="live"?(state.session||cache.session):cache.session,records:cache.records};
       }else this.shown=null;
       if(!(this.shadowRoot.activeElement?.tagName==="INPUT"&&this.shadowRoot.activeElement.closest("#current")))this.drawCurrent();
-      if(!this.$("#tooltip")||this.$("#tooltip").hidden)this.drawHistory();this.drawSettings();this.message(null);
-    }catch(error){this.message(error);}finally{this.busy=false;}
+      if(!this.$("#tooltip")||this.$("#tooltip").hidden)this.drawHistory();this.drawSettings();this.message(null,"refresh");
+    }catch(error){this.message(error,"refresh");}finally{this.busy=false;}
   }
   drawCurrent() {
     const progressionOpen=this.$("#current details")?.open;
@@ -267,10 +280,12 @@ class SaunaPanel extends HTMLElement {
     this.$("#configuration-lock").textContent=state.configuration_locked?"Temperatur- und Ablaufeinstellungen bleiben bis zum Ende der Saunasitzung gesperrt, auch während einer kurzen Unterbrechung.":"Änderungen gelten für die nächste Saunasitzung. Felder ohne Vorgabe bitte passend zur Anlage einstellen.";
   }
   async saveSettings() {
+    this.message(null);
     const values={};for(const [key,value] of new FormData(this.$("form")))if(value!=="")values[key]=Number(value);
     await this.updateParameters(values);
   }
   async action(action) {
+    this.message(null);
     if(action==="configure"){await this.action("details");return this.action("settings");}
     if(action==="logging"){await this.api(`/${this.entry}/logging`,"POST",{level:this.$("#log-level").value});await this.refresh();return;}
     if(action==="menu"){this.dispatchEvent(new CustomEvent("hass-toggle-menu",{bubbles:true,composed:true}));return;}
