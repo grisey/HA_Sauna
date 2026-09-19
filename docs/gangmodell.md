@@ -70,20 +70,19 @@ Türbetätigung desselben Gangs und zusätzliche Personenmeldungen verschieben
 seinen Beginn und damit die Frist nicht. Die ungefähren 15 Minuten bewirken
 keinen automatischen Abschluss eines bestätigten Gangs.
 
-### Besprochener Ablaufvorschlag, Details noch nicht ausdrücklich bestätigt
+### Festlegung vom 19.09.2026 und Umsetzung
 
 Bei Aufguss innerhalb der Frist ist die Bestätigungsanforderung erfüllt.
-Ohne Aufguss soll nach dem bisherigen Vorschlag die vorläufige Zuordnung samt
-besonderer Heizbehandlung aufgehoben werden; die normale Regelung darf wieder
-arbeiten, ohne Gangzählung oder Gang-Nachlauf. Ein weiteres Personensignal
-derselben Episode soll keine neue volle Frist vergeben. Ein späterer eindeutiger
-Aufguss soll unabhängig davon verwertbar bleiben und auf die erhaltene
-Schließungszuordnung zugreifen können.
+Ohne Aufguss wird die vorläufige Zuordnung vollständig aufgehoben, als sei kein
+Gang gestartet worden. Kein abgeschlossener Gang, keine Zählung und kein
+Gang-Nachlauf entstehen daraus. Ein weiteres Personensignal derselben Episode
+vergibt keine neue Frist. Ein späterer eindeutiger Aufguss bleibt verwertbar
+und kann die erhaltene Schließung als Beginn verwenden.
 
-Diese Folgen, die genaue Aufhebung beziehungsweise spätere Korrektur der
-Gangzuordnung und erneutes Durchlüften vor Aufguss werden vor Implementierung
-abschließend festgelegt. Der vorhandene `UnresolvedTransition` kennzeichnet
-weiterhin den noch nicht definierten Durchlüftungsübergang ohne Aufguss.
+Bestätigtes Durchlüften vor dem ersten Aufguss hebt den vorläufigen Gang ebenso
+vollständig auf. Der vorhandene Gangkern führt diese Regeln selbst aus;
+`retracted` enthält nur die Diagnose der verworfenen Erkennung. Die tatsächliche
+Gerätewirkung wird separat im Regelungs-/Adapterpaket geprüft.
 
 ## 5. Heizbehandlung, Fortsetzung und Ende
 

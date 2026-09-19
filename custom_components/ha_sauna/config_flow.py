@@ -128,7 +128,13 @@ class SaunaOptionsFlow(OptionsFlow):
 
     def _has_session(self) -> bool:
         runtime = getattr(self.config_entry, "runtime_data", None)
-        return runtime is not None and not runtime.closed and runtime.session is not None
+        if runtime is None or runtime.closed:
+            return False
+        try:
+            runtime.check_configuration_change()
+        except ValueError:
+            return True
+        return False
 
     async def async_step_init(self, user_input=None):
         if self._has_session():

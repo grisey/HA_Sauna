@@ -67,7 +67,21 @@ class SaunaRuntime:
     def check_configuration_change(self):
         self._require_open()
         if self.session is not None:
-            raise ValueError("Änderung laufender Fristen ist noch nicht festgelegt")
+            raise ValueError("Grundkonfiguration ist während einer Session gesperrt")
+
+    async def set_operation(self, enabled: bool):
+        async with self._lock:
+            self._require_open()
+            result = self.controller.set_operation(enabled, self._clock())
+            self.notify()
+            return result
+
+    async def tick(self, _at=None):
+        async with self._lock:
+            if self.closed:
+                return
+            self.controller.advance(self._clock())
+            self.notify()
 
     async def begin_session(self, session_id: str) -> Session:
         async with self._lock:
@@ -79,7 +93,9 @@ class SaunaRuntime:
             self._require_open()
             if event.detected_at > self._clock():
                 raise ValueError("Erkennungszeit liegt nach der Laufzeituhr")
-            return self.controller.process(event)
+            result = self.controller.process(event)
+            self.notify()
+            return result
 
     async def deadline_due(self, deadline: Deadline) -> bool:
         async with self._lock:

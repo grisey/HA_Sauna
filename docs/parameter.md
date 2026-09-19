@@ -133,9 +133,13 @@ empirisch kalibrierten Prüfwerten. Der eingefrorene Kandidat und seine
 Reproduktionsdaten bleiben unverändert, bis eine geänderte Auswertung besprochen
 und gesondert gegen die vorhandenen Referenzereignisse geprüft wurde.
 
-## Weiterhin festzulegen
+## Änderungssperre während einer Session
 
-Verhalten von Parameteränderungen bei bereits laufenden Fristen, endgültige
-Ausgangswerte und Eingabegrenzen sowie die tatsächlich geprüften Relationen.
-Es wird insbesondere nicht stillschweigend zwischen „nur beim nächsten Start“
-und „bestehende Frist sofort neu berechnen“ gewählt.
+Nutzerklarstellung vom 19.09.2026: Änderungen der Grundkonfiguration während
+einer Session sind nicht vorgesehen. Dialoge und Parameterentitäten verwenden
+dieselbe Sperre. Eine kurze Betriebsunterbrechung hebt sie nicht auf; erst das
+Ende der Session-Unterbrechungsfrist ermöglicht Änderungen. Deshalb werden
+laufende Fristen nicht aufgrund geänderter Grundparameter neu berechnet.
+
+Nicht vereinbarte sichere Ausgangswerte werden weiterhin ausdrücklich
+eingegeben und nicht vom Programm erfunden.

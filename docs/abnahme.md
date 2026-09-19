@@ -63,3 +63,24 @@ HA_TEST_REQUIRED=1 python -m unittest discover -s tests/integration -v
 Noch keine Gesamtfreigabe: Betriebssteuerung, Messpfad, Archiv, Backup/Restore,
 Browser und private Replay-Prüfung folgen separat. Reale Hardware ist nicht
 Teil der autorisierten Prüfungen.
+
+Paket A: Remote-Commit `cfcb28db484f6b5792d674ddd8773837c7b8a796`,
+[CI 35444407353](https://github.com/grisey/HA_Sauna/actions/runs/35444407353)
+tatsächlich abgeschlossen: core, ha-api und ha-integration jeweils success.
+Drei echte HA-Lebenszyklustests bestanden unter Linux/Python 3.14.2.
+
+## Paket B1: Betrieb, Session und Gangfortschreibung
+
+Der eigene Betriebsschalter verwendet den Controller. Aus beendet den Gang
+sofort; bestätigte beendete Gänge zählen anhand ihrer Aufgüsse genau einmal.
+Kurze Unterbrechung erhält nur die Session. Nach Sessionfrist entsteht beim
+Einschalten eine neue Session mit eigenen Unterobjekten. Alte Fristen können
+nicht wirken. Eine HA-Zeitregistrierung führt fällige Übergänge aus und wird
+beim Unload abgemeldet.
+
+Die am 19.09. geklärte Aufhebung bei Fristablauf bzw. Durchlüften vor Aufguss
+ist im bestehenden Timeline-Kern implementiert. Neue Personensignale derselben
+Episode starten keine neue Frist; Aufguss bleibt unabhängig verwertbar.
+Grundkonfiguration ist während der gesamten Session zentral gesperrt.
+`tests/test_operation.py` und der zusätzliche echte HA-Betriebsschaltertest
+prüfen diese Ketten. Der CI-Abschluss dieses Pakets wird separat nachgetragen.

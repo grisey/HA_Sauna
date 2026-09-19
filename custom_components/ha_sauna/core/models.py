@@ -86,6 +86,9 @@ class Session:
     timeline: Timeline
     heating: HeatingTime = field(default_factory=HeatingTime)
     deadlines: tuple[Deadline, ...] = ()
+    operation_enabled: bool = False
+    operation_off_at: datetime | None = None
+    ended_at: datetime | None = None
 
     def __post_init__(self) -> None:
         purposes = set()

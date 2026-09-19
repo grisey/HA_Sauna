@@ -18,7 +18,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         entry = await create_sauna(self.hass)
         self.assertEqual(entry.state, ConfigEntryState.LOADED)
         entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
-        self.assertEqual(len(entities), 10)
+        self.assertEqual(len(entities), 11)
         self.assertTrue(all(self.hass.states.get(e.entity_id) is not None for e in entities))
         self.assertEqual(entry.data, {})
         self.assertIsNone(entry.runtime_data.session)
@@ -28,7 +28,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(old.closed)
             self.assertTrue(await self.hass.config_entries.async_setup(entry.entry_id))
             await self.hass.async_block_till_done()
-            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), 10)
+            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), 11)
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
         values = {**entry.options["parameters"], "heating_minutes": 7}
@@ -41,6 +41,39 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry.options["parameters"]["heating_minutes"], 9)
         self.assertEqual(entry.runtime_data.configuration.parameters.values["heating_minutes"], 9)
         self.assertEqual(float(self.hass.states.get(number).state), 9)
+
+    async def test_operation_switch_session_expiry_and_configuration_lock(self):
+        from datetime import UTC, datetime, timedelta
+        entry = await create_sauna(self.hass)
+        runtime = entry.runtime_data
+        now = datetime.now(UTC)
+        runtime._clock = lambda: now
+        entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
+        switch = next(e.entity_id for e in entities if e.unique_id.endswith("_operation"))
+        number = next(e.entity_id for e in entities if e.unique_id.endswith("_heating_minutes"))
+        await self.hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+        session_id = runtime.session.session_id
+        self.assertTrue(runtime.session.operation_enabled)
+        self.assertEqual(self.hass.states.get(switch).state, "on")
+        flow = await self.hass.config_entries.options.async_init(entry.entry_id)
+        self.assertEqual(flow["type"], "abort")
+        self.assertEqual(flow["reason"], "session_exists")
+        with self.assertRaises(ValueError):
+            await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
+        self.assertEqual(entry.options["parameters"]["heating_minutes"], 2.5)
+        await self.hass.services.async_call("switch", "turn_off", {"entity_id": switch}, blocking=True)
+        now += timedelta(seconds=149)
+        await runtime.tick()
+        self.assertEqual(runtime.session.session_id, session_id)
+        self.assertFalse(runtime.session.operation_enabled)
+        with self.assertRaises(ValueError):
+            runtime.check_configuration_change()
+        now += timedelta(seconds=1)
+        await runtime.tick()
+        self.assertIsNone(runtime.session)
+        runtime.check_configuration_change()
+        await self.hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+        self.assertNotEqual(runtime.session.session_id, session_id)
 
     async def test_binding_change_survives_new_homeassistant_instance(self):
         entry = await create_sauna(self.hass)

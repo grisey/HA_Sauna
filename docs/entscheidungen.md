@@ -12,9 +12,11 @@ sie stellen keinen tatsächlich gezählten oder abgeschlossenen Gang dar.
 Weitere Personensignale derselben Episode gewähren keine neue volle Frist;
 ein späterer eindeutiger Aufguss kann die erhaltene Schließung verwenden.
 
-Das Verhalten laufender Fristen bei Parameteränderungen soll differenziert
-je Parameter festgelegt werden. Eine pauschale Sofortneuberechnung oder
-pauschale Anwendung erst beim nächsten Start ist nicht freigegeben.
+Die anschließende Klarstellung ist maßgeblich: Während einer Session sind
+Änderungen der Grundkonfiguration nicht vorgesehen. Konfigurationsdialog und
+Parameterentitäten sperren diese Änderungen zentral. Dadurch gibt es keine
+Neuberechnung laufender Fristen durch geänderte Grundparameter. Eine kurze
+Betriebsunterbrechung beendet diese Sperre nicht; die Sessionfrist muss ablaufen.
 
 Grundlage: Nutzerfestlegungen der Besprechung, fortgeschrieben am 18.09.2026.
 Der [Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung.
