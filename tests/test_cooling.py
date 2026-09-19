@@ -300,12 +300,72 @@ class CoolingTests(unittest.TestCase):
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertTrue(c.session.operation_enabled)
 
-    def test_mechanical_timer_is_wall_time_and_not_reset_by_thermostat_or_operation_pause(self):
+    def test_mechanical_timer_pauses_only_with_operation_off(self):
         c = controller(mechanical_timer_minutes=240)
         self.assertEqual(c.mechanical_timer_ends_at, at(14400))
-        c.set_operation(False, at(20))
-        c.set_operation(True, at(30))
+        c.report_heating(False, at(10))
         self.assertEqual(c.mechanical_timer_ends_at, at(14400))
-        c.advance(at(14401))
-        self.assertEqual(c.session.heating.elapsed_seconds, 0)
+        c.set_operation(False, at(20))
+        self.assertIsNone(c.mechanical_timer_ends_at)
+        self.assertEqual(c.mechanical_timer_status["state"], "paused")
+        c.advance(at(29))
+        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14380)
+        c.set_operation(True, at(30))
+        self.assertEqual(c.mechanical_timer_ends_at, at(14410))
+        c.advance(at(14411))
+        self.assertEqual(c.mechanical_timer_status["state"], "expired")
         self.assertTrue(c.session.operation_enabled)
+
+    def test_empty_session_preserves_timer_and_counted_session_resets_on_next_start(self):
+        c = controller(session_gap_minutes=1)
+        c.set_operation(False, at(20))
+        c.advance(at(80))
+        self.assertIsNone(c.session)
+        c.set_operation(True, at(100), session_id="s2")
+        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14380)
+        c.process(event("close", Kind.DOOR_CLOSE, 101, session="s2"))
+        c.process(event("infusion", Kind.INFUSION, 102, session="s2"))
+        c.set_operation(False, at(120))
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        c.advance(at(180))
+        self.assertTrue(c.mechanical_timer_status["reset_pending"])
+        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14360)
+        c.set_operation(True, at(200), session_id="s3")
+        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14400)
+
+    def test_temperature_steps_after_counted_gangs_and_stops_at_ceiling(self):
+        c = controller(target_temperature_c=75, final_temperature_c=82,
+                       temperature_increase_c=3, after_run_minutes=.1)
+        c.set_temperature(80, at(1))
+        self.assertEqual(c.phase, "bereit")
+        for index, expected in enumerate((78, 81, 82, 82)):
+            start=10+index*20
+            c.process(event(f"close{index}", Kind.DOOR_CLOSE, start))
+            c.process(event(f"infusion{index}", Kind.INFUSION, start+1))
+            self.assertEqual(c.target_temperature, (75,78,81,82)[index])
+            c.process(event(f"open{index}", Kind.DOOR_OPEN, start+2))
+            end_event=event(f"vent{index}", Kind.VENTILATION, start+3)
+            c.process(end_event)
+            self.assertEqual(c.target_temperature, expected)
+            self.assertFalse(c.process(end_event).changed)
+            self.assertEqual(c.target_temperature, expected)
+            self.assertFalse(c.last_decision.heat)  # Nachlauf hat Vorrang.
+            c.advance(at(start+10))
+            if index==0:
+                self.assertEqual(c.phase, "aufheizen")  # Neue Bereitschaft erst bei 83 °C.
+        c.set_operation(False, at(90))
+        c.set_operation(True, at(100))
+        self.assertEqual(c.target_temperature, 82)
+        c.set_operation(False, at(110))
+        c.advance(at(710))
+        c.set_operation(True, at(711))
+        self.assertEqual(c.target_temperature, 75)
+
+    def test_retracted_gang_does_not_increase_target(self):
+        c = controller(final_temperature_c=95)
+        c.process(event("close", Kind.DOOR_CLOSE, 1))
+        c.process(event("person", Kind.PERSON_STRONG, 2))
+        c.process(event("open", Kind.DOOR_OPEN, 3))
+        c.process(event("vent", Kind.VENTILATION, 4))
+        self.assertEqual(c.session.timeline.gang_count, 0)
+        self.assertEqual(c.target_temperature, 80)

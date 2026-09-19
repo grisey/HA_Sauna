@@ -37,7 +37,7 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
 
     @property
     def target_temperature(self):
-        return self.runtime.configuration.parameters.values.get("target_temperature_c")
+        return self.runtime.controller.target_temperature
 
     @property
     def extra_state_attributes(self):

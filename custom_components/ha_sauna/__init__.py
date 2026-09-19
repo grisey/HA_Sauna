@@ -21,6 +21,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime
     except (ValueError, TypeError) as error:
         raise ConfigEntryError("Ungültige HA-Sauna-Konfiguration") from error
     entry.runtime_data = SaunaRuntime(configuration)
+    from .log import SaunaLog
+    entry.runtime_data.log = SaunaLog(entry.entry_id, configuration.log_level)
+    entry.runtime_data.log.info("setup", "Sauna-Integration wird geladen; Saunabetrieb bleibt ausgeschaltet.")
     await entry.runtime_data.start_archive(hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id)
     from .api import register
     register(hass)
@@ -41,7 +44,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime
 
 
 async def async_options_updated(hass, entry):
+    runtime = getattr(entry, "runtime_data", None)
+    if runtime and not runtime.closed:
+        from .runtime import Configuration
+        updated = Configuration.from_options(entry.options)
+        before = runtime.configuration.as_options()
+        after = updated.as_options()
+        before.pop("log_level")
+        after.pop("log_level")
+        if before == after:
+            runtime.set_log_level(updated.log_level)
+            return
+    timer = runtime.controller.mechanical_timer.pause(runtime._clock()) if runtime and not runtime.closed else None
     await hass.config_entries.async_reload(entry.entry_id)
+    if timer is not None and getattr(entry, "runtime_data", None) and not entry.runtime_data.closed:
+        entry.runtime_data.controller.mechanical_timer = timer
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]) -> bool:

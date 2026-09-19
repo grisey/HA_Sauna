@@ -9,7 +9,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class SaunaEnergy(SaunaEntity, SensorEntity):
-    _attr_name = "Sessionenergie"
+    _attr_name = "Energieverbrauch der Saunasitzung"
     _attr_native_unit_of_measurement = "kWh"
     _attr_device_class = SensorDeviceClass.ENERGY
 
@@ -35,7 +35,7 @@ class SaunaEnergy(SaunaEntity, SensorEntity):
 class SaunaPhase(SaunaEntity, SensorEntity):
     def __init__(self, entry):
         super().__init__(entry, "phase")
-        self._attr_name = "Phase"
+        self._attr_name = "Betriebszustand"
 
     @property
     def native_value(self):

@@ -12,7 +12,14 @@ Schließung beziehungsweise 10 Minuten bei offen bleibender Tür.
 Für die erste Testinstallation zählt der Heizzähler ohne optionalen Leistungsmesser
 bei Schütz EIN. Die Temperaturkrümmungs-Erkennung ist ausdrücklich zurückgestellt.
 Leistungsmessung bleibt optional; der mechanische Timer ist reine Anzeige.
-Normalansicht, separates Verlaufsblatt und sortierte Detailansicht folgen der
+Die Timeranzeige hält bei Betrieb-Aus an und behält die Restzeit, auch nach einer
+beendeten Sitzung ohne gezählte Gänge. Erst nach einer beendeten Sitzung mit
+gezählten Gängen startet sie beim nächsten Einschalten neu.
+Die Temperatursteigerung folgt gezählten Gängen: Startwert plus Gangzahl mal
+Schrittweite, begrenzt durch eine optionale Endtemperatur. Ohne Endwert konstant.
+Der entkoppelte Taster steuert den Saunabetrieb, nie unmittelbar den Schütz.
+Tasterimpuls und dauerhafter Betriebsschalter sind getrennt konfigurierbar.
+Übersicht, separates Verlaufsblatt und sortierte Detailansicht folgen der
 Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.
 
 - Maßgeblich sind `docs/entscheidungen.md`, Gang-, Betriebs-, Parameter- und

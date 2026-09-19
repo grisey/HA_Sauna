@@ -57,7 +57,8 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.session.operation_enabled)
         self.assertEqual(self.hass.states.get(switch).state, "on")
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
-        self.assertEqual(flow["type"], "abort")
+        self.assertEqual(flow["type"], "menu")
+        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
         self.assertEqual(flow["reason"], "session_exists")
         with self.assertRaises(ValueError):
             await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)

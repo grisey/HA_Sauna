@@ -104,3 +104,17 @@ Betrieb ausschalten und reale Schütz-Aus-Stellung prüfen. Integration in
 selbst wiederherstellen. Die bisherige Steuerung bewusst und ohne parallel aktive
 zweite Regelung wieder aktivieren. Archiv und Export vorher sichern; zur
 Rückkehr ist keine Archivlöschung nötig.
+
+
+### Aktualisierung dieser Testfassung
+
+In HACS den Branch **main** auswählen. Eine Commit-Kurznummer ist kein Branchname;
+sie führt bei HACS zum falschen Downloadpfad und zu HTTP 404. Die Installation
+und der erforderliche HA-Neustart erfolgen ausschließlich durch den Benutzer.
+SSH wird nur lesend für die Diagnose verwendet.
+
+Gerätezuordnungen lassen sich unter Geräte & Dienste → HA Sauna → Konfigurieren
+→ Sensoren und Geräte ändern, sobald die Saunasitzung beendet ist. Den entkoppelten
+Shelly-Eingang als Bedienquelle auswählen, die Art auf Taster stellen und den
+wirklichen Schaltausgang getrennt als Heizschütz zuordnen. Der Shelly-Eingang muss
+auf Geräteebene entkoppelt bleiben; die Integration ändert diese Geräteeinstellung nicht.

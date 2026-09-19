@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+import logging
+from datetime import datetime, timedelta
 from math import isfinite
 
 from homeassistant.helpers.event import async_track_state_change_event, async_track_state_report_event
@@ -12,6 +13,7 @@ from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core.models import Measurement, Position, Quantity
 from .core import power
+from .presentation import configuration_message, FAULTS
 
 
 class HADevice:
@@ -34,6 +36,8 @@ class HADevice:
         self.notified = set()
         self.heating_observation = {"source": "unknown", "heating": None, "power_w": None}
         self._saved_heating_observation = None
+        self.input_started_at = runtime._clock()
+        self.last_input_event = None
 
     async def start(self):
         now = self.runtime._clock()
@@ -51,6 +55,8 @@ class HADevice:
     def ingest(self, role, state, received_at, *, initial=False):
         self.states[role] = state
         self.source_received_at[role] = received_at
+        if initial and role == "control_input" and state is not None:
+            self.last_input_event = state.state
         if role in ("upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"):
             position, quantity = role.split("_", 1)
             value = None
@@ -68,6 +74,7 @@ class HADevice:
             m = Measurement(Position(position), Quantity(quantity), value,
                 state.state if state else "unavailable", self.bindings[role], received_at)
             self.measurements[role] = m
+            self.runtime.log.debug("measurement", "Messwert %s: %s; empfangen: %s.", role, value, received_at)
             if role == "upper_temperature" and value is not None:
                 self.last_valid_temperature = m
             session = self.runtime.session
@@ -84,14 +91,36 @@ class HADevice:
         if event.data["entity_id"] != self.bindings["control_input"]:
             return None
         old, new = event.data.get("old_state"), event.data.get("new_state")
-        if old is None or new is None or old.state in ("unknown", "unavailable") or new.state in ("unknown", "unavailable"):
+        if old is None or new is None or new.state in ("unknown", "unavailable"):
             return None
         if old.state == new.state:
             return None
+        toggle = not bool(self.runtime.session and self.runtime.session.operation_enabled)
         if new.domain == "binary_sensor":
+            if old.state in ("unknown", "unavailable"):
+                return None
+            if self.runtime.configuration.control_input_mode == "button":
+                return toggle if old.state == "off" and new.state == "on" else None
             return new.state == "on" if new.state in ("on", "off") else None
-        # Ein ausgewähltes event-Entity liefert einen neuen Bedienimpuls.
-        return not bool(self.runtime.session and self.runtime.session.operation_enabled)
+        if new.state == self.last_input_event:
+            return None
+        try:
+            occurred = datetime.fromisoformat(new.state)
+            if occurred.tzinfo is None or occurred < self.input_started_at:
+                return None
+        except (ValueError, TypeError):
+            return None
+        self.last_input_event = new.state
+        event_type = new.attributes.get("event_type")
+        selected = self.runtime.configuration.button_event_type
+        if selected:
+            if event_type != selected:
+                return None
+        elif event_type is not None and event_type not in ("single_push", "single"):
+            # Shelly meldet Drücken, Loslassen und die fertige Klickauswertung.
+            # Nur die kurze Klickauswertung umschalten, niemals dreifach.
+            return None
+        return toggle
 
     def binary_state(self, role):
         state = self.states.get(role)
@@ -130,12 +159,39 @@ class HADevice:
     def feedback(self):
         return self.observe_heating(self.runtime._clock())["heating"]
 
+    @property
+    def missing_configuration(self):
+        keys = ["target_temperature_c", "sensor_timeout_seconds",
+                "feedback_timeout_seconds", "fault_confirmation_seconds"]
+        if "heater_power" in self.bindings:
+            keys.append("power_heating_threshold_w")
+        return [key for key in keys if key not in self.values]
+
+    def start_errors(self):
+        errors = []
+        if self.missing_configuration:
+            errors.append(configuration_message(self.missing_configuration))
+        if self.runtime.controller.temperature is None and "sensor_timeout_seconds" not in self.missing_configuration:
+            errors.append(FAULTS["regulation_temperature_unavailable"])
+        if self.contactor_feedback() is None:
+            errors.append(FAULTS["heater_feedback_unavailable"])
+        if self.runtime.controller.protection:
+            errors.append("Eine Schutzabschaltung ist verriegelt. Bitte die Störung prüfen und anschließend quittieren.")
+        return errors
+
+    def measurement_status(self, now):
+        timeout = self.values.get("sensor_timeout_seconds")
+        result = {}
+        for role, measurement in self.measurements.items():
+            age = max(0, (now - measurement.received_at).total_seconds())
+            state = ("unavailable" if measurement.value is None else "validity_unconfigured"
+                     if timeout is None else "stale" if age > timeout else "current")
+            result[role] = {"state": state, "age_seconds": age}
+        return result
+
     def refresh(self, now):
         controller = self.runtime.controller
-        missing = [key for key in ("target_temperature_c", "sensor_timeout_seconds",
-            "feedback_timeout_seconds", "fault_confirmation_seconds") if key not in self.values]
-        if "heater_power" in self.bindings and "power_heating_threshold_w" not in self.values:
-            missing.append("power_heating_threshold_w")
+        missing = self.missing_configuration
         controller.inhibits = {"configuration_required:" + ",".join(missing)} if missing else set()
         timeout = self.values.get("sensor_timeout_seconds")
         upper = self.last_valid_temperature
@@ -156,9 +212,10 @@ class HADevice:
                 self.heating_observation, observation_key[0])
             self._saved_heating_observation = observation_key
         problems = set()
-        for role, m in self.measurements.items():
-            if m.value is None or timeout is None or (now - m.received_at).total_seconds() > timeout:
-                self.faults[role] = "measurement_unavailable"
+        for role, status in self.measurement_status(now).items():
+            if status["state"] != "current":
+                self.faults[role] = {"unavailable": "measurement_unavailable",
+                    "stale": "measurement_stale", "validity_unconfigured": "validity_unconfigured"}[status["state"]]
             else:
                 self.faults.pop(role, None)
         if temperature is None:
@@ -226,6 +283,7 @@ class HADevice:
         if self.command is not heat or self.command_at is None:
             self.command, self.command_at = heat, now
         self.last_sent_at = now
+        self.runtime.log.info("heater_command", "Schaltbefehl an Heizschütz: %s.", "EIN" if heat else "AUS")
         try:
             if ack is None:
                 await self.hass.services.async_call("switch", "turn_off",
@@ -239,6 +297,8 @@ class HADevice:
         except Exception as exc:
             self.command_error = True
             error = type(exc).__name__
+        self.runtime.log.change("heater_command_error", error, logging.ERROR if error else logging.INFO,
+            "Ergebnis des Schaltbefehls: %s.", error or "Dienstaufruf abgeschlossen; Schützrückmeldung wird getrennt geprüft")
         if self.runtime.archive:
             self.runtime.archive.append("command", now, {"heater": self.bindings["heater"],
                 "heat": heat, "decision": plain(self.runtime.controller.last_decision),
@@ -269,7 +329,7 @@ class HADevice:
         if ends:
             lead = self.values.get("mechanical_timer_warning_minutes", 0) * 60
             phase = "expired" if now >= ends else "warning" if now >= ends - timedelta(seconds=lead) else None
-            key = (self.runtime.session.session_id, phase)
+            key = (self.runtime.controller.mechanical_timer.cycle_id, phase)
             if phase and key not in self.notified:
                 self.notified.add(key)
                 message = ("Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen. Bitte den Drehschalter erneut einstellen."

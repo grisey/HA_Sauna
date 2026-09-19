@@ -12,6 +12,7 @@ from homeassistant.helpers import selector
 from .bindings import BindingError, Bindings, ROLES, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
 from .core.parameters import DEFINITIONS, ParameterError, Parameters
+from .log import LEVELS
 
 
 def binding_schema(*, include_name: bool = False) -> vol.Schema:
@@ -24,6 +25,9 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
             entity_filter["device_class"] = role.device_class
         marker = vol.Optional if role.optional else vol.Required
         fields[marker(role.key)] = selector.EntitySelector({"filter": entity_filter})
+    fields[vol.Required("control_input_mode", default="button")] = selector.SelectSelector({
+        "options": ["button", "switch"], "translation_key": "control_input_mode"})
+    fields[vol.Optional("button_event_type", default="")] = selector.TextSelector()
     return vol.Schema(fields)
 
 
@@ -43,7 +47,7 @@ def parameter_schema() -> vol.Schema:
 
 
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
-    bindings = Bindings(user_input)
+    bindings = Bindings({k: v for k, v in user_input.items() if k not in ("control_input_mode", "button_event_type")})
     metadata = {
         entity_id: state.attributes if (state := hass.states.get(entity_id)) else None
         for entity_id in bindings.values.values()
@@ -68,6 +72,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._name = ""
         self._bindings: Bindings | None = None
+        self._input_options = {}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         errors = {}
@@ -83,6 +88,8 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                 if heater_is_used(self._async_current_entries(), bindings):
                     raise BindingError("heater", "heater_already_used")
                 self._bindings = bindings
+                self._input_options = {"control_input_mode": user_input.get("control_input_mode", "button"),
+                    "button_event_type": user_input.get("button_event_type", "").strip()}
             except BindingError as error:
                 errors[error.key] = error.code
             else:
@@ -110,6 +117,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                     title=self._name,
                     data={},
                     options={
+                        **self._input_options,
                         CONF_BINDINGS: self._bindings.as_dict(),
                         CONF_PARAMETERS: parameters.as_dict(),
                     },
@@ -140,9 +148,20 @@ class SaunaOptionsFlow(OptionsFlow):
         return False
 
     async def async_step_init(self, user_input=None):
-        if self._has_session():
-            return self.async_abort(reason="session_exists")
-        return self.async_show_menu(step_id="init", menu_options=["bindings", "parameters"])
+        return self.async_show_menu(step_id="init", menu_options=["bindings", "parameters", "logging"])
+
+    async def async_step_logging(self, user_input=None):
+        errors = {}
+        if user_input is not None:
+            if user_input.get("log_level") in LEVELS:
+                return self.async_create_entry(title="", data={
+                    **self.config_entry.options, "log_level": user_input["log_level"],
+                })
+            errors["log_level"] = "invalid_log_level"
+        return self.async_show_form(step_id="logging", data_schema=vol.Schema({
+            vol.Required("log_level", default=self.config_entry.options.get("log_level", "INFO")):
+                selector.SelectSelector({"options": list(LEVELS), "translation_key": "log_level"}),
+        }), errors=errors)
 
     async def async_step_bindings(self, user_input: dict[str, Any] | None = None):
         if self._has_session():
@@ -160,11 +179,16 @@ class SaunaOptionsFlow(OptionsFlow):
             else:
                 return self.async_create_entry(title="", data={
                     **self.config_entry.options, CONF_BINDINGS: bindings.as_dict(),
+                    "control_input_mode": user_input.get("control_input_mode", self.config_entry.options.get("control_input_mode", "switch")),
+                    "button_event_type": user_input.get("button_event_type", "").strip(),
                 })
         return self.async_show_form(
             step_id="bindings",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(), user_input if user_input is not None else self.config_entry.options[CONF_BINDINGS],
+                binding_schema(), user_input if user_input is not None else {
+                    **self.config_entry.options[CONF_BINDINGS],
+                    "control_input_mode": self.config_entry.options.get("control_input_mode", "switch"),
+                    "button_event_type": self.config_entry.options.get("button_event_type", "")},
             ),
             errors=errors,
         )

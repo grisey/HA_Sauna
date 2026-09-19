@@ -79,9 +79,9 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
                 hass.states.async_set(entity_id, "off", {})
     flow = await hass.config_entries.flow.async_init("ha_sauna", context={"source": "user"})
     assert flow["step_id"] == "user", flow
-    flow = await hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Testsauna", **bindings})
+    flow = await hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Testsauna", "control_input_mode": "switch", **bindings})
     assert flow["step_id"] == "parameters", flow
-    values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS}
+    values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS if d.key != "final_temperature_c"}
     values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
     values.update(parameter_overrides or {})
     result = await hass.config_entries.flow.async_configure(flow["flow_id"], values)

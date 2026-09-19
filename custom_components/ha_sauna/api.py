@@ -4,9 +4,11 @@ from dataclasses import asdict
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView, KEY_HASS
 from .archive import plain
-from .core.parameters import DEFINITIONS, Parameters
+from .core.parameters import DEFINITIONS, Parameters, ParameterError
 from .core.detection_parameters import SPECS
 from .const import DOMAIN
+from .presentation import issues, decision_message, fault_message, parameter_error
+from .log import LEVELS
 
 
 def runtime_for(hass, entry_id):
@@ -44,6 +46,7 @@ class StateView(HomeAssistantView):
             experts = {s[0] for s in SPECS}
             return self.json(plain({"now": now, "phase": controller.phase,
                 "session": session, "configuration": runtime.configuration.as_options(),
+                "last_session": controller.completed_sessions[-1] if controller.completed_sessions else None,
                 "parameters": [{**asdict(d), "expert": d.key in experts} for d in DEFINITIONS],
                 "configuration_locked": session is not None,
                 "operation_enabled": bool(session and session.operation_enabled),
@@ -53,8 +56,14 @@ class StateView(HomeAssistantView):
                 "energy_source": session.energy.source if session else "estimated",
                 "heating_limit_seconds": controller.heating_limit_seconds,
                 "readiness_target": controller.readiness_target,
+                "target_temperature": controller.target_temperature,
                 "cooling_wait_until": controller.cooling_wait_until,
                 "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
+                "mechanical_timer": controller.mechanical_timer_status,
+                "start_errors": device.start_errors() if device else [],
+                "issues": issues(runtime),
+                "decision_text": decision_message(controller.last_decision),
+                "measurement_status": device.measurement_status(now) if device else {},
                 "gang_count": session.timeline.gang_count if session else 0,
                 "gang_confirmation": active.confirmation if active else None,
                 "gang_duration_seconds": active.elapsed_seconds(now) if active else None,
@@ -81,7 +90,10 @@ class ControlView(HomeAssistantView):
         body = await request.json()
         if not isinstance(body, dict) or set(body) != {"enabled"} or not isinstance(body["enabled"], bool):
             raise web.HTTPBadRequest(text="enabled muss wahr oder falsch sein")
-        await runtime.set_operation(body["enabled"])
+        try:
+            await runtime.set_operation(body["enabled"])
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
 
 
@@ -98,15 +110,35 @@ class ParametersView(HomeAssistantView):
         body = await request.json()
         try:
             parameters = Parameters(body)
-        except ValueError as error:
-            return self.json({"error": str(error)}, status_code=400)
+        except ParameterError as error:
+            return self.json({"error": parameter_error(error)}, status_code=400)
         async with runtime._lock:
             if runtime.session is not None:
-                return self.json({"error": "Grundkonfiguration ist während einer Session gesperrt"}, status_code=409)
+                return self.json({"error": "Einstellungen können erst nach Ende der Saunasitzung geändert werden."}, status_code=409)
             runtime.check_configuration_change()
             entry = hass.config_entries.async_get_entry(entry_id)
             hass.config_entries.async_update_entry(entry, options={
                 **entry.options, "parameters": parameters.as_dict()})
+        return self.json({"success": True})
+
+
+class LoggingView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/logging"
+    name = "api:ha_sauna:logging"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {"level"} or body["level"] not in LEVELS:
+            return self.json({"error": "Bitte ERROR, INFO oder DEBUG auswählen."}, status_code=400)
+        async with runtime._lock:
+            entry = hass.config_entries.async_get_entry(entry_id)
+            hass.config_entries.async_update_entry(entry, options={**entry.options, "log_level": body["level"]})
+            runtime.set_log_level(body["level"])
         return self.json({"success": True})
 
 
@@ -126,6 +158,11 @@ class ArchiveView(HomeAssistantView):
         result = await asyncio.to_thread(runtime.archive.read, session_id, after=after)
         if result is None:
             raise web.HTTPNotFound()
+        if session_id:
+            for record in result["records"]:
+                if record["kind"] == "diagnostic":
+                    record["payload"]["messages"] = [fault_message(k, v)
+                        for k, v in record["payload"].get("faults", {}).items()]
         return self.json(result)
 
 
@@ -167,4 +204,5 @@ def register(hass):
     hass.http.register_view(StateView)
     hass.http.register_view(ControlView)
     hass.http.register_view(ParametersView)
+    hass.http.register_view(LoggingView)
     data["api_registered"] = True

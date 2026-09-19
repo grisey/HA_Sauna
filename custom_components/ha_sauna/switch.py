@@ -11,7 +11,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class SaunaOperation(SaunaEntity, SwitchEntity):
     def __init__(self, entry):
         super().__init__(entry, "operation")
-        self._attr_name = "Betrieb"
+        self._attr_name = "Saunabetrieb"
 
     @property
     def is_on(self):
