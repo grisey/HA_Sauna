@@ -1,5 +1,21 @@
 # Entscheidungen und Umsetzungsstand
 
+## Ergänzung vom 19.09.2026
+
+Der Nutzer hat die bisher offenen Aufhebungsfolgen präzisiert: Ohne Aufguss
+bis zum Ende der Bestätigungsfrist wird der vorläufige Gang vollständig
+aufgehoben, als sei kein Gang gestartet worden. Keine Gangzählung, kein
+Nachlauf und keine besondere Heizbehandlung bleiben zurück. Dasselbe gilt
+für bestätigtes Durchlüften während eines noch unbestätigten Gangs.
+Diagnoseereignisse dürfen die verworfene Erkennung nachvollziehbar erhalten;
+sie stellen keinen tatsächlich gezählten oder abgeschlossenen Gang dar.
+Weitere Personensignale derselben Episode gewähren keine neue volle Frist;
+ein späterer eindeutiger Aufguss kann die erhaltene Schließung verwenden.
+
+Das Verhalten laufender Fristen bei Parameteränderungen soll differenziert
+je Parameter festgelegt werden. Eine pauschale Sofortneuberechnung oder
+pauschale Anwendung erst beim nächsten Start ist nicht freigegeben.
+
 Grundlage: Nutzerfestlegungen der Besprechung, fortgeschrieben am 18.09.2026.
 Der [Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung.
 [Gangmodell](gangmodell.md), [Betrieb](betrieb.md), [Parameter](parameter.md),

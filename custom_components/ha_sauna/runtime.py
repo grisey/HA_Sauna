@@ -45,6 +45,7 @@ class SaunaRuntime:
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
         self._cleanup: list[Callable[[], None]] = []
+        self._subscribers: set[Callable[[], None]] = set()
         self.closed = False
 
     @property
@@ -54,6 +55,19 @@ class SaunaRuntime:
     def _require_open(self) -> None:
         if self.closed:
             raise RuntimeError("Sauna-Laufzeit wurde entladen")
+
+    def subscribe(self, callback):
+        self._subscribers.add(callback)
+        return lambda: self._subscribers.discard(callback)
+
+    def notify(self):
+        for callback in tuple(self._subscribers):
+            callback()
+
+    def check_configuration_change(self):
+        self._require_open()
+        if self.session is not None:
+            raise ValueError("Änderung laufender Fristen ist noch nicht festgelegt")
 
     async def begin_session(self, session_id: str) -> Session:
         async with self._lock:

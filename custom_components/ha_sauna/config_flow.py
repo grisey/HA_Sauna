@@ -5,7 +5,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlowWithReload
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
@@ -123,7 +123,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return SaunaOptionsFlow()
 
 
-class SaunaOptionsFlow(OptionsFlowWithReload):
+class SaunaOptionsFlow(OptionsFlow):
     """Geänderte Zuordnungen und Parameter über dieselbe Eingabeprüfung speichern."""
 
     def _has_session(self) -> bool:

@@ -3,7 +3,15 @@
 Eigene Home-Assistant-Integration mit eigenem Thermostat, Zwei-Sensor-Erkennung
 und langfristigen Sessiondaten unabhängig vom Recorder.
 
-## Stand: erstes Umsetzungspaket
+## Laufende Fertigstellung und Abnahme
+
+Das Gerüst wird in geprüften Paketen erweitert. Paket A stellt eigene Parameter-
+und Statusentitäten bereit und prüft den Lebenszyklus mit einem echten HA-Kern.
+Der aktuelle Nachweis und noch ausstehende Prüfungen stehen in
+[Abnahme](docs/abnahme.md). Die nachfolgende Beschreibung des ersten Pakets
+bleibt als Ausgangsstand erhalten, bis die Betriebsumsetzung abgeschlossen ist.
+
+## Ausgangsstand: erstes Umsetzungspaket
 
 Das Grundgerüst enthält Einrichtung und Optionsdialog, frei wählbare
 Entitätszuordnungen, zentrale Parameterprüfung, eine Sauna-Laufzeit und einen

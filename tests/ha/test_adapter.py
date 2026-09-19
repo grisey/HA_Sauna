@@ -36,6 +36,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.entries = []
         self.entry = SimpleNamespace(
             entry_id="example", options={"bindings": self.inputs, "parameters": self.values},
+            async_on_unload=lambda callback: None,
+            add_update_listener=lambda listener: lambda: None,
         )
         self.hass = SimpleNamespace(
             states=SimpleNamespace(get=self.states.get),
@@ -43,6 +45,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 async_entries=lambda *a, **kw: self.entries,
                 async_get_entry=lambda *a: self.entry,
                 async_reload=AsyncMock(),
+                async_forward_entry_setups=AsyncMock(),
+                async_unload_platforms=AsyncMock(return_value=True),
             ),
         )
         self.flow = SaunaConfigFlow()
