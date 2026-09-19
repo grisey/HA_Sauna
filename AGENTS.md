@@ -12,7 +12,10 @@ Schließung beziehungsweise 10 Minuten bei offen bleibender Tür.
 Für die erste Testinstallation zählt der Heizzähler ohne optionalen Leistungsmesser
 bei Schütz EIN. Die Temperaturkrümmungs-Erkennung ist ausdrücklich zurückgestellt.
 Leistungsmessung bleibt optional; der mechanische Timer ist reine Anzeige.
-Die Timeranzeige hält bei Betrieb-Aus an und behält die Restzeit, auch nach einer
+Die Timeranzeige zählt nur bei Betrieb-Ein und bestätigtem Schütz-Ein. Bei
+Schütz-Aus oder unbekannter Schützstellung hält sie auch während Heizpause,
+Nachlauf und Zwangskühlung an. Die optionale Heizleistungsmessung ist davon
+getrennt. Sie hält bei Betrieb-Aus an und behält die Restzeit, auch nach einer
 beendeten Sitzung ohne gezählte Gänge. Erst nach einer beendeten Sitzung mit
 gezählten Gängen startet sie beim nächsten Einschalten neu.
 Die Temperatursteigerung folgt gezählten Gängen: Startwert plus Gangzahl mal
@@ -20,6 +23,10 @@ Schrittweite, begrenzt durch eine optionale Endtemperatur. Ohne Endwert konstant
 Solltemperatur, Erhöhung je Gang und Endtemperatur sind während der Sitzung änderbar. Eine neue Solltemperatur gilt sofort als Ausgangspunkt weiterer Steigerungen; keine Änderung darf Gang, Fristen, Heizsperren oder Schutz zurücksetzen. Andere Einstellungen und Geräte bleiben während einer Sitzung gesperrt.
 Standardlicht: Betrieb 35 %, Nachlauf 15 %, Zwangskühlung 5 %, jeweils einstellbar. In der Übersicht steht nur die jeweils relevante Phasenzeit; Heizsumme und mechanischer Timer stehen in den Details.
 Nach endgültigem Sitzungsende: eigener einstellbarer Lichtnachlauf, Standard 10 Minuten bei 50 %, danach Licht aus. Eine neue Sitzung verwirft die alte Lichtfrist; keine Wirkung auf Heizregelung.
+In Details können laufender Nachlauf und laufende Zwangskühlung einzeln manuell
+wie bei Fristablauf beendet werden. Tatsächlich verstrichener Nachlauf wird
+angerechnet; eine folgende Kühlung, Betrieb-Aus und technische Schutzsperren
+bleiben wirksam. Bedienung protokollieren, veraltete Phasenaufrufe abweisen.
 Der entkoppelte Taster steuert den Saunabetrieb, nie unmittelbar den Schütz.
 Tasterimpuls und dauerhafter Betriebsschalter sind getrennt konfigurierbar.
 Übersicht, separates Verlaufsblatt und sortierte Detailansicht folgen der

@@ -300,8 +300,9 @@ class CoolingTests(unittest.TestCase):
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertTrue(c.session.operation_enabled)
 
-    def test_mechanical_timer_pauses_only_with_operation_off(self):
+    def test_mechanical_timer_is_independent_of_heating_feedback_and_pauses_with_operation_off(self):
         c = controller(mechanical_timer_minutes=240)
+        c.report_contactor(True, at(0))
         self.assertEqual(c.mechanical_timer_ends_at, at(14400))
         c.report_heating(False, at(10))
         self.assertEqual(c.mechanical_timer_ends_at, at(14400))
@@ -318,6 +319,7 @@ class CoolingTests(unittest.TestCase):
 
     def test_empty_session_preserves_timer_and_counted_session_resets_on_next_start(self):
         c = controller(session_gap_minutes=1)
+        c.report_contactor(True, at(0))
         c.set_operation(False, at(20))
         c.advance(at(80))
         self.assertIsNone(c.session)

@@ -112,10 +112,14 @@ Ofen-Aus; eine bloße Session-Neuanlage löscht keine Verriegelung.
 
 Der mechanische Ofentimer unterbricht nach Ablauf physisch die Stromversorgung.
 Seine Stellung ist nicht aus HA bekannt. Die Schätzung läuft standardmäßig
-4 Stunden bei eingeschaltetem Saunabetrieb. Thermostatpausen zählen weiter,
-Betriebsunterbrechungen halten die Anzeige an. Einstellbare Vorwarnung und Ablaufhinweis erscheinen
+4 Stunden bei eingeschaltetem Saunabetrieb und bestätigtem Schütz-Ein. Bei
+Schütz-Aus oder unbekannter Schützstellung hält sie an; dies gilt auch für
+Thermostatpause, Nachlauf und Zwangskühlung. Betriebsunterbrechungen halten
+die Anzeige ebenfalls an. Einstellbare Vorwarnung und Ablaufhinweis erscheinen
 als HA-Benachrichtigung. Fehlende gemessene Heizleistung bei weiterhin
-angezogenem Schütz pausiert den Zähler ohne technischen Abbruch. Schützstellung
+angezogenem Schütz pausiert den Heizzähler ohne technischen Abbruch. Die
+mechanische Timeranzeige folgt weiterhin der Schützstellung, unabhängig von
+der optionalen Heizleistungsmessung. Schützstellung
 bestätigt den Schaltvollzug; eine ausbleibende Schaltbestätigung oder trotz
 Ausschaltbefehl weiter gemessene Heizleistung unterliegt der technischen Fehlerfrist.
 Die Schätzung ist ausschließlich Anzeige und Erinnerung zum erneuten Einstellen
@@ -132,10 +136,19 @@ Keine automatische Wiederaufnahme; historische Daten bleiben verfügbar.
 Die mechanische Timeranzeige hält beim Ausschalten des Saunabetriebs an. Ein
 kurzer Test oder eine beendete Sitzung ohne gezählte Saunagänge behält die Restzeit.
 Nach einer beendeten Sitzung mit gezählten Gängen beginnt die Anzeige erst beim
-nächsten Einschalten wieder mit der eingestellten Gesamtdauer. Thermostatpausen,
-Nachlauf und Zwangskühlung innerhalb des eingeschalteten Betriebs lassen sie
-weiterlaufen. Optionsänderungen erhalten die angehaltene Anzeige; ein vollständiger
+nächsten Einschalten wieder mit der eingestellten Gesamtdauer. Bei ausgeschaltetem
+Schütz bleiben Restzeit und Timeridentität erhalten; erst seine bestätigte
+Einschaltung setzt die Anzeige fort. Optionsänderungen erhalten die angehaltene Anzeige; ein vollständiger
 HA-Neustart stellt keinen Laufzeitzustand wieder her. Der Timer bleibt rein informativ.
+
+In der Detailansicht können laufender Nachlauf und laufende Zwangskühlung einzeln
+manuell beendet werden. Es gilt derselbe Folgeablauf wie beim jeweiligen Fristende,
+mit dem tatsächlichen Bedienzeitpunkt als Ende. Beim Nachlauf wird nur die bis
+dahin verstrichene Dauer angerechnet; eine folgende Restkühlung bleibt bestehen.
+Beendete Zwangskühlung schließt den Kühlzyklus ab und beginnt den nächsten
+Heizabschnitt mit dem regulären Folgebudget. Betrieb-Aus, Thermostat und technische
+Schutzsperren bleiben wirksam. Die Bedienung steht im INFO-Protokoll und im Archiv.
+Ein alter oder wiederholter Klick darf keine spätere Phase beenden.
 
 Die frühere Steigerung über feste Temperaturszenen wird aus den gezählten Gängen
 abgeleitet: `min(Endtemperatur, Starttemperatur + Gangzahl × Schrittweite)`.

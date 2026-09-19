@@ -34,6 +34,7 @@ class Controller:
         # Reale Messlage und Schutz bleiben außerhalb der Session-Rücksetzung.
         self.temperature: float | None = None
         self.feedback: bool | None = None
+        self.contactor: bool | None = None
         self.power_w: float | None = None
         self.power_valid_until: datetime | None = None
         self.protection: set[str] = set()
@@ -99,8 +100,24 @@ class Controller:
 
     @property
     def mechanical_timer_status(self):
-        return self.mechanical_timer.status(self._last_at,
+        status = self.mechanical_timer.status(self._last_at,
             self.parameters.seconds("mechanical_timer_minutes"))
+        status["pause_reason"] = ("operation_off" if not self._session or not self._session.operation_enabled
+            else "contactor_off" if self.contactor is False else "contactor_unavailable") if status["state"] == "paused" else None
+        return status
+
+    def _sync_mechanical_timer(self, at):
+        if self._session and self._session.operation_enabled:
+            self.mechanical_timer = self.mechanical_timer.start(at, self._session.session_id)
+            if self.contactor is True:
+                return
+        self.mechanical_timer = self.mechanical_timer.pause(at)
+
+    def report_contactor(self, value: bool | None, at: datetime):
+        """Stromversorgung des Timerantriebs, getrennt von gemessener Heizleistung."""
+        self.advance(at, evaluate=False)
+        self.contactor = value
+        self._sync_mechanical_timer(utc(at))
 
     @property
     def cooling_wait_until(self):
@@ -136,7 +153,7 @@ class Controller:
         self._session = replace(self._session, heating=heating.report(
             self._session.heating, self.feedback, at, self.parameters.seconds("heat_reset_minutes")))
         self._last_at = at
-        self.mechanical_timer = self.mechanical_timer.start(at, session_id)
+        self._sync_mechanical_timer(at)
         self._evaluate(at)
         return self._session
 
@@ -149,7 +166,7 @@ class Controller:
             if not self._session.operation_enabled:
                 self._session = replace(self._session, operation_enabled=True, operation_off_at=None)
                 self._cancel("session_gap")
-                self.mechanical_timer = self.mechanical_timer.start(at, self._session.session_id)
+                self._sync_mechanical_timer(at)
         elif self._session is not None and self._session.operation_enabled:
             self.process(Event(uuid4().hex, self._session.session_id, Kind.OPERATION_OFF, at, at))
         self._evaluate(at)
@@ -345,6 +362,42 @@ class Controller:
             self._temperature_cooling_requested = False
             self.overtemperature_since = at if self.temperature is not None and self.temperature > self.parameters.values["safety_temperature_c"] else None
 
+    def _finish_after_run(self, phase):
+        session = self._session
+        self._session = replace(session, after_run=None,
+            timeline=replace(session.timeline, anchor=None, preparation=None),
+            after_run_history=session.after_run_history + (phase,))
+        if session.cooling is not None:
+            credit = (phase.ends_at - phase.started_at).total_seconds()
+            self._session = replace(self._session, cooling=replace(session.cooling,
+                credited_seconds=session.cooling.credited_seconds + credit))
+            self._start_cooling(phase.ends_at)
+
+    def finish_phase(self, purpose, token, at):
+        """Eine konkret angezeigte Phase wie bei Fristablauf abschließen."""
+        if purpose not in ("after_run", "forced_cooling"):
+            raise ValueError("Nur Nachlauf und laufende Zwangskühlung können manuell beendet werden.")
+        at = utc(at)
+        self.advance(at)
+        session = self._session
+        deadline = next((d for d in session.deadlines if d.purpose == purpose and d.token == token), None) if session else None
+        if deadline is None:
+            raise ValueError("Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren.")
+        if purpose == "after_run":
+            phase = session.after_run
+            if phase is None or phase.phase_id != token:
+                raise ValueError("Es läuft kein passender Nachlauf.")
+            self._cancel(purpose)
+            self._finish_after_run(replace(phase, ends_at=at))
+        else:
+            cycle = session.cooling
+            if cycle is None or cycle.cycle_id != token or cycle.started_at is None:
+                raise ValueError("Es läuft keine passende Zwangskühlung.")
+            self._cancel(purpose)
+            self._finish_cooling(replace(cycle, ends_at=at), at)
+        self._evaluate(at)
+        return deadline
+
     def _evaluate(self, at):
         session = self._session
         if session is None:
@@ -398,15 +451,7 @@ class Controller:
         elif deadline.purpose == "after_run":
             phase = session.after_run
             if phase is not None and phase.phase_id == deadline.token:
-                self._session = replace(self._session, after_run=None,
-                    timeline=replace(session.timeline, anchor=None, preparation=None),
-                    after_run_history=session.after_run_history + (phase,))
-                if session.cooling is not None:
-                    # Genau dieser beendete Nachlauf wird einmal angerechnet.
-                    credit = (phase.ends_at - phase.started_at).total_seconds()
-                    self._session = replace(self._session, cooling=replace(session.cooling,
-                        credited_seconds=session.cooling.credited_seconds + credit))
-                    self._start_cooling(phase.ends_at)
+                self._finish_after_run(phase)
         elif deadline.purpose == "forced_cooling":
             if session.cooling is not None and session.cooling.cycle_id == deadline.token:
                 self._finish_cooling(session.cooling, deadline.due_at)

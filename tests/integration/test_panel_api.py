@@ -56,13 +56,48 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         async with ClientSession() as client:
             async with client.get(url + "/state") as response:
                 self.assertEqual(response.status, 401)
+            async with client.post(url + "/finish_phase", json={"purpose":"after_run","token":"old"}) as response:
+                self.assertEqual(response.status, 401)
         user = await self.hass.auth.async_create_user("Read only", group_ids=[])
         token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
         headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
         async with ClientSession(headers=headers) as client:
             async with client.post(url + "/control", json={"enabled": True}) as response:
                 self.assertEqual(response.status, 403)
+            async with client.post(url + "/finish_phase", json={"purpose":"after_run","token":"old"}) as response:
+                self.assertEqual(response.status, 403)
         self.assertIsNone(self.entry.runtime_data.session)
+
+    async def test_manual_phase_end_checks_payload_identity_and_uses_real_runtime(self):
+        from datetime import datetime, UTC, timedelta
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        runtime = self.entry.runtime_data
+        base = now = datetime.now(UTC)
+        runtime._clock = lambda: now
+        await runtime.set_operation(True)
+        identity = runtime.session.session_id
+        for second, kind in ((1,Kind.DOOR_CLOSE),(2,Kind.INFUSION),(3,Kind.DOOR_OPEN),(4,Kind.VENTILATION)):
+            now = base + timedelta(seconds=second)
+            await runtime.receive(Event(f"api-phase:{second}",identity,kind,now,now))
+        token = runtime.session.after_run.phase_id
+        url = self.base + "/" + self.entry.entry_id + "/finish_phase"
+        async with ClientSession(headers=self.headers) as client:
+            for body in ([], {}, {"purpose":[],"token":token}, {"purpose":"session_gap","token":token},
+                         {"purpose":"after_run","token":[]}, {"purpose":"after_run","token":token,"extra":1}):
+                async with client.post(url, json=body) as response:
+                    self.assertEqual(response.status,400,await response.text())
+            async with client.post(url, json={"purpose":"after_run","token":"stale"}) as response:
+                self.assertEqual(response.status,409)
+            self.assertEqual(runtime.session.after_run.phase_id,token)
+            now = base + timedelta(seconds=10)
+            async with client.post(url, json={"purpose":"after_run","token":token}) as response:
+                self.assertEqual(response.status,200,await response.text())
+            self.assertIsNone(runtime.session.after_run)
+            self.assertEqual(runtime.session.after_run_history[-1].ends_at,now)
+            self.assertEqual(runtime.session.timeline.gang_count,1)
+            self.assertEqual(runtime.session.session_id,identity)
+            async with client.post(url, json={"purpose":"after_run","token":token}) as response:
+                self.assertEqual(response.status,409)
 
     async def test_logging_is_live_persistent_and_does_not_reload_or_end_session(self):
         import logging

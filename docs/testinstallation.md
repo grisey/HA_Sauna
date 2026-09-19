@@ -90,6 +90,13 @@ der Session wieder auf die gewünschten Betriebswerte setzen.
 
 Der mechanische Timer wird zu Beginn weiterhin von Hand eingestellt. Die
 Vier-Stunden-Anzeige ist eine Erinnerung; sie löst keine Steuerung aus.
+Bei ausgeschaltetem Schütz muss sie auch während Thermostatpause, Nachlauf und
+Zwangskühlung stehen bleiben. Nach bestätigtem Schütz-Ein läuft die Restzeit weiter.
+
+In Details sind laufender Nachlauf und laufende Zwangskühlung einzeln manuell
+beendbar. Beim Nachlauf folgt gegebenenfalls die noch fällige Kühlung; bei deren
+Ende setzt die reguläre Heizsteuerung ein. Licht und Zeitangaben müssen dem neuen
+Zustand folgen. Betrieb-Aus und technische Schutzsperren bleiben wirksam.
 
 ## Rückweg
 

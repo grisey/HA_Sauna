@@ -121,3 +121,26 @@ standardmäßig 10 Minuten bei 50 %, anschließend Licht aus. Neue Sitzung verwi
 die alte Lichtfrist. Dies hat keine Wirkung auf die Heizregelung.
 
 Nach zwei nicht erkannten Testöffnungen erlaubt der Nutzer die Prüfung einer zusätzlichen Türregel ohne Feuchteabfall und betont die Priorität des heißen Betriebs. Die unbeschränkte Zusatzregel erzeugte im privaten Referenzreplay zusätzliche Ereignisse und wird deshalb nicht verwendet. Die Ergänzung wird auf niedrigere Temperaturen und durchgehend eingeschaltete Heizung mit zwei verfügbaren Messpositionen begrenzt; die Erkennung im heißen Zustand bleibt vorerst unverändert.
+
+## Präzisierungen vom 20.09.2026
+
+Der mechanische Timerantrieb erhält über den Schütz Strom. Seine Anzeige zählt
+deshalb nur bei eingeschaltetem Betrieb und bestätigtem Schütz-Ein; ausgeschalteter
+oder unbekannter Schütz hält sie an. Eine optionale Heizleistungsmessung beeinflusst
+weiter den Heizzähler, nicht die Schätzung des Timerantriebs.
+
+Nachlauf und bereits laufende Zwangskühlung sind in Details einzeln manuell
+beendbar, mit demselben Folgeablauf wie bei Fristende. Verstrichener Nachlauf wird
+einmal angerechnet, folgende Kühlung bleibt bestehen; Schutzsperren und Betrieb-Aus
+werden nicht aufgehoben. Endzeitpunkt und manuelle Bedienung bleiben nachvollziehbar.
+
+Die Lüftungserkennung wird weiter geprüft: Ein kurzer Austritt unter 15 Sekunden
+muss denselben Gang samt anschließendem Aufguss erhalten. Eine pauschal kürzere
+Zeitgrenze oder getrennte Erkennungsregeln für Gangstart und Gangende sind noch
+nicht beschlossen. Zu untersuchen sind Stärke und Verlauf von Temperatur- und
+Feuchteabfall sowie Erholung; die Sensorreaktion ist keine Messung der physischen
+Türöffnungsdauer. Der bestehende Kandidat bleibt bis zum Nachweis unverändert.
+
+Noch zu klären: Soll abgeschlossener Nachlauf auch nach erneutem Heizen einmalig
+auf eine erst später fällige Zwangskühlung angerechnet werden? Der bestehende
+Ablauf rechnet ihn nur auf eine bereits angeforderte Kühlung an.
