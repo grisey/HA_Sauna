@@ -1,11 +1,11 @@
-"""Einrichtung und Konfiguration des nicht schaltenden Grundgerüsts."""
+"""Einrichtung und einheitliche Konfiguration der Sauna-Integration."""
 from __future__ import annotations
 
 from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlowWithReload
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
@@ -29,9 +29,12 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
 
 def parameter_schema() -> vol.Schema:
     return vol.Schema({
-        vol.Required(definition.key): selector.NumberSelector({
-            "min": 0,
-            "step": "any",
+        (vol.Optional if definition.optional else vol.Required)(
+            definition.key, default=definition.default if definition.default is not None else vol.UNDEFINED,
+        ): selector.NumberSelector({
+            "min": definition.minimum if definition.minimum is not None else 0,
+            "max": definition.maximum,
+            "step": 1 if definition.integer else "any",
             "mode": selector.NumberSelectorMode.BOX,
             "unit_of_measurement": definition.unit,
         })
@@ -123,12 +126,18 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return SaunaOptionsFlow()
 
 
-class SaunaOptionsFlow(OptionsFlowWithReload):
+class SaunaOptionsFlow(OptionsFlow):
     """Geänderte Zuordnungen und Parameter über dieselbe Eingabeprüfung speichern."""
 
     def _has_session(self) -> bool:
         runtime = getattr(self.config_entry, "runtime_data", None)
-        return runtime is not None and not runtime.closed and runtime.session is not None
+        if runtime is None or runtime.closed:
+            return False
+        try:
+            runtime.check_configuration_change()
+        except ValueError:
+            return True
+        return False
 
     async def async_step_init(self, user_input=None):
         if self._has_session():

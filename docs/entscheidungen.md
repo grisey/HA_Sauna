@@ -1,186 +1,97 @@
 # Entscheidungen und Umsetzungsstand
 
-Grundlage: Nutzerfestlegungen der Besprechung, fortgeschrieben am 18.09.2026.
-Der [Messkandidat](kandidat.md) dokumentiert die eingefrorene Kalibrierung.
-[Gangmodell](gangmodell.md), [Betrieb](betrieb.md), [Parameter](parameter.md),
-[Darstellung](darstellung.md) und [Speicherung](speicherung.md) halten die
-fachlichen Regeln und deren Status fest. Diese Fortschreibung betrifft die
-Dokumentation, nicht die Implementierung.
+## Geltender Stand vom 19.09.2026
 
-## Vereinbart
+Die späteren Nutzerkorrekturen sind in [Betrieb](betrieb.md),
+[Gangmodell](gangmodell.md), [Zeitmodell](zeitmodell.md),
+[Parameter](parameter.md), [Oberfläche](darstellung.md) und
+[Speicherung](speicherung.md) konsolidiert. Diese Darstellung ersetzt die zuvor
+widersprüchlichen Zwischenstände. Der ursprüngliche Verlauf bleibt in Git erhalten.
 
-**Aufbau:** eigene Home-Assistant-Integration mit eigenem Thermostat und einem
-zentralen Python-Ablaufkern. Messung, Erkennung, Gang/Session, Temperaturregelung,
-Bedienung und Speicherung haben getrennte Zuständigkeiten.
+- Unbestätigte Erkennung bei Fristablauf oder Durchlüften vollständig aufheben,
+  ohne Gangzählung oder Nachlauf. Bestätigte beendete Gänge zählen genau einmal.
+- Grundkonfiguration bleibt während der Session gesperrt, auch bei kurzem Aus/Ein.
+- Bereitschaftsziel ist Solltemperatur plus einstellbarer Aufschlag, Standard 5 °C;
+  einstellbare Hysterese Standard 3 °C. Keine Zielnachführung innerhalb eines Gangs.
+- Tatsächliches Heizbudget zunächst 90 Minuten, nach erster abgeschlossener Kühlung
+  einmalig um 30 Minuten verringert, danach konstant. Kühlvorgabe 15 Minuten.
+  Alle Zahlen sind einstellbare Defaults. Neue Session erhält wieder das Anfangsbudget.
+- Thermostat-Cooldown Standard 5 Minuten; Mindestheizzeit Standard 10 Minuten ab
+  tatsächlichem Einschalten. Nachlauf, Kühlung, Aus und technische Schutzabschaltung
+  haben Vorrang. Nachlauf hält den Ofen aus und sperrt neue Gänge.
+- Laufender Gang wird von fälliger Kühlung nicht abgebrochen. Danach Nachlauf und
+  nur die verbleibende Kühlung. Nachlauf wird einmal vollständig angerechnet.
+- Türöffnung in Bereitschaft/Aufheizen verschiebt fällige Kühlung: standardmäßig
+  10 Minuten ab Öffnung, falls offen geblieben; bei rechtzeitiger Schließung
+  stattdessen 4 Minuten ab Schließung. Ohne Personensignal beginnt danach die
+  fällige Kühlung. Bereits laufende Kühlung wird nicht rückgängig gemacht.
+- Mehr als 105 °C länger als 10 Minuten führt zu doppelter Kühlvorgabe ohne
+  Sessionabbruch. Grenze, Dauer und Faktor sind einstellbar. Die bestehenden
+  Gang-/Nachlaufregeln gelten. Sofortige temperaturbedingte Sessionabschaltung
+  ist verworfen. Bestätigte technische Dauerausfälle bleiben ein eigener Schutzgrund.
+- Mechanischer Timer trennt physisch den Strom. Die Integration führt eine
+  getrennte Schätzung von standardmäßig 4 Stunden, mit einstellbarer Vorwarnung.
+  Die tatsächliche Heizrückmeldung bleibt maßgeblich.
+  Präzisierung: ausschließlich Anzeige/Erinnerung zum erneuten Einstellen des
+  Drehschalters, keinerlei Steuer- oder Schutzwirkung aus der geschätzten Frist.
+- Zwei Hauptansichten: Normal mit einfacher Steuerung und eigenem Blatt für
+  Sessionverlauf samt Archivauswahl; Details mit übersichtlich sortiertem Betrieb,
+  Fristen, Fehlern, eigener Erkennungskontrolle und Einstellungen/Export.
+- Gestaltung entspricht der gelieferten Diagrammvorlage. Zoom, Achsen, Tooltips
+  und Aktualisierung dürfen verbessert werden. Erkennungsdetails stehen separat.
 
-**Sensoren:** Kanal 3 auf Kopfhöhe der obersten Bank, Kanal 6 etwa 20–30 cm
-darunter. Beide sind im Normalbetrieb fest eingebunden. Bei Ausfall eines
-Sensors erfolgt Weiterbetrieb mit dem verbleibenden Kanal und Fehlermeldung.
-Die Temperaturen werden weder gleichgesetzt noch mit einem erfundenen festen
-Höhenoffset umgerechnet. IBS wird nicht verwendet.
+## Präzisierung für die erste Testinstallation
 
-**Entitätszuordnung:** sämtliche verknüpften externen Entitäten sind im
-Konfigurationsbereich auswählbar und später neu zuordenbar. Obere und untere
-Messposition, Heizaktor, physische Bedienquelle und Saunalicht werden als Rollen
-mit geeigneten Entitäten verbunden; konkret installierte Entity-IDs gehören
-nicht in den Ablaufcode. Gleiches gilt für ergänzende Status-, Medien- oder
-Benachrichtigungsanbindungen, soweit sie verwendet werden. Die Zuordnung ist
-zentral gespeichert; Auswahleignung wird geprüft. K3/K6 bleiben Referenznamen
-des eingefrorenen Kandidaten, keine fest vorgegebenen produktiven Quellnamen.
-Einzelheiten: [Entitätszuordnung](parameter.md#verknüpfte-entitäten-auswählen).
+Am realen Ofen sind derzeit Schützstellung und Temperaturen verfügbar. Ohne
+Leistungsmessung läuft der Heizzähler bei Schütz EIN. Eine Leistungsmessung bleibt
+optional verfügbar und hat bei gültigem Messwert Vorrang. Die Schätzung des
+mechanischen Timers löst weiterhin keinerlei Steuerung aus. Eine Erkennung
+anhand nachlassenden Temperaturanstiegs soll einen tatsächlichen Übergang
+erkennen; die feste 0,5-Grad-/5-Minuten-Regel wurde verworfen. Dieser seltene
+Grenzfall ist auf ausdrücklichen Nutzerwunsch für die erste Testinstallation
+zurückgestellt, damit die Prüfung der Grundfunktion Vorrang erhält.
 
-**Vorbereitung und Gang:** Durchlüften und anschließende Schließung können die
-Personenfrüherkennung stützen. Das Personenmuster legt einen vorläufigen Gang
-an, der bereits als Saunagang angezeigt und behandelt wird. Ausschließlich
-ein Aufguss bestätigt den Gang. Er kann einen verpassten Start unmittelbar
-bestätigt nachholen. Im unveränderten Kandidaten benötigt nur der schwache
-Personenpfad vorbereitendes Durchlüften. Die Freigabe eines neuen Gangstarts
-bleibt eine Aufgabe der Ablaufsteuerung, nicht des Messdetektors.
+Sessionenergie wird ohne Leistungsmesser aus Heizzeit und konfigurierbarer
+Ofenleistung geschätzt (Standard 4,5 kW). Mit Messgerät haben gemessene
+Leistungswerte Vorrang. Messlücken und geschätzte Anteile bleiben erkennbar.
+Installation erfolgt ausschließlich durch den Nutzer über HACS. SSH darf nur
+lesend für Status und Logs verwendet werden; Schreiben darüber ist verboten.
 
-**Türereignisse:** schnelle Türmeldungen, Durchlüftungseinordnung und Gangablauf
-bleiben getrennt. Kurze Türbetätigung erhält Gang, Zeitbasis und Aufgüsse.
-Bestätigtes Durchlüften nach Aufguss ermöglicht den regulären Abschluss.
-Ein Türereignis allein belegt keinen Öffnungszweck und keine Personenzahl.
+Der Nutzer beauftragt die Vorbereitung einer ersten Testinstallation auf seinem
+Home-Assistant-System. Ofenaktivierung und Änderungen an der bestehenden realen
+Steuerung werden dadurch nicht stillschweigend durchgeführt.
 
-**Zeitbezug und Bestätigungsfrist:** zugeordneter Beginn bei der Türschließung,
-erste Erkennung und Aufgussbestätigung bleiben getrennt. Für die vorläufige
-Gangerkennung ist eine konfigurierbare Bestätigungsfrist vorgesehen. Als
-angemessen wurden 12 oder 13 Minuten ab der zugehörigen Türschließung benannt;
-ein fester Ausgangswert ist noch nicht ausgewählt. Die ungefähre Gangdauer von
-15 Minuten ist kein automatisches Gangende. Der besprochene Fristablauf und
-sein bisheriger Umsetzungsstand stehen im Gangmodell; daraus wird keine neue
-allgemeine Diskussion bereits geklärter Gangregeln eröffnet.
+## Unveränderte Architekturentscheidungen
 
-**Session und Sessiongrenze:** Die Session ist das übergeordnete Objekt für alle
-sessionbezogenen Laufzeitobjekte. Nach Ablauf der konfigurierten Frist seit dem
-Ausschalten des Saunabetriebs beginnt beim nächsten Einschalten eine vollständig
-neue Session mit neu initialisierten Unterobjekten. Bei früherem Einschalten
-bleibt dieselbe Session bestehen. Konfiguration, archivierte Daten und
-übergeordnete Schutzfunktionen bleiben vom Sessionwechsel getrennt. Normale
-Heizpausen und Zwangskühlung lösen keinen Sessionwechsel aus.
+Ein führender Session-/Ablaufkern; gleiche Bedienung durch physischen Eingang,
+HA-Entitäten und Panel. Eine neue Session initialisiert ihre Unterobjekte gemeinsam.
+Keine Rückdatierung realer Schaltbefehle. Konfiguration, Schutzgründe und Archiv
+überleben den Sessionwechsel. Kein automatischer Betriebsstart nach HA-Neustart.
 
-**Ausschalten im Gang:** Ein ausdrücklicher Ausschaltbefehl beendet den Gang
-sofort, auch wenn er bereits bestätigt ist. Ende und Grund „ausgeschaltet“
-werden festgehalten. Bei rechtzeitigem Wiedereinschalten wird ausschließlich
-die Session fortgesetzt, nicht der ausgeschaltete Gang.
+Erkennung verwendet beide Messhöhen getrennt. Ein-Sensor-Erkennung bleibt möglich
+mit Fehleranzeige. Keine Temperaturmittelung oder erfundener Höhenoffset, keine
+IBS-Sensoren. Die Heizregelung benötigt einen gültigen oberen Wert; eine sichere
+untere Ersatztemperatur wurde nicht festgelegt und wird nicht angenommen.
 
-**Gangzählung:** Jeder beendete Gang mit mindestens einem zugeordneten Aufguss
-zählt genau einmal, unabhängig vom Beendigungsgrund. Die Berechtigung folgt
-aus der Bestätigung durch das Aufgussobjekt, nicht aus einem separaten Zählmerker
-oder einer Sonderregel für ausgeschaltete Gänge.
+Vollauflösung und Ereignisrevisionen in SQLite unter HA-Konfiguration. Echte
+HA-Backup-Einbindung mit Restore-Prüfung. Authentifizierter ZIP-Download in den
+Einstellungen; keine Archive unter www. Keine automatische Löschung oder Verdichtung.
 
-**Physischer Schalter:** Der Shelly-Schalter soll sich wie ein einfacher
-An-/Ausschalter für den Saunabetrieb anfühlen. Maßgeblich ist die Betriebsfreigabe,
-nicht der momentane Heizrelaiszustand oder die noch fortsetzbare Session.
+## Grenzen und verworfene Varianten
 
-**Heizung:** engere Hysterese im eigenen Thermostat. Bereits im vorläufigen
-Gang werden reguläre Hysterese- und betriebliche Ablaufabschaltungen unterdrückt.
-Sicherheitsabschaltung und ausdrückliches Ausschalten bleiben übergeordnet.
-Dynamische Solltemperaturnachführung innerhalb eines Gangs ist verworfen.
-Hysterese und normaler Thermostat-Cooldown sind einfache Konfigurationsvariablen.
+Keine zusätzliche prozentuale Idle-Gutschrift, keine dynamische Vergrößerung des
+Heizbudgets, kein automatisches Gangende nach ungefähr 15 Minuten. Keine separate
+Schreibquelle für Bestätigung oder Zählbarkeit. Keine adaptive Erkennung als
+unbesprochener Ersatz des eingefrorenen Kandidaten. Keine voreilige rückwirkende
+Zuordnung des Gangendes zur Türöffnung.
 
-**Einheitliche Heizdauer:** Es gilt dieselbe einstellbare Heizzeitgrenze beim
-Anheizen und bei späteren Heizabschnitten. Die Unterscheidung zwischen Anheiz-
-und kürzerer Folgedauer entfällt. Ein Aufheizmerker wird für diese Zeitwahl
-nicht mehr benötigt; eine Darstellung des erstmaligen Aufheizens ist davon
-getrennt. Ein neuer numerischer Ausgangswert wird hier nicht festgelegt.
+Noch nicht vereinbarte Ausgangswerte werden bei Einrichtung verlangt. Dazu zählen
+Session-, Bestätigungs-, Heizzeit-Rücksetz- und Nachlaufdauer; erforderliche
+Mess-/Aktor-/Ausfallfristen sind an der Installation zu bestimmen. Prognosen der
+Aufheizzeit sind nicht aus Softwaretests als zuverlässige Regel abzuleiten.
 
-**Heizlaufzeit:** Der Heizzeittimer läuft nur während tatsächlichen Heizens
-und pausiert bei idle. Damit ist die Berücksichtigung normaler Idle-Zeiten
-vollständig beschrieben. Keine zusätzliche prozentuale Gutschrift auf die
-Kühldauer und keine zusätzliche Vergrößerung des Heizbudgets. Die zuvor
-vereinbarte Rücksetzung der Heizzeitsumme nach genügend langer zusammenhängender
-Ofen-Auszeit bleibt eine lokale Regel innerhalb der Session und ist kein
-Sessionwechsel.
-
-**Zwangskühlung:** Eine bereits laufende Zwangskühlung sperrt neue Gangstarts.
-Ein bereits laufender Gang wird nicht unterbrochen. Wird seine Heizzeitgrenze
-erreicht, folgt nach Gangende zuerst der Nachlauf und danach nur noch die um
-diesen Nachlauf reduzierte Restkühlzeit. Bei Restzeit null entfällt der zusätzliche
-Kühlabschnitt. Dies verwendet die allgemeine Nachlaufanrechnung, keine weitere
-Sonderlogik. Stark gedimmtes Licht zeigt die laufende Zwangskühlung an.
-
-**Nachlauf:** Betriebsunterbrechungen verändern einen laufenden Nachlauf nicht.
-Er behält seinen ursprünglichen Endzeitpunkt. Seine verstrichene Dauer wird
-vollständig und ohne Doppelzählung auf die zugehörige Zwangskühlungsdauer
-angerechnet. Eine noch nicht verstrichene Nachlaufzeit wird nicht vorweg
-angerechnet. Bei einer neuen Session gelten die gemeinsamen Initialisierungsregeln.
-
-**Getrennte Zeitmechanismen:** Sessionfrist, Thermostat-Cooldown, Nachlauf,
-Zwangskühlung und lokale Rücksetz-Auszeit behalten ihre jeweilige Bedeutung
-und eigene Parameter. Die vereinbarte Nachlaufanrechnung ist eine Beziehung
-zwischen Abläufen, keine Gleichsetzung ihrer Fristen.
-
-**Parameter:** notwendige Werte direkt in der Integration konfigurierbar machen.
-Genau eine konsumierte Quelle je Einstellung, gemeinsame Validierung und
-Speicherung. Sinnvolle Relationen statt unnötiger unabhängiger Absolutwerte;
-fachlich verschiedene Fristen nicht zusammenlegen. Abgeleitete Werte und
-Restzeiten nur lesbar anzeigen. Die automatische relative Erkennungsanpassung
-ist noch kein freigegebener Ersatzdetektor.
-
-**Darstellung:** Der vorgeschlagenen Sessionansicht wurde zugestimmt. Sie
-verbindet aktuellen Ablauf und Zeitverlauf, trennt Heizaktivität von der Phase
-und zeigt Messwerte beider Höhen, Türereignisse, Aufgüsse, Gangintervalle sowie
-Fehlerhinweise. Vorläufiger und bestätigter Gang sind Kennzeichnungen desselben
-Intervalls. Einstellungen und Kalibrierung sind getrennt zugänglich.
-Einzelheiten: [Darstellung](darstellung.md).
-
-**Archiv und Export:** Sessiondaten werden langfristig in voller empfangener
-Auflösung unabhängig vom Recorder gespeichert. Keine automatische Verdichtung
-oder altersbedingte Löschung der Originalmessungen. Der technische Vorschlag
-ist angenommen: eigene SQLite-Datenbank unter dem HA-Konfigurationsverzeichnis,
-konsistente Einbeziehung ins HA-Backup und ZIP-Export mit Messreihen sowie
-maschinenlesbaren Session-/Ereignisdaten über den Downloadbutton im
-Einstellungsbereich. Die historische Entitätszuordnung bleibt nachvollziehbar.
-Konkretes Schema, Archivschreiber und Backup-/Restore-Abnahme folgen in der
-Umsetzung; die Zustimmung ist kein bereits bestandener Funktionstest.
-
-**HA-Neustart:** Automatische Wiederaufnahme des laufenden Betriebs ist nicht
-notwendig; sie soll nur bei sehr einfacher Umsetzung ergänzt werden. Die
-Erstfassung kommt ohne zusätzliche automatische Betriebsfortsetzung aus.
-Dauerhaft lesbare Sessiondaten bleiben verpflichtend. Historienwiederherstellung
-und Fortsetzung einer Heizregelung sind unterschiedliche Aufgaben. Ein
-zusätzlicher komplexer Wiederanlaufautomat wird nicht zur Pflicht gemacht.
-
-## Korrekturen früherer Annahmen
-
-Die Gefäßentnahme um 22:39:40 ist das zusätzlich bestätigte 15. Türereignis der
-Referenzsession. Nicht jede Öffnung nach Aufguss beendet einen Gang. Manuelle
-Eingriffe waren einmalige Reparaturversuche, keine konkurrierenden Sollvorgaben
-für die Automatik. Normale Hystereseabschaltungen im Gang wurden durch die
-vereinbarte zustandsabhängige Heizbehandlung ersetzt.
-
-Ein durch Ausschalten beendeter Gang wird nicht wiederhergestellt, zählt aber
-bei zugeordnetem Aufguss wie jeder andere beendete bestätigte Gang. Eine
-Betriebsunterbrechung pausiert oder erneuert einen laufenden Nachlauf nicht.
-Die frühere Frage nach einer solchen Wiederaufnahme ist erledigt.
-
-Die vorgeschlagene Kopplung von Zwangskühlungsdauer und Rücksetz-Auszeit bleibt
-verworfen. Ebenso entfallen separate erste und spätere Heizzeitgrenzen sowie
-die zusätzliche Idle-Anrechnung zu beispielsweise 50 Prozent. Keine dieser
-verworfenen Varianten wird über eine Parametrierung wieder eingeführt.
-
-Der Vorrang laufender Zwangskühlung betrifft neue Gangstarts. Er bedeutet nicht,
-dass eine erst während eines Gangs fällige Kühlung diesen Gang beenden oder
-seine Heizbehandlung unterbrechen darf. Nach dem Gang wird zuerst der Nachlauf
-verarbeitet; dessen Anrechnung verhindert eine doppelte volle Kühlpause.
-
-## Verbleibende Umsetzung
-
-Darstellungsaufbau, auswählbare Entitätsverknüpfungen, langfristige Vollauflösung,
-SQLite-Ablage, konsistentes HA-Backup, ZIP-Download und der Verzicht auf eine
-zwingende Neustartfortsetzung sind festgelegt. Sie werden nicht erneut als
-offene Varianten angeboten. Details zur vorgesehenen Ablage stehen im
-[Speicherblock](speicherung.md); ihre Dokumentation behauptet keine bereits
-implementierte Datenbank, Backup-Prüfung oder Benutzeroberfläche.
-
-Konkrete Einstellungswerte werden über die Parameterverwaltung festgelegt.
-Die technische Umsetzung muss weiterhin ihre Voraussetzungen, insbesondere
-Schutzgrenzen, Aktorrückmeldungen und Ersatztemperatur bei Ausfall von Kanal 3,
-explizit behandeln; der Besprechungsfortschritt ist keine Live-Betriebsfreigabe.
-Offene technische Entscheidungen oder bislang nur vorgeschlagene Detektoränderungen
-werden nicht stillschweigend durch angenommene Standardwerte ersetzt.
-
-Die Besprechung bleibt bei einem Thema. Bereits geklärte Gang-, Heizzeit- und
-Sessionregeln werden nicht erneut als Varianten angeboten. Dokumentation,
-Implementierung und Messbefund bleiben getrennt gekennzeichnet.
+Der Auftrag autorisiert Repositoryarbeit und isolierte Tests, keine reale
+Ofenaktivierung, keine Produktionsinstallation, keine Versionserhöhung, kein
+Release und keine Lizenzwahl. Privater Recorderexport und Nutzerkonfiguration
+bleiben lokal. Ausgeführte Tests und noch fehlende Hardwareabnahme werden
+getrennt im [Abnahmebericht](abnahme.md) benannt.

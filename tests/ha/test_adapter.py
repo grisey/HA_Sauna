@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from custom_components.ha_sauna.core.parameters import DEFINITIONS
@@ -25,7 +26,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.config_flow import SaunaConfigFlow
         self.module = __import__("custom_components.ha_sauna.config_flow", fromlist=["*"])
         self.inputs = {r.key: f"{r.domains[0]}.test_{r.key}" for r in ROLES if not r.optional}
-        self.values = {d.key: 2.5 for d in DEFINITIONS}
+        self.values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS}
+        self.values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": r.device_class, "unit_of_measurement": r.unit,
@@ -36,19 +38,33 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.entries = []
         self.entry = SimpleNamespace(
             entry_id="example", options={"bindings": self.inputs, "parameters": self.values},
+            async_on_unload=lambda callback: None,
+            add_update_listener=lambda listener: lambda: None,
         )
         self.hass = SimpleNamespace(
+            data={},
+            http=SimpleNamespace(register_view=MagicMock(), async_register_static_paths=AsyncMock()),
+            bus=SimpleNamespace(async_listen=lambda *args: lambda: None, async_fire=MagicMock()),
             states=SimpleNamespace(get=self.states.get),
             config_entries=SimpleNamespace(
                 async_entries=lambda *a, **kw: self.entries,
                 async_get_entry=lambda *a: self.entry,
                 async_reload=AsyncMock(),
+                async_forward_entry_setups=AsyncMock(),
+                async_unload_platforms=AsyncMock(return_value=True),
             ),
         )
         self.flow = SaunaConfigFlow()
         self.flow.hass = self.hass
         self.flow.handler = "ha_sauna"
         self.flow.context = {"source": "user"}
+        self.temp = tempfile.TemporaryDirectory()
+        self.hass.config = SimpleNamespace(path=lambda *parts: str(Path(self.temp.name).joinpath(*parts)))
+
+    async def asyncTearDown(self):
+        if getattr(self.entry, "runtime_data", None) and not self.entry.runtime_data.closed:
+            await self.entry.runtime_data.close()
+        self.temp.cleanup()
 
     async def test_initial_form_and_real_selectors(self):
         form = await self.flow.async_step_user()
@@ -115,12 +131,14 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("upper_status", result["data"]["bindings"])
             self.assertEqual(result["data"]["parameters"], self.values)
 
-    async def test_setup_and_unload_never_start_a_session_or_call_services(self):
+    async def test_setup_unload_without_device_transport_never_starts_session(self):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry
         self.hass.services = MagicMock()
-        self.assertTrue(await async_setup_entry(self.hass, self.entry))
+        with patch("custom_components.ha_sauna.device.HADevice.start", new_callable=AsyncMock), patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
+            self.assertTrue(await async_setup_entry(self.hass, self.entry))
         self.assertIsNone(self.entry.runtime_data.session)
-        self.assertTrue(await async_unload_entry(self.hass, self.entry))
+        with patch("custom_components.ha_sauna.device.HADevice.close", new_callable=AsyncMock):
+            self.assertTrue(await async_unload_entry(self.hass, self.entry))
         self.assertTrue(self.entry.runtime_data.closed)
         self.assertEqual(self.hass.services.mock_calls, [])
 

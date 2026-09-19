@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from math import isfinite
 from types import MappingProxyType
 
+from .detection_parameters import SPECS
+
 
 class ParameterError(ValueError):
     """Fehler mit Feldbezug für die Konfigurationsoberfläche."""
@@ -21,6 +23,11 @@ class ParameterDefinition:
     label: str
     unit: str
     allow_zero: bool = False
+    optional: bool = False
+    maximum: float = 1000000
+    default: float | None = None
+    minimum: float | None = None
+    integer: bool = False
 
     def validate(self, value: object) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -31,23 +38,53 @@ class ParameterDefinition:
             raise ParameterError(self.key, "invalid_number") from None
         if not isfinite(number) or (self.unit == "min" and not isfinite(number * 60)):
             raise ParameterError(self.key, "invalid_number")
-        if number < 0 or (number == 0 and not self.allow_zero):
+        if self.minimum is not None:
+            if number < self.minimum:
+                raise ParameterError(self.key, "too_small")
+        elif number < 0 or (number == 0 and not self.allow_zero):
             raise ParameterError(self.key, "non_negative" if self.allow_zero else "positive")
-        return number
+        if self.integer and not number.is_integer():
+            raise ParameterError(self.key, "integer_required")
+        if number > self.maximum:
+            raise ParameterError(self.key, "too_large")
+        return int(number) if self.integer else number
 
 
 # Keine unvereinbarten Ausgangswerte. Der Nutzer setzt die Werte bei Einrichtung.
 DEFINITIONS = (
     ParameterDefinition("session_gap_minutes", "Session-Unterbrechungsfrist", "min"),
     ParameterDefinition("confirmation_minutes", "Aufgussbestätigungsfrist", "min"),
-    ParameterDefinition("heating_minutes", "Heizzeitgrenze", "min"),
+    ParameterDefinition("heating_minutes", "Heizzeit vor erster Kühlung", "min", default=90),
+    ParameterDefinition("heating_reduction_minutes", "Einmalige Heizzeitverkürzung", "min", True, default=30),
     ParameterDefinition("heat_reset_minutes", "Heizzeit-Rücksetz-Auszeit", "min"),
-    ParameterDefinition("thermostat_cooldown_minutes", "Thermostat-Cooldown", "min", True),
-    ParameterDefinition("forced_cooling_minutes", "Zwangskühlungsdauer", "min"),
+    ParameterDefinition("thermostat_cooldown_minutes", "Thermostat-Cooldown", "min", True, default=5),
+    ParameterDefinition("minimum_heating_minutes", "Mindestheizzeit nach Einschalten", "min", True, default=10),
+    ParameterDefinition("mechanical_timer_minutes", "Mechanischer Ofentimer", "min", default=240),
+    ParameterDefinition("mechanical_timer_warning_minutes", "Vorwarnung Ofentimer", "min", optional=True),
+    ParameterDefinition("forced_cooling_minutes", "Zwangskühlungsdauer", "min", default=15),
+    ParameterDefinition("person_wait_minutes", "Personenerkennung nach Türschließung abwarten", "min", default=4),
+    ParameterDefinition("open_door_wait_minutes", "Kühlaufschub bei offener Tür", "min", default=10),
     ParameterDefinition("after_run_minutes", "Nachlaufdauer", "min"),
-    ParameterDefinition("cold_tolerance_c", "Untere Hysterese", "°C", True),
-    ParameterDefinition("hot_tolerance_c", "Obere Hysterese", "°C", True),
-)
+    ParameterDefinition("readiness_offset_c", "Bereitschaftsaufschlag", "°C", True, default=5),
+    ParameterDefinition("readiness_hysteresis_c", "Bereitschaftshysterese", "°C", default=3),
+    ParameterDefinition("preset_start_c", "Erste Temperaturkachel", "°C", default=70),
+    ParameterDefinition("preset_step_c", "Abstand der Temperaturkacheln", "°C", default=5),
+    ParameterDefinition("preset_count", "Anzahl der Temperaturkacheln", "Anzahl", default=6, minimum=1, maximum=20, integer=True),
+    # Unbestimmte Schutz-/Betriebswerte bleiben leer. Leer bedeutet Heizsperre,
+    # nicht ein vom Code gewählter Ersatzwert oder eine sichere Werkseinstellung.
+    ParameterDefinition("target_temperature_c", "Solltemperatur oben", "°C", optional=True),
+    ParameterDefinition("safety_temperature_c", "Temperaturgrenze für Zusatzkühlung", "°C", default=105),
+    ParameterDefinition("overtemperature_minutes", "Auslösezeit für Zusatzkühlung", "min", default=10),
+    ParameterDefinition("overtemperature_cooling_factor", "Faktor für Zusatzkühlung", "×", default=2, minimum=1),
+    ParameterDefinition("fault_confirmation_seconds", "Bestätigungsfrist zentraler Ausfälle", "s", optional=True),
+    ParameterDefinition("sensor_timeout_seconds", "Messwert-Gültigkeitsdauer", "s", optional=True),
+    ParameterDefinition("feedback_timeout_seconds", "Rückmeldungsfrist", "s", optional=True),
+    ParameterDefinition("power_heating_threshold_w", "Heizen oberhalb dieser Ofenleistung", "W", True, optional=True),
+    ParameterDefinition("nominal_power_kw", "Ofenleistung für Energieschätzung", "kW", default=4.5),
+    ParameterDefinition("cooling_brightness_percent", "Licht bei Zwangskühlung", "%", optional=True, maximum=100),
+) + tuple(ParameterDefinition(key, label, unit, allow_zero=minimum <= 0,
+        default=default, minimum=minimum, maximum=maximum, integer=integer)
+    for key, label, unit, default, minimum, maximum, integer in SPECS)
 BY_KEY = MappingProxyType({definition.key: definition for definition in DEFINITIONS})
 
 
@@ -66,13 +103,23 @@ class Parameters:
         checked = {}
         for definition in DEFINITIONS:
             if definition.key not in self.values:
+                if definition.default is not None:
+                    checked[definition.key] = definition.validate(definition.default)
+                    continue
+                if definition.optional:
+                    continue
                 raise ParameterError(definition.key, "required")
             checked[definition.key] = definition.validate(self.values[definition.key])
+        if checked["heating_reduction_minutes"] >= checked["heating_minutes"]:
+            raise ParameterError("heating_reduction_minutes", "reduction_too_large")
+        for route in ("strong", "weak"):
+            if checked[f"{route}_window_seconds"] % checked["person_step_seconds"]:
+                raise ParameterError(f"{route}_window_seconds", "window_not_divisible")
         object.__setattr__(self, "values", MappingProxyType(checked))
 
     def seconds(self, key: str) -> float:
         """Einheitenumrechnung, keine zusätzliche frei gewählte Zeitbeziehung."""
-        if BY_KEY[key].unit != "min":
+        if key not in BY_KEY or BY_KEY[key].unit != "min":
             raise ParameterError(key, "not_duration")
         return self.values[key] * 60
 

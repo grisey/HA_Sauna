@@ -221,13 +221,14 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.active.active.elapsed_seconds(t("21:18:00"))
 
-    def test_unagreed_transition_remains_explicit(self):
+    def test_ventilation_retracts_unconfirmed_gang_without_completion(self):
         state = apply(self.active, e("o", Kind.DOOR_OPEN, "21:27:15"))
-        with self.assertRaises(UnresolvedTransition):
-            apply(state, e("v", Kind.VENTILATION, "21:28:25"))
-        self.assertEqual(state.active, self.active.active)
-        self.assertEqual(state.completed, ())
-        self.assertIsNone(state.open_ventilation)
+        result = apply(state, e("v", Kind.VENTILATION, "21:28:25"))
+        self.assertIsNone(result.active)
+        self.assertEqual(result.completed, ())
+        self.assertEqual(result.gang_count, 0)
+        self.assertEqual(result.retracted, (self.active.active,))
+        self.assertIsNotNone(result.open_ventilation)
 
     def test_ventilation_requires_an_open_episode(self):
         with self.assertRaises(ValueError):

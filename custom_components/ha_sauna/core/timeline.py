@@ -25,6 +25,8 @@ class Kind(StrEnum):
     PERSON_WEAK = "person_weak"
     INFUSION = "infusion"
     VENTILATION = "ventilation_confirmed"
+    OPERATION_OFF = "operation_off"
+    CONFIRMATION_EXPIRED = "confirmation_expired"
 
 
 class Door(StrEnum):
@@ -75,6 +77,7 @@ class Gang:
     infusion_events: tuple[Event, ...] = ()
     ended_at: datetime | None = None
     end_event_id: str | None = None
+    end_reason: str | None = None
 
     @property
     def confirmation(self) -> Confirmation:
@@ -111,6 +114,13 @@ class Timeline:
     active: Gang | None = None
     completed: tuple[Gang, ...] = ()
     processed: tuple[Event, ...] = ()
+    # Aufgehobene Erkennungen sind Diagnosedaten, keine abgeschlossenen Gänge.
+    retracted: tuple[Gang, ...] = ()
+    rejected_start_sources: tuple[str, ...] = ()
+
+    @property
+    def gang_count(self) -> int:
+        return sum(bool(g.infusion_events) for g in self.completed)
 
     def __post_init__(self) -> None:
         if not self.session_id or not isinstance(self.door, Door):
@@ -144,7 +154,7 @@ def apply(state: Timeline, event: Event) -> Timeline:
             raise ValueError("Doppelte Öffnung mit unterschiedlicher Ereignis-ID")
         result = replace(
             state, door=Door.OPEN, anchor=None, opening=event,
-            open_ventilation=None, preparation=None,
+            open_ventilation=None, preparation=None, rejected_start_sources=(),
         )
     elif event.kind == Kind.DOOR_CLOSE:
         if state.door == Door.CLOSED:
@@ -158,6 +168,9 @@ def apply(state: Timeline, event: Event) -> Timeline:
             raise ValueError("Gangerkennung benötigt einen geschlossenen Türzustand")
         gang = state.active
         if gang is None:
+            source = state.anchor.event_id if state.anchor else "recognition_only"
+            if event.kind != Kind.INFUSION and source in state.rejected_start_sources:
+                return replace(state, processed=state.processed + (event,))
             if event.kind == Kind.PERSON_WEAK and state.preparation is None:
                 raise ValueError("Schwacher Gangstart benötigt vorheriges Durchlüften")
             anchor = state.anchor
@@ -186,13 +199,32 @@ def apply(state: Timeline, event: Event) -> Timeline:
         result = replace(state, open_ventilation=state.open_ventilation or event)
         if state.active is not None:
             if state.active.confirmation == Confirmation.PROVISIONAL:
-                raise UnresolvedTransition(
-                    "Durchlüften bei vorläufigem Gang: Aufhebung noch festzulegen"
+                result = replace(
+                    result, active=None, retracted=state.retracted + (state.active,),
+                    rejected_start_sources=state.rejected_start_sources + (
+                        state.active.start_source_event_id if state.active.start_basis == "door_close" else "recognition_only",
+                    ),
                 )
-            finished = replace(
-                state.active, ended_at=event.detected_at, end_event_id=event.event_id,
-            )
+            else:
+                finished = replace(
+                    state.active, ended_at=event.detected_at, end_event_id=event.event_id,
+                    end_reason="ventilation",
+                )
+                result = replace(result, active=None, completed=state.completed + (finished,))
+    elif event.kind == Kind.CONFIRMATION_EXPIRED:
+        if state.active is not None and not state.active.infusion_events:
             result = replace(
-                result, active=None, completed=state.completed + (finished,),
+                state, active=None, retracted=state.retracted + (state.active,),
+                rejected_start_sources=state.rejected_start_sources + (
+                    state.active.start_source_event_id if state.active.start_basis == "door_close" else "recognition_only",
+                ),
             )
+    elif event.kind == Kind.OPERATION_OFF:
+        completed = state.completed
+        if state.active is not None:
+            completed += (replace(state.active, ended_at=event.detected_at,
+                                  end_event_id=event.event_id, end_reason="ausgeschaltet"),)
+        # Eine spätere neue Erkennung darf nicht den Beginn des ausgeschalteten
+        # Gangs erben. Die bekannte Türlage bleibt erhalten.
+        result = replace(state, active=None, completed=completed, anchor=None, preparation=None)
     return replace(result, processed=state.processed + (event,))

@@ -1,5 +1,20 @@
 # Arbeitsregeln
 
+## Geltende Nutzerentscheidungen vom 19.09.2026
+
+Maßgeblich sind die konsolidierten Regeln in `docs/entscheidungen.md` und
+`docs/betrieb.md`. Die frühere einheitliche Heizzeit wurde ausdrücklich durch
+90 Minuten Anfangsbudget, einmalig 30 Minuten Verringerung nach erster Kühlung
+und danach konstanten Wert ersetzt. Alle Zahlen sind einstellbare Defaults.
+Temperaturüberschreitung erzeugt nach anhaltendem Nachweis Zusatzkühlung ohne
+Sessionabbruch. Die jüngste Türwartefrist beträgt standardmäßig 4 Minuten nach
+Schließung beziehungsweise 10 Minuten bei offen bleibender Tür.
+Für die erste Testinstallation zählt der Heizzähler ohne optionalen Leistungsmesser
+bei Schütz EIN. Die Temperaturkrümmungs-Erkennung ist ausdrücklich zurückgestellt.
+Leistungsmessung bleibt optional; der mechanische Timer ist reine Anzeige.
+Normalansicht, separates Verlaufsblatt und sortierte Detailansicht folgen der
+Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.
+
 - Maßgeblich sind `docs/entscheidungen.md`, Gang-, Betriebs-, Parameter- und
   Zeitmodell sowie der festgehaltene Kandidat. Spätere Nutzerkorrekturen gehen vor.
 - Die Besprechung bleibt schrittweise und jeweils bei einem Thema. Regeln und
@@ -22,9 +37,11 @@
 - Jeder beendete Gang mit zugeordnetem Aufguss zählt genau einmal, unabhängig
   vom Beendigungsgrund. Die Zählberechtigung folgt aus den Gang-/Aufgussobjekten;
   keine Sonderregel nur für ausgeschaltete Gänge und kein paralleler Merker.
-- Es gilt eine einstellbare Heizzeitgrenze für sämtliche Heizabschnitte, ohne
-  eigene Anheiz- und Folgedauer. Der Heizzeittimer zählt nur tatsächliches Heizen
-  und pausiert bei idle. Keine zusätzliche prozentuale Idle-Gutschrift und kein
+- Das Heizbudget folgt Anfangswert und einmaliger Verringerung nach erster
+  abgeschlossener Kühlung. Der Heizzeittimer verwendet die gültige optionale
+  Leistungsmessung, sonst eine unabhängige Heizrückmeldung oder ersatzweise die
+  Schützstellung. Ohne unabhängige Messung ist die Zählung eine Schätzung.
+  Keine zusätzliche prozentuale Idle-Gutschrift und kein
   durch Idle-Zeiten vergrößertes Heizbudget. Die zuvor vereinbarte lokale
   Rücksetzung nach genügend langer zusammenhängender Auszeit bleibt davon
   getrennt und ist kein Sessionwechsel.

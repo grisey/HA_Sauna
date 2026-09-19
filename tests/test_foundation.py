@@ -20,7 +20,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({definition.key: 2.5 for definition in DEFINITIONS})
+    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS},
+                       "heating_minutes": 2.5, "heating_reduction_minutes": 0.5})
 
 
 def bindings():
@@ -77,7 +78,7 @@ class ParameterTests(unittest.TestCase):
     def test_seconds_are_derived_from_the_only_value(self):
         self.assertEqual(parameters().seconds("heating_minutes"), 150)
         with self.assertRaises(ParameterError):
-            parameters().seconds("cold_tolerance_c")
+            parameters().seconds("readiness_hysteresis_c")
 
     def test_caller_cannot_mutate_parameters(self):
         original = parameters().as_dict()
@@ -347,14 +348,16 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]), {d.key for d in DEFINITIONS})
         self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES})
 
-    def test_no_actuator_service_calls_in_step_one(self):
+    def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"
         for file in folder.rglob("*.py"):
             text = file.read_text()
             ast.parse(text)
             with self.subTest(file=file.name):
-                self.assertNotIn("hass.services", text)
-                self.assertNotIn("async_call(", text)
+                if file.name != "device.py":
+                    self.assertNotIn("hass.services", text)
+                if file.name != "device.py":
+                    self.assertNotIn("async_call(", text)
                 self.assertNotIn("SUPERVISOR_TOKEN", text)
 
 

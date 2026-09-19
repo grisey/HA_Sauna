@@ -1,4 +1,4 @@
-"""Session-eigene Laufzeitdaten und Schnittstellen des ersten Umsetzungspakets."""
+"""Session-eigene Laufzeitdaten und unveränderte Messherkunft."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -23,8 +23,8 @@ class Quantity(StrEnum):
 class Measurement:
     """Normalisierter Eingang; Originalwert und Herkunft bleiben daneben erhalten.
 
-    Noch kein Live-Messadapter. Sekundenraster oder wiederverwendete Werte dürfen
-    später nicht als weitere Originalmessungen an diese Schnittstelle gelangen.
+    Sekundenraster oder wiederverwendete Werte werden getrennt von tatsächlichen
+    Originalmessungen geführt und archiviert.
     """
 
     position: Position
@@ -67,10 +67,22 @@ class Deadline:
 
 
 @dataclass(frozen=True)
+class HeatingInterval:
+    started_at: datetime
+    ended_at: datetime | None = None
+    end_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class HeatingTime:
-    """Anfangsdaten, noch keine Heizzeit- oder Kühlungsberechnung."""
+    """Tatsächlich rückgemeldete Heizintervalle und lokale Zeitführung."""
 
     elapsed_seconds: float = 0.0
+    reported_heating: bool | None = None
+    accounted_at: datetime | None = None
+    off_since: datetime | None = None
+    last_reset_at: datetime | None = None
+    intervals: tuple[HeatingInterval, ...] = ()
 
     def __post_init__(self) -> None:
         if (isinstance(self.elapsed_seconds, bool)
@@ -80,12 +92,68 @@ class HeatingTime:
 
 
 @dataclass(frozen=True)
+class Energy:
+    measured_kwh: float = 0.0
+    estimated_kwh: float = 0.0
+    measured_seconds: float = 0.0
+    estimated_seconds: float = 0.0
+    unknown_seconds: float = 0.0
+    accounted_at: datetime | None = None
+
+    @property
+    def total_kwh(self):
+        return self.measured_kwh + self.estimated_kwh
+
+    @property
+    def source(self):
+        if self.unknown_seconds:
+            return "incomplete"
+        if self.measured_seconds and self.estimated_seconds:
+            return "mixed"
+        return "measured" if self.measured_seconds else "estimated"
+
+
+@dataclass(frozen=True)
+class TimedPhase:
+    phase_id: str
+    started_at: datetime
+    ends_at: datetime
+
+
+@dataclass(frozen=True)
+class CoolingCycle:
+    cycle_id: str
+    requested_at: datetime
+    duration_seconds: float
+    credited_seconds: float = 0
+    started_at: datetime | None = None
+    ends_at: datetime | None = None
+    reason: str = "heating_budget"
+
+
+@dataclass(frozen=True)
+class ThermostatState:
+    demand: bool = False
+    cooldown_until: datetime | None = None
+
+
+@dataclass(frozen=True)
 class Session:
     """Besitzt Gangmodell, Heizzeit und Fristen; Konfiguration bleibt außerhalb."""
 
     timeline: Timeline
     heating: HeatingTime = field(default_factory=HeatingTime)
+    energy: Energy = field(default_factory=Energy)
     deadlines: tuple[Deadline, ...] = ()
+    operation_enabled: bool = False
+    operation_off_at: datetime | None = None
+    ended_at: datetime | None = None
+    thermostat: ThermostatState = field(default_factory=ThermostatState)
+    after_run: TimedPhase | None = None
+    after_run_history: tuple[TimedPhase, ...] = ()
+    cooling: CoolingCycle | None = None
+    cooling_history: tuple[CoolingCycle, ...] = ()
+    ready_at: datetime | None = None
 
     def __post_init__(self) -> None:
         purposes = set()
