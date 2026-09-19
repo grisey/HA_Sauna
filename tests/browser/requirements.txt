@@ -1,0 +1,16 @@
+# Target HA version and its bundled frontend requirement.
+homeassistant==2026.9.2
+home-assistant-frontend==20260826.7
+securetar==2026.4.1
+cronsim==2.7
+playwright==1.63.0
+# HA's real service catalogue imports the base entity components. These pins
+# come from their manifests in Core 2026.9.2, including transitive components.
+gazetteer-matcher==1.1.0
+hassil==3.12.0
+home-assistant-intents==2026.8.28
+pymicro-vad==1.0.1
+pyspeex-noise==1.0.2
+mutagen==1.48.1
+ha-ffmpeg==3.2.2
+PyTurboJPEG==1.8.3

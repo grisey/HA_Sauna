@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.14.2'
-      - run: python -m pip install 'homeassistant==2026.9.2' 'home-assistant-frontend==20260826.7' 'securetar==2026.4.1' 'cronsim==2.7' 'playwright==1.63.0'
+      - run: python -m pip install -r tests/browser/requirements.txt
       - run: python -m playwright install --with-deps chromium
       - run: python -m unittest discover -s tests/browser -v
         env:
