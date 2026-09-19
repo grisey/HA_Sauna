@@ -33,12 +33,10 @@ class ThermostatTests(unittest.TestCase):
         _, decision = self.decide(state, now=T0 + timedelta(seconds=60), temperature=70)
         self.assertTrue(decision.heat)
 
-    def test_provisional_gang_suppresses_hysteresis_and_operational_stops(self):
-        for kwargs in ({"temperature": 100}, {"cooling": True}, {"after_run": True}):
-            with self.subTest(kwargs=kwargs):
-                _, decision = self.decide(gang=True, **kwargs)
-                self.assertTrue(decision.heat)
-                self.assertEqual(decision.reason, "gang")
+    def test_provisional_gang_suppresses_regular_temperature_stops(self):
+        _, decision = self.decide(gang=True, temperature=100)
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "gang")
 
     def test_safety_and_explicit_off_always_override_gang(self):
         for kwargs in ({"enabled": False},
@@ -57,6 +55,30 @@ class ThermostatTests(unittest.TestCase):
         _, decision = self.decide(parameters=configured, temperature=None)
         self.assertFalse(decision.heat)
         self.assertEqual(decision.reason, "upper_temperature_unavailable")
+
+    def test_pending_regulation_failure_only_continues_confirmed_running_heat(self):
+        running = ThermostatState(demand=True)
+        _, decision = self.decide(running, temperature=None, heating_since=T0,
+            pending_regulation_failure=True)
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "pending_regulation_temperature")
+        for state, heating_since, pending in ((ThermostatState(), T0, True),
+                                              (running, None, True), (running, T0, False)):
+            with self.subTest(state=state, heating_since=heating_since, pending=pending):
+                _, decision = self.decide(state, temperature=None, heating_since=heating_since,
+                    pending_regulation_failure=pending)
+                self.assertFalse(decision.heat)
+                self.assertEqual(decision.reason, "upper_temperature_unavailable")
+
+    def test_pending_regulation_failure_never_overrides_safety_paths(self):
+        for args in ({"enabled": False}, {"protection": ("missing_feedback",)},
+                     {"inhibits": ("configuration_required:test",)},
+                     {"cooling": True}, {"after_run": True},
+                     {"gang": True, "cooling": True}, {"gang": True, "after_run": True}):
+            with self.subTest(args=args):
+                _, decision = self.decide(ThermostatState(demand=True), temperature=None,
+                    heating_since=T0, pending_regulation_failure=True, **args)
+                self.assertFalse(decision.heat)
 
     def test_after_run_and_cooling_keep_heater_off_outside_gang(self):
         for field in ("after_run", "cooling"):

@@ -200,7 +200,21 @@ class HADevice:
         temperature = upper.value if upper is not None and timeout is not None and (now - upper.received_at).total_seconds() <= timeout else None
         # Ein kurz fehlendes Paket verwirft einen noch gültigen Messwert nicht.
         # Nach Gültigkeitsende gibt es keinen erfundenen Ersatz der unteren Höhe.
-        controller.set_temperature(temperature, now)
+        # Ein bereits laufender Ofen darf nur bis zur vorhandenen
+        # Fehler-Bestätigungsfrist weiterlaufen. Der Temperaturwert selbst
+        # bleibt unbekannt; ein Start ist weiterhin ausgeschlossen.
+        regulation_fault = "regulation_temperature_unavailable"
+        confirmation = self.values.get("fault_confirmation_seconds")
+        if temperature is None:
+            since = self.fault_since.setdefault(regulation_fault, now)
+            pending_regulation_failure = (confirmation is not None
+                and (now - since).total_seconds() < confirmation
+                and regulation_fault not in controller.protection)
+        else:
+            self.fault_since.pop(regulation_fault, None)
+            pending_regulation_failure = False
+        controller.set_temperature(temperature, now,
+            pending_regulation_failure=pending_regulation_failure)
         contactor = self.contactor_feedback()
         controller.report_contactor(contactor, now)
         self.heating_observation = self.observe_heating(now)

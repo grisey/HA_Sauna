@@ -25,6 +25,7 @@ FAULTS = {
 REASONS = {"operation_off": "Der Saunabetrieb ist ausgeschaltet.",
     "temperature_configuration_required": "Die Temperatureinstellungen sind noch unvollständig.",
     "upper_temperature_unavailable": "Ein gültiger oberer Temperaturwert fehlt.",
+    "pending_regulation_temperature": "Die laufende Heizung bleibt während der kurzen Temperatur-Messlücke eingeschaltet; der Ausfall wird noch geprüft.",
     "gang": "Die Heizung bleibt während des Saunagangs eingeschaltet.",
     "forced_cooling": "Die Zwangskühlung läuft; der Ofen bleibt aus.",
     "after_run": "Der Nachlauf läuft; der Ofen bleibt aus.",

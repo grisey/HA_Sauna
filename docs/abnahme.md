@@ -1,5 +1,24 @@
 # Funktionsprüfung der aktuellen Testfassung
 
+## Messlücken und Mindestheizzeit vom 20.09.2026
+
+Eine kurz überschrittene Messwertgültigkeit führte bisher zum Ausschalten und
+sofortigen Wiedereinschalten bei Rückkehr des Messwerts. Damit entstand ein neuer
+Heizintervallstart einschließlich neuer Mindestheizzeit. Die ausdrücklich
+freigegebene Korrektur erhält bereits laufendes, rückgemeldetes Heizen während
+der bestehenden Fehler-Bestätigungsfrist. Fehlende Regeltemperatur bleibt als
+solche sichtbar. Neue Heizstarts bleiben gesperrt; bestätigter Dauerausfall,
+Nachlauf, gestartete Kühlung, Betrieb-Aus und andere Sperren gehen vor.
+
+Lokal **177 Kerntests bestanden, 2 private Replay-Skips**, 179 gesammelt.
+Python-/JavaScript-Syntax, Sprachdateien und `git diff --check` sind geprüft.
+Die HA-Regressionen prüfen die kurze Messlücke nach bereits abgelaufener
+Mindestheizzeit, die verriegelte Abschaltung nach anhaltendem Ausfall,
+ausdrückliches Ausschalten mit anschließend blockiertem Neustart und eine
+Sollwerterhöhung bei fehlender Temperatur und zuvor ausgeschaltetem Ofen.
+Der Nachweis dieser Gerätepfade folgt aus der Linux-CI. Keine reale Installation
+oder Gerätebetätigung durch den Entwicklungszugriff.
+
 ## Zustandsabhängige Erkennung vom 20.09.2026
 
 Der Controller gibt Personen- und Aufgussprüfungen nur frei, wenn sie den
@@ -12,7 +31,13 @@ Lokal **175 Kerntests bestanden, 2 private Replay-Skips**, 177 gesammelt.
 Der separate Vergleich aller Rasterpunkte mit dem eingefrorenen Kandidaten besteht.
 Ein weiterer privater Ablaufvergleich erhält sämtliche Tür-, Lüftungs- und
 Aufgusszeitpunkte sowie die Gangzuordnung; nur nachträgliche Personensignale
-entfallen. HA- und Browsernachweise für diese Ergänzung folgen aus der Linux-CI.
+entfallen. Geprüfter Code:
+[`3b46a78`](https://github.com/grisey/HA_Sauna/commit/3b46a78387913336495a102ba8cae1987b196869).
+[CI 35476362531](https://github.com/grisey/HA_Sauna/actions/runs/35476362531)
+ist vollständig erfolgreich: **175 Kerntests bestanden, 2 private Replay-Skips;
+11 HA-API-Smokes; 32 echte HA-Integrationstests; 4 Browserabläufe**. Der neue
+HA-Test bestätigt, dass der erste Aufguss den Gang anlegt und weitere Aufgüsse
+bei ruhender Personensuche demselben Gang zugeordnet bleiben.
 
 Die vorherige Fassung wurde inzwischen vom Nutzer installiert. Ausschließlich
 gelesene Archiv- und Zustandsdaten bestätigen Heizschütz-Aus zum Gangende,
