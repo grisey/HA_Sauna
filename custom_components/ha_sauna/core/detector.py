@@ -135,7 +135,12 @@ class Detector:
         self.levels[name] = condition
         return condition and not old
 
-    def advance(self, at, *, enabled):
+    def advance(self, at, *, enabled, allowed=None, on_detection=None):
+        """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
+
+        Ohne Kontext bleibt der reine Messvergleich zum Referenzkandidaten möglich.
+        Im Betrieb liefert ausschließlich der Controller die Erkennungsfreigaben.
+        """
         at = utc(at)
         final = int((at - self.origin).total_seconds())
         if final < self.index:
@@ -145,10 +150,10 @@ class Detector:
             self.index += 1
             now = self.origin + timedelta(seconds=self.index)
             self._consume(now)
-            output.extend(self._sample(now, at, enabled))
+            output.extend(self._sample(now, at, enabled, allowed, on_detection))
         return output
 
-    def _sample(self, now, decision_at, enabled):
+    def _sample(self, now, decision_at, enabled, allowed=None, on_detection=None):
         p = self.p
         available, faults = [], []
         for position in self.positions:
@@ -173,7 +178,7 @@ class Detector:
             self.levels.clear()
         self.active_positions, self.faults = channels, tuple(faults)
         trace = {"at": now, "channels": tuple(c.value for c in channels),
-                 "metrics": {c.value: {} for c in channels}, "conditions": {}}
+                 "metrics": {c.value: {} for c in channels}, "conditions": {}, "checks": {}}
         output = []
         def observe():
             trace.update(holds=dict(self.counts), signals=tuple(d.kind for d in output),
@@ -182,29 +187,36 @@ class Detector:
             if self.observer:
                 self.observer(trace)
         def emit(kind):
-            output.append(Detection(kind, now, decision_at, tuple(c.value for c in channels)))
+            detection = Detection(kind, now, decision_at, tuple(c.value for c in channels))
+            output.append(detection)
+            if on_detection:
+                on_detection(detection)
         if not channels:
             observe()
             return output
-        opening, closing = True, True
-        temperature_opening = bool(enabled and self.heating_since is not None
+        opening, closing = (None, True) if self.open else (True, None)
+        temperature_opening = bool(not self.open and enabled and self.heating_since is not None
             and (now - self.heating_since).total_seconds() >= p["door_window_seconds"] + p["median_seconds"]
             and set(channels) == {Position.UPPER, Position.LOWER})
         for c in channels:
             trend = self._slope(c, "Tm", p["door_window_seconds"])
-            dh = self._difference(c, "Hm", p["door_humidity_seconds"])
+            dh = self._difference(c, "Hm", p["door_humidity_seconds"]) if not self.open else None
             trace["metrics"][c.value].update(door_temperature_slope=trend, door_humidity_delta=dh)
-            opening &= trend is not None and trend < p["door_open_slope"] and dh is not None and dh <= -p[f"door_open_humidity_{c.value}"]
-            closing &= trend is not None and trend > p["door_close_slope"]
-            temperature_opening &= trend is not None and trend < p["door_heating_slope"]
-            current = self.frames[c][-1]["Tm"]
-            temperature_opening &= (p["door_heating_max_temperature_c"] > 0 and current is not None
-                and current < p["door_heating_max_temperature_c"])
+            if self.open:
+                closing &= trend is not None and trend > p["door_close_slope"]
+            else:
+                opening &= trend is not None and trend < p["door_open_slope"] and dh is not None and dh <= -p[f"door_open_humidity_{c.value}"]
+            if not self.open:
+                temperature_opening &= trend is not None and trend < p["door_heating_slope"]
+                current = self.frames[c][-1]["Tm"]
+                temperature_opening &= (p["door_heating_max_temperature_c"] > 0 and current is not None
+                    and current < p["door_heating_max_temperature_c"])
         temperature_toggle = self._sustain("door_heating", temperature_opening and not self.open,
             p["door_heating_hold_seconds"])
         toggle = self._sustain("door", closing if self.open else opening,
             p["door_close_hold_seconds"] if self.open else p["door_open_hold_seconds"])
-        trace["conditions"].update(door_open=opening, door_heating=temperature_opening, door_close=closing)
+        trace["checks"].update(door_open=not self.open, door_close=self.open)
+        trace["conditions"].update(door_open=opening, door_heating=temperature_opening if not self.open else None, door_close=closing)
         # Eine Lüftung kann am selben Rasterpunkt wie die Schließung belegt sein.
         # Dann wird zuerst ihr noch offener Kontext abgeschlossen.
         if self.open and not self.ventilated and (now - self.opened_at).total_seconds() >= p["vent_hold_seconds"]:
@@ -228,26 +240,32 @@ class Detector:
                 self.context = self.ventilated
                 emit(Kind.DOOR_CLOSE)
         eligible = bool(enabled and not self.open)
-        infusion = eligible
-        for c in channels:
-            dh = self._difference(c, "H", p["infusion_window_seconds"])
-            dt = self._difference(c, "T", p["infusion_window_seconds"])
-            trace["metrics"][c.value].update(infusion_humidity_delta=dh, infusion_temperature_delta=dt)
-            infusion &= dh is not None and dh >= p["infusion_humidity"] and dt is not None and dt >= p["infusion_temperature"]
+        infusion_check = eligible and (allowed is None or allowed(Kind.INFUSION))
+        trace["checks"]["infusion"] = infusion_check
+        infusion = infusion_check
+        if infusion_check:
+            for c in channels:
+                dh = self._difference(c, "H", p["infusion_window_seconds"])
+                dt = self._difference(c, "T", p["infusion_window_seconds"])
+                trace["metrics"][c.value].update(infusion_humidity_delta=dh, infusion_temperature_delta=dt)
+                infusion &= dh is not None and dh >= p["infusion_humidity"] and dt is not None and dt >= p["infusion_temperature"]
         sustained = self._sustain("infusion", infusion, p["infusion_hold_seconds"])
-        trace["conditions"]["infusion"] = infusion
+        trace["conditions"]["infusion"] = infusion if infusion_check else None
         if self._edge("infusion", sustained):
             emit(Kind.INFUSION)
         if self.index % p["person_step_seconds"] == 0:
             for route, kind in (("strong", Kind.PERSON_STRONG), ("weak", Kind.PERSON_WEAK)):
-                condition = eligible and (route != "weak" or self.context)
-                for c in channels:
-                    for key, quantity in (("Tm", "temperature"), ("Hm", "humidity")):
-                        trend = self._slope(c, key, p[f"{route}_window_seconds"], p["person_step_seconds"])
-                        trace["metrics"][c.value][f"{route}_{quantity}_slope"] = trend
-                        condition &= trend is not None and trend >= p[f"{route}_{quantity}_{c.value}"]
+                checking = eligible and (route != "weak" or self.context) and (allowed is None or allowed(kind))
+                trace["checks"][route] = checking
+                condition = checking
+                if checking:
+                    for c in channels:
+                        for key, quantity in (("Tm", "temperature"), ("Hm", "humidity")):
+                            trend = self._slope(c, key, p[f"{route}_window_seconds"], p["person_step_seconds"])
+                            trace["metrics"][c.value][f"{route}_{quantity}_slope"] = trend
+                            condition &= trend is not None and trend >= p[f"{route}_{quantity}_{c.value}"]
                 sustained = self._sustain(route, condition, p[f"{route}_hold_seconds"], p["person_step_seconds"])
-                trace["conditions"][route] = condition
+                trace["conditions"][route] = condition if checking else None
                 if self._edge(route, sustained):
                     emit(kind)
         observe()

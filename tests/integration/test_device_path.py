@@ -180,7 +180,45 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(originals), 4 * 401)
         self.assertTrue(any(r["kind"] == "command" and r["payload"]["heat"] for r in archived["records"]))
         self.assertTrue(any(r["kind"] == "detection" for r in archived["records"]))
+        from custom_components.ha_sauna.core.timeline import Kind
+        persons = [e for e in self.runtime.session.timeline.processed
+                   if e.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)]
+        self.assertEqual([e.event_id for e in persons], [provisional.recognition_event_id])
         self.assertGreater(self.runtime.session.heating.intervals[0].ended_at.timestamp() - self.base.timestamp(), 240)
+
+    async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
+        from custom_components.ha_sauna.core.timeline import Kind
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        first_gang = None
+        for second in range(161):
+            self.now = self.base + timedelta(seconds=second)
+            temperature = 70 + second*.01
+            humidity = 20 + second*.001 + max(0, second-70)*.02 + (2 if second>=70 else 0) + (2 if second>=140 else 0)
+            for position in ("upper", "lower"):
+                await self.set_source(position + "_temperature", temperature)
+                await self.set_source(position + "_humidity", humidity)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+            active = self.runtime.session.timeline.active
+            if active and active.infusion_events:
+                first_gang = first_gang or active
+                self.assertEqual(active.gang_id, first_gang.gang_id)
+                self.assertEqual(active.started_at, first_gang.started_at)
+                if second % 5 == 0:
+                    self.assertFalse(self.runtime.detector.diagnostic["checks"]["strong"])
+                    self.assertNotIn("strong_temperature_slope", self.runtime.detector.diagnostic["metrics"]["upper"])
+        self.assertIsNotNone(first_gang)
+        self.assertEqual(first_gang.recognition_kind, Kind.INFUSION)
+        self.assertEqual(len(self.runtime.session.timeline.active.infusion_events), 2)
+        self.assertFalse(any(e.kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK)
+                             for e in self.runtime.session.timeline.processed))
+        self.assertTrue(self.heater.is_on)
+        await self.runtime.archive.flush()
+        import asyncio
+        data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
+        detections = [r["payload"]["event"]["kind"] for r in data["records"] if r["kind"] == "detection"]
+        self.assertEqual(detections, [Kind.INFUSION,Kind.INFUSION])
 
     async def test_light_start_after_run_cooling_and_restore_use_real_light_service(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind

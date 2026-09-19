@@ -28,6 +28,13 @@ wie bei Fristablauf beendet werden. Tatsächlich verstrichener Nachlauf wird
 angerechnet; eine folgende Kühlung, Betrieb-Aus und technische Schutzsperren
 bleiben wirksam. Bedienung protokollieren, veraltete Phasenaufrufe abweisen.
 Der entkoppelte Taster steuert den Saunabetrieb, nie unmittelbar den Schütz.
+Erkennungen nur prüfen, wenn sie den aktuellen Ablauf noch ändern können.
+Türöffnung ausschließlich bei geschlossener, Türschließung ausschließlich bei
+offener Tür prüfen. Personensuche ruht bereits im vorläufigen Gang und nach
+Aufgussbestätigung; weitere Aufgüsse bleiben aktiv. Nachlauf, laufende Kühlung
+und Betrieb-Aus sperren neue Gangsignale. Erkennungsfreigaben aus dem führenden
+Controller ableiten, auch zwischen Signalen desselben Messzyklus. Keine Änderung
+der Tür-/Lüftungsschwellen für den angekündigten Vergleich längerer Öffnungen.
 Tasterimpuls und dauerhafter Betriebsschalter sind getrennt konfigurierbar.
 Übersicht, separates Verlaufsblatt und sortierte Detailansicht folgen der
 Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.

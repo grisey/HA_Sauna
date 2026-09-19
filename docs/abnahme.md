@@ -1,5 +1,24 @@
 # Funktionsprüfung der aktuellen Testfassung
 
+## Zustandsabhängige Erkennung vom 20.09.2026
+
+Der Controller gibt Personen- und Aufgussprüfungen nur frei, wenn sie den
+aktuellen Ablauf ändern können. Bereits erkannte Gänge benötigen keine weiteren
+Personensignale. Aufgüsse bleiben im Gang aktiv; Nachlauf, laufende Kühlung und
+Betrieb-Aus sperren neue Gangsignale. Türprüfungen bewerten nur den jeweils
+möglichen Übergang. Schwellen und eingefrorener Referenzkandidat bleiben gleich.
+
+Lokal **175 Kerntests bestanden, 2 private Replay-Skips**, 177 gesammelt.
+Der separate Vergleich aller Rasterpunkte mit dem eingefrorenen Kandidaten besteht.
+Ein weiterer privater Ablaufvergleich erhält sämtliche Tür-, Lüftungs- und
+Aufgusszeitpunkte sowie die Gangzuordnung; nur nachträgliche Personensignale
+entfallen. HA- und Browsernachweise für diese Ergänzung folgen aus der Linux-CI.
+
+Die vorherige Fassung wurde inzwischen vom Nutzer installiert. Ausschließlich
+gelesene Archiv- und Zustandsdaten bestätigen Heizschütz-Aus zum Gangende,
+Nachlauflicht mit rund 15 % und die Rückkehr zum Betriebslicht. Die physische
+Türöffnungsdauer ist weiterhin keine unabhängige Kontaktmessung.
+
 ## Ergänzung vom 20.09.2026 – Ofentimer und manuelles Phasenende
 
 Der Ofentimer zählt jetzt nur bei eingeschaltetem Betrieb und bestätigtem

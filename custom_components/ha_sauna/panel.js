@@ -7,7 +7,7 @@ const num = (v,d=1) => v == null ? "–" : Number(v).toLocaleString("de-DE",{max
 const duration = v => v == null ? "–" : `${Math.floor(Math.max(0,v)/60)}:${String(Math.floor(Math.max(0,v)%60)).padStart(2,"0")} min`;
 const phases = {aus:"Aus",aufheizen:"Aufheizen",bereit:"Bereit",saunagang:"Saunagang",nachlauf:"Nachlauf",zwangskühlung:"Zwangskühlung"};
 const events = {door_open:"Tür geöffnet",door_close:"Tür geschlossen",person_strong:"Person erkannt",person_weak:"Person erkannt (schwach)",infusion:"Aufguss",ventilation_confirmed:"Durchlüften bestätigt",operation_off:"Betrieb ausgeschaltet",confirmation_expired:"Vorläufigen Gang aufgehoben"};
-const signalText = {door_heating:"Temperaturabfall trotz Heizen",door_close:"Türschließung",door_open:"Türöffnung",door_close:"Türschließung",door:"Tür",infusion:"Aufguss",strong:"Deutliches Personensignal",weak:"Schwaches Personensignal"};
+const signalText = {door_heating:"Temperaturabfall trotz Heizen",door_close:"Türschließung",door_open:"Türöffnung",door:"Tür",infusion:"Aufguss",strong:"Deutliches Personensignal",weak:"Schwaches Personensignal"};
 const errorText = error => {
   // hass.callApi legt die Antwort der Integration in body ab; error enthält
   // lediglich den allgemeinen HTTP-Fehler (etwa „Response error: 409“).
@@ -248,7 +248,7 @@ class SaunaPanel extends HTMLElement {
       if(metric.startsWith("infusion_"))return [parameters[metric.replace("_delta","")]];
       return [parameters[metric.replace("_slope",`_${position}`)]];
     };
-    let html='<div class="notice">Kontrollansicht des tatsächlich laufenden Detektors. Gestrichelte Linien zeigen die für diese Saunasitzung gespeicherten Schwellen. Ein Grenzübertritt allein ist noch kein Ereignis: Kontext, verfügbare Sensoren und Bestätigungszeiten wirken zusätzlich.</div>';
+    let html='<div class="notice">Kontrollansicht des tatsächlich laufenden Detektors. Gestrichelte Linien zeigen die für diese Saunasitzung gespeicherten Schwellen. Ein Grenzübertritt allein ist noch kein Ereignis: Kontext, verfügbare Sensoren und Bestätigungszeiten wirken zusätzlich. Personensuche ruht im bereits erkannten Gang, im Nachlauf und während laufender Kühlung. Weitere Aufgüsse werden im Gang weiter erkannt; inaktive Prüfungen erzeugen keine zusätzlichen Personenmeldungen.</div>';
     if(!traces.length){this.$("#detection-plots").innerHTML=html+'<p>Für diese Saunasitzung liegen keine gespeicherten Erkennungsverläufe vor.</p>';return;}
     const [start,end]=this.window,x=t=>50+(stamp(t)-start)/(end-start)*900;
     for(const [group,metric,label] of groups){
@@ -265,7 +265,7 @@ class SaunaPanel extends HTMLElement {
       for(let n=0;n<=4;n++){const v=lo+(hi-lo)*n/4,t=start+(end-start)*n/4;chart+=`<text x="4" y="${y(v)+4}">${num(v,1)}</text><text text-anchor="middle" x="${x(t)}" y="192">${clock(t)}</text>`;}
       chart+='</svg>';html+=`<div class="plot-panel"><h3>${group} · ${label}</h3><p class="muted">Orange: oben · Blau: unten</p>${chart}</div>`;
     }
-    html+='<div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Bedingungen erfüllt</th><th>Bestätigungszeiten</th><th>Ausgelöste Signale</th></tr></thead><tbody>'+traces.filter(t=>t.signals.length).map(t=>`<tr><td>${when(t.at)}</td><td>${esc(Object.entries(t.conditions).filter(([,v])=>v).map(([k])=>signalText[k]||"Erkennungsbedingung").join(", "))}</td><td>${esc(Object.entries(t.holds).map(([k,v])=>`${signalText[k]||"Signal"}: ${num(v)} s`).join(" · "))}</td><td>${esc(t.signals.map(k=>events[k]||k).join(", "))}</td></tr>`).join("")+'</tbody></table></div></div>';
+    html+='<div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Aktive Prüfungen</th><th>Bedingungen erfüllt</th><th>Bestätigungszeiten</th><th>Ausgelöste Signale</th></tr></thead><tbody>'+traces.filter(t=>t.signals.length).map(t=>`<tr><td>${when(t.at)}</td><td>${esc(t.checks?Object.entries(t.checks).filter(([,v])=>v).map(([k])=>signalText[k]||"Erkennung").join(", "):"Keine Angabe in älteren Daten")}</td><td>${esc(Object.entries(t.conditions).filter(([,v])=>v).map(([k])=>signalText[k]||"Erkennungsbedingung").join(", "))}</td><td>${esc(Object.entries(t.holds).map(([k,v])=>`${signalText[k]||"Signal"}: ${num(v)} s`).join(" · "))}</td><td>${esc(t.signals.map(k=>events[k]||k).join(", "))}</td></tr>`).join("")+'</tbody></table></div></div>';
     this.$("#detection-plots").innerHTML=html;
   }
   drawSettings() {

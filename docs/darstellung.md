@@ -86,6 +86,11 @@ Veraltete Messwerte und unvollständige Einrichtung werden unterschiedlich erkl�
 interne Fehlerkennungen erscheinen nicht als Fehlermeldung. Die frei einstellbare
 Temperatursteigerung ist in der Steuerung unter einer eigenen Aufklappzeile wählbar.
 
+Die Erkennungskontrolle unterscheidet inaktive Prüfungen von nicht erfüllten
+Bedingungen. Personentrends werden im bestehenden Gang nicht als weitere
+Personenmeldungen ausgegeben; zusätzliche Aufgüsse bleiben sichtbar. Bei
+Türereignissen wird nur der mögliche nächste Übergang geprüft und dokumentiert.
+
 Unter Details → Einstellungen steht **Protokollierung**. **INFO** ist Standard:
 Fehler, Warnungen, Zustandswechsel, Sollwertwechsel und Schaltbefehle. **ERROR**
 begrenzt die Ausgabe auf Fehler; **DEBUG** ergänzt Messwerte und Erkennungsprüfungen.

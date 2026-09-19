@@ -116,19 +116,26 @@ class SaunaRuntime:
                 and self.device.feedback() is True and self.session.operation_enabled)
             self.detector.report_heating(heating, now)
         if sample and self.detector:
-            detections = self.detector.advance(now, enabled=self.session.operation_enabled)
-            if self.session.timeline.door == Door.UNKNOWN and self.detector.active_positions:
-                # Dokumentierte Anfangsannahme des Kandidaten, keine erfundene
-                # Türschließung und kein rückdatierter Startanker.
-                self.controller._session = replace(self.session,
-                    timeline=replace(self.session.timeline, door=Door.CLOSED))
-            for i, detection in enumerate(detections):
+            def initialize_door():
+                if self.session and self.session.timeline.door == Door.UNKNOWN and self.detector.active_positions:
+                    # Dokumentierte Anfangsannahme, kein erfundenes Türereignis.
+                    self.controller._session = replace(self.session,
+                        timeline=replace(self.session.timeline, door=Door.CLOSED))
+
+            index = 0
+            def detected(detection):
+                nonlocal index
+                initialize_door()
+                i, index = index, index + 1
                 event = Event(f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
                     self.session.session_id, detection.kind, detection.effective_at, now)
                 self.controller.process(event)
                 self.log.info("detection", "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.", EVENTS.get(detection.kind, "Erkennungssignal"), detection.effective_at)
                 if self.archive:
                     self.archive.append("detection", now, {"event": event, "channels": detection.channels}, self.session.session_id)
+            self.detector.advance(now, enabled=self.session.operation_enabled,
+                allowed=self.controller.recognition_allowed, on_detection=detected)
+            initialize_door()
         if self.device:
             self.device.refresh(now)
         else:

@@ -144,3 +144,14 @@ Türöffnungsdauer. Der bestehende Kandidat bleibt bis zum Nachweis unverändert
 Noch zu klären: Soll abgeschlossener Nachlauf auch nach erneutem Heizen einmalig
 auf eine erst später fällige Zwangskühlung angerechnet werden? Der bestehende
 Ablauf rechnet ihn nur auf eine bereits angeforderte Kühlung an.
+
+Erkennungen werden auf ihre Wirkung im bestehenden Ablauf begrenzt. Eine
+geschlossene Tür benötigt keine Schließungsprüfung, eine offene Tür keine
+weitere Öffnungsprüfung. Personensuche soll einen neuen Gang anlegen; ein bereits
+vorläufiger oder durch Aufguss bestätigter Gang benötigt sie nicht mehr. Weitere
+Aufgüsse werden weiter zugeordnet. Während Nachlauf, laufender Zwangskühlung und
+Betrieb-Aus bleiben neue Gangsignale gesperrt. Die Freigaben folgen ausschließlich
+dem Controller; der Detektor führt keinen zweiten Bestätigungsstand.
+
+Der Nutzer akzeptiert die nicht erkannte kurze Testöffnung. Tür- und Lüftungs-
+schwellen bleiben für den angekündigten Versuch mit längerer Öffnung unverändert.
