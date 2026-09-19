@@ -1,1 +1,28 @@
-"""HA Sauna: vorbereiteter Fachkern; noch kein installierbarer HA-Adapter."""
+"""Einrichtbares HA-Sauna-Grundgerüst ohne Geräteansteuerung."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+    from .runtime import SaunaRuntime
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]) -> bool:
+    """Eine konfigurierte Instanz laden, ohne einen Saunabetrieb zu starten."""
+    from homeassistant.exceptions import ConfigEntryError
+    from .runtime import Configuration, SaunaRuntime
+
+    try:
+        configuration = Configuration.from_options(entry.options)
+    except (ValueError, TypeError) as error:
+        raise ConfigEntryError("Ungültige HA-Sauna-Konfiguration") from error
+    entry.runtime_data = SaunaRuntime(configuration)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]) -> bool:
+    """Laufzeit schließen; niemals einen Heizbefehl beim Entladen erzeugen."""
+    await entry.runtime_data.close()
+    return True

@@ -1,0 +1,127 @@
+{
+  "title": "HA Sauna",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sauna einrichten",
+        "description": "Quellen und Ziele auswählen. Diese Fassung schaltet weder den Heizaktor noch das Licht und liest noch keine laufenden Messungen.",
+        "data": {
+          "name": "Name",
+          "upper_temperature": "Temperatur oben",
+          "upper_humidity": "Luftfeuchte oben",
+          "lower_temperature": "Temperatur unten",
+          "lower_humidity": "Luftfeuchte unten",
+          "heater": "Heizaktor",
+          "control_input": "Physische Bedienquelle",
+          "light": "Dimmbares Saunalicht",
+          "upper_status": "Sensorstatus oben",
+          "lower_status": "Sensorstatus unten",
+          "heater_feedback": "Zusätzliche Heizrückmeldung"
+        }
+      },
+      "parameters": {
+        "title": "Ablauf- und Thermostatparameter",
+        "description": "Alle Werte ausdrücklich festlegen. Es werden noch keine Timer oder Geräte angesteuert; dies ist das nicht schaltende Grundgerüst.",
+        "data": {
+          "session_gap_minutes": "Session-Unterbrechungsfrist",
+          "confirmation_minutes": "Aufgussbestätigungsfrist",
+          "heating_minutes": "Heizzeitgrenze",
+          "heat_reset_minutes": "Heizzeit-Rücksetz-Auszeit",
+          "thermostat_cooldown_minutes": "Thermostat-Cooldown",
+          "forced_cooling_minutes": "Zwangskühlungsdauer",
+          "after_run_minutes": "Nachlaufdauer",
+          "cold_tolerance_c": "Untere Hysterese",
+          "hot_tolerance_c": "Obere Hysterese"
+        }
+      }
+    },
+    "error": {
+      "required": "Bitte einen Wert angeben.",
+      "entity_required": "Bitte eine passende Entität auswählen.",
+      "wrong_domain": "Die Entität gehört nicht zum benötigten Typ.",
+      "wrong_device_class": "Die Geräteklasse passt nicht zur Messgröße.",
+      "wrong_unit": "Die Messquelle muss °C beziehungsweise % liefern.",
+      "duplicate_sensor": "Die beiden Positionen benötigen unterschiedliche Messquellen.",
+      "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
+      "light_not_dimmable": "Das Licht muss Dimmen unterstützen.",
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "invalid_number": "Bitte eine endliche Zahl angeben.",
+      "positive": "Der Wert muss größer als null sein.",
+      "non_negative": "Der Wert darf nicht negativ sein.",
+      "unknown_parameter": "Unbekannter Parameter.",
+      "unknown_binding": "Unbekannte Entitätsrolle.",
+      "invalid_parameters": "Die Parameter sind unvollständig oder ungültig.",
+      "invalid_bindings": "Die Entitätszuordnung ist ungültig."
+    },
+    "abort": {
+      "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "session_exists": "Eine Testsession ist aktiv. Änderungen mit laufenden Fristen werden erst im nächsten Umsetzungspaket unterstützt."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sauna konfigurieren",
+        "menu_options": {
+          "bindings": "Verknüpfte Entitäten",
+          "parameters": "Ablauf- und Thermostatparameter"
+        }
+      },
+      "bindings": {
+        "title": "Verknüpfte Entitäten",
+        "description": "Quellen und Ziele auswählen. Diese Fassung schaltet weder den Heizaktor noch das Licht und liest noch keine laufenden Messungen.",
+        "data": {
+          "upper_temperature": "Temperatur oben",
+          "upper_humidity": "Luftfeuchte oben",
+          "lower_temperature": "Temperatur unten",
+          "lower_humidity": "Luftfeuchte unten",
+          "heater": "Heizaktor",
+          "control_input": "Physische Bedienquelle",
+          "light": "Dimmbares Saunalicht",
+          "upper_status": "Sensorstatus oben",
+          "lower_status": "Sensorstatus unten",
+          "heater_feedback": "Zusätzliche Heizrückmeldung"
+        }
+      },
+      "parameters": {
+        "title": "Ablauf- und Thermostatparameter",
+        "description": "Alle Werte ausdrücklich festlegen. Es werden noch keine Timer oder Geräte angesteuert; dies ist das nicht schaltende Grundgerüst.",
+        "data": {
+          "session_gap_minutes": "Session-Unterbrechungsfrist",
+          "confirmation_minutes": "Aufgussbestätigungsfrist",
+          "heating_minutes": "Heizzeitgrenze",
+          "heat_reset_minutes": "Heizzeit-Rücksetz-Auszeit",
+          "thermostat_cooldown_minutes": "Thermostat-Cooldown",
+          "forced_cooling_minutes": "Zwangskühlungsdauer",
+          "after_run_minutes": "Nachlaufdauer",
+          "cold_tolerance_c": "Untere Hysterese",
+          "hot_tolerance_c": "Obere Hysterese"
+        }
+      }
+    },
+    "error": {
+      "required": "Bitte einen Wert angeben.",
+      "entity_required": "Bitte eine passende Entität auswählen.",
+      "wrong_domain": "Die Entität gehört nicht zum benötigten Typ.",
+      "wrong_device_class": "Die Geräteklasse passt nicht zur Messgröße.",
+      "wrong_unit": "Die Messquelle muss °C beziehungsweise % liefern.",
+      "duplicate_sensor": "Die beiden Positionen benötigen unterschiedliche Messquellen.",
+      "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
+      "light_not_dimmable": "Das Licht muss Dimmen unterstützen.",
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "invalid_number": "Bitte eine endliche Zahl angeben.",
+      "positive": "Der Wert muss größer als null sein.",
+      "non_negative": "Der Wert darf nicht negativ sein.",
+      "unknown_parameter": "Unbekannter Parameter.",
+      "unknown_binding": "Unbekannte Entitätsrolle.",
+      "invalid_parameters": "Die Parameter sind unvollständig oder ungültig.",
+      "invalid_bindings": "Die Entitätszuordnung ist ungültig."
+    },
+    "abort": {
+      "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "session_exists": "Eine Testsession ist aktiv. Änderungen mit laufenden Fristen werden erst im nächsten Umsetzungspaket unterstützt."
+    }
+  }
+}

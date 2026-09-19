@@ -1,0 +1,12 @@
+{
+  "domain": "ha_sauna",
+  "name": "HA Sauna",
+  "codeowners": ["@grisey"],
+  "config_flow": true,
+  "documentation": "https://github.com/grisey/HA_Sauna",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/grisey/HA_Sauna/issues",
+  "requirements": [],
+  "version": "0.0.0"
+}
