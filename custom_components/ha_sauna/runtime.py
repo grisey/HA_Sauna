@@ -16,7 +16,7 @@ from .core.models import Deadline, Session
 from .core.parameters import Parameters
 from .core.timeline import Door, Event
 from .log import SaunaLog, LEVELS
-from .presentation import fault_message, decision_message
+from .presentation import fault_message, decision_message, PHASES, EVENTS
 
 
 @dataclass(frozen=True)
@@ -119,9 +119,9 @@ class SaunaRuntime:
                     timeline=replace(self.session.timeline, door=Door.CLOSED))
             for i, detection in enumerate(detections):
                 event = Event(f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
-                    self.session.session_id, detection.kind, detection.effective_at, now)
+                    self.session.session_id, EVENTS.get(detection.kind, "Erkennungssignal"), detection.effective_at, now)
                 self.controller.process(event)
-                self.log.info("detection", "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.", detection.kind, detection.effective_at)
+                self.log.info("detection", "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.", EVENTS.get(detection.kind, "Erkennungssignal"), detection.effective_at)
                 if self.archive:
                     self.archive.append("detection", now, {"event": event, "channels": detection.channels}, self.session.session_id)
         if self.device:
@@ -209,7 +209,7 @@ class SaunaRuntime:
 
     def notify(self):
         phase = self.controller.phase
-        self.log.change("phase", phase, logging.INFO, "Betriebszustand: %s.", phase)
+        self.log.change("phase", phase, logging.INFO, "Betriebszustand: %s.", PHASES[phase])
         self.log.change("target", self.controller.target_temperature, logging.INFO,
             "Aktuelle Solltemperatur: %s °C.", self.controller.target_temperature)
         decision = self.controller.last_decision

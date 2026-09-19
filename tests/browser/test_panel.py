@@ -187,6 +187,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-action="normal"]')).to_have_text("Übersicht")
         self.assertNotIn("Bereitschaft", await self.panel.locator("#current").inner_text())
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
+        await self.panel.locator('#current details summary').click()
+        await self.panel.locator('#target').fill("75")
+        await self.panel.locator('#progression-end').fill("86")
+        await self.panel.locator('#progression-step').fill("3")
+        await self.panel.locator('[data-action="progression"]').click()
+        await expect(self.panel.locator('#current')).to_contain_text("Steigerung bis 86 °C", timeout=15000)
+        self.runtime=self.entry.runtime_data
+        from datetime import UTC, datetime
+        self.now=datetime.now(UTC)
+        self.runtime._clock=lambda:self.now
+        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"],86)
+        self.assertEqual(self.entry.options["parameters"]["temperature_increase_c"],3)
         await self.panel.locator('#current [data-action="operation"]').click()
         self.now+=timedelta(seconds=20)
         await self.runtime.tick()
@@ -220,6 +232,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options, "parameters":values})
         await self.hass.async_block_till_done()
         self.runtime=self.entry.runtime_data
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14380)
         await self.panel.locator('[data-action="normal"]').click()
         await expect(self.panel.locator('#current [role="alert"]')).to_contain_text("Höchstalter eines Messwerts", timeout=15000)
         await expect(self.panel.locator('#current [data-action="operation"]')).to_be_disabled()

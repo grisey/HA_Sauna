@@ -1,6 +1,11 @@
 """Deutsche Anzeigetexte; technische Zustandskennungen bleiben in der API erhalten."""
 from .core.parameters import BY_KEY
 
+PHASES = {"aus":"Aus", "aufheizen":"Aufheizen", "bereit":"Bereit", "saunagang":"Saunagang",
+    "nachlauf":"Nachlauf", "zwangskühlung":"Zwangskühlung"}
+EVENTS = {"door_open":"Tür geöffnet", "door_close":"Tür geschlossen", "person_strong":"Person erkannt",
+    "person_weak":"Schwaches Personensignal", "infusion":"Aufguss", "ventilation_confirmed":"Durchlüften bestätigt"}
+
 ROLES = {"upper_temperature": "Temperatur oben", "lower_temperature": "Temperatur unten",
     "upper_humidity": "Luftfeuchte oben", "lower_humidity": "Luftfeuchte unten",
     "heater_power": "Leistungsmessung", "heater_feedback": "Unabhängige Heizrückmeldung"}
