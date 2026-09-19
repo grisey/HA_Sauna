@@ -202,6 +202,7 @@ class HADevice:
         # Nach Gültigkeitsende gibt es keinen erfundenen Ersatz der unteren Höhe.
         controller.set_temperature(temperature, now)
         contactor = self.contactor_feedback()
+        controller.report_contactor(contactor, now)
         self.heating_observation = self.observe_heating(now)
         power_received = self.source_received_at.get("heater_power")
         controller.report_power(self.heating_observation["power_w"],

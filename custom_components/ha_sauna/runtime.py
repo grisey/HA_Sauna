@@ -264,6 +264,18 @@ class SaunaRuntime:
             await self._cycle()
             return result
 
+    async def finish_phase(self, purpose, token):
+        async with self._lock:
+            self._require_open()
+            now = self._clock()
+            deadline = self.controller.finish_phase(purpose, token, now)
+            label = "Nachlauf" if purpose == "after_run" else "Zwangskühlung"
+            self.log.info("phase_finished_manually", "%s manuell beendet; regulärer Folgeablauf wird fortgesetzt.", label)
+            if self.archive:
+                self.archive.append("manual_phase_end", now, {"purpose": purpose,
+                    "token": token, "planned_ends_at": deadline.due_at, "ended_at": now}, deadline.session_id)
+            await self._cycle()
+
     async def tick(self, _at=None):
         async with self._lock:
             if self.closed:

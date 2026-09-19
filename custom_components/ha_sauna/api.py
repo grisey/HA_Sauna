@@ -102,6 +102,27 @@ class ControlView(HomeAssistantView):
         return self.json({"success": True})
 
 
+class FinishPhaseView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/finish_phase"
+    name = "api:ha_sauna:finish_phase"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        body = await request.json()
+        if (not isinstance(body, dict) or set(body) != {"purpose", "token"}
+                or not isinstance(body["purpose"], str) or body["purpose"] not in ("after_run", "forced_cooling")
+                or not isinstance(body["token"], str) or not body["token"]):
+            return self.json({"error": "Bitte einen laufenden Nachlauf oder eine laufende Zwangskühlung auswählen."}, status_code=400)
+        try:
+            await runtime.finish_phase(body["purpose"], body["token"])
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True})
+
+
 class ParametersView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/parameters"
     name = "api:ha_sauna:parameters"
@@ -212,6 +233,7 @@ def register(hass):
     hass.http.register_view(InstancesView)
     hass.http.register_view(StateView)
     hass.http.register_view(ControlView)
+    hass.http.register_view(FinishPhaseView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
     hass.http.register_view(LoggingView)

@@ -356,11 +356,19 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(self.hass.states.get(self.operation).state, "on")
         identity = self.runtime.session.session_id
+        await self.time(10)
         await self.set_source("upper_temperature", 85)
         self.assertFalse(self.heater.is_on)
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertEqual(self.runtime.session.session_id, identity)
         self.assertEqual(self.hass.states.get(self.climate).attributes["hvac_action"], "idle")
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["pause_reason"], "contactor_off")
+        await self.time(20)
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14390)
+        self.assertIsNone(self.runtime.controller.mechanical_timer_ends_at)
+        await self.set_source("upper_temperature", 70)
+        await self.time(25)
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14385)
         await self.set_source("control_input", "on")
         await self.set_source("control_input", "off")
         self.assertFalse(self.runtime.session.operation_enabled)
@@ -377,6 +385,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("heater_feedback_mismatch", self.runtime.controller.protection)
         await self.time(7)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, 0)
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14400)
+        self.assertIsNone(self.runtime.controller.mechanical_timer_ends_at)
         self.assertIn("heater_feedback_mismatch", self.runtime.controller.protection)
         self.assertFalse(self.heater.is_on)
         await self.time(8)
@@ -397,7 +407,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("upper_temperature", self.runtime.device.faults)
         self.assertEqual(len(self.runtime.detector.active_positions), 2)
 
-    async def test_mechanical_timer_power_cut_stops_counting_and_notifies_once(self):
+    async def test_mechanical_timer_expiry_is_informative_and_heating_feedback_is_separate(self):
         # Configure before starting, via the real options listener and reload.
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
             "mechanical_timer_minutes": 1, "mechanical_timer_warning_minutes": .25,
@@ -409,6 +419,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
+        await self.time(10)
+        self.heater.powered = False
+        await self.set_source("heater_feedback", "off")
+        await self.time(20)
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 40)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 10)
+        self.heater.powered = True
+        await self.set_source("heater_feedback", "on")
         await self.time(45)
         self.assertIn((self.runtime.session.session_id, "warning"), self.runtime.device.notified)
         # Ablauf der Schätzung allein schaltet nichts und verändert keine Diagnose.
@@ -452,6 +470,53 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
+
+    async def prepare_gang_after_run(self):
+        options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
+            "heating_minutes": 1, "heating_reduction_minutes": .25,
+            "sensor_timeout_seconds": 180}}
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = datetime.now(UTC)
+        self.runtime._clock = lambda: self.now
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        for second, kind in ((1, Kind.DOOR_CLOSE), (2, Kind.INFUSION),
+                             (61, Kind.DOOR_OPEN), (62, Kind.VENTILATION)):
+            self.now = self.base + timedelta(seconds=second)
+            await self.runtime.receive(Event(f"manual-test:{second}", self.runtime.session.session_id,
+                kind, self.now, self.now))
+            await self.hass.async_block_till_done()
+        self.assertEqual(self.runtime.controller.phase, "nachlauf")
+
+    async def test_manual_phase_end_preserves_cooling_light_and_heater_sequence(self):
+        await self.prepare_gang_after_run()
+        identity = self.runtime.session.session_id
+        self.assertFalse(self.heater.is_on)
+        self.assertAlmostEqual(self.light.brightness, 255*.15, delta=1)
+        await self.time(72)
+        await self.runtime.finish_phase("after_run", self.runtime.session.after_run.phase_id)
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.runtime.controller.phase, "zwangskühlung")
+        self.assertEqual(self.runtime.session.cooling.credited_seconds, 10)
+        self.assertFalse(self.heater.is_on)
+        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
+        await self.time(82)
+        await self.runtime.finish_phase("forced_cooling", self.runtime.session.cooling.cycle_id)
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.heater.is_on)
+        self.assertAlmostEqual(self.light.brightness, 255*.35, delta=1)
+        self.assertEqual(self.runtime.session.timeline.gang_count, 1)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertEqual(self.runtime.controller.heating_limit_seconds, 45)
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14400-62)
+        import asyncio
+        await self.runtime.archive.flush()
+        archived = await asyncio.to_thread(self.runtime.archive.read, identity, limit=10000)
+        actions = [r["payload"]["purpose"] for r in archived["records"] if r["kind"] == "manual_phase_end"]
+        self.assertEqual(actions, ["after_run", "forced_cooling"])
 
     async def test_contactor_only_counts_without_invented_temperature_cutoff(self):
         await self.configure_feedback()

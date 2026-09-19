@@ -73,6 +73,12 @@ Regelungswerte stehen ausschließlich in den Details. Gesperrte Temperaturtasten
 bleiben sichtbar; der Grund der Sperre wird erklärt. Nach Sitzungsende bleibt
 der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar.
 
+In Details steht während eines Nachlaufs „Nachlauf jetzt beenden“, während
+laufender Zwangskühlung „Zwangskühlung jetzt beenden“. Die Bedienung setzt den
+jeweiligen regulären Folgeablauf fort; sie erscheint nicht in der Übersicht.
+Beim angehaltenen Ofentimer wird der Grund genannt: Saunabetrieb aus, Schütz aus
+oder Schützstellung unbekannt. Seine Restzeit bleibt währenddessen stehen.
+
 Alle Einstellfelder besitzen deutsche Bezeichnungen und Zweckbeschreibungen.
 Sie sind nach Temperatur, Ablauf, Überwachung, Ofentimer/Energie und Darstellung
 geordnet. Erkennungsparameter stehen separat unter Experteneinstellungen.

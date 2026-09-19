@@ -1,6 +1,26 @@
 # Funktionsprüfung der aktuellen Testfassung
 
-Geprüfter Funktionsstand:
+## Ergänzung vom 20.09.2026 – Ofentimer und manuelles Phasenende
+
+Der Ofentimer zählt jetzt nur bei eingeschaltetem Betrieb und bestätigtem
+Schütz-Ein. Details bieten die manuelle Beendigung eines laufenden Nachlaufs oder
+einer laufenden Zwangskühlung mit dem regulären Folgeablauf. Ausgeführte
+Kernprüfungen: **169 bestanden, 2 private Replay-Skips**; 171 gesammelt.
+Separater privater fortlaufender Replay-Vergleich: **1 bestanden, Exit 0**.
+Python- und JavaScript-Syntax sowie `git diff --check` sind erfolgreich geprüft.
+Die neuen HA-, API- und Browserprüfungen werden in Linux-CI ausgeführt; ihr
+Ergebnis ist vor Abschluss der CI noch nicht nachgewiesen. Keine reale Installation.
+
+Die Tests prüfen Schütz-Aus/Unbekannt, Wiederaufnahme, fehlenden Schaltvollzug,
+Trennung von optionaler Heizleistung, Erinnerung und unveränderte Rücksetzregeln.
+Für manuelles Phasenende prüfen sie tatsächliche Endzeit, einmalige Anrechnung,
+Restkühlung, Folgebudget, alte Klicks, Authentifizierung, erhaltene Schutzsperren
+und die Licht-/Heizfolge. Die Lüftungserkennung wird mit dieser Ergänzung nicht
+geändert. Anrechnung eines Nachlaufs auf erst später fällige Kühlung bleibt offen.
+
+## Zuvor vollständig geprüfter Funktionsstand
+
+Geprüfter Stand:
 [`0c16486800a7763cbb25c9a97cc37f8f0e920a69`](https://github.com/grisey/HA_Sauna/commit/0c16486800a7763cbb25c9a97cc37f8f0e920a69).
 [CI 35469913084](https://github.com/grisey/HA_Sauna/actions/runs/35469913084)
 ist vollständig beendet: **core, ha-api, ha-integration und browser erfolgreich**.
