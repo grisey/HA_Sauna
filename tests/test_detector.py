@@ -108,3 +108,12 @@ class DetectorTests(unittest.TestCase):
                 detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, value, 0, measured=measured))
                 self.assertEqual(detector.advance(T0, enabled=True), [])
                 self.assertEqual(detector.active_positions, ())
+
+    def test_report_after_tick_at_equal_timestamp_is_used_next_tick_without_rewriting_history(self):
+        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+        sample(detector, 0, 70, 40, (Position.UPPER,))
+        self.assertTrue(detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 71, 0)))
+        self.assertEqual(detector.frames[Position.UPPER][-1]["T"], 70)
+        detector.advance(T0 + timedelta(seconds=1), enabled=True)
+        self.assertEqual(detector.frames[Position.UPPER][-1]["T"], 71)
+        self.assertEqual(detector.frames[Position.UPPER][-2]["T"], 70)

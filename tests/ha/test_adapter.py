@@ -44,7 +44,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.hass = SimpleNamespace(
             data={},
             http=SimpleNamespace(register_view=MagicMock()),
-            bus=SimpleNamespace(async_listen_once=lambda *args: lambda: None),
+            bus=SimpleNamespace(async_listen=lambda *args: lambda: None),
             states=SimpleNamespace(get=self.states.get),
             config_entries=SimpleNamespace(
                 async_entries=lambda *a, **kw: self.entries,

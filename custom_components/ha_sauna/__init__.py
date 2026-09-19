@@ -33,7 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime
     entry.runtime_data.on_close(async_track_time_interval(hass, entry.runtime_data.tick, timedelta(seconds=1)))
     async def stopped(_event):
         await entry.runtime_data.close()
-    entry.runtime_data.on_close(hass.bus.async_listen_once("homeassistant_stop", stopped))
+    entry.runtime_data.on_close(hass.bus.async_listen("homeassistant_stop", stopped))
     entry.async_on_unload(entry.add_update_listener(async_options_updated))
     return True
 

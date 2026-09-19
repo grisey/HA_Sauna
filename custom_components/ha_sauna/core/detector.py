@@ -58,7 +58,7 @@ class Detector:
         if measurement.position not in self.positions:
             return False
         if ((self.last_received is not None and measurement.received_at < self.last_received)
-                or (self.index >= 0 and measurement.received_at <= self.origin + timedelta(seconds=self.index))):
+                or (self.index >= 0 and measurement.received_at < self.origin + timedelta(seconds=self.index))):
             self.rejected += 1
             return False
         self.last_received = measurement.received_at
