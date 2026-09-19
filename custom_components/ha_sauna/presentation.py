@@ -36,6 +36,16 @@ def configuration_message(keys):
     return "Vor dem Start bitte einstellen: " + "; ".join(BY_KEY[k].label for k in keys) + "."
 
 
+def fault_resolved(key):
+    subject = ROLES.get(key) or {
+        "configuration":"Einrichtung", "regulation_temperature_unavailable":"Regeltemperatur",
+        "heater_feedback_unavailable":"Schützrückmeldung", "heater_feedback_mismatch":"Schaltbestätigung",
+        "heater_service_unavailable":"Ansteuerung des Heizschützes", "heater_still_heating":"Heizabschaltung",
+        "heater_no_power":"Heizleistung", "archive":"Sitzungsarchiv", "cooling_light":"Saunalicht",
+        "start_rejected":"Startvoraussetzungen"}.get(key, "Gerätediagnose")
+    return subject + ": Der vorherige Fehlerhinweis ist nicht mehr aktiv."
+
+
 def fault_message(key, value):
     if key == "configuration":
         return configuration_message([k.strip() for k in value.split(",") if k.strip() in BY_KEY])

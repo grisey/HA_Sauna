@@ -188,6 +188,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Bereitschaft", await self.panel.locator("#current").inner_text())
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
         await self.panel.locator('#current details summary').click()
+        await self.panel.evaluate("p=>p.refresh()")
+        await expect(self.panel.locator("#progression-end")).to_be_visible()
         await self.panel.locator('#target').fill("75")
         await self.panel.locator('#progression-end').fill("86")
         await self.panel.locator('#progression-step').fill("3")

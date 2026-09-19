@@ -16,7 +16,7 @@ from .core.models import Deadline, Session
 from .core.parameters import Parameters
 from .core.timeline import Door, Event
 from .log import SaunaLog, LEVELS
-from .presentation import fault_message, decision_message, PHASES, EVENTS
+from .presentation import fault_message, fault_resolved, decision_message, PHASES, EVENTS
 
 
 @dataclass(frozen=True)
@@ -211,7 +211,7 @@ class SaunaRuntime:
         phase = self.controller.phase
         self.log.change("phase", phase, logging.INFO, "Betriebszustand: %s.", PHASES[phase])
         self.log.change("target", self.controller.target_temperature, logging.INFO,
-            "Aktuelle Solltemperatur: %s °C.", self.controller.target_temperature)
+            "Aktuelle Solltemperatur: %s.", f"{self.controller.target_temperature:g} °C" if self.controller.target_temperature is not None else "noch nicht eingestellt")
         decision = self.controller.last_decision
         if decision:
             self.log.change("decision", (decision.heat, decision.reason), logging.DEBUG,
@@ -222,7 +222,7 @@ class SaunaRuntime:
                 level = logging.ERROR if value == "confirmed" or key in ("archive", "cooling_light", "heater_service_unavailable") else logging.WARNING
                 self.log.logger.log(level, "%s", fault_message(key, value), extra={"sauna_event": key})
         for key in self._logged_faults.keys() - faults.keys():
-            self.log.info("fault_cleared", "Störung behoben: %s", fault_message(key, self._logged_faults[key]))
+            self.log.info("fault_cleared", "%s", fault_resolved(key))
         self._logged_faults = faults
         self.persist()
         for callback in tuple(self._subscribers):

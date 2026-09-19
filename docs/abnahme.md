@@ -1,4 +1,54 @@
-# Abnahmebericht zur ersten Testinstallation
+# Prüfung nach der ersten HACS-Testinstallation
+
+Die erste Installation durch den Benutzer zeigte Bedienungs- und Anzeigefehler.
+Diese Rückmeldungen sind durch konkrete Korrekturen und zusätzliche Prüfungen
+abgedeckt. Geräte und Ofen der Nutzeranlage wurden ausschließlich lesend geprüft;
+Installation und Neustart erfolgen weiterhin durch den Benutzer.
+
+Der Funktionsstand `7ba72f08eda9f5f2e6c55d4fc2afc88f5ecb94d5` hat
+[CI 35458776770](https://github.com/grisey/HA_Sauna/actions/runs/35458776770)
+mit **allen vier Jobs erfolgreich** abgeschlossen: 144 reine Tests (zwei private
+Replays öffentlich übersprungen), 11 HA-API-Smokes, 19 echte HA-Integrationstests
+und zwei vollständige Chromium-Abläufe. Der anschließende Abschlussstand ergänzt
+sprachliche Fehlerbehandlung und erhält aufgeklappte Bedienelemente beim Aktualisieren;
+sein eigener CI-Lauf ist beim Pull Request #3 nachvollziehbar.
+
+Zusätzliche Nachweise:
+
+- Ofentimer bei Betrieb-Aus angehalten, bei Wiedereinschalten fortgesetzt,
+  nach leerer Sitzung erhalten und nach abgeschlossener Sitzung mit gezählten
+  Gängen beim nächsten Start zurückgesetzt; angehaltene Attribute ohne Ausnahme.
+- Temperatursteigerung mit frei gewählter Schrittweite und Endtemperatur,
+  Deckelung, keine Erhöhung durch aufgehobene Gänge, erhaltene Stufe bei kurzer
+  Unterbrechung und Startwert bei neuer Sitzung. Einstellung im echten Browser.
+- Entkoppelter binärer Taster und Shelly-Ereignistaster; Loslassen und doppelte
+  Zustandsmeldungen lösen kein erneutes Umschalten aus. Neu zugeordnete Quelle
+  übernimmt, alte Quelle wirkt nicht weiter.
+- Fehlende Einrichtung und veraltete Regeltemperatur verhindern einen Start,
+  ohne eine Sitzung anzulegen oder die Einstellungen zu sperren.
+- Protokollstufen ERROR, INFO und DEBUG werden gespeichert und wirken während
+  einer Sitzung ohne Neuladen. Standardfilter und Unterdrückung identischer
+  Wiederholungen sind geprüft.
+- Übersicht mit dauerhaft sichtbaren Temperaturtasten, angehaltener Restzeit,
+  getrennten Bereitschaftsdetails, verständlichen Fehlerhinweisen und Feldhilfen.
+  Archiv bleibt nach Sitzungsende sichtbar; Breite bei 390 Pixeln geprüft.
+
+Beide privaten Replay-Prüfungen wurden zusätzlich lokal erfolgreich ausgeführt:
+ein vollständiger fortlaufender Vergleich und drei Kandidaten-/Referenzprüfungen,
+jeweils Exit 0. Numerische Erkennungsparameter und eingefrorene Referenzdateien
+blieben unverändert. Die Referenz bleibt Kalibrierungsmaterial, kein unabhängiger
+Nachweis realer Saunagänge. HA selbst lief für diese Prüfungen ausschließlich in
+der isolierten Linux-CI, nicht auf dem lokalen Mac.
+
+Die Browserläufe melden keine JavaScript-Ausnahmen oder abgewiesenen WebSocket-
+Antworten. Beim absichtlich ausgelösten Optionsneuladen kann die noch ladende
+Instanz vorübergehend HTTP 503 liefern; die Oberfläche behält dabei ihre Anzeige.
+Ein abgeschlossener CI-Lauf ersetzt keine Abnahme des realen Saunaofens.
+
+---
+
+## Vorheriger Prüfstand der ersten Testfassung
+
 
 Stand 19.09.2026. Die Betriebsintegration ist implementiert und in einer echten,
 isolierten Home-Assistant-Instanz einschließlich Browser und Backup/Restore
@@ -50,7 +100,7 @@ Rohdaten, private Entity-IDs und Zugangsdaten sind nicht veröffentlicht.
 | Technischer Dauerausfall, fehlende Aktorantwort und sichere Initialisierung | `device.py`, `runtime.py` | `tests/integration/test_device_path.py`; Setup/Unload senden Aus, keine automatische Betriebsfortsetzung |
 | Originalauflösung, Ereignisrevisionen und Export während Erfassung | `archive.py`, `api.py` | `test_archive.py`, `tests/integration/test_archive_backup.py`, Browserdownload |
 | Konsistentes HA-Backup und Wiederherstellung | `backup.py`, Archiv | Tatsächlicher HA-Core-Backup-Writer und offizielle Start-Restore-Routine in getrenntem Konfigurationspfad; neue HA-Instanz vergleicht Archiv, Optionen und Zuordnungen |
-| Normalansicht, separates Verlaufsblatt mit Archiv, sortierte Details und Erkennungskontrolle | `frontend.py`, `panel.js`, `api.py` | `tests/integration/test_panel_api.py`, `tests/browser/test_panel.py` |
+| Übersicht, separates Verlaufsblatt mit Archiv, sortierte Details und Erkennungskontrolle | `frontend.py`, `panel.js`, `api.py` | `tests/integration/test_panel_api.py`, `tests/browser/test_panel.py` |
 
 Ohne Leistungsmesser läuft der Heizzähler wie zuletzt vereinbart bei Schütz EIN.
 Die Energie wird mit der einstellbaren Ofenleistung, Standard **4,5 kW**, geschätzt.
