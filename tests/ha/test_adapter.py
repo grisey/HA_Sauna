@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from custom_components.ha_sauna.core.parameters import DEFINITIONS
@@ -41,6 +42,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             add_update_listener=lambda listener: lambda: None,
         )
         self.hass = SimpleNamespace(
+            data={},
+            http=SimpleNamespace(register_view=MagicMock()),
+            bus=SimpleNamespace(async_listen_once=lambda *args: lambda: None),
             states=SimpleNamespace(get=self.states.get),
             config_entries=SimpleNamespace(
                 async_entries=lambda *a, **kw: self.entries,
@@ -54,6 +58,13 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.flow.hass = self.hass
         self.flow.handler = "ha_sauna"
         self.flow.context = {"source": "user"}
+        self.temp = tempfile.TemporaryDirectory()
+        self.hass.config = SimpleNamespace(path=lambda *parts: str(Path(self.temp.name).joinpath(*parts)))
+
+    async def asyncTearDown(self):
+        if getattr(self.entry, "runtime_data", None) and not self.entry.runtime_data.closed:
+            await self.entry.runtime_data.close()
+        self.temp.cleanup()
 
     async def test_initial_form_and_real_selectors(self):
         form = await self.flow.async_step_user()

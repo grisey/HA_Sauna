@@ -41,14 +41,14 @@ class ThermostatTests(unittest.TestCase):
                 self.assertEqual(decision.reason, "gang")
 
     def test_safety_and_explicit_off_always_override_gang(self):
-        for kwargs in ({"temperature": 110}, {"enabled": False},
+        for kwargs in ({"enabled": False},
                        {"protection": ("missing_feedback",)}, {"temperature": None}):
             with self.subTest(kwargs=kwargs):
                 _, decision = self.decide(gang=True, **kwargs)
                 self.assertFalse(decision.heat)
 
     def test_missing_settings_do_not_invent_safe_values(self):
-        for key in ("target_temperature_c", "safety_temperature_c"):
+        for key in ("target_temperature_c",):
             values = self.parameters.as_dict()
             del values[key]
             _, decision = self.decide(parameters=Parameters(values))
@@ -73,7 +73,7 @@ class ThermostatTests(unittest.TestCase):
 
     def test_minimum_heating_never_delays_cooling_after_run_off_or_safety(self):
         for args in ({"cooling": True}, {"after_run": True}, {"enabled": False},
-                     {"temperature": 110}, {"temperature": None},
+                     {"temperature": None},
                      {"protection": ("missing_feedback",)}):
             with self.subTest(args=args):
                 _, decision = self.decide(ThermostatState(demand=True),

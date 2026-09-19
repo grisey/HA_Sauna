@@ -68,7 +68,10 @@ DEFINITIONS = (
     # Unbestimmte Schutz-/Betriebswerte bleiben leer. Leer bedeutet Heizsperre,
     # nicht ein vom Code gewählter Ersatzwert oder eine sichere Werkseinstellung.
     ParameterDefinition("target_temperature_c", "Solltemperatur oben", "°C", optional=True),
-    ParameterDefinition("safety_temperature_c", "Abschalttemperatur oben", "°C", optional=True),
+    ParameterDefinition("safety_temperature_c", "Temperaturgrenze für Zusatzkühlung", "°C", default=105),
+    ParameterDefinition("overtemperature_minutes", "Auslösezeit für Zusatzkühlung", "min", default=10),
+    ParameterDefinition("overtemperature_cooling_factor", "Faktor für Zusatzkühlung", "×", default=2, minimum=1),
+    ParameterDefinition("fault_confirmation_seconds", "Bestätigungsfrist zentraler Ausfälle", "s", optional=True),
     ParameterDefinition("sensor_timeout_seconds", "Messwert-Gültigkeitsdauer", "s", optional=True),
     ParameterDefinition("feedback_timeout_seconds", "Rückmeldungsfrist", "s", optional=True),
     ParameterDefinition("cooling_brightness_percent", "Licht bei Zwangskühlung", "%", optional=True, maximum=100),

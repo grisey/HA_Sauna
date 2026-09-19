@@ -134,3 +134,34 @@ als solche validiert. Die eingefrorenen Kandidatendateien bleiben unverändert.
 Zusätzliche Mindestheizzeitprüfungen belegen regulären Stop erst nach Ablauf,
 aber sofortigen Vorrang von Nachlauf/Kühlung/Aus und bisherigen Schutzregeln.
 Die zuletzt gewünschte neue Temperatur-Schutzregel ist noch nicht festgelegt.
+
+Paket C: Commit `2315352b67e2e9e176f9091b34f5adc8cfd286ab`,
+[CI 35446468410](https://github.com/grisey/HA_Sauna/actions/runs/35446468410): alle Jobs success.
+
+## Paket D: Archiv, authentifizierter Export und HA-Backup
+
+`archive.py` speichert empfangene Originale und unveränderliche Zustandsrevisionen
+in `config/ha_sauna/<entry-id>.sqlite`. Das Archiv bewahrt die früheren
+vorläufigen und später bestätigten Gangzuordnungen samt IDs. ZIP: Manifest,
+Sessions/Records als JSONL und Originalmessungen als CSV. Keine Verdichtung
+oder altersabhängige Löschung. Datenbank und Export liegen außerhalb von www.
+
+`backup.py` pausiert den serialisierten Schreiber an einer abgearbeiteten
+Warteschlangenmarke. Neue Eingänge werden gepuffert; HA kopiert eine unveränderte
+Datenbank ohne offene Schreibtransaktion. Post-Backup setzt den Schreiber fort.
+`api.py` registriert authentifizierte Archiv- und ZIP-Endpunkte.
+
+`test_archive.py`: Originale im Subsekundenabstand, historische Referenzen,
+Backup-Schreibpause mit weiterem Eingang und konsistenter Export während
+Erfassung. `tests/integration/test_archive_backup.py`: tatsächlicher HTTP-Abruf
+mit und ohne HA-Zugang, tatsächliches Core-Backup (Recorder ausdrücklich nicht
+enthalten) und offizielle HA-Start-Restore-Routine in getrenntem Konfigurations-
+pfad mit neuer HA-Instanz. CI-Ergebnisse erst nach Abschluss ergänzen.
+
+Die neue Nutzerregel zur Temperatur ist durch zusätzliche Kettenprüfungen
+abgedeckt: strikt mehr als 105 °C für mehr als zehn Minuten, erneuter Nachweis
+nach Unterbrechung, doppelte Kühlvorgabe ohne Sessionabbruch und Gangfortsetzung
+mit anschließender Nachlaufanrechnung. Der ältere Sofortabschaltungstest ist
+entsprechend der ausdrücklich geänderten Anforderung ersetzt, nicht als noch
+verbindliche Sicherheitsregel abgeschwächt. Mechanischer Ofentimer bleibt
+separate Schätzung ab Sessionbeginn.

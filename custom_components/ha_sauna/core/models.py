@@ -106,6 +106,7 @@ class CoolingCycle:
     credited_seconds: float = 0
     started_at: datetime | None = None
     ends_at: datetime | None = None
+    reason: str = "heating_budget"
 
 
 @dataclass(frozen=True)

@@ -35,6 +35,8 @@ class Controller:
         self.protection: set[str] = set()
         self.last_decision: thermostat.Decision | None = None
         self.decisions: list[thermostat.Decision] = []
+        self.overtemperature_since: datetime | None = None
+        self._temperature_cooling_requested = False
 
     @property
     def session(self) -> Session | None:
@@ -104,8 +106,12 @@ class Controller:
         self.advance(at, evaluate=False)
         self.temperature = value
         limit = self.parameters.values.get("safety_temperature_c")
-        if value is not None and limit is not None and value >= limit:
-            self.protection.add("overtemperature")
+        if value is not None and limit is not None and value > limit:
+            if self.overtemperature_since is None:
+                self.overtemperature_since = utc(at)
+        else:
+            self.overtemperature_since = None
+            self._temperature_cooling_requested = False
         self._evaluate(utc(at))
 
     def report_heating(self, value: bool | None, at: datetime):
@@ -208,6 +214,7 @@ class Controller:
         self._schedule("after_run", phase.ends_at, phase.phase_id)
 
     def _ensure_cooling(self, at):
+        self._ensure_temperature_cooling(at)
         session = self._session
         if session.cooling is None and session.heating.elapsed_seconds >= self.heating_limit_seconds:
             cycle = CoolingCycle(uuid4().hex, at, self.parameters.seconds("forced_cooling_minutes"))
@@ -216,6 +223,23 @@ class Controller:
         if (session.cooling is not None and session.cooling.started_at is None
                 and session.timeline.active is None and session.after_run is None):
             self._start_cooling(at)
+
+    def _ensure_temperature_cooling(self, at):
+        if (self.overtemperature_since is None or self._temperature_cooling_requested
+                or (at - self.overtemperature_since).total_seconds() <= self.parameters.seconds("overtemperature_minutes")):
+            return
+        self._temperature_cooling_requested = True
+        duration = self.parameters.seconds("forced_cooling_minutes") * self.parameters.values["overtemperature_cooling_factor"]
+        cycle = self._session.cooling
+        if cycle is None:
+            cycle = CoolingCycle(uuid4().hex, at, duration, reason="overtemperature")
+        else:
+            cycle = replace(cycle, duration_seconds=max(duration, cycle.duration_seconds), reason="overtemperature")
+            if cycle.started_at is not None:
+                cycle = replace(cycle, ends_at=cycle.started_at + timedelta(seconds=max(0, cycle.duration_seconds - cycle.credited_seconds)))
+                self._cancel("forced_cooling")
+                self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
+        self._session = replace(self._session, cooling=cycle)
 
     def _start_cooling(self, at):
         cycle = self._session.cooling
@@ -235,6 +259,9 @@ class Controller:
             cooling_history=session.cooling_history + (cycle,),
             timeline=replace(session.timeline, anchor=None, preparation=None),
             heating=replace(session.heating, elapsed_seconds=0, last_reset_at=at))
+        if cycle.reason == "overtemperature":
+            self._temperature_cooling_requested = False
+            self.overtemperature_since = at if self.temperature is not None and self.temperature > self.parameters.values["safety_temperature_c"] else None
 
     def _evaluate(self, at):
         session = self._session

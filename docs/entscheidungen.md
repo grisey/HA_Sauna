@@ -248,3 +248,15 @@ Technische Schutzabschaltungen sollen erst bei klaren dauerhaften Ausfällen
 zentraler Regelungsteile erfolgen. Der Nutzer möchte auch die bisher sofortige
 Temperaturabschaltung ändern; die genaue Ersatzregel ist noch in Klärung.
 Bis dahin keine Live-Freigabe aus den bisherigen Grenzwerttests ableiten.
+
+### Geklärte Temperaturreaktion (ersetzt sofortige Grenzwertabschaltung)
+
+Länger als zehn Minuten durchgehend **mehr als 105 °C** am oberen Sensor löst
+Zwangskühlung mit dem Faktor zwei aus (bei Kühlvorgabe 15 Minuten also 30 Minuten).
+Kein Abbruch der Session. Es gelten die bestehenden Gang-/Nachlaufregeln;
+Nachlauf wird einmal auf die erweiterte Dauer angerechnet. Grenze, Zeit und
+Faktor sind zentrale einstellbare Standardwerte. Unterbrechung der Überschreitung
+oder fehlende belastbare Temperatur unterbrechen den Kontinuitätsnachweis.
+Eine bereits angeforderte Kühlung wird auf die doppelte Gesamtvorgabe erweitert,
+nicht bei jeder Auswertung erneut verdoppelt. Die Mindestheizzeit sperrt diese
+Kühlung nicht. Technische Dauerausfälle bleiben ein gesonderter Schutzgrund.

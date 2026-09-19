@@ -2,6 +2,7 @@
 from pathlib import Path
 import tempfile
 import shutil
+import socket
 
 from homeassistant import bootstrap, config_entries, loader
 from homeassistant.core import HomeAssistant
@@ -28,10 +29,23 @@ async def start_hass(directory=None):
     loader.async_setup(hass)
     hass.config_entries = config_entries.ConfigEntries(hass, {})
     assert await bootstrap.async_load_base_functionality(hass)
+    from homeassistant.auth import auth_manager_from_config
+    hass.auth = await auth_manager_from_config(hass, [], [])
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    assert await async_setup_component(hass, "http", {"http": {
+        "server_host": "127.0.0.1", "server_port": port}})
     assert await async_setup_component(hass, "homeassistant", {})
     assert await async_setup_component(hass, "persistent_notification", {})
     await hass.async_start()
     return hass, temp
+
+
+async def credentials(hass):
+    user = await hass.auth.async_create_user("Isolierter Test")
+    refresh = await hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+    return hass.auth.async_create_access_token(refresh)
 
 
 def seed_sources(hass):

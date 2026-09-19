@@ -28,12 +28,10 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
         return result(False, "operation_off")
     target = values.get("target_temperature_c")
     limit = values.get("safety_temperature_c")
-    if target is None or limit is None or limit <= target + values["readiness_offset_c"]:
+    if target is None or limit is None:
         return result(False, "temperature_configuration_required")
     if temperature is None or not isfinite(temperature):
         return result(False, "upper_temperature_unavailable")
-    if temperature >= limit:
-        return result(False, "overtemperature")
     if gang:
         return result(True, "gang")
     if cooling:

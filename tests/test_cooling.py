@@ -163,10 +163,67 @@ class CoolingTests(unittest.TestCase):
     def test_safety_survives_new_session_and_cannot_be_overridden_by_gang(self):
         c = controller(session_gap_minutes=1)
         self.start(c)
-        c.set_temperature(110, at(4))
+        c.protection.add("confirmed_controller_failure")
+        c.advance(at(4))
         self.assertFalse(c.last_decision.heat)
         c.set_operation(False, at(5))
         c.set_temperature(70, at(6))
         c.set_operation(True, at(65), session_id="new")
-        self.assertIn("overtemperature", c.protection)
+        self.assertIn("confirmed_controller_failure", c.protection)
         self.assertFalse(c.last_decision.heat)
+
+    def test_overtemperature_requires_more_than_ten_minutes_and_uses_double_cooling(self):
+        c = controller(safety_temperature_c=105, overtemperature_minutes=10,
+            forced_cooling_minutes=15, overtemperature_cooling_factor=2)
+        c.set_temperature(106, at(1))
+        c.advance(at(601))
+        self.assertIsNone(c.session.cooling)
+        c.advance(at(602))
+        self.assertEqual(c.phase, "zwangskühlung")
+        self.assertEqual(c.session.cooling.duration_seconds, 1800)
+        self.assertEqual(c.session.cooling.reason, "overtemperature")
+        self.assertEqual(c.session.cooling.ends_at, at(2402))
+        self.assertTrue(c.session.operation_enabled)
+        self.assertEqual(c.protection, set())
+        c.advance(at(603))
+        self.assertEqual(c.session.cooling.ends_at, at(2402))
+
+    def test_temperature_recovery_or_missing_measurement_restarts_continuity_proof(self):
+        for recovered in (105, 104, None):
+            with self.subTest(recovered=recovered):
+                c = controller(safety_temperature_c=105, overtemperature_minutes=10)
+                c.set_temperature(106, at(1))
+                c.set_temperature(recovered, at(600))
+                c.set_temperature(106, at(601))
+                c.advance(at(1201))
+                self.assertIsNone(c.session.cooling)
+                c.advance(at(1202))
+                self.assertIsNotNone(c.session.cooling)
+
+    def test_temperature_cooling_preserves_gang_then_credits_after_run(self):
+        c = controller(safety_temperature_c=105, overtemperature_minutes=10,
+            forced_cooling_minutes=15, overtemperature_cooling_factor=2)
+        self.start(c)
+        gang_id = c.session.timeline.active.gang_id
+        c.set_temperature(106, at(4))
+        c.advance(at(605))
+        self.assertEqual(c.session.timeline.active.gang_id, gang_id)
+        self.assertTrue(c.last_decision.heat)
+        self.assertIsNone(c.session.cooling.started_at)
+        c.process(event("open-end", Kind.DOOR_OPEN, 606))
+        c.process(event("vent-end", Kind.VENTILATION, 607))
+        c.advance(at(637))
+        self.assertEqual(c.session.cooling.credited_seconds, 30)
+        self.assertEqual(c.session.cooling.ends_at, at(2407))
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        self.assertTrue(c.session.operation_enabled)
+
+    def test_mechanical_timer_is_wall_time_and_not_reset_by_thermostat_or_operation_pause(self):
+        c = controller(mechanical_timer_minutes=240)
+        self.assertEqual(c.mechanical_timer_ends_at, at(14400))
+        c.set_operation(False, at(20))
+        c.set_operation(True, at(30))
+        self.assertEqual(c.mechanical_timer_ends_at, at(14400))
+        c.advance(at(14401))
+        self.assertEqual(c.session.heating.elapsed_seconds, 0)
+        self.assertTrue(c.session.operation_enabled)

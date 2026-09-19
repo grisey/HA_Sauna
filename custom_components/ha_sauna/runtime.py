@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from .bindings import Bindings
@@ -54,6 +54,23 @@ class SaunaRuntime:
         self._cleanup: list[Callable[[], None]] = []
         self._subscribers: set[Callable[[], None]] = set()
         self.closed = False
+        self.archive = None
+        self._archived_completed = 0
+
+    async def start_archive(self, path, entry_id):
+        from .archive import Archive
+        self.archive = Archive(path, entry_id)
+        await self.archive.start()
+
+    def persist(self):
+        if self.archive is None:
+            return
+        now = self._clock()
+        for session in self.controller.completed_sessions[self._archived_completed:]:
+            self.archive.save_session(session, now, self.configuration.as_options())
+        self._archived_completed = len(self.controller.completed_sessions)
+        if self.session is not None:
+            self.archive.save_session(self.session, now, self.configuration.as_options())
 
     @property
     def session(self) -> Session | None:
@@ -68,6 +85,7 @@ class SaunaRuntime:
         return lambda: self._subscribers.discard(callback)
 
     def notify(self):
+        self.persist()
         for callback in tuple(self._subscribers):
             callback()
 
@@ -93,7 +111,9 @@ class SaunaRuntime:
     async def begin_session(self, session_id: str) -> Session:
         async with self._lock:
             self._require_open()
-            return self.controller.begin_session(session_id, self._clock())
+            result = self.controller.begin_session(session_id, self._clock())
+            self.notify()
+            return result
 
     async def receive(self, event: Event) -> Result:
         async with self._lock:
@@ -123,6 +143,15 @@ class SaunaRuntime:
             for unsubscribe in reversed(callbacks):
                 try:
                     unsubscribe()
+                except Exception as error:
+                    failures.append(error)
+            if self.archive is not None:
+                if self.session is not None:
+                    now = self._clock()
+                    self.archive.append("interruption", now, {"reason": "integration_unloaded"}, self.session.session_id)
+                    self.archive.save_session(replace(self.session, ended_at=now), now, self.configuration.as_options())
+                try:
+                    await self.archive.close()
                 except Exception as error:
                     failures.append(error)
             if failures:
