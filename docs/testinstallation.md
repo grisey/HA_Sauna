@@ -14,6 +14,11 @@ Saunasteuerung bleibt bis zum bewusst vorgenommenen Wechsel maßgeblich.
 4. Home Assistant selbst neu starten. Unter **Einstellungen → Geräte & Dienste →
    Integration hinzufügen → HA Sauna** einrichten. Noch nicht einschalten.
 
+Einrichtung, Reload und Unload senden **Aus** an den ausgewählten Heizaktor.
+Die Zuordnung des echten Schützes daher bei ausgeschaltetem Saunabetrieb
+vornehmen; für die erste Prüfung können stattdessen Testentitäten gewählt werden.
+Vor dessen Übernahme bestehende Regelungen wie unten beschrieben umstellen.
+
 Ohne GitHub-Release lädt HACS den Standardbranch `main` des Repositories.
 Der angebotene Stand muss den im [Abnahmebericht](abnahme.md) benannten
 Implementierungscommit enthalten. Die Vorbereitung erzeugt keinen Release und
