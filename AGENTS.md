@@ -19,6 +19,7 @@ Die Temperatursteigerung folgt gezählten Gängen: Startwert plus Gangzahl mal
 Schrittweite, begrenzt durch eine optionale Endtemperatur. Ohne Endwert konstant.
 Solltemperatur, Erhöhung je Gang und Endtemperatur sind während der Sitzung änderbar. Eine neue Solltemperatur gilt sofort als Ausgangspunkt weiterer Steigerungen; keine Änderung darf Gang, Fristen, Heizsperren oder Schutz zurücksetzen. Andere Einstellungen und Geräte bleiben während einer Sitzung gesperrt.
 Standardlicht: Betrieb 35 %, Nachlauf 15 %, Zwangskühlung 5 %, jeweils einstellbar. In der Übersicht steht nur die jeweils relevante Phasenzeit; Heizsumme und mechanischer Timer stehen in den Details.
+Nach endgültigem Sitzungsende: eigener einstellbarer Lichtnachlauf, Standard 10 Minuten bei 50 %, danach Licht aus. Eine neue Sitzung verwirft die alte Lichtfrist; keine Wirkung auf Heizregelung.
 Der entkoppelte Taster steuert den Saunabetrieb, nie unmittelbar den Schütz.
 Tasterimpuls und dauerhafter Betriebsschalter sind getrennt konfigurierbar.
 Übersicht, separates Verlaufsblatt und sortierte Detailansicht folgen der

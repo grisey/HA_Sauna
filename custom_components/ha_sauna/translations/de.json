@@ -107,7 +107,9 @@
           "infusion_window_seconds": "Zeitfenster für die Aufgusserkennung",
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
-          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals"
+          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
+          "session_light_minutes": "Lichtnachlauf nach Sitzungsende",
+          "session_light_brightness_percent": "Lichthelligkeit nach Sitzungsende"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -175,7 +177,9 @@
           "infusion_window_seconds": "Zeitraum, in dem Luftfeuchteanstieg und Temperaturänderung eines Aufgusses bewertet werden.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
-          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs."
+          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
+          "session_light_minutes": "Dauer ab dem endgültigen Sitzungsende, also nach der Pause bis zum Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",
+          "session_light_brightness_percent": "Helligkeit während des Lichtnachlaufs nach einer beendeten Saunasitzung. Standard: 50 %. Der Nachlauf nach einem Saunagang und die Zwangskühlung haben eigene Lichtwerte."
         }
       }
     },
@@ -323,7 +327,9 @@
           "infusion_window_seconds": "Zeitfenster für die Aufgusserkennung",
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
-          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals"
+          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
+          "session_light_minutes": "Lichtnachlauf nach Sitzungsende",
+          "session_light_brightness_percent": "Lichthelligkeit nach Sitzungsende"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -391,7 +397,9 @@
           "infusion_window_seconds": "Zeitraum, in dem Luftfeuchteanstieg und Temperaturänderung eines Aufgusses bewertet werden.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
-          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs."
+          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
+          "session_light_minutes": "Dauer ab dem endgültigen Sitzungsende, also nach der Pause bis zum Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",
+          "session_light_brightness_percent": "Helligkeit während des Lichtnachlaufs nach einer beendeten Saunasitzung. Standard: 50 %. Der Nachlauf nach einem Saunagang und die Zwangskühlung haben eigene Lichtwerte."
         }
       },
       "logging": {

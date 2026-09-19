@@ -64,6 +64,7 @@ class StateView(HomeAssistantView):
                 "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
                 "mechanical_timer": controller.mechanical_timer_status,
                 "phase_timer": phase_timer(controller, now),
+                "light_after_run": controller.light_after_run,
                 "start_errors": device.start_errors() if device else [],
                 "issues": issues(runtime),
                 "decision_text": decision_message(controller.last_decision),

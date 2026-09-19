@@ -1,6 +1,8 @@
 """Gemeinsame deutsche Begriffe und Feldhilfen für Einrichtung und Oberfläche."""
 
 PARAMETER_TEXT = {
+    "session_light_minutes": ("Lichtnachlauf nach Sitzungsende", "Dauer ab dem endgültigen Sitzungsende, also nach der Pause bis zum Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.", "operation"),
+    "session_light_brightness_percent": ("Lichthelligkeit nach Sitzungsende", "Helligkeit während des Lichtnachlaufs nach einer beendeten Saunasitzung. Standard: 50 %. Der Nachlauf nach einem Saunagang und die Zwangskühlung haben eigene Lichtwerte.", "operation"),
     "temperature_increase_c": ("Temperaturerhöhung je Saunagang", "Erhöhung nach jedem weiteren gezählten Saunagang, höchstens bis zur Endtemperatur. Während der Sitzung änderbar; bereits gezählte Gänge werden nicht erneut angerechnet.", "temperature"),
     "final_temperature_c": ("Endtemperatur der Steigerung", "Obergrenze für die Solltemperatur. Leer lassen für eine konstante Temperatur. Eine niedrigere Endtemperatur begrenzt die aktuelle Solltemperatur; Heizsperren und laufende Fristen bleiben wirksam.", "temperature"),
     "target_temperature_c": ("Solltemperatur", "Gewünschte Temperatur am oberen Sensor während eines Saunagangs. Eine Änderung während der Sitzung gilt sofort; weitere Steigerungen beginnen ab diesem Wert.", "temperature"),

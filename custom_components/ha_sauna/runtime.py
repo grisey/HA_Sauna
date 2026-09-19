@@ -170,6 +170,13 @@ class SaunaRuntime:
         self.archive = Archive(path, entry_id)
         await self.archive.start()
 
+    def persist_completed_sessions(self):
+        if self.archive is None:
+            return
+        for session in self.controller.completed_sessions[self._archived_completed:]:
+            self.archive.save_session(session, self._clock(), self.configuration.as_options())
+        self._archived_completed = len(self.controller.completed_sessions)
+
     def persist(self):
         if self.archive is None:
             return
@@ -183,9 +190,7 @@ class SaunaRuntime:
         if fault_key != self._saved_faults:
             self.archive.append("diagnostic", now, {"faults": faults}, phase_key[0])
             self._saved_faults = fault_key
-        for session in self.controller.completed_sessions[self._archived_completed:]:
-            self.archive.save_session(session, now, self.configuration.as_options())
-        self._archived_completed = len(self.controller.completed_sessions)
+        self.persist_completed_sessions()
         if self.session is not None:
             signature = plain(self.session)
             signature["heating"].pop("accounted_at")
@@ -224,7 +229,7 @@ class SaunaRuntime:
         faults = dict(self.device.faults) if self.device else {}
         for key, value in faults.items():
             if self._logged_faults.get(key) != value:
-                level = logging.ERROR if value == "confirmed" or key in ("archive", "cooling_light", "operation_light", "after_run_light", "heater_service_unavailable") else logging.WARNING
+                level = logging.ERROR if value == "confirmed" or key in ("archive", "cooling_light", "operation_light", "after_run_light", "session_light", "heater_service_unavailable") else logging.WARNING
                 self.log.logger.log(level, "%s", fault_message(key, value), extra={"sauna_event": key})
         for key in self._logged_faults.keys() - faults.keys():
             self.log.info("fault_cleared", "%s", fault_resolved(key))

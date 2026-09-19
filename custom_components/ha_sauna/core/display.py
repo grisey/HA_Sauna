@@ -4,14 +4,15 @@ from datetime import timedelta
 
 def phase_timer(controller, now):
     session = controller.session
-    if session is None:
-        return None
-
     def remaining(kind, label, end):
         return {"kind": kind, "label": label, "seconds": max(0, (end - now).total_seconds()), "mode": "remaining"}
 
     def elapsed(kind, label, start):
         return {"kind": kind, "label": label, "seconds": max(0, (now - start).total_seconds()), "mode": "elapsed"}
+
+    if session is None:
+        light = controller.light_after_run
+        return remaining("session_light", "Lichtnachlauf noch", light.ends_at) if light and now < light.ends_at else None
 
     if not session.operation_enabled:
         end = next((d.due_at for d in session.deadlines if d.purpose == "session_gap"), None)

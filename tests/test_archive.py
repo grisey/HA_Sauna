@@ -98,3 +98,24 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.archive.failure)
         saved = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)
+
+    async def test_temperature_change_at_session_expiry_keeps_original_archive_configuration(self):
+        from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+        from custom_components.ha_sauna.core.parameters import Parameters
+        from custom_components.ha_sauna.settings import apply_temperature_parameters
+        now = T0
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: now)
+        runtime.archive = self.archive
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+        old_target = runtime.configuration.parameters.values["target_temperature_c"]
+        await runtime.set_operation(False)
+        now += timedelta(seconds=runtime.configuration.parameters.seconds("session_gap_minutes"))
+        updated = Parameters({**runtime.configuration.parameters.as_dict(), "target_temperature_c": 91})
+        async with runtime._lock:
+            await apply_temperature_parameters(runtime, updated, explicit_target=True)
+        await self.archive.flush()
+        stored = await asyncio.to_thread(self.archive.read, session_id)
+        self.assertEqual(stored["session"]["configuration"]["parameters"]["target_temperature_c"], old_target)
+        self.assertEqual(runtime.controller.target_temperature, 91)
+        self.assertIsNone(runtime.session)

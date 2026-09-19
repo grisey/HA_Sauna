@@ -43,6 +43,8 @@ Alle notwendigen Parameter haben auf Nutzeranweisung einstellbare Standardwerte.
 | Licht bei Zwangskühlung (`cooling_brightness_percent`) | % | 5 |
 | Licht beim Einschalten (`operation_brightness_percent`) | % | 35 |
 | Licht im Nachlauf (`after_run_brightness_percent`) | % | 15 |
+| Lichtnachlauf nach Sitzungsende (`session_light_minutes`) | min | 10; null schaltet am Sitzungsende direkt aus |
+| Lichthelligkeit nach Sitzungsende (`session_light_brightness_percent`) | % | 50 |
 | Erhöhung je gezähltem Gang (`temperature_increase_c`) | °C | 5 |
 | Endtemperatur (`final_temperature_c`) | °C | Optional leer, dann konstante Temperatur |
 

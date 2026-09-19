@@ -65,6 +65,9 @@ class TestLight(LightEntity):
 
     async def async_turn_off(self, **kwargs):
         self.calls.append(("off", kwargs))
+        if self.fail_commands:
+            from homeassistant.exceptions import HomeAssistantError
+            raise HomeAssistantError("Synthetic light failure")
         self._attr_is_on = False
         self.async_write_ha_state()
 
@@ -229,6 +232,81 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertNotIn("operation_light",self.runtime.device.faults)
         self.assertTrue(self.light.is_on)
+
+    async def test_session_light_defaults_reach_real_light_service_and_switch_off(self):
+        from custom_components.ha_sauna.core.display import phase_timer
+        await self.runtime.set_operation(True)
+        session_id = self.runtime.session.session_id
+        await self.runtime.set_operation(False)
+        await self.hass.async_block_till_done()
+        self.heater.calls.clear()
+        await self.time(149)
+        self.assertIsNotNone(self.runtime.session)
+        self.assertAlmostEqual(self.light.brightness, 255*.35, delta=1)
+        await self.time(150)
+        self.assertIsNone(self.runtime.session)
+        self.assertAlmostEqual(self.light.brightness, 255*.5, delta=1)
+        self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
+        calls = len(self.light.calls)
+        await self.time(749)
+        self.assertEqual(len(self.light.calls), calls)
+        self.assertTrue(self.light.is_on)
+        await self.time(750)
+        self.assertFalse(self.light.is_on)
+        self.assertIsNone(phase_timer(self.runtime.controller, self.now))
+        await self.time(751)
+        self.assertEqual(len(self.light.calls), calls+1)
+        self.assertNotIn(True, self.heater.calls)
+        await self.runtime.archive.flush()
+        stored = self.runtime.archive.read(session_id)
+        commands = [r["payload"] for r in stored["records"] if r["kind"] == "light_command" and r["payload"]["purpose"] == "session_end"]
+        self.assertEqual([c["service"] for c in commands], ["turn_on", "turn_off"])
+
+    async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
+        from custom_components.ha_sauna.settings import async_set_parameters
+        await async_set_parameters(self.hass, self.entry, {
+            "session_light_minutes": .2, "session_light_brightness_percent": 64}, partial=True)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.runtime._clock = lambda: self.now
+        await self.runtime.set_operation(True)
+        await self.runtime.set_operation(False)
+        await self.hass.async_block_till_done()
+        await self.time(150)
+        phase = self.runtime.controller.light_after_run
+        self.assertEqual(phase.ends_at, self.base+timedelta(seconds=162))
+        self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
+        await async_set_parameters(self.hass, self.entry, {"nominal_power_kw": 5}, partial=True)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.runtime._clock = lambda: self.now
+        self.assertEqual(self.runtime.controller.light_after_run, phase)
+        await self.time(151)
+        self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
+        await self.set_source("upper_temperature", 70)
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        self.assertAlmostEqual(self.light.brightness, 255*.35, delta=1)
+        await self.time(163)
+        self.assertTrue(self.light.is_on)
+        self.assertAlmostEqual(self.light.brightness, 255*.35, delta=1)
+
+    async def test_failed_session_light_commands_are_visible_and_not_repeated_each_tick(self):
+        await self.runtime.set_operation(True)
+        await self.runtime.set_operation(False)
+        await self.hass.async_block_till_done()
+        self.light.fail_commands = True
+        await self.time(150)
+        self.assertEqual(self.runtime.device.faults["session_light"], "turn_on_failed")
+        calls = len(self.light.calls)
+        await self.time(151)
+        self.assertEqual(len(self.light.calls), calls)
+        await self.time(750)
+        self.assertEqual(self.runtime.device.faults["session_light"], "turn_off_failed")
+        await self.time(751)
+        self.assertEqual(len(self.light.calls), calls+1)
+        self.assertFalse(self.heater.is_on)
 
     async def test_additional_door_signal_updates_timeline_and_cooling_wait(self):
         await self.runtime.set_operation(True)

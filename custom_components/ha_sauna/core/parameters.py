@@ -94,6 +94,8 @@ DEFINITIONS = (
     definition("operation_brightness_percent", "%", default=35, maximum=100),
     definition("after_run_brightness_percent", "%", default=15, maximum=100),
     definition("cooling_brightness_percent", "%", default=5, maximum=100),
+    definition("session_light_minutes", "min", True, default=10),
+    definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
 ) + tuple(definition(key, unit, allow_zero=minimum <= 0,
         default=default, minimum=minimum, maximum=maximum, integer=integer)
     for key, label, unit, default, minimum, maximum, integer in SPECS)

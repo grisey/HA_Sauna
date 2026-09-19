@@ -75,9 +75,21 @@ async def async_options_updated(hass, entry):
             return
         runtime.reconfiguring = True
     timer = runtime.controller.mechanical_timer.pause(runtime._clock()) if runtime and not runtime.closed else None
+    light_timer = runtime.controller.light_after_run if runtime and not runtime.closed else None
+    light_command = runtime.device.session_light_command if runtime and runtime.device else None
+    if runtime and runtime.device and "session_light" in runtime.device.faults:
+        light_command = None  # Nach einer korrigierten Konfiguration erneut versuchen.
+    if light_timer and runtime.configuration.bindings.values["light"] != updated.bindings.values["light"]:
+        # Bei neuer Lichtzuordnung den bisherigen Lichtnachlauf am alten Gerät
+        # beenden; dessen Frist darf nicht auf eine andere Leuchte übergehen.
+        await runtime.device.apply_session_light(runtime._clock(), light_timer, finish=True)
+        light_timer = light_command = None
     await hass.config_entries.async_reload(entry.entry_id)
     if timer is not None and getattr(entry, "runtime_data", None) and not entry.runtime_data.closed:
         entry.runtime_data.controller.mechanical_timer = timer
+        entry.runtime_data.controller.light_after_run = light_timer
+        entry.runtime_data.device.session_light_command = light_command
+        await entry.runtime_data.tick()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]) -> bool:

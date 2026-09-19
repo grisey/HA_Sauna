@@ -11,7 +11,8 @@ ausgeführte Prüfungen ist der [Abnahmebericht](abnahme.md).
 | C – Messverarbeitung | Fortlaufender Kandidat, Sensorfehler/Rejoin/Quellenwechsel, Expertenwerte | `tests/test_detector.py`, `test_stream_replay.py`, `test_candidate.py` |
 | D – Speicherung | SQLite, Revisionen, konsistenter ZIP-Export, HA-Backup-Hooks | `tests/test_archive.py`, `tests/integration/test_archive_backup.py` |
 | E – Gerätepfad | Reale HA-Listener/Services, getrennte Rückmeldung, Licht, Fehler und Timerhinweise | `tests/integration/test_device_path.py` |
-| F – Oberfläche | Normal/Details, Sessionarchiv, Designvorlage, Erkennungskontrolle, Einstellungen/Export | `tests/integration/test_panel_api.py`, `tests/browser/test_panel.py` |
+| F – Oberfläche | Übersicht/Details, phasenbezogene Zeit, live änderbares Temperaturprogramm, Sessionarchiv, Designvorlage, Erkennungskontrolle, Einstellungen/Export | `tests/integration/test_panel_api.py`, `tests/browser/test_panel.py` |
+| Lichtnachlauf nach Sitzungsende | Standard 10 Minuten bei 50 %, danach aus; neue Sitzung verwirft die alte Lichtfrist | `tests/test_session_light.py`, `tests/integration/test_device_path.py` |
 | Leistung und Energie | Optionaler Leistungsmesser, Schützschätzung und Sessionenergie mit Standardleistung 4,5 kW | `tests/test_power.py`, `tests/test_energy.py`, `tests/integration/test_device_path.py` |
 
 ## Umgebungen und Grenzen
@@ -30,5 +31,6 @@ Ein grüner Einzeltest ersetzt keinen erfolgreich beendeten Gesamtprozess.
 Noch keine reale Hardwareabnahme: tatsächliche Messkalibrierung, Heizrückmeldung,
 Schutzkomponenten, sichere Schaltwirkung und Montagebedingungen müssen vor
 Produktivbetrieb am konkreten Aufbau geprüft werden. Ohne gültige obere
-Temperatur wird keine alternative Regeltemperatur angenommen. Eine adaptive
-Erkennung oder Aufheizzeitprognose ist nicht als neue Regel freigegeben.
+Temperatur wird keine alternative Regeltemperatur angenommen. Die zusätzliche
+temperaturabhängige Türregel ist eine begrenzte Ergänzung für das Aufheizen;
+eine Aufheizzeitprognose ist nicht als neue Regel freigegeben.

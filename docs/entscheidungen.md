@@ -116,4 +116,8 @@ Solltemperatur, Steigerungsrate und Endtemperatur sind live änderbar. Eine manu
 
 Die Übersicht zeigt nur eine zur Phase passende Zeit. Die Lichtvorgaben sind einstellbare 35 % beim Start, 15 % im Nachlauf und 5 % bei Zwangskühlung. Alle erforderlichen Parameter erhalten Standardwerte.
 
+Nach dem endgültigen Sitzungsende folgt auf Nutzeranweisung ein eigener Lichtnachlauf,
+standardmäßig 10 Minuten bei 50 %, anschließend Licht aus. Neue Sitzung verwirft
+die alte Lichtfrist. Dies hat keine Wirkung auf die Heizregelung.
+
 Nach zwei nicht erkannten Testöffnungen erlaubt der Nutzer die Prüfung einer zusätzlichen Türregel ohne Feuchteabfall und betont die Priorität des heißen Betriebs. Die unbeschränkte Zusatzregel erzeugte im privaten Referenzreplay zusätzliche Ereignisse und wird deshalb nicht verwendet. Die Ergänzung wird auf niedrigere Temperaturen und durchgehend eingeschaltete Heizung mit zwei verfügbaren Messpositionen begrenzt; die Erkennung im heißen Zustand bleibt vorerst unverändert.

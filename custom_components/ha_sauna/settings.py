@@ -46,6 +46,8 @@ async def apply_temperature_parameters(runtime, parameters, *, explicit_target=F
     target_before = runtime.controller.target_temperature
     runtime.controller.update_temperature_parameters(parameters, runtime._clock(),
         explicit_target=explicit_target)
+    # Eine gerade abgelaufene Sitzung erhält ihren bisherigen Parameterstand.
+    runtime.persist_completed_sessions()
     runtime.configuration = replace(runtime.configuration, parameters=parameters)
     if runtime.device:
         runtime.device.values = parameters.values

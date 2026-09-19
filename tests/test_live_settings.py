@@ -160,4 +160,5 @@ class PhaseTimerTests(unittest.TestCase):
         c.set_operation(False, at(94))
         self.assertEqual(phase_timer(c, at(94))["kind"], "session_gap")
         c.advance(at(694))
-        self.assertIsNone(phase_timer(c, at(694)))
+        self.assertEqual(phase_timer(c, at(694))["kind"], "session_light")
+        self.assertIsNone(phase_timer(c, at(1294)))

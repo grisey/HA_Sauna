@@ -114,6 +114,16 @@ class Energy:
 
 
 @dataclass(frozen=True)
+class LightAfterRun:
+    """Lichtfrist nach Sitzungsende; ohne Wirkung auf Ofen oder Heizfristen."""
+
+    session_id: str
+    started_at: datetime
+    ends_at: datetime
+    brightness_percent: float
+
+
+@dataclass(frozen=True)
 class TimedPhase:
     phase_id: str
     started_at: datetime

@@ -19,6 +19,7 @@ FAULTS = {
     "archive": "Das Sitzungsarchiv konnte nicht geschrieben werden.",
     "operation_light": "Das Saunalicht konnte beim Start des Saunabetriebs nicht eingeschaltet werden.",
     "after_run_light": "Das Saunalicht konnte für den Nachlauf nicht gedimmt werden.",
+    "session_light": "Das Saunalicht konnte nach dem Sitzungsende nicht eingestellt werden.",
     "start_rejected": "Der Start wurde verhindert. Bitte die fehlenden Einstellungen und Messwerte prüfen.",
 }
 REASONS = {"operation_off": "Der Saunabetrieb ist ausgeschaltet.",
@@ -44,11 +45,13 @@ def fault_resolved(key):
         "heater_feedback_unavailable":"Schützrückmeldung", "heater_feedback_mismatch":"Schaltbestätigung",
         "heater_service_unavailable":"Ansteuerung des Heizschützes", "heater_still_heating":"Heizabschaltung",
         "heater_no_power":"Heizleistung", "archive":"Sitzungsarchiv", "cooling_light":"Saunalicht", "operation_light":"Saunalicht", "after_run_light":"Saunalicht",
-        "start_rejected":"Startvoraussetzungen"}.get(key, "Gerätediagnose")
+        "session_light":"Lichtnachlauf", "start_rejected":"Startvoraussetzungen"}.get(key, "Gerätediagnose")
     return subject + ": Der vorherige Fehlerhinweis ist nicht mehr aktiv."
 
 
 def fault_message(key, value):
+    if key == "session_light" and value == "turn_off_failed":
+        return "Das Saunalicht konnte nach Ablauf des Lichtnachlaufs nicht ausgeschaltet werden. Bitte das Licht prüfen."
     if key == "configuration":
         return configuration_message([k.strip() for k in value.split(",") if k.strip() in BY_KEY])
     if key in ROLES:

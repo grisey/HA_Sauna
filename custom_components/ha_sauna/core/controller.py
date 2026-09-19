@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from . import energy, heating, thermostat
-from .models import CoolingCycle, Deadline, Energy, Session, TimedPhase
+from .models import CoolingCycle, Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .mechanical_timer import MechanicalTimer
 from .parameters import Parameters, LIVE_TEMPERATURE_KEYS
 from .timeline import Event, Kind, apply, utc
@@ -29,6 +29,7 @@ class Controller:
         self.parameters = parameters
         self._session: Session | None = None
         self.completed_sessions: tuple[Session, ...] = ()
+        self.light_after_run: LightAfterRun | None = None
         self._last_at: datetime | None = None
         # Reale Messlage und Schutz bleiben außerhalb der Session-Rücksetzung.
         self.temperature: float | None = None
@@ -129,6 +130,7 @@ class Controller:
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
+        self.light_after_run = None
         self._session = replace(Session.create(session_id, at), operation_enabled=True,
                                 energy=Energy(accounted_at=at))
         self._session = replace(self._session, heating=heating.report(
@@ -410,6 +412,9 @@ class Controller:
                 self._finish_cooling(session.cooling, deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
             self.completed_sessions += (replace(self._session, ended_at=deadline.due_at, deadlines=()),)
+            self.light_after_run = LightAfterRun(session.session_id, deadline.due_at,
+                deadline.due_at + timedelta(seconds=self.parameters.seconds("session_light_minutes")),
+                self.parameters.values["session_light_brightness_percent"])
             if session.timeline.gang_count:
                 self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
             self._session = None
