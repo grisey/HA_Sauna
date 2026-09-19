@@ -15,6 +15,7 @@ from homeassistant.auth.const import GROUP_ID_ADMIN
 from homeassistant.components.onboarding import OnboardingStorage
 from homeassistant.components.onboarding.const import STEPS
 from homeassistant.setup import async_setup_component
+from homeassistant.helpers.service import async_get_all_descriptions
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
@@ -27,6 +28,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await OnboardingStorage(self.hass, 4, "onboarding", private=True).async_save({"done": STEPS})
         self.assertTrue(await async_setup_component(self.hass, "frontend", {}))
         await self.hass.async_block_till_done()
+        # The real frontend cannot finish loading without its service catalogue.
+        # Surface setup errors here rather than hiding them behind a WS error.
+        self.assertTrue(await async_get_all_descriptions(self.hass))
         self.user = await self.hass.auth.async_create_user("Testperson", group_ids=[GROUP_ID_ADMIN])
         self.url = f"http://127.0.0.1:{self.hass.http.server_port}"
         refresh = await self.hass.auth.async_create_refresh_token(self.user, client_id=self.url + "/")
@@ -48,15 +52,24 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.page.on("response", lambda r: self.network_errors.append((r.url.split("?")[0], r.status)) if r.status >= 400 else None)
         self.ws_errors = []
         def websocket(socket):
+            requests = {}
+            def sent(data):
+                try:
+                    message = json.loads(data)
+                    if isinstance(message, dict) and "id" in message:
+                        requests[message["id"]] = message.get("type")
+                except (ValueError, TypeError):
+                    pass
             def received(data):
                 try:
                     messages = json.loads(data)
                     for message in messages if isinstance(messages, list) else [messages]:
                         if isinstance(message, dict) and message.get("success") is False:
-                            self.ws_errors.append(message.get("error"))
+                            self.ws_errors.append({"request": requests.get(message.get("id")), "error": message.get("error")})
                 except (ValueError, TypeError):
                     pass
             socket.on("framereceived", received)
+            socket.on("framesent", sent)
         self.page.on("websocket", websocket)
         await self.page.goto(self.url + "/ha-sauna")
         self.panel = self.page.locator("ha-sauna-panel")
@@ -74,7 +87,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             print("BROWSER_WS_ERRORS", self.ws_errors)
             print("BROWSER_REJECTIONS", await self.page.evaluate("window.testErrors"))
             print("BROWSER_SCRIPTS", await self.page.locator("script[src]").evaluate_all("els=>els.map(e=>e.src)"))
-            print("BROWSER_HA_STATE", await self.page.evaluate("()=>{const h=document.querySelector('home-assistant')?.hass;return h?Object.fromEntries(['connected','states','config','themes','panels','user'].map(k=>[k,h[k]!=null])):{element:!!document.querySelector('home-assistant'),defined:!!customElements.get('home-assistant')}}"))
+            print("BROWSER_HA_STATE", await self.page.evaluate("()=>{const e=document.querySelector('home-assistant'),h=e?.hass;return h?{...Object.fromEntries(['connected','states','config','services','themes','panels','user'].map(k=>[k,h[k]!=null])),migration:e._databaseMigration}:{element:!!e,defined:!!customElements.get('home-assistant')}}"))
             await self.browser.close()
             await self.playwright.stop()
             self.browser = None
