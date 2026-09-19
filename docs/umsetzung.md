@@ -1,17 +1,18 @@
 # Implementierungsstand
 
-Die Fertigstellung erfolgt auf `codex/ha-sauna-fertigstellung`; keine Änderung
-an Produktions-HA, kein Versionssprung und kein Release. Maßgeblich für tatsächlich
+Die erste Testinstallation erfolgt durch den Nutzer über HACS. Die Vorbereitung
+ändert kein Produktions-HA; kein Versionssprung und kein Release. Maßgeblich für tatsächlich
 ausgeführte Prüfungen ist der [Abnahmebericht](abnahme.md).
 
 | Paket | Implementierung | Ausführbare Prüfung |
 |---|---|---|
 | A – Grundgerüst | Config Flow, Optionen, Rollen, eigene Entitäten, Setup/Unload/Reload | `tests/ha/test_adapter.py`, `tests/integration/test_lifecycle.py` |
-| B – Betrieb | Session, Gang, Fristen, reale Heizzeit, Thermostat, Nachlauf/Kühlung, Türwartefrist | `tests/test_operation.py`, `test_timeline.py`, `test_heating.py`, `test_thermostat.py`, `test_cooling.py` |
+| B – Betrieb | Session, Gang, Fristen, gezählte Heizzeit, Thermostat, Nachlauf/Kühlung, Türwartefrist | `tests/test_operation.py`, `test_timeline.py`, `test_heating.py`, `test_thermostat.py`, `test_cooling.py` |
 | C – Messverarbeitung | Fortlaufender Kandidat, Sensorfehler/Rejoin/Quellenwechsel, Expertenwerte | `tests/test_detector.py`, `test_stream_replay.py`, `test_candidate.py` |
 | D – Speicherung | SQLite, Revisionen, konsistenter ZIP-Export, HA-Backup-Hooks | `tests/test_archive.py`, `tests/integration/test_archive_backup.py` |
 | E – Gerätepfad | Reale HA-Listener/Services, getrennte Rückmeldung, Licht, Fehler und Timerhinweise | `tests/integration/test_device_path.py` |
 | F – Oberfläche | Normal/Details, Sessionarchiv, Designvorlage, Erkennungskontrolle, Einstellungen/Export | `tests/integration/test_panel_api.py`, `tests/browser/test_panel.py` |
+| Leistung und Energie | Optionaler Leistungsmesser, Schützschätzung und Sessionenergie mit Standardleistung 4,5 kW | `tests/test_power.py`, `tests/test_energy.py`, `tests/integration/test_device_path.py` |
 
 ## Umgebungen und Grenzen
 

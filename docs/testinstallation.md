@@ -14,10 +14,10 @@ Saunasteuerung bleibt bis zum bewusst vorgenommenen Wechsel maßgeblich.
 4. Home Assistant selbst neu starten. Unter **Einstellungen → Geräte & Dienste →
    Integration hinzufügen → HA Sauna** einrichten. Noch nicht einschalten.
 
-Ohne GitHub-Release lädt HACS den Standardbranch des Repositories. Solange der
-geprüfte Arbeitszweig noch nicht in `main` übernommen wurde, bietet HACS daher
-noch den alten Stand an. Die Vorbereitung erzeugt keinen Release und erhöht
-keine Versionsnummer. [Offizielle HACS-Regel](https://www.hacs.dev/docs/publish/integration/).
+Ohne GitHub-Release lädt HACS den Standardbranch `main` des Repositories.
+Der angebotene Stand muss den im [Abnahmebericht](abnahme.md) benannten
+Implementierungscommit enthalten. Die Vorbereitung erzeugt keinen Release und
+erhöht keine Versionsnummer. [Offizielle HACS-Regel](https://www.hacs.dev/docs/publish/integration/).
 
 Alle Laufzeitdateien liegen unter `custom_components/ha_sauna`; `hacs.json`
 legt Anzeigenamen und Mindestversion fest. Das Archiv liegt außerhalb des

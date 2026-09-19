@@ -38,8 +38,10 @@ Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.
   vom Beendigungsgrund. Die Zählberechtigung folgt aus den Gang-/Aufgussobjekten;
   keine Sonderregel nur für ausgeschaltete Gänge und kein paralleler Merker.
 - Das Heizbudget folgt Anfangswert und einmaliger Verringerung nach erster
-  abgeschlossener Kühlung. Der Heizzeittimer zählt nur tatsächliches Heizen
-  oder ohne Messgerät die Schützstellung und pausiert bei idle. Keine zusätzliche prozentuale Idle-Gutschrift und kein
+  abgeschlossener Kühlung. Der Heizzeittimer verwendet die gültige optionale
+  Leistungsmessung, sonst eine unabhängige Heizrückmeldung oder ersatzweise die
+  Schützstellung. Ohne unabhängige Messung ist die Zählung eine Schätzung.
+  Keine zusätzliche prozentuale Idle-Gutschrift und kein
   durch Idle-Zeiten vergrößertes Heizbudget. Die zuvor vereinbarte lokale
   Rücksetzung nach genügend langer zusammenhängender Auszeit bleibt davon
   getrennt und ist kein Sessionwechsel.

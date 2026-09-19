@@ -1,7 +1,7 @@
 # Architektur
 
 Es gibt einen führenden Controller pro konfigurierter Sauna. Die Session besitzt
-Gangzuordnung, Heizzeit, Bereitschaft, Thermostatstatus, Nachlauf, Kühlung und
+Gangzuordnung, Heizzeit, Sessionenergie, Bereitschaft, Thermostatstatus, Nachlauf, Kühlung und
 Fristen. Dauerhafte Konfiguration, reale Eingangslage, technische Schutzgründe
 und historische Archive liegen außerhalb des Sessionwechsels.
 
@@ -12,7 +12,8 @@ und historische Archive liegen außerhalb des Sessionwechsels.
 | `core/detector.py` | Kausale, begrenzte Arbeitsfenster je Messhöhe; eingefrorene Erkennungslogik mit einstellbaren Expertenparametern. |
 | `core/timeline.py` | Ereignisreferenzen, Gangbeginn, Aufgussbestätigung, Aufhebung und Abschluss. |
 | `core/controller.py` | Sessionlebenszyklus, Fristfolgen, Kühlreihenfolge und Heizentscheidung. |
-| `core/heating.py`, `core/thermostat.py` | Tatsächliche Heizintervalle und eigene Temperaturregelung. |
+| `core/heating.py`, `core/thermostat.py` | Gezählt aktive Heizintervalle und eigene Temperaturregelung. |
+| `core/power.py`, `core/energy.py` | Optionale W-/kW-Messung; Sessionenergie mit getrennten gemessenen und geschätzten Anteilen. |
 | `runtime.py` | Serialisierte Ereignisverarbeitung, Lebenszyklus, Archivübergabe und Entitätsaktualisierung. |
 | `archive.py`, `backup.py` | SQLite, Schreibpuffer, konsistente HA-Sicherung und Export. |
 | `api.py`, `frontend.py`, `panel.js` | Authentifizierte Abfragen/Bedienung und zwei Hauptansichten ohne zweiten Ablaufkern. |

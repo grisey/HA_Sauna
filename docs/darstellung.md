@@ -8,7 +8,8 @@ Regelungszustand. Browsernachweise stehen im [Abnahmebericht](abnahme.md).
 ## Normal
 
 Einfache Steuerung mit Status, Betrieb-An/Aus, Temperaturwahl vor einer Session,
-Temperatur und Feuchte. Temperaturkacheln verwenden zentral konfigurierte
+Temperatur, Feuchte und Sessionenergie mit Kennzeichnung der Mess-/Schätzquelle.
+Temperaturkacheln verwenden zentral konfigurierte
 Ausgangstemperatur, Abstand und Anzahl; Vorlage: 70 bis 95 °C in 5-Grad-Schritten.
 Die Kacheln setzen die Solltemperatur und starten über denselben Backendpfad.
 Gemischte alte Start-/Endtemperatur-Szenen werden nicht übernommen: Die aktuelle
@@ -26,7 +27,7 @@ historische Sessions auswählbar. Gestaltung aus der gelieferten Vorlage:
 | Gang | Magentafarbene Fläche; vorläufig mit gestrichelter Kontur |
 | Aufguss | Weiße Zeitmarke |
 | Heizen / bereit / lüften | Orange / grüne / blaugraue Zeitfläche |
-| Reale Heizaktivität | Eigener schmaler Streifen aus tatsächlichen Heizintervallen |
+| Gezählt als Heizaktivität | Eigener schmaler Streifen; Details nennen Leistungsmessung, unabhängige Rückmeldung oder Schützschätzung |
 
 Gangflächen stammen aus dem neuesten zugeordneten Sessionobjekt. Eine spätere
 Bestätigung verändert weder ID noch Beginn. Tooltip zeigt Originalwert und
@@ -37,9 +38,11 @@ Bildspalte und verändert niemals gespeicherte Originale.
 
 ## Details
 
-**Betrieb & Fristen:** beide Messpositionen, Bereitschaftsziel, tatsächliche
-Heizzeit und Budget, Gangstatus, Nachlauf, Kühlung, Türwartefrist, mechanischer
-Timer als Schätzung, Heizentscheidungsgrund und aktuelle Fehler.
+**Betrieb & Fristen:** beide Messpositionen, Bereitschaftsziel, gezählte
+Heizzeit und Budget, Rückmeldungsquelle, gemessene Leistung sowie Sessionenergie,
+Gangstatus, Nachlauf, Kühlung, Türwartefrist, mechanischer Timer als Schätzung,
+Heizentscheidungsgrund und aktuelle Fehler. Messlücken und geschätzte Energieanteile
+bleiben gekennzeichnet; Kühlung und Heizbudgetrücksetzung löschen die Summe nicht.
 
 **Erkennungskontrolle:** eigene Verlaufskurven der tatsächlich im Detektor
 berechneten Tür-, Personen- und Aufgussmerkmale. Die für die ausgewählte Session
