@@ -63,13 +63,18 @@ class SaunaRuntime:
         self._detector_session = None
         self._archive_signature = None
         self._saved_decisions = 0
+        self._saved_phase = None
 
     def _sync_detector(self):
         session_id = self.session.session_id if self.session else None
         if session_id == self._detector_session:
             return
         self._detector_session = session_id
-        self.detector = Detector(self.configuration.parameters, self.session.started_at) if self.session else None
+        def observed(trace):
+            if self.archive:
+                self.archive.append("detector_trace", self._clock(), trace, session_id)
+        self.detector = Detector(self.configuration.parameters, self.session.started_at,
+            observer=observed) if self.session else None
         if self.detector and self.device:
             for measurement in sorted(self.device.measurements.values(), key=lambda m: m.received_at):
                 self.detector.accept(measurement)
@@ -133,6 +138,10 @@ class SaunaRuntime:
         if self.archive is None:
             return
         now = self._clock()
+        phase_key = (self.session.session_id if self.session else None, self.controller.phase)
+        if phase_key != self._saved_phase:
+            self.archive.append("phase", now, {"phase": self.controller.phase}, phase_key[0])
+            self._saved_phase = phase_key
         for session in self.controller.completed_sessions[self._archived_completed:]:
             self.archive.save_session(session, now, self.configuration.as_options())
         self._archived_completed = len(self.controller.completed_sessions)

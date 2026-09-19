@@ -67,6 +67,9 @@ DEFINITIONS = (
     ParameterDefinition("after_run_minutes", "Nachlaufdauer", "min"),
     ParameterDefinition("readiness_offset_c", "Bereitschaftsaufschlag", "°C", True, default=5),
     ParameterDefinition("readiness_hysteresis_c", "Bereitschaftshysterese", "°C", default=3),
+    ParameterDefinition("preset_start_c", "Erste Temperaturkachel", "°C", default=70),
+    ParameterDefinition("preset_step_c", "Abstand der Temperaturkacheln", "°C", default=5),
+    ParameterDefinition("preset_count", "Anzahl der Temperaturkacheln", "Anzahl", default=6, minimum=1, maximum=20, integer=True),
     # Unbestimmte Schutz-/Betriebswerte bleiben leer. Leer bedeutet Heizsperre,
     # nicht ein vom Code gewählter Ersatzwert oder eine sichere Werkseinstellung.
     ParameterDefinition("target_temperature_c", "Solltemperatur oben", "°C", optional=True),

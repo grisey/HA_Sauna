@@ -76,7 +76,10 @@
           "infusion_temperature": "Experte: Aufgusstemperaturänderung",
           "infusion_hold_seconds": "Experte: Aufgussbestätigung",
           "person_wait_minutes": "Personenerkennung nach Türschließung abwarten",
-          "open_door_wait_minutes": "Kühlaufschub bei offener Tür"
+          "open_door_wait_minutes": "Kühlaufschub bei offener Tür",
+          "preset_start_c": "Erste Temperaturkachel",
+          "preset_step_c": "Abstand der Temperaturkacheln",
+          "preset_count": "Anzahl der Temperaturkacheln"
         }
       }
     },
@@ -191,7 +194,10 @@
           "infusion_temperature": "Experte: Aufgusstemperaturänderung",
           "infusion_hold_seconds": "Experte: Aufgussbestätigung",
           "person_wait_minutes": "Personenerkennung nach Türschließung abwarten",
-          "open_door_wait_minutes": "Kühlaufschub bei offener Tür"
+          "open_door_wait_minutes": "Kühlaufschub bei offener Tür",
+          "preset_start_c": "Erste Temperaturkachel",
+          "preset_step_c": "Abstand der Temperaturkacheln",
+          "preset_count": "Anzahl der Temperaturkacheln"
         }
       }
     },

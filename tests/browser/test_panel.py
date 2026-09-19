@@ -1,0 +1,125 @@
+"""Chromium inside the real HA frontend; no mock hass object or fake API."""
+import base64
+from datetime import timedelta
+import io
+import json
+from pathlib import Path
+import sys
+import time
+import unittest
+import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integration"))
+import test_device_path as device_tests
+from homeassistant.auth.const import GROUP_ID_ADMIN
+from homeassistant.components.onboarding import OnboardingStorage
+from homeassistant.components.onboarding.const import STEPS
+from homeassistant.setup import async_setup_component
+from playwright.async_api import async_playwright, expect
+from custom_components.ha_sauna.core.timeline import Event, Kind
+
+
+class BrowserTests(unittest.IsolatedAsyncioTestCase):
+    set_source = device_tests.DevicePathTests.set_source
+
+    async def asyncSetUp(self):
+        await device_tests.DevicePathTests.asyncSetUp(self)
+        await OnboardingStorage(self.hass, 4, "onboarding", private=True).async_save({"done": STEPS})
+        self.assertTrue(await async_setup_component(self.hass, "frontend", {}))
+        await self.hass.async_block_till_done()
+        self.user = await self.hass.auth.async_create_user("Testperson", group_ids=[GROUP_ID_ADMIN])
+        self.url = f"http://127.0.0.1:{self.hass.http.server_port}"
+        refresh = await self.hass.auth.async_create_refresh_token(self.user, client_id=self.url + "/")
+        tokens = {"hassUrl": self.url, "clientId": self.url + "/", "access_token": self.hass.auth.async_create_access_token(refresh),
+                  "refresh_token": refresh.token, "expires": (time.time()+1800)*1000, "expires_in": 1800}
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch()
+        self.context = await self.browser.new_context(viewport={"width": 1440, "height": 1080}, color_scheme="dark", accept_downloads=True)
+        await self.context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+        self.page = await self.context.new_page()
+        self.errors = []
+        self.page.on("pageerror", lambda e: self.errors.append(str(e)))
+        await self.page.goto(self.url + "/ha-sauna")
+        self.panel = self.page.locator("ha-sauna-panel")
+        await expect(self.panel.locator('[data-action="operation"]')).to_be_visible(timeout=60000)
+
+    async def asyncTearDown(self):
+        if getattr(self, "page", None):
+            if self.errors:
+                print("BROWSER_ERRORS", self.errors)
+            await self.browser.close()
+            await self.playwright.stop()
+        await device_tests.DevicePathTests.asyncTearDown(self)
+
+    async def emit(self, kind, second):
+        self.now = self.base + timedelta(seconds=second)
+        await self.runtime.receive(Event(f"browser:{kind}:{second}", self.runtime.session.session_id,
+            kind, self.now, self.now))
+        await self.hass.async_block_till_done()
+
+    async def test_live_history_assignment_diagnostics_and_authenticated_download(self):
+        await self.panel.locator('[data-action="operation"]').click()
+        await expect(self.panel.locator('[data-phase="aufheizen"]')).to_be_visible()
+        identity = self.runtime.session.session_id
+        for second in range(15):
+            self.now = self.base + timedelta(seconds=second)
+            for pos in ("upper", "lower"):
+                await self.set_source(pos + "_temperature", (72 if pos=="upper" else 62)+second/5)
+                await self.set_source(pos + "_humidity", 15+second/10)
+            await self.runtime.tick()
+        # Browser verifies historical backassignment. The separate HA device-path
+        # test proves the detector itself produces these signals from HA inputs.
+        await self.emit(Kind.DOOR_OPEN, 20)
+        await self.emit(Kind.DOOR_CLOSE, 25)
+        await self.emit(Kind.PERSON_STRONG, 35)
+        await self.panel.locator('[data-action="history"]').click()
+        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Vorläufig", timeout=15000)
+        gang_id = await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id")
+        start = await self.panel.locator('[data-gang-id]').get_attribute("data-start")
+        self.assertEqual(start, (self.base+timedelta(seconds=25)).isoformat())
+        await self.emit(Kind.INFUSION, 40)
+        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
+        self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id"), gang_id)
+        self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+        for pos in ("upper", "lower"):
+            for quantity in ("temperature", "humidity"):
+                path = self.panel.locator(f'[data-series="{pos}_{quantity}"]')
+                self.assertTrue((await path.get_attribute("d")).startswith("M"))
+        chart = self.panel.locator("svg.session-chart")
+        await chart.hover(position={"x": 250, "y": 200})
+        await expect(self.panel.locator("#tooltip")).to_be_visible()
+        await expect(self.panel.locator("#tooltip")).to_contain_text("Temperatur oben")
+        await self.panel.locator('[data-action="zoom-in"]').click()
+        self.assertEqual(await self.panel.evaluate("p=>p.zoom"), 2)
+        await self.panel.locator('[data-action="reset-zoom"]').click()
+        screenshot = await self.page.screenshot(type="jpeg", quality=55)
+        print("BROWSER_IMAGE_SESSION " + base64.b64encode(screenshot).decode())
+        await self.panel.locator('[data-action="details"]').click()
+        await self.set_source("upper_temperature", "unavailable")
+        await expect(self.panel.locator('#details [role="alert"]')).to_contain_text("Temperatur oben", timeout=15000)
+        await self.panel.locator('[data-action="diagnostics"]').click()
+        await expect(self.panel.locator('[data-series="detector_door_temperature_slope_upper"]')).to_be_attached()
+        self.assertFalse(await self.panel.locator("#plots").is_visible())
+        await self.panel.locator('[data-action="settings"]').click()
+        await expect(self.panel.locator('input[name="heating_minutes"]')).to_be_disabled()
+        async with self.page.expect_download() as result:
+            await self.panel.locator('[data-action="export"]').click()
+        download = await result.value
+        self.assertIsNone(await download.failure())
+        with zipfile.ZipFile(await download.path()) as archive:
+            session = json.loads(archive.read("sessions.jsonl").splitlines()[0])
+            self.assertEqual(session["timeline"]["session_id"], identity)
+            self.assertEqual(session["timeline"]["active"]["gang_id"], gang_id)
+            self.assertGreater(len(archive.read("measurements.csv").splitlines()), 50)
+        await self.runtime.set_operation(False)
+        self.now += timedelta(minutes=3)
+        await self.runtime.tick()
+        await self.panel.locator('[data-action="normal"]').click()
+        await self.panel.locator('[data-action="history"]').click()
+        await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_be_attached(timeout=15000)
+        await self.panel.locator("#session").select_option(identity)
+        await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
+        self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+        await self.page.set_viewport_size({"width": 390, "height": 844})
+        self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
+        self.assertEqual(self.errors, [])

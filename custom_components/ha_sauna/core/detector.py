@@ -30,7 +30,7 @@ class Detector:
     Begrenzte Arbeitsfenster sind keine Archivverdichtung. Jedes Original wird
     separat archiviert. Fehlende/alte Messungen werden niemals interpoliert.
     """
-    def __init__(self, parameters, origin, positions=(Position.UPPER, Position.LOWER)):
+    def __init__(self, parameters, origin, positions=(Position.UPPER, Position.LOWER), observer=None):
         self.p = parameters.values
         self.origin = utc(origin)
         self.positions = tuple(positions)
@@ -53,6 +53,8 @@ class Detector:
         self.active_positions = ()
         self.faults = ()
         self.rejected = 0
+        self.observer = observer
+        self.diagnostic = None
 
     def accept(self, measurement: Measurement):
         if measurement.position not in self.positions:
@@ -161,19 +163,30 @@ class Detector:
             self.counts.clear()
             self.levels.clear()
         self.active_positions, self.faults = channels, tuple(faults)
+        trace = {"at": now, "channels": tuple(c.value for c in channels),
+                 "metrics": {c.value: {} for c in channels}, "conditions": {}}
         output = []
+        def observe():
+            trace.update(holds=dict(self.counts), signals=tuple(d.kind for d in output),
+                         door_open=self.open, ventilation_context=self.context)
+            self.diagnostic = trace
+            if self.observer:
+                self.observer(trace)
         def emit(kind):
             output.append(Detection(kind, now, decision_at, tuple(c.value for c in channels)))
         if not channels:
+            observe()
             return output
         opening, closing = True, True
         for c in channels:
             trend = self._slope(c, "Tm", p["door_window_seconds"])
             dh = self._difference(c, "Hm", p["door_humidity_seconds"])
+            trace["metrics"][c.value].update(door_temperature_slope=trend, door_humidity_delta=dh)
             opening &= trend is not None and trend < p["door_open_slope"] and dh is not None and dh <= -p[f"door_open_humidity_{c.value}"]
             closing &= trend is not None and trend > p["door_close_slope"]
         toggle = self._sustain("door", closing if self.open else opening,
             p["door_close_hold_seconds"] if self.open else p["door_open_hold_seconds"])
+        trace["conditions"].update(door_open=opening, door_close=closing)
         # Eine Lüftung kann am selben Rasterpunkt wie die Schließung belegt sein.
         # Dann wird zuerst ihr noch offener Kontext abgeschlossen.
         if self.open and not self.ventilated and (now - self.opened_at).total_seconds() >= p["vent_hold_seconds"]:
@@ -200,8 +213,10 @@ class Detector:
         for c in channels:
             dh = self._difference(c, "H", p["infusion_window_seconds"])
             dt = self._difference(c, "T", p["infusion_window_seconds"])
+            trace["metrics"][c.value].update(infusion_humidity_delta=dh, infusion_temperature_delta=dt)
             infusion &= dh is not None and dh >= p["infusion_humidity"] and dt is not None and dt >= p["infusion_temperature"]
         sustained = self._sustain("infusion", infusion, p["infusion_hold_seconds"])
+        trace["conditions"]["infusion"] = infusion
         if self._edge("infusion", sustained):
             emit(Kind.INFUSION)
         if self.index % p["person_step_seconds"] == 0:
@@ -210,8 +225,11 @@ class Detector:
                 for c in channels:
                     for key, quantity in (("Tm", "temperature"), ("Hm", "humidity")):
                         trend = self._slope(c, key, p[f"{route}_window_seconds"], p["person_step_seconds"])
+                        trace["metrics"][c.value][f"{route}_{quantity}_slope"] = trend
                         condition &= trend is not None and trend >= p[f"{route}_{quantity}_{c.value}"]
                 sustained = self._sustain(route, condition, p[f"{route}_hold_seconds"], p["person_step_seconds"])
+                trace["conditions"][route] = condition
                 if self._edge(route, sustained):
                     emit(kind)
+        observe()
         return output

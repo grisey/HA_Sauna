@@ -24,6 +24,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime
     await entry.runtime_data.start_archive(hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id)
     from .api import register
     register(hass)
+    from .frontend import register as register_panel
+    await register_panel(hass)
     if entry.options != configuration.as_options():
         hass.config_entries.async_update_entry(entry, options=configuration.as_options())
     await hass.config_entries.async_forward_entry_setups(entry, ["number", "sensor", "switch", "climate", "button"])

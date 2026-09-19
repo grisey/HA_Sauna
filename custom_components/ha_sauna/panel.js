@@ -1,0 +1,267 @@
+/* Native HA custom panel. Backend objects are authoritative; no control model here. */
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const stamp = v => v ? new Date(v).getTime() : null;
+const when = v => v ? new Date(v).toLocaleString("de-DE", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "–";
+const clock = v => new Date(v).toLocaleTimeString("de-DE", {hour:"2-digit",minute:"2-digit"});
+const duration = v => v == null ? "–" : `${Math.floor(Math.max(0,v)/60)}:${String(Math.floor(Math.max(0,v)%60)).padStart(2,"0")} min`;
+const phases = {aus:"Aus",aufheizen:"Aufheizen",bereit:"Bereit",saunagang:"Saunagang",nachlauf:"Nachlauf",zwangskühlung:"Zwangskühlung"};
+const events = {door_open:"Tür geöffnet",door_close:"Tür geschlossen",person_strong:"Person erkannt",person_weak:"Person erkannt (schwach)",infusion:"Aufguss",ventilation_confirmed:"Durchlüften bestätigt",operation_off:"Betrieb ausgeschaltet",confirmation_expired:"Vorläufigen Gang aufgehoben"};
+const faultText = {upper_temperature:"Temperatur oben",upper_humidity:"Feuchte oben",lower_temperature:"Temperatur unten",lower_humidity:"Feuchte unten",heater_feedback:"Heizrückmeldung",heater:"Heizaktor"};
+
+class SaunaPanel extends HTMLElement {
+  constructor() {
+    super(); this.attachShadow({mode:"open"}); this.view="overview"; this.selected="live";
+    this.cache=new Map(); this.zoom=1; this.pan=100; this.generation=0; this.positions=new Set(["upper","lower"]);
+  }
+  set hass(value) { this._hass=value; if(this.isConnected && !this.timer) this.start(); }
+  get hass() { return this._hass; }
+  connectedCallback() { this.shell(); if(this._hass) this.start(); }
+  disconnectedCallback() { clearInterval(this.timer); this.timer=null; this.generation++; }
+  start() { this.refresh(); this.timer=setInterval(()=>this.refresh(),2000); }
+  $(selector) { return this.shadowRoot.querySelector(selector); }
+  async api(path, method="GET", body) { return this.hass.callApi(method, `ha_sauna${path}`,body); }
+  shell() {
+    this.shadowRoot.innerHTML=`<style>
+      :host{display:block;height:100%;overflow:auto;color:var(--primary-text-color,#203331);background:var(--primary-background-color,#f4f7f6);font:15px/1.5 system-ui,sans-serif;--accent:#197367;--warm:#cd693a}
+      *{box-sizing:border-box}main{max-width:1280px;margin:auto;padding:28px 32px 60px}header{display:flex;align-items:center;gap:18px;margin-bottom:24px}h1{font-size:28px;letter-spacing:-.6px;margin:0}h2{font-size:19px;margin:0 0 12px}h3{font-size:14px;margin:12px 0 8px}p{margin:8px 0}small,.muted{color:var(--secondary-text-color,#657572);font-size:13px}.grow{flex:1}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+      button,select,input{font:inherit;border:1px solid var(--divider-color,#d4dfdc);border-radius:8px;padding:9px 13px;background:var(--card-background-color,#fff);color:inherit}button{cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.5;cursor:default}button.primary{background:var(--accent);color:white;border-color:var(--accent)}button.stop{background:#a34029;color:white}button[aria-selected=true]{background:var(--accent);color:white}a{color:var(--accent)}.tabs{display:flex;gap:8px;margin:24px 0 18px}.card{background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#dce5e2);border-radius:14px;padding:22px;margin:16px 0}.hero{border-left:4px solid var(--accent)}.phase{font-size:28px;font-weight:650;letter-spacing:-.5px}.badge{display:inline-block;border-radius:20px;padding:3px 11px;background:#e4f2ed;color:#24584c;font-size:13px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;margin-top:18px}.metric strong{display:block;font-size:24px;font-weight:600;white-space:nowrap}.metric small{display:block}.notice{background:#fff1db;color:#6f481d;border-left:4px solid #d79a42;padding:12px 16px;border-radius:8px;margin:10px 0}.error{background:#fcebe6;color:#862d21}.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}.upper{background:#197367}.lower{background:#bd7133}.chart{width:100%;height:auto;display:block;touch-action:pan-y}.chart text{fill:var(--secondary-text-color,#6d7874);font:12px system-ui}.chart .gridline{stroke:var(--divider-color,#e2e9e6);stroke-width:1}.chart .gang{fill:#5eaa9633;stroke:#5eaa96}.chart .provisional{fill:#dfa94b22;stroke:#bb8b35;stroke-dasharray:5 4}.chart .heat{fill:#d8764433}.chart .event{stroke:#83978e;stroke-dasharray:3 5}.chart .infusion{stroke:#426bbb}.chart path{fill:none;stroke-width:2}.chart path.upper{stroke:#197367}.chart path.lower{stroke:#bd7133}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:10px 12px;border-bottom:1px solid var(--divider-color,#e4ebe8);white-space:nowrap}th{font-weight:600}.toolbar{margin:18px 0 8px}input[type=range]{padding:0;max-width:180px}.forms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}label.field{display:flex;flex-direction:column;gap:6px;font-size:13px}label.field input{width:100%}fieldset{border:0;padding:0;margin:0}details{margin:18px 0}summary{cursor:pointer;font-weight:600;margin-bottom:14px}[hidden]{display:none!important}#message:empty{display:none}#settings .row{margin:18px 0}.empty{padding:45px;text-align:center;color:var(--secondary-text-color,#657572)}
+      @media(max-width:800px){main{padding:18px 16px 40px}.grid{grid-template-columns:repeat(2,1fr)}.forms{grid-template-columns:repeat(2,1fr)}header{gap:10px}h1{font-size:23px}.card{padding:16px}.metric strong{font-size:21px}header select{max-width:180px}}
+      @media(max-width:450px){.forms{grid-template-columns:1fr}.phase{font-size:24px}.grid{gap:12px}.legend{gap:12px}}
+      :host{--accent:#e58a55}main{max-width:none}header{margin-bottom:12px}.tabs{margin-top:8px}.plot-panel{padding:20px 12px 30px;background:#111;color:#c8c8c8;border-radius:8px}.plot-title{text-align:center;color:#aaa;font-weight:500;font-size:18px}.legend{justify-content:center;margin:18px 0}.legend i{display:inline-block;width:32px;height:5px;margin-right:6px;vertical-align:middle}.top-legend{margin:24px 0 0}.position-select{justify-content:center;font-size:12px;gap:8px}.position-select button{background:transparent;color:#aaa;border:0;padding:6px}.position-select button[aria-pressed=false]{opacity:.35}.plot-wrap{position:relative}.chart{height:520px;width:100%;touch-action:none}.chart text{fill:#aaa}.detector-chart{height:220px}.main-tabs{border-bottom:1px solid var(--divider-color,#333);padding-bottom:10px}.normal-tabs,.detail-tabs{font-size:13px}.chart .gridline{stroke:rgba(255,255,255,.10)}.chart .gang{fill:rgba(165,30,85,.46);stroke:none}.chart .provisional{stroke:#a51e55;stroke-dasharray:5 4}.chart .heat{fill:rgba(255,150,35,.28)}.chart .ready{fill:rgba(38,125,82,.3)}.chart .vent{fill:rgba(58,125,155,.3)}.chart .cool{fill:rgba(103,130,154,.3)}.chart .after{fill:rgba(58,125,155,.18)}.chart .door{fill:rgba(255,205,80,.75)}.chart .infusion{stroke:#f5f5f5;stroke-width:1}.chart path{stroke-width:3.5}.chart path.temperature{stroke:#ff6b4a}.chart path.humidity{stroke:#42a5ff}.chart path.lower{stroke-dasharray:8 5;opacity:.75}.chart .axis-temperature{fill:#ff6b4a}.chart .axis-humidity{fill:#42a5ff}.plot-note{text-align:center;color:#999}#tooltip{position:absolute;pointer-events:none;background:#f6f6f6;color:#333;padding:10px 13px;font:13px/1.5 system-ui;border:1px solid #999;z-index:2;box-shadow:0 3px 10px #0003}.dashboard{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;max-width:1150px;margin:0 auto}.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}.tile{padding:18px;text-align:left;min-height:72px}.tile.full{grid-column:1/-1}.greeting{text-align:center;font-size:24px;margin:25px 0}.dial{max-width:330px;display:block;margin:auto}.dial text{fill:var(--primary-text-color,#ddd)}.dial .reading{font-size:33px}.dial .caption{font-size:13px}.dashboard .card{margin-top:0}.state-line{display:flex;justify-content:space-between;gap:15px}.gauge-card h2{text-align:center}.temperature-choice{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px}.temperature-choice input{width:95px}
+      @media(max-width:800px){.dashboard{grid-template-columns:1fr}.chart{height:420px}.plot-panel{padding:12px 0}.legend{font-size:12px;gap:12px}.legend i{width:22px}main{padding:14px}}
+    </style><main>
+      <header><button data-action="menu" aria-label="Menü öffnen">☰</button><div><h1>Sauna</h1><small>Session & Temperatur</small></div><span class="grow"></span><select id="instance" aria-label="Sauna auswählen"></select></header>
+      <nav class="tabs main-tabs" aria-label="Ansicht"><button data-action="normal" aria-selected="true">Normal</button><button data-action="details" aria-selected="false">Details</button></nav>
+      <nav class="tabs normal-tabs" aria-label="Normalansicht"><button data-action="overview" aria-selected="true">Steuerung</button><button data-action="history" aria-selected="false">Sessionverlauf & Archiv</button></nav>
+      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-selected="true">Betrieb & Fristen</button><button data-action="diagnostics" aria-selected="false">Erkennungskontrolle</button><button data-action="settings" aria-selected="false">Einstellungen & Export</button></nav>
+      <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
+      <section id="history" hidden><div class="row"><h2 class="grow">Sessionverlauf</h2><select id="session" aria-label="Session auswählen"><option value="live">Aktuelle Session</option></select></div>
+        <div class="row toolbar"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom">Gesamte Session</button><label>Zeitausschnitt <input id="pan" type="range" min="0" max="100" value="100" aria-label="Zeitausschnitt verschieben"></label><span id="range" class="muted"></span></div><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+      </section><section id="settings" hidden></section>
+    </main>`;
+    this.shadowRoot.addEventListener("click",e=>{const b=e.target.closest("button[data-action]"); if(b)this.action(b.dataset.action).catch(err=>this.message(err));});
+    this.shadowRoot.addEventListener("change",e=>{
+      if(e.target.id==="instance"){this.entry=e.target.value;this.generation++;this.selected="live";this.cache.clear();this.settingsEntry=null;this.zoom=1;this.refresh();}
+      if(e.target.id==="session"){this.selected=e.target.value;this.zoom=1;this.pan=100;this.refresh();}
+    });
+    this.shadowRoot.addEventListener("input",e=>{if(e.target.id==="pan"){this.pan=Number(e.target.value);this.drawHistory();}});
+    this.shadowRoot.addEventListener("pointermove",e=>{if(e.target.closest("svg.session-chart"))this.hoverChart(e);});
+    this.shadowRoot.addEventListener("pointerout",e=>{if(e.target.closest("svg.session-chart")&&!e.relatedTarget?.closest?.("svg.session-chart")){this.$("#tooltip")?.setAttribute("hidden","");this.$("#cursor")?.setAttribute("visibility","hidden");}});
+    this.shadowRoot.addEventListener("wheel",e=>{if(!e.target.closest("svg.session-chart"))return;e.preventDefault();this.zoom=Math.max(1,Math.min(256,this.zoom*(e.deltaY<0?1.25:.8)));this.drawHistory();},{passive:false});
+    this.shadowRoot.addEventListener("submit",e=>{e.preventDefault();this.saveSettings().catch(err=>this.message(err));});
+  }
+  message(error) { const node=this.$("#message"); node.className=error?"notice error":"";node.textContent=error?(error.message||error.error||String(error)):""; }
+  async refresh() {
+    if(this.busy || !this.isConnected)return;
+    this.busy=true; const generation=this.generation;
+    try {
+      if(!this.entry){
+        const instances=await this.api("");
+        this.$("#instance").innerHTML=instances.map(i=>`<option value="${esc(i.entry_id)}">${esc(i.title)}</option>`).join("");
+        if(!instances.length){this.$("#current").innerHTML='<p>Keine geladene Sauna vorhanden.</p>';return;}
+        this.entry=instances[0].entry_id;
+      }
+      const entry=this.entry;
+      const [state,list]=await Promise.all([this.api(`/${entry}/state`),this.api(`/${entry}/archive`)]);
+      if(generation!==this.generation || !this.isConnected)return;
+      this.state=state; this.sessions=list;
+      const optionHtml='<option value="live">Aktuelle Session</option>'+list.filter(s=>s.session_id!==state.session?.timeline.session_id).map(s=>`<option value="${esc(s.session_id)}">${esc(when(s.started_at))}${s.ended_at?" · beendet":" · unterbrochen"}</option>`).join("");
+      if(this.$("#session").innerHTML!==optionHtml){this.$("#session").innerHTML=optionHtml;this.$("#session").value=this.selected;}
+      const id=this.selected==="live"?state.session?.timeline.session_id:this.selected;
+      if(id){
+        const cache=this.cache.get(id)||{records:[],after:0};
+        if(this.selected==="live"||!cache.loaded){
+          let page;
+          do {
+            page=await this.api(`/${entry}/archive?session_id=${encodeURIComponent(id)}&after=${cache.after}`);
+            if(generation!==this.generation || !this.isConnected)return;
+            cache.session=page.session;
+            cache.records.push(...page.records.filter(r=>["measurement","source_snapshot","diagnostic","phase","detector_trace"].includes(r.kind)));
+            cache.after=page.records.at(-1)?.id||cache.after;
+          }while(page.next_after);
+          cache.loaded=true;this.cache.set(id,cache);
+        }
+        this.shown={session:this.selected==="live"?state.session:cache.session,records:cache.records};
+      }else this.shown=null;
+      if(this.shadowRoot.activeElement?.tagName!=="INPUT")this.drawCurrent();
+      if(!this.$("#tooltip")||this.$("#tooltip").hidden)this.drawHistory();this.drawSettings();this.message(null);
+    }catch(error){this.message(error);}finally{this.busy=false;}
+  }
+  drawCurrent() {
+    const s=this.state, session=s.session, now=stamp(s.now), active=session?.timeline.active;
+    const value=(p,q,unit)=>{const m=s.measurements.find(m=>m.position===p&&m.quantity===q);return m?.value==null?'–':`${m.value.toFixed(1)} ${unit}`;};
+    const remaining=end=>duration(end?(stamp(end)-now)/1000:null);
+    const timer=session?.after_run?`Nachlauf: ${remaining(session.after_run.ends_at)}`:session?.cooling?.started_at?`Kühlung: ${remaining(session.cooling.ends_at)}`:active?`${s.gang_confirmation==="confirmed"?"Bestätigt durch Aufguss":"Vorläufig · wartet auf Aufguss"} · ${duration(s.gang_duration_seconds)}`:s.cooling_wait_until?`Personenerkennung abwarten: ${remaining(s.cooling_wait_until)}`:session?`Session seit ${when(session.timeline.session_started_at)}`:"Keine laufende Session";
+    const faults=Object.entries(s.faults).map(([key,v])=>`${faultText[key]||key}: ${v}`);
+    if(s.detection_channels.length===1)faults.push("Erkennung mit einer Messposition");
+    if(s.protection.length)faults.push(`Schutzabschaltung: ${s.protection.join(", ")}`);
+    if(s.inhibits.length)faults.push(`Heizen gesperrt: ${s.inhibits.join(", ")}`);
+    if(s.archive_error)faults.push(`Archivfehler: ${s.archive_error}`);
+    this.$("#current").innerHTML=`<div class="card hero"><div class="row"><div class="grow"><span class="phase" data-phase="${esc(s.phase)}">${phases[s.phase]||esc(s.phase)}</span> <span class="badge">${s.gang_count} Gänge beendet</span><p id="phase-detail" class="muted">${esc(timer)}</p></div><button data-action="operation" class="${s.operation_enabled?"stop":"primary"}" ${this.hass.user?.is_admin?'':'disabled'}>${s.operation_enabled?"Betrieb ausschalten":"Betrieb einschalten"}</button></div><div class="grid"><div class="metric"><small>Temperatur oben</small><strong>${value("upper","temperature","°C")}</strong><small>${value("upper","humidity","% rF")}</small></div><div class="metric"><small>Temperatur unten</small><strong>${value("lower","temperature","°C")}</strong><small>${value("lower","humidity","% rF")}</small></div><div class="metric"><small>Solltemperatur im Gang</small><strong>${esc(s.configuration.parameters.target_temperature_c??"–")} °C</strong><small>Bereitschaft bei ${esc(s.readiness_target??"–")} °C</small></div><div class="metric"><small>Tatsächliche Heizaktivität</small><strong>${s.heating_feedback===true?"Heizt":s.heating_feedback===false?"Ofen aus":"Unbekannt"}</strong><small>${duration(session?.heating.elapsed_seconds||0)} von ${duration(s.heating_limit_seconds)}</small></div></div>${s.mechanical_timer_ends_at?`<p class="muted">Mechanischer Ofentimer · geschätzte Restzeit ${remaining(s.mechanical_timer_ends_at)} · Ende ${when(s.mechanical_timer_ends_at)}</p>`:""}</div>${faults.length?`<div id="faults" role="alert" class="notice">${faults.map(esc).join("<br>")}</div>`:""}`;
+      this.$("#details").innerHTML=this.$("#current").innerHTML+`<div class="card"><h2>Fristen & Regelung</h2><div class="scroll"><table><tbody>${(session?.deadlines||[]).map(d=>`<tr><th>${esc({confirmation:"Aufgussbestätigung",person_opportunity:"Personenerkennung abwarten",after_run:"Nachlauf",forced_cooling:"Zwangskühlung",session_gap:"Session-Unterbrechungsfrist"}[d.purpose]||d.purpose)}</th><td>${when(d.due_at)}</td><td>${remaining(d.due_at)}</td></tr>`).join("")}<tr><th>Letzte Heizentscheidung</th><td>${esc(s.decision?.heat?"Heizen":"Aus")}</td><td>${esc(s.decision?.reason)}</td></tr><tr><th>Sensoren für Erkennung</th><td colspan="2">${esc(s.detection_channels.join(", "))}</td></tr></tbody></table></div></div>`;
+    const p=s.configuration.parameters,upper=s.measurements.find(m=>m.position==="upper"&&m.quantity==="temperature")?.value;
+    const humidity=s.measurements.find(m=>m.position==="upper"&&m.quantity==="humidity")?.value;
+    const disabled=s.configuration_locked||!this.hass.user?.is_admin;
+    const presets=Array.from({length:p.preset_count},(_,i)=>p.preset_start_c+i*p.preset_step_c);
+    const dial=(value,unit,caption,color,maximum)=>`<svg class="dial" viewBox="0 0 300 235" role="img" aria-label="${esc(caption)}"><path d="M 54 195 A 120 120 0 1 1 246 195" fill="none" stroke="var(--divider-color,#444)" stroke-width="16" stroke-linecap="round"/><path d="M 54 195 A 120 120 0 1 1 246 195" fill="none" stroke="${color}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0,Math.min(100,(value??0)/maximum*100))} 100"/><text class="reading" x="150" y="128" text-anchor="middle">${value==null?"–":value.toFixed(1)} ${unit}</text><text class="caption" x="150" y="160" text-anchor="middle">${esc(caption)}</text></svg>`;
+    this.$("#current").innerHTML=`<h2 class="greeting">Servus ${esc(this.hass.user?.name||"")}</h2><div class="dashboard"><div><div class="card"><div class="state-line"><strong class="phase" data-phase="${esc(s.phase)}">${phases[s.phase]}</strong><span class="badge">${s.gang_count} Gänge</span></div><p id="phase-detail" class="muted">${esc(timer)}</p><div class="tiles"><button class="tile full ${s.operation_enabled?"stop":"primary"}" data-action="operation" ${this.hass.user?.is_admin?"":"disabled"}>${s.operation_enabled?"Sauna ausschalten":"Sauna einschalten"}</button><div class="tile full">♧ Saunatür <strong>${{open:"offen",closed:"geschlossen"}[session?.timeline.door]||"unbekannt"}</strong></div>${!s.configuration_locked?presets.map(v=>`<button class="tile" data-action="preset:${v}" ${disabled?"disabled":""}>♨ Sauna ${v}°</button>`).join(""):""}</div>${faults.length?`<div class="notice" id="faults" role="alert">${faults.map(esc).join("<br>")}</div>`:""}</div></div><div><div class="card gauge-card"><h2>Temperatur</h2>${dial(upper,"°C",s.heating_feedback?"Heizt":"Ofen aus","#ff6b4a",120)}<div class="temperature-choice"><label>Solltemperatur <input id="target" aria-label="Solltemperatur" type="number" step="0.5" value="${p.target_temperature_c??""}" ${disabled?"disabled":""}></label><button data-action="target" ${disabled?"disabled":""}>Übernehmen</button></div><p class="muted" style="text-align:center">Bereitschaft bei ${esc(s.readiness_target??"–")} °C</p></div><div class="card gauge-card"><h2>Feuchtigkeit</h2>${dial(humidity,"%","Oben",humidity>=40?"#f55":humidity>=20?"#eac353":"#51ab71",60)}</div></div></div>`;
+  }
+  async changeTarget(value,start=false) {
+    if(!Number.isFinite(value))throw Error("Gültige Solltemperatur eingeben");
+    const entry=this.entry;
+    await this.api(`/${entry}/parameters`,"POST",{...this.state.configuration.parameters,target_temperature_c:value});
+    // A saved parameter is loaded by HA's single options listener. Do not start
+    // against the previous runtime while reload is still in progress.
+    let loaded=false;
+    for(let attempt=0;attempt<100;attempt++){
+      try {const state=await this.api(`/${entry}/state`);if(state.configuration.parameters.target_temperature_c===value){loaded=true;break;}}
+      catch(error){if(error.status_code!==503)throw error;}
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    if(!loaded)throw Error("Parameter gespeichert, Neuladen noch nicht abgeschlossen. Bitte Status prüfen.");
+    this.settingsEntry=null;
+    if(start)await this.api(`/${entry}/control`,"POST",{enabled:true});
+    await this.refresh();
+  }
+  drawHistory() {
+    if(!this.shown){this.$("#plots").innerHTML='<div class="card empty">Noch keine Sessiondaten. Wähle eine frühere Session oder schalte den Betrieb ein.</div>';this.$("#gangs").innerHTML="";this.$("#event-list").innerHTML="";return;}
+    const {session,records}=this.shown, t=session.timeline;
+    const start=stamp(t.session_started_at)-15*60000,end=Math.max(start+1000,stamp(session.ended_at||this.state.now))+15*60000;
+    const width=(end-start)/this.zoom, right=end-(end-start-width)*(1-this.pan/100);this.window=[right-width,right];
+    if(this.view==="diagnostics")this.drawDiagnostics();
+    this.$("#range").textContent=`${when(this.window[0])} – ${when(this.window[1])}`;
+    const gangs=[...t.completed,...(t.active?[t.active]:[])];
+    this.$("#plots").innerHTML=`<div class="plot-panel"><h2 class="plot-title">${this.selected==="live"?"Verlauf aktuelle Session":"Verlauf ausgewählte Session"}</h2><div class="legend top-legend"><span><i style="background:#ff6b4a"></i>Temperatur</span><span><i style="background:#42a5ff"></i>Luftfeuchte</span></div><div class="row position-select"><button data-action="position-upper" aria-pressed="${this.positions.has("upper")}">━━ Oben</button><button data-action="position-lower" aria-pressed="${this.positions.has("lower")}">┄┄ Unten</button></div><div class="plot-wrap">${this.chart(records,session,gangs)}<div id="tooltip" hidden></div></div><div class="legend"><span><i style="background:rgba(255,205,80,.95)"></i>Saunatür offen</span><span><i style="background:rgba(165,30,85,.95)"></i>Saunagang</span><span><i style="background:#f5f5f5"></i>Aufguss</span></div><div class="legend"><span><i style="background:rgba(255,150,35,.4)"></i>heizen</span><span><i style="background:rgba(38,125,82,.4)"></i>bereit</span><span><i style="background:rgba(58,125,155,.4)"></i>lüften</span><span><i style="background:#67829a"></i>Zwangskühlung</span></div><p class="muted plot-note">Durchgezogen: oben · gestrichelt: unten / vorläufiger Gang · schmaler Streifen: tatsächliches Heizen</p></div>`;
+    this.$("#gangs").innerHTML=`<div class="card"><h2>Saunagänge</h2>${gangs.length?`<div class="scroll"><table><thead><tr><th>Gang</th><th>Beginn</th><th>Erkannt</th><th>Bestätigung</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g,i)=>`<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i+1} · ${g.infusion_events.length?"Bestätigt":"Vorläufig"}</td><td>${when(g.started_at)}</td><td>${when(g.detected_at)}</td><td>${g.infusion_events.length?when(g.infusion_events[0].detected_at):"Aufguss ausstehend"}</td><td>${duration((stamp(g.ended_at||session.ended_at||this.state.now)-stamp(g.started_at))/1000)}</td><td>${when(g.ended_at)}</td></tr>`).join("")}</tbody></table></div>`:'<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`;
+    const diagnostics=records.filter(r=>r.kind==="diagnostic");
+    this.$("#event-list").innerHTML=`<div class="card"><details><summary>Ereignisse & Zuordnung (${t.processed.length})</summary><div class="scroll"><table><thead><tr><th>Ereignis</th><th>Zugeordnete Zeit</th><th>Erkennungszeit</th></tr></thead><tbody>${[...t.processed].reverse().map(e=>`<tr><td>${esc(events[e.kind]||e.kind)}</td><td>${when(e.effective_at)}</td><td>${when(e.detected_at)}</td></tr>`).join("")}</tbody></table></div></details>${diagnostics.length?`<details><summary>Historische Fehlerhinweise (${diagnostics.length})</summary>${diagnostics.map(r=>`<p><small>${when(r.received_at)}</small> ${esc(JSON.stringify(r.payload))}</p>`).join("")}</details>`:""}${t.retracted.length?`<p class="muted">${t.retracted.length} vorläufige Erkennung(en) aufgehoben. Diese werden nicht als Gänge gezählt.</p>`:""}</div>`;
+  }
+  chart(records,session,gangs) {
+    const [start,end]=this.window,W=1200,H=480,left=65,right=1135,top=18,bottom=435;
+    const x=t=>left+(t-start)/(end-start)*(right-left);
+    const raw=records.filter(r=>["measurement","source_snapshot"].includes(r.kind)).map(r=>r.payload);
+    this.chartMeasurements=raw;
+    const visible=raw.filter(m=>this.positions.has(m.position)&&m.quantity==="temperature"&&stamp(m.received_at)>=start&&stamp(m.received_at)<=end&&m.value!=null);
+    const bounds=visible.reduce(([lo,hi],m)=>[Math.min(lo,m.value),Math.max(hi,m.value)],[Infinity,-Infinity]);
+    const low=visible.length?Math.floor((bounds[0]-2)/10)*10:20,high=visible.length?Math.ceil((bounds[1]+2)/10)*10:100;
+    const yT=v=>bottom-(v-low)/(high-low)*(bottom-top),yH=v=>bottom-v/40*(bottom-top);
+    const interval=(a,b,klass,title,y=top,height=bottom-top)=>{const aa=Math.max(start,stamp(a)),bb=Math.min(end,stamp(b||session.ended_at||this.state.now));return bb>aa?`<rect class="${klass}" x="${x(aa).toFixed(2)}" y="${y}" width="${(x(bb)-x(aa)).toFixed(2)}" height="${height}"><title>${esc(title)}</title></rect>`:"";};
+    let svg=`<svg class="chart session-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Sessionverlauf: Temperatur und Luftfeuchte beider Höhen"><defs><clipPath id="plot-clip"><rect x="${left}" y="${top}" width="${right-left}" height="${bottom-top}"/></clipPath></defs><g clip-path="url(#plot-clip)">`;
+    const phases=records.filter(r=>r.kind==="phase"),styles={aufheizen:"heat",bereit:"ready",zwangskühlung:"cool",nachlauf:"after"};
+    phases.forEach((p,i)=>{if(styles[p.payload.phase])svg+=interval(p.received_at,phases[i+1]?.received_at,styles[p.payload.phase],p.payload.phase);});
+    const doorEvents=session.timeline.processed.filter(e=>e.kind==="door_open"||e.kind==="door_close");
+    for(const e of session.timeline.processed.filter(e=>e.kind==="ventilation_confirmed")){const close=doorEvents.find(d=>d.kind==="door_close"&&stamp(d.effective_at)>=stamp(e.effective_at));svg+=interval(e.effective_at,close?.effective_at,"vent","lüften");}
+    svg+=gangs.map(g=>interval(g.started_at,g.ended_at,g.infusion_events.length?"gang":"gang provisional",`Gang ab ${when(g.started_at)}`)).join("");
+    doorEvents.forEach((e,i)=>{if(e.kind==="door_open")svg+=interval(e.effective_at,doorEvents[i+1]?.effective_at,"door","Saunatür offen");});
+    svg+=session.heating.intervals.map(i=>interval(i.started_at,i.ended_at,"heat actual-heat",`Tatsächliches Heizen ab ${when(i.started_at)}`,bottom-5,5)).join("");
+    for(let n=0;n<=8;n++){const yy=top+(bottom-top)*n/8;svg+=`<line class="gridline" x1="${left}" x2="${right}" y1="${yy}" y2="${yy}"/>`;}
+    for(const e of session.timeline.processed.filter(e=>e.kind==="infusion")){const xx=x(stamp(e.effective_at));svg+=`<line class="infusion" x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}"><title>Aufguss · ${when(e.effective_at)} · erkannt ${when(e.detected_at)}</title></line>`;}
+    for(const position of this.positions)for(const quantity of ["temperature","humidity"]){
+      const values=raw.filter(m=>m.position===position&&m.quantity===quantity).sort((a,b)=>stamp(a.received_at)-stamp(b.received_at));
+      const points=[];let bucket=[],key=null;
+      const flush=()=>{if(!bucket.length)return;const keep=new Set([bucket[0],bucket.at(-1),bucket.reduce((a,b)=>a.value<b.value?a:b),bucket.reduce((a,b)=>a.value>b.value?a:b)]);points.push(...bucket.filter(p=>keep.has(p)));bucket=[];};
+      for(const m of values){const time=stamp(m.received_at);if(time<start||time>end)continue;const k=Math.floor(x(time));if(k!==key||m.value==null){flush();key=k;}if(m.value==null)points.push(m);else bucket.push(m);}flush();
+      let path="",last=null;const ttl=(session.configuration?.parameters||this.state.configuration.parameters).sensor_timeout_seconds*1000;
+      for(const m of points){const time=stamp(m.received_at);if(m.value==null){last=null;continue;}path+=`${last==null||(ttl&&time-last>ttl)?"M":"L"}${x(time).toFixed(2)},${(quantity==="temperature"?yT(m.value):yH(m.value)).toFixed(2)} `;last=time;}
+      svg+=`<path class="${position} ${quantity}" data-series="${position}_${quantity}" d="${path}"/>`;
+    }
+    svg+='</g>';
+    for(let n=0;n<=8;n++){const f=n/8,yy=bottom-(bottom-top)*f,t=start+(end-start)*f;svg+=`<text class="axis-temperature" x="${left-10}" text-anchor="end" y="${yy+4}">${(low+(high-low)*f).toFixed(0)}</text><text class="axis-humidity" x="${right+10}" y="${yy+4}">${(40*f).toFixed(0)}</text><text text-anchor="middle" x="${x(t)}" y="${bottom+27}">${clock(t)}</text>`;}
+    svg+=`<text class="axis-temperature" x="13" y="${H/2}">°C</text><text class="axis-humidity" x="${W-15}" y="${H/2}">%</text><line id="cursor" x1="0" x2="0" y1="${top}" y2="${bottom}" stroke="#eee" stroke-dasharray="3 3" visibility="hidden"/>`;
+    return svg+'</svg>';
+  }
+  hoverChart(e) {
+    const svg=e.target.closest("svg.session-chart"),rect=svg.getBoundingClientRect(),px=(e.clientX-rect.left)/rect.width*1200;
+    if(px<65||px>1135)return;
+    const time=this.window[0]+(px-65)/1070*(this.window[1]-this.window[0]);
+    const rows=[];for(const p of this.positions)for(const q of ["temperature","humidity"]){
+      const nearest=this.chartMeasurements.filter(m=>m.position===p&&m.quantity===q).reduce((a,b)=>!a||Math.abs(stamp(b.received_at)-time)<Math.abs(stamp(a.received_at)-time)?b:a,null);
+      if(nearest)rows.push(`<span style="color:${q==="temperature"?'#e25d40':'#2f8bde'}">${q==="temperature"?"Temperatur":"Luftfeuchte"} ${p==="upper"?"oben":"unten"}</span><br>${nearest.value==null?"Nicht verfügbar":`${nearest.value.toLocaleString("de-DE")} ${q==="temperature"?"°C":"%"}`} · ${when(nearest.received_at)}`);
+    }
+    const tip=this.$("#tooltip");tip.innerHTML=`<strong>${when(time)}</strong><br>${rows.join("<br>")}`;tip.hidden=false;
+    tip.style.left=`${Math.max(0,Math.min(rect.width-290,e.clientX-rect.left+12))}px`;tip.style.top=`${Math.max(0,e.clientY-rect.top-90)}px`;
+    const cursor=this.$("#cursor");cursor.setAttribute("x1",px);cursor.setAttribute("x2",px);cursor.setAttribute("visibility","visible");
+  }
+  drawDiagnostics() {
+    if(!this.shown){this.$("#detection-plots").innerHTML='<p>Keine Session ausgewählt.</p>';return;}
+    const traces=this.shown.records.filter(r=>r.kind==="detector_trace").map(r=>r.payload);
+    const groups=[
+      ["Türerkennung","door_temperature_slope","Temperaturänderung · °C/min"],
+      ["Türerkennung","door_humidity_delta","Feuchteänderung · Prozentpunkte"],
+      ["Starke Personenerkennung","strong_temperature_slope","Temperaturtrend · °C/min"],
+      ["Starke Personenerkennung","strong_humidity_slope","Feuchtetrend · Prozentpunkte/min"],
+      ["Schwache Personenerkennung","weak_temperature_slope","Temperaturtrend · °C/min"],
+      ["Schwache Personenerkennung","weak_humidity_slope","Feuchtetrend · Prozentpunkte/min"],
+      ["Aufgusserkennung","infusion_humidity_delta","Feuchteänderung · Prozentpunkte"],
+      ["Aufgusserkennung","infusion_temperature_delta","Temperaturänderung · °C"]];
+    const parameters=this.shown.session.configuration?.parameters||this.state.configuration.parameters;
+    const thresholds=(metric,position)=>{
+      if(metric==="door_temperature_slope")return [parameters.door_open_slope,parameters.door_close_slope];
+      if(metric==="door_humidity_delta")return [-parameters[`door_open_humidity_${position}`]];
+      if(metric.startsWith("infusion_"))return [parameters[metric.replace("_delta","")]];
+      return [parameters[metric.replace("_slope",`_${position}`)]];
+    };
+    let html='<div class="notice">Kontrollansicht des tatsächlich laufenden Detektors. Gestrichelte Linien zeigen die für diese Session gespeicherten Schwellen. Ein Grenzübertritt allein ist noch kein Ereignis: Kontext, verfügbare Sensoren und Haltezeiten wirken zusätzlich.</div>';
+    if(!traces.length){this.$("#detection-plots").innerHTML=html+'<p>Für diese Session liegen keine gespeicherten Erkennungsverläufe vor.</p>';return;}
+    const [start,end]=this.window,x=t=>50+(stamp(t)-start)/(end-start)*900;
+    for(const [group,metric,label] of groups){
+      const vals=traces.flatMap(t=>Object.values(t.metrics).map(m=>m[metric])).filter(v=>v!=null),lines=[...thresholds(metric,"upper"),...thresholds(metric,"lower")];
+      const [min,max]=[...vals,...lines].reduce(([lo,hi],v)=>[Math.min(lo,v),Math.max(hi,v)],[0,0]);
+      const lo=min-1,hi=max+1,y=v=>165-(v-lo)/(hi-lo)*140;
+      let chart='<svg class="chart detector-chart" viewBox="0 0 1000 200" role="img" aria-label="'+esc(group+' '+label)+'">';
+      for(const pos of ["upper","lower"]){
+        let path="",last=null;
+        for(const t of traces){const v=t.metrics[pos]?.[metric],time=stamp(t.at);if(v==null||time<start||time>end)continue;path+=`${last==null||time-last>parameters.person_step_seconds*1000?"M":"L"}${x(t.at).toFixed(2)},${y(v).toFixed(2)} `;last=time;}
+        chart+=`<path class="${pos} ${pos==="upper"?"temperature":"humidity"}" data-series="detector_${metric}_${pos}" d="${path}"/>`;
+        for(const v of thresholds(metric,pos))chart+=`<line x1="50" x2="950" y1="${y(v)}" y2="${y(v)}" stroke="${pos==="upper"?'#ff6b4a':'#42a5ff'}" stroke-dasharray="4 5"><title>Schwelle ${pos}: ${v}</title></line>`;
+      }
+      for(let n=0;n<=4;n++){const v=lo+(hi-lo)*n/4,t=start+(end-start)*n/4;chart+=`<text x="4" y="${y(v)+4}">${v.toFixed(1)}</text><text text-anchor="middle" x="${x(t)}" y="192">${clock(t)}</text>`;}
+      chart+='</svg>';html+=`<div class="plot-panel"><h3>${group} · ${label}</h3><p class="muted">Orange: oben · Blau: unten</p>${chart}</div>`;
+    }
+    html+='<div class="card"><h2>Signalbedingungen & Haltebelege</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Bedingungen erfüllt</th><th>Haltezähler</th><th>Ausgelöste Signale</th></tr></thead><tbody>'+traces.filter(t=>t.signals.length).map(t=>`<tr><td>${when(t.at)}</td><td>${esc(Object.entries(t.conditions).filter(([,v])=>v).map(([k])=>k).join(", "))}</td><td>${esc(JSON.stringify(t.holds))}</td><td>${esc(t.signals.map(k=>events[k]||k).join(", "))}</td></tr>`).join("")+'</tbody></table></div></div>';
+    this.$("#detection-plots").innerHTML=html;
+  }
+  drawSettings() {
+    const state=this.state;
+    if(this.settingsEntry!==this.entry){
+      const field=d=>`<label class="field">${esc(d.label)} (${esc(d.unit)})<input type="number" name="${esc(d.key)}" step="${d.integer?1:"any"}" min="${d.minimum??0}" max="${d.maximum}" value="${esc(state.configuration.parameters[d.key]??"")}" ${d.optional?"":"required"}></label>`;
+      this.$("#settings").innerHTML=`<div class="card"><h2>Einstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters"><div class="forms">${state.parameters.filter(d=>!d.expert).map(field).join("")}</div><details><summary>Experteneinstellungen · Erkennung</summary><div class="forms">${state.parameters.filter(d=>d.expert).map(field).join("")}</div></details><button type="submit" class="primary">Parameter speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren, Heizaktor und Bedienquelle zuordnen</a></div></div><div class="card"><h2>Sessionarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sessionverläufe und Ereigniszuordnungen herunterladen.</p><button data-action="export">Archiv als ZIP herunterladen</button></div>`;
+      this.settingsEntry=this.entry;
+    }
+    this.$("#parameters").disabled=state.configuration_locked||!this.hass.user?.is_admin;
+    this.$("#configuration-lock").textContent=state.configuration_locked?"Während einer Session bleiben die Grundparameter gesperrt, auch bei kurzer Betriebsunterbrechung.":"Änderungen gelten für die nächste Session.";
+  }
+  async saveSettings() {
+    const values={};for(const [key,value] of new FormData(this.$("form")))if(value!=="")values[key]=Number(value);
+    await this.api(`/${this.entry}/parameters`,"POST",values);this.settingsEntry=null;await this.refresh();
+  }
+  async action(action) {
+    if(action==="menu"){this.dispatchEvent(new CustomEvent("hass-toggle-menu",{bubbles:true,composed:true}));return;}
+    if(action==="normal"||action==="details"){
+      this.$(".normal-tabs").hidden=action!=="normal";this.$(".detail-tabs").hidden=action!=="details";
+      this.shadowRoot.querySelectorAll(".main-tabs button").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.action===action)));
+      return this.action(action==="normal"?"overview":"detail");
+    }
+    if(["overview","history","detail","diagnostics","settings"].includes(action)){
+      this.view=action;this.$("#current").hidden=action!=="overview";this.$("#details").hidden=action!=="detail";
+      this.$("#history").hidden=!["history","diagnostics"].includes(action);this.$("#settings").hidden=action!=="settings";
+      this.$("#plots").hidden=action==="diagnostics";this.$("#detection-plots").hidden=action!=="diagnostics";
+      this.$("#gangs").hidden=action==="diagnostics";this.$("#event-list").hidden=action!=="diagnostics";
+      this.shadowRoot.querySelectorAll(".normal-tabs button,.detail-tabs button").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.action===action)));
+      this.drawHistory();return;
+    }
+    if(action.startsWith("preset:"))return this.changeTarget(Number(action.slice(7)),true);
+    if(action==="target")return this.changeTarget(Number(this.$("#target").value));
+    if(action==="operation"){await this.api(`/${this.entry}/control`,"POST",{enabled:!this.state.operation_enabled});await this.refresh();}
+    if(action==="zoom-in")this.zoom=Math.min(256,this.zoom*2);
+    if(action==="zoom-out")this.zoom=Math.max(1,this.zoom/2);
+    if(action==="reset-zoom"){this.zoom=1;this.pan=100;this.$("#pan").value="100";}
+    if(action.includes("zoom"))this.drawHistory();
+    if(action.startsWith("position-")){const p=action.slice(9);this.positions.has(p)?this.positions.delete(p):this.positions.add(p);this.drawHistory();}
+    if(action==="export"){
+      const signed=await this.hass.callWS({type:"auth/sign_path",path:`/api/ha_sauna/${this.entry}/export`});
+      const link=document.createElement("a");link.href=signed.path;link.download="ha-sauna-archive.zip";this.shadowRoot.append(link);link.click();link.remove();
+    }
+  }
+}
+if(!customElements.get("ha-sauna-panel"))customElements.define("ha-sauna-panel",SaunaPanel);
