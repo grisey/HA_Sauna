@@ -74,6 +74,12 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await runtime.tick()
         self.assertIsNone(runtime.session)
         runtime.check_configuration_change()
+        with self.assertRaisesRegex(ValueError, "Temperaturwert"):
+            await self.hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+        self.assertIsNone(runtime.session)
+        source = entry.options["bindings"]["upper_temperature"]
+        self.hass.states.async_set(source, "25", self.hass.states.get(source).attributes, force_update=True)
+        await self.hass.async_block_till_done()
         await self.hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
         self.assertNotEqual(runtime.session.session_id, session_id)
 

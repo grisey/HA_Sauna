@@ -119,7 +119,7 @@ class SaunaRuntime:
                     timeline=replace(self.session.timeline, door=Door.CLOSED))
             for i, detection in enumerate(detections):
                 event = Event(f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
-                    self.session.session_id, EVENTS.get(detection.kind, "Erkennungssignal"), detection.effective_at, now)
+                    self.session.session_id, detection.kind, detection.effective_at, now)
                 self.controller.process(event)
                 self.log.info("detection", "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.", EVENTS.get(detection.kind, "Erkennungssignal"), detection.effective_at)
                 if self.archive:
