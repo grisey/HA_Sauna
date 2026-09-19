@@ -41,6 +41,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 409)
             async with client.post(url + "/control", json={"enabled": False}) as response:
                 self.assertEqual(response.status, 200)
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertEqual(state["mechanical_timer"]["state"], "paused")
+                self.assertIsNone(state["mechanical_timer_ends_at"])
             async with client.post(url + "/parameters", json=values) as response:
                 self.assertEqual(response.status, 409)
 

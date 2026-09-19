@@ -50,6 +50,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 async_entries=lambda *a, **kw: self.entries,
                 async_get_entry=lambda *a: self.entry,
                 async_reload=AsyncMock(),
+                async_update_entry=lambda entry, **kwargs: setattr(entry, "options", kwargs["options"]),
                 async_forward_entry_setups=AsyncMock(),
                 async_unload_platforms=AsyncMock(return_value=True),
             ),

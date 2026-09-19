@@ -8,7 +8,6 @@ const duration = v => v == null ? "–" : `${Math.floor(Math.max(0,v)/60)}:${Str
 const phases = {aus:"Aus",aufheizen:"Aufheizen",bereit:"Bereit",saunagang:"Saunagang",nachlauf:"Nachlauf",zwangskühlung:"Zwangskühlung"};
 const events = {door_open:"Tür geöffnet",door_close:"Tür geschlossen",person_strong:"Person erkannt",person_weak:"Person erkannt (schwach)",infusion:"Aufguss",ventilation_confirmed:"Durchlüften bestätigt",operation_off:"Betrieb ausgeschaltet",confirmation_expired:"Vorläufigen Gang aufgehoben"};
 const signalText = {door_open:"Türöffnung",door_close:"Türschließung",door:"Tür",infusion:"Aufguss",strong:"Deutliches Personensignal",weak:"Schwaches Personensignal"};
-const faultText = {upper_temperature:"Temperatur oben",upper_humidity:"Feuchte oben",lower_temperature:"Temperatur unten",lower_humidity:"Feuchte unten",heater_feedback:"Unabhängiger Heiznachweis",heater:"Schütz",heater_power:"Leistungsmessung",heater_no_power:"Schütz ein, keine Heizleistung",heater_feedback_unavailable:"Schützstellung fehlt",heater_feedback_mismatch:"Schütz folgt Schaltbefehl nicht",heater_still_heating:"Heizleistung trotz Ausschaltbefehl",regulation_temperature_unavailable:"Regeltemperatur fehlt"};
 
 class SaunaPanel extends HTMLElement {
   constructor() {
@@ -128,15 +127,18 @@ class SaunaPanel extends HTMLElement {
   }
   async changeTarget(value,start=false) {
     if(!Number.isFinite(value))throw Error("Gültige Solltemperatur eingeben");
-    const entry=this.entry;
     const parameters={...this.state.configuration.parameters,target_temperature_c:value};
     delete parameters.final_temperature_c;
+    return this.updateParameters(parameters,start);
+  }
+  async updateParameters(parameters,start=false) {
+    const entry=this.entry;
     await this.api(`/${entry}/parameters`,"POST",parameters);
     // A saved parameter is loaded by HA's single options listener. Do not start
     // against the previous runtime while reload is still in progress.
     let loaded=false;
     for(let attempt=0;attempt<100;attempt++){
-      try {const state=await this.api(`/${entry}/state`);if(state.configuration.parameters.target_temperature_c===value){loaded=true;break;}}
+      try {const state=await this.api(`/${entry}/state`);if(Object.keys(state.configuration.parameters).length===Object.keys(parameters).length&&Object.entries(parameters).every(([k,v])=>state.configuration.parameters[k]===v)){loaded=true;break;}}
       catch(error){if(error.status_code!==503)throw error;}
       await new Promise(resolve=>setTimeout(resolve,100));
     }
@@ -206,7 +208,7 @@ class SaunaPanel extends HTMLElement {
     const cursor=this.$("#cursor");cursor.setAttribute("x1",px);cursor.setAttribute("x2",px);cursor.setAttribute("visibility","visible");
   }
   drawDiagnostics() {
-    if(!this.shown){this.$("#detection-plots").innerHTML='<p>Keine Session ausgewählt.</p>';return;}
+    if(!this.shown){this.$("#detection-plots").innerHTML='<p>Keine Saunasitzung ausgewählt.</p>';return;}
     const traces=this.shown.records.filter(r=>r.kind==="detector_trace").map(r=>r.payload);
     const groups=[
       ["Türerkennung","door_temperature_slope","Temperaturänderung · °C/min"],
@@ -224,8 +226,8 @@ class SaunaPanel extends HTMLElement {
       if(metric.startsWith("infusion_"))return [parameters[metric.replace("_delta","")]];
       return [parameters[metric.replace("_slope",`_${position}`)]];
     };
-    let html='<div class="notice">Kontrollansicht des tatsächlich laufenden Detektors. Gestrichelte Linien zeigen die für diese Session gespeicherten Schwellen. Ein Grenzübertritt allein ist noch kein Ereignis: Kontext, verfügbare Sensoren und Haltezeiten wirken zusätzlich.</div>';
-    if(!traces.length){this.$("#detection-plots").innerHTML=html+'<p>Für diese Session liegen keine gespeicherten Erkennungsverläufe vor.</p>';return;}
+    let html='<div class="notice">Kontrollansicht des tatsächlich laufenden Detektors. Gestrichelte Linien zeigen die für diese Saunasitzung gespeicherten Schwellen. Ein Grenzübertritt allein ist noch kein Ereignis: Kontext, verfügbare Sensoren und Bestätigungszeiten wirken zusätzlich.</div>';
+    if(!traces.length){this.$("#detection-plots").innerHTML=html+'<p>Für diese Saunasitzung liegen keine gespeicherten Erkennungsverläufe vor.</p>';return;}
     const [start,end]=this.window,x=t=>50+(stamp(t)-start)/(end-start)*900;
     for(const [group,metric,label] of groups){
       const vals=traces.flatMap(t=>Object.values(t.metrics).map(m=>m[metric])).filter(v=>v!=null),lines=[...thresholds(metric,"upper"),...thresholds(metric,"lower")];
@@ -238,7 +240,7 @@ class SaunaPanel extends HTMLElement {
         chart+=`<path class="${pos} ${pos==="upper"?"temperature":"humidity"}" data-series="detector_${metric}_${pos}" d="${path}"/>`;
         for(const v of thresholds(metric,pos))chart+=`<line x1="50" x2="950" y1="${y(v)}" y2="${y(v)}" stroke="${pos==="upper"?'#ff6b4a':'#42a5ff'}" stroke-dasharray="4 5"><title>Schwelle ${pos==="upper"?"oben":"unten"}: ${num(v,2)}</title></line>`;
       }
-      for(let n=0;n<=4;n++){const v=lo+(hi-lo)*n/4,t=start+(end-start)*n/4;chart+=`<text x="4" y="${y(v)+4}">${v.toFixed(1)}</text><text text-anchor="middle" x="${x(t)}" y="192">${clock(t)}</text>`;}
+      for(let n=0;n<=4;n++){const v=lo+(hi-lo)*n/4,t=start+(end-start)*n/4;chart+=`<text x="4" y="${y(v)+4}">${num(v,1)}</text><text text-anchor="middle" x="${x(t)}" y="192">${clock(t)}</text>`;}
       chart+='</svg>';html+=`<div class="plot-panel"><h3>${group} · ${label}</h3><p class="muted">Orange: oben · Blau: unten</p>${chart}</div>`;
     }
     html+='<div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Bedingungen erfüllt</th><th>Bestätigungszeiten</th><th>Ausgelöste Signale</th></tr></thead><tbody>'+traces.filter(t=>t.signals.length).map(t=>`<tr><td>${when(t.at)}</td><td>${esc(Object.entries(t.conditions).filter(([,v])=>v).map(([k])=>signalText[k]||"Erkennungsbedingung").join(", "))}</td><td>${esc(Object.entries(t.holds).map(([k,v])=>`${signalText[k]||"Signal"}: ${num(v)} s`).join(" · "))}</td><td>${esc(t.signals.map(k=>events[k]||k).join(", "))}</td></tr>`).join("")+'</tbody></table></div></div>';
@@ -261,7 +263,7 @@ class SaunaPanel extends HTMLElement {
   }
   async saveSettings() {
     const values={};for(const [key,value] of new FormData(this.$("form")))if(value!=="")values[key]=Number(value);
-    await this.api(`/${this.entry}/parameters`,"POST",values);this.settingsEntry=null;await this.refresh();
+    await this.updateParameters(values);
   }
   async action(action) {
     if(action==="configure"){await this.action("details");return this.action("settings");}
@@ -285,7 +287,7 @@ class SaunaPanel extends HTMLElement {
       const parameters={...this.state.configuration.parameters,target_temperature_c:Number(this.$("#target").value),temperature_increase_c:Number(this.$("#progression-step").value)};
       if(this.$("#progression-end").value==="")delete parameters.final_temperature_c;
       else parameters.final_temperature_c=Number(this.$("#progression-end").value);
-      await this.api(`/${this.entry}/parameters`,"POST",parameters);this.settingsEntry=null;await this.refresh();return;
+      await this.updateParameters(parameters);return;
     }
     if(action==="target")return this.changeTarget(Number(this.$("#target").value));
     if(action==="operation"){await this.api(`/${this.entry}/control`,"POST",{enabled:!this.state.operation_enabled});await this.refresh();}
