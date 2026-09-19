@@ -15,6 +15,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
 
     async def asyncTearDown(self):
+        # An options POST schedules HA's reload listener. Finish that real work
+        # before stopping HA and deleting the isolated archive directory.
+        await self.hass.async_block_till_done()
         await self.hass.async_stop(force=True)
         self.temp.cleanup()
 
@@ -103,3 +106,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([i["key"] for i in state["issues"]], ["configuration"])
             async with client.post(url + "/parameters", json={**values,"sensor_timeout_seconds":60,"feedback_timeout_seconds":2,"fault_confirmation_seconds":5}) as response:
                 self.assertEqual(response.status, 200)
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.entry.runtime_data.device.missing_configuration, [])
+            async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertTrue(self.entry.runtime_data.session.operation_enabled)
