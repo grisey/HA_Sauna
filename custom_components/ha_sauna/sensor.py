@@ -31,4 +31,11 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "readiness_target": self.runtime.controller.readiness_target,
             "after_run_ends_at": session.after_run.ends_at.isoformat() if session and session.after_run else None,
             "cooling_ends_at": session.cooling.ends_at.isoformat() if session and session.cooling and session.cooling.ends_at else None,
+            "mechanical_timer_ends_at": self.runtime.controller.mechanical_timer_ends_at.isoformat() if session else None,
+            "mechanical_timer_estimated": True,
+            "faults": dict(self.runtime.device.faults) if self.runtime.device else {},
+            "heating_feedback": self.runtime.controller.feedback,
+            "decision_reason": self.runtime.controller.last_decision.reason if self.runtime.controller.last_decision else None,
+            "detection_channels": [p.value for p in self.runtime.detector.active_positions] if self.runtime.detector else [],
+            "gang_duration_seconds": active.elapsed_seconds(self.runtime._clock()) if active else None,
         }

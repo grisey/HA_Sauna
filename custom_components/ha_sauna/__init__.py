@@ -1,4 +1,4 @@
-"""Einrichtbares HA-Sauna-Grundgerüst ohne Geräteansteuerung."""
+"""HA-Sauna-Integration mit sicherem Aus-Start und explizitem Saunabetrieb."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -26,7 +26,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime
     register(hass)
     if entry.options != configuration.as_options():
         hass.config_entries.async_update_entry(entry, options=configuration.as_options())
-    await hass.config_entries.async_forward_entry_setups(entry, ["number", "sensor", "switch"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["number", "sensor", "switch", "climate", "button"])
+    from .device import HADevice
+    entry.runtime_data.device = HADevice(hass, entry.runtime_data)
+    await entry.runtime_data.device.start()
     entry.runtime_data.on_close(async_track_time_interval(hass, entry.runtime_data.tick, timedelta(seconds=1)))
     async def stopped(_event):
         await entry.runtime_data.close()
@@ -40,8 +43,8 @@ async def async_options_updated(hass, entry):
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]) -> bool:
-    """Laufzeit schließen; niemals einen Heizbefehl beim Entladen erzeugen."""
-    if not await hass.config_entries.async_unload_platforms(entry, ["number", "sensor", "switch"]):
+    """Beim Entladen Ofen ausschalten, Listener lösen und Archiv abschließen."""
+    if not await hass.config_entries.async_unload_platforms(entry, ["number", "sensor", "switch", "climate", "button"]):
         return False
     await entry.runtime_data.close()
     return True

@@ -85,3 +85,16 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len({r["id"] for r in rows}), len(rows))
         finally:
             path.unlink()
+
+    async def test_cancelled_reader_does_not_poison_archive_writer(self):
+        await self.archive.pre_backup()
+        waiter = asyncio.create_task(self.archive.flush())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        self.record(2)
+        await self.archive.post_backup()
+        self.assertIsNone(self.archive.failure)
+        saved = await asyncio.to_thread(self.archive.read, "s")
+        self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)

@@ -5,13 +5,15 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from .archive import encoded, plain
+from .core.detector import Detector
 
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
 from .core.controller import Controller, Result
 from .core.models import Deadline, Session
 from .core.parameters import Parameters
-from .core.timeline import Event
+from .core.timeline import Door, Event
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,71 @@ class SaunaRuntime:
         self.closed = False
         self.archive = None
         self._archived_completed = 0
+        self.device = None
+        self.detector = None
+        self._detector_session = None
+        self._archive_signature = None
+        self._saved_decisions = 0
+
+    def _sync_detector(self):
+        session_id = self.session.session_id if self.session else None
+        if session_id == self._detector_session:
+            return
+        self._detector_session = session_id
+        self.detector = Detector(self.configuration.parameters, self.session.started_at) if self.session else None
+        if self.detector and self.device:
+            for measurement in sorted(self.device.measurements.values(), key=lambda m: m.received_at):
+                self.detector.accept(measurement)
+                if self.archive:
+                    self.archive.append("source_snapshot", self._clock(), measurement, session_id)
+
+    async def _cycle(self, *, sample=False):
+        now = self._clock()
+        self._sync_detector()
+        if sample and self.detector:
+            detections = self.detector.advance(now, enabled=self.session.operation_enabled)
+            if self.session.timeline.door == Door.UNKNOWN and self.detector.active_positions:
+                # Dokumentierte Anfangsannahme des Kandidaten, keine erfundene
+                # Türschließung und kein rückdatierter Startanker.
+                self.controller._session = replace(self.session,
+                    timeline=replace(self.session.timeline, door=Door.CLOSED))
+            for i, detection in enumerate(detections):
+                event = Event(f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
+                    self.session.session_id, detection.kind, detection.effective_at, now)
+                self.controller.process(event)
+                if self.archive:
+                    self.archive.append("detection", now, {"event": event, "channels": detection.channels}, self.session.session_id)
+        if self.device:
+            self.device.refresh(now)
+        else:
+            self.controller.advance(now)
+        if self.device:
+            await self.device.apply(now)
+        self.notify()
+
+    async def device_input(self, event):
+        received_at = self._clock()
+        async with self._lock:
+            if self.closed:
+                return
+            entity_id = event.data["entity_id"]
+            for role, source in self.configuration.bindings.values.items():
+                if source == entity_id:
+                    self.device.ingest(role, event.data.get("new_state"), received_at)
+            action = self.device.physical_action(event)
+            if action is not None:
+                self.controller.set_operation(action, self._clock())
+            await self._cycle()
+
+    async def reset_protection(self):
+        async with self._lock:
+            self._require_open()
+            if self.session and self.session.operation_enabled:
+                raise ValueError("Betrieb vor Quittierung ausschalten")
+            if self.device and (self.device.feedback() is not False or self.device.command_error):
+                raise ValueError("Quittierung benötigt bestätigten Ofen-Aus-Zustand")
+            self.controller.protection.clear()
+            await self._cycle()
 
     async def start_archive(self, path, entry_id):
         from .archive import Archive
@@ -70,7 +137,17 @@ class SaunaRuntime:
             self.archive.save_session(session, now, self.configuration.as_options())
         self._archived_completed = len(self.controller.completed_sessions)
         if self.session is not None:
-            self.archive.save_session(self.session, now, self.configuration.as_options())
+            signature = plain(self.session)
+            signature["heating"].pop("accounted_at")
+            signature["heating"].pop("elapsed_seconds")
+            signature = encoded(signature)
+            if signature != self._archive_signature:
+                self.archive.save_session(self.session, now, self.configuration.as_options())
+                self._archive_signature = signature
+        for decision in self.controller.decisions[self._saved_decisions:]:
+            self.archive.append("decision", decision.at, decision,
+                self.session.session_id if self.session else None)
+        self._saved_decisions = len(self.controller.decisions)
 
     @property
     def session(self) -> Session | None:
@@ -98,15 +175,14 @@ class SaunaRuntime:
         async with self._lock:
             self._require_open()
             result = self.controller.set_operation(enabled, self._clock())
-            self.notify()
+            await self._cycle()
             return result
 
     async def tick(self, _at=None):
         async with self._lock:
             if self.closed:
                 return
-            self.controller.advance(self._clock())
-            self.notify()
+            await self._cycle(sample=True)
 
     async def begin_session(self, session_id: str) -> Session:
         async with self._lock:
@@ -121,7 +197,7 @@ class SaunaRuntime:
             if event.detected_at > self._clock():
                 raise ValueError("Erkennungszeit liegt nach der Laufzeituhr")
             result = self.controller.process(event)
-            self.notify()
+            await self._cycle()
             return result
 
     async def deadline_due(self, deadline: Deadline) -> bool:
@@ -143,6 +219,12 @@ class SaunaRuntime:
             for unsubscribe in reversed(callbacks):
                 try:
                     unsubscribe()
+                except Exception as error:
+                    failures.append(error)
+            if self.device:
+                try:
+                    self.controller.set_operation(False, self._clock())
+                    await self.device.close()
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:

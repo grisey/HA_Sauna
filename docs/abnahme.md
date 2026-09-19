@@ -165,3 +165,37 @@ mit anschließender Nachlaufanrechnung. Der ältere Sofortabschaltungstest ist
 entsprechend der ausdrücklich geänderten Anforderung ersetzt, nicht als noch
 verbindliche Sicherheitsregel abgeschwächt. Mechanischer Ofentimer bleibt
 separate Schätzung ab Sessionbeginn.
+
+Paket D: Commit `ca878f7deedd07ba0f3465a50bb65403b301a694`,
+[CI 35447023861](https://github.com/grisey/HA_Sauna/actions/runs/35447023861): alle Jobs success,
+einschließlich tatsächlichem HA-Backup/Restore und authentifiziertem HTTP-Export.
+
+## Paket E: HA-Mess-/Gerätepfad
+
+`device.py` registriert sowohl geänderte als auch unverändert neu berichtete
+HA-Werte. Rohmessungen bleiben in Empfangsauflösung, erkannte Ereignisse laufen
+über denselben Controller. `climate.py`, `switch.py` und physische Bedienung
+bedienen denselben Betrieb. Binary-Sensor-Bedienquelle folgt An/Aus, Event-Quelle
+liefert Umschaltimpulse. Ein wieder verfügbarer Eingang startet nicht von selbst.
+Setup und Unload senden ausschließlich Aus; keine Wiederaufnahme beim Neustart.
+
+Heizzeit benötigt die separat ausgewählte reale `heater_feedback`-Quelle.
+Ein erfolgreicher Service oder die angeforderte Relaisstellung beweist kein
+Heizen, insbesondere bei abgelaufenem mechanischem Timer. Fehlende Bindung
+sperrt die Heizfreigabe und wird sichtbar gemeldet. Die drei Zeitangaben für
+Messgültigkeit, Aktorantwort und bestätigten zentralen Ausfall müssen örtlich
+konfiguriert werden; dafür wurden keine neuen angeblich sicheren Defaults erfunden.
+Ein gültiger oberer Messwert überbrückt kurze Paketlücken. Ohne gültige obere
+Regeltemperatur pausiert das Heizen; eine untere Ersatztemperatur bleibt
+ungeregelt und wird nicht erfunden. Die Erkennung arbeitet mit einer verfügbaren
+Position weiter. Erst bestätigte Dauerausfälle verriegeln die Heizfreigabe;
+Quittierung nach Betrieb-Aus und bestätigtem Ofen-Aus verhindert Wiederanlauf-
+schleifen. Temperaturüberschreitung verwendet separat die vereinbarte Kühlregel.
+
+`test_device_path.py` verwendet echte HA-Switch-/Light-Testentitäten und
+Servicehandler. Die synthetischen Messungen erreichen den produktiven Listener,
+Detektor, Gangkern, Thermostat, Aktor und die separat erzeugte Rückmeldung.
+Prüfung: vorläufig/ bestätigt mit gleicher ID, Budgetende während Gang,
+Nachlauf/Restkühlung, Lichtdimmung/-wiederherstellung, volle Archivauflösung,
+UI-/physische Bedienung, idle ohne Sessionwechsel, fehlende Rückmeldung und
+kurzer Sensorausfall. HA-Nachweis folgt über tatsächlichen CI-Abschluss.

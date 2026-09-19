@@ -131,13 +131,14 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("upper_status", result["data"]["bindings"])
             self.assertEqual(result["data"]["parameters"], self.values)
 
-    async def test_setup_and_unload_never_start_a_session_or_call_services(self):
+    async def test_setup_unload_without_device_transport_never_starts_session(self):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry
         self.hass.services = MagicMock()
-        with patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
+        with patch("custom_components.ha_sauna.device.HADevice.start", new_callable=AsyncMock), patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
             self.assertTrue(await async_setup_entry(self.hass, self.entry))
         self.assertIsNone(self.entry.runtime_data.session)
-        self.assertTrue(await async_unload_entry(self.hass, self.entry))
+        with patch("custom_components.ha_sauna.device.HADevice.close", new_callable=AsyncMock):
+            self.assertTrue(await async_unload_entry(self.hass, self.entry))
         self.assertTrue(self.entry.runtime_data.closed)
         self.assertEqual(self.hass.services.mock_calls, [])
 

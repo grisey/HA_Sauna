@@ -33,6 +33,7 @@ class Controller:
         self.temperature: float | None = None
         self.feedback: bool | None = None
         self.protection: set[str] = set()
+        self.inhibits: set[str] = set()
         self.last_decision: thermostat.Decision | None = None
         self.decisions: list[thermostat.Decision] = []
         self.overtemperature_since: datetime | None = None
@@ -276,6 +277,7 @@ class Controller:
                 temperature=self.temperature, enabled=session.operation_enabled, gang=session.timeline.active is not None,
                 cooling=session.cooling is not None and session.cooling.started_at is not None,
                 after_run=session.after_run is not None, protection=tuple(sorted(self.protection)),
+                inhibits=tuple(sorted(self.inhibits)),
                 heating_since=(session.heating.intervals[-1].started_at
                     if session.heating.reported_heating is True else None))
             self._session = replace(session, thermostat=state)

@@ -19,7 +19,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         entry = await create_sauna(self.hass)
         self.assertEqual(entry.state, ConfigEntryState.LOADED)
         entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
-        self.assertEqual(len(entities), len(DEFINITIONS) + 2)
+        self.assertEqual(len(entities), len(DEFINITIONS) + 4)
         self.assertTrue(all(self.hass.states.get(e.entity_id) is not None for e in entities))
         self.assertEqual(entry.data, {})
         self.assertIsNone(entry.runtime_data.session)
@@ -29,7 +29,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(old.closed)
             self.assertTrue(await self.hass.config_entries.async_setup(entry.entry_id))
             await self.hass.async_block_till_done()
-            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(DEFINITIONS) + 2)
+            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(DEFINITIONS) + 4)
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
         values = {**entry.options["parameters"], "heating_minutes": 7}

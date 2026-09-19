@@ -61,14 +61,20 @@ def seed_sources(hass):
     return bindings
 
 
-async def create_sauna(hass):
+async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None):
     bindings = seed_sources(hass)
+    if binding_overrides:
+        bindings.update(binding_overrides)
+        for role, entity_id in binding_overrides.items():
+            if hass.states.get(entity_id) is None:
+                hass.states.async_set(entity_id, "off", {})
     flow = await hass.config_entries.flow.async_init("ha_sauna", context={"source": "user"})
     assert flow["step_id"] == "user", flow
     flow = await hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Testsauna", **bindings})
     assert flow["step_id"] == "parameters", flow
     values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS}
     values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
+    values.update(parameter_overrides or {})
     result = await hass.config_entries.flow.async_configure(flow["flow_id"], values)
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()

@@ -43,6 +43,7 @@ class Archive:
         self.resume.set()
         self.worker = None
         self.failure = None
+        self.failed_records = []
         self.closed = False
 
     async def start(self):
@@ -86,6 +87,8 @@ class Archive:
                 if kind == "stop":
                     return
                 if kind == "fence":
+                    if payload.cancelled():
+                        continue
                     if self.failure:
                         payload.set_exception(self.failure)
                     else:
@@ -101,6 +104,8 @@ class Archive:
                     await asyncio.to_thread(self._write, payload)
             except Exception as error:
                 self.failure = error
+                if kind == "record":
+                    self.failed_records.append(payload)
             finally:
                 self.queue.task_done()
 

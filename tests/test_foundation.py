@@ -348,14 +348,16 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]), {d.key for d in DEFINITIONS})
         self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES})
 
-    def test_no_actuator_service_calls_in_step_one(self):
+    def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"
         for file in folder.rglob("*.py"):
             text = file.read_text()
             ast.parse(text)
             with self.subTest(file=file.name):
-                self.assertNotIn("hass.services", text)
-                self.assertNotIn("async_call(", text)
+                if file.name != "device.py":
+                    self.assertNotIn("hass.services", text)
+                if file.name != "device.py":
+                    self.assertNotIn("async_call(", text)
                 self.assertNotIn("SUPERVISOR_TOKEN", text)
 
 

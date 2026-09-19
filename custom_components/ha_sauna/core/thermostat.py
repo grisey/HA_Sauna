@@ -17,6 +17,7 @@ class Decision:
 def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
              temperature: float | None, enabled: bool, gang: bool,
              cooling: bool, after_run: bool, protection: tuple[str, ...] = (),
+             inhibits: tuple[str, ...] = (),
              heating_since: datetime | None = None):
     values = parameters.values
     def result(demand, reason, cooldown=state.cooldown_until):
@@ -26,6 +27,8 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
         return result(False, "protection:" + ",".join(protection))
     if not enabled:
         return result(False, "operation_off")
+    if inhibits:
+        return result(False, "inhibit:" + ",".join(inhibits))
     target = values.get("target_temperature_c")
     limit = values.get("safety_temperature_c")
     if target is None or limit is None:
