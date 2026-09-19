@@ -22,6 +22,9 @@ from custom_components.ha_sauna.core.timeline import Event, Kind
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
+    # HA's shell queries recorder/info even on a custom panel. Start the real
+    # Recorder before entity platforms; never suppress or stub its WS response.
+    with_recorder = True
     set_source = device_tests.DevicePathTests.set_source
 
     async def asyncSetUp(self):
@@ -172,4 +175,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         await self.page.set_viewport_size({"width": 390, "height": 844})
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
+        recorder = await self.page.evaluate("()=>document.querySelector('home-assistant').hass.callWS({type:'recorder/info'})")
+        self.assertTrue(recorder["thread_running"])
+        self.assertTrue(recorder["recording"])
         self.assertEqual(self.errors, [])
+        self.assertEqual(await self.page.evaluate("window.testErrors"), [])
+        self.assertEqual(self.ws_errors, [])

@@ -62,7 +62,7 @@ class TestLight(LightEntity):
 
 class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.hass, self.temp = await start_hass()
+        self.hass, self.temp = await start_hass(with_recorder=getattr(self, "with_recorder", False))
         assert await async_setup_component(self.hass, "switch", {})
         assert await async_setup_component(self.hass, "light", {})
         self.heater, self.light = TestHeater(), TestLight()
