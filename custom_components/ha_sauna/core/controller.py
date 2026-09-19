@@ -5,8 +5,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from . import heating, thermostat
-from .models import CoolingCycle, Deadline, Session, TimedPhase
+from . import energy, heating, thermostat
+from .models import CoolingCycle, Deadline, Energy, Session, TimedPhase
 from .parameters import Parameters
 from .timeline import Event, Kind, apply, utc
 
@@ -32,6 +32,8 @@ class Controller:
         # Reale Messlage und Schutz bleiben außerhalb der Session-Rücksetzung.
         self.temperature: float | None = None
         self.feedback: bool | None = None
+        self.power_w: float | None = None
+        self.power_valid_until: datetime | None = None
         self.protection: set[str] = set()
         self.inhibits: set[str] = set()
         self.last_decision: thermostat.Decision | None = None
@@ -89,7 +91,8 @@ class Controller:
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
-        self._session = replace(Session.create(session_id, at), operation_enabled=True)
+        self._session = replace(Session.create(session_id, at), operation_enabled=True,
+                                energy=Energy(accounted_at=at))
         self._session = replace(self._session, heating=heating.report(
             self._session.heating, self.feedback, at, self.parameters.seconds("heat_reset_minutes")))
         self._last_at = at
@@ -131,6 +134,10 @@ class Controller:
             self._ensure_cooling(utc(at))
         self._evaluate(utc(at))
 
+    def report_power(self, value: float | None, valid_until: datetime | None, at: datetime):
+        self.advance(at, evaluate=False)
+        self.power_w, self.power_valid_until = value, valid_until
+
     def _account_heat(self, at):
         if self._session is None:
             return
@@ -138,7 +145,10 @@ class Controller:
         if state.accounted_at is not None and state.accounted_at > at:
             return
         self._session = replace(self._session, heating=heating.advance(
-            state, at, self.parameters.seconds("heat_reset_minutes")))
+            state, at, self.parameters.seconds("heat_reset_minutes")),
+            energy=energy.advance(self._session.energy, at, power_w=self.power_w,
+                valid_until=self.power_valid_until, heating=state.reported_heating,
+                nominal_kw=self.parameters.values["nominal_power_kw"]))
 
     def _cancel(self, purpose):
         self._session = replace(self._session, deadlines=tuple(

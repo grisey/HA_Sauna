@@ -19,9 +19,12 @@ class TestHeater(SwitchEntity):
         self.calls = []
         self.respond = True
         self.powered = True
+        self.accept_commands = True
 
     async def async_turn_on(self, **kwargs):
         self.calls.append(True)
+        if not self.accept_commands:
+            return
         self._attr_is_on = True
         self.async_write_ha_state()
         if self.respond:
@@ -29,6 +32,8 @@ class TestHeater(SwitchEntity):
 
     async def async_turn_off(self, **kwargs):
         self.calls.append(False)
+        if not self.accept_commands:
+            return
         self._attr_is_on = False
         self.async_write_ha_state()
         if self.respond:
@@ -177,10 +182,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.session.session_id, identity)
 
     async def test_successful_command_without_feedback_does_not_count_heating(self):
-        self.heater.respond = False
+        self.heater.accept_commands = False
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        self.assertTrue(self.heater.is_on)
+        self.assertIn(True, self.heater.calls)
+        self.assertFalse(self.heater.is_on)
         await self.time(2)
         self.assertNotIn("heater_feedback_mismatch", self.runtime.controller.protection)
         await self.time(7)
@@ -233,10 +239,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(70)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, elapsed)
         self.assertFalse(self.runtime.controller.feedback)
-        # Anhaltend widersprüchliche reale Rückmeldung verwendet dieselben
-        # technischen Ausfallregeln vor und nach der geschätzten Timerfrist.
-        self.assertIn("heater_feedback_mismatch", self.runtime.controller.protection)
-        self.assertFalse(self.heater.is_on)
+        # Schütz hat den Befehl ausgeführt. Fehlende Heizleistung bei angezogenem
+        # Schütz pausiert den Zähler, löst aber keinen technischen Abbruch aus.
+        self.assertEqual(self.runtime.controller.protection, set())
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.runtime.device.faults["heater_no_power"], "measured")
         self.assertEqual(self.runtime.device.notified, {(self.runtime.session.session_id, "warning"),
             (self.runtime.session.session_id, "expired")})
         import asyncio
@@ -244,3 +251,67 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
         self.assertEqual([r["payload"]["kind"] for r in data["records"] if r["kind"] == "notice"],
                          ["mechanical_timer_warning", "mechanical_timer_expired"])
+
+    async def configure_feedback(self, *, power_sensor=False):
+        bindings = dict(self.entry.options["bindings"])
+        bindings.pop("heater_feedback", None)
+        if power_sensor:
+            bindings["heater_power"] = "sensor.oven_power"
+            self.hass.states.async_set("sensor.oven_power", "0", {
+                "device_class": "power", "unit_of_measurement": "kW"})
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            "bindings": bindings, "parameters": {**self.entry.options["parameters"],
+                "power_heating_threshold_w": 100, "sensor_timeout_seconds": 120}})
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = datetime.now(UTC)
+        self.runtime._clock = lambda: self.now
+
+    async def test_contactor_only_counts_without_invented_temperature_cutoff(self):
+        await self.configure_feedback()
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        await self.time(60)
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 60)
+        self.assertAlmostEqual(self.runtime.session.energy.total_kwh, .075)
+        self.assertEqual(self.runtime.session.energy.source, "estimated")
+        self.assertEqual(self.runtime.device.heating_observation["source"], "contactor")
+        self.assertTrue(self.runtime.device.heating_observation["estimated"])
+        self.assertEqual(self.runtime.controller.inhibits, set())
+        self.assertEqual(self.runtime.controller.protection, set())
+        await self.runtime.set_operation(False)
+        await self.hass.async_block_till_done()
+        await self.time(90)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 60)
+
+    async def test_optional_power_measurement_controls_counter_not_contactor(self):
+        await self.configure_feedback(power_sensor=True)
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        await self.time(5)
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 0)
+        await self.set_source("heater_power", 6)
+        await self.time(15)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 10)
+        self.assertEqual(self.runtime.device.heating_observation["power_w"], 6000)
+        self.assertEqual(self.runtime.device.heating_observation["source"], "power")
+        await self.set_source("heater_power", 0.05)
+        await self.time(30)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 10)
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.runtime.controller.protection, set())
+        await self.set_source("heater_power", "unavailable")
+        await self.time(35)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 15)
+        self.assertIn("heater_power", self.runtime.device.faults)
+        self.assertTrue(self.runtime.device.heating_observation["estimated"])
+        await self.set_source("heater_power", 0)
+        await self.time(45)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 15)
+        self.assertEqual(self.runtime.device.heating_observation["source"], "power")
+        self.assertNotIn("heater_power", self.runtime.device.faults)
+        self.assertAlmostEqual(self.runtime.session.energy.measured_kwh, .016875)
+        self.assertAlmostEqual(self.runtime.session.energy.estimated_kwh, .00625)
+        self.assertEqual(self.runtime.session.energy.source, "mixed")

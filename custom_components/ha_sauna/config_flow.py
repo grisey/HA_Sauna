@@ -1,4 +1,4 @@
-"""Einrichtung und Konfiguration des nicht schaltenden Grundgerüsts."""
+"""Einrichtung und einheitliche Konfiguration der Sauna-Integration."""
 from __future__ import annotations
 
 from typing import Any

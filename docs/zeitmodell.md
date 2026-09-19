@@ -8,9 +8,9 @@
 | Gangdauer | Vom zugeordneten Beginn bis Ende beziehungsweise jetzt. |
 | Bestätigungsfrist | Beginn plus konfigurierter Fristwert. |
 | Sessionfrist | Ausdrückliches Betrieb-Aus plus Session-Unterbrechungsfrist. |
-| Heizzeit | Tatsächlich rückgemeldete Heizintervalle seit letzter Rücksetzung. |
+| Heizzeit | Gezählte Heizintervalle seit Rücksetzung; gemessen oder aus Schützstellung geschätzt. |
 | Heizbudget | Anfangswert; nach erster abgeschlossener Kühlung einmalig verringert. |
-| Lokale Heizzeitrücksetzung | Durchgehend tatsächliches Ofen-Aus über konfigurierte Dauer. |
+| Lokale Heizzeitrücksetzung | Durchgehend rückgemeldetes Ofen-Aus über konfigurierte Dauer. |
 | Thermostat-Cooldown | Reguläre temperaturbedingte Abschaltentscheidung plus Cooldown. |
 | Mindestheizzeit | Beginn des tatsächlichen Heizintervalls. |
 | Nachlauf | Tatsächliches Ende des bestätigten Gangs plus Nachlaufdauer. |

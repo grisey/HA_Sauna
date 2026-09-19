@@ -21,6 +21,7 @@ class Role:
     device_class: str | None = None
     unit: str | None = None
     optional: bool = False
+    accepted_units: tuple[str, ...] = ()
 
 
 ROLES = (
@@ -33,7 +34,9 @@ ROLES = (
     Role("light", "Dimmbares Saunalicht", ("light",)),
     Role("upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True),
     Role("lower_status", "Sensorstatus unten", ("sensor", "binary_sensor"), optional=True),
-    Role("heater_feedback", "Zusätzliche Heizrückmeldung", ("switch", "binary_sensor"), optional=True),
+    Role("heater_feedback", "Unabhängiger binärer Heiznachweis (optional)", ("switch", "binary_sensor"), optional=True),
+    Role("heater_power", "Leistungsmessung des Ofens (optional)", ("sensor",), "power", "W",
+         optional=True, accepted_units=("W", "kW")),
 )
 ROLE_BY_KEY = MappingProxyType({role.key: role for role in ROLES})
 ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
@@ -81,7 +84,7 @@ def validate_metadata(bindings: Bindings, attributes: Mapping[str, Mapping | Non
         role = ROLE_BY_KEY[key]
         if role.device_class and attrs.get("device_class") != role.device_class:
             raise BindingError(key, "wrong_device_class")
-        if role.unit and attrs.get("unit_of_measurement") != role.unit:
+        if role.unit and attrs.get("unit_of_measurement") not in (role.accepted_units or (role.unit,)):
             raise BindingError(key, "wrong_unit")
         if key == "light":
             modes = attrs.get("supported_color_modes") or ()

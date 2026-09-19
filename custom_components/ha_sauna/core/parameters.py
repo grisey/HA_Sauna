@@ -79,6 +79,8 @@ DEFINITIONS = (
     ParameterDefinition("fault_confirmation_seconds", "Bestätigungsfrist zentraler Ausfälle", "s", optional=True),
     ParameterDefinition("sensor_timeout_seconds", "Messwert-Gültigkeitsdauer", "s", optional=True),
     ParameterDefinition("feedback_timeout_seconds", "Rückmeldungsfrist", "s", optional=True),
+    ParameterDefinition("power_heating_threshold_w", "Heizen oberhalb dieser Ofenleistung", "W", True, optional=True),
+    ParameterDefinition("nominal_power_kw", "Ofenleistung für Energieschätzung", "kW", default=4.5),
     ParameterDefinition("cooling_brightness_percent", "Licht bei Zwangskühlung", "%", optional=True, maximum=100),
 ) + tuple(ParameterDefinition(key, label, unit, allow_zero=minimum <= 0,
         default=default, minimum=minimum, maximum=maximum, integer=integer)

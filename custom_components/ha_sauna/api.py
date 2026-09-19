@@ -48,6 +48,9 @@ class StateView(HomeAssistantView):
                 "configuration_locked": session is not None,
                 "operation_enabled": bool(session and session.operation_enabled),
                 "heating_feedback": controller.feedback,
+                "heating_observation": device.heating_observation if device else None,
+                "energy_kwh": session.energy.total_kwh if session else 0,
+                "energy_source": session.energy.source if session else "estimated",
                 "heating_limit_seconds": controller.heating_limit_seconds,
                 "readiness_target": controller.readiness_target,
                 "cooling_wait_until": controller.cooling_wait_until,
@@ -133,6 +136,9 @@ class ExportView(HomeAssistantView):
 
     async def get(self, request, entry_id):
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        async with runtime._lock:
+            if runtime.session:
+                runtime.archive.save_session(runtime.session, runtime._clock(), runtime.configuration.as_options())
         path = await runtime.archive.export()
         response = web.StreamResponse(headers={"Content-Type": "application/zip",
             "Content-Disposition": 'attachment; filename="ha-sauna-archive.zip"',

@@ -9,17 +9,28 @@ bisherigen Nachweis. Version `0.0.0`, kein Release und kein Produktivdeployment.
 
 ## Einrichtung und Bedienung
 
-`custom_components/ha_sauna` in das HA-Konfigurationsverzeichnis kopieren,
-Home Assistant neu starten und unter **Einstellungen → Geräte & Dienste**
+Vorbereitung und Rückweg für die erste Testinstallation: [Testinstallation](docs/testinstallation.md).
+
+In HACS `https://github.com/grisey/HA_Sauna` als benutzerdefiniertes Repository
+vom Typ **Integration** hinzufügen, herunterladen, Home Assistant selbst neu
+starten und unter **Einstellungen → Geräte & Dienste**
 **HA Sauna** hinzufügen. Temperatur und Feuchte oben/unten, Heizaktor,
-physische Bedienquelle, dimmbares Licht und tatsächliche Heizrückmeldung werden
-nach ihrer Rolle ausgewählt. Es gibt keine fest hinterlegten privaten Entitäten.
+physische Bedienquelle und dimmbares Licht werden nach ihrer Rolle ausgewählt.
+Eine Leistungsmessung in W/kW oder ein unabhängiger binärer Heiznachweis sind optional. Es gibt keine fest hinterlegten privaten Entitäten.
+
+Sessionenergie: standardmäßig **4,5 kW × gezählte Heizstunden**, einstellbar.
+Mit Leistungsmesser wird dessen gemessener Verlauf integriert. Die Summe überlebt
+Kühlungen und Heizzeitrücksetzungen; Messlücken werden gekennzeichnet.
 
 Die obere Temperatur regelt den Ofen. Ohne gültige obere Regeltemperatur wird
 kein unterer Ersatzwert erfunden. Die Ereigniserkennung arbeitet bei Ausfall
 mit der verbleibenden Messposition weiter und zeigt den Fehler an. Die
-Heizrückmeldung muss tatsächliches Heizen abbilden; ein Relaisbefehl allein
-beweist das insbesondere beim mechanischen Ofentimer nicht.
+Heizzeit läuft ohne unabhängige Messung bei rückgemeldetem Schütz EIN. Die
+Anzeige kennzeichnet diese Ableitung als Schätzung. Eine zugeordnete gültige
+Leistungsmessung hat Vorrang; ihre einstellbare Watt-Schwelle unterscheidet
+Standby und Heizen. Bei Messausfall wird sichtbar auf Schützstellung zurückgefallen.
+Die Erkennung eines internen Ofen-Aus anhand der Temperaturkrümmung wurde für
+die erste Testinstallation ausdrücklich zurückgestellt.
 
 Vor Heizfreigabe sind Solltemperatur, Messwert-Gültigkeitsdauer, Rückmeldungsfrist
 und Bestätigungsfrist zentraler Ausfälle zu konfigurieren. Auch Sessionfrist,
@@ -54,7 +65,7 @@ Gang sofort. Jeder beendete Gang mit Aufguss zählt einmal.
 | Bereitschaftshysterese | 3 °C |
 | Thermostat-Cooldown | 5 Minuten |
 | Mindestheizzeit nach tatsächlichem Einschalten | 10 Minuten |
-| Heizbudget vor erster Kühlung | 90 Minuten tatsächliches Heizen |
+| Heizbudget vor erster Kühlung | 90 Minuten gezählte Heizzeit |
 | Einmalige Verringerung nach erster Kühlung | 30 Minuten, danach konstant |
 | Zwangskühlung | 15 Minuten |
 | Personenerkennung nach Türschließung abwarten | 4 Minuten |

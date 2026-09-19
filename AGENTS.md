@@ -9,6 +9,9 @@ und danach konstanten Wert ersetzt. Alle Zahlen sind einstellbare Defaults.
 Temperaturüberschreitung erzeugt nach anhaltendem Nachweis Zusatzkühlung ohne
 Sessionabbruch. Die jüngste Türwartefrist beträgt standardmäßig 4 Minuten nach
 Schließung beziehungsweise 10 Minuten bei offen bleibender Tür.
+Für die erste Testinstallation zählt der Heizzähler ohne optionalen Leistungsmesser
+bei Schütz EIN. Die Temperaturkrümmungs-Erkennung ist ausdrücklich zurückgestellt.
+Leistungsmessung bleibt optional; der mechanische Timer ist reine Anzeige.
 Normalansicht, separates Verlaufsblatt und sortierte Detailansicht folgen der
 Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.
 
@@ -36,7 +39,7 @@ Nutzervorlage; Erkennungskontrolle gehört ausschließlich in die Details.
   keine Sonderregel nur für ausgeschaltete Gänge und kein paralleler Merker.
 - Das Heizbudget folgt Anfangswert und einmaliger Verringerung nach erster
   abgeschlossener Kühlung. Der Heizzeittimer zählt nur tatsächliches Heizen
-  und pausiert bei idle. Keine zusätzliche prozentuale Idle-Gutschrift und kein
+  oder ohne Messgerät die Schützstellung und pausiert bei idle. Keine zusätzliche prozentuale Idle-Gutschrift und kein
   durch Idle-Zeiten vergrößertes Heizbudget. Die zuvor vereinbarte lokale
   Rücksetzung nach genügend langer zusammenhängender Auszeit bleibt davon
   getrennt und ist kein Sessionwechsel.

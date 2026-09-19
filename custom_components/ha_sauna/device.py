@@ -11,6 +11,7 @@ from homeassistant.components import persistent_notification
 from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core.models import Measurement, Position, Quantity
+from .core import power
 
 
 class HADevice:
@@ -19,6 +20,7 @@ class HADevice:
         self.bindings = runtime.configuration.bindings.values
         self.values = runtime.configuration.parameters.values
         self.states = {}
+        self.source_received_at = {}
         self.measurements = {}
         self.last_valid_temperature = None
         self.fault_since = {}
@@ -30,6 +32,8 @@ class HADevice:
         self.light_before = None
         self.light_active = False
         self.notified = set()
+        self.heating_observation = {"source": "unknown", "heating": None, "power_w": None}
+        self._saved_heating_observation = None
 
     async def start(self):
         now = self.runtime._clock()
@@ -46,6 +50,7 @@ class HADevice:
 
     def ingest(self, role, state, received_at, *, initial=False):
         self.states[role] = state
+        self.source_received_at[role] = received_at
         if role in ("upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"):
             position, quantity = role.split("_", 1)
             value = None
@@ -88,18 +93,49 @@ class HADevice:
         # Ein ausgewähltes event-Entity liefert einen neuen Bedienimpuls.
         return not bool(self.runtime.session and self.runtime.session.operation_enabled)
 
-    def feedback(self):
-        state = self.states.get("heater_feedback")
+    def binary_state(self, role):
+        state = self.states.get(role)
         if state is None or state.state not in ("on", "off"):
             return None
         return state.state == "on"
+
+    def contactor_feedback(self):
+        """Schützstellung bestätigt den Schaltbefehl, nicht die Ofenleistung."""
+        return self.binary_state("heater")
+
+    def power_value(self, now):
+        state = self.states.get("heater_power")
+        received = self.source_received_at.get("heater_power")
+        ttl = self.values.get("sensor_timeout_seconds")
+        if state is None or received is None or ttl is None or (now - received).total_seconds() > ttl:
+            return None
+        if state.attributes.get("device_class") != "power":
+            return None
+        return power.watts(state.state, state.attributes.get("unit_of_measurement"))
+
+    def observe_heating(self, now):
+        measured = self.power_value(now)
+        active = power.heating(measured, self.values.get("power_heating_threshold_w"))
+        if active is not None:
+            source = "power"
+        elif (self.bindings.get("heater_feedback") != self.bindings["heater"]
+              and (active := self.binary_state("heater_feedback")) is not None):
+            source = "independent_feedback"
+        else:
+            active = self.contactor_feedback()
+            source = "contactor" if active is not None else "unknown"
+        return {"source": source, "heating": active, "power_w": measured,
+                "contactor": self.contactor_feedback(), "estimated": source == "contactor"}
+
+    def feedback(self):
+        return self.observe_heating(self.runtime._clock())["heating"]
 
     def refresh(self, now):
         controller = self.runtime.controller
         missing = [key for key in ("target_temperature_c", "sensor_timeout_seconds",
             "feedback_timeout_seconds", "fault_confirmation_seconds") if key not in self.values]
-        if "heater_feedback" not in self.bindings:
-            missing.append("heater_feedback")
+        if "heater_power" in self.bindings and "power_heating_threshold_w" not in self.values:
+            missing.append("power_heating_threshold_w")
         controller.inhibits = {"configuration_required:" + ",".join(missing)} if missing else set()
         timeout = self.values.get("sensor_timeout_seconds")
         upper = self.last_valid_temperature
@@ -107,8 +143,18 @@ class HADevice:
         # Ein kurz fehlendes Paket verwirft einen noch gültigen Messwert nicht.
         # Nach Gültigkeitsende gibt es keinen erfundenen Ersatz der unteren Höhe.
         controller.set_temperature(temperature, now)
-        feedback = self.feedback()
-        controller.report_heating(feedback, now)
+        contactor = self.contactor_feedback()
+        self.heating_observation = self.observe_heating(now)
+        power_received = self.source_received_at.get("heater_power")
+        controller.report_power(self.heating_observation["power_w"],
+            power_received + timedelta(seconds=timeout) if power_received and timeout else None, now)
+        controller.report_heating(self.heating_observation["heating"], now)
+        observation_key = (controller.session.session_id if controller.session else None,
+                           self.heating_observation["source"], self.heating_observation["heating"])
+        if self.runtime.archive and observation_key != self._saved_heating_observation:
+            self.runtime.archive.append("heating_observation", now,
+                self.heating_observation, observation_key[0])
+            self._saved_heating_observation = observation_key
         problems = set()
         for role, m in self.measurements.items():
             if m.value is None or timeout is None or (now - m.received_at).total_seconds() > timeout:
@@ -117,15 +163,32 @@ class HADevice:
                 self.faults.pop(role, None)
         if temperature is None:
             problems.add("regulation_temperature_unavailable")
-        if feedback is None and "heater_feedback" in self.bindings:
+        if contactor is None:
             problems.add("heater_feedback_unavailable")
+        for role in ("heater_power", "heater_feedback"):
+            unavailable = (self.heating_observation["power_w"] is None if role == "heater_power"
+                           else self.binary_state(role) is None)
+            if role in self.bindings and unavailable:
+                self.faults[role] = "measurement_unavailable"
+            else:
+                self.faults.pop(role, None)
+        if contactor is True and self.heating_observation["heating"] is False:
+            self.faults["heater_no_power"] = "measured"
+        else:
+            self.faults.pop("heater_no_power", None)
         ack = self.values.get("feedback_timeout_seconds")
         if (self.command is not None and self.command_at is not None and ack is not None
                 and (now - self.command_at).total_seconds() >= ack
-                and feedback is not self.command):
-            # Nur tatsächlicher Befehl und Rückmeldung bestimmen diese Diagnose.
+                and contactor is not self.command):
+            # Ein fehlender Schaltvollzug ist ein Aktorfehler. Fehlende Ofenleistung
+            # bei angezogenem Schütz pausiert nur den Zähler, etwa bei Ofentimer-Aus.
             # Die geschätzte mechanische Timerstellung hat keinerlei Steuerwirkung.
             problems.add("heater_feedback_mismatch")
+        if (self.command is False and self.command_at is not None and ack is not None
+                and (now - self.command_at).total_seconds() >= ack
+                and self.heating_observation["source"] in ("power", "independent_feedback")
+                and self.heating_observation["heating"] is True):
+            problems.add("heater_still_heating")
         if self.command_error:
             problems.add("heater_service_unavailable")
         for key in tuple(self.fault_since):
@@ -134,13 +197,13 @@ class HADevice:
         for key in problems:
             self.fault_since.setdefault(key, now)
         confirmation = self.values.get("fault_confirmation_seconds")
-        monitoring = bool(controller.session and controller.session.operation_enabled) or feedback is True
+        monitoring = bool(controller.session and controller.session.operation_enabled) or contactor is True
         if monitoring:
             controller.protection.update(key for key, since in self.fault_since.items()
                 if confirmation is not None and (now - since).total_seconds() >= confirmation)
         else:
             self.fault_since.clear()
-        for key in ("regulation_temperature_unavailable", "heater_feedback_unavailable", "heater_feedback_mismatch", "heater_service_unavailable"):
+        for key in ("regulation_temperature_unavailable", "heater_feedback_unavailable", "heater_feedback_mismatch", "heater_service_unavailable", "heater_still_heating"):
             self.faults.pop(key, None)
         self.faults.update({key: "confirmed" if key in controller.protection else "pending" for key in problems})
         self.faults.update({key: "confirmed" for key in controller.protection})
@@ -155,7 +218,7 @@ class HADevice:
     async def send(self, heat, now, *, force=False):
         ack = self.values.get("feedback_timeout_seconds")
         same = self.command is heat
-        matched = self.feedback() is heat
+        matched = self.contactor_feedback() is heat
         if not force and same and (matched or ack is None or (now - self.last_sent_at).total_seconds() < ack):
             return
         # Bestätigungsfrist wird bei Wiederholungen desselben Befehls nicht neu
@@ -211,7 +274,7 @@ class HADevice:
                 self.notified.add(key)
                 message = ("Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen. Bitte den Drehschalter erneut einstellen."
                     if phase == "expired" else "Der mechanische Ofentimer erreicht voraussichtlich bald sein Ende.")
-                message += " Seine tatsächliche Stellung wird nicht gemessen; die Heizrückmeldung bleibt maßgeblich."
+                message += " Seine tatsächliche Stellung wird nicht gemessen; diese Erinnerung löst keine Steuerung aus."
                 persistent_notification.async_create(self.hass, message,
                     title="Sauna: mechanischer Ofentimer", notification_id=f"sauna_timer_{self.runtime.session.session_id}")
                 if self.runtime.archive:

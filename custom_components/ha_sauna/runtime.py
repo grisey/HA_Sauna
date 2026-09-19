@@ -125,7 +125,8 @@ class SaunaRuntime:
             self._require_open()
             if self.session and self.session.operation_enabled:
                 raise ValueError("Betrieb vor Quittierung ausschalten")
-            if self.device and (self.device.feedback() is not False or self.device.command_error):
+            if self.device and (self.device.contactor_feedback() is not False
+                                or self.device.feedback() is not False or self.device.command_error):
                 raise ValueError("Quittierung benötigt bestätigten Ofen-Aus-Zustand")
             self.controller.protection.clear()
             await self._cycle()
@@ -155,6 +156,7 @@ class SaunaRuntime:
             signature = plain(self.session)
             signature["heating"].pop("accounted_at")
             signature["heating"].pop("elapsed_seconds")
+            signature.pop("energy")  # Counters do not create a revision every second.
             signature = encoded(signature)
             if signature != self._archive_signature:
                 self.archive.save_session(self.session, now, self.configuration.as_options())

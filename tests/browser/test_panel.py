@@ -16,6 +16,7 @@ from homeassistant.components.onboarding import OnboardingStorage
 from homeassistant.components.onboarding.const import STEPS
 from homeassistant.setup import async_setup_component
 from homeassistant.helpers.service import async_get_all_descriptions
+from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
@@ -25,7 +26,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await device_tests.DevicePathTests.asyncSetUp(self)
+        # This fixture intentionally binds a new ephemeral localhost port.
+        # Confirm its working HTTP configuration so HA's own migration dialog
+        # does not cover the panel under test.
+        http_store = await async_get_and_load_store(self.hass)
+        if http_store.pending:
+            await http_store.async_promote_pending()
         await OnboardingStorage(self.hass, 4, "onboarding", private=True).async_save({"done": STEPS})
+        for component in ("labs", "brands"):
+            self.assertTrue(await async_setup_component(self.hass, component, {}))
         self.assertTrue(await async_setup_component(self.hass, "frontend", {}))
         await self.hass.async_block_till_done()
         # The real frontend cannot finish loading without its service catalogue.

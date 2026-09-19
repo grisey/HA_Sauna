@@ -1,11 +1,35 @@
 """Lesbare Zustände aus dem führenden Ablaufmodell."""
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 
 from .entity import SaunaEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([SaunaPhase(entry)])
+    async_add_entities([SaunaPhase(entry), SaunaEnergy(entry)])
+
+
+class SaunaEnergy(SaunaEntity, SensorEntity):
+    _attr_name = "Sessionenergie"
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_device_class = SensorDeviceClass.ENERGY
+
+    def __init__(self, entry):
+        super().__init__(entry, "session_energy")
+
+    @property
+    def native_value(self):
+        session = self.runtime.session
+        return round(session.energy.total_kwh, 4) if session else None
+
+    @property
+    def extra_state_attributes(self):
+        session = self.runtime.session
+        return {"session_id": session.session_id if session else None,
+            "source": session.energy.source if session else None,
+            "measured_kwh": session.energy.measured_kwh if session else 0,
+            "estimated_kwh": session.energy.estimated_kwh if session else 0,
+            "unobserved_seconds": session.energy.unknown_seconds if session else 0,
+            "nominal_power_kw": self.runtime.configuration.parameters.values["nominal_power_kw"]}
 
 
 class SaunaPhase(SaunaEntity, SensorEntity):
@@ -36,6 +60,7 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "mechanical_timer_estimated": True,
             "faults": dict(self.runtime.device.faults) if self.runtime.device else {},
             "heating_feedback": self.runtime.controller.feedback,
+            "heating_observation": dict(self.runtime.device.heating_observation) if self.runtime.device else None,
             "decision_reason": self.runtime.controller.last_decision.reason if self.runtime.controller.last_decision else None,
             "detection_channels": [p.value for p in self.runtime.detector.active_positions] if self.runtime.detector else [],
             "gang_duration_seconds": active.elapsed_seconds(self.runtime._clock()) if active else None,

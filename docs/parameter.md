@@ -40,6 +40,8 @@ stellt keine Heizfreigabe dar: benötigte fehlende Werte werden als Sperre gemel
 | Bestätigungsfrist zentraler Ausfälle (`fault_confirmation_seconds`) | s | Optional leer |
 | Messwert-Gültigkeitsdauer (`sensor_timeout_seconds`) | s | Optional leer |
 | Rückmeldungsfrist (`feedback_timeout_seconds`) | s | Optional leer |
+| Heizen oberhalb dieser Ofenleistung (`power_heating_threshold_w`) | W | Nur bei Leistungsmesser einzugeben |
+| Ofenleistung für Energieschätzung (`nominal_power_kw`) | kW | 4,5 |
 | Licht bei Zwangskühlung (`cooling_brightness_percent`) | % | Optional leer |
 
 ## Erkennungsexpertenwerte
@@ -58,14 +60,17 @@ Detektor; die Kontrollansicht zeichnet seine tatsächlichen Merkmale auf.
 ## Externe Entitäten
 
 Temperatur und Luftfeuchte oben/unten, Heizaktor (Switch), Bedienquelle
-(Event oder Binary Sensor), dimmbares Licht und tatsächliche Heizrückmeldung
-werden über HA-Selektoren gewählt. Optionale Statusquellen sind zuordenbar.
+(Event oder Binary Sensor) und dimmbares Licht werden über HA-Selektoren gewählt.
+Leistungssensor (Geräteklasse power, W oder kW), unabhängiger binärer Heiznachweis
+und Statusquellen sind optional. Ohne Leistungsmesser zählt die Schützstellung.
+Eine mit dem Heizaktor identische binäre Rückmeldequelle gilt ebenfalls als Schätzung.
 Metadatenprüfung kontrolliert Domain, Geräteklasse, Einheit und Dimmbarkeit.
 Obere und untere Quellen derselben Messgröße dürfen nicht identisch sein.
 Konkrete Gerätebezeichnungen/Entity-IDs stehen nicht im Produktivcode.
 
 Vor Start braucht die Regelung insbesondere gültige obere Temperatur,
-Solltemperatur, Messgültigkeit, Rückmeldungsfrist, Fehler-Bestätigungsfrist und
-eine Rückmeldequelle für tatsächliches Heizen. Fehlende Werte sind sichtbar.
+Solltemperatur, Messgültigkeit, Schütz-Rückmeldungsfrist und Fehler-Bestätigungsfrist.
+Bei ausgewähltem Leistungsmesser ist zusätzlich die Watt-Schwelle einzustellen;
+es gibt keinen erfundenen Standby-Grenzwert. Fehlende Werte sind sichtbar.
 Die untere Höhe wird nicht als feste Ersatztemperatur interpretiert. Ein-Sensor-
 Erkennung ist davon getrennt. Einheiten und Rollen: `bindings.py`.

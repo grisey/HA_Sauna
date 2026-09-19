@@ -40,6 +40,27 @@ widersprüchlichen Zwischenstände. Der ursprüngliche Verlauf bleibt in Git erh
 - Gestaltung entspricht der gelieferten Diagrammvorlage. Zoom, Achsen, Tooltips
   und Aktualisierung dürfen verbessert werden. Erkennungsdetails stehen separat.
 
+## Präzisierung für die erste Testinstallation
+
+Am realen Ofen sind derzeit Schützstellung und Temperaturen verfügbar. Ohne
+Leistungsmessung läuft der Heizzähler bei Schütz EIN. Eine Leistungsmessung bleibt
+optional verfügbar und hat bei gültigem Messwert Vorrang. Die Schätzung des
+mechanischen Timers löst weiterhin keinerlei Steuerung aus. Eine Erkennung
+anhand nachlassenden Temperaturanstiegs soll einen tatsächlichen Übergang
+erkennen; die feste 0,5-Grad-/5-Minuten-Regel wurde verworfen. Dieser seltene
+Grenzfall ist auf ausdrücklichen Nutzerwunsch für die erste Testinstallation
+zurückgestellt, damit die Prüfung der Grundfunktion Vorrang erhält.
+
+Sessionenergie wird ohne Leistungsmesser aus Heizzeit und konfigurierbarer
+Ofenleistung geschätzt (Standard 4,5 kW). Mit Messgerät haben gemessene
+Leistungswerte Vorrang. Messlücken und geschätzte Anteile bleiben erkennbar.
+Installation erfolgt ausschließlich durch den Nutzer über HACS. SSH darf nur
+lesend für Status und Logs verwendet werden; Schreiben darüber ist verboten.
+
+Der Nutzer beauftragt die Vorbereitung einer ersten Testinstallation auf seinem
+Home-Assistant-System. Ofenaktivierung und Änderungen an der bestehenden realen
+Steuerung werden dadurch nicht stillschweigend durchgeführt.
+
 ## Unveränderte Architekturentscheidungen
 
 Ein führender Session-/Ablaufkern; gleiche Bedienung durch physischen Eingang,

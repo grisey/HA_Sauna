@@ -33,16 +33,33 @@ Messwert wird niemals durch Mittelwertbildung oder Höhenoffset zur oberen
 Regeltemperatur erklärt. Kurz fehlende Pakete überbrückt nur ein noch gültiger
 oberer Messwert; nach dessen Gültigkeitsende pausiert die Heizung.
 
-Heizzeit zählt ausschließlich tatsächliche Rückmeldung. Idle pausiert, unbekannt
-beweist weder Heizen noch Auszeit. Eine genügend lange zusammenhängende tatsächliche
-Auszeit setzt die lokale Heizsumme zurück; sie ist kein Sessionwechsel und kein
-abgeschlossener Kühlvorgang. Keine zusätzliche Idle-Gutschrift.
+Ohne unabhängige Messung zählt Heizzeit bei rückgemeldetem Schütz EIN. Eine
+gültige optionale Leistungsmessung (W/kW, einstellbare Watt-Schwelle) hat Vorrang
+vor optionalem binärem Heiznachweis und Schützstellung. Die Quelle und der
+Schätzcharakter sind sichtbar und archiviert. Bei fehlender optionaler Messung
+wird mit Fehleranzeige auf die nächste verfügbare Quelle zurückgefallen.
+Unbekannte Schützstellung ohne andere Messung beweist weder Heizen noch Auszeit.
+Eine genügend lange zusammenhängende rückgemeldete Auszeit setzt die lokale
+Heizsumme zurück; sie ist kein Sessionwechsel und kein abgeschlossener Kühlvorgang.
+Keine zusätzliche Idle-Gutschrift. Die vorgeschlagene feste Anstiegsgrenze von
+0,5 °C/5 Minuten ist verworfen; die spätere Krümmungserkennung ist zurückgestellt.
 
-Das tatsächliche Heizbudget beträgt zunächst standardmäßig 90 Minuten. Nach der
+Das Heizbudget beträgt zunächst standardmäßig 90 Minuten. Nach der
 ersten abgeschlossenen Kühlung derselben Session wird es einmalig um 30 Minuten
 verringert, danach bleibt es konstant. Mit abgeschlossenem Kühlvorgang beginnt
 der nächste Heizabschnitt bei verbrauchter Zeit null. Eine neue Session erhält
 das ursprüngliche Budget. Beide Vorgabewerte sind einstellbar.
+
+## Sessionenergie
+
+Ohne Leistungsmesser gilt gezählte Heizzeit × einstellbare Ofenleistung
+(Standard 4,5 kW). Die Summe bleibt bei Kühlung und lokaler Heizzeitrücksetzung
+erhalten und beginnt erst mit einer neuen Session neu. Mit gültigem Leistungsmesser
+ersetzt dessen zeitliches Integral die Schätzung; auch gemessener Standbyverbrauch
+gehört dazu. Der letzte Messwert gilt maximal bis zur Messgültigkeitsgrenze.
+Ausfälle werden mit erkennbar geschätzten Anteilen überbrückt; ohne bekannte
+Heizaktivität bleibt der betroffene Abschnitt ausdrücklich unvollständig.
+Oberfläche, eigener Energiesensor und Sessionarchiv erhalten dieselben Werte.
 
 ## Nachlauf und Zwangskühlung
 
@@ -87,7 +104,10 @@ Der mechanische Ofentimer unterbricht nach Ablauf physisch die Stromversorgung.
 Seine Stellung ist nicht aus HA bekannt. Die Schätzung läuft standardmäßig
 4 Stunden ab Sessionbeginn, unabhängig von Thermostatpausen und kurzen
 Betriebsunterbrechungen. Einstellbare Vorwarnung und Ablaufhinweis erscheinen
-als HA-Benachrichtigung. Reales Feedback bleibt für Heizzeit maßgeblich.
+als HA-Benachrichtigung. Fehlende gemessene Heizleistung bei weiterhin
+angezogenem Schütz pausiert den Zähler ohne technischen Abbruch. Schützstellung
+bestätigt den Schaltvollzug; eine ausbleibende Schaltbestätigung oder trotz
+Ausschaltbefehl weiter gemessene Heizleistung unterliegt der technischen Fehlerfrist.
 Die Schätzung ist ausschließlich Anzeige und Erinnerung zum erneuten Einstellen
 des Drehschalters. Ihr Ablauf verändert weder Heizbefehle noch Kühlung oder
 technische Schutzregeln. Diese richten sich ausschließlich nach tatsächlichen

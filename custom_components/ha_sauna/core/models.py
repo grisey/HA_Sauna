@@ -92,6 +92,28 @@ class HeatingTime:
 
 
 @dataclass(frozen=True)
+class Energy:
+    measured_kwh: float = 0.0
+    estimated_kwh: float = 0.0
+    measured_seconds: float = 0.0
+    estimated_seconds: float = 0.0
+    unknown_seconds: float = 0.0
+    accounted_at: datetime | None = None
+
+    @property
+    def total_kwh(self):
+        return self.measured_kwh + self.estimated_kwh
+
+    @property
+    def source(self):
+        if self.unknown_seconds:
+            return "incomplete"
+        if self.measured_seconds and self.estimated_seconds:
+            return "mixed"
+        return "measured" if self.measured_seconds else "estimated"
+
+
+@dataclass(frozen=True)
 class TimedPhase:
     phase_id: str
     started_at: datetime
@@ -121,6 +143,7 @@ class Session:
 
     timeline: Timeline
     heating: HeatingTime = field(default_factory=HeatingTime)
+    energy: Energy = field(default_factory=Energy)
     deadlines: tuple[Deadline, ...] = ()
     operation_enabled: bool = False
     operation_off_at: datetime | None = None

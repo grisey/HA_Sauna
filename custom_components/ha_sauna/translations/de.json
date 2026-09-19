@@ -16,7 +16,8 @@
           "light": "Dimmbares Saunalicht",
           "upper_status": "Sensorstatus oben",
           "lower_status": "Sensorstatus unten",
-          "heater_feedback": "Zusätzliche Heizrückmeldung"
+          "heater_feedback": "Unabhängiger binärer Heiznachweis (optional)",
+          "heater_power": "Leistungsmessung des Ofens (optional)"
         }
       },
       "parameters": {
@@ -79,7 +80,9 @@
           "open_door_wait_minutes": "Kühlaufschub bei offener Tür",
           "preset_start_c": "Erste Temperaturkachel",
           "preset_step_c": "Abstand der Temperaturkacheln",
-          "preset_count": "Anzahl der Temperaturkacheln"
+          "preset_count": "Anzahl der Temperaturkacheln",
+          "power_heating_threshold_w": "Heizen oberhalb dieser Ofenleistung",
+          "nominal_power_kw": "Ofenleistung für Energieschätzung"
         }
       }
     },
@@ -134,7 +137,8 @@
           "light": "Dimmbares Saunalicht",
           "upper_status": "Sensorstatus oben",
           "lower_status": "Sensorstatus unten",
-          "heater_feedback": "Zusätzliche Heizrückmeldung"
+          "heater_feedback": "Unabhängiger binärer Heiznachweis (optional)",
+          "heater_power": "Leistungsmessung des Ofens (optional)"
         }
       },
       "parameters": {
@@ -197,7 +201,9 @@
           "open_door_wait_minutes": "Kühlaufschub bei offener Tür",
           "preset_start_c": "Erste Temperaturkachel",
           "preset_step_c": "Abstand der Temperaturkacheln",
-          "preset_count": "Anzahl der Temperaturkacheln"
+          "preset_count": "Anzahl der Temperaturkacheln",
+          "power_heating_threshold_w": "Heizen oberhalb dieser Ofenleistung",
+          "nominal_power_kw": "Ofenleistung für Energieschätzung"
         }
       }
     },
