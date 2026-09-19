@@ -204,3 +204,36 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(2)
         self.assertNotIn("upper_temperature", self.runtime.device.faults)
         self.assertEqual(len(self.runtime.detector.active_positions), 2)
+
+    async def test_mechanical_timer_power_cut_stops_counting_and_notifies_once(self):
+        # Configure before starting, via the real options listener and reload.
+        options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
+            "mechanical_timer_minutes": 1, "mechanical_timer_warning_minutes": .25,
+            "sensor_timeout_seconds": 120}}
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = datetime.now(UTC)
+        self.runtime._clock = lambda: self.now
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        await self.time(45)
+        self.assertIn((self.runtime.session.session_id, "warning"), self.runtime.device.notified)
+        self.now = self.base + timedelta(seconds=60)
+        self.heater.powered = False
+        self.hass.states.async_set("binary_sensor.actual_heating", "off")
+        await self.hass.async_block_till_done()
+        elapsed = self.runtime.session.heating.elapsed_seconds
+        await self.time(70)
+        self.assertEqual(self.runtime.session.heating.elapsed_seconds, elapsed)
+        self.assertTrue(self.heater.is_on)  # Relay command is not physical heating.
+        self.assertFalse(self.runtime.controller.feedback)
+        self.assertNotIn("heater_feedback_mismatch", self.runtime.controller.protection)
+        self.assertIn("mechanical_timer", self.runtime.device.faults)
+        self.assertEqual(self.runtime.device.notified, {(self.runtime.session.session_id, "warning"),
+            (self.runtime.session.session_id, "expired")})
+        import asyncio
+        await self.runtime.archive.flush()
+        data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
+        self.assertEqual([r["payload"]["kind"] for r in data["records"] if r["kind"] == "notice"],
+                         ["mechanical_timer_warning", "mechanical_timer_expired"])

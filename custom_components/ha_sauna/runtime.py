@@ -64,6 +64,7 @@ class SaunaRuntime:
         self._archive_signature = None
         self._saved_decisions = 0
         self._saved_phase = None
+        self._saved_faults = None
 
     def _sync_detector(self):
         session_id = self.session.session_id if self.session else None
@@ -142,6 +143,11 @@ class SaunaRuntime:
         if phase_key != self._saved_phase:
             self.archive.append("phase", now, {"phase": self.controller.phase}, phase_key[0])
             self._saved_phase = phase_key
+        faults = dict(self.device.faults) if self.device else {}
+        fault_key = (phase_key[0], encoded(faults))
+        if fault_key != self._saved_faults:
+            self.archive.append("diagnostic", now, {"faults": faults}, phase_key[0])
+            self._saved_faults = fault_key
         for session in self.controller.completed_sessions[self._archived_completed:]:
             self.archive.save_session(session, now, self.configuration.as_options())
         self._archived_completed = len(self.controller.completed_sessions)

@@ -34,7 +34,8 @@ class HADevice:
     async def start(self):
         now = self.runtime._clock()
         for role, entity_id in self.bindings.items():
-            self.ingest(role, self.hass.states.get(entity_id), now, initial=True)
+            state = self.hass.states.get(entity_id)
+            self.ingest(role, state, state.last_reported if state else now, initial=True)
         async def changed(event):
             await self.runtime.device_input(event)
         entities = list(self.bindings.values())
@@ -119,6 +120,7 @@ class HADevice:
         if feedback is None and "heater_feedback" in self.bindings:
             problems.add("heater_feedback_unavailable")
         ack = self.values.get("feedback_timeout_seconds")
+        self.faults.pop("mechanical_timer", None)
         if (self.command is not None and self.command_at is not None and ack is not None
                 and (now - self.command_at).total_seconds() >= ack
                 and feedback is not self.command):

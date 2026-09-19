@@ -43,6 +43,22 @@ def trace(second):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_diagnostic_observer_reports_actual_metrics_without_changing_signals(self):
+        observed = []
+        detector = Detector(detection_parameters(), T0, observer=observed.append)
+        reference = Detector(detection_parameters(), T0)
+        events = []
+        for i in range(401):
+            current = sample(detector, i, *trace(i))
+            self.assertEqual(current, sample(reference, i, *trace(i)))
+            events.extend(current)
+        self.assertEqual(len(observed), 401)
+        self.assertEqual(observed[0]["at"], T0)
+        self.assertEqual(observed[200]["metrics"]["upper"]["strong_temperature_slope"],
+                         observed[200]["metrics"]["lower"]["strong_temperature_slope"])
+        self.assertEqual([k for row in observed for k in row["signals"]], [e.kind for e in events])
+        self.assertIsNotNone(observed[100]["metrics"]["upper"]["door_temperature_slope"])
+
     def test_defaults_are_exactly_the_frozen_reference_and_overrides_are_consumed(self):
         expected = json.loads((Path(__file__).resolve().parents[1] / "candidate/parameter.json").read_text())
         self.assertEqual(candidate_values(detection_parameters().values), expected)
