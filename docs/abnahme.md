@@ -8,8 +8,14 @@ einer laufenden Zwangskühlung mit dem regulären Folgeablauf. Ausgeführte
 Kernprüfungen: **169 bestanden, 2 private Replay-Skips**; 171 gesammelt.
 Separater privater fortlaufender Replay-Vergleich: **1 bestanden, Exit 0**.
 Python- und JavaScript-Syntax sowie `git diff --check` sind erfolgreich geprüft.
-Die neuen HA-, API- und Browserprüfungen werden in Linux-CI ausgeführt; ihr
-Ergebnis ist vor Abschluss der CI noch nicht nachgewiesen. Keine reale Installation.
+Geprüfter Code: [`1577ce0`](https://github.com/grisey/HA_Sauna/commit/1577ce067e72c0f6fc5b2fe710a0fc1feaa48099).
+[CI 35472918986](https://github.com/grisey/HA_Sauna/actions/runs/35472918986)
+und der PR-Lauf sind vollständig erfolgreich: **169 Kerntests bestanden, 2 private
+Replay-Skips; 11 HA-API-Smokes; 31 echte HA-Integrationstests; 4 Browserabläufe**.
+Die neuen Bedienknöpfe wurden im echten HA-Frontend ausgeführt und visuell geprüft.
+Keine JavaScript-Ausnahmen oder abgewiesenen WebSocket-Antworten; der absichtlich
+geprüfte Start mit veralteten Messwerten liefert weiterhin die erwartete HTTP-409-
+Antwort mit verständlicher Fehlermeldung. Keine reale Installation oder Betätigung.
 
 Die Tests prüfen Schütz-Aus/Unbekannt, Wiederaufnahme, fehlenden Schaltvollzug,
 Trennung von optionaler Heizleistung, Erinnerung und unveränderte Rücksetzregeln.
