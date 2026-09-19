@@ -25,8 +25,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.config_flow import SaunaConfigFlow
         self.module = __import__("custom_components.ha_sauna.config_flow", fromlist=["*"])
         self.inputs = {r.key: f"{r.domains[0]}.test_{r.key}" for r in ROLES if not r.optional}
-        self.values = {d.key: 2.5 for d in DEFINITIONS}
-        self.values["heating_reduction_minutes"] = 0.5
+        self.values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS}
+        self.values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": r.device_class, "unit_of_measurement": r.unit,

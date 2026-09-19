@@ -16,7 +16,8 @@ class Decision:
 
 def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
              temperature: float | None, enabled: bool, gang: bool,
-             cooling: bool, after_run: bool, protection: tuple[str, ...] = ()):
+             cooling: bool, after_run: bool, protection: tuple[str, ...] = (),
+             heating_since: datetime | None = None):
     values = parameters.values
     def result(demand, reason, cooldown=state.cooldown_until):
         return replace(state, demand=demand, cooldown_until=cooldown), Decision(now, demand, reason)
@@ -39,6 +40,9 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
         return result(False, "forced_cooling")
     if after_run:
         return result(False, "after_run")
+    if (state.demand and heating_since is not None
+            and now < heating_since + timedelta(seconds=parameters.seconds("minimum_heating_minutes"))):
+        return result(True, "minimum_heating")
     readiness_target = target + values["readiness_offset_c"]
     if temperature >= readiness_target:
         cooldown = now + timedelta(seconds=parameters.seconds("thermostat_cooldown_minutes")) if state.demand else state.cooldown_until

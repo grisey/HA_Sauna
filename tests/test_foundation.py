@@ -20,8 +20,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({**{definition.key: 2.5 for definition in DEFINITIONS},
-                       "heating_reduction_minutes": 0.5})
+    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS},
+                       "heating_minutes": 2.5, "heating_reduction_minutes": 0.5})
 
 
 def bindings():

@@ -32,9 +32,9 @@ def parameter_schema() -> vol.Schema:
         (vol.Optional if definition.optional else vol.Required)(
             definition.key, default=definition.default if definition.default is not None else vol.UNDEFINED,
         ): selector.NumberSelector({
-            "min": 0,
+            "min": definition.minimum if definition.minimum is not None else 0,
             "max": definition.maximum,
-            "step": "any",
+            "step": 1 if definition.integer else "any",
             "mode": selector.NumberSelectorMode.BOX,
             "unit_of_measurement": definition.unit,
         })

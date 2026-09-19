@@ -23,6 +23,8 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         self._attr_name = definition.label
         self._attr_native_unit_of_measurement = definition.unit
         self._attr_native_max_value = definition.maximum
+        self._attr_native_min_value = definition.minimum if definition.minimum is not None else 0
+        self._attr_native_step = 1 if definition.integer else 0.01
 
     @property
     def native_value(self):

@@ -59,3 +59,23 @@ class ThermostatTests(unittest.TestCase):
         for field in ("after_run", "cooling"):
             _, decision = self.decide(**{field: True})
             self.assertFalse(decision.heat)
+
+    def test_minimum_heating_defers_regular_stop_then_starts_cooldown(self):
+        state = ThermostatState(demand=True)
+        state, decision = self.decide(state, now=T0 + timedelta(seconds=599),
+            heating_since=T0, temperature=90)
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "minimum_heating")
+        state, decision = self.decide(state, now=T0 + timedelta(seconds=600),
+            heating_since=T0, temperature=90)
+        self.assertFalse(decision.heat)
+        self.assertEqual(state.cooldown_until, T0 + timedelta(seconds=660))
+
+    def test_minimum_heating_never_delays_cooling_after_run_off_or_safety(self):
+        for args in ({"cooling": True}, {"after_run": True}, {"enabled": False},
+                     {"temperature": 110}, {"temperature": None},
+                     {"protection": ("missing_feedback",)}):
+            with self.subTest(args=args):
+                _, decision = self.decide(ThermostatState(demand=True),
+                    now=T0 + timedelta(seconds=60), heating_since=T0, **args)
+                self.assertFalse(decision.heat)

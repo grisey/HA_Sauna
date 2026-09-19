@@ -53,6 +53,12 @@ class Controller:
         return None if target is None else target + self.parameters.values["readiness_offset_c"]
 
     @property
+    def mechanical_timer_ends_at(self):
+        if self._session is None:
+            return None
+        return self._session.started_at + timedelta(seconds=self.parameters.seconds("mechanical_timer_minutes"))
+
+    @property
     def phase(self) -> str:
         session = self._session
         if session is None or not session.operation_enabled:
@@ -242,7 +248,9 @@ class Controller:
             state, decision = thermostat.evaluate(session.thermostat, now=at, parameters=self.parameters,
                 temperature=self.temperature, enabled=session.operation_enabled, gang=session.timeline.active is not None,
                 cooling=session.cooling is not None and session.cooling.started_at is not None,
-                after_run=session.after_run is not None, protection=tuple(sorted(self.protection)))
+                after_run=session.after_run is not None, protection=tuple(sorted(self.protection)),
+                heating_since=(session.heating.intervals[-1].started_at
+                    if session.heating.reported_heating is True else None))
             self._session = replace(session, thermostat=state)
         if self.last_decision is None or (decision.heat, decision.reason) != (self.last_decision.heat, self.last_decision.reason):
             self.decisions.append(decision)

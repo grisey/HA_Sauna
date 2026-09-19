@@ -107,8 +107,8 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Test", **bindings})
         from homeassistant.data_entry_flow import InvalidData
         from custom_components.ha_sauna.core.parameters import DEFINITIONS
-        values = {d.key: 2.5 for d in DEFINITIONS}
-        values["heating_reduction_minutes"] = 0.5
+        values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS}
+        values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
         with self.assertRaises(InvalidData):
             await self.hass.config_entries.flow.async_configure(flow["flow_id"], {**values, "heating_minutes": -1})
         self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [])

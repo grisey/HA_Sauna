@@ -229,3 +229,22 @@ werden nicht stillschweigend durch angenommene Standardwerte ersetzt.
 Die Besprechung bleibt bei einem Thema. Bereits geklärte Gang-, Heizzeit- und
 Sessionregeln werden nicht erneut als Varianten angeboten. Dokumentation,
 Implementierung und Messbefund bleiben getrennt gekennzeichnet.
+
+## Weitere Präzisierungen am 19.09.2026
+
+Thermostat-Cooldown nach Erreichen des Bereitschaftsziels: Standard 5 Minuten.
+Mindestheizzeit nach Wiedereinschalten: Standard 10 Minuten, ab tatsächlichem
+Heizbeginn. Sie verzögert reguläre Thermostatabschaltung, niemals Nachlauf,
+Zwangskühlung oder ausdrückliches Ausschalten. Beide Werte sind einstellbar.
+
+Der mechanische Ofentimer wird zu Beginn auf vier Stunden gestellt und trennt
+bei Ablauf tatsächlich die Stromversorgung. Die Integration führt deshalb eine
+separate geschätzte Frist ab Sessionbeginn (Standard 240 Minuten), unabhängig
+von tatsächlicher Heizzeit. Kurzes Aus/Ein setzt sie nicht zurück. Vorwarnung
+ist separat einstellbar; die Schätzung beweist weder Timerstellung noch eine
+bereits erfolgte Stromtrennung. Die Aktorrückmeldung bleibt maßgeblich.
+
+Technische Schutzabschaltungen sollen erst bei klaren dauerhaften Ausfällen
+zentraler Regelungsteile erfolgen. Der Nutzer möchte auch die bisher sofortige
+Temperaturabschaltung ändern; die genaue Ersatzregel ist noch in Klärung.
+Bis dahin keine Live-Freigabe aus den bisherigen Grenzwerttests ableiten.

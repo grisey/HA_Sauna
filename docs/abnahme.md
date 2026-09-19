@@ -105,3 +105,32 @@ nicht aktiviert (ein Skip), Prozess beendet mit Exit 0. Kein HA-Import und
 keine nativen HA-Abhängigkeiten geladen. HA-Nachweis ausschließlich Linux-CI;
 deren Ergebnis wird erst nach tatsächlichem Abschluss ergänzt.
 Noch kein Aktorpfad, Messdetektor, Archiv oder Browsernachweis in diesem Paket.
+
+Paket B1: Commit `5f9cf332e71fb11a41fdc19b285cde7e9a9fb55b`,
+[CI 35444853634](https://github.com/grisey/HA_Sauna/actions/runs/35444853634): alle Jobs success.
+Paket B2: Commit `39530a5ef42aff6609e808de56b7457029ae2da8`,
+[CI 35445966589](https://github.com/grisey/HA_Sauna/actions/runs/35445966589): alle Jobs success.
+
+## Paket C: kausale Erkennung und Expertenparameter
+
+`core/detector.py` verwendet nur empfangene Daten und begrenzte Arbeitsfenster,
+getrennt nach funktionaler Sensorrolle. Zeitstempelprüfung, Gültigkeitsfrist,
+fehlende/plausible Werte, dynamischer Ausfall, Wiederkehr und Quellenwechsel
+sind synthetisch geprüft. Kein Höhenoffset, keine Mittelung beider Positionen.
+Ein Quellenwechsel verwirft die zugehörige Historie und alte Haltebelege.
+
+`test_stream_replay.py` wurde lokal mit dem privaten Export ausgeführt:
+**bestanden, Exit 0**. Jeder Rasterpunkt der Türlage, Personenpfade und
+Aufgussbedingung sowie sämtliche Tür-/Lüftungsereignisse stimmen in allen drei
+Sensormodi mit der unveränderten Referenz überein. 15 Öffnungsepisoden je Modus.
+Der Vergleich umfasst die vier bekannten Gänge und sämtliche Vergleichszeiten;
+dieselbe Kalibrierung bleibt keine unabhängige Feldvalidierung.
+Nur NumPy/Pandas für den Referenzcode, keine lokalen HA-Imports/-Prozesse.
+
+Alle numerischen Detektorwerte stammen aus den zentralen options. Experten-
+Standardwerte entsprechen exakt `candidate/parameter.json` (separater Test).
+Das Ein-Sekunden-Grundraster ist eine feste Algorithmusvoraussetzung und wird
+als solche validiert. Die eingefrorenen Kandidatendateien bleiben unverändert.
+Zusätzliche Mindestheizzeitprüfungen belegen regulären Stop erst nach Ablauf,
+aber sofortigen Vorrang von Nachlauf/Kühlung/Aus und bisherigen Schutzregeln.
+Die zuletzt gewünschte neue Temperatur-Schutzregel ist noch nicht festgelegt.
