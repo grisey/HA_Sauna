@@ -16,7 +16,12 @@ Die HA-Regressionen prüfen die kurze Messlücke nach bereits abgelaufener
 Mindestheizzeit, die verriegelte Abschaltung nach anhaltendem Ausfall,
 ausdrückliches Ausschalten mit anschließend blockiertem Neustart und eine
 Sollwerterhöhung bei fehlender Temperatur und zuvor ausgeschaltetem Ofen.
-Der Nachweis dieser Gerätepfade folgt aus der Linux-CI. Keine reale Installation
+Geprüfter Code:
+[`16b5f23`](https://github.com/grisey/HA_Sauna/commit/16b5f23fe8aa52f321db381d91ac7a957b64a0b2).
+[CI 35477051428](https://github.com/grisey/HA_Sauna/actions/runs/35477051428)
+und der zugehörige PR-Lauf sind vollständig erfolgreich: **177 Kerntests
+bestanden, 2 private Replay-Skips; 11 HA-API-Smokes; 36 echte HA-Integrationstests;
+4 Browserabläufe**. Alle vier neuen Gerätepfade bestehen. Keine reale Installation
 oder Gerätebetätigung durch den Entwicklungszugriff.
 
 ## Zustandsabhängige Erkennung vom 20.09.2026
