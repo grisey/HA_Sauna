@@ -118,3 +118,30 @@ Gerätezuordnungen lassen sich unter Geräte & Dienste → HA Sauna → Konfigur
 Shelly-Eingang als Bedienquelle auswählen, die Art auf Taster stellen und den
 wirklichen Schaltausgang getrennt als Heizschütz zuordnen. Der Shelly-Eingang muss
 auf Geräteebene entkoppelt bleiben; die Integration ändert diese Geräteeinstellung nicht.
+
+### Start abgewiesen oder weiterhin die alte Oberfläche sichtbar
+
+Nach einem Update HA neu starten und die Oberfläche in der App vollständig neu
+laden. Eine bereits geöffnete Seite kann noch den zuvor geladenen JavaScript-Code
+verwenden. Der aktuelle Reiter heißt **Übersicht**, nicht **Normal**. Die Integration
+vergibt anhand des Dateiinhalts eine neue Moduladresse, damit die nächste geladene
+Seite nach einem Update die passende Oberfläche erhält.
+
+Eine Startantwort mit HTTP 409 bedeutet eine abgewiesene Betriebsanforderung.
+Die Oberfläche zeigt die konkrete Begründung der Integration an und behält diese
+auch bei den automatischen Messwertaktualisierungen. Bei noch fehlenden Werten
+unter **Details → Einstellungen & Export → Messwerte und Störungsüberwachung**
+folgende Felder ergänzen und speichern:
+
+- **Höchstalter eines Messwerts**: wie lange nach der letzten Meldung ein
+  Sensorwert für die Regelung gültig bleibt; passend zum realen Meldeabstand.
+- **Wartezeit auf die Schützrückmeldung**: Frist für die Bestätigung eines
+  Schaltbefehls durch die zurückgemeldete Schützstellung.
+- **Dauer bis zur bestätigten Störung**: wie lange ein zentraler Fehler
+  durchgehend bestehen muss, bevor die Schutzabschaltung verriegelt.
+
+Diese drei Felder haben bislang keinen vereinbarten Standardwert. Ein fehlender
+Wert bedeutet unvollständige Einrichtung. Das Update ergänzt keine erfundenen
+Fristen und hebt die Startsperre nicht auf. Nach dem Speichern prüft die
+Integration die Voraussetzungen erneut; bei gültigen Messwerten und Rückmeldungen
+wird die Starttaste freigegeben.

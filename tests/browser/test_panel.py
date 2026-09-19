@@ -1,6 +1,7 @@
 """Chromium inside the real HA frontend; no mock hass object or fake API."""
 import base64
 from datetime import timedelta
+from hashlib import sha256
 import io
 import json
 from pathlib import Path
@@ -249,3 +250,46 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         self.assertEqual(self.errors,[])
         self.assertEqual(self.ws_errors,[])
+
+    async def test_rejected_start_explains_reason_and_settings_repair_it(self):
+        panel_file = Path(__file__).resolve().parents[2] / "custom_components/ha_sauna/panel.js"
+        digest = sha256(panel_file.read_bytes()).hexdigest()[:16]
+        loaded = await self.page.evaluate("performance.getEntriesByType('resource').map(r=>r.name)")
+        self.assertIn(self.url + "/ha_sauna/panel.js?v=" + digest, loaded)
+
+        # A different client changes configuration after the last UI refresh.
+        # Keep that genuine stale display and click its still-enabled button:
+        # the real HA API, not a route/mock, must reject the start with HTTP 409.
+        await self.panel.evaluate("p=>clearInterval(p.timer)")
+        values = dict(self.entry.options["parameters"])
+        for key in ("sensor_timeout_seconds", "feedback_timeout_seconds", "fault_confirmation_seconds"):
+            values.pop(key)
+        self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options, "parameters":values})
+        await self.hass.async_block_till_done()
+        async with self.page.expect_response(lambda r: r.url.endswith("/control") and r.request.method == "POST") as response:
+            await self.panel.locator('#current [data-action="operation"]').click()
+        self.assertEqual((await response.value).status, 409)
+        message = self.panel.locator('#message')
+        for label in ("Start nicht möglich", "Höchstalter eines Messwerts", "Wartezeit auf die Schützrückmeldung", "Dauer bis zur bestätigten Störung"):
+            await expect(message).to_contain_text(label)
+        self.assertNotIn("Response error", await message.inner_text())
+        self.assertIsNone(self.entry.runtime_data.session)
+        self.assertNotIn(True, self.heater.calls)
+
+        await self.panel.evaluate("p=>p.refresh()")
+        await expect(message).to_contain_text("Start nicht möglich")
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_disabled()
+        await self.panel.locator('#current [data-action="configure"]').click()
+        for key, value in {"sensor_timeout_seconds":"30", "feedback_timeout_seconds":"2", "fault_confirmation_seconds":"5"}.items():
+            await self.panel.locator(f'input[name="{key}"]').fill(value)
+        await self.panel.locator('#settings button[type="submit"]').click()
+        await expect(self.panel.locator('#message')).to_be_empty()
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_enabled(timeout=15000)
+        await self.panel.locator('[data-action="normal"]').click()
+        await self.panel.locator('#current [data-action="operation"]').click()
+        await expect(self.panel.locator('#current [data-mechanical-timer="running"]')).to_be_visible()
+        self.assertTrue(self.entry.runtime_data.session.operation_enabled)
+        self.assertIn(True, self.heater.calls)
+        self.assertEqual(self.errors, [])
+        self.assertEqual(await self.page.evaluate("window.testErrors"), [])
+        self.assertEqual(self.ws_errors, [])
