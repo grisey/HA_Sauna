@@ -36,6 +36,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.browser = await self.playwright.chromium.launch()
         self.context = await self.browser.new_context(viewport={"width": 1440, "height": 1080}, color_scheme="dark", accept_downloads=True)
         await self.context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+        await self.context.add_init_script("window.testErrors=[];addEventListener('unhandledrejection',e=>window.testErrors.push({code:e.reason?.code,message:e.reason?.message,stack:e.reason?.stack}));")
         self.page = await self.context.new_page()
         self.errors = []
         self.console_errors = []
@@ -45,6 +46,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.page.on("console", lambda e: self.console_errors.append(e.text) if e.type == "error" else None)
         self.page.on("requestfailed", lambda r: self.network_errors.append((r.url.split("?")[0], r.failure)))
         self.page.on("response", lambda r: self.network_errors.append((r.url.split("?")[0], r.status)) if r.status >= 400 else None)
+        self.ws_errors = []
+        def websocket(socket):
+            def received(data):
+                try:
+                    message = json.loads(data)
+                    if message.get("success") is False:
+                        self.ws_errors.append(message.get("error"))
+                except (ValueError, TypeError):
+                    pass
+            socket.on("framereceived", received)
+        self.page.on("websocket", websocket)
         await self.page.goto(self.url + "/ha-sauna")
         self.panel = self.page.locator("ha-sauna-panel")
         await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
@@ -59,6 +71,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             print("BROWSER_CONSOLE", self.console_errors[-20:])
             print("BROWSER_NETWORK", self.network_errors[-20:])
             print("BROWSER_SCRIPTS", await self.page.locator("script[src]").evaluate_all("els=>els.map(e=>e.src)"))
+            print("BROWSER_WS_ERRORS", self.ws_errors)
+            print("BROWSER_REJECTIONS", await self.page.evaluate("window.testErrors"))
+            print("BROWSER_HA_STATE", await self.page.evaluate("()=>{const h=document.querySelector('home-assistant')?.hass;return h?Object.fromEntries(['connected','states','config','themes','panels','user'].map(k=>[k,h[k]!=null])):{element:!!document.querySelector('home-assistant'),defined:!!customElements.get('home-assistant')}}"))
             await self.browser.close()
             await self.playwright.stop()
             self.browser = None
