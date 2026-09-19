@@ -1,5 +1,6 @@
 """Chromium inside the real HA frontend; no mock hass object or fake API."""
 import base64
+import asyncio
 from datetime import timedelta
 import io
 import json
@@ -16,6 +17,7 @@ from homeassistant.components.onboarding import OnboardingStorage
 from homeassistant.components.onboarding.const import STEPS
 from homeassistant.setup import async_setup_component
 from homeassistant.helpers.service import async_get_all_descriptions
+from homeassistant.helpers import recorder as recorder_helper
 from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -33,6 +35,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         if http_store.pending:
             await http_store.async_promote_pending()
         await OnboardingStorage(self.hass, 4, "onboarding", private=True).async_save({"done": STEPS})
+        # HA's shell queries recorder/info even on a custom panel. Use the real
+        # bootstrap initialization and a real isolated database; never suppress
+        # an unknown-command rejection or replace the endpoint with a stub.
+        recorder_helper.async_initialize_recorder(self.hass)
+        self.assertTrue(await async_setup_component(self.hass, "recorder", {"recorder": {}}))
+        await asyncio.wait_for(recorder_helper.get_instance(self.hass).async_recorder_ready.wait(), 30)
         for component in ("labs", "brands"):
             self.assertTrue(await async_setup_component(self.hass, component, {}))
         self.assertTrue(await async_setup_component(self.hass, "frontend", {}))
@@ -172,4 +180,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         await self.page.set_viewport_size({"width": 390, "height": 844})
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
+        recorder = await self.page.evaluate("()=>document.querySelector('home-assistant').hass.callWS({type:'recorder/info'})")
+        self.assertTrue(recorder["thread_running"])
+        self.assertTrue(recorder["recording"])
         self.assertEqual(self.errors, [])
+        self.assertEqual(await self.page.evaluate("window.testErrors"), [])
+        self.assertEqual(self.ws_errors, [])

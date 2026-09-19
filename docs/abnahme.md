@@ -11,6 +11,14 @@ Geprüfter Implementierungsstand:
 ist tatsächlich abgeschlossen: **core, ha-api, ha-integration und browser success**.
 Dieser Bericht ersetzt die früheren Zwischenberichte zu einzelnen Paketen.
 
+Ein zusätzlicher Lauf nach Übernahme in `main` zeigte einen Fehler der
+Browser-Testumgebung: Der HA-Rahmen fragte `recorder/info` ab, obwohl der Recorder
+in dieser isolierten Instanz nicht gestartet war. Die Browserumgebung initialisiert
+jetzt auch den echten Recorder samt eigener temporärer Datenbank und prüft diesen
+WebSocket-Aufruf ausdrücklich. Fehler-Assertions bleiben erhalten und prüfen
+zusätzlich abgewiesene Promises und WebSocket-Antworten. Der Produktivcode ist
+durch diese Korrektur unverändert.
+
 ## Ausgeführte Prüfungen
 
 | Prüfung | Ergebnis | Aussage und Grenze |
