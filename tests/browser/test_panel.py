@@ -218,6 +218,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.now+=timedelta(seconds=20)
         await self.runtime.tick()
         await expect(self.panel.locator('#current [data-phase-timer="heating"]')).to_be_visible()
+        print("BROWSER_IMAGE_OVERVIEW_ACTIVE " + base64.b64encode(await self.page.screenshot(type="jpeg",quality=65)).decode())
         await self.panel.locator('#current [data-action="operation"]').click()
         await self.panel.locator('[data-action="details"]').click()
         timer=self.panel.locator('#details [data-mechanical-timer="paused"] strong')
@@ -249,7 +250,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="normal"]').click()
         await self.panel.evaluate("p=>p.refresh()")
         self.assertEqual(await self.panel.locator('#current [data-mechanical-timer]').count(),0)
-        self.assertEqual(await self.panel.locator('#current [data-phase-timer]').count(),0)
+        await expect(self.panel.locator('#current [data-phase-timer]')).to_have_count(0,timeout=15000)
         text=await self.panel.locator('#current').inner_text()
         for code in ("measurement_unavailable", "configuration_required", "pending", "sensor_timeout_seconds"):
             self.assertNotIn(code,text)

@@ -124,6 +124,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         runtime=self.entry.runtime_data
         await runtime.set_operation(True)
         session_id=runtime.session.session_id
+        await runtime.tick()  # Erste Messauswertung setzt den belegten Türkontext.
         now=runtime._clock()
         await runtime.receive(Event("infusion",session_id,Kind.INFUSION,now,now))
         gang=runtime.session.timeline.active

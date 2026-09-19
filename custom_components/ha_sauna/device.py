@@ -320,10 +320,12 @@ class HADevice:
             phase = self.runtime.session.cooling if cooling else self.runtime.session.after_run
             self.runtime.log.change("light_dim", (dim, phase.started_at), logging.INFO,
                 "Saunalicht für %s auf %s %% dimmen.", "Zwangskühlung" if cooling else "Nachlauf", brightness)
+            # Pro Phasenwechsel einmal versuchen. Ein Fehler darf weder jeden
+            # Messzyklus blockieren noch den ursprünglichen Lichtzustand ersetzen.
+            self.light_active = dim
             try:
                 await self.light_call("turn_on", {
                     "entity_id": self.bindings["light"], "brightness_pct": brightness})
-                self.light_active = dim
                 self.faults.pop("cooling_light", None)
                 self.faults.pop("after_run_light", None)
             except Exception:
