@@ -56,10 +56,13 @@ class ThermostatTests(unittest.TestCase):
         self.assertFalse(decision.heat)
         self.assertEqual(decision.reason, "upper_temperature_unavailable")
 
-    def test_after_run_and_cooling_keep_heater_off_outside_gang(self):
+    def test_started_cooling_and_after_run_override_even_inconsistent_gang_state(self):
         for field in ("after_run", "cooling"):
-            _, decision = self.decide(**{field: True})
-            self.assertFalse(decision.heat)
+            for gang in (False, True):
+                with self.subTest(field=field, gang=gang):
+                    _, decision = self.decide(gang=gang, **{field: True})
+                    self.assertFalse(decision.heat)
+                    self.assertEqual(decision.reason, "forced_cooling" if field == "cooling" else "after_run")
 
     def test_minimum_heating_defers_regular_stop_then_starts_cooldown(self):
         state = ThermostatState(demand=True)
