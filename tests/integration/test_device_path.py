@@ -268,6 +268,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             "session_light_minutes": .2, "session_light_brightness_percent": 64}, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
+        self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
         await self.runtime.set_operation(False)

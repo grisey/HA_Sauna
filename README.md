@@ -36,6 +36,10 @@ Alle erforderlichen Einstellungen haben veränderbare [Standardwerte](docs/param
 
 Das Saunalicht schaltet bei Betriebsstart standardmäßig auf **35 %**, im Nachlauf auf **15 %** und während Zwangskühlung auf **5 %**. Danach kehrt die vorherige Helligkeit zurück. Alle drei Werte sind einstellbar.
 
+Nach dem endgültigen Sitzungsende bleibt das Licht standardmäßig noch **10 Minuten
+bei 50 %** an und wird anschließend ausgeschaltet. Dauer und Helligkeit sind
+einstellbar; eine neue Sitzung beendet den alten Lichtnachlauf.
+
 In der Seitenleiste erscheint **Sauna** mit zwei Hauptansichten:
 
 - **Übersicht:** einfache Steuerung mit einer passenden Zeitanzeige zur aktuellen Phase; eigenes Blatt **Verlauf und Archiv**.

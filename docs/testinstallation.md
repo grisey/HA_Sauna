@@ -57,7 +57,7 @@ Diagnose und die Zählung fällt auf die verbleibende Rückmeldung zurück.
 
 Alle notwendigen Einstellungen besitzen [Standardwerte](parameter.md). Besonders prüfen: Solltemperatur 80 °C, Messwertalter 180 Sekunden, Schützrückmeldung 10 Sekunden, Störungsbestätigung 60 Sekunden; Sitzungsende nach 15 Minuten Betrieb-Aus, Aufgussbestätigung 12 Minuten, Heizzeitrücksetzung nach 10 Minuten Ofen-Aus und Nachlauf 8 Minuten. Gespeicherte örtliche Werte werden beim Update nicht überschrieben.
 
-Die Lichthelligkeiten sind 35 % beim Einschalten, 15 % im Nachlauf und 5 % bei Zwangskühlung. Optional bleiben Endtemperatur der Steigerung und Timer-Vorwarnzeit.
+Die Lichthelligkeiten sind 35 % beim Einschalten, 15 % im Nachlauf und 5 % bei Zwangskühlung. Nach dem endgültigen Sitzungsende folgen 10 Minuten Lichtnachlauf bei 50 %, dann Licht aus. Alle Lichtwerte sind einstellbar. Optional bleiben Endtemperatur der Steigerung und Timer-Vorwarnzeit.
 
 Die Ofenleistung für die Energieschätzung steht standardmäßig auf **4,5 kW**.
 Bei vorhandenem Leistungsmesser wird stattdessen dessen Verlauf integriert.
