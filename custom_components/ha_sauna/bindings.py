@@ -72,7 +72,7 @@ def validate_metadata(bindings: Bindings, attributes: Mapping[str, Mapping | Non
 
     Die Einrichtung braucht Metadaten der ausgewählten Entitäten. Eine temporäre
     Nichtverfügbarkeit einer schon gespeicherten Quelle wird NICHT durch eine neue
-    Zuordnung ersetzt. Laufende Ausfalldiagnose folgt mit dem Messadapter.
+    Zuordnung ersetzt. Laufende Ausfalldiagnose übernimmt der Messadapter.
     """
     for key, entity_id in bindings.values.items():
         attrs = attributes.get(entity_id)

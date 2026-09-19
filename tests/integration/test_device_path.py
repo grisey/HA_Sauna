@@ -219,17 +219,24 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         await self.time(45)
         self.assertIn((self.runtime.session.session_id, "warning"), self.runtime.device.notified)
-        self.now = self.base + timedelta(seconds=60)
+        # Ablauf der Schätzung allein schaltet nichts und verändert keine Diagnose.
+        await self.time(60)
+        self.assertTrue(self.heater.is_on)
+        self.assertTrue(self.runtime.controller.feedback)
+        self.assertEqual(self.runtime.controller.protection, set())
+        self.now = self.base + timedelta(seconds=61)
         self.heater.powered = False
         self.hass.states.async_set("binary_sensor.actual_heating", "off")
         await self.hass.async_block_till_done()
         elapsed = self.runtime.session.heating.elapsed_seconds
+        self.assertTrue(self.heater.is_on)  # Relay command is not physical heating.
         await self.time(70)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, elapsed)
-        self.assertTrue(self.heater.is_on)  # Relay command is not physical heating.
         self.assertFalse(self.runtime.controller.feedback)
-        self.assertNotIn("heater_feedback_mismatch", self.runtime.controller.protection)
-        self.assertIn("mechanical_timer", self.runtime.device.faults)
+        # Anhaltend widersprüchliche reale Rückmeldung verwendet dieselben
+        # technischen Ausfallregeln vor und nach der geschätzten Timerfrist.
+        self.assertIn("heater_feedback_mismatch", self.runtime.controller.protection)
+        self.assertFalse(self.heater.is_on)
         self.assertEqual(self.runtime.device.notified, {(self.runtime.session.session_id, "warning"),
             (self.runtime.session.session_id, "expired")})
         import asyncio

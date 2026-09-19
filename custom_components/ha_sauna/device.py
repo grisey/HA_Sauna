@@ -120,17 +120,12 @@ class HADevice:
         if feedback is None and "heater_feedback" in self.bindings:
             problems.add("heater_feedback_unavailable")
         ack = self.values.get("feedback_timeout_seconds")
-        self.faults.pop("mechanical_timer", None)
         if (self.command is not None and self.command_at is not None and ack is not None
                 and (now - self.command_at).total_seconds() >= ack
                 and feedback is not self.command):
-            # Der mechanische Timer ist nur eine Schätzung: Ausbleibendes Heizen
-            # wird sichtbar, aber niemals als Heizzeit gebucht.
-            timer_end = controller.mechanical_timer_ends_at
-            if self.command and feedback is False and timer_end is not None and now >= timer_end:
-                self.faults["mechanical_timer"] = "estimated_timer_end_and_no_heating"
-            else:
-                problems.add("heater_feedback_mismatch")
+            # Nur tatsächlicher Befehl und Rückmeldung bestimmen diese Diagnose.
+            # Die geschätzte mechanische Timerstellung hat keinerlei Steuerwirkung.
+            problems.add("heater_feedback_mismatch")
         if self.command_error:
             problems.add("heater_service_unavailable")
         for key in tuple(self.fault_since):
@@ -214,7 +209,7 @@ class HADevice:
             key = (self.runtime.session.session_id, phase)
             if phase and key not in self.notified:
                 self.notified.add(key)
-                message = ("Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen."
+                message = ("Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen. Bitte den Drehschalter erneut einstellen."
                     if phase == "expired" else "Der mechanische Ofentimer erreicht voraussichtlich bald sein Ende.")
                 message += " Seine tatsächliche Stellung wird nicht gemessen; die Heizrückmeldung bleibt maßgeblich."
                 persistent_notification.async_create(self.hass, message,

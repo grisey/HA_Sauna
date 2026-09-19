@@ -44,8 +44,8 @@ class Configuration:
 class SaunaRuntime:
     """Serialisiert Kernzugriffe; Timer/Listener können kontrolliert abgemeldet werden.
 
-    In Paket 1 werden keine Mess-/Tasterlistener, Servicehandler oder Heizaktionen
-    registriert. Die öffentlichen Methoden dienen den Kern- und Adaptertests.
+    Messungen, Bedienung und Timer erreichen denselben serialisierten Kern.
+    Gerätebefehle führt ausschließlich der Geräteadapter aus.
     """
 
     def __init__(self, configuration: Configuration, clock: Callable[[], datetime] | None = None) -> None:

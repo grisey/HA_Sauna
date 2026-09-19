@@ -50,9 +50,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         def websocket(socket):
             def received(data):
                 try:
-                    message = json.loads(data)
-                    if message.get("success") is False:
-                        self.ws_errors.append(message.get("error"))
+                    messages = json.loads(data)
+                    for message in messages if isinstance(messages, list) else [messages]:
+                        if isinstance(message, dict) and message.get("success") is False:
+                            self.ws_errors.append(message.get("error"))
                 except (ValueError, TypeError):
                     pass
             socket.on("framereceived", received)
@@ -70,9 +71,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             print("BROWSER_ERRORS", self.errors)
             print("BROWSER_CONSOLE", self.console_errors[-20:])
             print("BROWSER_NETWORK", self.network_errors[-20:])
-            print("BROWSER_SCRIPTS", await self.page.locator("script[src]").evaluate_all("els=>els.map(e=>e.src)"))
             print("BROWSER_WS_ERRORS", self.ws_errors)
             print("BROWSER_REJECTIONS", await self.page.evaluate("window.testErrors"))
+            print("BROWSER_SCRIPTS", await self.page.locator("script[src]").evaluate_all("els=>els.map(e=>e.src)"))
             print("BROWSER_HA_STATE", await self.page.evaluate("()=>{const h=document.querySelector('home-assistant')?.hass;return h?Object.fromEntries(['connected','states','config','themes','panels','user'].map(k=>[k,h[k]!=null])):{element:!!document.querySelector('home-assistant'),defined:!!customElements.get('home-assistant')}}"))
             await self.browser.close()
             await self.playwright.stop()

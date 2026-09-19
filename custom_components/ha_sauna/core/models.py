@@ -1,4 +1,4 @@
-"""Session-eigene Laufzeitdaten und Schnittstellen des ersten Umsetzungspakets."""
+"""Session-eigene Laufzeitdaten und unveränderte Messherkunft."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -23,8 +23,8 @@ class Quantity(StrEnum):
 class Measurement:
     """Normalisierter Eingang; Originalwert und Herkunft bleiben daneben erhalten.
 
-    Noch kein Live-Messadapter. Sekundenraster oder wiederverwendete Werte dürfen
-    später nicht als weitere Originalmessungen an diese Schnittstelle gelangen.
+    Sekundenraster oder wiederverwendete Werte werden getrennt von tatsächlichen
+    Originalmessungen geführt und archiviert.
     """
 
     position: Position
@@ -75,7 +75,7 @@ class HeatingInterval:
 
 @dataclass(frozen=True)
 class HeatingTime:
-    """Anfangsdaten, noch keine Heizzeit- oder Kühlungsberechnung."""
+    """Tatsächlich rückgemeldete Heizintervalle und lokale Zeitführung."""
 
     elapsed_seconds: float = 0.0
     reported_heating: bool | None = None
