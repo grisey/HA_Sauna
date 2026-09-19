@@ -4,11 +4,13 @@ from dataclasses import asdict
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView, KEY_HASS
 from .archive import plain
-from .core.parameters import DEFINITIONS, Parameters, ParameterError
+from .core.parameters import DEFINITIONS, ParameterError, LIVE_TEMPERATURE_KEYS
+from .core.display import phase_timer
 from .core.detection_parameters import SPECS
 from .const import DOMAIN
 from .presentation import issues, decision_message, fault_message, parameter_error
 from .log import LEVELS
+from .settings import async_set_parameters, ConfigurationLocked
 
 
 def runtime_for(hass, entry_id):
@@ -47,7 +49,8 @@ class StateView(HomeAssistantView):
             return self.json(plain({"now": now, "phase": controller.phase,
                 "session": session, "configuration": runtime.configuration.as_options(),
                 "last_session": controller.completed_sessions[-1] if controller.completed_sessions else None,
-                "parameters": [{**asdict(d), "expert": d.key in experts} for d in DEFINITIONS],
+                "parameters": [{**asdict(d), "expert": d.key in experts,
+                    "live_editable": d.key in LIVE_TEMPERATURE_KEYS} for d in DEFINITIONS],
                 "configuration_locked": session is not None,
                 "operation_enabled": bool(session and session.operation_enabled),
                 "heating_feedback": controller.feedback,
@@ -60,6 +63,8 @@ class StateView(HomeAssistantView):
                 "cooling_wait_until": controller.cooling_wait_until,
                 "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
                 "mechanical_timer": controller.mechanical_timer_status,
+                "phase_timer": phase_timer(controller, now),
+                "light_after_run": controller.light_after_run,
                 "start_errors": device.start_errors() if device else [],
                 "issues": issues(runtime),
                 "decision_text": decision_message(controller.last_decision),
@@ -101,25 +106,29 @@ class ParametersView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/parameters"
     name = "api:ha_sauna:parameters"
     requires_auth = True
+    partial = False
 
     async def post(self, request, entry_id):
         if not request["hass_user"].is_admin:
             raise web.HTTPForbidden()
         hass = request.app[KEY_HASS]
-        runtime = runtime_for(hass, entry_id)
+        runtime_for(hass, entry_id)
         body = await request.json()
         try:
-            parameters = Parameters(body)
+            if self.partial and (not isinstance(body, dict) or not body or set(body) - LIVE_TEMPERATURE_KEYS):
+                raise ParameterError("base", "invalid_parameters")
+            parameters = await async_set_parameters(hass, hass.config_entries.async_get_entry(entry_id), body, partial=self.partial)
         except ParameterError as error:
             return self.json({"error": parameter_error(error)}, status_code=400)
-        async with runtime._lock:
-            if runtime.session is not None:
-                return self.json({"error": "Einstellungen können erst nach Ende der Saunasitzung geändert werden."}, status_code=409)
-            runtime.check_configuration_change()
-            entry = hass.config_entries.async_get_entry(entry_id)
-            hass.config_entries.async_update_entry(entry, options={
-                **entry.options, "parameters": parameters.as_dict()})
-        return self.json({"success": True})
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True, "parameters": parameters})
+
+
+class TemperatureView(ParametersView):
+    url = "/api/ha_sauna/{entry_id}/temperature"
+    name = "api:ha_sauna:temperature"
+    partial = True
 
 
 class LoggingView(HomeAssistantView):
@@ -204,5 +213,6 @@ def register(hass):
     hass.http.register_view(StateView)
     hass.http.register_view(ControlView)
     hass.http.register_view(ParametersView)
+    hass.http.register_view(TemperatureView)
     hass.http.register_view(LoggingView)
     data["api_registered"] = True

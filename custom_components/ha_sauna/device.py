@@ -33,6 +33,8 @@ class HADevice:
         self.command_error = False
         self.light_before = None
         self.light_active = False
+        self.light_operation_enabled = False
+        self.session_light_command = None
         self.notified = set()
         self.heating_observation = {"source": "unknown", "heating": None, "power_w": None}
         self._saved_heating_observation = None
@@ -307,24 +309,54 @@ class HADevice:
 
     async def apply(self, now):
         await self.send(self.runtime.controller.last_decision.heat, now)
+        await self.apply_light(now)
+        self.notify_mechanical_timer(now)
+
+    async def apply_light(self, now):
+        light_after_run = self.runtime.controller.light_after_run
+        if light_after_run is not None:
+            await self.apply_session_light(now, light_after_run)
+            return
+        self.session_light_command = None
+        self.faults.pop("session_light", None)
         cooling = bool(self.runtime.session and self.runtime.session.cooling
             and self.runtime.session.cooling.started_at)
-        if cooling and not self.light_active:
-            brightness = self.values.get("cooling_brightness_percent")
-            if brightness is None:
-                self.faults["cooling_light"] = "brightness_required"
-            else:
+        after_run = bool(self.runtime.session and self.runtime.session.after_run)
+        dim = "cooling" if cooling else "after_run" if after_run else None
+        if dim and self.light_active != dim:
+            brightness = self.values[f"{dim}_brightness_percent"]
+            if not self.light_active:
                 state = self.hass.states.get(self.bindings["light"])
                 self.light_before = (state.state, state.attributes.get("brightness")) if state else None
-                try:
-                    await self.hass.services.async_call("light", "turn_on", {
-                        "entity_id": self.bindings["light"], "brightness_pct": brightness}, blocking=True)
-                    self.light_active = True
-                    self.faults.pop("cooling_light", None)
-                except Exception:
-                    self.faults["cooling_light"] = "service_unavailable"
-        elif not cooling and self.light_active:
+            phase = self.runtime.session.cooling if cooling else self.runtime.session.after_run
+            self.runtime.log.change("light_dim", (dim, phase.started_at), logging.INFO,
+                "Saunalicht für %s auf %s %% dimmen.", "Zwangskühlung" if cooling else "Nachlauf", brightness)
+            # Pro Phasenwechsel einmal versuchen. Ein Fehler darf weder jeden
+            # Messzyklus blockieren noch den ursprünglichen Lichtzustand ersetzen.
+            self.light_active = dim
+            try:
+                await self.light_call("turn_on", {
+                    "entity_id": self.bindings["light"], "brightness_pct": brightness})
+                self.faults.pop("cooling_light", None)
+                self.faults.pop("after_run_light", None)
+            except Exception:
+                self.faults[f"{dim}_light"] = "service_unavailable"
+        elif not dim and self.light_active:
             await self.restore_light()
+        operation = bool(self.runtime.session and self.runtime.session.operation_enabled)
+        if not operation:
+            self.light_operation_enabled = False
+            self.faults.pop("operation_light", None)
+        elif not dim and not self.light_operation_enabled:
+            # Nur beim Übergang in den Betrieb einschalten. Normale Messzyklen
+            # und Thermostatpausen überschreiben keine manuelle Lichtbedienung.
+            self.light_operation_enabled = True
+            await self.start_light(now)
+        light = self.states.get("light")
+        if light is not None and light.state == "on":
+            self.faults.pop("operation_light", None)
+
+    def notify_mechanical_timer(self, now):
         ends = self.runtime.controller.mechanical_timer_ends_at
         if ends:
             lead = self.values.get("mechanical_timer_warning_minutes", 0) * 60
@@ -341,8 +373,56 @@ class HADevice:
                     self.runtime.archive.append("notice", now, {"kind": "mechanical_timer_" + phase,
                         "estimated_ends_at": ends}, self.runtime.session.session_id)
 
-    async def restore_light(self):
+    async def apply_session_light(self, now, phase, *, finish=False):
+        service = "turn_on" if not finish and now < phase.ends_at else "turn_off"
+        key = (phase.session_id, service)
+        if key == self.session_light_command:
+            return
+        # Ein neuer Sitzungsstart verwirft diese Frist. Keine alte Wiederherstellung
+        # darf danach das Licht einer neuen Sitzung ausschalten oder aufhellen.
+        self.session_light_command = key
         self.light_active = False
+        self.light_before = None
+        self.light_operation_enabled = False
+        data = {"entity_id": self.bindings["light"]}
+        if service == "turn_on":
+            data["brightness_pct"] = phase.brightness_percent
+        self.runtime.log.info("session_light", "Lichtnachlauf nach Sitzungsende: %s.",
+            f"{phase.brightness_percent:g} % bis {phase.ends_at.isoformat()}" if service == "turn_on" else "Licht ausschalten")
+        error = None
+        try:
+            await self.light_call(service, data)
+            for fault in ("session_light", "operation_light", "cooling_light", "after_run_light"):
+                self.faults.pop(fault, None)
+        except Exception as exc:
+            error = type(exc).__name__
+            self.faults["session_light"] = service + "_failed"
+        if self.runtime.archive:
+            self.runtime.archive.append("light_command", now, {
+                "purpose": "session_end", "service": service,
+                "brightness_pct": data.get("brightness_pct"),
+                "ends_at": phase.ends_at, "service_error": error}, phase.session_id)
+
+    async def start_light(self, now):
+        brightness = self.values["operation_brightness_percent"]
+        self.runtime.log.info("light_command", "Lichtbefehl beim Start des Saunabetriebs: EIN mit %s %% Helligkeit.", brightness)
+        error = None
+        try:
+            await self.light_call("turn_on", {
+                "entity_id": self.bindings["light"], "brightness_pct": brightness})
+            self.faults.pop("operation_light", None)
+        except Exception as exc:
+            error = type(exc).__name__
+            self.faults["operation_light"] = "service_unavailable"
+        if self.runtime.archive:
+            self.runtime.archive.append("light_command", now, {
+                "purpose": "operation_start", "service": "turn_on", "brightness_pct": brightness, "service_error": error},
+                self.runtime.session.session_id)
+
+    async def restore_light(self):
+        if not self.light_active:
+            return
+        mode, self.light_active = self.light_active, False
         if self.light_before is None:
             return
         state, brightness = self.light_before
@@ -350,9 +430,19 @@ class HADevice:
         if state == "on" and brightness is not None:
             data["brightness"] = brightness
         try:
-            await self.hass.services.async_call("light", "turn_on" if state == "on" else "turn_off", data, blocking=True)
+            await self.light_call("turn_on" if state == "on" else "turn_off", data)
         except Exception:
-            self.faults["cooling_light"] = "restore_failed"
+            self.faults[f"{mode}_light"] = "restore_failed"
+        else:
+            self.light_before = None
+            self.faults.pop("cooling_light", None)
+            self.faults.pop("after_run_light", None)
+
+    async def light_call(self, service, data):
+        # Ein nicht antwortendes Licht darf den serialisierten Regelkreis nicht
+        # unbegrenzt blockieren. Dieselbe Dienstfrist gilt für alle Aktoren.
+        async with asyncio.timeout(self.values["feedback_timeout_seconds"]):
+            await self.hass.services.async_call("light", service, data, blocking=True)
 
     async def close(self):
         await self.send(False, self.runtime._clock(), force=True)

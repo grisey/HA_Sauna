@@ -32,15 +32,17 @@ Standby und Heizen. Bei Messausfall wird sichtbar auf Schützstellung zurückgef
 Die Erkennung eines internen Ofen-Aus anhand der Temperaturkrümmung wurde für
 die erste Testinstallation ausdrücklich zurückgestellt.
 
-Vor Heizfreigabe sind Solltemperatur, Messwert-Gültigkeitsdauer, Rückmeldungsfrist
-und Bestätigungsfrist zentraler Ausfälle zu konfigurieren. Auch Sessionfrist,
-Aufgussbestätigungsfrist, lokale Heizzeit-Rücksetz-Auszeit und Nachlaufdauer
-benötigen eine ausdrückliche Einstellung. Für diese noch nicht festgelegten
-Ausgangswerte gibt es keine erfundenen Defaults.
+Alle erforderlichen Einstellungen haben veränderbare [Standardwerte](docs/parameter.md). Bei älteren Konfigurationen werden fehlende Werte ergänzt; gespeicherte Einstellungen behalten Vorrang. Startprüfungen und Schutzregeln bleiben wirksam.
+
+Das Saunalicht schaltet bei Betriebsstart standardmäßig auf **35 %**, im Nachlauf auf **15 %** und während Zwangskühlung auf **5 %**. Danach kehrt die vorherige Helligkeit zurück. Alle drei Werte sind einstellbar.
+
+Nach dem endgültigen Sitzungsende bleibt das Licht standardmäßig noch **10 Minuten
+bei 50 %** an und wird anschließend ausgeschaltet. Dauer und Helligkeit sind
+einstellbar; eine neue Sitzung beendet den alten Lichtnachlauf.
 
 In der Seitenleiste erscheint **Sauna** mit zwei Hauptansichten:
 
-- **Normal:** einfache Steuerung; eigenes Blatt **Sessionverlauf & Archiv**.
+- **Übersicht:** einfache Steuerung mit einer passenden Zeitanzeige zur aktuellen Phase; eigenes Blatt **Verlauf und Archiv**.
 - **Details:** Betrieb und Fristen, separate Erkennungskontrolle sowie
   Einstellungen und authentifizierter ZIP-Export.
 
@@ -48,7 +50,7 @@ Die Verlaufsgestaltung folgt der Nutzervorlage: orange Temperatur, blaue
 Feuchte auf gemeinsamer Zeitachse, gelbe Türöffnungen, magentafarbene Gänge,
 weiße Aufgüsse und farbige Betriebsbereiche. Oben/unten bleiben getrennte
 Kurven. Konfiguration wird ausschließlich in den HA-Entry-Optionen gespeichert
-und bleibt während einer gesamten Session gesperrt, auch bei kurzem Betrieb-Aus.
+und bleibt während einer Sitzung bis auf Solltemperatur, Erhöhung je Gang und Endtemperatur gesperrt. Eine neue Solltemperatur gilt sofort als Ausgangspunkt weiterer Steigerungen. Änderungen setzen weder Gang noch Nachlauf, Kühlung, Heizpause, Mindestheizzeit oder Schutz zurück.
 
 ## Vereinbarter Ablauf
 

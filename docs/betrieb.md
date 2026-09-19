@@ -15,7 +15,8 @@ bleibt die Session erhalten, der beendete Gang bleibt beendet. Nach der
 konfigurierten Session-Unterbrechungsfrist wird beim nächsten Einschalten eine
 neue Session samt Gang-, Heizzeit-, Nachlauf-, Kühlungs- und Fristobjekten angelegt.
 Übergeordnete Schutzfunktionen, Konfiguration und Archiv bleiben erhalten.
-Grundparameter und Entitätszuordnung sind während der gesamten Session gesperrt.
+Während einer Sitzung sind Solltemperatur, Erhöhung je Saunagang und Endtemperatur
+änderbar. Weitere Grundparameter und Entitätszuordnung bleiben gesperrt.
 
 ## Temperatur und Heizzeit
 
@@ -28,7 +29,9 @@ reguläres Heizen mindestens 10 Minuten. Diese Mindestzeit verzögert niemals
 Betrieb-Aus, Nachlauf, Zwangskühlung oder technische Schutzabschaltung.
 
 Schon ein vorläufiger Gang unterdrückt reguläre Hysterese-/Ablaufabschaltungen.
-Temperaturzieländerung während einer Session ist nicht vorgesehen. Ein unterer
+Eine manuelle Solltemperatur gilt sofort als neuer Ausgangspunkt weiterer
+Steigerungen. Bereits gezählte Gänge werden nicht erneut addiert. Änderungen
+erhalten laufende Gänge, Fristen, Mindestheizzeit, Kühlung und Schutz. Ein unterer
 Messwert wird niemals durch Mittelwertbildung oder Höhenoffset zur oberen
 Regeltemperatur erklärt. Kurz fehlende Pakete überbrückt nur ein noch gültiger
 oberer Messwert; nach dessen Gültigkeitsende pausiert die Heizung.
@@ -71,9 +74,7 @@ verstrichene Nachlaufdauer wird genau einmal vollständig angerechnet:
 `Restkühlzeit = max(0, Kühlvorgabe − angerechneter Nachlauf)`
 
 Standard-Kühlvorgabe: einstellbare 15 Minuten. Bei Restzeit null entfällt ein
-weiterer Kühlabschnitt. Laufende Zwangskühlung sperrt neue Gänge und dimmt das
-zugeordnete Licht auf den eingestellten Wert; anschließend wird dessen vorheriger
-Zustand wiederhergestellt. Alte Startanker aus gesperrten Phasen werden verworfen.
+weiterer Kühlabschnitt. Laufende Zwangskühlung sperrt neue Gänge. Betriebsstart schaltet das Licht auf standardmäßig 35 %, Nachlauf dimmt auf 15 %, Zwangskühlung auf 5 %. Alle Werte sind einstellbar. Beim Übergang vom Nachlauf zur Kühlung bleibt es gedimmt; erst anschließend wird der zuvor bestehende Lichtzustand wiederhergestellt. Ein reiner Lichtfehler wird gemeldet und beendet nicht den Heizbetrieb. Alte Startanker aus gesperrten Phasen werden verworfen.
 
 Eine Türöffnung beim Aufheizen/in Bereitschaft hält eine fällige Kühlung zurück:
 bei offener Tür maximal standardmäßig 10 Minuten ab Öffnung; bei rechtzeitiger
@@ -82,6 +83,15 @@ am Fristende wird noch berücksichtigt. Ohne Signal beginnt die fällige Kühlun
 Ein erkannter Gang verwendet die bestehenden Gangregeln. Aufhebung des vorläufigen
 Gangs gibt die ausstehende Kühlung frei. Eine bereits laufende Kühlung wird durch
 Türöffnung nicht zurückgenommen. Beide Wartewerte sind einstellbar.
+
+Nach dem endgültigen Sitzungsende folgt ein eigener Lichtnachlauf: standardmäßig
+10 Minuten bei 50 %, anschließend Licht aus. Er beginnt nach Ablauf der Pause
+bis zum Sitzungsende, nicht bei einer kurzen Betriebsunterbrechung. Dauer und
+Helligkeit sind einstellbar; Dauer null bedeutet direktes Ausschalten am Sitzungsende.
+Eine neue Sitzung beendet den Lichtnachlauf und verwendet wieder das Betriebslicht.
+Die Lichtfrist verändert keine Ofenbefehle. Ihr Endzeitpunkt bleibt beim Übernehmen
+von Grundeinstellungen erhalten; eine neue Lichtzuordnung beendet sie am bisherigen
+Gerät. Fehler beim Einschalten oder Ausschalten erscheinen in Anzeige und Protokoll.
 
 ## Temperatur-Zusatzkühlung und technische Fehler
 

@@ -43,6 +43,52 @@ def trace(second):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_door_with_delayed_humidity_drop_during_continuous_heating(self):
+        detector = Detector(detection_parameters(), T0)
+        events = []
+        for i in range(80):
+            detector.report_heating(True, T0 + timedelta(seconds=i))
+            # Synthetische kurze Öffnung: beidseitig 1,2 °C/min, zunächst
+            # sogar steigende Feuchte. Die bisherige UND-Regel reicht nicht.
+            temperature = 50 if i < 20 else 50-.02*min(20,i-20)+max(0,i-40)*.03
+            events += sample(detector, i, temperature, 30+i*.002)
+        self.assertEqual([e.kind for e in events], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+        self.assertGreaterEqual((events[0].detected_at-T0).total_seconds(), 25)
+
+    def test_temperature_rule_does_not_treat_heater_off_as_door_opening(self):
+        for heating, lower_falls, duration in ((False, True, 20), (None, True, 20), (True, False, 20), (True, True, 2)):
+            with self.subTest(heating=heating, lower_falls=lower_falls, duration=duration):
+                d = Detector(detection_parameters(), T0)
+                events = []
+                for i in range(70):
+                    d.report_heating(heating if i >= 20 else True, T0+timedelta(seconds=i))
+                    delta = -.03*(i-20) if 20 <= i < 20+duration else 0
+                    for position in (Position.UPPER, Position.LOWER):
+                        temp = 50+delta if position == Position.UPPER or lower_falls else 50
+                        d.accept(measurement(position,Quantity.TEMPERATURE,temp,i))
+                        d.accept(measurement(position,Quantity.HUMIDITY,30,i))
+                    events += d.advance(T0+timedelta(seconds=i),enabled=True)
+                self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+
+    def test_additional_rule_requires_both_positions_and_restarts_proof_after_heater_change(self):
+        for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
+            d=Detector(detection_parameters(),T0,positions)
+            events=[]
+            for i in range(80):
+                # Wiederholtes Aus/Ein verhindert den durchgehenden Nachweis.
+                d.report_heating(False if i%8==0 else True,T0+timedelta(seconds=i))
+                events+=sample(d,i,50-.03*i,30,positions)
+            self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+
+    def test_hot_operation_keeps_reference_rule_and_warmup_rule_can_be_disabled(self):
+        for base, limit in ((90,70),(50,0)):
+            d=Detector(detection_parameters(door_heating_max_temperature_c=limit),T0)
+            events=[]
+            for i in range(80):
+                d.report_heating(True,T0+timedelta(seconds=i))
+                events+=sample(d,i,base-.03*i,30)
+            self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+
     def test_diagnostic_observer_reports_actual_metrics_without_changing_signals(self):
         observed = []
         detector = Detector(detection_parameters(), T0, observer=observed.append)

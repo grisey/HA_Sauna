@@ -11,7 +11,8 @@ from homeassistant.helpers import selector
 
 from .bindings import BindingError, Bindings, ROLES, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
-from .core.parameters import DEFINITIONS, ParameterError, Parameters
+from .core.parameters import DEFINITIONS, ParameterError, Parameters, LIVE_TEMPERATURE_KEYS
+from .settings import async_set_parameters, ConfigurationLocked
 from .log import LEVELS
 
 
@@ -31,7 +32,7 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
     return vol.Schema(fields)
 
 
-def parameter_schema() -> vol.Schema:
+def parameter_schema(*, live_only=False) -> vol.Schema:
     return vol.Schema({
         (vol.Optional if definition.optional else vol.Required)(
             definition.key, default=definition.default if definition.default is not None else vol.UNDEFINED,
@@ -42,7 +43,7 @@ def parameter_schema() -> vol.Schema:
             "mode": selector.NumberSelectorMode.BOX,
             "unit_of_measurement": definition.unit,
         })
-        for definition in DEFINITIONS
+        for definition in DEFINITIONS if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
     })
 
 
@@ -194,22 +195,36 @@ class SaunaOptionsFlow(OptionsFlow):
         )
 
     async def async_step_parameters(self, user_input: dict[str, Any] | None = None):
-        if self._has_session():
-            return self.async_abort(reason="session_exists")
+        live_only = self._has_session()
+        runtime = getattr(self.config_entry, "runtime_data", None)
         errors = {}
         if user_input is not None:
             try:
-                parameters = Parameters(user_input)
+                if runtime and not runtime.closed:
+                    values = dict(user_input)
+                    if live_only:
+                        if set(values) - LIVE_TEMPERATURE_KEYS:
+                            raise ConfigurationLocked()
+                        values.setdefault("final_temperature_c", None)
+                    parameters = await async_set_parameters(self.hass, self.config_entry,
+                        values, partial=live_only)
+                else:
+                    parameters = Parameters(user_input).as_dict()
             except ParameterError as error:
                 errors[error.key] = error.code
+            except ConfigurationLocked:
+                return self.async_abort(reason="session_exists")
             else:
                 return self.async_create_entry(title="", data={
-                    **self.config_entry.options, CONF_PARAMETERS: parameters.as_dict(),
+                    **self.config_entry.options, CONF_PARAMETERS: parameters,
                 })
+        suggested = dict(self.config_entry.options[CONF_PARAMETERS])
+        if live_only:
+            suggested["target_temperature_c"] = runtime.controller.target_temperature
         return self.async_show_form(
             step_id="parameters",
             data_schema=self.add_suggested_values_to_schema(
-                parameter_schema(), user_input if user_input is not None else self.config_entry.options[CONF_PARAMETERS],
+                parameter_schema(live_only=live_only), user_input if user_input is not None else suggested,
             ),
             errors=errors,
         )

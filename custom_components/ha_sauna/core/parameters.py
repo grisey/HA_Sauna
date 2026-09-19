@@ -59,13 +59,14 @@ def definition(key, unit, allow_zero=False, **kwargs):
         description=description, group=group, **kwargs)
 
 
-# Keine unvereinbarten Ausgangswerte. Der Nutzer setzt die Werte bei Einrichtung.
+# Einstellbare Standardwerte; bereits gespeicherte Werte haben Vorrang.
+LIVE_TEMPERATURE_KEYS = frozenset({"target_temperature_c", "temperature_increase_c", "final_temperature_c"})
 DEFINITIONS = (
-    definition("session_gap_minutes", "min"),
-    definition("confirmation_minutes", "min"),
+    definition("session_gap_minutes", "min", default=15),
+    definition("confirmation_minutes", "min", default=12),
     definition("heating_minutes", "min", default=90),
     definition("heating_reduction_minutes", "min", True, default=30),
-    definition("heat_reset_minutes", "min"),
+    definition("heat_reset_minutes", "min", default=10),
     definition("thermostat_cooldown_minutes", "min", True, default=5),
     definition("minimum_heating_minutes", "min", True, default=10),
     definition("mechanical_timer_minutes", "min", default=240),
@@ -73,26 +74,28 @@ DEFINITIONS = (
     definition("forced_cooling_minutes", "min", default=15),
     definition("person_wait_minutes", "min", default=4),
     definition("open_door_wait_minutes", "min", default=10),
-    definition("after_run_minutes", "min"),
+    definition("after_run_minutes", "min", default=8),
     definition("readiness_offset_c", "°C", True, default=5),
     definition("readiness_hysteresis_c", "°C", default=3),
     definition("preset_start_c", "°C", default=70),
     definition("preset_step_c", "°C", default=5),
     definition("preset_count", "Anzahl", default=6, minimum=1, maximum=20, integer=True),
-    # Unbestimmte Schutz-/Betriebswerte bleiben leer. Leer bedeutet Heizsperre,
-    # nicht ein vom Code gewählter Ersatzwert oder eine sichere Werkseinstellung.
-    definition("target_temperature_c", "°C", optional=True),
+    definition("target_temperature_c", "°C", default=80),
     definition("temperature_increase_c", "°C", default=5),
     definition("final_temperature_c", "°C", optional=True),
     definition("safety_temperature_c", "°C", default=105),
     definition("overtemperature_minutes", "min", default=10),
     definition("overtemperature_cooling_factor", "×", default=2, minimum=1),
-    definition("fault_confirmation_seconds", "s", optional=True),
-    definition("sensor_timeout_seconds", "s", optional=True),
-    definition("feedback_timeout_seconds", "s", optional=True),
-    definition("power_heating_threshold_w", "W", True, optional=True),
+    definition("fault_confirmation_seconds", "s", default=60),
+    definition("sensor_timeout_seconds", "s", default=180),
+    definition("feedback_timeout_seconds", "s", default=10),
+    definition("power_heating_threshold_w", "W", True, default=50),
     definition("nominal_power_kw", "kW", default=4.5),
-    definition("cooling_brightness_percent", "%", optional=True, maximum=100),
+    definition("operation_brightness_percent", "%", default=35, maximum=100),
+    definition("after_run_brightness_percent", "%", default=15, maximum=100),
+    definition("cooling_brightness_percent", "%", default=5, maximum=100),
+    definition("session_light_minutes", "min", True, default=10),
+    definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
 ) + tuple(definition(key, unit, allow_zero=minimum <= 0,
         default=default, minimum=minimum, maximum=maximum, integer=integer)
     for key, label, unit, default, minimum, maximum, integer in SPECS)

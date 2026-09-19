@@ -8,6 +8,7 @@
 | Gangdauer | Vom zugeordneten Beginn bis Ende beziehungsweise jetzt. |
 | Bestätigungsfrist | Beginn plus konfigurierter Fristwert. |
 | Sessionfrist | Ausdrückliches Betrieb-Aus plus Session-Unterbrechungsfrist. |
+| Lichtnachlauf nach Sitzungsende | Endgültiges Sitzungsende plus eingestellte Lichtnachlaufdauer. Neue Sitzung verwirft diese Lichtfrist. |
 | Heizzeit | Gezählte Heizintervalle seit Rücksetzung; gemessen oder aus Schützstellung geschätzt. |
 | Heizbudget | Anfangswert; nach erster abgeschlossener Kühlung einmalig verringert. |
 | Lokale Heizzeitrücksetzung | Durchgehend rückgemeldetes Ofen-Aus über konfigurierte Dauer. |
@@ -37,8 +38,8 @@ Gangende bleibt die Durchlüftungsbestätigung, nicht rückwirkend die Öffnung.
 
 Der laufende Nachlauf behält sein Ende bei Aus/Ein. Seine verstrichene Dauer wird
 vollständig und einmal angerechnet; künftige Zeit wird nicht vorweggenommen.
-Konfiguration ist während einer Session gesperrt, daher gibt es keine laufende
-Neuberechnung von Grundfristen durch Parameteränderung. Nach HA-Neustart bleibt
+Zeitparameter bleiben während einer Session gesperrt. Die live änderbaren
+Temperaturwerte berechnen keine Grundfristen neu. Nach HA-Neustart bleibt
 Historie erhalten, Betrieb und Fristen werden nicht automatisch fortgesetzt.
 
 Im privaten Kalibrierungsvergleich liegt das schwache Personensignal eines Gangs

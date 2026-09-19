@@ -47,13 +47,16 @@ class ThermostatTests(unittest.TestCase):
                 _, decision = self.decide(gang=True, **kwargs)
                 self.assertFalse(decision.heat)
 
-    def test_missing_settings_do_not_invent_safe_values(self):
-        for key in ("target_temperature_c",):
-            values = self.parameters.as_dict()
-            del values[key]
-            _, decision = self.decide(parameters=Parameters(values))
-            self.assertFalse(decision.heat)
-            self.assertEqual(decision.reason, "temperature_configuration_required")
+    def test_default_target_uses_normal_regulation_and_missing_measurement_still_blocks(self):
+        values = self.parameters.as_dict()
+        del values["target_temperature_c"]
+        configured = Parameters(values)
+        self.assertEqual(configured.values["target_temperature_c"], 80)
+        _, decision = self.decide(parameters=configured)
+        self.assertTrue(decision.heat)
+        _, decision = self.decide(parameters=configured, temperature=None)
+        self.assertFalse(decision.heat)
+        self.assertEqual(decision.reason, "upper_temperature_unavailable")
 
     def test_after_run_and_cooling_keep_heater_off_outside_gang(self):
         for field in ("after_run", "cooling"):

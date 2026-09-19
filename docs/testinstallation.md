@@ -55,15 +55,9 @@ Diagnose und die Zählung fällt auf die verbleibende Rückmeldung zurück.
 
 ## Werte vor dem ersten Heizversuch
 
-Die vereinbarten Defaults stehen in [Parameter](parameter.md). Folgende Werte
-haben ausdrücklich keinen angenommenen Default und müssen gesetzt werden:
+Alle notwendigen Einstellungen besitzen [Standardwerte](parameter.md). Besonders prüfen: Solltemperatur 80 °C, Messwertalter 180 Sekunden, Schützrückmeldung 10 Sekunden, Störungsbestätigung 60 Sekunden; Sitzungsende nach 15 Minuten Betrieb-Aus, Aufgussbestätigung 12 Minuten, Heizzeitrücksetzung nach 10 Minuten Ofen-Aus und Nachlauf 8 Minuten. Gespeicherte örtliche Werte werden beim Update nicht überschrieben.
 
-- Session-Unterbrechungsfrist, Aufgussbestätigungsfrist,
-  Heizzeit-Rücksetz-Auszeit und Nachlaufdauer.
-- Solltemperatur oben; Messwert-Gültigkeitsdauer;
-  Rückmeldungsfrist für den Schütz und Bestätigungsfrist zentraler Ausfälle.
-- Gewünschte Lichthelligkeit während Kühlung.
-- Nur bei Leistungsmesser: Watt-Schwelle. Optional: Timer-Vorwarnzeit.
+Die Lichthelligkeiten sind 35 % beim Einschalten, 15 % im Nachlauf und 5 % bei Zwangskühlung. Nach dem endgültigen Sitzungsende folgen 10 Minuten Lichtnachlauf bei 50 %, dann Licht aus. Alle Lichtwerte sind einstellbar. Optional bleiben Endtemperatur der Steigerung und Timer-Vorwarnzeit.
 
 Die Ofenleistung für die Energieschätzung steht standardmäßig auf **4,5 kW**.
 Bei vorhandenem Leistungsmesser wird stattdessen dessen Verlauf integriert.
@@ -71,7 +65,7 @@ Gemischte Mess-/Schätzwerte sind in der Anzeige gekennzeichnet.
 
 Die Messgültigkeit muss die reale Aktualisierung der Quellen abdecken. Die
 untere Temperatur wird nicht als pauschaler Ersatz für den oberen Sensor benutzt.
-Parameter bleiben während der gesamten Session gesperrt, auch bei kurzem Aus/Ein.
+Während der Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar. Laufende Fristen und Heizsperren bleiben erhalten. Andere Parameter und Gerätezuordnungen bleiben gesperrt.
 
 ## Kurzer Testablauf
 
@@ -140,8 +134,4 @@ folgende Felder ergänzen und speichern:
 - **Dauer bis zur bestätigten Störung**: wie lange ein zentraler Fehler
   durchgehend bestehen muss, bevor die Schutzabschaltung verriegelt.
 
-Diese drei Felder haben bislang keinen vereinbarten Standardwert. Ein fehlender
-Wert bedeutet unvollständige Einrichtung. Das Update ergänzt keine erfundenen
-Fristen und hebt die Startsperre nicht auf. Nach dem Speichern prüft die
-Integration die Voraussetzungen erneut; bei gültigen Messwerten und Rückmeldungen
-wird die Starttaste freigegeben.
+Diese Felder werden bei fehlendem Eintrag mit 180, 10 und 60 Sekunden ergänzt. Vorhandene Einstellungen bleiben erhalten. Ein sehr knapp eingestelltes Messwertalter kann bereits bei gewöhnlichen Meldepausen zu kurzen Heizsperren führen. Bei gültigen Messwerten und Rückmeldungen wird die Starttaste freigegeben.

@@ -40,7 +40,7 @@
       },
       "parameters": {
         "title": "Temperatur, Zeiten und Erkennung",
-        "description": "Diese Einstellungen gelten für die nächste Saunasitzung. Felder ohne Standardwert bewusst festlegen. Vor dem Start sind insbesondere Solltemperatur, Messwertalter, Schützrückmeldung und Störungsdauer erforderlich.",
+        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung.",
         "data": {
           "session_gap_minutes": "Pause bis zum Sitzungsende",
           "confirmation_minutes": "Zeit für die Aufgussbestätigung",
@@ -71,6 +71,8 @@
           "feedback_timeout_seconds": "Wartezeit auf die Schützrückmeldung",
           "power_heating_threshold_w": "Leistungsschwelle für das Heizen",
           "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
+          "operation_brightness_percent": "Lichthelligkeit beim Einschalten",
+          "after_run_brightness_percent": "Lichthelligkeit im Nachlauf",
           "cooling_brightness_percent": "Lichthelligkeit bei Zwangskühlung",
           "grid_seconds": "Zeitabstand der Auswertung",
           "median_seconds": "Glättungszeit der Messwerte",
@@ -80,6 +82,9 @@
           "door_open_humidity_upper": "Luftfeuchteabfall bei Türöffnung oben",
           "door_open_humidity_lower": "Luftfeuchteabfall bei Türöffnung unten",
           "door_open_hold_seconds": "Bestätigungsdauer der Türöffnung",
+          "door_heating_slope": "Türöffnung: Temperaturabfall trotz eingeschalteter Heizung",
+          "door_heating_hold_seconds": "Bestätigungsdauer des Temperaturabfalls beim Heizen",
+          "door_heating_max_temperature_c": "Temperaturgrenze der ergänzenden Türerkennung",
           "door_close_slope": "Temperaturtrend bei Türschließung",
           "door_close_hold_seconds": "Bestätigungsdauer der Türschließung",
           "vent_baseline_seconds": "Vergleichszeit vor dem Lüften",
@@ -102,7 +107,9 @@
           "infusion_window_seconds": "Zeitfenster für die Aufgusserkennung",
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
-          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals"
+          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
+          "session_light_minutes": "Lichtnachlauf nach Sitzungsende",
+          "session_light_brightness_percent": "Lichthelligkeit nach Sitzungsende"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -123,17 +130,19 @@
           "preset_start_c": "Solltemperatur der ersten Taste in der Übersicht.",
           "preset_step_c": "Abstand zwischen zwei benachbarten Temperaturtasten.",
           "preset_count": "Anzahl der sichtbaren Tasten für die Solltemperatur.",
-          "target_temperature_c": "Gewünschte Temperatur am oberen Sensor während eines Saunagangs.",
-          "temperature_increase_c": "Nach jedem beendeten und gezählten Saunagang steigt die Solltemperatur um diesen Wert, höchstens bis zur Endtemperatur.",
-          "final_temperature_c": "Obergrenze für die Solltemperatur. Leer lassen für eine konstante Temperatur. Die Solltemperatur ist der Startwert der Saunasitzung.",
+          "target_temperature_c": "Gewünschte Temperatur am oberen Sensor während eines Saunagangs. Eine Änderung während der Sitzung gilt sofort; weitere Steigerungen beginnen ab diesem Wert.",
+          "temperature_increase_c": "Erhöhung nach jedem weiteren gezählten Saunagang, höchstens bis zur Endtemperatur. Während der Sitzung änderbar; bereits gezählte Gänge werden nicht erneut angerechnet.",
+          "final_temperature_c": "Obergrenze für die Solltemperatur. Leer lassen für eine konstante Temperatur. Eine niedrigere Endtemperatur begrenzt die aktuelle Solltemperatur; Heizsperren und laufende Fristen bleiben wirksam.",
           "safety_temperature_c": "Wird diese Temperatur anhaltend überschritten, ist eine verlängerte Zwangskühlung fällig; die Sitzung wird nicht abgebrochen.",
           "overtemperature_minutes": "Die Temperaturgrenze muss länger als diese Zeit ununterbrochen überschritten sein.",
           "overtemperature_cooling_factor": "Faktor für die eingestellte Kühlzeit. Der Wert 2 bedeutet doppelte Kühlzeit.",
-          "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Vor dem ersten Start einstellen.",
-          "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Vor dem ersten Start passend zum Meldeabstand der Sensoren einstellen.",
-          "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss. Vor dem ersten Start einstellen.",
+          "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt.",
+          "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Bei Bedarf passend zum tatsächlichen Meldeabstand einstellen.",
+          "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss.",
           "power_heating_threshold_w": "Nur bei zugeordnetem Leistungssensor: Oberhalb dieser Leistung zählt die Zeit als Heizzeit. Standby bleibt beim Energieverbrauch berücksichtigt.",
           "nominal_power_kw": "Nennleistung des Ofens in kW. Ohne Leistungsmessung wird daraus und aus der Heizzeit der Verbrauch in kWh berechnet.",
+          "operation_brightness_percent": "Helligkeit des Saunalichts beim Einschalten des Saunabetriebs. Manuelle Lichtänderungen bleiben bis zum nächsten Einschalten erhalten.",
+          "after_run_brightness_percent": "Helligkeit des Saunalichts während des Nachlaufs. Nach Nachlauf und anschließender Kühlung wird die vorherige Helligkeit wiederhergestellt.",
           "cooling_brightness_percent": "Helligkeit des Saunalichts während einer laufenden Zwangskühlung.",
           "grid_seconds": "Das feste Ein-Sekunden-Raster gehört zum geprüften Erkennungsverfahren.",
           "median_seconds": "Zeitfenster für den Median. Es glättet einzelne Messausreißer vor der Erkennung.",
@@ -143,6 +152,9 @@
           "door_open_humidity_upper": "Mindestabfall am oberen Sensor in Prozentpunkten; wird zusammen mit dem Temperaturtrend bewertet.",
           "door_open_humidity_lower": "Mindestabfall am unteren Sensor in Prozentpunkten; wird zusammen mit dem Temperaturtrend bewertet.",
           "door_open_hold_seconds": "So lange müssen die Bedingungen für eine offene Tür bestehen.",
+          "door_heating_slope": "Zusätzliche Erkennung ohne Feuchteabfall: Beide Temperaturtrends müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Bei nur einer verfügbaren Messposition bleibt die bisherige Regel mit Luftfeuchte maßgeblich.",
+          "door_heating_hold_seconds": "So lange muss der zusätzliche Temperaturabfall an beiden Messpositionen gleichzeitig bestehen. Eine Heizabschaltung verwirft diesen Nachweis.",
+          "door_heating_max_temperature_c": "Nur solange beide geglätteten Temperaturen unter diesem Wert liegen, darf die zusätzliche Regel ohne Feuchteabfall auslösen. Im heißen Bereich bleibt die Regel mit Temperatur- und Feuchteabfall maßgeblich. Null schaltet die Ergänzung aus.",
           "door_close_slope": "Mindestanstieg der Temperatur für die Erkennung einer geschlossenen Tür.",
           "door_close_hold_seconds": "So lange muss die Bedingung für eine geschlossene Tür bestehen.",
           "vent_baseline_seconds": "Rückblick für die Temperatur vor der Türöffnung.",
@@ -165,7 +177,9 @@
           "infusion_window_seconds": "Zeitraum, in dem Luftfeuchteanstieg und Temperaturänderung eines Aufgusses bewertet werden.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
-          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs."
+          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
+          "session_light_minutes": "Dauer ab dem endgültigen Sitzungsende, also nach der Pause bis zum Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",
+          "session_light_brightness_percent": "Helligkeit während des Lichtnachlaufs nach einer beendeten Saunasitzung. Standard: 50 %. Der Nachlauf nach einem Saunagang und die Zwangskühlung haben eigene Lichtwerte."
         }
       }
     },
@@ -197,7 +211,7 @@
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "session_exists": "Die Saunasitzung ist noch nicht beendet. Temperatur- und Ablaufeinstellungen können nach Ablauf der eingestellten Pause geändert werden."
+      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Erhöhung je Gang und Endtemperatur sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
     }
   },
   "options": {
@@ -246,7 +260,7 @@
       },
       "parameters": {
         "title": "Temperatur, Zeiten und Erkennung",
-        "description": "Diese Einstellungen gelten für die nächste Saunasitzung. Felder ohne Standardwert bewusst festlegen. Vor dem Start sind insbesondere Solltemperatur, Messwertalter, Schützrückmeldung und Störungsdauer erforderlich.",
+        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung.",
         "data": {
           "session_gap_minutes": "Pause bis zum Sitzungsende",
           "confirmation_minutes": "Zeit für die Aufgussbestätigung",
@@ -277,6 +291,8 @@
           "feedback_timeout_seconds": "Wartezeit auf die Schützrückmeldung",
           "power_heating_threshold_w": "Leistungsschwelle für das Heizen",
           "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
+          "operation_brightness_percent": "Lichthelligkeit beim Einschalten",
+          "after_run_brightness_percent": "Lichthelligkeit im Nachlauf",
           "cooling_brightness_percent": "Lichthelligkeit bei Zwangskühlung",
           "grid_seconds": "Zeitabstand der Auswertung",
           "median_seconds": "Glättungszeit der Messwerte",
@@ -286,6 +302,9 @@
           "door_open_humidity_upper": "Luftfeuchteabfall bei Türöffnung oben",
           "door_open_humidity_lower": "Luftfeuchteabfall bei Türöffnung unten",
           "door_open_hold_seconds": "Bestätigungsdauer der Türöffnung",
+          "door_heating_slope": "Türöffnung: Temperaturabfall trotz eingeschalteter Heizung",
+          "door_heating_hold_seconds": "Bestätigungsdauer des Temperaturabfalls beim Heizen",
+          "door_heating_max_temperature_c": "Temperaturgrenze der ergänzenden Türerkennung",
           "door_close_slope": "Temperaturtrend bei Türschließung",
           "door_close_hold_seconds": "Bestätigungsdauer der Türschließung",
           "vent_baseline_seconds": "Vergleichszeit vor dem Lüften",
@@ -308,7 +327,9 @@
           "infusion_window_seconds": "Zeitfenster für die Aufgusserkennung",
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
-          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals"
+          "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
+          "session_light_minutes": "Lichtnachlauf nach Sitzungsende",
+          "session_light_brightness_percent": "Lichthelligkeit nach Sitzungsende"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -329,17 +350,19 @@
           "preset_start_c": "Solltemperatur der ersten Taste in der Übersicht.",
           "preset_step_c": "Abstand zwischen zwei benachbarten Temperaturtasten.",
           "preset_count": "Anzahl der sichtbaren Tasten für die Solltemperatur.",
-          "target_temperature_c": "Gewünschte Temperatur am oberen Sensor während eines Saunagangs.",
-          "temperature_increase_c": "Nach jedem beendeten und gezählten Saunagang steigt die Solltemperatur um diesen Wert, höchstens bis zur Endtemperatur.",
-          "final_temperature_c": "Obergrenze für die Solltemperatur. Leer lassen für eine konstante Temperatur. Die Solltemperatur ist der Startwert der Saunasitzung.",
+          "target_temperature_c": "Gewünschte Temperatur am oberen Sensor während eines Saunagangs. Eine Änderung während der Sitzung gilt sofort; weitere Steigerungen beginnen ab diesem Wert.",
+          "temperature_increase_c": "Erhöhung nach jedem weiteren gezählten Saunagang, höchstens bis zur Endtemperatur. Während der Sitzung änderbar; bereits gezählte Gänge werden nicht erneut angerechnet.",
+          "final_temperature_c": "Obergrenze für die Solltemperatur. Leer lassen für eine konstante Temperatur. Eine niedrigere Endtemperatur begrenzt die aktuelle Solltemperatur; Heizsperren und laufende Fristen bleiben wirksam.",
           "safety_temperature_c": "Wird diese Temperatur anhaltend überschritten, ist eine verlängerte Zwangskühlung fällig; die Sitzung wird nicht abgebrochen.",
           "overtemperature_minutes": "Die Temperaturgrenze muss länger als diese Zeit ununterbrochen überschritten sein.",
           "overtemperature_cooling_factor": "Faktor für die eingestellte Kühlzeit. Der Wert 2 bedeutet doppelte Kühlzeit.",
-          "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Vor dem ersten Start einstellen.",
-          "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Vor dem ersten Start passend zum Meldeabstand der Sensoren einstellen.",
-          "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss. Vor dem ersten Start einstellen.",
+          "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt.",
+          "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Bei Bedarf passend zum tatsächlichen Meldeabstand einstellen.",
+          "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss.",
           "power_heating_threshold_w": "Nur bei zugeordnetem Leistungssensor: Oberhalb dieser Leistung zählt die Zeit als Heizzeit. Standby bleibt beim Energieverbrauch berücksichtigt.",
           "nominal_power_kw": "Nennleistung des Ofens in kW. Ohne Leistungsmessung wird daraus und aus der Heizzeit der Verbrauch in kWh berechnet.",
+          "operation_brightness_percent": "Helligkeit des Saunalichts beim Einschalten des Saunabetriebs. Manuelle Lichtänderungen bleiben bis zum nächsten Einschalten erhalten.",
+          "after_run_brightness_percent": "Helligkeit des Saunalichts während des Nachlaufs. Nach Nachlauf und anschließender Kühlung wird die vorherige Helligkeit wiederhergestellt.",
           "cooling_brightness_percent": "Helligkeit des Saunalichts während einer laufenden Zwangskühlung.",
           "grid_seconds": "Das feste Ein-Sekunden-Raster gehört zum geprüften Erkennungsverfahren.",
           "median_seconds": "Zeitfenster für den Median. Es glättet einzelne Messausreißer vor der Erkennung.",
@@ -349,6 +372,9 @@
           "door_open_humidity_upper": "Mindestabfall am oberen Sensor in Prozentpunkten; wird zusammen mit dem Temperaturtrend bewertet.",
           "door_open_humidity_lower": "Mindestabfall am unteren Sensor in Prozentpunkten; wird zusammen mit dem Temperaturtrend bewertet.",
           "door_open_hold_seconds": "So lange müssen die Bedingungen für eine offene Tür bestehen.",
+          "door_heating_slope": "Zusätzliche Erkennung ohne Feuchteabfall: Beide Temperaturtrends müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Bei nur einer verfügbaren Messposition bleibt die bisherige Regel mit Luftfeuchte maßgeblich.",
+          "door_heating_hold_seconds": "So lange muss der zusätzliche Temperaturabfall an beiden Messpositionen gleichzeitig bestehen. Eine Heizabschaltung verwirft diesen Nachweis.",
+          "door_heating_max_temperature_c": "Nur solange beide geglätteten Temperaturen unter diesem Wert liegen, darf die zusätzliche Regel ohne Feuchteabfall auslösen. Im heißen Bereich bleibt die Regel mit Temperatur- und Feuchteabfall maßgeblich. Null schaltet die Ergänzung aus.",
           "door_close_slope": "Mindestanstieg der Temperatur für die Erkennung einer geschlossenen Tür.",
           "door_close_hold_seconds": "So lange muss die Bedingung für eine geschlossene Tür bestehen.",
           "vent_baseline_seconds": "Rückblick für die Temperatur vor der Türöffnung.",
@@ -371,7 +397,9 @@
           "infusion_window_seconds": "Zeitraum, in dem Luftfeuchteanstieg und Temperaturänderung eines Aufgusses bewertet werden.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
-          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs."
+          "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
+          "session_light_minutes": "Dauer ab dem endgültigen Sitzungsende, also nach der Pause bis zum Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",
+          "session_light_brightness_percent": "Helligkeit während des Lichtnachlaufs nach einer beendeten Saunasitzung. Standard: 50 %. Der Nachlauf nach einem Saunagang und die Zwangskühlung haben eigene Lichtwerte."
         }
       },
       "logging": {
@@ -413,7 +441,7 @@
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "session_exists": "Die Saunasitzung ist noch nicht beendet. Temperatur- und Ablaufeinstellungen können nach Ablauf der eingestellten Pause geändert werden."
+      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Erhöhung je Gang und Endtemperatur sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
     }
   },
   "selector": {

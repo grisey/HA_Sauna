@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from . import energy, heating, thermostat
-from .models import CoolingCycle, Deadline, Energy, Session, TimedPhase
+from .models import CoolingCycle, Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .mechanical_timer import MechanicalTimer
-from .parameters import Parameters
+from .parameters import Parameters, LIVE_TEMPERATURE_KEYS
 from .timeline import Event, Kind, apply, utc
 
 GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
@@ -29,6 +29,7 @@ class Controller:
         self.parameters = parameters
         self._session: Session | None = None
         self.completed_sessions: tuple[Session, ...] = ()
+        self.light_after_run: LightAfterRun | None = None
         self._last_at: datetime | None = None
         # Reale Messlage und Schutz bleiben außerhalb der Session-Rücksetzung.
         self.temperature: float | None = None
@@ -42,6 +43,8 @@ class Controller:
         self.overtemperature_since: datetime | None = None
         self._temperature_cooling_requested = False
         self.mechanical_timer = MechanicalTimer()
+        self.phase_since = None
+        self._phase_key = (None, "aus")
 
     @property
     def session(self) -> Session | None:
@@ -59,9 +62,31 @@ class Controller:
         target = self.parameters.values.get("target_temperature_c")
         end = self.parameters.values.get("final_temperature_c")
         count = self._session.timeline.gang_count if self._session else 0
+        if self._session and self._session.temperature_base_c is not None:
+            target = self._session.temperature_base_c
+            count -= self._session.temperature_base_gang_count
         if target is not None and end is not None:
             return min(end, target + count * self.parameters.values["temperature_increase_c"])
         return target
+
+    def update_temperature_parameters(self, parameters, at, *, explicit_target=False):
+        changed = {k for k in self.parameters.values.keys() | parameters.values.keys()
+                   if self.parameters.values.get(k) != parameters.values.get(k)}
+        if changed - LIVE_TEMPERATURE_KEYS:
+            raise ValueError("Während einer Saunasitzung sind nur Solltemperatur, Steigerungsrate und Endtemperatur änderbar.")
+        self.advance(at, evaluate=False)
+        before = self.target_temperature
+        self.parameters = parameters
+        if self._session and (changed or explicit_target):
+            target = parameters.values["target_temperature_c"] if explicit_target else before
+            end = parameters.values.get("final_temperature_c")
+            if end is not None:
+                target = min(target, end)
+            self._session = replace(self._session, temperature_base_c=target,
+                temperature_base_gang_count=self._session.timeline.gang_count)
+            if self.target_temperature != before:
+                self._session = replace(self._session, ready_at=None)
+        self._evaluate(utc(at))
 
     @property
     def readiness_target(self) -> float | None:
@@ -105,6 +130,7 @@ class Controller:
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
+        self.light_after_run = None
         self._session = replace(Session.create(session_id, at), operation_enabled=True,
                                 energy=Energy(accounted_at=at))
         self._session = replace(self._session, heating=heating.report(
@@ -340,6 +366,9 @@ class Controller:
         if self.last_decision is None or (decision.heat, decision.reason) != (self.last_decision.heat, self.last_decision.reason):
             self.decisions.append(decision)
         self.last_decision = decision
+        phase_key = (session.session_id if session else None, self.phase)
+        if phase_key != self._phase_key:
+            self._phase_key, self.phase_since = phase_key, at
         return decision
 
     def register_deadline(self, deadline: Deadline) -> None:
@@ -383,6 +412,9 @@ class Controller:
                 self._finish_cooling(session.cooling, deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
             self.completed_sessions += (replace(self._session, ended_at=deadline.due_at, deadlines=()),)
+            self.light_after_run = LightAfterRun(session.session_id, deadline.due_at,
+                deadline.due_at + timedelta(seconds=self.parameters.seconds("session_light_minutes")),
+                self.parameters.values["session_light_brightness_percent"])
             if session.timeline.gang_count:
                 self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
             self._session = None
