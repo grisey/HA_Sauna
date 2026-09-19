@@ -9,7 +9,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class SaunaEnergy(SaunaEntity, SensorEntity):
-    _attr_name = "Sessionenergie"
+    _attr_name = "Energieverbrauch der Saunasitzung"
     _attr_native_unit_of_measurement = "kWh"
     _attr_device_class = SensorDeviceClass.ENERGY
 
@@ -35,7 +35,7 @@ class SaunaEnergy(SaunaEntity, SensorEntity):
 class SaunaPhase(SaunaEntity, SensorEntity):
     def __init__(self, entry):
         super().__init__(entry, "phase")
-        self._attr_name = "Phase"
+        self._attr_name = "Betriebszustand"
 
     @property
     def native_value(self):
@@ -56,7 +56,9 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "after_run_ends_at": session.after_run.ends_at.isoformat() if session and session.after_run else None,
             "cooling_ends_at": session.cooling.ends_at.isoformat() if session and session.cooling and session.cooling.ends_at else None,
             "cooling_wait_until": self.runtime.controller.cooling_wait_until.isoformat() if self.runtime.controller.cooling_wait_until else None,
-            "mechanical_timer_ends_at": self.runtime.controller.mechanical_timer_ends_at.isoformat() if session else None,
+            "mechanical_timer_ends_at": self.runtime.controller.mechanical_timer_ends_at.isoformat() if self.runtime.controller.mechanical_timer_ends_at else None,
+            "mechanical_timer_state": self.runtime.controller.mechanical_timer_status["state"],
+            "mechanical_timer_remaining_seconds": self.runtime.controller.mechanical_timer_status["remaining_seconds"],
             "mechanical_timer_estimated": True,
             "faults": dict(self.runtime.device.faults) if self.runtime.device else {},
             "heating_feedback": self.runtime.controller.feedback,

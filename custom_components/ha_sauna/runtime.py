@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -14,17 +15,30 @@ from .core.controller import Controller, Result
 from .core.models import Deadline, Session
 from .core.parameters import Parameters
 from .core.timeline import Door, Event
+from .log import SaunaLog, LEVELS
+from .presentation import fault_message, fault_resolved, decision_message, PHASES, EVENTS
 
 
 @dataclass(frozen=True)
 class Configuration:
     bindings: Bindings
     parameters: Parameters
+    log_level: str = "INFO"
+    control_input_mode: str = "switch"
+    button_event_type: str = ""
 
     @classmethod
     def from_options(cls, options: Mapping) -> Configuration:
-        if not isinstance(options, Mapping) or set(options) != {CONF_BINDINGS, CONF_PARAMETERS}:
+        if (not isinstance(options, Mapping) or not {CONF_BINDINGS, CONF_PARAMETERS} <= set(options)
+                or set(options) - {CONF_BINDINGS, CONF_PARAMETERS, "log_level", "control_input_mode", "button_event_type"}):
             raise ValueError("Vollständige Entitäts- und Parameterkonfiguration erforderlich")
+        level = options.get("log_level", "INFO")
+        if level not in LEVELS:
+            raise ValueError("Ungültige Protokollstufe")
+        mode = options.get("control_input_mode", "switch")
+        event_type = options.get("button_event_type", "")
+        if mode not in ("button", "switch") or not isinstance(event_type, str):
+            raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
         # Einmalige Übernahme der alten beidseitigen Bandbreite. Danach werden
         # ausschließlich die neuen, gemeinsam gespeicherten Parameter konsumiert.
@@ -32,12 +46,15 @@ class Configuration:
             cold = values.pop("cold_tolerance_c", 0)
             hot = values.pop("hot_tolerance_c", 0)
             values.setdefault("readiness_hysteresis_c", cold + hot)
-        return cls(Bindings(options[CONF_BINDINGS]), Parameters(values))
+        return cls(Bindings(options[CONF_BINDINGS]), Parameters(values), level, mode, event_type.strip())
 
     def as_options(self) -> dict:
         return {
             CONF_BINDINGS: self.bindings.as_dict(),
             CONF_PARAMETERS: self.parameters.as_dict(),
+            "log_level": self.log_level,
+            "control_input_mode": self.control_input_mode,
+            "button_event_type": self.button_event_type,
         }
 
 
@@ -65,6 +82,13 @@ class SaunaRuntime:
         self._saved_decisions = 0
         self._saved_phase = None
         self._saved_faults = None
+        self.log = SaunaLog(id(self), configuration.log_level)
+        self._logged_faults = {}
+
+    def set_log_level(self, level):
+        self.log.set_level(level)
+        self.configuration = replace(self.configuration, log_level=level)
+        self.log.info("log_level", "Protokollstufe auf %s gesetzt.", level)
 
     def _sync_detector(self):
         session_id = self.session.session_id if self.session else None
@@ -72,6 +96,7 @@ class SaunaRuntime:
             return
         self._detector_session = session_id
         def observed(trace):
+            self.log.debug("detection_check", "Erkennungsprüfung: %s", trace)
             if self.archive:
                 self.archive.append("detector_trace", self._clock(), trace, session_id)
         self.detector = Detector(self.configuration.parameters, self.session.started_at,
@@ -96,6 +121,7 @@ class SaunaRuntime:
                 event = Event(f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
                     self.session.session_id, detection.kind, detection.effective_at, now)
                 self.controller.process(event)
+                self.log.info("detection", "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.", EVENTS.get(detection.kind, "Erkennungssignal"), detection.effective_at)
                 if self.archive:
                     self.archive.append("detection", now, {"event": event, "channels": detection.channels}, self.session.session_id)
         if self.device:
@@ -117,7 +143,10 @@ class SaunaRuntime:
                     self.device.ingest(role, event.data.get("new_state"), received_at)
             action = self.device.physical_action(event)
             if action is not None:
-                self.controller.set_operation(action, self._clock())
+                try:
+                    self._set_operation(action)
+                except ValueError as error:
+                    self.device.faults["start_rejected"] = str(error)
             await self._cycle()
 
     async def reset_protection(self):
@@ -179,6 +208,22 @@ class SaunaRuntime:
         return lambda: self._subscribers.discard(callback)
 
     def notify(self):
+        phase = self.controller.phase
+        self.log.change("phase", phase, logging.INFO, "Betriebszustand: %s.", PHASES[phase])
+        self.log.change("target", self.controller.target_temperature, logging.INFO,
+            "Aktuelle Solltemperatur: %s.", f"{self.controller.target_temperature:g} °C" if self.controller.target_temperature is not None else "noch nicht eingestellt")
+        decision = self.controller.last_decision
+        if decision:
+            self.log.change("decision", (decision.heat, decision.reason), logging.DEBUG,
+                "Heizentscheidung: %s", decision_message(decision))
+        faults = dict(self.device.faults) if self.device else {}
+        for key, value in faults.items():
+            if self._logged_faults.get(key) != value:
+                level = logging.ERROR if value == "confirmed" or key in ("archive", "cooling_light", "heater_service_unavailable") else logging.WARNING
+                self.log.logger.log(level, "%s", fault_message(key, value), extra={"sauna_event": key})
+        for key in self._logged_faults.keys() - faults.keys():
+            self.log.info("fault_cleared", "%s", fault_resolved(key))
+        self._logged_faults = faults
         self.persist()
         for callback in tuple(self._subscribers):
             callback()
@@ -186,12 +231,24 @@ class SaunaRuntime:
     def check_configuration_change(self):
         self._require_open()
         if self.session is not None:
-            raise ValueError("Grundkonfiguration ist während einer Session gesperrt")
+            raise ValueError("Einstellungen können erst nach Ende der Saunasitzung geändert werden")
+
+    def _set_operation(self, enabled):
+        if self.device:
+            self.device.refresh(self._clock())
+            if enabled and not (self.session and self.session.operation_enabled):
+                errors = self.device.start_errors()
+                if errors:
+                    self.log.change("start_rejected", tuple(errors), logging.WARNING, "Start verhindert: %s", " ".join(errors))
+                    raise ValueError("Start nicht möglich. " + " ".join(errors))
+            self.device.faults.pop("start_rejected", None)
+        self.log.info("operation", "Saunabetrieb %s angefordert.", "einschalten" if enabled else "ausschalten")
+        return self.controller.set_operation(enabled, self._clock())
 
     async def set_operation(self, enabled: bool):
         async with self._lock:
             self._require_open()
-            result = self.controller.set_operation(enabled, self._clock())
+            result = self._set_operation(enabled)
             await self._cycle()
             return result
 
@@ -231,6 +288,7 @@ class SaunaRuntime:
             if self.closed:
                 return
             self.closed = True
+            self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")
             callbacks, self._cleanup = self._cleanup, []
             failures = []
             for unsubscribe in reversed(callbacks):

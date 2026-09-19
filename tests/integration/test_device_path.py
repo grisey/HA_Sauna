@@ -315,3 +315,56 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.runtime.session.energy.measured_kwh, .016875)
         self.assertAlmostEqual(self.runtime.session.energy.estimated_kwh, .00625)
         self.assertEqual(self.runtime.session.energy.source, "mixed")
+
+    async def test_detached_binary_button_toggles_operation_on_press_not_release(self):
+        from dataclasses import replace
+        self.runtime.configuration = replace(self.runtime.configuration, control_input_mode="button")
+        await self.set_source("control_input", "on")
+        identity = self.runtime.session.session_id
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertTrue(self.heater.is_on)
+        await self.set_source("control_input", "off")
+        self.assertTrue(self.runtime.session.operation_enabled)
+        await self.set_source("control_input", "on")
+        self.assertFalse(self.runtime.session.operation_enabled)
+        self.assertFalse(self.heater.is_on)
+        await self.set_source("control_input", "off")
+        self.assertFalse(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.session_id, identity)
+
+    async def test_shelly_event_button_ignores_press_release_and_recovery_duplicates(self):
+        from dataclasses import replace
+        from custom_components.ha_sauna.bindings import Bindings
+        # Rebind through real HA options; the old listener must disappear.
+        values={**self.entry.options["bindings"], "control_input":"event.detached_button"}
+        self.hass.states.async_set("event.detached_button", "unknown", {"event_type":None})
+        self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options,
+            "bindings":values, "control_input_mode":"button"})
+        await self.hass.async_block_till_done()
+        self.runtime=self.entry.runtime_data
+        self.runtime._clock=lambda:self.now
+        self.now=self.runtime.device.input_started_at+timedelta(seconds=1)
+        async def push(kind):
+            self.now+=timedelta(milliseconds=100)
+            self.hass.states.async_set("event.detached_button", self.now.isoformat(), {"event_type":kind})
+            await self.hass.async_block_till_done()
+        await push("btn_down")
+        self.assertIsNone(self.runtime.session)
+        await push("btn_up")
+        self.assertIsNone(self.runtime.session)
+        await push("single_push")
+        self.assertTrue(self.runtime.session.operation_enabled)
+        saved=self.hass.states.get("event.detached_button")
+        self.hass.states.async_set("event.detached_button", "unavailable")
+        await self.hass.async_block_till_done()
+        self.hass.states.async_set("event.detached_button", saved.state, saved.attributes)
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.runtime.session.operation_enabled)
+        # The old binary input no longer controls this instance.
+        self.hass.states.async_set("binary_sensor.operator", "on")
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.runtime.session.operation_enabled)
+        await push("btn_down")
+        await push("btn_up")
+        await push("single_push")
+        self.assertFalse(self.runtime.session.operation_enabled)

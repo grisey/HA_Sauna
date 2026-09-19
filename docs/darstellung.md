@@ -63,3 +63,30 @@ Die private Bildschirmaufnahme und ihre Entity-IDs werden nicht veröffentlicht.
 Eine Vorhersage der verbleibenden Aufheizzeit ist keine vereinbarte/validierte
 Regel und wird nicht als zuverlässige Restzeit erfunden. Vorhandene Timer und
 Fristen werden mit ihrem tatsächlichen Zeitbezug angezeigt.
+
+
+## Präzisierung nach der ersten Testinstallation
+
+Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht hat die
+Blätter **Steuerung** und **Verlauf und Archiv**. Zustand, gezählte Heizzeit,
+angehaltener/laufender mechanischer Ofentimer und die jeweils aktive Gang-,
+Nachlauf- oder Kühlzeit erscheinen kompakt. Bereitschaftstemperatur und interne
+Regelungswerte stehen ausschließlich in den Details. Gesperrte Temperaturtasten
+bleiben sichtbar; der Grund der Sperre wird erklärt. Nach Sitzungsende bleibt
+der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar.
+
+Alle Einstellfelder besitzen deutsche Bezeichnungen und Zweckbeschreibungen.
+Sie sind nach Temperatur, Ablauf, Überwachung, Ofentimer/Energie und Darstellung
+geordnet. Erkennungsparameter stehen separat unter Experteneinstellungen.
+Veraltete Messwerte und unvollständige Einrichtung werden unterschiedlich erklärt;
+interne Fehlerkennungen erscheinen nicht als Fehlermeldung. Die frei einstellbare
+Temperatursteigerung ist in der Steuerung unter einer eigenen Aufklappzeile wählbar.
+
+Unter Details → Einstellungen steht **Protokollierung**. **INFO** ist Standard:
+Fehler, Warnungen, Zustandswechsel, Sollwertwechsel und Schaltbefehle. **ERROR**
+begrenzt die Ausgabe auf Fehler; **DEBUG** ergänzt Messwerte und Erkennungsprüfungen.
+Die Auswahl wird gespeichert und wirkt ohne Neustart oder Sitzungsunterbrechung.
+Home Assistants normale Logger und Loghandler führen die Ausgabe unter
+`custom_components.ha_sauna.instance.…`; gleichbleibende Störungen werden nicht
+sekündlich erneut gemeldet. Das vollständige Sitzungsarchiv ist unabhängig von
+dieser Auswahl. Die gleiche Auswahl steht in den HA-Integrationsoptionen bereit.

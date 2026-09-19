@@ -102,8 +102,8 @@ Ofen-Aus; eine bloße Session-Neuanlage löscht keine Verriegelung.
 
 Der mechanische Ofentimer unterbricht nach Ablauf physisch die Stromversorgung.
 Seine Stellung ist nicht aus HA bekannt. Die Schätzung läuft standardmäßig
-4 Stunden ab Sessionbeginn, unabhängig von Thermostatpausen und kurzen
-Betriebsunterbrechungen. Einstellbare Vorwarnung und Ablaufhinweis erscheinen
+4 Stunden bei eingeschaltetem Saunabetrieb. Thermostatpausen zählen weiter,
+Betriebsunterbrechungen halten die Anzeige an. Einstellbare Vorwarnung und Ablaufhinweis erscheinen
 als HA-Benachrichtigung. Fehlende gemessene Heizleistung bei weiterhin
 angezogenem Schütz pausiert den Zähler ohne technischen Abbruch. Schützstellung
 bestätigt den Schaltvollzug; eine ausbleibende Schaltbestätigung oder trotz
@@ -115,3 +115,35 @@ Eingängen und bestätigten Fehlern, unabhängig von der Timeranzeige.
 
 Setup/HA-Neustart aktiviert keinen Betrieb. Setup und Unload senden Ofen-Aus.
 Keine automatische Wiederaufnahme; historische Daten bleiben verfügbar.
+
+
+## Ergänzungen zur Bedienung vom 19.09.2026
+
+Die mechanische Timeranzeige hält beim Ausschalten des Saunabetriebs an. Ein
+kurzer Test oder eine beendete Sitzung ohne gezählte Saunagänge behält die Restzeit.
+Nach einer beendeten Sitzung mit gezählten Gängen beginnt die Anzeige erst beim
+nächsten Einschalten wieder mit der eingestellten Gesamtdauer. Thermostatpausen,
+Nachlauf und Zwangskühlung innerhalb des eingeschalteten Betriebs lassen sie
+weiterlaufen. Optionsänderungen erhalten die angehaltene Anzeige; ein vollständiger
+HA-Neustart stellt keinen Laufzeitzustand wieder her. Der Timer bleibt rein informativ.
+
+Die frühere Steigerung über feste Temperaturszenen wird aus den gezählten Gängen
+abgeleitet: `min(Endtemperatur, Starttemperatur + Gangzahl × Schrittweite)`.
+Startwert ist die eingestellte Solltemperatur, die Schrittweite standardmäßig 5 °C.
+Eine leere Endtemperatur bedeutet konstanten Betrieb. Vorläufige oder aufgehobene
+Gänge erhöhen die Temperatur nicht. Neue Sitzungen beginnen wieder beim Startwert;
+kurzes Aus-/Einschalten erhält die erreichte Stufe. Bereitschaftsaufschlag und
+Hysterese beziehen sich auf die aktuell berechnete Solltemperatur. Nachlauf und
+Kühlung behalten Vorrang. Erhöhte Bereitschaft muss zunächst erreicht werden.
+
+Ein entkoppelter Taster bedient den Saunabetrieb. Der Heizschütz wird ausschließlich
+von der Regelung geschaltet. Bei binären Tastern zählt nur die Flanke Aus → Ein;
+Loslassen schaltet nicht aus. Ereignistaster verarbeiten standardmäßig kurze
+Shelly-Klicks (`single_push` oder `single`); Drücken/Loslassen sowie Wiederholungen
+beim Wiederverbinden zählen nicht erneut. Andere Ereignisarten sind zuordenbar.
+Ein dauerhafter Betriebsschalter kann alternativ seine Ein-/Ausstellung übernehmen.
+Bestehende binäre Zuordnungen behalten bis zur Umstellung ihre Schalterauswertung.
+
+Ein Start mit fehlenden notwendigen Einstellungen, ohne gültige Regeltemperatur
+oder ohne Schützrückmeldung erzeugt keine Sitzung. Die Einrichtung bleibt damit
+zugänglich. Sensor-, Geräte- und Ablaufänderungen sind nach Sitzungsende möglich.

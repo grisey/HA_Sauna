@@ -2,8 +2,9 @@
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory
 
-from .core.parameters import DEFINITIONS, Parameters
+from .core.parameters import DEFINITIONS, Parameters, ParameterError
 from .entity import SaunaEntity
+from .presentation import parameter_error
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -31,10 +32,13 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         return self.runtime.configuration.parameters.values.get(self.definition.key)
 
     async def async_set_native_value(self, value):
-        parameters = Parameters({
-            **self.entry.options["parameters"], self.definition.key: value,
-        })
         self.runtime.check_configuration_change()
+        try:
+            parameters = Parameters({
+                **self.entry.options["parameters"], self.definition.key: value,
+            })
+        except ParameterError as error:
+            raise ValueError(parameter_error(error)) from None
         self.hass.config_entries.async_update_entry(self.entry, options={
             **self.entry.options, "parameters": parameters.as_dict(),
         })

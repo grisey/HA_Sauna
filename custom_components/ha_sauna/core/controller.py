@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from . import energy, heating, thermostat
 from .models import CoolingCycle, Deadline, Energy, Session, TimedPhase
+from .mechanical_timer import MechanicalTimer
 from .parameters import Parameters
 from .timeline import Event, Kind, apply, utc
 
@@ -40,6 +41,7 @@ class Controller:
         self.decisions: list[thermostat.Decision] = []
         self.overtemperature_since: datetime | None = None
         self._temperature_cooling_requested = False
+        self.mechanical_timer = MechanicalTimer()
 
     @property
     def session(self) -> Session | None:
@@ -53,15 +55,27 @@ class Controller:
         return limit
 
     @property
-    def readiness_target(self) -> float | None:
+    def target_temperature(self) -> float | None:
         target = self.parameters.values.get("target_temperature_c")
+        end = self.parameters.values.get("final_temperature_c")
+        count = self._session.timeline.gang_count if self._session else 0
+        if target is not None and end is not None:
+            return min(end, target + count * self.parameters.values["temperature_increase_c"])
+        return target
+
+    @property
+    def readiness_target(self) -> float | None:
+        target = self.target_temperature
         return None if target is None else target + self.parameters.values["readiness_offset_c"]
 
     @property
     def mechanical_timer_ends_at(self):
-        if self._session is None:
-            return None
-        return self._session.started_at + timedelta(seconds=self.parameters.seconds("mechanical_timer_minutes"))
+        return self.mechanical_timer_status["ends_at"]
+
+    @property
+    def mechanical_timer_status(self):
+        return self.mechanical_timer.status(self._last_at,
+            self.parameters.seconds("mechanical_timer_minutes"))
 
     @property
     def cooling_wait_until(self):
@@ -96,6 +110,7 @@ class Controller:
         self._session = replace(self._session, heating=heating.report(
             self._session.heating, self.feedback, at, self.parameters.seconds("heat_reset_minutes")))
         self._last_at = at
+        self.mechanical_timer = self.mechanical_timer.start(at, session_id)
         self._evaluate(at)
         return self._session
 
@@ -108,6 +123,7 @@ class Controller:
             if not self._session.operation_enabled:
                 self._session = replace(self._session, operation_enabled=True, operation_off_at=None)
                 self._cancel("session_gap")
+                self.mechanical_timer = self.mechanical_timer.start(at, self._session.session_id)
         elif self._session is not None and self._session.operation_enabled:
             self.process(Event(uuid4().hex, self._session.session_id, Kind.OPERATION_OFF, at, at))
         self._evaluate(at)
@@ -226,7 +242,10 @@ class Controller:
             self._evaluate(event.detected_at)
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
+        previous_target = self.target_temperature
         self._session = replace(previous, timeline=timeline)
+        if self.target_temperature != previous_target:
+            self._session = replace(self._session, ready_at=None)
         active = timeline.active
         if active is not None or event.kind == Kind.OPERATION_OFF:
             self._cancel("person_opportunity")
@@ -239,6 +258,7 @@ class Controller:
             self._begin_after_run(timeline.completed[-1].gang_id, event.detected_at)
         if event.kind == Kind.OPERATION_OFF:
             self._session = replace(self._session, operation_enabled=False, operation_off_at=event.detected_at)
+            self.mechanical_timer = self.mechanical_timer.pause(event.detected_at)
             self._schedule("session_gap", event.detected_at + timedelta(seconds=self.parameters.seconds("session_gap_minutes")))
         self.advance(event.detected_at)
         return Result(self._session, True, "gang_model_updated", event.event_id)
@@ -309,6 +329,7 @@ class Controller:
                     and self.temperature >= target and session.operation_enabled):
                 self._session = session = replace(session, ready_at=at)
             state, decision = thermostat.evaluate(session.thermostat, now=at, parameters=self.parameters,
+                target_temperature=self.target_temperature,
                 temperature=self.temperature, enabled=session.operation_enabled, gang=session.timeline.active is not None,
                 cooling=session.cooling is not None and session.cooling.started_at is not None,
                 after_run=session.after_run is not None, protection=tuple(sorted(self.protection)),
@@ -362,5 +383,7 @@ class Controller:
                 self._finish_cooling(session.cooling, deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
             self.completed_sessions += (replace(self._session, ended_at=deadline.due_at, deadlines=()),)
+            if session.timeline.gang_count:
+                self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
             self._session = None
         return True

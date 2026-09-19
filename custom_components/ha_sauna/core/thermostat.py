@@ -18,7 +18,7 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
              temperature: float | None, enabled: bool, gang: bool,
              cooling: bool, after_run: bool, protection: tuple[str, ...] = (),
              inhibits: tuple[str, ...] = (),
-             heating_since: datetime | None = None):
+             heating_since: datetime | None = None, target_temperature: float | None = None):
     values = parameters.values
     def result(demand, reason, cooldown=state.cooldown_until):
         return replace(state, demand=demand, cooldown_until=cooldown), Decision(now, demand, reason)
@@ -29,7 +29,7 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
         return result(False, "operation_off")
     if inhibits:
         return result(False, "inhibit:" + ",".join(inhibits))
-    target = values.get("target_temperature_c")
+    target = target_temperature if target_temperature is not None else values.get("target_temperature_c")
     limit = values.get("safety_temperature_c")
     if target is None or limit is None:
         return result(False, "temperature_configuration_required")

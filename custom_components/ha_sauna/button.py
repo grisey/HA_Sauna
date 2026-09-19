@@ -9,7 +9,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class SaunaReset(SaunaEntity, ButtonEntity):
-    _attr_name = "Bestätigten Ausfall quittieren"
+    _attr_name = "Schutzabschaltung quittieren"
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, entry):

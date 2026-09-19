@@ -34,7 +34,7 @@ widersprüchlichen Zwischenstände. Der ursprüngliche Verlauf bleibt in Git erh
   Die tatsächliche Heizrückmeldung bleibt maßgeblich.
   Präzisierung: ausschließlich Anzeige/Erinnerung zum erneuten Einstellen des
   Drehschalters, keinerlei Steuer- oder Schutzwirkung aus der geschätzten Frist.
-- Zwei Hauptansichten: Normal mit einfacher Steuerung und eigenem Blatt für
+- Zwei Hauptansichten: Übersicht mit einfacher Steuerung und eigenem Blatt für
   Sessionverlauf samt Archivauswahl; Details mit übersichtlich sortiertem Betrieb,
   Fristen, Fehlern, eigener Erkennungskontrolle und Einstellungen/Export.
 - Gestaltung entspricht der gelieferten Diagrammvorlage. Zoom, Achsen, Tooltips
@@ -95,3 +95,20 @@ Ofenaktivierung, keine Produktionsinstallation, keine Versionserhöhung, kein
 Release und keine Lizenzwahl. Privater Recorderexport und Nutzerkonfiguration
 bleiben lokal. Ausgeführte Tests und noch fehlende Hardwareabnahme werden
 getrennt im [Abnahmebericht](abnahme.md) benannt.
+
+
+## Korrekturen nach der ersten Testinstallation
+
+Die Timeranzeige hält bei Betrieb-Aus an. Erst nach abgeschlossener Sitzung mit
+gezählten Saunagängen beginnt sie beim nächsten Einschalten neu. Leere Testsitzungen
+behalten ihre Restzeit. Bereitschaftswerte gehören nur in Details; Übersicht und
+Temperaturtasten bleiben auch während gesperrter Einstellungen sichtbar.
+
+Die vorherige Temperatursteigerung wird wieder aufgenommen: einstellbare Schrittweite
+je gezähltem Gang (Default 5 °C), frei wählbare Endtemperatur, Startwert aus der
+Solltemperatur. Ohne Endtemperatur bleibt der Betrieb konstant.
+
+Die Protokollierung ist in den Einstellungen als ERROR, INFO (Standard) oder DEBUG
+wählbar und wirkt sofort. Gerätezuordnungen sind nachträglich änderbar, sobald keine
+Sitzung offen ist. Entkoppelter Taster und Schütz sind getrennte Rollen; Loslassen
+eines Tasters darf nicht ausschalten.

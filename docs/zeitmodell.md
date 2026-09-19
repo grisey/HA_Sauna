@@ -17,7 +17,7 @@
 | Kühlende | Start der Kühlung plus um verbrauchten Nachlauf verminderte Kühlvorgabe. |
 | Türwartefrist | Öffnung plus Offenfrist; nach rechtzeitiger Schließung diese plus Personenwartefrist. |
 | Temperatur-Zusatzkühlung | Durchgehender gültiger oberer Temperaturbeleg über Grenze und Auslösezeit. |
-| Mechanischer Ofentimer | Geschätzte Wandzeit ab Sessionbeginn, keine Messung seiner Stellung. |
+| Mechanischer Ofentimer | Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb. Betrieb-Aus hält die Anzeige an; Thermostatpausen und Kühlung nicht. Neue volle Laufzeit erst nach beendeter Sitzung mit gezählten Gängen. Keine Messung seiner Stellung. |
 
 Alle Zeitstempel tragen eine Zeitzone und werden intern in UTC geführt.
 `effective_at` kennzeichnet die zugeordnete Ereigniszeit, `detected_at` die
