@@ -68,7 +68,7 @@ Fristen werden mit ihrem tatsächlichen Zeitbezug angezeigt.
 ## Präzisierung nach der ersten Testinstallation
 
 Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht hat die
-Blätter **Steuerung** und **Verlauf und Archiv**. Neben dem Zustand erscheint genau die relevante Phasenzeit: Gangdauer, Nachlauf, Kühlung, Türwartefrist, Heizpause, Mindestheizzeit, Bereitschafts-/Aufheizdauer oder Frist bis zum Sitzungsende. Heizzeitsumme und mechanischer Timer stehen ausschließlich in Details. Bereitschaftstemperatur und interne
+Blätter **Steuerung** und **Verlauf und Archiv**. Neben dem Zustand erscheint genau die relevante Phasenzeit: Gangdauer, Nachlauf, Kühlung, Türwartefrist, Heizpause, Mindestheizzeit, Bereitschafts-/Aufheizdauer oder Frist bis zum Sitzungsende. Danach wird die verbleibende Lichtnachlaufzeit angezeigt. Heizzeitsumme und mechanischer Timer stehen ausschließlich in Details. Bereitschaftstemperatur und interne
 Regelungswerte stehen ausschließlich in den Details. Gesperrte Temperaturtasten
 bleiben sichtbar; der Grund der Sperre wird erklärt. Nach Sitzungsende bleibt
 der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar.
