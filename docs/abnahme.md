@@ -1,5 +1,58 @@
 # Funktionsprüfung der aktuellen Testfassung
 
+## Messlücken und Mindestheizzeit vom 20.09.2026
+
+Der untersuchte Aus-/Ein-Zyklus entstand durch eine zu kurze gespeicherte
+Messwert-Gültigkeit, obwohl gültige Sensormeldungen weiter eintrafen. Eine passende
+Gültigkeitsfrist genügt; die zwischenzeitlich geprüfte zusätzliche Überbrückung
+nach Gültigkeitsende wurde auf Nutzerhinweis wieder entfernt. Der Standard von
+180 Sekunden bleibt erhalten, ebenso vorhandene abweichende Einstellungen.
+Die Feldhilfe erklärt den Unterschied zur späteren Fehlerverriegelung.
+
+Die HA-Regressionen vergleichen denselben synthetischen Meldeabstand mit
+5 Sekunden und 30 Sekunden Gültigkeit: zu kurze Gültigkeit erzeugt einen echten
+Aus-/Ein-Zyklus samt neuer Mindestheizzeit; passende Gültigkeit erhält den
+Heizintervallstart auch nach bereits abgelaufener Mindestheizzeit. Weitere
+Gerätepfade prüfen sofortiges Pausieren nach tatsächlichem Gültigkeitsende,
+spätere Verriegelung bei Dauerausfall und den gesperrten Neustart nach einer
+Sollwerterhöhung ohne gültige Temperatur. Bereits gestartete Kühlung und Nachlauf
+gehen auch bei widersprüchlichem Gangsignal vor; noch nicht gestartete Kühlung
+wartet weiterhin auf das Gangende.
+
+Geprüfter Stand:
+[`4486127`](https://github.com/grisey/HA_Sauna/commit/44861277bc1112561f554cd437a2400b0c237841).
+[CI 35477475041](https://github.com/grisey/HA_Sauna/actions/runs/35477475041)
+ist vollständig erfolgreich: **175 Kerntests bestanden, 2 private Replay-Skips;
+11 HA-API-Smokes; 36 echte HA-Integrationstests; 4 Browserabläufe**. Beide
+Gültigkeitsfälle sowie die Sperr- und Verriegelungsprüfungen bestehen im realen
+HA-Kern mit kontrollierten Testgeräten. Keine reale Installation oder
+Gerätebetätigung durch den Entwicklungszugriff.
+
+## Zustandsabhängige Erkennung vom 20.09.2026
+
+Der Controller gibt Personen- und Aufgussprüfungen nur frei, wenn sie den
+aktuellen Ablauf ändern können. Bereits erkannte Gänge benötigen keine weiteren
+Personensignale. Aufgüsse bleiben im Gang aktiv; Nachlauf, laufende Kühlung und
+Betrieb-Aus sperren neue Gangsignale. Türprüfungen bewerten nur den jeweils
+möglichen Übergang. Schwellen und eingefrorener Referenzkandidat bleiben gleich.
+
+Lokal **175 Kerntests bestanden, 2 private Replay-Skips**, 177 gesammelt.
+Der separate Vergleich aller Rasterpunkte mit dem eingefrorenen Kandidaten besteht.
+Ein weiterer privater Ablaufvergleich erhält sämtliche Tür-, Lüftungs- und
+Aufgusszeitpunkte sowie die Gangzuordnung; nur nachträgliche Personensignale
+entfallen. Geprüfter Code:
+[`3b46a78`](https://github.com/grisey/HA_Sauna/commit/3b46a78387913336495a102ba8cae1987b196869).
+[CI 35476362531](https://github.com/grisey/HA_Sauna/actions/runs/35476362531)
+ist vollständig erfolgreich: **175 Kerntests bestanden, 2 private Replay-Skips;
+11 HA-API-Smokes; 32 echte HA-Integrationstests; 4 Browserabläufe**. Der neue
+HA-Test bestätigt, dass der erste Aufguss den Gang anlegt und weitere Aufgüsse
+bei ruhender Personensuche demselben Gang zugeordnet bleiben.
+
+Die vorherige Fassung wurde inzwischen vom Nutzer installiert. Ausschließlich
+gelesene Archiv- und Zustandsdaten bestätigen Heizschütz-Aus zum Gangende,
+Nachlauflicht mit rund 15 % und die Rückkehr zum Betriebslicht. Die physische
+Türöffnungsdauer ist weiterhin keine unabhängige Kontaktmessung.
+
 ## Ergänzung vom 20.09.2026 – Ofentimer und manuelles Phasenende
 
 Der Ofentimer zählt jetzt nur bei eingeschaltetem Betrieb und bestätigtem

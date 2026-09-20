@@ -306,6 +306,25 @@ class Controller:
         self.advance(event.detected_at)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
+    def recognition_allowed(self, kind: Kind) -> bool:
+        """Nur Signale prüfen, die den führenden Gangzustand noch ändern können."""
+        session = self._session
+        if session is None or not session.operation_enabled:
+            return False
+        active = session.timeline.active
+        if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK):
+            if active is not None:
+                return False
+            source = session.timeline.anchor.event_id if session.timeline.anchor else "recognition_only"
+            if source in session.timeline.rejected_start_sources:
+                return False
+            if kind == Kind.PERSON_WEAK and session.timeline.preparation is None:
+                return False
+        elif kind != Kind.INFUSION:
+            return False
+        return active is not None or (session.after_run is None
+            and not (session.cooling and session.cooling.started_at is not None))
+
     def _begin_after_run(self, gang_id, at):
         phase = TimedPhase(gang_id, at, at + timedelta(seconds=self.parameters.seconds("after_run_minutes")))
         self._session = replace(self._session, after_run=phase)

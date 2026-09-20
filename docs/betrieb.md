@@ -34,7 +34,12 @@ Steigerungen. Bereits gezählte Gänge werden nicht erneut addiert. Änderungen
 erhalten laufende Gänge, Fristen, Mindestheizzeit, Kühlung und Schutz. Ein unterer
 Messwert wird niemals durch Mittelwertbildung oder Höhenoffset zur oberen
 Regeltemperatur erklärt. Kurz fehlende Pakete überbrückt nur ein noch gültiger
-oberer Messwert; nach dessen Gültigkeitsende pausiert die Heizung.
+oberer Messwert; nach dessen Gültigkeitsende pausiert die Heizung. Die konfigurierte
+Gültigkeitsdauer muss die normalen Meldeabstände abdecken. Sonst erzeugt eine
+gewöhnliche Meldepause einen tatsächlichen Aus-/Ein-Zyklus und damit eine neue
+Mindestheizzeit. Die separate Fehler-Bestätigungsfrist betrifft die spätere
+Verriegelung; sie verlängert die Messwertgültigkeit nicht. Der Standard bleibt
+180 Sekunden; gespeicherte abweichende Einstellungen bleiben erhalten.
 
 Ohne unabhängige Messung zählt Heizzeit bei rückgemeldetem Schütz EIN. Eine
 gültige optionale Leistungsmessung (W/kW, einstellbare Watt-Schwelle) hat Vorrang

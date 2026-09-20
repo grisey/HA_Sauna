@@ -72,6 +72,12 @@ Erkennung verwendet beide Messhöhen getrennt. Ein-Sensor-Erkennung bleibt mögl
 mit Fehleranzeige. Keine Temperaturmittelung oder erfundener Höhenoffset, keine
 IBS-Sensoren. Die Heizregelung benötigt einen gültigen oberen Wert; eine sichere
 untere Ersatztemperatur wurde nicht festgelegt und wird nicht angenommen.
+Die normale Messwertgültigkeit muss zum Meldeabstand passen. Nach Klärung einer
+zu kurzen lokalen Gültigkeitsfrist wurde die zusätzliche Überbrückung nach
+Gültigkeitsende verworfen. Die Fehler-Bestätigungsfrist betrifft ausschließlich
+die spätere Verriegelung. Bei fehlender gültiger Regeltemperatur pausiert die
+Heizung sofort. Bereits gestartete Kühlung und Nachlauf haben auch bei einem
+widersprüchlichen Gangsignal Vorrang.
 
 Vollauflösung und Ereignisrevisionen in SQLite unter HA-Konfiguration. Echte
 HA-Backup-Einbindung mit Restore-Prüfung. Authentifizierter ZIP-Download in den
@@ -144,3 +150,14 @@ Türöffnungsdauer. Der bestehende Kandidat bleibt bis zum Nachweis unverändert
 Noch zu klären: Soll abgeschlossener Nachlauf auch nach erneutem Heizen einmalig
 auf eine erst später fällige Zwangskühlung angerechnet werden? Der bestehende
 Ablauf rechnet ihn nur auf eine bereits angeforderte Kühlung an.
+
+Erkennungen werden auf ihre Wirkung im bestehenden Ablauf begrenzt. Eine
+geschlossene Tür benötigt keine Schließungsprüfung, eine offene Tür keine
+weitere Öffnungsprüfung. Personensuche soll einen neuen Gang anlegen; ein bereits
+vorläufiger oder durch Aufguss bestätigter Gang benötigt sie nicht mehr. Weitere
+Aufgüsse werden weiter zugeordnet. Während Nachlauf, laufender Zwangskühlung und
+Betrieb-Aus bleiben neue Gangsignale gesperrt. Die Freigaben folgen ausschließlich
+dem Controller; der Detektor führt keinen zweiten Bestätigungsstand.
+
+Der Nutzer akzeptiert die nicht erkannte kurze Testöffnung. Tür- und Lüftungs-
+schwellen bleiben für den angekündigten Versuch mit längerer Öffnung unverändert.

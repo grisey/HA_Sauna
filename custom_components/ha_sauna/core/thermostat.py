@@ -33,14 +33,14 @@ def evaluate(state: ThermostatState, *, now: datetime, parameters: Parameters,
     limit = values.get("safety_temperature_c")
     if target is None or limit is None:
         return result(False, "temperature_configuration_required")
-    if temperature is None or not isfinite(temperature):
-        return result(False, "upper_temperature_unavailable")
-    if gang:
-        return result(True, "gang")
     if cooling:
         return result(False, "forced_cooling")
     if after_run:
         return result(False, "after_run")
+    if temperature is None or not isfinite(temperature):
+        return result(False, "upper_temperature_unavailable")
+    if gang:
+        return result(True, "gang")
     if (state.demand and heating_since is not None
             and now < heating_since + timedelta(seconds=parameters.seconds("minimum_heating_minutes"))):
         return result(True, "minimum_heating")
