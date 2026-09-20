@@ -25,6 +25,10 @@ Gerätezuordnungen nach Sitzungsende, Protokollierung und Archiv finden Sie unte
 **Details**. Für das Protokoll wählen Sie bei Bedarf **INFO** für
 Betriebsereignisse, **ERROR** für Fehler oder **DEBUG** für die Diagnose.
 
+Mit **Standardwerte wiederherstellen** setzen Sie nach Sitzungsende die
+Einstellungen einschließlich Temperaturprogrammen und Protokollstufe zurück.
+Die Zuordnung Ihrer Sensoren, Geräte und des Bedieneingangs bleibt erhalten.
+
 Berücksichtigen Sie die vorhandenen Sicherheitsfunktionen der Anlage. Diese
 Anleitung beschreibt die Konfiguration in Home Assistant; sie ersetzt keine
 Prüfung der konkreten Installation.

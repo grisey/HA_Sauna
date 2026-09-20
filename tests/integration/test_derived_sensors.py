@@ -92,6 +92,7 @@ class DerivedHumiditySensorTests(unittest.IsolatedAsyncioTestCase):
         )
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
+        self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
 
         entries = er.async_entries_for_config_entry(er.async_get(self.hass), self.entry.entry_id)

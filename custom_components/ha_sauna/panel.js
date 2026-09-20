@@ -221,18 +221,22 @@ class SaunaPanel extends HTMLElement {
     const entry=this.entry;
     const saved=await this.api(`/${entry}/${partial?"temperature":"parameters"}`,"POST",parameters);
     parameters=saved.parameters;
+    await this.waitForConfiguration(entry,parameters);
+    this.settingsEntry=null;this.draft=null;
+    if(start)await this.api(`/${entry}/control`,"POST",{enabled:true});
+    await this.refresh();
+  }
+  async waitForConfiguration(entry,parameters,configuration) {
     // A saved parameter is loaded by HA's single options listener. Do not start
     // against the previous runtime while reload is still in progress.
     let loaded=false;
     for(let attempt=0;attempt<100;attempt++){
-      try {const state=await this.api(`/${entry}/state`);if(Object.keys(state.configuration.parameters).length===Object.keys(parameters).length&&Object.entries(parameters).every(([k,v])=>state.configuration.parameters[k]===v)){loaded=true;break;}}
+      try {const state=await this.api(`/${entry}/state`);const current=state.configuration;
+        if(Object.keys(current.parameters).length===Object.keys(parameters).length&&Object.entries(parameters).every(([k,v])=>current.parameters[k]===v)&&Object.entries(configuration||{}).every(([key,value])=>key==="parameters"||current[key]===value)){loaded=true;break;}}
       catch(error){if(error.status_code!==503)throw error;}
       await new Promise(resolve=>setTimeout(resolve,100));
     }
     if(!loaded)throw Error("Parameter gespeichert, Neuladen noch nicht abgeschlossen. Bitte Status prüfen.");
-    this.settingsEntry=null;this.draft=null;
-    if(start)await this.api(`/${entry}/control`,"POST",{enabled:true});
-    await this.refresh();
   }
   drawHistory() {
     if(!this.shown){this.$("#plots").innerHTML='<div class="card empty">Noch keine Sitzungsdaten. Wähle eine frühere Saunasitzung oder schalte den Betrieb ein.</div>';this.$("#gangs").innerHTML="";this.$("#event-list").innerHTML="";this.$("#detection-plots").innerHTML="";return;}
@@ -420,7 +424,7 @@ class SaunaPanel extends HTMLElement {
       const fields=Object.entries(groups).map(([key,title],index)=>`<details class="settings-group" ${index===0?"open":""}><summary>${title}</summary><div class="forms">${state.parameters.filter(d=>d.group===key&&!d.expert).map(field).join("")}</div></details>`).join("");
       const expertGroups={measurement:["Messbasis",d=>["grid_seconds","median_seconds"].includes(d.key)],door:["Tür",d=>d.key.startsWith("door_")],vent:["Lüftung",d=>d.key.startsWith("vent_")],person:["Person",d=>d.key.startsWith("person_")||d.key.startsWith("strong_")||d.key.startsWith("weak_")],infusion:["Aufguss",d=>d.key.startsWith("infusion_")]};
       const experts=Object.values(expertGroups).map(([title,match])=>`<section class="expert-group"><h3>${title}</h3><div class="forms">${state.parameters.filter(d=>d.expert&&match(d)).map(field).join("")}</div></section>`).join("");
-      this.$("#settings").innerHTML=`<div class="card"><h2>Einstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters">${fields}<details class="settings-group"><summary>Experteneinstellungen zur Erkennung</summary><p class="muted">Diese Werte verändern die Erkennung von Türöffnungen, Personen und Aufgüssen. Die Erkennungskontrolle zeigt ihre Wirkung.</p>${experts}</details><button type="submit" class="primary">Einstellungen speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a></div></div><div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv bleibt unabhängig davon vollständig.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Erkennungsprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sitzungsverläufe und Ereigniszuordnungen herunterladen.</p><button data-action="export">Archiv als ZIP herunterladen</button></div>`;
+      this.$("#settings").innerHTML=`<div class="card"><h2>Einstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters">${fields}<details class="settings-group"><summary>Experteneinstellungen zur Erkennung</summary><p class="muted">Diese Werte verändern die Erkennung von Türöffnungen, Personen und Aufgüssen. Die Erkennungskontrolle zeigt ihre Wirkung.</p>${experts}</details><button type="submit" class="primary">Einstellungen speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a></div></div><div class="card"><h2>Standardwerte</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten.</p><button data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div><div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv bleibt unabhängig davon vollständig.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Erkennungsprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sitzungsverläufe und Ereigniszuordnungen herunterladen.</p><button data-action="export">Archiv als ZIP herunterladen</button></div>`;
       this.$("#log-level").value=state.configuration.log_level;
       this.settingsEntry=this.entry;
     }
@@ -428,6 +432,7 @@ class SaunaPanel extends HTMLElement {
     for(const d of state.parameters){const input=this.$(`#parameters input[name="${d.key}"]`);if(!input)continue;input.disabled=!this.hass.user?.is_admin||(state.configuration_locked&&!d.live_editable);if(!input.dataset.edited&&this.shadowRoot.activeElement!==input)input.value=d.key==="target_temperature_c"?state.target_temperature:(state.configuration.parameters[d.key]??"");}
     this.$("#log-level").disabled=!this.hass.user?.is_admin;
     this.$('[data-action="logging"]').disabled=!this.hass.user?.is_admin;
+    this.$('[data-action="reset-settings"]').disabled=!this.hass.user?.is_admin||state.configuration_locked;
     this.$("#configuration-lock").textContent=state.configuration_locked?"Solltemperatur, Endtemperatur und Verteilung der Steigerung sind änderbar. Andere Einstellungen bleiben bis zum Ende der Saunasitzung gesperrt. Laufende Fristen und Heizsperren bleiben immer wirksam.":"Alle erforderlichen Einstellungen haben Standardwerte. Änderungen der Grundeinstellungen gelten für die nächste Saunasitzung.";
   }
   async saveSettings() {
@@ -440,6 +445,16 @@ class SaunaPanel extends HTMLElement {
     }
     await this.updateParameters(values,false,partial);
   }
+  async resetSettings() {
+    const entry=this.entry;
+    const saved=await this.api(`/${entry}/parameters/reset`,"POST");
+    await this.waitForConfiguration(entry,saved.parameters,saved.configuration);
+    this.settingsEntry=null;this.draft=null;
+    this.shadowRoot.querySelectorAll("#parameters input[data-edited]").forEach(input=>delete input.dataset.edited);
+    await this.refresh();
+    const status=this.shadowRoot.querySelector("#settings-reset-status");
+    if(status)status.textContent="Standardwerte wurden wiederhergestellt.";
+  }
   async action(action) {
     this.message(null);
     const permissions=this.state?.permissions||{};
@@ -450,8 +465,10 @@ class SaunaPanel extends HTMLElement {
       ||(action==="manual-light"&&(!permissions.admin||!permissions.light))
       ||(action.startsWith("heater:")&&(!permissions.admin||!permissions.heater))
       ||(action.startsWith("end-phase:")&&!permissions.admin)
+      ||(action==="reset-settings"&&(!permissions.admin||this.state.configuration_locked))
       ||((action==="details"||action==="detail"||action==="diagnostics"||action==="settings")&&!permissions.admin))return;
     if(action==="configure"){await this.action("details");return this.action("settings");}
+    if(action==="reset-settings")return this.resetSettings();
     if(action==="logging"){await this.api(`/${this.entry}/logging`,"POST",{level:this.$("#log-level").value});await this.refresh();return;}
     if(action==="menu"){this.dispatchEvent(new CustomEvent("hass-toggle-menu",{bubbles:true,composed:true}));return;}
     if(action.startsWith("event-marker:")){this.highlightEvent(action.slice(13),true);return;}

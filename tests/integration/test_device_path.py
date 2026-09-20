@@ -122,27 +122,32 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         self.assertFalse(self.light.is_on)
         await self.set_source("control_input", "on")
+        # Ein Phasenwechsel blendet vom beobachteten Lichtwert ein. Erst nach
+        # der konfigurierten Übergangszeit ist die kalte Temperaturkurve erreicht.
+        await self.time(30)
         self.assertTrue(self.light.is_on)
         self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
         normal_brightness = self.light.brightness
         session_id = self.runtime.session.session_id
         provisional = None
         confirmed = None
-        for second in range(401):
+        # Die Uhr bleibt nach dem anfänglichen 30-Sekunden-Übergang monoton.
+        for second in range(30, 431):
             self.now = self.base + timedelta(seconds=second)
-            if second < 70:
+            elapsed = second - 30
+            if elapsed < 70:
                 temperature, humidity = 70, 40
-            elif second < 85:
-                temperature, humidity = 70 - .3 * (second - 70), 40 - .08 * (second - 70)
-            elif second < 150:
+            elif elapsed < 85:
+                temperature, humidity = 70 - .3 * (elapsed - 70), 40 - .08 * (elapsed - 70)
+            elif elapsed < 150:
                 temperature, humidity = 65.5, 38.8
-            elif second < 260:
-                temperature = 65.5 + .025 * (second - 150)
-                humidity = 38.8 + .02 * (second - 150) + (3 if second >= 240 else 0)
-            elif second < 280:
+            elif elapsed < 260:
+                temperature = 65.5 + .025 * (elapsed - 150)
+                humidity = 38.8 + .02 * (elapsed - 150) + (3 if elapsed >= 240 else 0)
+            elif elapsed < 280:
                 temperature, humidity = 68.25, 44
             else:
-                temperature, humidity = 68.25 - .05 * (second - 280), 44 - .06 * (second - 280)
+                temperature, humidity = 68.25 - .05 * (elapsed - 280), 44 - .06 * (elapsed - 280)
             for position in ("upper", "lower"):
                 await self.set_source(f"{position}_temperature", temperature)
                 await self.set_source(f"{position}_humidity", humidity)
@@ -226,9 +231,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        # Bei 70 °C auf dem Weg zu 80 °C folgt der Start der Temperaturkurve:
-        # 5 % am Kaltpunkt, 40 % am Bereitschaftsziel, nicht der alte 35-%-Sprung.
-        self.assertAlmostEqual(self.light.brightness, 255*.33, delta=1)
+        # Bei 70 °C auf dem Weg zum Bereitschaftsziel 85 °C folgt die Kurve:
+        # 5 % am Kaltpunkt 30 °C, 40 % am Bereitschaftsziel. Das sind
+        # 5 + (40 - 5) * (70 - 30) / (85 - 30) = 30,45 %.
+        # Die Automatik übernimmt den vorhandenen Lichtwert erst über 30 s.
+        self.assertAlmostEqual(self.light.brightness, 180, delta=1)
+        await self.time(30)
+        self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
         # Die manuelle Wahl ist Ausgangspunkt für den sanften Phasenwechsel.
         await self.hass.services.async_call("light", "turn_on", {"entity_id":self.light.entity_id,"brightness":160}, blocking=True)
         await self.hass.async_block_till_done()
@@ -237,36 +246,36 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.now=self.base+timedelta(seconds=seconds)
             await self.runtime.receive(Event(str(seconds),session_id,kind,self.now,self.now))
             await self.hass.async_block_till_done()
-        await signal(Kind.DOOR_CLOSE,1)
-        await signal(Kind.INFUSION,2)
-        self.now=self.base+timedelta(seconds=241)
+        await signal(Kind.DOOR_CLOSE,31)
+        await signal(Kind.INFUSION,32)
+        self.now=self.base+timedelta(seconds=271)
         await self.set_source("upper_temperature",70)
         await self.runtime.tick()
-        await signal(Kind.DOOR_OPEN,242)
-        await signal(Kind.VENTILATION,243)
+        await signal(Kind.DOOR_OPEN,272)
+        await signal(Kind.VENTILATION,273)
         self.assertFalse(self.heater.is_on)
         self.assertAlmostEqual(self.light.brightness, 160, delta=1)
-        await self.time(251)
+        await self.time(281)
         self.assertGreater(self.light.brightness, 255*.15)
         self.assertLess(self.light.brightness, 160)
-        await self.time(258)
+        await self.time(288)
         self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
-        await self.time(273)
+        await self.time(303)
         self.assertEqual(self.runtime.controller.phase,"zwangskühlung")
         self.assertGreater(self.light.brightness,255*.05)
-        await self.time(280)
+        await self.time(310)
         self.assertGreater(self.light.brightness,255*.05)
         self.assertLess(self.light.brightness,255*.15)
-        await self.time(288)
+        await self.time(318)
         self.assertAlmostEqual(self.light.brightness,255*.05,delta=1)
         before_normal_ramp = self.light.brightness
-        self.now=self.base+timedelta(seconds=303)
+        self.now=self.base+timedelta(seconds=333)
         await self.set_source("upper_temperature",70)
         await self.runtime.tick()
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(self.light.brightness, before_normal_ramp, delta=1)
-        await self.time(333)
-        self.assertAlmostEqual(self.light.brightness,255*.33,delta=1)
+        await self.time(363)
+        self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
 
     async def test_light_failure_is_reported_and_does_not_disable_heating(self):
         self.light.fail_commands=True
@@ -275,8 +284,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("operation_light",self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
         self.assertFalse(self.light.is_on)
+        calls = len(self.light.calls)
         await self.time(1)
-        self.assertEqual(len(self.light.calls),2)
+        # Ein fehlgeschlagener Lichtdienst bleibt im nächsten Tick erneut fällig.
+        self.assertEqual(len(self.light.calls), calls + 1)
         await self.runtime.set_operation(False)
         self.light.fail_commands=False
         await self.runtime.set_operation(True)
@@ -291,12 +302,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()
         self.heater.calls.clear()
+        before_session_light = self.light.brightness
         await self.time(149)
         self.assertIsNotNone(self.runtime.session)
-        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
+        self.assertAlmostEqual(self.light.brightness, before_session_light, delta=1)
         await self.time(150)
         self.assertIsNone(self.runtime.session)
-        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
+        # Der Lichtnachlauf beginnt ebenfalls am vorhandenen Wert und dimmt
+        # erst anschließend auf seine eigene 50-%-Vorgabe.
+        self.assertAlmostEqual(self.light.brightness, before_session_light, delta=1)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
         await self.time(180)
         self.assertAlmostEqual(self.light.brightness, 255*.5, delta=1)
@@ -346,10 +360,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         self.assertIsNone(self.runtime.controller.light_after_run)
-        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
+        # Der Neustart ersetzt den Lichtnachlauf, blendet aber vom sichtbaren
+        # 64-%-Wert in seine neue temperaturabhängige Vorgabe über.
+        self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
         await self.time(187)
         self.assertTrue(self.light.is_on)
-        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
+        self.assertLess(self.light.brightness, 255*.64)
+        self.assertGreater(self.light.brightness, 255*.05)
 
     async def test_failed_session_light_commands_are_archived_and_retried(self):
         await self.runtime.set_operation(True)
@@ -694,10 +711,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.prepare_gang_after_run()
         identity = self.runtime.session.session_id
         self.assertFalse(self.heater.is_on)
-        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
+        after_run_start = self.light.brightness
+        self.assertTrue(self.light.is_on)
         await self.time(72)
-        self.assertGreater(self.light.brightness, 255*.05)
-        self.assertLess(self.light.brightness, 255*.15)
+        self.assertGreater(self.light.brightness, 255*.15)
+        self.assertLess(self.light.brightness, after_run_start)
         before_cooling = self.light.brightness
         await self.runtime.finish_phase("after_run", self.runtime.session.after_run.phase_id)
         await self.hass.async_block_till_done()

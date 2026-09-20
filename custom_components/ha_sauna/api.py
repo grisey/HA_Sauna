@@ -12,7 +12,8 @@ from .core.detection_parameters import SPECS
 from .const import DOMAIN
 from .presentation import issues, decision_message, fault_message, parameter_error
 from .log import LEVELS
-from .settings import async_set_parameters, async_set_program, ConfigurationLocked
+from .settings import (async_set_parameters, async_set_program,
+                       async_reset_parameters, ConfigurationLocked)
 
 
 def can_control(request, entry_id):
@@ -189,6 +190,27 @@ class TemperatureView(ParametersView):
     partial = True
 
 
+class ResetParametersView(HomeAssistantView):
+    """Restore all software preferences, leaving hardware associations intact."""
+    url = "/api/ha_sauna/{entry_id}/parameters/reset"
+    name = "api:ha_sauna:parameters:reset"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime_for(hass, entry_id)
+        try:
+            parameters = await async_reset_parameters(hass, entry)
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True, "parameters": parameters,
+            "configuration": {key: entry.options.get(key) for key in
+                              ("log_level", "program_mode", "button_program")}})
+
+
 class ProgramView(HomeAssistantView):
     """Select a stored profile or an explicit start/end/distribution program."""
     url = "/api/ha_sauna/{entry_id}/program"
@@ -359,6 +381,7 @@ def register(hass):
     hass.http.register_view(FinishPhaseView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
+    hass.http.register_view(ResetParametersView)
     hass.http.register_view(ProgramView)
     hass.http.register_view(LightView)
     hass.http.register_view(HeaterView)

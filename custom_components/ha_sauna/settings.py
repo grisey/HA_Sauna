@@ -37,45 +37,76 @@ async def async_set_parameters(hass, entry, values, *, partial=False,
                                new_program=False):
     runtime = entry.runtime_data
     async with runtime._lock:
-        runtime._require_open()
-        if runtime.reconfiguring:
-            raise ConfigurationLocked("Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten.")
-        if not isinstance(values, Mapping):
-            raise ParameterError("base", "invalid_parameters")
-        before = runtime.configuration.parameters.as_dict()
-        merged = {**before, **values} if partial else dict(values)
-        # Optionalen Endwert in einer Teiländerung ausdrücklich entfernen.
-        if partial and merged.get("final_temperature_c", False) is None:
-            merged.pop("final_temperature_c")
-        parameters = Parameters(merged)
-        changed = {k for k in before.keys() | parameters.values.keys()
-                   if before.get(k) != parameters.values.get(k)}
-        if runtime.session and changed - LIVE_TEMPERATURE_KEYS:
-            raise ConfigurationLocked("Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar. Andere Einstellungen gelten nach Ende der Sitzung.")
-        explicit_target = ("target_temperature_c" in values
-                           if explicit_target is None else explicit_target)
-        selected_mode = (program_mode if program_mode is not None else "constant"
-                         if explicit_target else None)
-        # Re-sending the existing progressive mode for an end/count edit must
-        # not turn it into a fresh program: that would discard its live anchor.
-        if selected_mode == runtime.configuration.program_mode and not new_program:
-            selected_mode = None
-        mode_changed = selected_mode is not None and selected_mode != runtime.configuration.program_mode
-        if not changed - LIVE_TEMPERATURE_KEYS:
-            await apply_temperature_parameters(runtime, parameters,
-                explicit_target=explicit_target,
-                # Jede direkte Sollwahl beendet ein laufendes Programm auch
-                # dauerhaft; der Controller allein speichert diesen Standard
-                # außerhalb einer Sitzung nicht.
-                program_mode=selected_mode, new_program=new_program or mode_changed)
-        else:
-            runtime.reconfiguring = True
-        # Bei weiteren Änderungen ohne Sitzung übernimmt der HA-Optionslistener
-        # das Neuladen. Temperaturänderungen sind bereits vollständig angewendet.
-        hass.config_entries.async_update_entry(entry, options={
-            **entry.options, "parameters": parameters.as_dict(),
-            **({"program_mode": selected_mode} if selected_mode is not None else {})})
-        return parameters.as_dict()
+        return await _async_set_parameters_locked(hass, entry, values,
+            partial=partial, explicit_target=explicit_target,
+            program_mode=program_mode, new_program=new_program)
+
+
+async def async_reset_parameters(hass, entry):
+    """Restore software settings while retaining physical entity associations."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        # Import here because Runtime imports ``program_parameters`` from this
+        # module.  Configuration owns the defaults for the non-parameter UI
+        # preferences while retaining the configured hardware bindings.
+        from .runtime import Configuration
+        defaults = Configuration(runtime.configuration.bindings, Parameters({}))
+        return await _async_set_parameters_locked(hass, entry,
+            defaults.parameters.as_dict(), explicit_target=True,
+            program_mode=defaults.program_mode, new_program=True,
+            require_no_session=True,
+            option_updates={"button_program": defaults.button_program,
+                            "log_level": defaults.log_level})
+
+
+async def _async_set_parameters_locked(hass, entry, values, *, partial=False,
+                                       explicit_target=None, program_mode=None,
+                                       new_program=False, require_no_session=False,
+                                       option_updates=None):
+    """Shared parameter write path; the caller holds ``runtime._lock``."""
+    runtime = entry.runtime_data
+    runtime._require_open()
+    if runtime.reconfiguring:
+        raise ConfigurationLocked("Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten.")
+    if not isinstance(values, Mapping):
+        raise ParameterError("base", "invalid_parameters")
+    before = runtime.configuration.parameters.as_dict()
+    merged = {**before, **values} if partial else dict(values)
+    # Optionalen Endwert in einer Teiländerung ausdrücklich entfernen.
+    if partial and merged.get("final_temperature_c", False) is None:
+        merged.pop("final_temperature_c")
+    parameters = Parameters(merged)
+    changed = {k for k in before.keys() | parameters.values.keys()
+               if before.get(k) != parameters.values.get(k)}
+    if require_no_session and runtime.session:
+        raise ConfigurationLocked("Einstellungen können erst nach Ende der Saunasitzung zurückgesetzt werden.")
+    if runtime.session and changed - LIVE_TEMPERATURE_KEYS:
+        raise ConfigurationLocked("Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar. Andere Einstellungen gelten nach Ende der Sitzung.")
+    explicit_target = ("target_temperature_c" in values
+                       if explicit_target is None else explicit_target)
+    selected_mode = (program_mode if program_mode is not None else "constant"
+                     if explicit_target else None)
+    # Re-sending the existing progressive mode for an end/count edit must
+    # not turn it into a fresh program: that would discard its live anchor.
+    if selected_mode == runtime.configuration.program_mode and not new_program:
+        selected_mode = None
+    mode_changed = selected_mode is not None and selected_mode != runtime.configuration.program_mode
+    if not changed - LIVE_TEMPERATURE_KEYS:
+        await apply_temperature_parameters(runtime, parameters,
+            explicit_target=explicit_target,
+            # Jede direkte Sollwahl beendet ein laufendes Programm auch
+            # dauerhaft; der Controller allein speichert diesen Standard
+            # außerhalb einer Sitzung nicht.
+            program_mode=selected_mode, new_program=new_program or mode_changed)
+    else:
+        runtime.reconfiguring = True
+    # Bei weiteren Änderungen ohne Sitzung übernimmt der HA-Optionslistener
+    # das Neuladen. Temperaturänderungen sind bereits vollständig angewendet.
+    hass.config_entries.async_update_entry(entry, options={
+        **entry.options, "parameters": parameters.as_dict(),
+        **({"program_mode": selected_mode} if selected_mode is not None else {}),
+        **(option_updates or {})})
+    return parameters.as_dict()
 
 
 async def async_set_program(hass, entry, profile):

@@ -220,3 +220,9 @@ zur Anrechnung eines bereits abgeschlossenen Nachlaufs überholt.
   Produktive Regeln dürfen keine Sitzungs-IDs, Testzeitpunkte, Aufgussnummern
   oder Sonderfälle einzelner Referenzereignisse enthalten. Die Aufzeichnungen
   dienen der Prüfung allgemeiner Merkmale und ihrer Übertragbarkeit.
+- In den Einstellungen stellt ein eigener Button sämtliche Einstellungswerte
+  einschließlich Temperaturprogrammen und Protokollstufe auf ihre zentralen
+  Standards zurück. Entitätszuordnungen und die dazugehörige Taster- oder
+  Schalterkonfiguration bleiben erhalten. Die Rücksetzung ist für HA-Admins
+  nach Sitzungsende verfügbar; laufende Sitzungen und Fristen können damit
+  nicht zurückgesetzt werden.

@@ -170,6 +170,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             paused = runtime.session.after_run
             self.assertIsNone(paused.ends_at)
             self.assertEqual(paused.elapsed_seconds, 6)
+            phase_entity = next(state for state in self.hass.states.async_all("sensor")
+                                if state.attributes.get("session_id") == identity
+                                and "after_run_paused" in state.attributes)
+            self.assertIsNone(phase_entity.attributes["after_run_ends_at"])
+            self.assertTrue(phase_entity.attributes["after_run_paused"])
+            self.assertEqual(phase_entity.attributes["after_run_remaining_seconds"], paused.remaining_seconds)
             decisions_before_finish = len(runtime.controller.decisions)
             now = base + timedelta(seconds=20)
             async with client.post(url + "/finish_phase", json={"purpose": "after_run", "token": token}) as response:
@@ -274,7 +280,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             deadline=runtime.session.after_run
             async with client.post(url+"/temperature",json={"target_temperature_c":95}) as response:
                 self.assertEqual(response.status,200,await response.text())
-            self.assertEqual(runtime.session.after_run,deadline)
+            after_run = runtime.session.after_run
+            self.assertEqual(after_run.phase_id, deadline.phase_id)
+            self.assertEqual(after_run.ends_at, deadline.ends_at)
+            self.assertGreaterEqual(after_run.elapsed_seconds, deadline.elapsed_seconds)
+            self.assertAlmostEqual(after_run.remaining_seconds,
+                (after_run.ends_at - after_run.accounted_at).total_seconds())
             self.assertFalse(runtime.controller.last_decision.heat)
             self.assertFalse(runtime.session.operation_enabled)
 
