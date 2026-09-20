@@ -20,6 +20,11 @@ Diese Rechte reichen für die Einrichtung aus.
    Einstellungen bleiben erhalten. Wählen Sie insbesondere Messwerte und
    Rückmeldungen, die zur tatsächlichen Anlage passen.
 
+Für ein Update wählen Sie in HACS die gewünschte Veröffentlichung von **HA Sauna**
+und starten anschließend Home Assistant neu. Vorabversionen wie `1.0.0-rc1`
+lassen sich ebenfalls auswählen. Damit HACS sie als Update anbietet, aktivieren
+Sie den zugehörigen [Schalter für Vorabversionen](https://hacs.dev/docs/use/entities/switch/).
+
 Die Bedienung beginnt in der **Übersicht**. Zusätzliche Einstellungen,
 Gerätezuordnungen nach Sitzungsende, Protokollierung und Archiv finden Sie unter
 **Details**. Für das Protokoll wählen Sie bei Bedarf **INFO** für
