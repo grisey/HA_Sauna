@@ -211,6 +211,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_overview_timers_stable_controls_german_settings_and_logging(self):
         await expect(self.panel.locator('[data-action="normal"]')).to_have_text("Übersicht")
+        await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Türerkennung ruht")
         self.assertNotIn("Bereitschaft", await self.panel.locator("#current").inner_text())
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
         await self.panel.locator('#current details summary').click()
@@ -243,6 +244,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.now+=timedelta(seconds=20)
         await self.runtime.tick()
         await expect(self.panel.locator('#current [data-phase-timer="heating"]')).to_be_visible()
+        await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Tür geschlossen")
         print("BROWSER_IMAGE_OVERVIEW_ACTIVE " + base64.b64encode(await self.page.screenshot(type="jpeg",quality=65)).decode())
         await self.set_source("upper_temperature", 90)
         await self.panel.locator('[data-action="details"]').click()
@@ -264,6 +266,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         await self.panel.evaluate("p=>p.refresh()")
         await expect(timer).to_have_text(frozen)
+        self.assertIsNotNone(self.runtime.session)
+        await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Tür geschlossen")
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
         await expect(self.panel.locator('#current [data-action^="preset:"]').first).to_be_disabled()
         await expect(self.panel.locator('[data-readiness]')).to_be_visible()
@@ -287,6 +291,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.refresh()")
         self.assertEqual(await self.panel.locator('#current [data-mechanical-timer]').count(),0)
         await expect(self.panel.locator('#current [data-phase-timer="session_light"]')).to_be_visible()
+        await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Türerkennung ruht")
         await expect(self.panel.locator('#current')).to_contain_text("Lichtnachlauf noch")
         text=await self.panel.locator('#current').inner_text()
         for code in ("measurement_unavailable", "configuration_required", "pending", "sensor_timeout_seconds"):
@@ -302,6 +307,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="settings"]').click()
         await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_be_enabled()
         await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_value("10")
+        await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Türerkennung ruht")
+        await expect(self.panel.locator("#details")).to_contain_text("Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.")
         await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_value("50")
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         self.assertEqual(self.errors,[])

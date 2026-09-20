@@ -1,5 +1,25 @@
 # Funktionsprüfung der aktuellen Testfassung
 
+## Türanzeige nach Sitzungsende vom 20.09.2026
+
+Die Türerkennung endet mit der Sitzung. Das bisherige „Tür unbekannt“ war danach
+missverständlich. Übersicht und Details zeigen nun „Türerkennung ruht“; die
+Details erklären die sitzungsgebundene Auswertung. Während der
+Betriebsunterbrechungsfrist bleibt der Türzustand der laufenden Sitzung sichtbar.
+Erkennungsregeln, Sitzungslaufzeit und Steuerung sind unverändert.
+
+Geprüfter Stand:
+[`e96d3a7`](https://github.com/grisey/HA_Sauna/commit/e96d3a7e7e22ff5d1ec02a73fe376330c1626253).
+[CI 35479522357](https://github.com/grisey/HA_Sauna/actions/runs/35479522357)
+ist vollständig erfolgreich: **175 Kerntests bestanden, 2 private Replay-Skips;
+11 HA-API-Smokes; 36 echte HA-Integrationstests; 4 Browserabläufe**. Der erweiterte
+Browserablauf prüft die Türanzeige vor dem Start, im Betrieb, während der
+Unterbrechung und nach Sitzungsende im tatsächlichen HA-Frontend. Keine
+JavaScript-Ausnahmen oder abgewiesenen WebSocket-Antworten. Lokal bestehen die
+175 Kerntests (zwei private Replay-Skips), JavaScript-Syntax und Diff-Prüfung.
+Ein neues privates Replay wurde für diese reine Anzeigeänderung nicht ausgeführt.
+Die Installation auf dem Saunasystem erfolgt weiterhin durch den Benutzer.
+
 ## Messlücken und Mindestheizzeit vom 20.09.2026
 
 Der untersuchte Aus-/Ein-Zyklus entstand durch eine zu kurze gespeicherte

@@ -71,7 +71,12 @@ Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht hat di
 Blätter **Steuerung** und **Verlauf und Archiv**. Neben dem Zustand erscheint genau die relevante Phasenzeit: Gangdauer, Nachlauf, Kühlung, Türwartefrist, Heizpause, Mindestheizzeit, Bereitschafts-/Aufheizdauer oder Frist bis zum Sitzungsende. Danach wird die verbleibende Lichtnachlaufzeit angezeigt. Heizzeitsumme und mechanischer Timer stehen ausschließlich in Details. Bereitschaftstemperatur und interne
 Regelungswerte stehen ausschließlich in den Details. Gesperrte Temperaturtasten
 bleiben sichtbar; der Grund der Sperre wird erklärt. Nach Sitzungsende bleibt
-der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar.
+der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar. Die
+Türanzeige lautet dann „Türerkennung ruht“; auch vor der ersten Sitzung ruht
+die Erkennung. Details erklären, dass außerhalb einer Sitzung keine Türbewegungen
+ausgewertet werden. Während der Unterbrechungsfrist gehört die Türerkennung noch
+zur bestehenden Sitzung. Ein historischer Türzustand wird nicht als aktueller
+Zustand übernommen.
 
 In Details steht während eines Nachlaufs „Nachlauf jetzt beenden“, während
 laufender Zwangskühlung „Zwangskühlung jetzt beenden“. Die Bedienung setzt den
