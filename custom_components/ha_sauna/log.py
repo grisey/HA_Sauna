@@ -1,4 +1,5 @@
 """Standard-Python-Logging je Sauna; Ausgabe über Home Assistants Loghandler."""
+
 import logging
 
 LEVELS = ("ERROR", "INFO", "DEBUG")
@@ -6,7 +7,9 @@ LEVELS = ("ERROR", "INFO", "DEBUG")
 
 class SaunaLog:
     def __init__(self, identity, level="INFO"):
-        self.logger = logging.getLogger(f"custom_components.ha_sauna.instance.{identity}")
+        self.logger = logging.getLogger(
+            f"custom_components.ha_sauna.instance.{identity}"
+        )
         self.set_level(level)
         self.previous = {}
 

@@ -1,11 +1,16 @@
 """HA 2026.9 Backup-Hooks: Schreibpause mit weiterlaufender Eingangswarteschlange."""
+
 from .const import DOMAIN
 
 
 def archives(hass):
     for entry in hass.config_entries.async_entries(DOMAIN):
         runtime = getattr(entry, "runtime_data", None)
-        if runtime is not None and not runtime.closed and getattr(runtime, "archive", None):
+        if (
+            runtime is not None
+            and not runtime.closed
+            and getattr(runtime, "archive", None)
+        ):
             yield runtime.archive
 
 

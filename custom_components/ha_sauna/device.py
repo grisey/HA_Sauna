@@ -1,4 +1,5 @@
 """HA-Geräteadapter: ausgewählte Quellen, reale Dienste, getrennte Rückmeldung."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +7,10 @@ import logging
 from datetime import datetime, timedelta
 from math import isfinite
 
-from homeassistant.helpers.event import async_track_state_change_event, async_track_state_report_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_state_report_event,
+)
 from homeassistant.components import persistent_notification
 
 from .archive import plain
@@ -44,7 +48,11 @@ class HADevice:
         self._light_session_off_superseded_key = None
         self._light_override_dirty = False
         self.notified = set()
-        self.heating_observation = {"source": "unknown", "heating": None, "power_w": None}
+        self.heating_observation = {
+            "source": "unknown",
+            "heating": None,
+            "power_w": None,
+        }
         self._saved_heating_observation = None
         self.input_started_at = runtime._clock()
         self.last_input_event = None
@@ -53,12 +61,20 @@ class HADevice:
         now = self.runtime._clock()
         for role, entity_id in self.bindings.items():
             state = self.hass.states.get(entity_id)
-            self.ingest(role, state, state.last_reported if state else now, initial=True)
+            self.ingest(
+                role, state, state.last_reported if state else now, initial=True
+            )
+
         async def changed(event):
             await self.runtime.device_input(event)
+
         entities = list(self.bindings.values())
-        self.runtime.on_close(async_track_state_change_event(self.hass, entities, changed))
-        self.runtime.on_close(async_track_state_report_event(self.hass, entities, changed))
+        self.runtime.on_close(
+            async_track_state_change_event(self.hass, entities, changed)
+        )
+        self.runtime.on_close(
+            async_track_state_report_event(self.hass, entities, changed)
+        )
         self.refresh(now)
         await self.send(False, now, force=True)
 
@@ -67,13 +83,22 @@ class HADevice:
         self.source_received_at[role] = received_at
         if initial and role == "control_input" and state is not None:
             self.last_input_event = state.state
-        if role in ("upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"):
+        if role in (
+            "upper_temperature",
+            "upper_humidity",
+            "lower_temperature",
+            "lower_humidity",
+        ):
             position, quantity = role.split("_", 1)
             value = None
             if state is not None:
                 try:
                     value = float(state.state)
-                    if not isfinite(value) or state.attributes.get("unit_of_measurement") != ROLE_BY_KEY[role].unit:
+                    if (
+                        not isfinite(value)
+                        or state.attributes.get("unit_of_measurement")
+                        != ROLE_BY_KEY[role].unit
+                    ):
                         value = None
                     elif quantity == "humidity" and not 0 <= value <= 100:
                         value = None
@@ -81,21 +106,43 @@ class HADevice:
                         value = None
                 except (ValueError, TypeError):
                     value = None
-            m = Measurement(Position(position), Quantity(quantity), value,
-                state.state if state else "unavailable", self.bindings[role], received_at)
+            m = Measurement(
+                Position(position),
+                Quantity(quantity),
+                value,
+                state.state if state else "unavailable",
+                self.bindings[role],
+                received_at,
+            )
             self.measurements[role] = m
-            self.runtime.log.debug("measurement", "Messwert %s: %s; empfangen: %s.", role, value, received_at)
+            self.runtime.log.debug(
+                "measurement",
+                "Messwert %s: %s; empfangen: %s.",
+                role,
+                value,
+                received_at,
+            )
             if role == "upper_temperature" and value is not None:
                 self.last_valid_temperature = m
             session = self.runtime.session
             if self.runtime.archive and session and not initial:
-                self.runtime.archive.append("measurement", received_at, m, session.session_id)
+                self.runtime.archive.append(
+                    "measurement", received_at, m, session.session_id
+                )
             if self.runtime.detector and not initial:
                 self.runtime.detector.accept(m)
         elif self.runtime.archive and self.runtime.session and not initial:
-            self.runtime.archive.append("source_state", received_at, {"role": role,
-                "source": self.bindings[role], "state": state.state if state else None,
-                "attributes": dict(state.attributes) if state else {}}, self.runtime.session.session_id)
+            self.runtime.archive.append(
+                "source_state",
+                received_at,
+                {
+                    "role": role,
+                    "source": self.bindings[role],
+                    "state": state.state if state else None,
+                    "attributes": dict(state.attributes) if state else {},
+                },
+                self.runtime.session.session_id,
+            )
 
     def physical_action(self, event):
         if event.data["entity_id"] != self.bindings["control_input"]:
@@ -105,7 +152,9 @@ class HADevice:
             return None
         if old.state == new.state:
             return None
-        toggle = not bool(self.runtime.session and self.runtime.session.operation_enabled)
+        toggle = not bool(
+            self.runtime.session and self.runtime.session.operation_enabled
+        )
         if new.domain == "binary_sensor":
             if old.state in ("unknown", "unavailable"):
                 return None
@@ -146,7 +195,12 @@ class HADevice:
         state = self.states.get("heater_power")
         received = self.source_received_at.get("heater_power")
         ttl = self.values.get("sensor_timeout_seconds")
-        if state is None or received is None or ttl is None or (now - received).total_seconds() > ttl:
+        if (
+            state is None
+            or received is None
+            or ttl is None
+            or (now - received).total_seconds() > ttl
+        ):
             return None
         if state.attributes.get("device_class") != "power":
             return None
@@ -157,14 +211,21 @@ class HADevice:
         active = power.heating(measured, self.values.get("power_heating_threshold_w"))
         if active is not None:
             source = "power"
-        elif (self.bindings.get("heater_feedback") != self.bindings["heater"]
-              and (active := self.binary_state("heater_feedback")) is not None):
+        elif (
+            self.bindings.get("heater_feedback") != self.bindings["heater"]
+            and (active := self.binary_state("heater_feedback")) is not None
+        ):
             source = "independent_feedback"
         else:
             active = self.contactor_feedback()
             source = "contactor" if active is not None else "unknown"
-        return {"source": source, "heating": active, "power_w": measured,
-                "contactor": self.contactor_feedback(), "estimated": source == "contactor"}
+        return {
+            "source": source,
+            "heating": active,
+            "power_w": measured,
+            "contactor": self.contactor_feedback(),
+            "estimated": source == "contactor",
+        }
 
     def feedback(self):
         return self.observe_heating(self.runtime._clock())["heating"]
@@ -173,12 +234,17 @@ class HADevice:
         """Keep a trend only during one uninterrupted, confirmed heating run."""
         controller = self.runtime.controller
         session = controller.session
-        eligible = (session is not None and session.operation_enabled
-                    and controller.phase == "aufheizen"
-                    and self.heating_observation["heating"] is True
-                    and not controller.protection and not controller.inhibits
-                    and session.timeline.door != Door.OPEN
-                    and upper is not None and upper.value is not None)
+        eligible = (
+            session is not None
+            and session.operation_enabled
+            and controller.phase == "aufheizen"
+            and self.heating_observation["heating"] is True
+            and not controller.protection
+            and not controller.inhibits
+            and session.timeline.door != Door.OPEN
+            and upper is not None
+            and upper.value is not None
+        )
         if not eligible:
             self.warmup.reset()
             self._warmup_key = None
@@ -198,18 +264,28 @@ class HADevice:
         """Return an ETA-safe rate, never a control input."""
         controller = self.runtime.controller
         session = controller.session
-        if (session is None or not session.operation_enabled or controller.phase != "aufheizen"
-                or self.heating_observation["heating"] is not True
-                or controller.protection or controller.inhibits or controller.temperature is None
-                or session.timeline.door == Door.OPEN):
+        if (
+            session is None
+            or not session.operation_enabled
+            or controller.phase != "aufheizen"
+            or self.heating_observation["heating"] is not True
+            or controller.protection
+            or controller.inhibits
+            or controller.temperature is None
+            or session.timeline.door == Door.OPEN
+        ):
             return None
         timeout = self.values.get("sensor_timeout_seconds")
         return self.warmup.rate(now, maximum_age_seconds=timeout)
 
     @property
     def missing_configuration(self):
-        keys = ["target_temperature_c", "sensor_timeout_seconds",
-                "feedback_timeout_seconds", "fault_confirmation_seconds"]
+        keys = [
+            "target_temperature_c",
+            "sensor_timeout_seconds",
+            "feedback_timeout_seconds",
+            "fault_confirmation_seconds",
+        ]
         if "heater_power" in self.bindings:
             keys.append("power_heating_threshold_w")
         return [key for key in keys if key not in self.values]
@@ -218,12 +294,17 @@ class HADevice:
         errors = []
         if self.missing_configuration:
             errors.append(configuration_message(self.missing_configuration))
-        if self.runtime.controller.temperature is None and "sensor_timeout_seconds" not in self.missing_configuration:
+        if (
+            self.runtime.controller.temperature is None
+            and "sensor_timeout_seconds" not in self.missing_configuration
+        ):
             errors.append(FAULTS["regulation_temperature_unavailable"])
         if self.contactor_feedback() is None:
             errors.append(FAULTS["heater_feedback_unavailable"])
         if self.runtime.controller.protection:
-            errors.append("Eine Schutzabschaltung ist verriegelt. Bitte die Störung prüfen und anschließend quittieren.")
+            errors.append(
+                "Eine Schutzabschaltung ist verriegelt. Bitte die Störung prüfen und anschließend quittieren."
+            )
         return errors
 
     def measurement_status(self, now):
@@ -231,18 +312,33 @@ class HADevice:
         result = {}
         for role, measurement in self.measurements.items():
             age = max(0, (now - measurement.received_at).total_seconds())
-            state = ("unavailable" if measurement.value is None else "validity_unconfigured"
-                     if timeout is None else "stale" if age > timeout else "current")
+            state = (
+                "unavailable"
+                if measurement.value is None
+                else "validity_unconfigured"
+                if timeout is None
+                else "stale"
+                if age > timeout
+                else "current"
+            )
             result[role] = {"state": state, "age_seconds": age}
         return result
 
     def refresh(self, now):
         controller = self.runtime.controller
         missing = self.missing_configuration
-        controller.inhibits = {"configuration_required:" + ",".join(missing)} if missing else set()
+        controller.inhibits = (
+            {"configuration_required:" + ",".join(missing)} if missing else set()
+        )
         timeout = self.values.get("sensor_timeout_seconds")
         upper = self.last_valid_temperature
-        temperature = upper.value if upper is not None and timeout is not None and (now - upper.received_at).total_seconds() <= timeout else None
+        temperature = (
+            upper.value
+            if upper is not None
+            and timeout is not None
+            and (now - upper.received_at).total_seconds() <= timeout
+            else None
+        )
         # Ein kurz fehlendes Paket verwirft einen noch gültigen Messwert nicht.
         # Nach Gültigkeitsende gibt es keinen erfundenen Ersatz der unteren Höhe.
         controller.set_temperature(temperature, now)
@@ -250,20 +346,32 @@ class HADevice:
         controller.report_contactor(contactor, now)
         self.heating_observation = self.observe_heating(now)
         power_received = self.source_received_at.get("heater_power")
-        controller.report_power(self.heating_observation["power_w"],
-            power_received + timedelta(seconds=timeout) if power_received and timeout else None, now)
+        controller.report_power(
+            self.heating_observation["power_w"],
+            power_received + timedelta(seconds=timeout)
+            if power_received and timeout
+            else None,
+            now,
+        )
         controller.report_heating(self.heating_observation["heating"], now)
-        observation_key = (controller.session.session_id if controller.session else None,
-                           self.heating_observation["source"], self.heating_observation["heating"])
+        observation_key = (
+            controller.session.session_id if controller.session else None,
+            self.heating_observation["source"],
+            self.heating_observation["heating"],
+        )
         if self.runtime.archive and observation_key != self._saved_heating_observation:
-            self.runtime.archive.append("heating_observation", now,
-                self.heating_observation, observation_key[0])
+            self.runtime.archive.append(
+                "heating_observation", now, self.heating_observation, observation_key[0]
+            )
             self._saved_heating_observation = observation_key
         problems = set()
         for role, status in self.measurement_status(now).items():
             if status["state"] != "current":
-                self.faults[role] = {"unavailable": "measurement_unavailable",
-                    "stale": "measurement_stale", "validity_unconfigured": "validity_unconfigured"}[status["state"]]
+                self.faults[role] = {
+                    "unavailable": "measurement_unavailable",
+                    "stale": "measurement_stale",
+                    "validity_unconfigured": "validity_unconfigured",
+                }[status["state"]]
             else:
                 self.faults.pop(role, None)
         if temperature is None:
@@ -271,8 +379,11 @@ class HADevice:
         if contactor is None:
             problems.add("heater_feedback_unavailable")
         for role in ("heater_power", "heater_feedback"):
-            unavailable = (self.heating_observation["power_w"] is None if role == "heater_power"
-                           else self.binary_state(role) is None)
+            unavailable = (
+                self.heating_observation["power_w"] is None
+                if role == "heater_power"
+                else self.binary_state(role) is None
+            )
             if role in self.bindings and unavailable:
                 self.faults[role] = "measurement_unavailable"
             else:
@@ -282,17 +393,25 @@ class HADevice:
         else:
             self.faults.pop("heater_no_power", None)
         ack = self.values.get("feedback_timeout_seconds")
-        if (self.command is not None and self.command_at is not None and ack is not None
-                and (now - self.command_at).total_seconds() >= ack
-                and contactor is not self.command):
+        if (
+            self.command is not None
+            and self.command_at is not None
+            and ack is not None
+            and (now - self.command_at).total_seconds() >= ack
+            and contactor is not self.command
+        ):
             # Ein fehlender Schaltvollzug ist ein Aktorfehler. Fehlende Ofenleistung
             # bei angezogenem Schütz pausiert nur den Zähler, etwa bei Ofentimer-Aus.
             # Die geschätzte mechanische Timerstellung hat keinerlei Steuerwirkung.
             problems.add("heater_feedback_mismatch")
-        if (self.command is False and self.command_at is not None and ack is not None
-                and (now - self.command_at).total_seconds() >= ack
-                and self.heating_observation["source"] in ("power", "independent_feedback")
-                and self.heating_observation["heating"] is True):
+        if (
+            self.command is False
+            and self.command_at is not None
+            and ack is not None
+            and (now - self.command_at).total_seconds() >= ack
+            and self.heating_observation["source"] in ("power", "independent_feedback")
+            and self.heating_observation["heating"] is True
+        ):
             problems.add("heater_still_heating")
         if self.command_error:
             problems.add("heater_service_unavailable")
@@ -302,15 +421,33 @@ class HADevice:
         for key in problems:
             self.fault_since.setdefault(key, now)
         confirmation = self.values.get("fault_confirmation_seconds")
-        monitoring = bool(controller.session and controller.session.operation_enabled) or contactor is True
+        monitoring = (
+            bool(controller.session and controller.session.operation_enabled)
+            or contactor is True
+        )
         if monitoring:
-            controller.protection.update(key for key, since in self.fault_since.items()
-                if confirmation is not None and (now - since).total_seconds() >= confirmation)
+            controller.protection.update(
+                key
+                for key, since in self.fault_since.items()
+                if confirmation is not None
+                and (now - since).total_seconds() >= confirmation
+            )
         else:
             self.fault_since.clear()
-        for key in ("regulation_temperature_unavailable", "heater_feedback_unavailable", "heater_feedback_mismatch", "heater_service_unavailable", "heater_still_heating"):
+        for key in (
+            "regulation_temperature_unavailable",
+            "heater_feedback_unavailable",
+            "heater_feedback_mismatch",
+            "heater_service_unavailable",
+            "heater_still_heating",
+        ):
             self.faults.pop(key, None)
-        self.faults.update({key: "confirmed" if key in controller.protection else "pending" for key in problems})
+        self.faults.update(
+            {
+                key: "confirmed" if key in controller.protection else "pending"
+                for key in problems
+            }
+        )
         self.faults.update({key: "confirmed" for key in controller.protection})
         if missing:
             self.faults["configuration"] = ", ".join(missing)
@@ -325,34 +462,68 @@ class HADevice:
         ack = self.values.get("feedback_timeout_seconds")
         same = self.command is heat
         matched = self.contactor_feedback() is heat
-        if not force and same and (matched or ack is None or (now - self.last_sent_at).total_seconds() < ack):
+        if (
+            not force
+            and same
+            and (
+                matched
+                or ack is None
+                or (now - self.last_sent_at).total_seconds() < ack
+            )
+        ):
             return
         # Bestätigungsfrist wird bei Wiederholungen desselben Befehls nicht neu
         # begonnen. Andernfalls könnte ein Dauerausfall nie bestätigt werden.
         if self.command is not heat or self.command_at is None:
             self.command, self.command_at = heat, now
         self.last_sent_at = now
-        self.runtime.log.info("heater_command", "Schaltbefehl an Heizschütz: %s.", "EIN" if heat else "AUS")
+        self.runtime.log.info(
+            "heater_command",
+            "Schaltbefehl an Heizschütz: %s.",
+            "EIN" if heat else "AUS",
+        )
         try:
             if ack is None:
-                await self.hass.services.async_call("switch", "turn_off",
-                    {"entity_id": self.bindings["heater"]}, blocking=False)
+                await self.hass.services.async_call(
+                    "switch",
+                    "turn_off",
+                    {"entity_id": self.bindings["heater"]},
+                    blocking=False,
+                )
             else:
                 async with asyncio.timeout(ack):
-                    await self.hass.services.async_call("switch", "turn_on" if heat else "turn_off",
-                        {"entity_id": self.bindings["heater"]}, blocking=True)
+                    await self.hass.services.async_call(
+                        "switch",
+                        "turn_on" if heat else "turn_off",
+                        {"entity_id": self.bindings["heater"]},
+                        blocking=True,
+                    )
             self.command_error = False
             error = None
         except Exception as exc:
             self.command_error = True
             error = type(exc).__name__
-        self.runtime.log.change("heater_command_error", error, logging.ERROR if error else logging.INFO,
-            "Ergebnis des Schaltbefehls: %s.", error or "Dienstaufruf abgeschlossen; Schützrückmeldung wird getrennt geprüft")
+        self.runtime.log.change(
+            "heater_command_error",
+            error,
+            logging.ERROR if error else logging.INFO,
+            "Ergebnis des Schaltbefehls: %s.",
+            error
+            or "Dienstaufruf abgeschlossen; Schützrückmeldung wird getrennt geprüft",
+        )
         if self.runtime.archive:
-            self.runtime.archive.append("command", now, {"heater": self.bindings["heater"],
-                "heat": heat, "decision": plain(self.runtime.controller.last_decision),
-                "service_error": error, "feedback_proves_heating": False},
-                self.runtime.session.session_id if self.runtime.session else None)
+            self.runtime.archive.append(
+                "command",
+                now,
+                {
+                    "heater": self.bindings["heater"],
+                    "heat": heat,
+                    "decision": plain(self.runtime.controller.last_decision),
+                    "service_error": error,
+                    "feedback_proves_heating": False,
+                },
+                self.runtime.session.session_id if self.runtime.session else None,
+            )
 
     async def apply(self, now):
         await self.send(self.runtime.controller.last_decision.heat, now)
@@ -367,8 +538,16 @@ class HADevice:
             return
         phase = self._light_phase(now)
         key, name, ends_at = phase
-        after_run = self.runtime.controller.session.after_run if self.runtime.controller.session else None
-        phase_paused = name == "nachlauf" and after_run is not None and after_run.paused_at is not None
+        after_run = (
+            self.runtime.controller.session.after_run
+            if self.runtime.controller.session
+            else None
+        )
+        phase_paused = (
+            name == "nachlauf"
+            and after_run is not None
+            and after_run.paused_at is not None
+        )
         state = self.hass.states.get(self.bindings["light"])
         actual = self._light_brightness(state)
         if name == "aus":
@@ -381,27 +560,49 @@ class HADevice:
         else:
             elevation = self._sun_elevation()
             normal = normal_brightness(elevation, self.runtime.configuration.parameters)
-            target = phase_target(name, self.runtime.controller.temperature,
-                self.runtime.controller.readiness_target, self.runtime.configuration.parameters, normal)
+            target = phase_target(
+                name,
+                self.runtime.controller.temperature,
+                self.runtime.controller.readiness_target,
+                self.runtime.configuration.parameters,
+                normal,
+            )
         plan = self.light_output.update(
-            now, key, name, target, actual, ends_at,
+            now,
+            key,
+            name,
+            target,
+            actual,
+            ends_at,
             phase_paused=phase_paused,
-            phase_brightness_percent=(self.runtime.controller.light_after_run.brightness_percent
-                                     if name == "session_light" else None),
+            phase_brightness_percent=(
+                self.runtime.controller.light_after_run.brightness_percent
+                if name == "session_light"
+                else None
+            ),
         )
         # Der Plan enthält Fließkommawerte, HA erhält einen stabilen Prozentwert.
         brightness = round(plan.brightness_percent, 2)
         service = "turn_off" if brightness <= 0 else "turn_on"
         command_key = (key, service, brightness if service == "turn_on" else None)
-        already_sent = (command_key == self._light_last_command_key
-                        or (service == "turn_on" and state is not None
-                            and state.state == "on"
-                            and round(actual * 255 / 100) == round(brightness * 255 / 100)))
-        if already_sent or (name == "aus" and plan.automatic and not self._light_override_dirty):
+        already_sent = command_key == self._light_last_command_key or (
+            service == "turn_on"
+            and state is not None
+            and state.state == "on"
+            and round(actual * 255 / 100) == round(brightness * 255 / 100)
+        )
+        if already_sent or (
+            name == "aus" and plan.automatic and not self._light_override_dirty
+        ):
             return
-        if await self._send_light_command(now, key=command_key, phase=name, service=service,
-                                          brightness=brightness if service == "turn_on" else None,
-                                          session_id=self._light_session_id()):
+        if await self._send_light_command(
+            now,
+            key=command_key,
+            phase=name,
+            service=service,
+            brightness=brightness if service == "turn_on" else None,
+            session_id=self._light_session_id(),
+        ):
             self._light_override_dirty = False
 
     async def _finish_expired_session_light(self, now):
@@ -410,12 +611,20 @@ class HADevice:
         if light_after_run is None or now < light_after_run.ends_at:
             return True
         key = ("session_light", light_after_run.session_id, light_after_run.started_at)
-        if key in (self._light_session_off_completed_key, self._light_session_off_superseded_key):
+        if key in (
+            self._light_session_off_completed_key,
+            self._light_session_off_superseded_key,
+        ):
             return True
-        if not await self._send_light_command(now, key=(key, "turn_off", None),
-                                              phase="session_light", service="turn_off",
-                                              brightness=None, session_id=light_after_run.session_id,
-                                              ends_at=light_after_run.ends_at):
+        if not await self._send_light_command(
+            now,
+            key=(key, "turn_off", None),
+            phase="session_light",
+            service="turn_off",
+            brightness=None,
+            session_id=light_after_run.session_id,
+            ends_at=light_after_run.ends_at,
+        ):
             return False
         self._light_session_off_completed_key = key
         return True
@@ -423,8 +632,11 @@ class HADevice:
     def _light_session_id(self):
         session = self.runtime.controller.session
         light_after_run = self.runtime.controller.light_after_run
-        return session.session_id if session is not None else (
-            light_after_run.session_id if light_after_run is not None else None)
+        return (
+            session.session_id
+            if session is not None
+            else (light_after_run.session_id if light_after_run is not None else None)
+        )
 
     async def finish_session_light(self, now, phase, *, purpose="light_reassignment"):
         """Beendet den bisherigen Lichtnachlauf vor einem Lichtwechsel.
@@ -435,11 +647,28 @@ class HADevice:
         """
         key = ("session_light", phase.session_id, phase.started_at)
         return await self._send_light_command(
-            now, key=(key, "turn_off", None), phase="session_light", service="turn_off",
-            brightness=None, session_id=phase.session_id, ends_at=phase.ends_at, purpose=purpose)
+            now,
+            key=(key, "turn_off", None),
+            phase="session_light",
+            service="turn_off",
+            brightness=None,
+            session_id=phase.session_id,
+            ends_at=phase.ends_at,
+            purpose=purpose,
+        )
 
-    async def _send_light_command(self, now, *, key, phase, service, brightness, session_id,
-                                  ends_at=None, purpose=None):
+    async def _send_light_command(
+        self,
+        now,
+        *,
+        key,
+        phase,
+        service,
+        brightness,
+        session_id,
+        ends_at=None,
+        purpose=None,
+    ):
         """Führt einen geplanten Lichtdienst aus und hält Ergebnis und Archiv zusammen.
 
         Nur ein erfolgreich abgeschlossener Dienstaufruf wird als deduplizierbar
@@ -456,21 +685,51 @@ class HADevice:
         except Exception as exc:
             error = type(exc).__name__
             self.faults[fault] = "service_unavailable"
-            self.runtime.log.change("light_command_error", (phase, service, error), logging.ERROR,
-                "Lichtdienst für %s (%s) fehlgeschlagen: %s.", phase, service, error)
+            self.runtime.log.change(
+                "light_command_error",
+                (phase, service, error),
+                logging.ERROR,
+                "Lichtdienst für %s (%s) fehlgeschlagen: %s.",
+                phase,
+                service,
+                error,
+            )
         else:
             self._light_last_command_key = key
-            for known_fault in ("session_light", "operation_light", "after_run_light", "cooling_light"):
+            for known_fault in (
+                "session_light",
+                "operation_light",
+                "after_run_light",
+                "cooling_light",
+            ):
                 self.faults.pop(known_fault, None)
-            self.runtime.log.change("light_command", (phase, service), logging.INFO,
-                "Lichtdienst für %s abgeschlossen: %s.", phase, service)
+            self.runtime.log.change(
+                "light_command",
+                (phase, service),
+                logging.INFO,
+                "Lichtdienst für %s abgeschlossen: %s.",
+                phase,
+                service,
+            )
             if service == "turn_on":
-                self.runtime.log.debug("light_dimming", "Lichtwert für %s: %s %%.", phase, brightness)
+                self.runtime.log.debug(
+                    "light_dimming", "Lichtwert für %s: %s %%.", phase, brightness
+                )
         if self.runtime.archive:
-            self.runtime.archive.append("light_command", now, {
-                "purpose": purpose or ("session_end" if phase == "session_light" else phase),
-                "phase": phase, "service": service, "brightness_pct": brightness,
-                "ends_at": ends_at, "service_error": error}, session_id)
+            self.runtime.archive.append(
+                "light_command",
+                now,
+                {
+                    "purpose": purpose
+                    or ("session_end" if phase == "session_light" else phase),
+                    "phase": phase,
+                    "service": service,
+                    "brightness_pct": brightness,
+                    "ends_at": ends_at,
+                    "service_error": error,
+                },
+                session_id,
+            )
         return error is None
 
     def _light_phase(self, now=None):
@@ -478,7 +737,11 @@ class HADevice:
         controller = self.runtime.controller
         light_after_run = controller.light_after_run
         if light_after_run is not None:
-            key = ("session_light", light_after_run.session_id, light_after_run.started_at)
+            key = (
+                "session_light",
+                light_after_run.session_id,
+                light_after_run.started_at,
+            )
             # Das Objekt bleibt als Sitzungsnachweis erhalten, die logische
             # Lichtphase endet aber exakt mit seiner Frist. Ein noch
             # ausstehender OFF-Service wird unabhängig in ``apply_light``
@@ -492,9 +755,17 @@ class HADevice:
             return (("aus",), "aus", None)
         phase = controller.phase
         if phase == "nachlauf" and session.after_run is not None:
-            return ((session.session_id, phase, session.after_run.phase_id), phase, session.after_run.ends_at)
+            return (
+                (session.session_id, phase, session.after_run.phase_id),
+                phase,
+                session.after_run.ends_at,
+            )
         if phase == "zwangskühlung" and session.cooling is not None:
-            return ((session.session_id, phase, session.cooling.cycle_id), phase, session.cooling.ends_at)
+            return (
+                (session.session_id, phase, session.cooling.cycle_id),
+                phase,
+                session.cooling.ends_at,
+            )
         return ((session.session_id, phase), phase, None)
 
     @staticmethod
@@ -502,7 +773,10 @@ class HADevice:
         if state is None or state.state != "on":
             return 0.0
         try:
-            return max(0.0, min(100.0, float(state.attributes.get("brightness", 0)) * 100 / 255))
+            return max(
+                0.0,
+                min(100.0, float(state.attributes.get("brightness", 0)) * 100 / 255),
+            )
         except (TypeError, ValueError):
             return 0.0
 
@@ -515,14 +789,21 @@ class HADevice:
 
     @staticmethod
     def _light_fault(phase):
-        return {"session_light": "session_light", "nachlauf": "after_run_light",
-                "zwangskühlung": "cooling_light"}.get(phase, "operation_light")
+        return {
+            "session_light": "session_light",
+            "nachlauf": "after_run_light",
+            "zwangskühlung": "cooling_light",
+        }.get(phase, "operation_light")
 
     def set_light_override(self, value):
         """Eine spätere API kann diesen manuellen Wert bis zum Phasenwechsel halten."""
         if value not in (None, True, False, "normal"):
-            if (isinstance(value, bool) or not isinstance(value, (int, float))
-                    or not isfinite(value) or not 0 <= value <= 100):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or not 0 <= value <= 100
+            ):
                 raise ValueError("Lichtwert muss zwischen 0 und 100 Prozent liegen.")
         # Die Runtime ruft diese Methode vor ihrem nächsten Regelzyklus auf.
         # Deshalb muss der aktuelle Controller-Schlüssel hier mitgegeben
@@ -530,13 +811,19 @@ class HADevice:
         now = self.runtime._clock()
         phase_key = self._light_phase(now)[0]
         light_after_run = self.runtime.controller.light_after_run
-        if (value is not None and light_after_run is not None
-                and now >= light_after_run.ends_at):
+        if (
+            value is not None
+            and light_after_run is not None
+            and now >= light_after_run.ends_at
+        ):
             # Eine neue Bedienung nach Ablauf gehört bereits zur Außenphase.
             # Sie löst den noch nicht ausgeführten Timer-AUS-Befehl ab, damit
             # der Adapter nicht erst AUS und unmittelbar danach EIN sendet.
             self._light_session_off_superseded_key = (
-                "session_light", light_after_run.session_id, light_after_run.started_at)
+                "session_light",
+                light_after_run.session_id,
+                light_after_run.started_at,
+            )
             # Der Timer ist fachlich beendet, auch wenn seine AUS-Ausgabe für
             # die neue manuelle Wahl übersprungen wird. LightOutput besitzt
             # dafür keine eigene Ablaufzeit und erhält den Grundwert hier vom
@@ -545,12 +832,18 @@ class HADevice:
         if value is None:
             self.light_output.return_to_automatic()
         elif value is True:
-            self.light_output.set_manual(self.values["session_light_brightness_percent"], phase_key=phase_key)
+            self.light_output.set_manual(
+                self.values["session_light_brightness_percent"], phase_key=phase_key
+            )
         elif value is False:
             self.light_output.set_manual(0, phase_key=phase_key)
         elif value == "normal":
-            self.light_output.set_manual(normal_brightness(self._sun_elevation(),
-                self.runtime.configuration.parameters), phase_key=phase_key)
+            self.light_output.set_manual(
+                normal_brightness(
+                    self._sun_elevation(), self.runtime.configuration.parameters
+                ),
+                phase_key=phase_key,
+            )
         else:
             self.light_output.set_manual(value, phase_key=phase_key)
         self._light_override_dirty = True
@@ -559,18 +852,38 @@ class HADevice:
         ends = self.runtime.controller.mechanical_timer_ends_at
         if ends:
             lead = self.values.get("mechanical_timer_warning_minutes", 0) * 60
-            phase = "expired" if now >= ends else "warning" if now >= ends - timedelta(seconds=lead) else None
+            phase = (
+                "expired"
+                if now >= ends
+                else "warning"
+                if now >= ends - timedelta(seconds=lead)
+                else None
+            )
             key = (self.runtime.controller.mechanical_timer.cycle_id, phase)
             if phase and key not in self.notified:
                 self.notified.add(key)
-                message = ("Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen. Bitte den Drehschalter erneut einstellen."
-                    if phase == "expired" else "Der mechanische Ofentimer erreicht voraussichtlich bald sein Ende.")
+                message = (
+                    "Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen. Bitte den Drehschalter erneut einstellen."
+                    if phase == "expired"
+                    else "Der mechanische Ofentimer erreicht voraussichtlich bald sein Ende."
+                )
                 message += " Seine tatsächliche Stellung wird nicht gemessen; diese Erinnerung löst keine Steuerung aus."
-                persistent_notification.async_create(self.hass, message,
-                    title="Sauna: mechanischer Ofentimer", notification_id=f"sauna_timer_{self.runtime.session.session_id}")
+                persistent_notification.async_create(
+                    self.hass,
+                    message,
+                    title="Sauna: mechanischer Ofentimer",
+                    notification_id=f"sauna_timer_{self.runtime.session.session_id}",
+                )
                 if self.runtime.archive:
-                    self.runtime.archive.append("notice", now, {"kind": "mechanical_timer_" + phase,
-                        "estimated_ends_at": ends}, self.runtime.session.session_id)
+                    self.runtime.archive.append(
+                        "notice",
+                        now,
+                        {
+                            "kind": "mechanical_timer_" + phase,
+                            "estimated_ends_at": ends,
+                        },
+                        self.runtime.session.session_id,
+                    )
 
     async def light_call(self, service, data):
         # Ein nicht antwortendes Licht darf den serialisierten Regelkreis nicht

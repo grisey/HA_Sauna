@@ -1,4 +1,5 @@
 """Reine, seiteneffektfreie Ausgabeplanung fuer das Saunalicht."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,7 +22,11 @@ def _remaining(now, ends_at) -> float | None:
 
 
 def _percent(value) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(value)
+    ):
         raise ValueError("Helligkeit muss eine endliche Zahl von 0 bis 100 sein")
     return max(0.0, min(100.0, float(value)))
 
@@ -102,9 +107,19 @@ class LightOutput:
         """Der letzte reine Planwert für Adapter, die außerhalb einer Sitzung ruhen."""
         return self._last_automatic
 
-    def update(self, now, phase_key, phase: str, temperature_target_percent: float,
-               actual_percent: float, phase_ends_at=None, phase_started_at=None,
-               *, phase_paused=False, phase_brightness_percent=None) -> LightPlan:
+    def update(
+        self,
+        now,
+        phase_key,
+        phase: str,
+        temperature_target_percent: float,
+        actual_percent: float,
+        phase_ends_at=None,
+        phase_started_at=None,
+        *,
+        phase_paused=False,
+        phase_brightness_percent=None,
+    ) -> LightPlan:
         """Gibt ausschließlich die nächste gewünschte Helligkeit zurück.
 
         ``phase_started_at`` beschreibt den führenden Ablauf für Adapter und
@@ -119,9 +134,14 @@ class LightOutput:
                 self._manual = None
                 self._manual_phase_key = None
             self._phase_key = phase_key
-            self._motion = self._start_motion(now, phase, actual, phase_ends_at,
-                                              phase_brightness_percent=phase_brightness_percent,
-                                              transition=had_phase)
+            self._motion = self._start_motion(
+                now,
+                phase,
+                actual,
+                phase_ends_at,
+                phase_brightness_percent=phase_brightness_percent,
+                transition=had_phase,
+            )
             self._phase_paused = False
             self._paused_automatic = None
             self._phase_ends_at = phase_ends_at
@@ -133,8 +153,11 @@ class LightOutput:
                 # Der Controller behält den Phasenschlüssel beim Pausieren. Die
                 # bis dahin geplante Nachlaufhelligkeit wird deshalb eingefroren,
                 # statt mit der fehlenden Deadline auf das Normalziel zu springen.
-                self._paused_automatic = (self._automatic(now, phase, target, self._phase_ends_at)
-                                          if self._phase_ends_at is not None else self._last_automatic)
+                self._paused_automatic = (
+                    self._automatic(now, phase, target, self._phase_ends_at)
+                    if self._phase_ends_at is not None
+                    else self._last_automatic
+                )
                 self._phase_paused = True
             if self._manual is not None:
                 return LightPlan(self._manual, False, True)
@@ -153,29 +176,55 @@ class LightOutput:
         self._phase_ends_at = phase_ends_at
         automatic = self._automatic(now, phase, target, phase_ends_at)
         if self._resume_pending:
-            self._motion = _Motion("resume", now, self._last_automatic, 0.0,
-                                   self.parameters.values["light_transition_seconds"], target)
+            self._motion = _Motion(
+                "resume",
+                now,
+                self._last_automatic,
+                0.0,
+                self.parameters.values["light_transition_seconds"],
+                target,
+            )
             self._resume_pending = False
             automatic = self._last_automatic
         self._last_automatic = automatic
         return LightPlan(automatic, True, False)
 
-    def _start_motion(self, now, phase: str, actual: float, ends_at, *,
-                      phase_brightness_percent=None, transition=False) -> _Motion | None:
+    def _start_motion(
+        self,
+        now,
+        phase: str,
+        actual: float,
+        ends_at,
+        *,
+        phase_brightness_percent=None,
+        transition=False,
+    ) -> _Motion | None:
         if phase == "aus":
             return None
         duration = self.parameters.values["light_transition_seconds"]
         remaining = _remaining(now, ends_at)
         if phase in self._DIM_PHASES:
-            low = (self.parameters.values["after_run_brightness_percent"]
-                   if phase == "nachlauf" else self.parameters.values["cooling_brightness_percent"])
+            low = (
+                self.parameters.values["after_run_brightness_percent"]
+                if phase == "nachlauf"
+                else self.parameters.values["cooling_brightness_percent"]
+            )
             fade = min(duration, remaining / 2) if remaining is not None else duration
             return _Motion("dim", now, actual, low, fade)
         if phase in self._SESSION_PHASES:
             fade = min(duration, remaining) if remaining is not None else duration
-            return _Motion("session", now, actual, 0.0, fade,
-                           (self.parameters.values["session_light_brightness_percent"]
-                            if phase_brightness_percent is None else _percent(phase_brightness_percent)))
+            return _Motion(
+                "session",
+                now,
+                actual,
+                0.0,
+                fade,
+                (
+                    self.parameters.values["session_light_brightness_percent"]
+                    if phase_brightness_percent is None
+                    else _percent(phase_brightness_percent)
+                ),
+            )
         if transition:
             return _Motion("normal", now, actual, 0.0, duration)
         return None
@@ -190,16 +239,25 @@ class LightOutput:
             # neue Temperatur- oder Dämmerungslage nicht am alten Ziel hängen.
             return linear(motion.start_percent, target, elapsed, motion.fade_seconds)
         if motion.kind == "session":
-            return linear(motion.start_percent, motion.fixed_percent, elapsed, motion.fade_seconds)
+            return linear(
+                motion.start_percent, motion.fixed_percent, elapsed, motion.fade_seconds
+            )
         if motion.kind == "rise":
             remaining = _remaining(now, ends_at)
-            return motion.start_percent if remaining is None else linear(
-                motion.start_percent, target, elapsed, remaining + elapsed)
+            return (
+                motion.start_percent
+                if remaining is None
+                else linear(motion.start_percent, target, elapsed, remaining + elapsed)
+            )
         if elapsed <= motion.fade_seconds:
-            return linear(motion.start_percent, motion.low_percent, elapsed, motion.fade_seconds)
+            return linear(
+                motion.start_percent, motion.low_percent, elapsed, motion.fade_seconds
+            )
         remaining = _remaining(now, ends_at)
         if remaining is None:
             return target
         rise_elapsed = elapsed - motion.fade_seconds
         # Die aktuelle Frist bestimmt die Steigung; sie wird nie im Motion-Zustand kopiert.
-        return linear(motion.low_percent, target, rise_elapsed, remaining + rise_elapsed)
+        return linear(
+            motion.low_percent, target, rise_elapsed, remaining + rise_elapsed
+        )

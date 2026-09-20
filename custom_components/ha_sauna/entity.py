@@ -1,4 +1,5 @@
 """Gemeinsame Identität und Aktualisierung der eigenen HA-Entitäten."""
+
 from homeassistant.helpers.entity import DeviceInfo, Entity
 
 from .const import DOMAIN
@@ -13,8 +14,10 @@ class SaunaEntity(Entity):
         self.runtime = entry.runtime_data
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)}, name=entry.title,
-            manufacturer="HA Sauna", model="Sessionsteuerung",
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="HA Sauna",
+            model="Sessionsteuerung",
         )
 
     async def async_added_to_hass(self):

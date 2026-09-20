@@ -1,4 +1,5 @@
 """Ein Bedienweg für den logischen Saunabetrieb, unabhängig vom Heizrelais."""
+
 from homeassistant.components.switch import SwitchEntity
 
 from .entity import SaunaEntity

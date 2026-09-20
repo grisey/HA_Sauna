@@ -1,4 +1,5 @@
 """Berechnung unveränderlicher Temperaturprogramme für gezählte Gänge."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,7 +26,9 @@ def _count(value: object, name: str) -> int:
     return value
 
 
-def evenly_distributed(start_c: object, end_c: object, gangs: object) -> tuple[float, ...]:
+def evenly_distributed(
+    start_c: object, end_c: object, gangs: object
+) -> tuple[float, ...]:
     """Start und Ende liegen auf dem ersten und letzten Verteilungspunkt."""
     start = _temperature(start_c, "start_c")
     end = _temperature(end_c, "end_c")
@@ -51,7 +54,11 @@ class TemperatureProgram:
 
     def target(self, completed: object) -> float:
         """Target after ``completed`` actual gangs."""
-        if isinstance(completed, bool) or not isinstance(completed, int) or completed < 0:
+        if (
+            isinstance(completed, bool)
+            or not isinstance(completed, int)
+            or completed < 0
+        ):
             raise ValueError("completed must be a non-negative integer")
         # A one-gang distribution still begins at its configured start.  When
         # start and end differ, the first actual gang must be able to reach

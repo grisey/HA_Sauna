@@ -1,4 +1,5 @@
 """HA-Quellen nach Rollen zuordnen; keine Zuordnung durch Gerätenamen erraten."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -32,11 +33,27 @@ ROLES = (
     Role("heater", "Schalter des Heizschützes", ("switch",)),
     Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
     Role("light", "Dimmbares Saunalicht", ("light",)),
-    Role("upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True),
-    Role("lower_status", "Sensorstatus unten", ("sensor", "binary_sensor"), optional=True),
-    Role("heater_feedback", "Unabhängiger binärer Heiznachweis (optional)", ("switch", "binary_sensor"), optional=True),
-    Role("heater_power", "Leistungsmessung des Ofens (optional)", ("sensor",), "power", "W",
-         optional=True, accepted_units=("W", "kW")),
+    Role(
+        "upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True
+    ),
+    Role(
+        "lower_status", "Sensorstatus unten", ("sensor", "binary_sensor"), optional=True
+    ),
+    Role(
+        "heater_feedback",
+        "Unabhängiger binärer Heiznachweis (optional)",
+        ("switch", "binary_sensor"),
+        optional=True,
+    ),
+    Role(
+        "heater_power",
+        "Leistungsmessung des Ofens (optional)",
+        ("sensor",),
+        "power",
+        "W",
+        optional=True,
+        accepted_units=("W", "kW"),
+    ),
 )
 ROLE_BY_KEY = MappingProxyType({role.key: role for role in ROLES})
 ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
@@ -70,7 +87,9 @@ class Bindings:
         return dict(self.values)
 
 
-def validate_metadata(bindings: Bindings, attributes: Mapping[str, Mapping | None]) -> None:
+def validate_metadata(
+    bindings: Bindings, attributes: Mapping[str, Mapping | None]
+) -> None:
     """Bei der Auswahl Typ, Einheit und Dimmbarkeit prüfen, nicht Messwert != unknown.
 
     Die Einrichtung braucht Metadaten der ausgewählten Entitäten. Eine temporäre
@@ -84,12 +103,24 @@ def validate_metadata(bindings: Bindings, attributes: Mapping[str, Mapping | Non
         role = ROLE_BY_KEY[key]
         if role.device_class and attrs.get("device_class") != role.device_class:
             raise BindingError(key, "wrong_device_class")
-        if role.unit and attrs.get("unit_of_measurement") not in (role.accepted_units or (role.unit,)):
+        if role.unit and attrs.get("unit_of_measurement") not in (
+            role.accepted_units or (role.unit,)
+        ):
             raise BindingError(key, "wrong_unit")
         if key == "light":
             modes = attrs.get("supported_color_modes") or ()
             if not isinstance(modes, (list, tuple, set, frozenset)) or not any(
-                mode in {"brightness", "color_temp", "hs", "xy", "rgb", "rgbw", "rgbww", "white"}
+                mode
+                in {
+                    "brightness",
+                    "color_temp",
+                    "hs",
+                    "xy",
+                    "rgb",
+                    "rgbw",
+                    "rgbww",
+                    "white",
+                }
                 for mode in modes
             ):
                 raise BindingError(key, "light_not_dimmable")

@@ -1,4 +1,5 @@
 """Ein Parameterkatalog für Eingabeprüfung, Oberfläche und spätere Verbraucher."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -45,7 +46,9 @@ class ParameterDefinition:
             if number < self.minimum:
                 raise ParameterError(self.key, "too_small")
         elif number < 0 or (number == 0 and not self.allow_zero):
-            raise ParameterError(self.key, "non_negative" if self.allow_zero else "positive")
+            raise ParameterError(
+                self.key, "non_negative" if self.allow_zero else "positive"
+            )
         if self.integer and not number.is_integer():
             raise ParameterError(self.key, "integer_required")
         if number > self.maximum:
@@ -55,12 +58,21 @@ class ParameterDefinition:
 
 def definition(key, unit, allow_zero=False, **kwargs):
     label, description, group = PARAMETER_TEXT[key]
-    return ParameterDefinition(key, label, unit, allow_zero=allow_zero,
-        description=description, group=group, **kwargs)
+    return ParameterDefinition(
+        key,
+        label,
+        unit,
+        allow_zero=allow_zero,
+        description=description,
+        group=group,
+        **kwargs,
+    )
 
 
 # Einstellbare Standardwerte; bereits gespeicherte Werte haben Vorrang.
-LIVE_TEMPERATURE_KEYS = frozenset({"target_temperature_c", "final_temperature_c", "temperature_gangs"})
+LIVE_TEMPERATURE_KEYS = frozenset(
+    {"target_temperature_c", "final_temperature_c", "temperature_gangs"}
+)
 DEFINITIONS = (
     definition("session_gap_minutes", "min", default=15),
     definition("confirmation_minutes", "min", default=12),
@@ -80,17 +92,25 @@ DEFINITIONS = (
     definition("warmup_estimation_minutes", "min", default=5),
     definition("preset_start_c", "°C", default=70, maximum=100),
     definition("preset_step_c", "°C", default=5),
-    definition("preset_count", "Anzahl", default=6, minimum=1, maximum=20, integer=True),
+    definition(
+        "preset_count", "Anzahl", default=6, minimum=1, maximum=20, integer=True
+    ),
     definition("target_temperature_c", "°C", default=80, maximum=100),
     definition("temperature_increase_c", "°C", default=5),
     definition("final_temperature_c", "°C", default=95, maximum=100),
-    definition("temperature_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True),
+    definition(
+        "temperature_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True
+    ),
     definition("program_1_start_c", "°C", default=80, maximum=100),
     definition("program_1_end_c", "°C", default=95, maximum=100),
-    definition("program_1_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True),
+    definition(
+        "program_1_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True
+    ),
     definition("program_2_start_c", "°C", default=70, maximum=100),
     definition("program_2_end_c", "°C", default=90, maximum=100),
-    definition("program_2_gangs", "Anzahl", default=3, minimum=1, maximum=20, integer=True),
+    definition(
+        "program_2_gangs", "Anzahl", default=3, minimum=1, maximum=20, integer=True
+    ),
     definition("safety_temperature_c", "°C", default=105),
     definition("overtemperature_minutes", "min", default=10),
     definition("overtemperature_cooling_factor", "×", default=2, minimum=1),
@@ -107,13 +127,23 @@ DEFINITIONS = (
     definition("cooling_brightness_percent", "%", default=5, maximum=100),
     definition("session_light_minutes", "min", True, default=10),
     definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
-) + tuple(definition(key, unit, allow_zero=minimum <= 0,
-        default=default, minimum=minimum, maximum=maximum, integer=integer)
-    for key, label, unit, default, minimum, maximum, integer in SPECS)
+) + tuple(
+    definition(
+        key,
+        unit,
+        allow_zero=minimum <= 0,
+        default=default,
+        minimum=minimum,
+        maximum=maximum,
+        integer=integer,
+    )
+    for key, label, unit, default, minimum, maximum, integer in SPECS
+)
 BY_KEY = MappingProxyType({definition.key: definition for definition in DEFINITIONS})
 # Alte Optionen bleiben beim Laden erhalten, sind aber keine bedienbaren Werte mehr.
 EDITABLE_DEFINITIONS = tuple(
-    definition for definition in DEFINITIONS
+    definition
+    for definition in DEFINITIONS
     if definition.key != "temperature_increase_c"
 )
 

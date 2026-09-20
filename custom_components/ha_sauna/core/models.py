@@ -1,4 +1,5 @@
 """Session-eigene Laufzeitdaten und unveränderte Messherkunft."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,7 +37,9 @@ class Measurement:
     measured_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.position, Position) or not isinstance(self.quantity, Quantity):
+        if not isinstance(self.position, Position) or not isinstance(
+            self.quantity, Quantity
+        ):
             raise ValueError("Gültige Messrolle und Messgröße erforderlich")
         if not self.source or not isinstance(self.raw_value, str):
             raise ValueError("Messherkunft und Originalwert erforderlich")
@@ -45,7 +48,9 @@ class Measurement:
             or not isinstance(self.value, (int, float))
             or not isfinite(self.value)
         ):
-            raise ValueError("Messwert muss endlich oder als fehlend gekennzeichnet sein")
+            raise ValueError(
+                "Messwert muss endlich oder als fehlend gekennzeichnet sein"
+            )
         object.__setattr__(self, "received_at", utc(self.received_at))
         if self.measured_at is not None:
             object.__setattr__(self, "measured_at", utc(self.measured_at))
@@ -61,7 +66,10 @@ class Deadline:
     due_at: datetime
 
     def __post_init__(self) -> None:
-        if not all(isinstance(v, str) and v for v in (self.session_id, self.purpose, self.token)):
+        if not all(
+            isinstance(v, str) and v
+            for v in (self.session_id, self.purpose, self.token)
+        ):
             raise ValueError("Session, Zweck und eindeutiges Fristtoken erforderlich")
         object.__setattr__(self, "due_at", utc(self.due_at))
 
@@ -85,9 +93,12 @@ class HeatingTime:
     intervals: tuple[HeatingInterval, ...] = ()
 
     def __post_init__(self) -> None:
-        if (isinstance(self.elapsed_seconds, bool)
-                or not isinstance(self.elapsed_seconds, (int, float))
-                or not isfinite(self.elapsed_seconds) or self.elapsed_seconds < 0):
+        if (
+            isinstance(self.elapsed_seconds, bool)
+            or not isinstance(self.elapsed_seconds, (int, float))
+            or not isfinite(self.elapsed_seconds)
+            or self.elapsed_seconds < 0
+        ):
             raise ValueError("Heizzeit muss endlich und nicht negativ sein")
 
 
@@ -139,15 +150,24 @@ class TimedPhase:
         if self.duration_seconds is None:
             if self.ends_at is None:
                 raise ValueError("Pausierte Phase benötigt ihre ursprüngliche Dauer")
-            object.__setattr__(self, "duration_seconds",
-                               max(0.0, (self.ends_at - self.started_at).total_seconds()))
-        if (isinstance(self.duration_seconds, bool)
-                or not isinstance(self.duration_seconds, (int, float))
-                or not isfinite(self.duration_seconds) or self.duration_seconds < 0):
+            object.__setattr__(
+                self,
+                "duration_seconds",
+                max(0.0, (self.ends_at - self.started_at).total_seconds()),
+            )
+        if (
+            isinstance(self.duration_seconds, bool)
+            or not isinstance(self.duration_seconds, (int, float))
+            or not isfinite(self.duration_seconds)
+            or self.duration_seconds < 0
+        ):
             raise ValueError("Phasendauer muss endlich und nicht negativ sein")
-        if (isinstance(self.elapsed_seconds, bool)
-                or not isinstance(self.elapsed_seconds, (int, float))
-                or not isfinite(self.elapsed_seconds) or self.elapsed_seconds < 0):
+        if (
+            isinstance(self.elapsed_seconds, bool)
+            or not isinstance(self.elapsed_seconds, (int, float))
+            or not isfinite(self.elapsed_seconds)
+            or self.elapsed_seconds < 0
+        ):
             raise ValueError("Phasenzeit muss endlich und nicht negativ sein")
         if self.elapsed_seconds > self.duration_seconds:
             raise ValueError("Phasenzeit darf ihre Dauer nicht überschreiten")
@@ -173,7 +193,9 @@ class CoolingCycle:
     @property
     def remaining_seconds(self) -> float:
         """Noch echte, nicht durch Nachlauf gedeckte Kühlzeit."""
-        return max(0.0, self.duration_seconds - self.credited_seconds - self.elapsed_seconds)
+        return max(
+            0.0, self.duration_seconds - self.credited_seconds - self.elapsed_seconds
+        )
 
 
 @dataclass(frozen=True)

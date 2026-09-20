@@ -1,4 +1,5 @@
 """Reine Zielwerte fuer die temperatur- und tageslichtabhaengige Lichtkurve."""
+
 from __future__ import annotations
 
 from math import isfinite
@@ -41,8 +42,12 @@ def normal_brightness(elevation: float | None, parameters: Parameters) -> float:
     return linear(night, day, _clamp((elevation + 6) / 6, 0, 1), 1)
 
 
-def temperature_brightness(temperature: float | None, readiness_target: float | None,
-                           parameters: Parameters, normal_brightness: float) -> float:
+def temperature_brightness(
+    temperature: float | None,
+    readiness_target: float | None,
+    parameters: Parameters,
+    normal_brightness: float,
+) -> float:
     """Temperaturkurve vom Kaltpunkt bis zum Bereitschaftsziel."""
     values = parameters.values
     minimum = values["cooling_brightness_percent"]
@@ -58,14 +63,25 @@ def temperature_brightness(temperature: float | None, readiness_target: float | 
     return linear(minimum, normal_brightness, fraction, 1)
 
 
-def phase_target(phase: str, temperature: float | None, readiness_target: float | None,
-                 parameters: Parameters, normal_brightness: float) -> float:
+def phase_target(
+    phase: str,
+    temperature: float | None,
+    readiness_target: float | None,
+    parameters: Parameters,
+    normal_brightness: float,
+) -> float:
     """Leitet nur aus der fuehrenden Phase den Zielwert ab, ohne eigenen Zustand."""
     if phase == "saunagang":
         return normal_brightness
     temperature, readiness_target = _number(temperature), _number(readiness_target)
     hysteresis = parameters.values["readiness_hysteresis_c"]
-    if (phase == "bereit" and temperature is not None
-            and readiness_target is not None and temperature >= readiness_target - hysteresis):
+    if (
+        phase == "bereit"
+        and temperature is not None
+        and readiness_target is not None
+        and temperature >= readiness_target - hysteresis
+    ):
         return normal_brightness
-    return temperature_brightness(temperature, readiness_target, parameters, normal_brightness)
+    return temperature_brightness(
+        temperature, readiness_target, parameters, normal_brightness
+    )
