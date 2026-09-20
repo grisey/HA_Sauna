@@ -700,8 +700,11 @@ class HADevice:
                 else None
             ),
         )
-        # Der Plan enthält Fließkommawerte, HA erhält einen stabilen Prozentwert.
-        brightness = round(plan.brightness_percent, 2)
+        # Der Plan darf intern fließend bleiben; die Hardwareausgabe folgt den
+        # festgelegten ganzen Prozentpunkten. Damit bleibt die sichtbare
+        # Rückmeldung eines eigenen ``brightness_pct``-Befehls bei derselben
+        # Rohhelligkeit wie die erwartete Signatur.
+        brightness = round(plan.brightness_percent)
         service = "turn_off" if brightness <= 0 else "turn_on"
         command_key = (key, service, brightness if service == "turn_on" else None)
         desired = self._light_command_signature(service, brightness)
@@ -710,6 +713,16 @@ class HADevice:
         )
         if already_sent or (
             name == "aus" and plan.automatic and not self._light_override_dirty
+        ):
+            return
+        # Genau die zuletzt angeforderte sichtbare Änderung kann wegen des
+        # Gerätepfads noch unterwegs sein. Ein anderer Prozentpunkt erhält
+        # einen anderen Befehlsschlüssel und bleibt ausführbar, auch wenn sein
+        # Wert als ältere Erwartung noch vorhanden ist.
+        if (
+            not self._light_override_dirty
+            and command_key == self._light_last_command_key
+            and self._light_change_is_pending(now, service, brightness)
         ):
             return
         if await self._send_light_command(
@@ -902,6 +915,15 @@ class HADevice:
                 "signature": signature,
                 "sent_at": now,
             }
+        )
+
+    def _light_change_is_pending(self, now, service, brightness):
+        """Whether this exact visible change still awaits its feedback."""
+        self._discard_expired_light_expectations(now)
+        signature = self._light_command_signature(service, brightness)
+        return any(
+            expected["signature"] == signature
+            for expected in self._expected_light_changes
         )
 
     def external_light_selection(self, event, received_at):
