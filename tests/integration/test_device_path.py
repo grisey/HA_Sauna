@@ -228,6 +228,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.settings import async_set_parameters
+        await async_set_parameters(self.hass, self.entry, {"target_temperature_c": 80},
+            partial=True, explicit_target=True, program_mode="constant")
         self.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 10})
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
@@ -239,6 +242,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.light.brightness, 180, delta=1)
         await self.time(30)
         self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
+        async def temperature(seconds):
+            self.now = self.base + timedelta(seconds=seconds)
+            await self.set_source("upper_temperature", 70)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+        await temperature(30)
         session_id = self.runtime.session.session_id
         async def signal(kind, seconds):
             self.now=self.base+timedelta(seconds=seconds)
@@ -246,9 +255,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
         await signal(Kind.DOOR_CLOSE,31)
         await signal(Kind.INFUSION,32)
-        self.now=self.base+timedelta(seconds=271)
-        await self.set_source("upper_temperature",70)
-        await self.runtime.tick()
+        for second in range(60, 271, 30):
+            await temperature(second)
+        await temperature(271)
         normal = self.light.brightness
         self.assertAlmostEqual(normal, 255*.4, delta=1)
         await signal(Kind.DOOR_OPEN,272)
@@ -260,7 +269,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.light.brightness, normal)
         await self.time(288)
         self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
-        await self.time(303)
+        await temperature(303)
         self.assertEqual(self.runtime.controller.phase,"zwangskühlung")
         self.assertGreater(self.light.brightness,255*.05)
         await self.time(310)
