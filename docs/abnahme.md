@@ -17,9 +17,16 @@ Gerätepfade prüfen sofortiges Pausieren nach tatsächlichem Gültigkeitsende,
 spätere Verriegelung bei Dauerausfall und den gesperrten Neustart nach einer
 Sollwerterhöhung ohne gültige Temperatur. Bereits gestartete Kühlung und Nachlauf
 gehen auch bei widersprüchlichem Gangsignal vor; noch nicht gestartete Kühlung
-wartet weiterhin auf das Gangende. Nachweise für den abschließenden Stand folgen
-aus der Linux-CI. Keine reale Installation oder Gerätebetätigung durch den
-Entwicklungszugriff.
+wartet weiterhin auf das Gangende.
+
+Geprüfter Stand:
+[`4486127`](https://github.com/grisey/HA_Sauna/commit/44861277bc1112561f554cd437a2400b0c237841).
+[CI 35477475041](https://github.com/grisey/HA_Sauna/actions/runs/35477475041)
+ist vollständig erfolgreich: **175 Kerntests bestanden, 2 private Replay-Skips;
+11 HA-API-Smokes; 36 echte HA-Integrationstests; 4 Browserabläufe**. Beide
+Gültigkeitsfälle sowie die Sperr- und Verriegelungsprüfungen bestehen im realen
+HA-Kern mit kontrollierten Testgeräten. Keine reale Installation oder
+Gerätebetätigung durch den Entwicklungszugriff.
 
 ## Zustandsabhängige Erkennung vom 20.09.2026
 
