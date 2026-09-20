@@ -178,7 +178,7 @@ class LiveTemperatureTests(unittest.TestCase):
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         before = c.session.timeline.active
-        change(c, 3, target_temperature_c=50)
+        change(c, 3, target_temperature_c=60)
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.session.timeline.active, before)
         c.protection.add("confirmed_controller_failure")

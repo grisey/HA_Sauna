@@ -14,9 +14,9 @@ const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8
 
 // Overview controls use the narrow live endpoints.  In particular a direct
 // target must never start a session or re-submit the complete configuration.
-assert.ok(panelSource.includes("`/${this.entry}/temperature`"));
-assert.ok(panelSource.includes("`/${this.entry}/program`"));
-assert.match(panelSource, /<foreignObject[\s\S]*id="target"[\s\S]*type="range"/);
+assert.ok(panelSource.includes("`/${entry}/temperature`"));
+assert.ok(panelSource.includes("`/${entry}/program`"));
+assert.match(panelSource, /data-target-arc[\s\S]*role="slider"/);
 assert.match(panelSource, /data-action="light:false"/);
 assert.match(panelSource, /permissions\.temperature/);
 assert.doesNotMatch(panelSource, /changeTarget\(Number\(action\.slice\(7\)\),true\)/);
@@ -51,6 +51,24 @@ const panel = () => Object.assign(Object.create(Panel.prototype), {
   assert.equal((d.match(/M/g)||[]).length,2,"raw TTL gap must not be bridged");
 }
 
+// The interaction index is numeric and sorted once, so the binary lookup
+// includes exact visible boundaries and picks the closest adjacent sample.
+{
+  const p=panel(), records=[record(20,72),record(0,70),record(10,71)];
+  p.historyIndex(records);
+  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_000_000).value,70,"first visible sample is reachable");
+  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_020_000).value,72,"last visible sample is reachable");
+  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_016_000).value,72,"binary lookup chooses the closest sample");
+}
+
+// An explicit missing measurement must remain a gap, never become zero.
+{
+  const p=panel(), svg=p.chart([record(0,70),record(1,null),record(2,71)],session,[]);
+  const d=/data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
+  assert.equal((d.match(/M/g)||[]).length,2,"explicit missing measurements break the curve");
+  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_001_000).value,null);
+}
+
 // Humidity uses a useful percentage scale above 40 rather than clipping it.
 {
   const p=panel(), svg=p.chart([record(1,80),record(1,55,"humidity")],session,[]);
@@ -61,7 +79,7 @@ const panel = () => Object.assign(Object.create(Panel.prototype), {
 // valid in the middle of a rendered gap.
 {
   const p=panel(), tooltip={style:{}}, cursor={setAttribute:()=>{}};
-  p.historyDetail=false; p.shown={session}; p.chartMeasurements=[record(0,70).payload];
+  p.historyDetail=false; p.shown={session}; p.historyIndex([record(0,70)]);
   p.$=id=>id==="#tooltip"?tooltip:cursor;
   const svg={getBoundingClientRect:()=>({left:0,top:0,width:1200}),closest:()=>svg};
   p.hoverChart({target:svg,clientX:600,clientY:100});

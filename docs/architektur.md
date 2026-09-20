@@ -1,34 +1,52 @@
 # Architektur
 
-Es gibt einen führenden Controller pro konfigurierter Sauna. Die Session besitzt
-Gangzuordnung, Heizzeit, Sessionenergie, Bereitschaft, Thermostatstatus, Nachlauf, Kühlung und
-Fristen. Dauerhafte Konfiguration, reale Eingangslage, technische Schutzgründe
-und historische Archive liegen außerhalb des Sessionwechsels.
+Pro konfigurierte Sauna gibt es genau einen führenden Controller. Er besitzt die
+laufende Sitzung mit Gängen, Heizzeit, Thermostat, Nachlauf, Kühlung, Licht und
+Fristen. Konfiguration, Eingangsmessungen, Schutzgründe und Archiv sind davon
+getrennt. Der Controller bleibt frei von Home-Assistant-Abhängigkeiten; nur der
+Geräteadapter liest Quellen und führt Aktorbefehle aus.
 
-| Baustein | Aufgabe |
-|---|---|
-| `config_flow.py`, `bindings.py`, `core/parameters.py` | Rollen, Metadatenprüfung, zentrale unveränderliche Parameterstände. |
-| `device.py` | HA-Listener einschließlich unverändert neu berichteter Messungen; tatsächliche Services und Rückmeldung. |
-| `core/detector.py` | Kausale, begrenzte Arbeitsfenster je Messhöhe; eingefrorene Erkennungslogik mit einstellbaren Expertenparametern. |
-| `core/timeline.py` | Ereignisreferenzen, Gangbeginn, Aufgussbestätigung, Aufhebung und Abschluss. |
-| `core/controller.py` | Sessionlebenszyklus, Fristfolgen, Kühlreihenfolge und Heizentscheidung. |
-| `core/heating.py`, `core/thermostat.py` | Gezählt aktive Heizintervalle und eigene Temperaturregelung. |
-| `core/power.py`, `core/energy.py` | Optionale W-/kW-Messung; Sessionenergie mit getrennten gemessenen und geschätzten Anteilen. |
-| `runtime.py` | Serialisierte Ereignisverarbeitung, Lebenszyklus, Archivübergabe und Entitätsaktualisierung. |
-| `archive.py`, `backup.py` | SQLite, Schreibpuffer, konsistente HA-Sicherung und Export. |
-| `api.py`, `frontend.py`, `panel.js` | Authentifizierte Abfragen/Bedienung und zwei Hauptansichten ohne zweiten Ablaufkern. |
+## Konfiguration und Bedienung
 
-`number`, `sensor`, `switch`, `climate` und `button` verwenden dieselbe Laufzeit.
-Parameteränderungen schreiben ausschließlich Entry-Optionen; ein Update-Listener
-lädt sie neu. Eine Session sperrt Änderungen an Parametern und Bindungen. Der
-Controller hat keine HA-Abhängigkeit. Gerätebefehle sind auf `device.py` begrenzt.
+`config_flow.py` und `bindings.py` ordnen die externen Rollen zu und prüfen
+deren Metadaten. `core/parameters.py` bildet den unveränderlichen zentralen
+Parameterstand. `core/program_catalog.py` verwaltet benannte
+Temperaturprogramme getrennt vom Laufzeitablauf. Einstellungen und API schreiben
+den Optionsstand; die drei in einer Sitzung erlaubten Temperaturwerte werden
+über den Live-Einstellpfad in den bestehenden Controller übernommen. Eine solche
+Änderung lädt nicht die gesamte Integration neu.
 
-Originalmessungen, berechnete Merkmale und Ereignisse haben getrennte Archivtypen.
-Der Detektor veröffentlicht seine tatsächlich berechneten Merkmale zur Diagnose;
-die Oberfläche implementiert seine Entscheidung nicht erneut. Archivrevisionen
-und Anzeige-Caches sind keine weiteren führenden Regelungswerte.
+## Messung, Erkennung und Ablauf
 
-Setup beginnt mit Ofen-Aus und ohne Session. Unload entfernt Listener, beendet
-Betrieb, sendet Aus, stellt das Licht wieder her und schließt das Archiv.
-Backup pausiert nur den Schreiber. Kein automatischer Wiederanlauf nach Neustart.
-Der private Referenzexport und konkrete Nutzergeräte gehören nicht zum Code.
+`device.py` sammelt unveränderte Quellmeldungen, hält ihre Empfangszeit fest und
+liefert nur diese Werte an den Ablauf. `core/moisture.py` berechnet aus einem
+frischen Temperatur-/Feuchte-Paar den absoluten Wassergehalt; `sensor.py`
+stellt ihn für beide Messpositionen als Diagnoseentität bereit.
+
+`core/detector.py` arbeitet kausal mit begrenzten Arbeitsfenstern und meldet
+Tür-, Personen-, Aufguss- und Lüftungssignale. `core/timeline.py` ordnet diese
+Signale Gängen zu, während `core/controller.py` die daraus folgenden Heiz-,
+Nachlauf- und Kühlentscheidungen trifft. Die detaillierte fachliche Regel steht
+in [Erkennung](erkennung.md), [Gangmodell](gangmodell.md) und
+[Betrieb](betrieb.md).
+
+`core/thermostat.py` und `core/heating.py` entscheiden die Temperaturregelung
+und zählen bestätigte Heizintervalle. `core/power.py` und `core/energy.py`
+trennen gemessene von geschätzter Energie. `core/light.py` berechnet die
+temperatur- und tageslichtabhängigen Zielhelligkeiten; `core/light_output.py`
+führt Übergänge und vorübergehende manuelle Wahl aus.
+
+## Laufzeit, Archiv und Darstellung
+
+`runtime.py` serialisiert Eingänge, hält den Lebenszyklus zusammen und stößt
+Archivierung sowie Entitätsaktualisierung an. `core/warmup.py` liefert nur eine
+ETA-taugliche Aufheizrate: zunächst aus dem stabilen Anstieg der aktuellen
+Sitzung, ersatzweise aus der letzten abgeschlossenen archivierten Aufheizphase.
+Diese Rate ist kein Regelwert.
+
+`archive.py` und `backup.py` speichern Messungen, Merkmale, Ereignisse und
+Parameterstände in SQLite, sichern sie konsistent über HA und exportieren sie
+authentifiziert. `api.py`, `frontend.py` und `panel.js` zeigen diesen
+führenden Zustand und berechnen weder Erkennung noch Heizentscheidung ein
+zweites Mal. Nach einem HA-Neustart bleibt das Archiv erhalten; ein Betrieb wird
+nicht automatisch fortgesetzt.

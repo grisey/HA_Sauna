@@ -54,6 +54,12 @@ def phase_timer(controller, now):
         and session.cooling.paused_at is None
     ):
         return remaining("cooling", "Zwangskühlung noch", session.cooling.ends_at)
+    if controller.control_mode == "manual":
+        return elapsed(
+            "manual",
+            "Manueller Betrieb seit",
+            controller.phase_since or session.started_at,
+        )
     if controller.cooling_wait_until:
         return remaining(
             "person_wait",
@@ -168,7 +174,14 @@ def start_availability(controller, now, temperature_rate=None):
             result.update(
                 blocker={"kind": "after_run_paused", "seconds": after_seconds},
                 pending_cooling=bool(cooling),
-                message="Der Nachlauf ist während des manuellen Heizens pausiert; ein neuer Saunagang ist noch nicht abschätzbar.",
+                minimum_wait_seconds=(
+                    0 if controller._paused_after_run_reentry_allowed(session) else None
+                ),
+                message=(
+                    "Das manuelle Heizen läuft; ein manueller Wiedereinstieg ist jetzt möglich."
+                    if controller._paused_after_run_reentry_allowed(session)
+                    else "Der Nachlauf ist während des manuellen Heizens pausiert; ein neuer Saunagang ist noch nicht abschätzbar."
+                ),
             )
             return result
         following_cooling_seconds = 0
@@ -208,11 +221,20 @@ def start_availability(controller, now, temperature_rate=None):
         )
         return result
 
+    if controller.control_mode == "manual":
+        result.update(message="Ofen und Licht werden manuell bedient.")
+        return result
+
     if cooling is not None and cooling.paused_at is not None:
         result.update(
             blocker={"kind": "cooling_paused"},
             pending_cooling=True,
-            message="Ein weiterer Saunagang ist noch nicht abschätzbar.",
+            minimum_wait_seconds=0 if controller.heater_override is True else None,
+            message=(
+                "Ein manueller Wiedereinstieg ist jetzt möglich."
+                if controller.heater_override is True
+                else "Ein weiterer Saunagang ist noch nicht abschätzbar."
+            ),
         )
         return result
 

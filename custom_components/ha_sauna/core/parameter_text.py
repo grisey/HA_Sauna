@@ -7,8 +7,8 @@ PARAMETER_TEXT = {
         "light",
     ),
     "session_light_brightness_percent": (
-        "Helligkeit für Raumlicht und Lichtnachlauf",
-        "Helligkeit der Lichtstufe Raumlicht und des Lichtnachlaufs nach Sitzungsende. Standard: 50 %.",
+        "Helligkeit für „Hell“ und Lichtnachlauf",
+        "Helligkeit der Lichtstufe „Hell“ und des Lichtnachlaufs nach Sitzungsende. Standard: 50 %.",
         "light",
     ),
     "temperature_increase_c": (
@@ -59,6 +59,11 @@ PARAMETER_TEXT = {
     "target_temperature_c": (
         "Solltemperatur",
         "Gewünschte Temperatur während eines Saunagangs. Die direkte Auswahl einer Solltemperatur gilt sofort und bleibt anschließend konstant. Eine Steigerung wird separat als Programm gewählt.",
+        "temperature",
+    ),
+    "sauna_min_temperature_c": (
+        "Mindesttemperatur der Sauna",
+        "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
         "temperature",
     ),
     "readiness_offset_c": (
@@ -118,7 +123,7 @@ PARAMETER_TEXT = {
     ),
     "after_run_minutes": (
         "Nachlauf nach einem Saunagang",
-        "Zeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Der Ofen bleibt aus; neue Saunagänge sind gesperrt.",
+        "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert den alten Nachlauf.",
         "operation",
     ),
     "person_wait_minutes": (
@@ -210,6 +215,21 @@ PARAMETER_TEXT = {
         "Leistungsschwelle für das Heizen",
         "Nur bei zugeordnetem Leistungssensor: Oberhalb dieser Leistung zählt die Zeit als Heizzeit. Standby bleibt beim Energieverbrauch berücksichtigt.",
         "timer",
+    ),
+    "manual_override_minutes": (
+        "Höchstdauer manueller Übersteuerungen",
+        "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
+        "operation",
+    ),
+    "button_hold_seconds": (
+        "Langdruckdauer des Saunatasters",
+        "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
+        "operation",
+    ),
+    "button_hold_brightness_percent": (
+        "Lichthelligkeit bei Langdruck",
+        "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
+        "light",
     ),
     "preset_start_c": (
         "Niedrigste Temperatur der Schnellauswahl",

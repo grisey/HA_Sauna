@@ -7,8 +7,9 @@ from homeassistant.components.climate import (
     HVACMode,
 )
 from homeassistant.const import UnitOfTemperature
-from .entity import SaunaEntity
+
 from .core.parameters import BY_KEY
+from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
 
 
@@ -25,7 +26,6 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
     )
-    _attr_min_temp = 0
     _attr_max_temp = BY_KEY["target_temperature_c"].maximum
     _attr_target_temperature_step = 0.1
 
@@ -49,6 +49,10 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
     @property
     def current_temperature(self):
         return self.runtime.controller.temperature
+
+    @property
+    def min_temp(self):
+        return self.runtime.configuration.parameters.minimum_for("target_temperature_c")
 
     @property
     def target_temperature(self):

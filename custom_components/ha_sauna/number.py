@@ -17,7 +17,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class SaunaNumber(SaunaEntity, NumberEntity):
     _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.BOX
-    _attr_native_min_value = 0
     _attr_native_max_value = 1000000
     _attr_native_step = 0.01
 
@@ -27,10 +26,11 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         self._attr_name = definition.label
         self._attr_native_unit_of_measurement = definition.unit
         self._attr_native_max_value = definition.maximum
-        self._attr_native_min_value = (
-            definition.minimum if definition.minimum is not None else 0
-        )
         self._attr_native_step = 1 if definition.integer else 0.01
+
+    @property
+    def native_min_value(self):
+        return self.runtime.configuration.parameters.minimum_for(self.definition.key)
 
     @property
     def native_value(self):

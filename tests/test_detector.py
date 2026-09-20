@@ -49,7 +49,9 @@ class DetectorTests(unittest.TestCase):
             median_seconds=1, door_window_seconds=2, door_humidity_seconds=2,
             door_open_slope=-1, door_open_humidity_upper=.01, door_open_humidity_lower=.01,
             door_open_hold_seconds=1, door_heating_hold_seconds=1,
-            door_heating_max_temperature_c=100, vent_baseline_seconds=5,
+            sauna_min_temperature_c=100, preset_start_c=100,
+            target_temperature_c=100, final_temperature_c=100,
+            vent_baseline_seconds=5,
             vent_hold_seconds=30, **overrides), T0, positions)
 
     @staticmethod
@@ -236,14 +238,16 @@ class DetectorTests(unittest.TestCase):
                 events+=sample(d,i,50-.03*i,30,positions)
             self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
 
-    def test_hot_operation_keeps_reference_rule_and_warmup_rule_can_be_disabled(self):
-        for base, limit in ((90,70),(50,0)):
-            d=Detector(detection_parameters(door_heating_max_temperature_c=limit),T0)
+    def test_hot_operation_keeps_reference_rule_and_uses_the_sauna_minimum(self):
+        for base, minimum, expected in ((90, 60, False), (65, 60, False), (59, 60, True)):
+            # The retained legacy value must not widen the additional rule.
+            d=Detector(detection_parameters(door_heating_max_temperature_c=100,
+                                             sauna_min_temperature_c=minimum),T0)
             events=[]
             for i in range(80):
                 d.report_heating(True,T0+timedelta(seconds=i))
                 events+=sample(d,i,base-.03*i,30)
-            self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+            self.assertEqual(Kind.DOOR_OPEN in [e.kind for e in events], expected)
 
     def test_diagnostic_observer_reports_actual_metrics_without_changing_signals(self):
         observed = []

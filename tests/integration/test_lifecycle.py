@@ -32,8 +32,12 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(EDITABLE_DEFINITIONS) + 7)
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
-        values = {key: value for key, value in entry.options["parameters"].items()
-                  if key != "temperature_increase_c"}
+        editable_keys = {definition.key for definition in EDITABLE_DEFINITIONS}
+        values = {
+            key: value
+            for key, value in entry.options["parameters"].items()
+            if key in editable_keys
+        }
         values["heating_minutes"] = 7
         await self.hass.config_entries.options.async_configure(form["flow_id"], values)
         await self.hass.async_block_till_done()
@@ -64,12 +68,19 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(flow["type"], "form")
         self.assertEqual({str(key) for key in flow["data_schema"].schema}, {
             "target_temperature_c", "final_temperature_c", "temperature_gangs",
-            "program_mode", "button_program",
+            "program_mode",
         })
+        from homeassistant.data_entry_flow import InvalidData
+        with self.assertRaises(InvalidData):
+            await self.hass.config_entries.options.async_configure(flow["flow_id"], {
+                "target_temperature_c": 80, "final_temperature_c": 95,
+                "temperature_gangs": 4, "program_mode": "progressive",
+                "button_program": "gipfelstuermer",
+            })
+        self.assertEqual(runtime.configuration.button_program, "current")
         flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {
             "target_temperature_c": 80, "final_temperature_c": 95,
             "temperature_gangs": 4, "program_mode": "progressive",
-            "button_program": "current",
         })
         await self.hass.async_block_till_done()
         self.assertEqual(flow["type"], "create_entry")

@@ -411,9 +411,7 @@ class Detector:
                 )
                 current = self.frames[c][-1]["Tm"]
                 temperature_opening &= (
-                    p["door_heating_max_temperature_c"] > 0
-                    and current is not None
-                    and current < p["door_heating_max_temperature_c"]
+                    current is not None and current < p["sauna_min_temperature_c"]
                 )
         temperature_toggle = self._sustain(
             "door_heating",

@@ -1,106 +1,114 @@
 # Oberfläche
 
-Stand 19.09.2026, einschließlich der jüngsten Präzisierung: zwei Hauptansichten.
-Das native HA-Custom-Panel ist unter `/ha-sauna` registriert. Es verwendet die
-vorhandene HA-Anmeldung und authentifizierte APIs; es führt keinen eigenen
-Regelungszustand. Browsernachweise stehen im [Abnahmebericht](abnahme.md).
+Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht enthält
+die alltägliche Bedienung sowie **Verlauf und Archiv**. Details stehen
+Home-Assistant-Administratoren zur Verfügung. Es gibt keine zusätzlichen
+Benutzerrollen der Integration.
 
 ## Übersicht
 
-Einfache Steuerung mit Status, Betrieb-An/Aus, Temperaturwahl auch während einer Sitzung,
-Temperatur, Feuchte und Sessionenergie mit Kennzeichnung der Mess-/Schätzquelle.
-Temperaturkacheln verwenden zentral konfigurierte
-Ausgangstemperatur, Abstand und Anzahl; Vorlage: 70 bis 95 °C in 5-Grad-Schritten.
-Die Kacheln setzen die Solltemperatur und starten über denselben Backendpfad.
-Gemischte alte Start-/Endtemperatur-Szenen werden nicht übernommen: Die aktuelle
-Grundkonfiguration bleibt während der Sitzung bis auf Solltemperatur, Erhöhung je Gang und Endtemperatur unverändert.
+Die Steuerung zeigt Zustand, Ofenaktivität, Türstatus, Temperatur und Luftfeuchte.
+Bei der Temperaturwahl liegt der Schieber direkt auf der Skala. Klick, Ziehen
+und Pfeiltasten ändern das Soll; der einstellbare Regelbereich beginnt
+standardmäßig bei 60 °C und endet bei 100 °C. Eine direkte Wahl bedeutet
+konstantes Heizen. Messwerte werden durch diesen Einstellbereich nicht begrenzt.
+Messposition und internes Bereitschaftsziel erscheinen erst in den Details.
 
-Auf dem eigenen Blatt **Sessionverlauf & Archiv** sind die laufende Session und
-historische Sessions auswählbar. Gestaltung aus der gelieferten Vorlage:
+Benannte Programme werden kompakt mit Namen und Temperaturfolge angezeigt.
+Unter **Temperaturautomatik** lassen sich Startwert, Endwert und die Verteilung
+frei wählen. Die Anzahl der Temperaturstufen ist keine Begrenzung der
+tatsächlichen Saunagänge. Nach Erreichen der Endtemperatur bleibt diese erhalten.
+
+Die Helligkeitsauswahl zeigt **Gedimmt** und **Hell** mit kleineren Prozentangaben.
+Im Automatikbetrieb stehen auf der Übersicht **Aus**, **Automatik** und **Hell**
+zur Verfügung. Die Betriebsart **Manuell** blendet die Temperaturautomatik aus
+und zeigt die manuelle Ofen- und Lichtbedienung. Der Betriebsartwechsel ist nur
+zwischen abgeschlossenen Sitzungen möglich. Vorübergehende Übersteuerungen
+während des Automatikbetriebs sind davon unabhängig.
+
+Direkt neben der Phase stehen die Bereitschaft und das verbleibende Startfenster.
+Geschätzte Zeiten erscheinen in Fünf-Minuten-Schritten ohne Sekunden. Solange
+die aktuelle Aufheizphase noch keinen stabilen Anstieg liefert, verwendet die
+Prognose den durchschnittlichen Anstieg der letzten Sitzung. Fehlt auch dafür
+ein brauchbarer Verlauf, bleibt die Startzeit offen. Die Prognose ersetzt keine
+Heizsperre oder laufende Kühlzeit. Während eines Gangs steht dessen Dauer im
+Vordergrund. Nach Sitzungsende wird der
+verbleibende Lichtnachlauf angezeigt. Technische Fristen und die Schätzung des
+mechanischen Ofentimers stehen kompakt in den Details.
+
+Die Temperaturanzeige übernimmt die Farbe der aktuellen Phase. Die
+Luftfeuchteanzeige ist bis einschließlich 20 % grün, bis einschließlich 30 %
+gelb und darüber rot. Ofen-Ein und Ofen-Aus sind zusätzlich farblich erkennbar.
+
+## Verlauf und Archiv
+
+Das eigene Verlaufsblatt zeigt die aktuelle oder letzte Sitzung; ältere
+Sitzungen sind über die Archivauswahl erreichbar. Die Standardansicht enthält
+eine Temperatur- und eine Feuchtekurve. Der Detailverlauf ergänzt beide
+Messpositionen. Die Gestaltung folgt der ursprünglichen Saunaansicht:
 
 | Element | Darstellung |
 |---|---|
-| Temperatur | `#ff6b4a`, linke °C-Achse |
-| Luftfeuchte | `#42a5ff`, rechte Prozentachse |
-| Messposition | Oben durchgezogen, unten gestrichelt; getrennt ein-/ausblendbar |
-| Tür offen | Gelbe Zeitfläche |
-| Gang | Magentafarbene Fläche; vorläufig mit gestrichelter Kontur |
+| Temperatur | Orange, linke °C-Achse |
+| Luftfeuchte | Blau, rechte Prozentachse |
+| Messposition im Detailverlauf | Oben durchgezogen, unten gestrichelt |
+| Tür offen | Gelbe Fläche |
+| Saunagang | Magentafarbene Fläche; vorläufig gestrichelt umrandet |
 | Aufguss | Weiße Zeitmarke |
-| Heizen / bereit / lüften | Orange / grüne / blaugraue Zeitfläche |
-| Gezählt als Heizaktivität | Eigener schmaler Streifen; Details nennen Leistungsmessung, unabhängige Rückmeldung oder Schützschätzung |
+| Heizen / bereit / lüften / Zwangskühlung | Orange / grüne / blaugraue / graublaue Fläche |
+| Gezählt als Heizaktivität | Schmaler Streifen unter dem Verlauf |
 
-Gangflächen stammen aus dem neuesten zugeordneten Sessionobjekt. Eine spätere
-Bestätigung verändert weder ID noch Beginn. Tooltip zeigt Originalwert und
-zugehörigen Empfangszeitpunkt jeder Messreihe. Zoom, verschiebbarer Ausschnitt
-und Rückkehr zur Gesamtsession sind Darstellungsfunktionen. Die Übertragung
-lädt das Archiv seitenweise; eine Begrenzung der SVG-Punkte erhält Extrema pro
-Bildspalte und verändert niemals gespeicherte Originale.
+Leichte Glättung dient nur der Darstellung. Ein Tooltip nennt den empfangenen
+Originalwert und seinen Zeitpunkt. Messlücken bleiben sichtbar; gespeicherte
+Rohwerte werden weder geglättet noch verdichtet.
+
+Plus/Minus, eine echte Vergrößerungsgeste oder Strg beziehungsweise Cmd mit dem
+Mausrad verändern den Ausschnitt. Normales Scrollen zoomt nicht. Eine kleine
+Übersicht über die gesamte Sitzung zeigt das ausgewählte Fenster; dessen
+Ränder lassen sich verschieben. **Gesamte Saunasitzung** stellt den vollständigen
+Verlauf wieder her.
 
 ## Details
 
-**Betrieb & Fristen:** beide Messpositionen, Bereitschaftsziel, gezählte
-Heizzeit und Budget, Rückmeldungsquelle, gemessene Leistung sowie Sessionenergie,
-Gangstatus, Nachlauf, Kühlung, Türwartefrist, mechanischer Timer als Schätzung,
-Heizentscheidungsgrund und aktuelle Fehler. Messlücken und geschätzte Energieanteile
-bleiben gekennzeichnet; Kühlung und Heizbudgetrücksetzung löschen die Summe nicht.
+Die Betriebsdetails sind nach **Heizung**, **Licht**, **Messwerten** und
+**Zeiten** geordnet. Soll- und Bereitschaftstemperatur, Heizentscheidung,
+Rückmeldungsquelle, Energieverbrauch und manuelle Bedienungen sind ihrem
+Steuerbereich zugeordnet. Alle laufenden Fristen stehen gemeinsam und kompakt
+an einem Ort.
 
-**Erkennungskontrolle:** eigene Verlaufskurven der tatsächlich im Detektor
-berechneten Tür-, Personen- und Aufgussmerkmale. Die für die ausgewählte Session
-gespeicherten Schwellen werden eingeblendet. Haltezähler, Kontext,
-Sensorverfügbarkeit und ausgelöste Signale bleiben nachvollziehbar. Es wird
-kein zweiter Detektor im Browser nachgebaut. Historische Fehler und die
-ursprünglichen Erkennungszeiten stehen hier getrennt vom normalen Verlauf.
+Nachlauf und laufende Zwangskühlung können dort wie bei regulärem Zeitablauf
+beendet werden. Laufende Schutzsperren bleiben wirksam. Die mechanische
+Timeranzeige nennt ihren Pausengrund und bleibt eine Schätzung; sie steuert
+keinen Aktor.
 
-**Einstellungen & Export:** zentrale Parameter, eingeklappte Expertenwerte,
-Verweis zum HA-Zuordnungsdialog und ZIP-Download des Archivs. Während einer
-Session sind nur Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar. Alle anderen Felder sind einzeln im Frontend und im Backend gesperrt. Steuerung und
-Parameteränderung verlangen HA-Administratorrechte, auch bei direktem API-Aufruf.
+Die **Erkennungskontrolle** zeigt die gespeicherten Merkmale für Tür, Personen,
+Aufgüsse und Lüftung mit den zur Sitzung gehörenden Schwellen. Ereignismarker
+liegen in den zugehörigen Graphen. Marker und Ereigniszeile führen beim
+Anklicken zueinander. Inaktive Bestätigungszeiten mit Wert null und leere
+Merkmalskurven werden nicht als vermeintliche Information aufgelistet.
+Im Browser wird keine zweite Erkennung berechnet.
 
-## Grenzen
+## Einstellungen
 
-Die Oberflächenprüfung verwendet synthetische Daten im tatsächlichen HA-Frontend.
-Die private Bildschirmaufnahme und ihre Entity-IDs werden nicht veröffentlicht.
-Eine Vorhersage der verbleibenden Aufheizzeit ist keine vereinbarte/validierte
-Regel und wird nicht als zuverlässige Restzeit erfunden. Vorhandene Timer und
-Fristen werden mit ihrem tatsächlichen Zeitbezug angezeigt.
+Die Einstellungen sind nach Temperatur, Betrieb, Licht, Überwachung, Timer,
+Energie und Darstellung geordnet. Die Programmbibliothek lässt Namen,
+Start- und Endtemperaturen sowie die Verteilung ändern und neue Programme
+hinzufügen. Die beim Start am Saunataster verwendete Wahl wird separat
+festgelegt. Erkennungsparameter stehen in einem eigenen Expertenbereich.
 
+Während einer Sitzung sind nur die dafür vorgesehenen Temperaturwerte und die
+Protokollstufe änderbar. Grundwerte, Programmeinträge, Betriebsart und
+Gerätezuordnungen bleiben gesperrt. Diese Grenzen gelten auch bei direkten
+API-Aufrufen. Die Bedienrechte stammen aus Home Assistant.
 
-## Präzisierung nach der ersten Testinstallation
+**INFO** protokolliert Betriebsereignisse und Fehler, **ERROR** nur Fehler,
+**DEBUG** zusätzlich Messwerte und Erkennungsprüfungen. Die Auswahl wirkt ohne
+Neustart und verändert das vollständige Sitzungsarchiv nicht. Das Archiv kann
+als authentifizierter ZIP-Download exportiert werden.
 
-Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht hat die
-Blätter **Steuerung** und **Verlauf und Archiv**. Neben dem Zustand erscheint genau die relevante Phasenzeit: Gangdauer, Nachlauf, Kühlung, Türwartefrist, Heizpause, Mindestheizzeit, Bereitschafts-/Aufheizdauer oder Frist bis zum Sitzungsende. Danach wird die verbleibende Lichtnachlaufzeit angezeigt. Heizzeitsumme und mechanischer Timer stehen ausschließlich in Details. Bereitschaftstemperatur und interne
-Regelungswerte stehen ausschließlich in den Details. Gesperrte Temperaturtasten
-bleiben sichtbar; der Grund der Sperre wird erklärt. Nach Sitzungsende bleibt
-der letzte Verlauf sichtbar und jede ältere Sitzung im Archiv auswählbar. Die
-Türanzeige lautet dann „Türerkennung ruht“; auch vor der ersten Sitzung ruht
-die Erkennung. Details erklären, dass außerhalb einer Sitzung keine Türbewegungen
-ausgewertet werden. Während der Unterbrechungsfrist gehört die Türerkennung noch
-zur bestehenden Sitzung. Ein historischer Türzustand wird nicht als aktueller
-Zustand übernommen.
+**Standardwerte wiederherstellen** setzt nach Sitzungsende die
+Softwareeinstellungen einschließlich Programmbibliothek zurück. Sensoren,
+Geräte und die Zuordnung des Bedieneingangs bleiben erhalten.
 
-In Details steht während eines Nachlaufs „Nachlauf jetzt beenden“, während
-laufender Zwangskühlung „Zwangskühlung jetzt beenden“. Die Bedienung setzt den
-jeweiligen regulären Folgeablauf fort; sie erscheint nicht in der Übersicht.
-Beim angehaltenen Ofentimer wird der Grund genannt: Saunabetrieb aus, Schütz aus
-oder Schützstellung unbekannt. Seine Restzeit bleibt währenddessen stehen.
-
-Alle Einstellfelder besitzen deutsche Bezeichnungen und Zweckbeschreibungen.
-Sie sind nach Temperatur, Ablauf, Überwachung, Ofentimer/Energie und Darstellung
-geordnet. Erkennungsparameter stehen separat unter Experteneinstellungen.
-Veraltete Messwerte und unvollständige Einrichtung werden unterschiedlich erklärt;
-interne Fehlerkennungen erscheinen nicht als Fehlermeldung. Die frei einstellbare
-Temperatursteigerung ist in der Steuerung unter einer eigenen Aufklappzeile wählbar.
-
-Die Erkennungskontrolle unterscheidet inaktive Prüfungen von nicht erfüllten
-Bedingungen. Personentrends werden im bestehenden Gang nicht als weitere
-Personenmeldungen ausgegeben; zusätzliche Aufgüsse bleiben sichtbar. Bei
-Türereignissen wird nur der mögliche nächste Übergang geprüft und dokumentiert.
-
-Unter Details → Einstellungen steht **Protokollierung**. **INFO** ist Standard:
-Fehler, Warnungen, Zustandswechsel, Sollwertwechsel und Schaltbefehle. **ERROR**
-begrenzt die Ausgabe auf Fehler; **DEBUG** ergänzt Messwerte und Erkennungsprüfungen.
-Die Auswahl wird gespeichert und wirkt ohne Neustart oder Sitzungsunterbrechung.
-Home Assistants normale Logger und Loghandler führen die Ausgabe unter
-`custom_components.ha_sauna.instance.…`; gleichbleibende Störungen werden nicht
-sekündlich erneut gemeldet. Das vollständige Sitzungsarchiv ist unabhängig von
-dieser Auswahl. Die gleiche Auswahl steht in den HA-Integrationsoptionen bereit.
+Die ausgeführten Oberflächenprüfungen und ihre Grenzen stehen im
+[Abnahmebericht](abnahme.md).

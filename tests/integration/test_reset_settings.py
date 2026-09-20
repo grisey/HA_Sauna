@@ -27,7 +27,7 @@ class ResetSettingsTests(unittest.IsolatedAsyncioTestCase):
             "control_input_mode": "button",
             "button_event_type": "custom_press",
             "program_mode": "progressive",
-            "button_program": "program_2",
+            "button_program": "gipfelstuermer",
             "log_level": "DEBUG",
         })
         await self.hass.async_block_till_done()

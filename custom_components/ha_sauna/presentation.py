@@ -9,6 +9,7 @@ PHASES = {
     "saunagang": "Saunagang",
     "nachlauf": "Nachlauf",
     "zwangskühlung": "Zwangskühlung",
+    "manuell": "Manueller Betrieb",
 }
 EVENTS = {
     "door_open": "Tür geöffnet",
@@ -52,6 +53,7 @@ REASONS = {
     "thermostat_cooldown": "Die Heizpause nach Erreichen der Bereitschaft läuft.",
     "below_target": "Die Temperatur liegt unter der Einschaltgrenze.",
     "hysteresis_band": "Die Temperatur liegt im eingestellten Schaltbereich.",
+    "manual_mode": "Der Ofen wird von Hand bedient und ist ausgeschaltet.",
 }
 
 
@@ -134,6 +136,12 @@ def issues(runtime):
 def decision_message(decision):
     if decision is None:
         return "Noch keine Heizentscheidung."
+    if decision.reason == "manual_override":
+        return (
+            "Der Ofen ist manuell eingeschaltet."
+            if decision.heat
+            else "Der Ofen ist manuell ausgeschaltet."
+        )
     if decision.reason.startswith("protection:"):
         return "Eine bestätigte technische Störung verhindert das Heizen."
     if decision.reason.startswith("inhibit:"):
@@ -154,5 +162,6 @@ def parameter_error(error):
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
         "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
         "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
+        "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail

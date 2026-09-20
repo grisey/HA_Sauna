@@ -2,8 +2,10 @@
 
 ## Vorrang des Entscheidungsstands vom 20.09.2026
 
-Der jüngste Abschnitt in `docs/entscheidungen.md` und spätere Nutzerkorrekturen
-gehen den nachstehenden Regeln vom 19.09. vor. Die Umsetzung ist beauftragt und
+Die konsolidierten Fachregeln in `docs/betrieb.md`, `docs/gangmodell.md` und
+`docs/zeitmodell.md` sowie spätere Nutzerkorrekturen gehen den nachstehenden
+Ablaufbeschreibungen vom 19.09. vor. `docs/entscheidungen.md` verweist auf diesen
+geltenden Stand. Die Umsetzung ist beauftragt und
 erfolgt in kleinen, abgegrenzten Terra-Aufgaben mit Prüfung durch den Hauptagenten.
 Insbesondere sind Lichtkurve, Temperaturprogramme, pausierbare Kühlung und die
 Anrechnung jedes Nachlaufs auf die nächste Kühlung inzwischen entschieden.
@@ -11,7 +13,13 @@ Die Verteilungszahl der Temperatursteigerung begrenzt keine tatsächlichen Gäng
 Produktive Erkennung darf keine Sonderregeln für IDs, Zeitpunkte oder einzelne
 Ereignisse der Testaufzeichnungen enthalten.
 
-## Geltende Nutzerentscheidungen vom 19.09.2026
+## Frühere fachliche Festlegungen und fortgeltende Arbeitsregeln vom 19.09.2026
+
+Die folgenden Zahlen und Ablaufbeschreibungen dokumentieren einen früheren
+Entwicklungsstand. Insbesondere feste Temperatursteigerung, 35-%-Betriebslicht
+und die als offen bezeichnete adaptive Lüftung wurden inzwischen fortgeschrieben;
+hierfür gelten die oben verlinkten Fachregeln. Sämtliche nachstehenden Regeln zu
+Arbeitsweise, Zugriffsrechten, Datenschutz, Freigaben und Prüfungen bleiben erhalten.
 
 Maßgeblich sind die konsolidierten Regeln in `docs/entscheidungen.md` und
 `docs/betrieb.md`. Die frühere einheitliche Heizzeit wurde ausdrücklich durch

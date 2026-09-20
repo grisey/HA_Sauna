@@ -2,22 +2,27 @@
 
 import asyncio
 from dataclasses import asdict
+
 from aiohttp import web
 from homeassistant.auth.permissions.const import POLICY_CONTROL
-from homeassistant.components.http import HomeAssistantView, KEY_HASS
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
+
 from .archive import plain
-from .core.parameters import EDITABLE_DEFINITIONS, ParameterError, LIVE_TEMPERATURE_KEYS
-from .core.display import phase_timer, start_availability
-from .core.detection_parameters import SPECS
 from .const import DOMAIN
-from .presentation import issues, decision_message, fault_message, parameter_error
+from .core.detection_parameters import SPECS
+from .core.display import phase_timer, start_availability
+from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .log import LEVELS
+from .presentation import decision_message, fault_message, issues, parameter_error
 from .settings import (
+    ConfigurationLocked,
+    async_reset_parameters,
+    async_set_button_program,
+    async_set_control_mode,
     async_set_parameters,
     async_set_program,
-    async_reset_parameters,
-    ConfigurationLocked,
+    async_set_program_catalog,
 )
 
 
@@ -44,13 +49,18 @@ def manual_controls(runtime):
     return {
         "heater": {
             "manual": runtime.controller.heater_override,
+            "override_ends_at": plain(runtime.controller.heater_override_ends_at),
             "automatic": runtime.controller.automatic_decision.heat
             if runtime.controller.automatic_decision
             else None,
         },
         "light": {
             "manual": light.manual_brightness if light else None,
+            "override_ends_at": plain(light.manual_ends_at) if light else None,
             "automatic": light.last_automatic_brightness if light else None,
+            "normal": runtime.device.normal_light_brightness()
+            if runtime.device
+            else None,
         },
     }
 
@@ -110,6 +120,9 @@ class StateView(HomeAssistantView):
                         "parameters": [
                             {
                                 **asdict(d),
+                                "minimum": runtime.configuration.parameters.minimum_for(
+                                    d.key
+                                ),
                                 "expert": d.key in experts,
                                 "live_editable": d.key in LIVE_TEMPERATURE_KEYS,
                             }
@@ -368,6 +381,79 @@ class ProgramView(HomeAssistantView):
         )
 
 
+class ProgramsView(HomeAssistantView):
+    """Replace the named temperature-program catalog for administrators."""
+
+    url = "/api/ha_sauna/{entry_id}/programs"
+    name = "api:ha_sauna:programs"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime_for(hass, entry_id)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {"programs"}:
+            raise web.HTTPBadRequest(text="Programmliste fehlt oder ist ungültig")
+        try:
+            programs = await async_set_program_catalog(hass, entry, body["programs"])
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({"success": True, "programs": programs})
+
+
+class ButtonProgramView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/button-program"
+    name = "api:ha_sauna:button_program"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime = runtime_for(hass, entry_id)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {"profile"}:
+            raise web.HTTPBadRequest(text="Tasterprogramm fehlt oder ist ungültig")
+        try:
+            await async_set_button_program(hass, entry, body["profile"])
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json(
+            {"success": True, "button_program": runtime.configuration.button_program}
+        )
+
+
+class ControlModeView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/control-mode"
+    name = "api:ha_sauna:control_mode"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime = runtime_for(hass, entry_id)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {"mode"}:
+            raise web.HTTPBadRequest(text="Betriebsmodus fehlt oder ist ungültig")
+        try:
+            await async_set_control_mode(hass, entry, body["mode"])
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json(
+            {"success": True, "control_mode": runtime.configuration.control_mode}
+        )
+
+
 class LightView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/light"
     name = "api:ha_sauna:light"
@@ -524,6 +610,9 @@ def register(hass):
     hass.http.register_view(TemperatureView)
     hass.http.register_view(ResetParametersView)
     hass.http.register_view(ProgramView)
+    hass.http.register_view(ProgramsView)
+    hass.http.register_view(ButtonProgramView)
+    hass.http.register_view(ControlModeView)
     hass.http.register_view(LightView)
     hass.http.register_view(HeaterView)
     hass.http.register_view(LoggingView)

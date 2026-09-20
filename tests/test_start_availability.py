@@ -67,7 +67,10 @@ class StartAvailabilityTests(unittest.TestCase):
         availability = start_availability(c, at(61))
 
         self.assertEqual(availability["blocker"], {"kind": "cooling_paused"})
-        self.assertIsNone(availability["minimum_wait_seconds"])
+        self.assertEqual(availability["minimum_wait_seconds"], 0)
+        self.assertEqual(
+            availability["message"], "Ein manueller Wiedereinstieg ist jetzt möglich."
+        )
         self.assertIsNone(availability["until_ready_seconds"])
 
     def test_protection_never_reports_ready_even_at_the_temperature_target(self):

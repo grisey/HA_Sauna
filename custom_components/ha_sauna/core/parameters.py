@@ -10,6 +10,11 @@ from types import MappingProxyType
 from .detection_parameters import SPECS
 from .parameter_text import PARAMETER_TEXT
 
+# The target-temperature definition is the source for every sauna setpoint
+# ceiling.  Keep this named value close to that definition so other consumers
+# do not grow independent 100 °C limits.
+SAUNA_TEMPERATURE_MAXIMUM_C = 100
+
 
 class ParameterError(ValueError):
     """Fehler mit Feldbezug für die Konfigurationsoberfläche."""
@@ -90,24 +95,39 @@ DEFINITIONS = (
     definition("readiness_offset_c", "°C", True, default=5),
     definition("readiness_hysteresis_c", "°C", default=3),
     definition("warmup_estimation_minutes", "min", default=5),
-    definition("preset_start_c", "°C", default=70, maximum=100),
+    definition(
+        "sauna_min_temperature_c", "°C", default=60, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
+    definition("preset_start_c", "°C", default=70, maximum=SAUNA_TEMPERATURE_MAXIMUM_C),
     definition("preset_step_c", "°C", default=5),
     definition(
         "preset_count", "Anzahl", default=6, minimum=1, maximum=20, integer=True
     ),
-    definition("target_temperature_c", "°C", default=80, maximum=100),
+    definition(
+        "target_temperature_c", "°C", default=80, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
     definition("temperature_increase_c", "°C", default=5),
-    definition("final_temperature_c", "°C", default=95, maximum=100),
+    definition(
+        "final_temperature_c", "°C", default=95, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
     definition(
         "temperature_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True
     ),
-    definition("program_1_start_c", "°C", default=80, maximum=100),
-    definition("program_1_end_c", "°C", default=95, maximum=100),
+    definition(
+        "program_1_start_c", "°C", default=80, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
+    definition(
+        "program_1_end_c", "°C", default=95, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
     definition(
         "program_1_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True
     ),
-    definition("program_2_start_c", "°C", default=70, maximum=100),
-    definition("program_2_end_c", "°C", default=90, maximum=100),
+    definition(
+        "program_2_start_c", "°C", default=70, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
+    definition(
+        "program_2_end_c", "°C", default=90, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
+    ),
     definition(
         "program_2_gangs", "Anzahl", default=3, minimum=1, maximum=20, integer=True
     ),
@@ -118,13 +138,16 @@ DEFINITIONS = (
     definition("sensor_timeout_seconds", "s", default=180),
     definition("feedback_timeout_seconds", "s", default=10),
     definition("power_heating_threshold_w", "W", True, default=50),
+    definition("manual_override_minutes", "min", default=10),
     definition("nominal_power_kw", "kW", default=4.5),
+    definition("button_hold_seconds", "s", True, default=2),
     definition("light_reference_temperature_c", "°C", default=30, maximum=100),
     definition("light_transition_seconds", "s", True, default=30),
     definition("night_brightness_percent", "%", default=25, maximum=100),
     definition("operation_brightness_percent", "%", default=40, maximum=100),
     definition("after_run_brightness_percent", "%", default=15, maximum=100),
     definition("cooling_brightness_percent", "%", default=5, maximum=100),
+    definition("button_hold_brightness_percent", "%", True, default=1, maximum=100),
     definition("session_light_minutes", "min", True, default=10),
     definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
 ) + tuple(
@@ -144,7 +167,17 @@ BY_KEY = MappingProxyType({definition.key: definition for definition in DEFINITI
 EDITABLE_DEFINITIONS = tuple(
     definition
     for definition in DEFINITIONS
-    if definition.key != "temperature_increase_c"
+    if definition.key
+    not in {
+        "temperature_increase_c",
+        "door_heating_max_temperature_c",
+        "program_1_start_c",
+        "program_1_end_c",
+        "program_1_gangs",
+        "program_2_start_c",
+        "program_2_end_c",
+        "program_2_gangs",
+    }
 )
 
 
@@ -170,6 +203,14 @@ class Parameters:
                     continue
                 raise ParameterError(definition.key, "required")
             checked[definition.key] = definition.validate(self.values[definition.key])
+        sauna_minimum = checked["sauna_min_temperature_c"]
+        for key in (
+            "preset_start_c",
+            "target_temperature_c",
+            "final_temperature_c",
+        ):
+            if checked[key] < sauna_minimum:
+                raise ParameterError(key, "too_small")
         if checked["heating_reduction_minutes"] >= checked["heating_minutes"]:
             raise ParameterError("heating_reduction_minutes", "reduction_too_large")
         for route in ("strong", "weak"):
@@ -182,6 +223,19 @@ class Parameters:
         if key not in BY_KEY or BY_KEY[key].unit != "min":
             raise ParameterError(key, "not_duration")
         return self.values[key] * 60
+
+    def minimum_for(self, key: str) -> float:
+        """Return the effective UI and validation minimum for a parameter."""
+        if key not in BY_KEY:
+            raise ParameterError(key, "unknown_parameter")
+        if key in {
+            "preset_start_c",
+            "target_temperature_c",
+            "final_temperature_c",
+        }:
+            return self.values["sauna_min_temperature_c"]
+        definition = BY_KEY[key]
+        return definition.minimum if definition.minimum is not None else 0
 
     def as_dict(self) -> dict[str, float]:
         return dict(self.values)
