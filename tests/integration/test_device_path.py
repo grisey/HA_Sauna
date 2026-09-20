@@ -54,6 +54,7 @@ class TestLight(LightEntity):
         self.calls = []
         self.fail_commands = False
         self.defer_state_writes = False
+        self.percent_steps = False
 
     async def async_turn_on(self, **kwargs):
         self.calls.append(("on", kwargs))
@@ -61,7 +62,11 @@ class TestLight(LightEntity):
             from homeassistant.exceptions import HomeAssistantError
             raise HomeAssistantError("Synthetic light failure")
         self._attr_is_on = True
-        self._attr_brightness = kwargs.get("brightness", self._attr_brightness)
+        brightness = kwargs.get("brightness", self._attr_brightness)
+        if self.percent_steps:
+            percentage = int(100 * (brightness + 1) / 255)
+            brightness = round(255 * percentage / 100)
+        self._attr_brightness = brightness
         if not self.defer_state_writes:
             self.async_write_ha_state()
 
@@ -505,6 +510,30 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.light.is_on)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
 
+    async def test_percent_step_light_echo_stays_automatic_after_fade(self):
+        self.light.percent_steps = True
+        self.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 10})
+        await self.set_source("upper_temperature", 70)
+        await self.runtime.set_operation(True)
+        await self.time(30)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        await self.set_source("upper_temperature", 70)
+        calls = len(self.light.calls)
+        await self.time(31)
+        await self.time(32)
+        self.assertEqual(len(self.light.calls), calls)
+
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(self.runtime.session.session_id)["records"]
+        brightnesses = [
+            record["payload"]["brightness_pct"]
+            for record in records
+            if record["kind"] == "light_command"
+            and record["payload"]["service"] == "turn_on"
+        ]
+        self.assertTrue(brightnesses)
+        self.assertTrue(all(value == round(value) for value in brightnesses))
+
     async def test_external_light_selection_expires_but_unchanged_report_does_not_extend_it(self):
         await self.runtime.set_operation(True)
         await self.set_light_externally(True, 128)
@@ -552,6 +581,19 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
         self.assertEqual(self.light.calls[-1], ("on", {"brightness": 128}))
+
+    async def test_pending_light_command_is_not_repeated_and_external_choice_still_applies(self):
+        self.light.defer_state_writes = True
+        await self.runtime.set_light_override(37)
+        calls = len(self.light.calls)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.light.calls), calls)
+
+        await self.set_light_externally(True, 128)
+        self.assertAlmostEqual(
+            self.runtime.device.light_output.manual_brightness, 128 * 100 / 255
+        )
 
     async def test_session_light_deadline_survives_options_change_but_not_restart(self):
         from custom_components.ha_sauna.settings import async_set_parameters

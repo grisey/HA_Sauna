@@ -103,7 +103,9 @@ laufende Kühlung wird nicht zurückgenommen.
 
 Im Automatikbetrieb steigt das Licht linear von 5 % bei 30 °C zur
 Normalhelligkeit: tagsüber 40 %, nachts 25 %, mit linearem Übergang in der
-bürgerlichen Dämmerung. Ein Gang hält die Normalhelligkeit auch bei fallender
+bürgerlichen Dämmerung. Die Ausgabe erfolgt in ganzen Prozentpunkten; ein
+unveränderter Zielwert erzeugt während der Rückmeldungsfrist keinen erneuten
+Lichtbefehl. Ein Gang hält die Normalhelligkeit auch bei fallender
 Temperatur. Nachlauf verwendet 15 %, Kühlung 5 %. Der Übergang dauert 30 s;
 danach steigt das Licht bis zum Ende der Phase wieder zum temperaturbezogenen
 Ziel. Nach endgültigem
