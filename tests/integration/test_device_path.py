@@ -315,11 +315,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         # Bei 70 °C auf dem Weg zum Bereitschaftsziel 85 °C folgt die Kurve:
         # 5 % am Kaltpunkt 30 °C, 40 % am Bereitschaftsziel. Das sind
-        # 5 + (40 - 5) * (70 - 30) / (85 - 30) = 30,45 %.
+        # 5 + (40 - 5) * (70 - 30) / (85 - 30) = 30,45 %, ausgegeben als 30 %.
         # Die Automatik übernimmt den vorhandenen Lichtwert erst über 30 s.
         self.assertAlmostEqual(self.light.brightness, 180, delta=1)
         await self.time(30)
-        self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
+        self.assertEqual(self.light.brightness, round(255 * .30))
         async def temperature(seconds):
             self.now = self.base + timedelta(seconds=seconds)
             await self.set_source("upper_temperature", 70)
@@ -362,7 +362,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(self.light.brightness, before_normal_ramp, delta=1)
         await self.time(363)
-        self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
+        self.assertEqual(self.light.brightness, round(255 * .30))
 
     async def test_light_failure_is_reported_and_does_not_disable_heating(self):
         self.light.fail_commands=True
@@ -373,12 +373,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.light.is_on)
         calls = len(self.light.calls)
         await self.time(1)
-        # Beim anfänglichen Nullwert ist das Licht bereits aus. Der vollständige
-        # sichtbare Zustand bestätigt deshalb diesen wirkungslosen AUS-Befehl.
-        self.assertEqual(len(self.light.calls), calls)
-        # Mit dem ersten darstellbaren Dimmwert bleibt der Fehler erneut fällig.
-        await self.time(2)
+        # Die ersten Fade-Werte runden noch auf 0 %. Ein fehlgeschlagener
+        # AUS-Dienst bleibt wiederholbar; er sperrt die Heizregelung nicht.
         self.assertEqual(len(self.light.calls), calls + 1)
+        await self.time(2)
+        self.assertEqual(len(self.light.calls), calls + 2)
         self.assertIn("operation_light", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
         await self.runtime.set_operation(False)
