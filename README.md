@@ -26,6 +26,11 @@ das Licht den Abschluss mit starkem Dimmen bestätigt. Nach dem Loslassen beginn
 der Lichtnachlauf. Eine dauerhafte Schalterstellung kann alternativ als
 Bedieneingang eingerichtet werden.
 
+Die Lichttaster bedienen das Licht weiterhin direkt: kurz drücken zum
+Ausschalten, gedrückt halten zum Heller- oder Dunklerstellen. Die gewählte
+Helligkeit bleibt im Automatikbetrieb bis zum nächsten Phasenwechsel erhalten,
+längstens für die eingestellte Übersteuerungsdauer.
+
 Zwischen den Sitzungen können Sie zur Betriebsart **Manuell** wechseln. Dann
 bedienen Sie Ofen und Licht selbst; die Temperaturautomatik wird ausgeblendet.
 Messung und Aufzeichnung laufen weiter. Technischer Schutz und die Reaktion auf

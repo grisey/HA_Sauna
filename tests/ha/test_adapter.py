@@ -11,7 +11,7 @@ import unittest
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from custom_components.ha_sauna.core.parameters import DEFINITIONS
+from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
 from custom_components.ha_sauna.bindings import ROLES
 
 HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
@@ -26,15 +26,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.config_flow import SaunaConfigFlow
         self.module = __import__("custom_components.ha_sauna.config_flow", fromlist=["*"])
         self.inputs = {r.key: f"{r.domains[0]}.test_{r.key}" for r in ROLES if not r.optional}
-        # ``temperature_increase_c`` remains readable for older entries but is
-        # no longer an editable form field.  The new program form supplies its
-        # progressive defaults instead.
         self.values = {d.key: d.default if d.default is not None else 2.5
-                       for d in DEFINITIONS
-                       if d.key not in ("final_temperature_c", "temperature_increase_c")}
+                       for d in EDITABLE_DEFINITIONS}
         self.values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
-        self.expected_values = {**self.values, "final_temperature_c": 95,
-                                "temperature_increase_c": 5}
+        self.expected_values = Parameters(self.values).as_dict()
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": r.device_class, "unit_of_measurement": r.unit,

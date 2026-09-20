@@ -29,6 +29,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await device_tests.DevicePathTests.asyncSetUp(self)
+        self.browser = None
+        self.playwright = None
+        self.page = None
+        self.errors = []
+        self.console_errors = []
+        self.network_errors = []
+        self.ws_errors = []
+        self.addAsyncCleanup(self.cleanup_browser)
         # This fixture intentionally binds a new ephemeral localhost port.
         # Confirm its working HTTP configuration so HA's own migration dialog
         # does not cover the panel under test.
@@ -54,15 +62,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
         await self.context.add_init_script("window.testErrors=[];addEventListener('unhandledrejection',e=>window.testErrors.push({code:e.reason?.code,message:e.reason?.message,stack:e.reason?.stack}));")
         self.page = await self.context.new_page()
-        self.errors = []
-        self.console_errors = []
-        self.network_errors = []
-        self.addAsyncCleanup(self.cleanup_browser)
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         self.page.on("console", lambda e: self.console_errors.append(e.text) if e.type == "error" else None)
         self.page.on("requestfailed", lambda r: self.network_errors.append((r.url.split("?")[0], r.failure)))
         self.page.on("response", lambda r: self.network_errors.append((r.url.split("?")[0], r.status)) if r.status >= 400 else None)
-        self.ws_errors = []
         def websocket(socket):
             requests = {}
             def sent(data):
@@ -87,22 +90,27 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.panel = self.page.locator("ha-sauna-panel")
         await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
 
-    async def asyncTearDown(self):
-        await self.cleanup_browser()
-        await device_tests.DevicePathTests.asyncTearDown(self)
-
     async def cleanup_browser(self):
-        if getattr(self, "browser", None):
-            print("BROWSER_ERRORS", self.errors)
-            print("BROWSER_CONSOLE", self.console_errors[-20:])
-            print("BROWSER_NETWORK", self.network_errors[-20:])
-            print("BROWSER_WS_ERRORS", self.ws_errors)
-            print("BROWSER_REJECTIONS", await self.page.evaluate("window.testErrors"))
-            print("BROWSER_SCRIPTS", await self.page.locator("script[src]").evaluate_all("els=>els.map(e=>e.src)"))
-            print("BROWSER_HA_STATE", await self.page.evaluate("()=>{const e=document.querySelector('home-assistant'),h=e?.hass;return h?{...Object.fromEntries(['connected','states','config','services','themes','panels','user'].map(k=>[k,h[k]!=null])),migration:e._databaseMigration}:{element:!!e,defined:!!customElements.get('home-assistant')}}"))
-            await self.browser.close()
-            await self.playwright.stop()
-            self.browser = None
+        try:
+            if self.browser and self.page:
+                print("BROWSER_ERRORS", self.errors)
+                print("BROWSER_CONSOLE", self.console_errors[-20:])
+                print("BROWSER_NETWORK", self.network_errors[-20:])
+                print("BROWSER_WS_ERRORS", self.ws_errors)
+                print("BROWSER_REJECTIONS", await self.page.evaluate("window.testErrors"))
+                print("BROWSER_SCRIPTS", await self.page.locator("script[src]").evaluate_all("els=>els.map(e=>e.src)"))
+                print("BROWSER_HA_STATE", await self.page.evaluate("()=>{const e=document.querySelector('home-assistant'),h=e?.hass;return h?{...Object.fromEntries(['connected','states','config','services','themes','panels','user'].map(k=>[k,h[k]!=null])),migration:e._databaseMigration}:{element:!!e,defined:!!customElements.get('home-assistant')}}"))
+        finally:
+            try:
+                if self.browser:
+                    await self.browser.close()
+            finally:
+                self.browser = None
+                try:
+                    if self.playwright:
+                        await self.playwright.stop()
+                finally:
+                    self.playwright = None
 
     async def emit(self, kind, second):
         self.now = self.base + timedelta(seconds=second)

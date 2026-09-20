@@ -44,6 +44,7 @@ class HADevice:
         self.command_error = False
         self.light_output = LightOutput(self.runtime.configuration.parameters)
         self._light_last_command_key = None
+        self._expected_light_changes = []
         self._light_session_off_completed_key = None
         self._light_session_off_superseded_key = None
         self._light_override_dirty = False
@@ -632,11 +633,9 @@ class HADevice:
         brightness = round(plan.brightness_percent, 2)
         service = "turn_off" if brightness <= 0 else "turn_on"
         command_key = (key, service, brightness if service == "turn_on" else None)
-        already_sent = command_key == self._light_last_command_key or (
-            service == "turn_on"
-            and state is not None
-            and state.state == "on"
-            and round(actual * 255 / 100) == round(brightness * 255 / 100)
+        desired = self._light_command_signature(service, brightness)
+        already_sent = self._light_state_signature(state) == desired and (
+            command_key == self._light_last_command_key or service == "turn_on"
         )
         if already_sent or (
             name == "aus" and plan.automatic and not self._light_override_dirty
@@ -726,6 +725,7 @@ class HADevice:
         data = {"entity_id": self.bindings["light"]}
         if service == "turn_on":
             data["brightness_pct"] = brightness
+        state_before = self.hass.states.get(self.bindings["light"])
         error = None
         try:
             await self.light_call(service, data)
@@ -743,6 +743,10 @@ class HADevice:
             )
         else:
             self._light_last_command_key = key
+            if self._light_state_signature(
+                state_before
+            ) != self._light_command_signature(service, brightness):
+                self._expect_light_change(now, service, brightness)
             for known_fault in (
                 "session_light",
                 "operation_light",
@@ -778,6 +782,91 @@ class HADevice:
                 session_id,
             )
         return error is None
+
+    @staticmethod
+    def _light_state_signature(state):
+        """Return the user-visible on/off and brightness state, if usable."""
+        if state is None or state.state not in ("on", "off"):
+            return None
+        if state.state == "off":
+            return ("off", None)
+        try:
+            brightness = float(state.attributes.get("brightness"))
+        except (TypeError, ValueError):
+            return ("on", None)
+        if not isfinite(brightness):
+            return ("on", None)
+        return ("on", max(0, min(255, round(brightness))))
+
+    @staticmethod
+    def _light_command_signature(service, brightness):
+        if service == "turn_off":
+            return ("off", None)
+        value = max(0, min(255, round(brightness * 255 / 100)))
+        # Home Assistant treats a turn_on command with brightness 0 as off.
+        return ("on", value) if value else ("off", None)
+
+    def _discard_expired_light_expectations(self, now):
+        """Keep echo expectations only for the existing feedback interval."""
+        timeout = self.values.get("feedback_timeout_seconds")
+        if timeout is None:
+            self._expected_light_changes.clear()
+            return
+        limit = timedelta(seconds=timeout)
+        self._expected_light_changes[:] = [
+            expected
+            for expected in self._expected_light_changes
+            if now - expected["sent_at"] <= limit
+        ]
+
+    def _expect_light_change(self, now, service, brightness):
+        self._discard_expired_light_expectations(now)
+        signature = self._light_command_signature(service, brightness)
+        for expected in self._expected_light_changes:
+            if expected["signature"] == signature:
+                expected["sent_at"] = now
+                return
+        self._expected_light_changes.append(
+            {
+                "signature": signature,
+                "sent_at": now,
+            }
+        )
+
+    def external_light_selection(self, event, received_at):
+        """Return one actual external light selection, excluding own echoes.
+
+        ``state_report`` events deliberately do not represent a new choice.
+        Expected automatic values are consumed only when their complete visible
+        state arrives before the normal feedback timeout.  Thus a delayed
+        automatic dim step cannot erase a different physical dimmer choice.
+        """
+        if (
+            event.event_type != "state_changed"
+            or event.data.get("entity_id") != self.bindings["light"]
+        ):
+            return None
+        old, new = event.data.get("old_state"), event.data.get("new_state")
+        if (
+            old is None
+            or new is None
+            or old.state in ("unknown", "unavailable")
+            or new.state in ("unknown", "unavailable")
+        ):
+            return None
+        old_signature = self._light_state_signature(old)
+        new_signature = self._light_state_signature(new)
+        if new_signature is None or new_signature == old_signature:
+            return None
+        self._discard_expired_light_expectations(received_at)
+        for index, expected in enumerate(self._expected_light_changes):
+            if expected["signature"] == new_signature:
+                del self._expected_light_changes[index]
+                return None
+        if new_signature[0] == "off":
+            return False
+        brightness = new_signature[1]
+        return True if brightness is None else brightness * 100 / 255
 
     def _light_phase(self, now=None):
         """Führt Licht strikt aus dem Controllerzustand und seinen Objekten ab."""
@@ -850,7 +939,7 @@ class HADevice:
         }.get(phase, "operation_light")
 
     def set_light_override(self, value):
-        """Eine spätere API kann diesen manuellen Wert bis zum Phasenwechsel halten."""
+        """Manuelle Lichtwahl bis zum Rückkehrpunkt oder Fristablauf halten."""
         if value not in (None, True, False, "normal"):
             if (
                 isinstance(value, bool)

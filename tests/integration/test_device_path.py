@@ -53,6 +53,7 @@ class TestLight(LightEntity):
     def __init__(self):
         self.calls = []
         self.fail_commands = False
+        self.defer_state_writes = False
 
     async def async_turn_on(self, **kwargs):
         self.calls.append(("on", kwargs))
@@ -61,7 +62,8 @@ class TestLight(LightEntity):
             raise HomeAssistantError("Synthetic light failure")
         self._attr_is_on = True
         self._attr_brightness = kwargs.get("brightness", self._attr_brightness)
-        self.async_write_ha_state()
+        if not self.defer_state_writes:
+            self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs):
         self.calls.append(("off", kwargs))
@@ -69,12 +71,15 @@ class TestLight(LightEntity):
             from homeassistant.exceptions import HomeAssistantError
             raise HomeAssistantError("Synthetic light failure")
         self._attr_is_on = False
-        self.async_write_ha_state()
+        if not self.defer_state_writes:
+            self.async_write_ha_state()
 
 
 class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass(with_recorder=getattr(self, "with_recorder", False))
+        self.addCleanup(self.temp.cleanup)
+        self.addAsyncCleanup(DevicePathTests.cleanup_hass, self)
         assert await async_setup_component(self.hass, "switch", {})
         assert await async_setup_component(self.hass, "light", {})
         self.heater, self.light = TestHeater(), TestLight()
@@ -100,10 +105,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.operation = next(e.entity_id for e in entities if e.unique_id.endswith("_operation"))
         self.climate = next(e.entity_id for e in entities if e.unique_id.endswith("_thermostat"))
 
-    async def asyncTearDown(self):
+    async def cleanup_hass(self):
         await self.hass.async_stop(force=True)
-        self.assertFalse(self.heater.calls[-1])
-        self.temp.cleanup()
+        if getattr(self, "heater", None) and self.heater.calls:
+            self.assertFalse(self.heater.calls[-1])
 
     async def set_source(self, role, value):
         entity = self.entry.options["bindings"][role]
@@ -114,6 +119,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def time(self, seconds):
         self.now = self.base + timedelta(seconds=seconds)
         await self.runtime.tick()
+        await self.hass.async_block_till_done()
+
+    async def set_light_externally(self, on, brightness=None):
+        """Simulate a directly linked physical light button or dimmer."""
+        self.light._attr_is_on = on
+        if brightness is not None:
+            self.light._attr_brightness = brightness
+        self.light.async_write_ha_state()
         await self.hass.async_block_till_done()
 
     async def test_full_measured_gang_and_cooling_chain_through_ha(self):
@@ -416,6 +429,63 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.device.light_output.last_automatic_brightness, 0)
         await self.runtime.set_light_override(None)
         self.assertFalse(self.light.is_on)
+
+    async def test_automatic_light_service_echo_does_not_create_manual_override(self):
+        await self.runtime.set_operation(True)
+        await self.time(1)  # the first fade value still rounds to brightness 0
+        self.assertFalse(self.light.is_on)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        await self.time(30)
+        self.assertTrue(self.light.is_on)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+
+    async def test_external_light_selection_expires_but_unchanged_report_does_not_extend_it(self):
+        await self.runtime.set_operation(True)
+        await self.set_light_externally(True, 128)
+        output = self.runtime.device.light_output
+        self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
+        ends_at = output.manual_ends_at
+        self.light.async_write_ha_state()  # state_report, not another choice
+        await self.hass.async_block_till_done()
+        self.assertEqual(output.manual_ends_at, ends_at)
+        await self.time(600)
+        self.assertIsNone(output.manual_brightness)
+
+    async def test_external_light_off_is_the_same_manual_selection(self):
+        await self.runtime.set_operation(True)
+        await self.time(30)
+        await self.set_light_externally(False)
+        output = self.runtime.device.light_output
+        self.assertEqual(output.manual_brightness, 0)
+        self.assertEqual(output.manual_ends_at, self.now + timedelta(minutes=10))
+
+    async def test_external_light_selection_is_indefinite_in_manual_mode(self):
+        from dataclasses import replace
+
+        self.runtime.controller.set_control_mode("manual")
+        self.runtime.configuration = replace(
+            self.runtime.configuration, control_mode="manual"
+        )
+        await self.set_light_externally(True, 128)
+        output = self.runtime.device.light_output
+        self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
+        self.assertIsNone(output.manual_ends_at)
+        await self.time(600)
+        self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
+
+    async def test_delayed_automatic_echo_does_not_replace_external_dimmer_selection(self):
+        self.light.defer_state_writes = True
+        await self.runtime.set_operation(True)
+        await self.time(30)
+        automatic_brightness = self.light.brightness  # command sent, echo pending
+        await self.set_light_externally(True, 128)
+        output = self.runtime.device.light_output
+        self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
+        self.light._attr_brightness = automatic_brightness
+        self.light.async_write_ha_state()  # delayed echo of the automatic command
+        await self.hass.async_block_till_done()
+        self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
+        self.assertEqual(self.light.calls[-1], ("on", {"brightness": 128}))
 
     async def test_session_light_deadline_survives_options_change_but_not_restart(self):
         from custom_components.ha_sauna.settings import async_set_parameters

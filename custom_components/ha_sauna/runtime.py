@@ -334,6 +334,9 @@ class SaunaRuntime:
             for role, source in self.configuration.bindings.values.items():
                 if source == entity_id:
                     self.device.ingest(role, event.data.get("new_state"), received_at)
+            light_selection = self.device.external_light_selection(event, received_at)
+            if light_selection is not None:
+                self._set_light_override(light_selection, received_at)
             action = self.device.physical_action(event)
             if self.configuration.control_input_mode == "button" and action is not None:
                 try:
@@ -650,16 +653,20 @@ class SaunaRuntime:
             if self.device is None:
                 raise ValueError("Lichtsteuerung ist nicht verfügbar")
             now = self._clock()
-            self.device.set_light_override(value)
-            self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
-            if self.archive:
-                self.archive.append(
-                    "manual_light",
-                    now,
-                    {"value": value},
-                    self.session.session_id if self.session else None,
-                )
+            self._set_light_override(value, now)
             await self._cycle()
+
+    def _set_light_override(self, value, now):
+        """Record a UI or physical light selection within the current lock."""
+        self.device.set_light_override(value)
+        self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
+        if self.archive:
+            self.archive.append(
+                "manual_light",
+                now,
+                {"value": value},
+                self.session.session_id if self.session else None,
+            )
 
     async def set_heater_override(self, value: bool | None):
         """Apply a manual heater selection through the serialized runtime path."""

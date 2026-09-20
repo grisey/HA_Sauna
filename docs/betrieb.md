@@ -125,6 +125,10 @@ die Helligkeit wieder zum temperaturabhängigen Ziel. Alle Ausgangswerte und
 die Übergangsdauer sind einstellbar. Eine manuelle Lichtwahl bleibt bis zum
 nächsten Phasenwechsel erhalten, höchstens bis zum Ende der eingestellten
 Übersteuerungsdauer. Reine Temperaturänderungen beenden sie nicht.
+Dies gilt auch für direkt mit dem Licht verbundene Taster: Ausschalten und
+Dimmen werden als manuelle Lichtwahl übernommen. Unveränderte Rückmeldungen
+verlängern die Übersteuerung nicht; eigene Lichtbefehle der Integration lösen
+keine manuelle Wahl aus.
 Ein reiner Lichtfehler wird gemeldet und beendet nicht den Heizbetrieb.
 
 Eine Türöffnung beim Aufheizen/in Bereitschaft hält eine fällige Kühlung zurück:

@@ -71,10 +71,7 @@ def parameter_schema(
             }
         )
         for definition in EDITABLE_DEFINITIONS
-        if (
-            not definition.key.startswith(("program_1_", "program_2_"))
-            and (not live_only or definition.key in LIVE_TEMPERATURE_KEYS)
-        )
+        if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
     }
     if include_program_choices:
         fields[vol.Required("program_mode", default="progressive")] = (

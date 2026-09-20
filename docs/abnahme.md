@@ -26,8 +26,10 @@ Sie prüft Temperaturbedienung, Programmwahl, kontrollierten Zoom, Kurvenmarker
 und die Navigation zur passenden Ereigniszeile. Die Linux-Prüfung mit echter
 Home-Assistant-Instanz ist für diesen Arbeitsstand noch ausstehend.
 
-Der Anschluss physischer Lichttaster ist noch offen: Dafür muss bekannt sein,
-ob sie eigene Ereignisse liefern oder direkt die Lichtentität verändern.
+Die physischen Lichttaster verändern direkt die zugeordnete Lichtentität.
+Externe Änderungen werden als manuelle Lichtwahl übernommen; eigene Befehle und
+unveränderte Rückmeldungen lösen keine neue Übersteuerung aus. Der HA-Testpfad
+prüft zusätzlich verzögert eintreffende Rückmeldungen eigener Dimmbefehle.
 Dieser Arbeitsstand wurde nicht auf dem Saunasystem installiert.
 
 ## Gemeinsame Heiz- und Lichtsteuerung vom 20.09.2026

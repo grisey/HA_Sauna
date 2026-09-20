@@ -135,7 +135,7 @@ class CoolingPauseTests(unittest.TestCase):
         c = self.cooling()
         before = c.session
         c.protection.add("confirmed_controller_failure")
-        with self.assertRaisesRegex(ValueError, "Schutz oder Inhibit"):
+        with self.assertRaisesRegex(ValueError, "Schutz.*Heizsperre"):
             c.set_heater_override(True, at(360))
         self.assertEqual(c.session, before)
         self.assertIsNone(c.heater_override)

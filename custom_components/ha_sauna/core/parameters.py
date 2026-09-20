@@ -168,7 +168,16 @@ EDITABLE_DEFINITIONS = tuple(
     definition
     for definition in DEFINITIONS
     if definition.key
-    not in {"temperature_increase_c", "door_heating_max_temperature_c"}
+    not in {
+        "temperature_increase_c",
+        "door_heating_max_temperature_c",
+        "program_1_start_c",
+        "program_1_end_c",
+        "program_1_gangs",
+        "program_2_start_c",
+        "program_2_end_c",
+        "program_2_gangs",
+    }
 )
 
 

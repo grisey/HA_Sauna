@@ -247,7 +247,8 @@ Dieser jüngste Abschnitt ersetzt abweichende frühere Vorgaben zur Bedienung.
   berechneten Temperaturstufen als Nebeninformation.
 - Lichtstufen heißen **Gedimmt** und **Hell**. Prozentwerte werden nachgeordnet
   angezeigt. Im Automatikbetrieb stehen auf der Übersicht nur Aus, Automatik
-  und Hell als manuelle Lichtübersteuerung bereit.
+  und Hell als manuelle Lichtübersteuerung bereit. Der Lichtbutton Automatik
+  erhält keine Prozentangabe.
 - Zwischen abgeschlossenen Sitzungen kann die Betriebsart Automatik/Manuell
   gewechselt werden. Im manuellen Betrieb schaltet der Nutzer Ofen und Licht;
   normale Temperaturregelung, Heizzeit-Kühlpausen und automatische Lichtwechsel
@@ -270,8 +271,11 @@ Dieser jüngste Abschnitt ersetzt abweichende frühere Vorgaben zur Bedienung.
   und signalisiert den Abschluss mit 1 % Licht; nach dem Loslassen beginnt
   der normale Lichtnachlauf. Beginn, Langdruck und Loslassen derselben
   Betätigung dürfen nicht als mehrere unabhängige Bedienungen wirken.
-  Änderungen über Lichttaster gelten ebenfalls als Übersteuerung bis zum
-  nächsten vereinbarten Rückkehrpunkt.
+  Die Lichttaster verändern direkt die Lichtentität: kurzer Druck schaltet aus,
+  gehaltenes Drücken dimmt je nach Taster nach oben oder unten. Tatsächliche
+  externe Zustands- und Helligkeitsänderungen gelten als Lichtübersteuerung bis
+  zum nächsten vereinbarten Rückkehrpunkt. Eigene Schaltbefehle der Integration
+  und unveränderte Rückmeldungen sind keine neue manuelle Bedienung.
 - Vorübergehende Ofen- und Lichtübersteuerungen enden spätestens nach einer
   einstellbaren Höchstdauer, standardmäßig zehn Minuten. Ein früherer
   Phasenwechsel beziehungsweise automatischer Heiz-Schaltwechsel oder die

@@ -61,9 +61,17 @@ class ProgramConfigurationTests(unittest.TestCase):
             }
         ).values
         self.assertEqual((values["program_1_start_c"], values["program_1_end_c"]), (45, 55))
-        self.assertNotIn(
-            "door_heating_max_temperature_c",
-            {definition.key for definition in EDITABLE_DEFINITIONS},
+        editable_keys = {definition.key for definition in EDITABLE_DEFINITIONS}
+        self.assertNotIn("door_heating_max_temperature_c", editable_keys)
+        self.assertTrue(
+            {
+                "program_1_start_c",
+                "program_1_end_c",
+                "program_1_gangs",
+                "program_2_start_c",
+                "program_2_end_c",
+                "program_2_gangs",
+            }.isdisjoint(editable_keys)
         )
 
     def test_legacy_without_final_temperature_is_constant(self):
