@@ -1,5 +1,13 @@
 # Arbeitsregeln
 
+## Vorrang des Entscheidungsstands vom 20.09.2026
+
+Der jüngste Abschnitt in `docs/entscheidungen.md` und spätere Nutzerkorrekturen
+gehen den nachstehenden Regeln vom 19.09. vor. Die Umsetzung ist beauftragt und
+erfolgt in kleinen, abgegrenzten Terra-Aufgaben mit Prüfung durch den Hauptagenten.
+Insbesondere sind Lichtkurve, Temperaturprogramme, pausierbare Kühlung und die
+Anrechnung jedes Nachlaufs auf die nächste Kühlung inzwischen entschieden.
+
 ## Geltende Nutzerentscheidungen vom 19.09.2026
 
 Maßgeblich sind die konsolidierten Regeln in `docs/entscheidungen.md` und

@@ -161,3 +161,52 @@ dem Controller; der Detektor führt keinen zweiten Bestätigungsstand.
 
 Der Nutzer akzeptiert die nicht erkannte kurze Testöffnung. Tür- und Lüftungs-
 schwellen bleiben für den angekündigten Versuch mit längerer Öffnung unverändert.
+
+## Verbindlicher jüngster Entscheidungsstand vom 20.09.2026
+
+Dieser Abschnitt geht allen früheren Aussagen in diesem Dokument vor. Soweit sie
+abweichen, sind insbesondere die bisherigen Lichtwerte (35 % Betrieb und 5 %
+Zwangskühlung), die daraus abgeleiteten Lichtphasen sowie die noch offene Frage
+zur Anrechnung eines bereits abgeschlossenen Nachlaufs überholt.
+
+- Heizbereich und Lichtbereich teilen sich dieselbe führende Sitzung und deren
+  Phasen; sie dürfen keine konkurrierenden Sitzungs- oder Phasenmodelle führen.
+  Die Lichthelligkeit verläuft temperaturbezogen linear. Der Kaltpunkt ist
+  einstellbar (Standard 30 °C), die Solltemperatur ist höchstens 100 °C.
+- Temperaturprogramme haben immer editierbaren Start- und Endwert. Standard ist
+  eine gleichmäßige Steigerung in vier Gängen. Die festen, konfigurierbaren
+  Vorlagen sind 80/85/90/95 °C und 70/80/90 °C. Wird beim bekannten
+  80–85–90–95-Programm der Endwert nach zwei Gängen auf 100 °C geändert,
+  bleibt das nächste Ziel 90 °C und anschließend gilt 100 °C als Endziel.
+  Eine direkte Sollwahl per Schieber oder Taste bedeutet dagegen konstantes
+  Heizen ohne weitere Steigerung. Die beim Start am Außentaster verwendete
+  Programmwahl ist konfigurierbar.
+- Zwangskühlung pausiert bei manueller Ofenübersteuerung und bei einem laufenden
+  Gang. Nach dessen Ende wird nur die um den Nachlauf verkürzte Restkühlung
+  angehängt; bei einem Phasenwechsel ohne Gang setzt die Kühlung fort. Jeder
+  aktuell abgelaufene oder manuell beendete Nachlauf wird genau einmal der
+  nächsten Kühlung gutgeschrieben, auch wenn diese erst später fällig wird.
+  Damit ist die zuvor offen gelassene Nachlaufanrechnung entschieden.
+- Reicht beim Beginn eines Nachlaufs das verbleibende Heizbudget nicht für die
+  Ofen-Mindestheizdauer, wird die Kühlung bereits an diesen Nachlauf angehängt
+  und dessen Restzeit gutgeschrieben; ein Zwischenheizen findet nicht statt.
+  Budgetablauf ist ein Fälligkeitsmerker: Seine Wirkung tritt bei der nächsten
+  passenden Gelegenheit ein und beachtet stets die Türwartephase. Die bisherigen
+  Defaults bleiben bis zu einer neuen Festlegung 4 Minuten nach Türschluss und
+  10 Minuten bei offen bleibender Tür. Ein laufender Gang wird dadurch nie
+  abgeschaltet.
+- Manuelle Lichtübersteuerung gilt bis zum Phasenwechsel, manuelle
+  Ofenübersteuerung bis zum nächsten fachlichen automatischen Eingriff.
+  Statusabfragen und Resends sind keine solchen Eingriffe. Schutzfunktionen
+  behalten Vorrang.
+- Lichtstandards sind Grundlicht 5 %, Nachlauf 15 %, tagsüber 40 %, nachts
+  25 % und außerhalb einer Sitzung 50 %, jeweils konfigurierbar; Übergänge
+  dauern standardmäßig 30 Sekunden und sind ebenfalls konfigurierbar. Nach dem
+  Sessionende leuchtet das Licht 10 Minuten mit 50 % und geht danach sofort aus.
+  Ein Gang hält das Normallicht auch bei fallender Temperatur, außer während
+  einer Kühlung.
+- Die Erkennung wird anhand von drei echten Sitzungen weiter untersucht. Kurze
+  Austritte sollen einen Gang erhalten, die Lüftung soll von starren Zeiten
+  entkoppelt werden, und Handtuchwedeln nach einem Aufguss kann Temperaturstürze
+  auslösen. Daraus ist noch keine fertige Detektionsregel abzuleiten oder zu
+  behaupten; der bestehende Kandidat bleibt bis belastbarer Auswertung bestehen.
