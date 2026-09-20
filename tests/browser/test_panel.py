@@ -1,5 +1,4 @@
 """Chromium inside the real HA frontend; no mock hass object or fake API."""
-import base64
 from datetime import timedelta
 from hashlib import sha256
 import io
@@ -120,7 +119,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="details"]').click()
         end_after = self.panel.get_by_role("button", name="Nachlauf jetzt beenden", exact=True)
         await expect(end_after).to_be_visible()
-        print("BROWSER_IMAGE_MANUAL_AFTER_RUN " + base64.b64encode(await self.page.screenshot(type="jpeg",quality=60)).decode())
         await end_after.click()
         end_cooling = self.panel.get_by_role("button", name="Zwangskühlung jetzt beenden", exact=True)
         await expect(end_cooling).to_be_visible()
@@ -187,8 +185,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="zoom-in"]').click()
         self.assertLessEqual(await self.panel.evaluate("p=>p.zoom"), 256)
         await self.panel.locator('[data-action="reset-zoom"]').click()
-        screenshot = await self.page.screenshot(type="jpeg", quality=55)
-        print("BROWSER_IMAGE_SESSION " + base64.b64encode(screenshot).decode())
         await self.panel.locator('[data-action="details"]').click()
         await self.set_source("upper_temperature", "unavailable")
         await expect(self.panel.locator('#details [role="alert"]')).to_contain_text("Temperatur oben", timeout=15000)
@@ -265,7 +261,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#current [data-phase-timer]')).to_have_count(0)
         await expect(self.panel.locator('#current')).to_contain_text("Noch nicht abschätzbar")
         await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Tür geschlossen")
-        print("BROWSER_IMAGE_OVERVIEW_ACTIVE " + base64.b64encode(await self.page.screenshot(type="jpeg",quality=65)).decode())
         await self.set_source("upper_temperature", 90)
         await self.panel.locator('[data-action="details"]').click()
         await expect(self.panel.locator('#details [data-phase-timer="heating"]')).to_be_visible()
@@ -324,7 +319,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         text=await self.panel.locator('#current').inner_text()
         for code in ("measurement_unavailable", "configuration_required", "pending", "sensor_timeout_seconds"):
             self.assertNotIn(code,text)
-        print("BROWSER_IMAGE_OVERVIEW " + base64.b64encode(await self.page.screenshot(type="jpeg",quality=60)).decode())
         self.now+=timedelta(minutes=10)
         await self.runtime.tick()
         await self.panel.evaluate("p=>p.refresh()")

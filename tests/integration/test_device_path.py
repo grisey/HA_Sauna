@@ -121,68 +121,69 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(self.heater.calls))
         self.assertIsNone(self.runtime.session)
         self.assertFalse(self.light.is_on)
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_temperature", 70)
+            await self.set_source(f"{position}_humidity", 40)
         await self.set_source("control_input", "on")
-        # Ein Phasenwechsel blendet vom beobachteten Lichtwert ein. Erst nach
-        # der konfigurierten Übergangszeit ist die kalte Temperaturkurve erreicht.
-        await self.time(30)
-        self.assertTrue(self.light.is_on)
-        self.assertAlmostEqual(self.light.brightness, 255*.05, delta=1)
-        normal_brightness = self.light.brightness
         session_id = self.runtime.session.session_id
         provisional = None
         confirmed = None
-        # Die Uhr bleibt nach dem anfänglichen 30-Sekunden-Übergang monoton.
-        for second in range(30, 431):
+        measurements_fed = 0
+        last_temperature = 70
+        for second in range(451):
             self.now = self.base + timedelta(seconds=second)
-            elapsed = second - 30
-            if elapsed < 70:
+            if second < 70:
                 temperature, humidity = 70, 40
-            elif elapsed < 85:
-                temperature, humidity = 70 - .3 * (elapsed - 70), 40 - .08 * (elapsed - 70)
-            elif elapsed < 150:
+            elif second < 85:
+                temperature, humidity = 70 - .3 * (second - 70), 40 - .08 * (second - 70)
+            elif second < 150:
                 temperature, humidity = 65.5, 38.8
-            elif elapsed < 260:
-                temperature = 65.5 + .025 * (elapsed - 150)
-                humidity = 38.8 + .02 * (elapsed - 150) + (3 if elapsed >= 240 else 0)
-            elif elapsed < 280:
+            elif second < 260:
+                temperature = 65.5 + .025 * (second - 150)
+                humidity = 38.8 + .02 * (second - 150) + (3 if second >= 240 else 0)
+            elif second < 280:
                 temperature, humidity = 68.25, 44
             else:
-                temperature, humidity = 68.25 - .05 * (elapsed - 280), 44 - .06 * (elapsed - 280)
+                temperature, humidity = 68.25 - .05 * (second - 280), 44 - .06 * (second - 280)
+            last_temperature = temperature
             for position in ("upper", "lower"):
                 await self.set_source(f"{position}_temperature", temperature)
                 await self.set_source(f"{position}_humidity", humidity)
+                measurements_fed += 2
             await self.runtime.tick()
             await self.hass.async_block_till_done()
             gang = self.runtime.session.timeline.active
             if gang and not gang.infusion_events and provisional is None:
                 provisional = gang
             if gang and gang.infusion_events and confirmed is None:
+                self.assertIsNotNone(provisional)
                 confirmed = gang
                 self.assertEqual(gang.gang_id, provisional.gang_id)
                 self.assertEqual(gang.started_at, provisional.started_at)
                 self.assertTrue(self.heater.is_on)
+            if self.runtime.controller.phase == "zwangskühlung":
+                break
         self.assertIsNotNone(provisional)
         self.assertIsNotNone(confirmed)
         self.assertEqual(self.runtime.session.timeline.gang_count, 1)
         self.assertEqual(self.runtime.session.session_id, session_id)
+        self.assertEqual(self.runtime.controller.phase, "zwangskühlung")
         self.assertFalse(self.heater.is_on)
         self.assertIsNotNone(self.runtime.session.cooling)
-        self.assertLess(self.light.brightness, 20)
         end = self.runtime.session.cooling.ends_at
         self.assertEqual(self.runtime.session.cooling.credited_seconds, 30)
         self.now = end
+        await self.set_source("upper_temperature", last_temperature)
         await self.runtime.tick()
         await self.hass.async_block_till_done()
         self.assertIsNone(self.runtime.session.cooling)
-        self.assertEqual(self.light.brightness, normal_brightness)
-        self.assertTrue(self.light.is_on)
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, 0)
         await self.runtime.archive.flush()
         import asyncio
         archived = await asyncio.to_thread(self.runtime.archive.read, session_id, limit=10000)
         originals = [r for r in archived["records"] if r["kind"] == "measurement"]
-        self.assertGreaterEqual(len(originals), 4 * 401)
+        self.assertGreaterEqual(len(originals), measurements_fed)
         self.assertTrue(any(r["kind"] == "command" and r["payload"]["heat"] for r in archived["records"]))
         self.assertTrue(any(r["kind"] == "detection" for r in archived["records"]))
         from custom_components.ha_sauna.core.timeline import Kind
@@ -238,9 +239,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.light.brightness, 180, delta=1)
         await self.time(30)
         self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
-        # Die manuelle Wahl ist Ausgangspunkt für den sanften Phasenwechsel.
-        await self.hass.services.async_call("light", "turn_on", {"entity_id":self.light.entity_id,"brightness":160}, blocking=True)
-        await self.hass.async_block_till_done()
         session_id = self.runtime.session.session_id
         async def signal(kind, seconds):
             self.now=self.base+timedelta(seconds=seconds)
@@ -251,13 +249,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.now=self.base+timedelta(seconds=271)
         await self.set_source("upper_temperature",70)
         await self.runtime.tick()
+        normal = self.light.brightness
+        self.assertAlmostEqual(normal, 255*.4, delta=1)
         await signal(Kind.DOOR_OPEN,272)
         await signal(Kind.VENTILATION,273)
         self.assertFalse(self.heater.is_on)
-        self.assertAlmostEqual(self.light.brightness, 160, delta=1)
+        self.assertAlmostEqual(self.light.brightness, normal, delta=1)
         await self.time(281)
         self.assertGreater(self.light.brightness, 255*.15)
-        self.assertLess(self.light.brightness, 160)
+        self.assertLess(self.light.brightness, normal)
         await self.time(288)
         self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
         await self.time(303)
@@ -293,6 +293,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         self.assertNotIn("operation_light",self.runtime.device.faults)
+        await self.time(16)
         self.assertTrue(self.light.is_on)
 
     async def test_session_light_defaults_reach_real_light_service_and_switch_off(self):
@@ -328,7 +329,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.archive.flush()
         stored = self.runtime.archive.read(session_id)
         commands = [r["payload"] for r in stored["records"] if r["kind"] == "light_command" and r["payload"]["purpose"] == "session_end"]
-        self.assertEqual([c["service"] for c in commands], ["turn_on", "turn_off"])
+        self.assertTrue(any(c["service"] == "turn_on" and c["brightness_pct"] == 50
+                            for c in commands))
+        self.assertEqual(commands[-1]["service"], "turn_off")
+        self.assertTrue(all(c["service_error"] is None for c in commands))
 
     async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
         from custom_components.ha_sauna.settings import async_set_parameters

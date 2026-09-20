@@ -1,5 +1,49 @@
 # Funktionsprüfung der aktuellen Testfassung
 
+## Gemeinsame Heiz- und Lichtsteuerung vom 20.09.2026
+
+Der neue Stand umfasst Temperaturprogramme, die Lichtkurve, pausierbaren
+Nachlauf und Kühlung sowie die getrennte Übersicht und Detailansicht. Die
+Rücksetzung der Einstellungen erhält Gerätezuordnungen und Tasterkonfiguration.
+Sie ist für HA-Administratoren erst nach Sitzungsende verfügbar.
+
+Die lokale Prüfung besteht aus **272 bestandenen Kerntests** und **fünf
+JavaScript-Prüfprogrammen**. Zwei zusätzliche Tests benötigen ein privates
+Recorderarchiv und werden im öffentlichen Lauf übersprungen. Die HA-Prüfungen
+laufen unter Linux; ihr Ergebnis ist beim jeweiligen Commit in den
+[GitHub-Prüfläufen](https://github.com/grisey/HA_Sauna/actions/workflows/tests.yml)
+sichtbar. Browser und HA testen dabei dieselben Schnittstellen wie die Bedienung.
+
+Ein unabhängiger Szenariolauf am Steuerungskern von
+[`706622b`](https://github.com/grisey/HA_Sauna/commit/706622b3b3fe6d46d9e58d1d5f1958bd77550b21)
+bestätigt insbesondere diese Übergänge. Die Heizrückmeldung folgt dabei den
+tatsächlich ausgegebenen Befehlen:
+
+| Szenario | Beobachtetes Ergebnis |
+|---|---|
+| 5 Minuten Heizbudget verbleiben bei 10 Minuten Mindestheizzeit; anschließend 8 Minuten Nachlauf | Die Kühlung folgt ohne Zwischenheizen. |
+| Nach 2 Minuten Nachlauf wird 5 Minuten manuell geheizt | Die Nachlaufuhr hält an. Danach laufen die übrigen 6 Minuten; von 15 Minuten Kühlung bleiben 7 Minuten. |
+| 5 Minuten Kühlung, danach manuelles Heizen mit Gang und 8 Minuten Nachlauf | 2 Minuten Restkühlung bleiben erhalten. |
+| Heizbudget erreicht, Türöffnung und möglicher Gangstart | Die Kühlung wartet auf die Personenentscheidung; ein erkannter Gang bleibt erhalten. |
+| Nachlauf oder Kühlung manuell beenden | Nur der aktuelle Phasenaufruf wirkt. Ausschalten und Schutzsperren behalten Vorrang. |
+
+Die Lüftungserkennung wurde zusätzlich mit drei privaten Aufzeichnungen
+nachgerechnet. Der Lauf verwendet Messwerte und aufgezeichnete Heizrückmeldungen,
+keine nachträglich eingespeisten Tür-, Personen- oder Aufgussereignisse. Neue
+Parameter werden aus den aktuellen Standards ergänzt. Für eine Aufzeichnung
+fehlt die Heizrückmeldung; dort wird nur der Detektor mit heutigen Standards
+verglichen. Dieser Vergleich rekonstruiert nicht die damalige gesamte Steuerung.
+Die Aufzeichnungen dienen der Kalibrierung und sind keine unabhängige
+Feldvalidierung. Originaldaten bleiben privat.
+
+Die automatische Prüfung vermeidet doppelte Branch- und Pull-Request-Läufe und
+bricht veraltete Läufe ab. Einzelne Testschritte sind auf zwei Minuten begrenzt;
+der vollständige HA- oder Browserjob auf fünf Minuten einschließlich Einrichtung.
+Browserprüfungen schreiben keine Bilddaten mehr in das Konsolenprotokoll.
+
+Die reale Installation und Hardwareprüfung erfolgen weiterhin durch den
+Benutzer über HACS. Die Versionsnummer bleibt unverändert.
+
 ## Türanzeige nach Sitzungsende vom 20.09.2026
 
 Die Türerkennung endet mit der Sitzung. Das bisherige „Tür unbekannt“ war danach
