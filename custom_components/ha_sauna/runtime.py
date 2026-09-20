@@ -120,6 +120,23 @@ class Configuration:
             cold = values.pop("cold_tolerance_c", 0)
             hot = values.pop("hot_tolerance_c", 0)
             values.setdefault("readiness_hysteresis_c", cold + hot)
+        if (
+            "sauna_min_temperature_c" not in values
+            and "temperature_programs" not in options
+        ):
+            minimum_c = BY_KEY["sauna_min_temperature_c"].default
+            for key in (
+                "preset_start_c",
+                "target_temperature_c",
+                "final_temperature_c",
+                "program_1_start_c",
+                "program_1_end_c",
+                "program_2_start_c",
+                "program_2_end_c",
+            ):
+                if key in values:
+                    minimum_c = min(minimum_c, BY_KEY[key].validate(values[key]))
+            values["sauna_min_temperature_c"] = minimum_c
         parameters = Parameters(values)
         minimum_c = parameters.minimum_for("target_temperature_c")
         maximum_c = BY_KEY["target_temperature_c"].maximum

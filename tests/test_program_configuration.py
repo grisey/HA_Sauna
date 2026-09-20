@@ -83,6 +83,30 @@ class ProgramConfigurationTests(unittest.TestCase):
         configuration = Configuration.from_options(options({"final_temperature_c": 92}))
         self.assertEqual(configuration.program_mode, "progressive")
 
+    def test_legacy_target_below_new_minimum_is_preserved(self):
+        configuration = Configuration.from_options(options({"target_temperature_c": 50}))
+        self.assertEqual(configuration.parameters.values["sauna_min_temperature_c"], 50)
+        self.assertEqual(configuration.parameters.values["target_temperature_c"], 50)
+
+    def test_legacy_program_below_new_minimum_keeps_button_selection(self):
+        configuration = Configuration.from_options(
+            options({"program_1_start_c": 45}, button_program="program_1")
+        )
+        self.assertEqual(configuration.parameters.values["sauna_min_temperature_c"], 45)
+        self.assertEqual(configuration.parameters.values["program_1_start_c"], 45)
+        self.assertEqual(configuration.button_program, "program_1")
+        self.assertIn("program_1", {program.id for program in configuration.temperature_programs})
+
+    def test_explicit_minimum_remains_strict_for_legacy_target(self):
+        with self.assertRaisesRegex(ParameterError, "target_temperature_c: too_small"):
+            Configuration.from_options(
+                options({"sauna_min_temperature_c": 60, "target_temperature_c": 50})
+            )
+
+    def test_legacy_defaults_keep_new_minimum(self):
+        configuration = Configuration.from_options(options())
+        self.assertEqual(configuration.parameters.values["sauna_min_temperature_c"], 60)
+
     def test_roundtrip_preserves_program_choices(self):
         configuration = Configuration(
             Bindings(bindings()), Parameters({"program_1_gangs": 6}),

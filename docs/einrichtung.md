@@ -22,6 +22,12 @@ HACS mit ausgeschaltetem Schalter einen Commit-Code als Update anbieten. Für di
 RC-Reihe sollte der Schalter daher eingeschaltet bleiben und die HACS-
 Versionsprüfung aktualisiert werden.
 
+Beim Update von RC1 bleiben gespeicherte Temperaturwerte und Gerätezuordnungen
+erhalten. Falls ältere Sollwerte oder Programme unter 60 °C liegen, wird die
+neu hinzugekommene Untergrenze entsprechend niedriger übernommen. Eine bereits
+ausdrücklich eingestellte Untergrenze bleibt unverändert. Für neue Einrichtungen
+gilt weiterhin der Standard von 60 °C.
+
 ## 2. Rollen zuordnen
 
 Wählen Sie die vorhandenen Entitäten nach ihrer Aufgabe aus, nicht nach ihrem
