@@ -1,4 +1,5 @@
 """Normalisierung einer optionalen, unabhängigen Ofen-Leistungsmessung."""
+
 from math import isfinite
 
 

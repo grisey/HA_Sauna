@@ -1,14 +1,17 @@
 """Parameterentitäten schreiben ausschließlich ConfigEntry.options."""
+
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory
 
-from .core.parameters import DEFINITIONS
+from .core.parameters import EDITABLE_DEFINITIONS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities(SaunaNumber(entry, definition) for definition in DEFINITIONS)
+    async_add_entities(
+        SaunaNumber(entry, definition) for definition in EDITABLE_DEFINITIONS
+    )
 
 
 class SaunaNumber(SaunaEntity, NumberEntity):
@@ -24,7 +27,9 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         self._attr_name = definition.label
         self._attr_native_unit_of_measurement = definition.unit
         self._attr_native_max_value = definition.maximum
-        self._attr_native_min_value = definition.minimum if definition.minimum is not None else 0
+        self._attr_native_min_value = (
+            definition.minimum if definition.minimum is not None else 0
+        )
         self._attr_native_step = 1 if definition.integer else 0.01
 
     @property
@@ -34,4 +39,6 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         return self.runtime.configuration.parameters.values.get(self.definition.key)
 
     async def async_set_native_value(self, value):
-        await async_set_entity_parameter(self.hass, self.entry, self.definition.key, value)
+        await async_set_entity_parameter(
+            self.hass, self.entry, self.definition.key, value
+        )

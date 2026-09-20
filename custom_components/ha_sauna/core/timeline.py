@@ -4,6 +4,7 @@ Der Zustand enthält beobachtete Ereignisse und daraus abgeleitete Gangintervall
 Ein rückwirkend zugeordneter Beginn ändert weder die Erkennungszeit noch einen
 bereits ausgeführten Schaltvorgang. Dieses Modul steuert keine Aktoren.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -82,7 +83,9 @@ class Gang:
     @property
     def confirmation(self) -> Confirmation:
         """Nur ein Aufguss bestätigt den Gang; kein zweiter schreibbarer Merker."""
-        return Confirmation.CONFIRMED if self.infusion_events else Confirmation.PROVISIONAL
+        return (
+            Confirmation.CONFIRMED if self.infusion_events else Confirmation.PROVISIONAL
+        )
 
     @property
     def confirmed_at(self) -> datetime | None:
@@ -153,15 +156,24 @@ def apply(state: Timeline, event: Event) -> Timeline:
         if state.door == Door.OPEN:
             raise ValueError("Doppelte Öffnung mit unterschiedlicher Ereignis-ID")
         result = replace(
-            state, door=Door.OPEN, anchor=None, opening=event,
-            open_ventilation=None, preparation=None, rejected_start_sources=(),
+            state,
+            door=Door.OPEN,
+            anchor=None,
+            opening=event,
+            open_ventilation=None,
+            preparation=None,
+            rejected_start_sources=(),
         )
     elif event.kind == Kind.DOOR_CLOSE:
         if state.door == Door.CLOSED:
             raise ValueError("Doppelte Schließung mit unterschiedlicher Ereignis-ID")
         result = replace(
-            state, door=Door.CLOSED, anchor=event, opening=None,
-            preparation=state.open_ventilation, open_ventilation=None,
+            state,
+            door=Door.CLOSED,
+            anchor=event,
+            opening=None,
+            preparation=state.open_ventilation,
+            open_ventilation=None,
         )
     elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
         if state.door != Door.CLOSED:
@@ -200,31 +212,53 @@ def apply(state: Timeline, event: Event) -> Timeline:
         if state.active is not None:
             if state.active.confirmation == Confirmation.PROVISIONAL:
                 result = replace(
-                    result, active=None, retracted=state.retracted + (state.active,),
-                    rejected_start_sources=state.rejected_start_sources + (
-                        state.active.start_source_event_id if state.active.start_basis == "door_close" else "recognition_only",
+                    result,
+                    active=None,
+                    retracted=state.retracted + (state.active,),
+                    rejected_start_sources=state.rejected_start_sources
+                    + (
+                        state.active.start_source_event_id
+                        if state.active.start_basis == "door_close"
+                        else "recognition_only",
                     ),
                 )
             else:
                 finished = replace(
-                    state.active, ended_at=event.detected_at, end_event_id=event.event_id,
+                    state.active,
+                    ended_at=event.detected_at,
+                    end_event_id=event.event_id,
                     end_reason="ventilation",
                 )
-                result = replace(result, active=None, completed=state.completed + (finished,))
+                result = replace(
+                    result, active=None, completed=state.completed + (finished,)
+                )
     elif event.kind == Kind.CONFIRMATION_EXPIRED:
         if state.active is not None and not state.active.infusion_events:
             result = replace(
-                state, active=None, retracted=state.retracted + (state.active,),
-                rejected_start_sources=state.rejected_start_sources + (
-                    state.active.start_source_event_id if state.active.start_basis == "door_close" else "recognition_only",
+                state,
+                active=None,
+                retracted=state.retracted + (state.active,),
+                rejected_start_sources=state.rejected_start_sources
+                + (
+                    state.active.start_source_event_id
+                    if state.active.start_basis == "door_close"
+                    else "recognition_only",
                 ),
             )
     elif event.kind == Kind.OPERATION_OFF:
         completed = state.completed
         if state.active is not None:
-            completed += (replace(state.active, ended_at=event.detected_at,
-                                  end_event_id=event.event_id, end_reason="ausgeschaltet"),)
+            completed += (
+                replace(
+                    state.active,
+                    ended_at=event.detected_at,
+                    end_event_id=event.event_id,
+                    end_reason="ausgeschaltet",
+                ),
+            )
         # Eine spätere neue Erkennung darf nicht den Beginn des ausgeschalteten
         # Gangs erben. Die bekannte Türlage bleibt erhalten.
-        result = replace(state, active=None, completed=completed, anchor=None, preparation=None)
+        result = replace(
+            state, active=None, completed=completed, anchor=None, preparation=None
+        )
     return replace(result, processed=state.processed + (event,))

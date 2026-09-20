@@ -1,7 +1,7 @@
 """Real authenticated panel endpoints, session guard and HA options reload."""
 import unittest
 from aiohttp import ClientSession
-from homeassistant.auth.const import GROUP_ID_ADMIN
+from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from harness import create_sauna, start_hass
 
 
@@ -68,6 +68,53 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
         self.assertIsNone(self.entry.runtime_data.session)
 
+    async def test_standard_user_controls_only_the_permitted_panel_routes(self):
+        """The normal HA user inherits control of the integration switch."""
+        user = await self.hass.auth.async_create_user("Standard user", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id
+
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertIsNotNone(runtime.session)
+            identity = runtime.session.session_id
+            async with client.post(url + "/control", json={"enabled": False}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.session.session_id, identity)
+            self.assertFalse(runtime.session.operation_enabled)
+
+            async with client.post(url + "/temperature", json={"target_temperature_c": 81}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/program", json={"profile": "constant"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for value in ("normal", True, False, None):
+                async with client.post(url + "/light", json={"value": value}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+            async with client.get(url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertTrue((await response.json())["permissions"]["control"])
+            async with client.get(url + "/archive") as response:
+                self.assertEqual(response.status, 200, await response.text())
+
+            session = runtime.session
+
+            async def forbidden(request):
+                async with request as response:
+                    self.assertEqual(response.status, 403, await response.text())
+                self.assertIs(runtime.session, session)
+                self.assertEqual(runtime.session.session_id, identity)
+                self.assertFalse(runtime.session.operation_enabled)
+
+            await forbidden(client.post(url + "/light", json={"value": 42}))
+            await forbidden(client.post(url + "/heater", json={"value": False}))
+            await forbidden(client.post(url + "/finish_phase", json={"purpose": "after_run", "token": "valid-token"}))
+            await forbidden(client.post(url + "/parameters", json=dict(self.entry.options["parameters"])))
+            await forbidden(client.post(url + "/logging", json={"level": "INFO"}))
+            await forbidden(client.get(url + "/export"))
+
     async def test_manual_phase_end_checks_payload_identity_and_uses_real_runtime(self):
         from datetime import datetime, UTC, timedelta
         from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -98,6 +145,54 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime.session.session_id,identity)
             async with client.post(url, json={"purpose":"after_run","token":token}) as response:
                 self.assertEqual(response.status,409)
+
+    async def test_paused_after_run_ends_through_api_without_a_fictitious_deadline(self):
+        from datetime import datetime, UTC, timedelta
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        import asyncio
+
+        runtime = self.entry.runtime_data
+        base = now = datetime.now(UTC)
+        runtime._clock = lambda: now
+        await runtime.set_operation(True)
+        identity = runtime.session.session_id
+        runtime.controller.report_heating(True, now)
+        for second, kind in ((1, Kind.DOOR_CLOSE), (2, Kind.INFUSION),
+                             (3, Kind.DOOR_OPEN), (4, Kind.VENTILATION)):
+            now = base + timedelta(seconds=second)
+            await runtime.receive(Event(f"api-paused-phase:{second}", identity, kind, now, now))
+        token = runtime.session.after_run.phase_id
+        now = base + timedelta(seconds=10)
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/heater", json={"value": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            paused = runtime.session.after_run
+            self.assertIsNone(paused.ends_at)
+            self.assertEqual(paused.elapsed_seconds, 6)
+            phase_entity = next(state for state in self.hass.states.async_all("sensor")
+                                if state.attributes.get("session_id") == identity
+                                and "after_run_paused" in state.attributes)
+            self.assertIsNone(phase_entity.attributes["after_run_ends_at"])
+            self.assertTrue(phase_entity.attributes["after_run_paused"])
+            self.assertEqual(phase_entity.attributes["after_run_remaining_seconds"], paused.remaining_seconds)
+            decisions_before_finish = len(runtime.controller.decisions)
+            now = base + timedelta(seconds=20)
+            async with client.post(url + "/finish_phase", json={"purpose": "after_run", "token": token}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+
+        self.assertIsNone(runtime.session.after_run)
+        self.assertEqual(runtime.session.after_run_history[-1].elapsed_seconds, 6)
+        self.assertEqual(runtime.session.cooling.credited_seconds, 6)
+        self.assertIsNone(runtime.controller.heater_override)
+        self.assertIsNotNone(runtime.session.cooling.started_at)
+        self.assertFalse(any(decision.heat for decision in runtime.controller.decisions[decisions_before_finish:]))
+        await runtime.archive.flush()
+        archived = await asyncio.to_thread(runtime.archive.read, identity, limit=10000)
+        record = next(row for row in archived["records"] if row["kind"] == "manual_phase_end")
+        self.assertEqual(record["session_id"], identity)
+        self.assertEqual(record["payload"], {"purpose": "after_run", "token": token,
+                                             "planned_ends_at": None, "ended_at": now.isoformat()})
 
     async def test_logging_is_live_persistent_and_does_not_reload_or_end_session(self):
         import logging
@@ -167,7 +262,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         timer=runtime.controller.mechanical_timer
         url=self.base+"/"+self.entry.entry_id
         async with ClientSession(headers=self.headers) as client:
-            for values in ({"target_temperature_c":81,"final_temperature_c":95}, {"temperature_increase_c":2}, {"final_temperature_c":None}):
+            for values in ({"target_temperature_c":81,"final_temperature_c":95}, {"final_temperature_c":None}):
                 async with client.post(url+"/temperature",json=values) as response:
                     self.assertEqual(response.status,200,await response.text())
                 await self.hass.async_block_till_done()
@@ -177,13 +272,20 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(runtime.controller.mechanical_timer,timer)
                 self.assertEqual(runtime.controller.target_temperature,81)
                 self.assertTrue(runtime.session.operation_enabled)
+            async with client.post(url+"/temperature",json={"temperature_increase_c":2}) as response:
+                self.assertEqual(response.status,400)
             async with client.post(url+"/temperature",json={"forced_cooling_minutes":0}) as response:
                 self.assertEqual(response.status,400)
             await runtime.set_operation(False)
             deadline=runtime.session.after_run
             async with client.post(url+"/temperature",json={"target_temperature_c":95}) as response:
                 self.assertEqual(response.status,200,await response.text())
-            self.assertEqual(runtime.session.after_run,deadline)
+            after_run = runtime.session.after_run
+            self.assertEqual(after_run.phase_id, deadline.phase_id)
+            self.assertEqual(after_run.ends_at, deadline.ends_at)
+            self.assertGreaterEqual(after_run.elapsed_seconds, deadline.elapsed_seconds)
+            self.assertAlmostEqual(after_run.remaining_seconds,
+                (after_run.ends_at - after_run.accounted_at).total_seconds())
             self.assertFalse(runtime.controller.last_decision.heat)
             self.assertFalse(runtime.session.operation_enabled)
 
@@ -197,3 +299,37 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.entry.runtime_data,runtime)
         self.assertEqual(runtime.session.session_id,identity)
         self.assertEqual(dict(self.entry.options),options)
+
+    async def test_program_and_manual_api_report_their_selected_and_automatic_values(self):
+        """The browser routes use the same serialized runtime as HA entities."""
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            free = {"target_temperature_c": 76, "final_temperature_c": 91,
+                    "temperature_gangs": 5}
+            async with client.post(url + "/program", json=free) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["program_mode"], "progressive")
+            self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 76)
+            self.assertEqual(runtime.configuration.parameters.values["final_temperature_c"], 91)
+            async with client.post(url + "/program", json={"profile": "constant"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.configuration.program_mode, "constant")
+            async with client.post(url + "/program", json={"target_temperature_c": 76,
+                                                             "final_temperature_c": None,
+                                                             "temperature_gangs": 5}) as response:
+                self.assertEqual(response.status, 400)
+            async with client.post(url + "/light", json={"value": 42}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["manual_controls"]["light"]["manual"], 42)
+            async with client.post(url + "/heater", json={"value": False}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertFalse((await response.json())["manual_controls"]["heater"]["manual"])
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertIn("permissions", state)
+                self.assertIn("manual_controls", state)
+                self.assertFalse(state["manual_controls"]["heater"]["manual"])
+            async with client.post(url + "/heater", json={"value": None}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertIsNone(runtime.controller.heater_override)

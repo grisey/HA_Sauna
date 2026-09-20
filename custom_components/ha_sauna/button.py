@@ -1,4 +1,5 @@
 """Quittierung eines bestätigten zentralen Ausfalls nach Ausschalten."""
+
 from homeassistant.components.button import ButtonEntity
 from homeassistant.const import EntityCategory
 from .entity import SaunaEntity

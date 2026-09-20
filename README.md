@@ -1,130 +1,102 @@
 # HA Sauna
 
-Home-Assistant-Integration mit eigenem Thermostat, fortlaufender Erkennung aus
-Temperatur und Luftfeuchte zweier Höhen, Sessionarchiv und eigener Oberfläche.
-Zielversion: **Home Assistant Core 2026.9.2**, Python **3.14.2 oder neuer**.
-Die Software schaltet den ausgewählten Heizaktor. Einrichten und Prüfen erfolgt
-zunächst mit Testentitäten; eine reale Hardwareabnahme gehört nicht zum
-bisherigen Nachweis. Version `0.0.0`, kein Release und kein Produktivdeployment.
+HA Sauna bringt die Steuerung, Temperaturwahl, das Licht und den Verlauf einer
+Saunasitzung in Home Assistant zusammen. Sie richtet sich an Menschen, die ihre
+Sauna von einer klaren Oberfläche aus bedienen und trotzdem die vorhandenen
+Schutz- und Bedienelemente weiter nutzen möchten.
 
-## Einrichtung und Bedienung
+Die Einrichtung beginnt mit dem kurzen [Einrichtungsleitfaden](docs/einrichtung.md).
+Er beschreibt, welche Geräte nach ihrer Rolle ausgewählt werden und welche
+Standards vor dem ersten Einsatz sinnvoll sind.
 
-Vorbereitung und Rückweg für die erste Testinstallation: [Testinstallation](docs/testinstallation.md).
+## Die Sauna bedienen
 
-In HACS `https://github.com/grisey/HA_Sauna` als benutzerdefiniertes Repository
-vom Typ **Integration** hinzufügen, herunterladen, Home Assistant selbst neu
-starten und unter **Einstellungen → Geräte & Dienste**
-**HA Sauna** hinzufügen. Temperatur und Feuchte oben/unten, Heizaktor,
-physische Bedienquelle und dimmbares Licht werden nach ihrer Rolle ausgewählt.
-Eine Leistungsmessung in W/kW oder ein unabhängiger binärer Heiznachweis sind optional. Es gibt keine fest hinterlegten privaten Entitäten.
+In der **Übersicht** starten und beenden Sie den Saunabetrieb, wählen eine
+Temperatur und sehen die Messwerte auf einen Blick. Die Zeitanzeige hilft bei
+zwei Fragen: Wann kann der nächste Gang beginnen, und wie lange ist ein Start
+noch möglich? Auch Normallicht, Raumlicht und die Rückkehr zur automatischen
+Lichtsteuerung sind hier direkt erreichbar.
 
-Sessionenergie: standardmäßig **4,5 kW × gezählte Heizstunden**, einstellbar.
-Mit Leistungsmesser wird dessen gemessener Verlauf integriert. Die Summe überlebt
-Kühlungen und Heizzeitrücksetzungen; Messlücken werden gekennzeichnet.
+Der physische Bedieneingang kann weiterhin zum Ein- und Ausschalten dienen. Ein
+entkoppelter Taster löst dabei den Saunabetrieb aus; der Heizaktor bleibt davon
+getrennt und wird von der Regelung geführt. So bleibt eine vorhandene Bedienung
+verständlich, ohne den Heizaktor unmittelbar zu schalten.
 
-Die obere Temperatur regelt den Ofen. Ohne gültige obere Regeltemperatur wird
-kein unterer Ersatzwert erfunden. Die Ereigniserkennung arbeitet bei Ausfall
-mit der verbleibenden Messposition weiter und zeigt den Fehler an. Die
-Heizzeit läuft ohne unabhängige Messung bei rückgemeldetem Schütz EIN. Die
-Anzeige kennzeichnet diese Ableitung als Schätzung. Eine zugeordnete gültige
-Leistungsmessung hat Vorrang; ihre einstellbare Watt-Schwelle unterscheidet
-Standby und Heizen. Bei Messausfall wird sichtbar auf Schützstellung zurückgefallen.
-Die Erkennung eines internen Ofen-Aus anhand der Temperaturkrümmung wurde für
-die erste Testinstallation ausdrücklich zurückgestellt.
+Unter **Details** finden Sie die weitergehende Bedienung: aktuelle Betriebs- und
+Fristinformationen, die manuelle Ofen- und Lichtsteuerung, Einstellungen,
+Protokollierung und den Archivexport. Nachlauf und Kühlung lassen sich dort bei
+Bedarf einzeln beenden; die verbleibende Regelung bleibt dabei erhalten.
 
-Alle erforderlichen Einstellungen haben veränderbare [Standardwerte](docs/parameter.md). Bei älteren Konfigurationen werden fehlende Werte ergänzt; gespeicherte Einstellungen behalten Vorrang. Startprüfungen und Schutzregeln bleiben wirksam.
+## Temperatur wählen oder steigern
 
-Das Saunalicht schaltet bei Betriebsstart standardmäßig auf **35 %**, im Nachlauf auf **15 %** und während Zwangskühlung auf **5 %**. Danach kehrt die vorherige Helligkeit zurück. Alle drei Werte sind einstellbar.
+Für eine direkte Sollwahl wählen Sie Temperatur per Taste oder Schieber. Diese
+Wahl bleibt konstant. Die Schnellauswahl kann angepasst werden; Temperaturen
+sind bis 100 °C begrenzt.
 
-Nach dem endgültigen Sitzungsende bleibt das Licht standardmäßig noch **10 Minuten
-bei 50 %** an und wird anschließend ausgeschaltet. Dauer und Helligkeit sind
-einstellbar; eine neue Sitzung beendet den alten Lichtnachlauf.
+Für eine steigende Temperatur stehen zwei anpassbare Profile bereit:
 
-In der Seitenleiste erscheint **Sauna** mit zwei Hauptansichten:
+| Profil | Werkseinstellung |
+|---|---|
+| 4-Gang-Programm | 80 → 85 → 90 → 95 °C |
+| 3-Gang-Programm | 70 → 80 → 90 °C |
 
-- **Übersicht:** einfache Steuerung mit einer passenden Zeitanzeige zur aktuellen Phase; eigenes Blatt **Verlauf und Archiv**.
-- **Details:** Betrieb und Fristen, separate Erkennungskontrolle sowie
-  Einstellungen und authentifizierter ZIP-Export.
+Start, Ende und die Verteilung der Steigerung lassen sich anpassen. Die
+Verteilungszahl beschreibt nur, wie die Temperatur von Start zu Ende ansteigt.
+Sie plant und begrenzt keine Saunagänge. Ist die Endtemperatur erreicht, bleibt
+sie auch für beliebig viele weitere Gänge gültig. Eine Änderung während einer
+Sitzung wirkt auf die weitere Temperaturfolge, ohne den laufenden Betrieb zu
+unterbrechen.
 
-Die Verlaufsgestaltung folgt der Nutzervorlage: orange Temperatur, blaue
-Feuchte auf gemeinsamer Zeitachse, gelbe Türöffnungen, magentafarbene Gänge,
-weiße Aufgüsse und farbige Betriebsbereiche. Oben/unten bleiben getrennte
-Kurven. Konfiguration wird ausschließlich in den HA-Entry-Optionen gespeichert
-und bleibt während einer Sitzung bis auf Solltemperatur, Erhöhung je Gang und Endtemperatur gesperrt. Eine neue Solltemperatur gilt sofort als Ausgangspunkt weiterer Steigerungen. Änderungen setzen weder Gang noch Nachlauf, Kühlung, Heizpause, Mindestheizzeit oder Schutz zurück.
+## Licht, das dem Aufheizen folgt
 
-## Vereinbarter Ablauf
+Das Licht orientiert sich während des Aufheizens an der Temperatur. Ab dem
+einstellbaren Kaltpunkt von standardmäßig 30 °C steigt es linear vom Grundlicht
+von 5 % bis zum normalen Licht. Dieses beträgt tagsüber standardmäßig 40 % und
+nachts 25 %; in der Dämmerung geht es gleitend zwischen beiden Werten über.
 
-Personenerkennung legt einen vorläufigen Gang an; Aufguss bestätigt denselben
-Gang. Beginn ist die passende Türschließung, Erkennung und Bestätigung bleiben
-separate Zeiten. Ohne Bestätigung wird der vorläufige Gang vollständig
-aufgehoben: keine Zählung und kein Nachlauf. Dasselbe gilt bei bestätigtem
-Durchlüften vor Aufguss. Ausdrückliches Ausschalten beendet einen laufenden
-Gang sofort. Jeder beendete Gang mit Aufguss zählt einmal.
+Im Nachlauf dimmt das Licht standardmäßig auf 15 %, während einer Kühlung auf
+5 %. Übergänge dauern standardmäßig 30 Sekunden und lassen sich anpassen.
+Anschließend steigt die Helligkeit bis zum Ende der jeweiligen Phase wieder
+auf den zur Temperatur passenden Wert. Bei
+einem Saunagang bleibt das normale Licht auch dann erhalten, wenn die Temperatur
+fällt; während einer Kühlung hat deren Lichtvorgabe Vorrang. Eine manuelle
+Lichtwahl gilt bis zum nächsten Phasenwechsel.
 
-| Einstellbarer Ausgangswert | Standard |
-|---|---:|
-| Bereitschaftsaufschlag auf Solltemperatur | 5 °C |
-| Bereitschaftshysterese | 3 °C |
-| Thermostat-Cooldown | 5 Minuten |
-| Mindestheizzeit nach tatsächlichem Einschalten | 10 Minuten |
-| Heizbudget vor erster Kühlung | 90 Minuten gezählte Heizzeit |
-| Einmalige Verringerung nach erster Kühlung | 30 Minuten, danach konstant |
-| Zwangskühlung | 15 Minuten |
-| Personenerkennung nach Türschließung abwarten | 4 Minuten |
-| Kühlaufschub bei offen bleibender Tür | 10 Minuten ab Öffnung |
-| Temperaturregel für Zusatzkühlung | länger als 10 Minuten über 105 °C |
-| Zusatzkühlung | doppelte konfigurierte Kühlzeit |
-| Geschätzte Laufzeit des mechanischen Ofentimers | 4 Stunden |
+Nach dem Ende einer Sitzung leuchtet das Licht standardmäßig noch 10 Minuten mit
+50 % und schaltet dann aus. Dauer und Helligkeit sind einstellbar.
 
-Ein laufender Gang bleibt bei fälliger Kühlung erhalten. Danach folgen
-Nachlauf mit Ofen-Aus und nur die verbleibende Kühlzeit. Nachlauf und laufende
-Kühlung sperren neue Gänge. Türöffnung beim Aufheizen/in Bereitschaft lässt
-zunächst Zeit für Personenerkennung. Ohne Signal beginnt anschließend eine
-fällige Kühlung. Mindestheizzeit verzögert weder Nachlauf/Kühlung noch Betrieb-Aus
-oder bestätigte technische Schutzabschaltung.
+## Heizzeit, Kühlung und Energie
 
-Setup/Neustart startet keinen Betrieb; Setup und Unload senden Ofen-Aus.
-Historische Daten bleiben erhalten. Übertemperatur erzeugt die vereinbarte
-Zusatzkühlung ohne Sessionabbruch. Bestätigte zentrale technische Ausfälle
-verriegeln die Heizung; Quittierung benötigt Betrieb-Aus und bestätigten Ofen-Aus.
+Die Heizzeit beginnt mit einem einstellbaren Budget von standardmäßig 90 Minuten
+gezählter Heizzeit. Nach der ersten Kühlung derselben Sitzung sinkt dieses Budget
+einmalig auf 60 Minuten und bleibt danach gleich. Eine fällige Kühlung pausiert
+bei einem laufenden Saunagang; anschließend wird der Nachlauf auf ihre Dauer
+angerechnet. Die Kühlvorgabe beträgt standardmäßig 15 Minuten. Alle diese Werte
+sind Standards und können angepasst werden.
 
-## Nachweise und Dokumentation
+Bei manueller Ofenübersteuerung bleibt die ausstehende Kühlung erhalten.
+Wird während des Nachlaufs manuell geheizt, hält dessen Uhr an und läuft danach
+mit der verbliebenen Zeit weiter.
 
-Der aktuelle, nach Testart getrennte Nachweis steht in [Abnahme](docs/abnahme.md).
-Softwaretests sind keine Abnahme des realen Ofens. Insbesondere sind reale
-Temperaturkalibrierung, Ausfallzeiten, tatsächliche Schalt-/Stromrückmeldung und
-Zusammenwirken mit vorhandenen mechanischen Schutzfunktionen örtlich zu prüfen.
+Der mechanische Ofentimer bleibt eine Erinnerung: Die Anzeige schätzt seine
+Restzeit, steuert aber weder Ofen noch Schutzfunktionen. Für die Sitzungsenergie
+nutzt HA Sauna standardmäßig 4,5 kW und die gezählte Heizzeit. Ist eine passende
+Leistungsmessung vorhanden, kann sie diese Schätzung ersetzen.
 
-[Architektur](docs/architektur.md) · [Betrieb](docs/betrieb.md) ·
-[Gangmodell](docs/gangmodell.md) · [Zeitmodell](docs/zeitmodell.md) ·
-[Parameter](docs/parameter.md) · [Oberfläche](docs/darstellung.md) ·
-[Archiv und Backup](docs/speicherung.md) · [Umsetzung](docs/umsetzung.md) ·
-[Entscheidungen](docs/entscheidungen.md) · [Unveränderter Kandidat](docs/kandidat.md)
+## Übersicht, Archiv und Verwaltung
 
-```sh
-# Reiner Fachkern und SQLite, kein HA erforderlich:
-python -m unittest discover -s tests -v
-# Installierte Zielversion in isolierter Linux-Umgebung:
-HA_TEST_REQUIRED=1 python -m unittest discover -s tests/ha -v
-HA_TEST_REQUIRED=1 python -m unittest discover -s tests/integration -v
-HA_TEST_REQUIRED=1 python -m unittest discover -s tests/browser -v
-```
+Neben der Übersicht gibt es einen Verlauf mit Archivwahl. Dort bleiben
+Messwerte und Ereignisse einer Sitzung nachvollziehbar. In den Details können
+Sie das Archiv als ZIP herunterladen.
 
-CI installiert HA 2026.9.2, für den Browser zusätzlich das dazugehörige Frontend
-20260826.7 und Playwright 1.63.0/Chromium. Die genauen Befehle stehen im
-[Workflow](.github/workflows/tests.yml). API-Smokes mit Testdoubles, tatsächliche
-HA-Integrationstests und Browserprüfungen werden getrennt ausgewiesen.
+Die Protokollierung ist ebenfalls in den Details wählbar: **INFO** ist der
+Standard für Betriebsereignisse und Fehler, **ERROR** beschränkt sich auf Fehler,
+und **DEBUG** ergänzt ausführliche Diagnoseinformationen.
 
-Privater Replay-Export bleibt lokal und außerhalb des Repos:
+## Weiterführende technische Dokumentation
 
-```sh
-python -m pip install -r requirements-replay.txt
-SAUNA_RECORDER_ARCHIVE=/pfad/sauna-recorder-2026-09-17.zip \
-  python -m unittest discover -s tests -p 'test_*replay.py' -v
-SAUNA_RECORDER_ARCHIVE=/pfad/sauna-recorder-2026-09-17.zip \
-  python -m unittest discover -s tests -p test_candidate.py -v
-```
-
-`candidate/parameter.json` und `candidate/provenienz.json` bleiben eingefrorene
-Referenzen. Produktive Parameter stammen ausschließlich aus den Entry-Optionen.
-Die Referenzsession dient der Kalibrierung, nicht der unabhängigen Feldvalidierung.
+Technische Hintergründe, Parameter und der dokumentierte Nachweis bleiben
+separat verfügbar: [Betrieb](docs/betrieb.md), [Parameter](docs/parameter.md),
+[Oberfläche](docs/darstellung.md), [Archiv und Backup](docs/speicherung.md),
+[Entscheidungen](docs/entscheidungen.md), [Umsetzung](docs/umsetzung.md) und
+[Abnahme](docs/abnahme.md).

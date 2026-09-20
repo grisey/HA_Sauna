@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
 from custom_components.ha_sauna.bindings import ROLES
-from custom_components.ha_sauna.core.parameters import DEFINITIONS
+from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,7 +52,8 @@ async def start_hass(directory=None, *, with_recorder=False):
 
 
 async def credentials(hass):
-    user = await hass.auth.async_create_user("Isolierter Test")
+    from homeassistant.auth.const import GROUP_ID_ADMIN
+    user = await hass.auth.async_create_user("Isolierter Test", group_ids=[GROUP_ID_ADMIN])
     refresh = await hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
     return hass.auth.async_create_access_token(refresh)
 
@@ -81,7 +82,7 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
     assert flow["step_id"] == "user", flow
     flow = await hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Testsauna", "control_input_mode": "switch", **bindings})
     assert flow["step_id"] == "parameters", flow
-    values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS if d.key != "final_temperature_c"}
+    values = {d.key: d.default if d.default is not None else 2.5 for d in EDITABLE_DEFINITIONS if d.key != "final_temperature_c"}
     values.update(heating_minutes=2.5, heating_reduction_minutes=0.5, session_gap_minutes=2.5,
         sensor_timeout_seconds=2.5, feedback_timeout_seconds=2.5, fault_confirmation_seconds=2.5)
     values.update(parameter_overrides or {})

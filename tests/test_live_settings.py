@@ -9,12 +9,13 @@ from test_cooling import at, controller
 from test_foundation import T0, event
 
 
-def change(c, second, **values):
+def change(c, second, *, explicit_target=None, new_program=False, program_mode=None, **values):
     merged = {**c.parameters.as_dict(), **values}
     if merged.get("final_temperature_c") is None:
         merged.pop("final_temperature_c", None)
     c.update_temperature_parameters(Parameters(merged), at(second),
-        explicit_target="target_temperature_c" in values)
+        explicit_target=("target_temperature_c" in values if explicit_target is None else explicit_target),
+        new_program=new_program, program_mode=program_mode)
 
 
 def gang(c, index, start):
@@ -25,49 +26,107 @@ def gang(c, index, start):
 
 
 class LiveTemperatureTests(unittest.TestCase):
-    def test_manual_target_rebases_after_two_gangs_without_recounting_them(self):
-        c = controller(target_temperature_c=75, final_temperature_c=100,
-            temperature_increase_c=5, after_run_minutes=.1)
+    def test_distribution_does_not_limit_real_gangs_after_end_change(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
         gang(c, 1, 10)
-        c.advance(at(20))
         gang(c, 2, 30)
-        self.assertEqual(c.target_temperature, 85)
-        after_run, deadlines = c.session.after_run, c.session.deadlines
-        timer = c.mechanical_timer
-        change(c, 34, target_temperature_c=80)
-        self.assertEqual(c.target_temperature, 80)
-        self.assertEqual(c.session.timeline.gang_count, 2)
-        self.assertEqual(c.session.after_run, after_run)
-        self.assertEqual(c.session.deadlines, deadlines)
-        self.assertEqual(c.mechanical_timer, timer)
-        self.assertFalse(c.last_decision.heat)
-        c.advance(at(45))
-        gang(c, 3, 50)
-        self.assertEqual(c.target_temperature, 85)
-        change(c, 54, target_temperature_c=80)  # Gleicher gespeicherter Wert, neue Wirkung.
-        self.assertEqual(c.target_temperature, 80)
+        change(c, 34, final_temperature_c=100, explicit_target=False)
+        self.assertEqual(c.target_temperature, 90)
+        for index in range(3, 13):
+            gang(c, index, 10 + (index - 1) * 20)
+            self.assertEqual(c.target_temperature, 100)
+            self.assertEqual(c.session.timeline.gang_count, index)
+            self.assertTrue(c.session.operation_enabled)
 
-    def test_rate_and_end_only_apply_to_future_gangs(self):
-        c = controller(target_temperature_c=75, final_temperature_c=100,
-            temperature_increase_c=5, after_run_minutes=.1)
+    def test_end_change_keeps_current_stage_then_reaches_new_end(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
         gang(c, 1, 10)
-        change(c, 14, temperature_increase_c=2)
-        self.assertEqual(c.target_temperature, 80)
-        c.advance(at(20))
+        self.assertEqual(c.target_temperature, 85)
+        change(c, 14, final_temperature_c=100, explicit_target=False)
+        self.assertEqual(c.target_temperature, 85)
         gang(c, 2, 30)
-        self.assertEqual(c.target_temperature, 82)
-        change(c, 34, final_temperature_c=81)
-        self.assertEqual(c.target_temperature, 81)
-        change(c, 35, final_temperature_c=None)
-        self.assertEqual(c.target_temperature, 81)
-        c.advance(at(40))
+        self.assertEqual(c.target_temperature, 92.5)
         gang(c, 3, 50)
-        self.assertEqual(c.target_temperature, 81)
-        c.set_operation(False, at(60))
-        c.advance(at(660))
-        c.set_operation(True, at(661))
-        self.assertEqual(c.target_temperature, 75)
-        self.assertIsNone(c.session.temperature_base_c)
+        self.assertEqual(c.target_temperature, 100)
+        gang(c, 4, 70)
+        self.assertEqual(c.target_temperature, 100)
+
+    def test_live_distribution_count_uses_gangs_since_program_selection(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
+        gang(c, 1, 10)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 90)
+        change(c, 34, temperature_gangs=6, explicit_target=False)
+        self.assertEqual(c.session.temperature_program_gangs, 6)
+        self.assertEqual(c.target_temperature, 90)
+        gang(c, 3, 50)
+        self.assertEqual(c.target_temperature, 91.66666666666667)
+        gang(c, 4, 70)
+        self.assertEqual(c.target_temperature, 93.33333333333333)
+        gang(c, 5, 90)
+        self.assertEqual(c.target_temperature, 95)
+        gang(c, 6, 110)
+        self.assertEqual(c.target_temperature, 95)
+
+    def test_one_distribution_point_reaches_a_different_end_after_one_gang(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=1, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
+        self.assertEqual(c.target_temperature, 80)
+        gang(c, 1, 10)
+        self.assertEqual(c.target_temperature, 95)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 95)
+
+    def test_repeated_end_changes_remember_gangs_since_program_selection(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
+        gang(c, 1, 10)
+        self.assertEqual(c.target_temperature, 85)
+        change(c, 14, final_temperature_c=100, explicit_target=False)
+        self.assertEqual(c.target_temperature, 85)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 92.5)
+        change(c, 34, final_temperature_c=98, explicit_target=False)
+        self.assertEqual(c.target_temperature, 92.5)
+        gang(c, 3, 50)
+        self.assertEqual(c.target_temperature, 98)
+        gang(c, 4, 70)
+        self.assertEqual(c.target_temperature, 98)
+
+    def test_direct_target_stays_constant_for_all_later_gangs(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
+        gang(c, 1, 10)
+        change(c, 14, target_temperature_c=80)
+        self.assertEqual(c.target_temperature, 80)
+        for index, start in enumerate((30, 50, 70), start=2):
+            gang(c, index, start)
+            self.assertEqual(c.target_temperature, 80)
+
+    def test_new_program_restarts_distribution_at_confirmed_gang(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+        c.program_mode = "progressive"
+        gang(c, 1, 10)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        change(c, 14, target_temperature_c=70, final_temperature_c=90,
+            temperature_gangs=3, explicit_target=False, new_program=True,
+            program_mode="progressive")
+        self.assertEqual(c.target_temperature, 70)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 80)
+        gang(c, 3, 50)
+        self.assertEqual(c.target_temperature, 90)
 
     def test_live_settings_preserve_cooling_after_run_and_door_wait(self):
         for phase in ("cooling", "after_run", "door_wait"):
@@ -80,10 +139,17 @@ class LiveTemperatureTests(unittest.TestCase):
                     gang(c, 1, 57)
                 c.advance(at(60))
                 before = c.session
-                change(c, 61, target_temperature_c=95, final_temperature_c=100, temperature_increase_c=1)
+                change(c, 61, target_temperature_c=95, final_temperature_c=100, temperature_gangs=6)
                 self.assertEqual(c.session.session_id, before.session_id)
-                self.assertEqual(c.session.cooling, before.cooling)
-                self.assertEqual(c.session.after_run, before.after_run)
+                self.assertEqual(c.session.cooling.ends_at if c.session.cooling else None,
+                                 before.cooling.ends_at if before.cooling else None)
+                if before.after_run is not None:
+                    self.assertEqual(c.session.after_run.phase_id, before.after_run.phase_id)
+                    self.assertEqual(c.session.after_run.ends_at, before.after_run.ends_at)
+                    self.assertEqual(c.session.after_run.remaining_seconds,
+                                     before.after_run.remaining_seconds - 1)
+                else:
+                    self.assertIsNone(c.session.after_run)
                 self.assertEqual(c.session.deadlines, before.deadlines)
                 self.assertGreaterEqual(c.session.heating.elapsed_seconds, before.heating.elapsed_seconds)
                 if phase != "door_wait":
@@ -125,7 +191,7 @@ class LiveTemperatureTests(unittest.TestCase):
         self.assertFalse(c.last_decision.heat)
         c.set_operation(False, at(6))
         gap = c.session.deadlines
-        change(c, 7, target_temperature_c=105)
+        change(c, 7, target_temperature_c=100)
         self.assertFalse(c.last_decision.heat)
         self.assertEqual(c.session.deadlines, gap)
 

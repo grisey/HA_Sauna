@@ -1,7 +1,7 @@
 """Manuelles Phasenende nutzt denselben Folgeablauf mit wirklichen Zeitpunkten."""
 import unittest
 
-from test_cooling import at, controller
+from test_cooling import Controller, at, controller
 from test_foundation import event
 from custom_components.ha_sauna.core.timeline import Kind
 
@@ -91,6 +91,25 @@ class ManualPhaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.finish_phase("confirmation", "unused", at(60))
         self.assertEqual(c.phase, "saunagang")
+
+    def test_paused_started_cooling_can_be_ended_with_its_current_cycle_id(self):
+        c = after_run()
+        c.finish_phase("after_run", c.session.after_run.phase_id, at(80))
+        cycle = c.session.cooling
+        c.set_heater_override(True, at(90))
+
+        self.assertEqual(cycle.cycle_id, c.session.cooling.cycle_id)
+        self.assertIsNotNone(c.session.cooling.started_at)
+        self.assertIsNone(c.session.cooling.ends_at)
+        c.finish_phase("forced_cooling", cycle.cycle_id, at(100))
+
+        self.assertIsNone(c.session.cooling)
+        self.assertEqual(c.session.cooling_history[-1].cycle_id, cycle.cycle_id)
+        self.assertEqual(c.session.cooling_history[-1].ends_at, at(100))
+
+    def test_finish_without_session_is_a_conflict_not_an_attribute_error(self):
+        with self.assertRaises(ValueError):
+            Controller(controller().parameters).finish_phase("after_run", "old", at(0))
 
     def test_expired_phase_is_not_processed_twice(self):
         c = after_run()

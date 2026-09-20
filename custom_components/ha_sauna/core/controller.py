@@ -1,17 +1,21 @@
 """Führender Sessionablauf mit Gang-, Heizzeit-, Nachlauf- und Kühlungsregeln."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from math import isfinite
 from uuid import uuid4
 
 from . import energy, heating, thermostat
 from .models import CoolingCycle, Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .mechanical_timer import MechanicalTimer
 from .parameters import Parameters, LIVE_TEMPERATURE_KEYS
+from .temperature_program import TemperatureProgram
 from .timeline import Event, Kind, apply, utc
 
 GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
+PROGRAM_MODES = frozenset(("constant", "progressive"))
 
 
 @dataclass(frozen=True)
@@ -25,8 +29,13 @@ class Result:
 class Controller:
     """Ein führender Zustand. Die äußere Laufzeit serialisiert alle Eingänge."""
 
-    def __init__(self, parameters: Parameters) -> None:
+    def __init__(
+        self, parameters: Parameters, *, program_mode: str = "constant"
+    ) -> None:
+        if program_mode not in PROGRAM_MODES:
+            raise ValueError("Ungültiger Temperaturprogrammmodus")
         self.parameters = parameters
+        self.program_mode = program_mode
         self._session: Session | None = None
         self.completed_sessions: tuple[Session, ...] = ()
         self.light_after_run: LightAfterRun | None = None
@@ -40,6 +49,14 @@ class Controller:
         self.protection: set[str] = set()
         self.inhibits: set[str] = set()
         self.last_decision: thermostat.Decision | None = None
+        # Die automatische Regelung und ihr tatsächlich ausgegebener Befehl
+        # sind absichtlich getrennt: eine Bedienung darf die Regelgrundlage
+        # nicht umschreiben.
+        self.automatic_decision: thermostat.Decision | None = None
+        self.heater_override: bool | None = None
+        self._override_snapshot: tuple[tuple[str | None, str], tuple[bool]] | None = (
+            None
+        )
         self.decisions: list[thermostat.Decision] = []
         self.overtemperature_since: datetime | None = None
         self._temperature_cooling_requested = False
@@ -60,31 +77,106 @@ class Controller:
 
     @property
     def target_temperature(self) -> float | None:
-        target = self.parameters.values.get("target_temperature_c")
+        start = self.parameters.values.get("target_temperature_c")
         end = self.parameters.values.get("final_temperature_c")
-        count = self._session.timeline.gang_count if self._session else 0
-        if self._session and self._session.temperature_base_c is not None:
-            target = self._session.temperature_base_c
-            count -= self._session.temperature_base_gang_count
-        if target is not None and end is not None:
-            return min(end, target + count * self.parameters.values["temperature_increase_c"])
-        return target
+        session = self._session
+        mode = (
+            session.temperature_program_mode
+            if session and session.temperature_program_mode
+            else self.program_mode
+        )
+        if mode != "progressive" or start is None or end is None:
+            return start
+        completed = session.timeline.gang_count if session else 0
+        base_anchor = session.temperature_base_gang_count if session else 0
+        program_anchor = session.temperature_program_start_gang_count if session else 0
+        if session and session.temperature_base_c is not None:
+            start = session.temperature_base_c
+        gangs = (
+            session.temperature_program_gangs
+            if session and session.temperature_program_gangs
+            else self.parameters.values["temperature_gangs"]
+        )
+        # The program anchor stays at the explicit program selection.  A live
+        # edit only moves the temperature anchor, so repeated edits cannot
+        # make already completed actual gangs disappear.
+        elapsed_before_base = max(0, base_anchor - program_anchor)
+        remaining = gangs - elapsed_before_base
+        if base_anchor > program_anchor:
+            remaining = max(2, remaining)
+        elapsed_after_base = max(0, completed - base_anchor)
+        return TemperatureProgram(start, end, remaining).target(elapsed_after_base)
 
-    def update_temperature_parameters(self, parameters, at, *, explicit_target=False):
-        changed = {k for k in self.parameters.values.keys() | parameters.values.keys()
-                   if self.parameters.values.get(k) != parameters.values.get(k)}
+    def update_temperature_parameters(
+        self,
+        parameters,
+        at,
+        *,
+        explicit_target=False,
+        program_mode=None,
+        new_program=False,
+    ):
+        """Change live temperature settings without altering the actual gang count.
+
+        ``explicit_target`` is a direct, constant target choice.  A program
+        selection must instead set ``new_program`` (and optionally its mode),
+        which anchors a fresh distribution at the already confirmed gang.
+        """
+        if program_mode is not None and program_mode not in PROGRAM_MODES:
+            raise ValueError("Ungültiger Temperaturprogrammmodus")
+        changed = {
+            k
+            for k in self.parameters.values.keys() | parameters.values.keys()
+            if self.parameters.values.get(k) != parameters.values.get(k)
+        }
         if changed - LIVE_TEMPERATURE_KEYS:
-            raise ValueError("Während einer Saunasitzung sind nur Solltemperatur, Steigerungsrate und Endtemperatur änderbar.")
+            raise ValueError(
+                "Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar."
+            )
         self.advance(at, evaluate=False)
         before = self.target_temperature
         self.parameters = parameters
-        if self._session and (changed or explicit_target):
-            target = parameters.values["target_temperature_c"] if explicit_target else before
-            end = parameters.values.get("final_temperature_c")
-            if end is not None:
-                target = min(target, end)
-            self._session = replace(self._session, temperature_base_c=target,
-                temperature_base_gang_count=self._session.timeline.gang_count)
+        selected_mode = program_mode if program_mode is not None else self.program_mode
+        if program_mode is not None:
+            self.program_mode = program_mode
+            new_program = True
+        if self._session and (changed or explicit_target or new_program):
+            completed = self._session.timeline.gang_count
+            if explicit_target:
+                # A direct setpoint deliberately remains fixed for later gangs.
+                self._session = replace(
+                    self._session,
+                    temperature_base_c=parameters.values["target_temperature_c"],
+                    temperature_base_gang_count=completed,
+                    temperature_program_mode="constant",
+                    temperature_program_gangs=None,
+                )
+            elif new_program:
+                self._session = replace(
+                    self._session,
+                    temperature_base_c=parameters.values["target_temperature_c"],
+                    temperature_base_gang_count=completed,
+                    temperature_program_mode=selected_mode,
+                    temperature_program_gangs=parameters.values["temperature_gangs"]
+                    if selected_mode == "progressive"
+                    else None,
+                    temperature_program_start_gang_count=completed,
+                )
+            elif (
+                self._session.temperature_program_mode or self.program_mode
+            ) == "progressive" and changed & {
+                "final_temperature_c",
+                "temperature_gangs",
+            }:
+                # Keep today's target.  The new distribution count is measured
+                # from the last explicit program selection, not this edit.
+                self._session = replace(
+                    self._session,
+                    temperature_base_c=before,
+                    temperature_base_gang_count=completed,
+                    temperature_program_mode="progressive",
+                    temperature_program_gangs=parameters.values["temperature_gangs"],
+                )
             if self.target_temperature != before:
                 self._session = replace(self._session, ready_at=None)
         self._evaluate(utc(at))
@@ -92,7 +184,11 @@ class Controller:
     @property
     def readiness_target(self) -> float | None:
         target = self.target_temperature
-        return None if target is None else target + self.parameters.values["readiness_offset_c"]
+        return (
+            None
+            if target is None
+            else target + self.parameters.values["readiness_offset_c"]
+        )
 
     @property
     def mechanical_timer_ends_at(self):
@@ -100,15 +196,27 @@ class Controller:
 
     @property
     def mechanical_timer_status(self):
-        status = self.mechanical_timer.status(self._last_at,
-            self.parameters.seconds("mechanical_timer_minutes"))
-        status["pause_reason"] = ("operation_off" if not self._session or not self._session.operation_enabled
-            else "contactor_off" if self.contactor is False else "contactor_unavailable") if status["state"] == "paused" else None
+        status = self.mechanical_timer.status(
+            self._last_at, self.parameters.seconds("mechanical_timer_minutes")
+        )
+        status["pause_reason"] = (
+            (
+                "operation_off"
+                if not self._session or not self._session.operation_enabled
+                else "contactor_off"
+                if self.contactor is False
+                else "contactor_unavailable"
+            )
+            if status["state"] == "paused"
+            else None
+        )
         return status
 
     def _sync_mechanical_timer(self, at):
         if self._session and self._session.operation_enabled:
-            self.mechanical_timer = self.mechanical_timer.start(at, self._session.session_id)
+            self.mechanical_timer = self.mechanical_timer.start(
+                at, self._session.session_id
+            )
             if self.contactor is True:
                 return
         self.mechanical_timer = self.mechanical_timer.pause(at)
@@ -123,8 +231,32 @@ class Controller:
     def cooling_wait_until(self):
         if self._session is None:
             return None
-        return next((d.due_at for d in self._session.deadlines
-                     if d.purpose == "person_opportunity"), None)
+        return next(
+            (
+                d.due_at
+                for d in self._session.deadlines
+                if d.purpose == "person_opportunity"
+            ),
+            None,
+        )
+
+    @property
+    def cooling_remaining_seconds(self) -> float | None:
+        """Unveränderliche Restzeit der aktuellen Kühlung, auch in Pause."""
+        cycle = self._session.cooling if self._session else None
+        return cycle.remaining_seconds if cycle is not None else None
+
+    def _cooling_active(self, cycle=None) -> bool:
+        cycle = (
+            cycle
+            if cycle is not None
+            else (self._session.cooling if self._session else None)
+        )
+        return bool(
+            cycle is not None
+            and cycle.started_at is not None
+            and cycle.paused_at is None
+        )
 
     @property
     def phase(self) -> str:
@@ -135,11 +267,15 @@ class Controller:
             return "saunagang"
         if session.after_run:
             return "nachlauf"
-        if session.cooling and session.cooling.started_at is not None:
+        if self._cooling_active(session.cooling):
             return "zwangskühlung"
-        if (session.ready_at is not None and self.temperature is not None
-                and self.readiness_target is not None
-                and self.temperature >= self.readiness_target - self.parameters.values["readiness_hysteresis_c"]):
+        if (
+            session.ready_at is not None
+            and self.temperature is not None
+            and self.readiness_target is not None
+            and self.temperature
+            >= self.readiness_target - self.parameters.values["readiness_hysteresis_c"]
+        ):
             return "bereit"
         return "aufheizen"
 
@@ -148,29 +284,103 @@ class Controller:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
         self.light_after_run = None
-        self._session = replace(Session.create(session_id, at), operation_enabled=True,
-                                energy=Energy(accounted_at=at))
-        self._session = replace(self._session, heating=heating.report(
-            self._session.heating, self.feedback, at, self.parameters.seconds("heat_reset_minutes")))
+        self._session = replace(
+            Session.create(session_id, at),
+            operation_enabled=True,
+            energy=Energy(accounted_at=at),
+        )
+        self._session = replace(
+            self._session,
+            heating=heating.report(
+                self._session.heating,
+                self.feedback,
+                at,
+                self.parameters.seconds("heat_reset_minutes"),
+            ),
+        )
+        # Der Übertemperatur-Nachweis gehört zur realen Messlage und bleibt
+        # sitzungsübergreifend. Die zugehörige Kühlanforderung dagegen bezog
+        # sich auf den verworfenen Sitzungszyklus und muss neu angelegt werden.
+        self._temperature_cooling_requested = False
         self._last_at = at
         self._sync_mechanical_timer(at)
+        self._ensure_cooling(at)
         self._evaluate(at)
         return self._session
 
-    def set_operation(self, enabled: bool, at: datetime, *, session_id: str | None = None):
+    def set_operation(
+        self, enabled: bool, at: datetime, *, session_id: str | None = None
+    ):
         at = utc(at)
         self.advance(at, evaluate=False)
+        if not enabled:
+            self._clear_heater_override()
         if enabled:
             if self._session is None:
                 return self.begin_session(session_id or uuid4().hex, at)
             if not self._session.operation_enabled:
-                self._session = replace(self._session, operation_enabled=True, operation_off_at=None)
+                self._session = replace(
+                    self._session, operation_enabled=True, operation_off_at=None
+                )
                 self._cancel("session_gap")
                 self._sync_mechanical_timer(at)
         elif self._session is not None and self._session.operation_enabled:
-            self.process(Event(uuid4().hex, self._session.session_id, Kind.OPERATION_OFF, at, at))
+            self.process(
+                Event(uuid4().hex, self._session.session_id, Kind.OPERATION_OFF, at, at)
+            )
         self._evaluate(at)
         return self._session
+
+    def set_heater_override(self, heat: bool | None, at: datetime):
+        """Manueller Ofenbefehl; ``None`` übergibt wieder an die Automatik."""
+        if heat is not None and not isinstance(heat, bool):
+            raise ValueError(
+                "Heizübersteuerung muss wahr, falsch oder automatisch sein"
+            )
+        if heat is True and (
+            self._session is None or not self._session.operation_enabled
+        ):
+            raise ValueError(
+                "Bitte zuerst den Saunabetrieb einschalten. Danach kann die Heizregelung manuell übersteuert werden."
+            )
+        if heat is True and (self.protection or self.inhibits):
+            raise ValueError(
+                "Manuelles Einschalten ist bei aktivem Schutz oder Inhibit nicht möglich"
+            )
+        if heat is True and (
+            self.temperature is None or not isfinite(self.temperature)
+        ):
+            raise ValueError(
+                "Manuelles Einschalten erfordert einen gültigen oberen Temperaturwert"
+            )
+        at = utc(at)
+        self.advance(at, evaluate=False)
+        self.heater_override = heat
+        if heat is None:
+            self._clear_heater_override()
+            self._ensure_cooling(at)
+            self._evaluate(at)
+            return self.last_decision
+        if heat is False:
+            # Ein manueller AUS-Befehl ist kein manuelles Heizen und darf die
+            # Nachlaufuhr daher nicht stillstehen lassen.
+            self._ensure_cooling(at)
+        if (
+            heat is True
+            and self._session is not None
+            and self._session.after_run is not None
+        ):
+            self._pause_after_run(at)
+        if self._cooling_active():
+            self._account_cooling(at)
+            self._pause_cooling(at)
+        # Erst nach den durch die Bedienung ausgelösten Phasenänderungen merken.
+        self._evaluate(at, preserve_override=True)
+        self._override_snapshot = (
+            self._current_phase_key(),
+            self._automatic_signature(),
+        )
+        return self.last_decision
 
     def set_temperature(self, value: float | None, at: datetime):
         self.advance(at, evaluate=False)
@@ -188,12 +398,21 @@ class Controller:
         self.advance(at, evaluate=False)
         self.feedback = value
         if self._session is not None:
-            self._session = replace(self._session, heating=heating.report(
-                self._session.heating, value, at, self.parameters.seconds("heat_reset_minutes")))
+            self._session = replace(
+                self._session,
+                heating=heating.report(
+                    self._session.heating,
+                    value,
+                    at,
+                    self.parameters.seconds("heat_reset_minutes"),
+                ),
+            )
             self._ensure_cooling(utc(at))
         self._evaluate(utc(at))
 
-    def report_power(self, value: float | None, valid_until: datetime | None, at: datetime):
+    def report_power(
+        self, value: float | None, valid_until: datetime | None, at: datetime
+    ):
         self.advance(at, evaluate=False)
         self.power_w, self.power_valid_until = value, valid_until
 
@@ -203,33 +422,59 @@ class Controller:
         state = self._session.heating
         if state.accounted_at is not None and state.accounted_at > at:
             return
-        self._session = replace(self._session, heating=heating.advance(
-            state, at, self.parameters.seconds("heat_reset_minutes")),
-            energy=energy.advance(self._session.energy, at, power_w=self.power_w,
-                valid_until=self.power_valid_until, heating=state.reported_heating,
-                nominal_kw=self.parameters.values["nominal_power_kw"]))
+        self._session = replace(
+            self._session,
+            heating=heating.advance(
+                state, at, self.parameters.seconds("heat_reset_minutes")
+            ),
+            energy=energy.advance(
+                self._session.energy,
+                at,
+                power_w=self.power_w,
+                valid_until=self.power_valid_until,
+                heating=state.reported_heating,
+                nominal_kw=self.parameters.values["nominal_power_kw"],
+            ),
+        )
 
     def _cancel(self, purpose):
-        self._session = replace(self._session, deadlines=tuple(
-            d for d in self._session.deadlines if d.purpose != purpose))
+        self._session = replace(
+            self._session,
+            deadlines=tuple(d for d in self._session.deadlines if d.purpose != purpose),
+        )
 
     def _schedule(self, purpose, due_at, token=None):
-        self.register_deadline(Deadline(self._session.session_id, purpose, token or uuid4().hex, due_at))
+        self.register_deadline(
+            Deadline(self._session.session_id, purpose, token or uuid4().hex, due_at)
+        )
 
     def advance(self, at: datetime, *, evaluate=True, inclusive_confirmation=True):
         at = utc(at)
         if self._last_at is not None and at < self._last_at:
             raise ValueError("Laufzeituhr darf nicht rückwärts laufen")
         while self._session is not None:
-            due = sorted((d for d in self._session.deadlines if d.due_at <= at
-                          and (inclusive_confirmation or d.purpose not in
-                               ("confirmation", "person_opportunity") or d.due_at < at)),
-                         key=lambda d: (d.due_at, d.purpose))
+            due = sorted(
+                (
+                    d
+                    for d in self._session.deadlines
+                    if d.due_at <= at
+                    and (
+                        inclusive_confirmation
+                        or d.purpose not in ("confirmation", "person_opportunity")
+                        or d.due_at < at
+                    )
+                ),
+                key=lambda d: (d.due_at, d.purpose),
+            )
             if not due:
                 break
             self._account_heat(due[0].due_at)
+            self._account_after_run(due[0].due_at)
+            self._account_cooling(due[0].due_at)
             self.consume_deadline(due[0], at)
         self._account_heat(at)
+        self._account_after_run(at)
+        self._account_cooling(at)
         self._last_at = at
         if self._session is not None:
             self._ensure_cooling(at)
@@ -241,7 +486,10 @@ class Controller:
         if self._session is None:
             raise ValueError("Ereignis ohne Session")
         previous = self._session
-        existing = next((e for e in previous.timeline.processed if e.event_id == event.event_id), None)
+        existing = next(
+            (e for e in previous.timeline.processed if e.event_id == event.event_id),
+            None,
+        )
         if existing is not None:
             if existing != event:
                 raise ValueError("Ereignis-ID mit abweichendem Inhalt wiederverwendet")
@@ -249,7 +497,9 @@ class Controller:
         if event.session_id != previous.session_id:
             raise ValueError("Ereignis gehört zu einer anderen Session")
         if self._last_at is not None and event.detected_at < self._last_at:
-            raise ValueError("Verspätetes Ereignis darf keine aktuelle Betriebsentscheidung ändern")
+            raise ValueError(
+                "Verspätetes Ereignis darf keine aktuelle Betriebsentscheidung ändern"
+            )
         # Fehlerhafte Eingänge dürfen nicht beiläufig Timer oder Zustand verändern.
         if event.effective_at < previous.started_at:
             raise ValueError("Ereignis liegt vor dem Sessionbeginn")
@@ -261,10 +511,15 @@ class Controller:
                 parameter = None
                 if event.kind == Kind.DOOR_OPEN:
                     parameter = "open_door_wait_minutes"
-                elif self.cooling_wait_until is not None and self.cooling_wait_until >= event.detected_at:
+                elif (
+                    self.cooling_wait_until is not None
+                    and self.cooling_wait_until >= event.detected_at
+                ):
                     parameter = "person_wait_minutes"
                 if parameter:
-                    due_at = event.effective_at + timedelta(seconds=self.parameters.seconds(parameter))
+                    due_at = event.effective_at + timedelta(
+                        seconds=self.parameters.seconds(parameter)
+                    )
                     if due_at > event.detected_at:
                         self._schedule("person_opportunity", due_at, event.event_id)
         self.advance(event.detected_at, evaluate=False, inclusive_confirmation=False)
@@ -277,11 +532,15 @@ class Controller:
                 blocked = "operation_off"
             elif previous.after_run is not None:
                 blocked = "after_run"
-            elif previous.cooling is not None and previous.cooling.started_at is not None:
+            elif self._cooling_active(previous.cooling):
                 blocked = "forced_cooling"
         if blocked:
-            self._session = replace(previous, timeline=replace(previous.timeline,
-                processed=previous.timeline.processed + (event,)))
+            self._session = replace(
+                previous,
+                timeline=replace(
+                    previous.timeline, processed=previous.timeline.processed + (event,)
+                ),
+            )
             self._evaluate(event.detected_at)
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
@@ -295,14 +554,29 @@ class Controller:
         if active is None or active.infusion_events:
             self._cancel("confirmation")
         elif previous.timeline.active is None:
-            self._schedule("confirmation", active.started_at + timedelta(
-                seconds=self.parameters.seconds("confirmation_minutes")), active.gang_id)
-        if len(timeline.completed) > len(previous.timeline.completed) and timeline.completed[-1].infusion_events:
+            self._schedule(
+                "confirmation",
+                active.started_at
+                + timedelta(seconds=self.parameters.seconds("confirmation_minutes")),
+                active.gang_id,
+            )
+        if (
+            len(timeline.completed) > len(previous.timeline.completed)
+            and timeline.completed[-1].infusion_events
+        ):
             self._begin_after_run(timeline.completed[-1].gang_id, event.detected_at)
         if event.kind == Kind.OPERATION_OFF:
-            self._session = replace(self._session, operation_enabled=False, operation_off_at=event.detected_at)
+            self._session = replace(
+                self._session,
+                operation_enabled=False,
+                operation_off_at=event.detected_at,
+            )
             self.mechanical_timer = self.mechanical_timer.pause(event.detected_at)
-            self._schedule("session_gap", event.detected_at + timedelta(seconds=self.parameters.seconds("session_gap_minutes")))
+            self._schedule(
+                "session_gap",
+                event.detected_at
+                + timedelta(seconds=self.parameters.seconds("session_gap_minutes")),
+            )
         self.advance(event.detected_at)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
@@ -315,130 +589,474 @@ class Controller:
         if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK):
             if active is not None:
                 return False
-            source = session.timeline.anchor.event_id if session.timeline.anchor else "recognition_only"
+            source = (
+                session.timeline.anchor.event_id
+                if session.timeline.anchor
+                else "recognition_only"
+            )
             if source in session.timeline.rejected_start_sources:
                 return False
             if kind == Kind.PERSON_WEAK and session.timeline.preparation is None:
                 return False
         elif kind != Kind.INFUSION:
             return False
-        return active is not None or (session.after_run is None
-            and not (session.cooling and session.cooling.started_at is not None))
+        return active is not None or (
+            session.after_run is None and not self._cooling_active(session.cooling)
+        )
 
     def _begin_after_run(self, gang_id, at):
-        phase = TimedPhase(gang_id, at, at + timedelta(seconds=self.parameters.seconds("after_run_minutes")))
+        duration = self.parameters.seconds("after_run_minutes")
+        phase = TimedPhase(
+            gang_id, at, at + timedelta(seconds=duration), duration, accounted_at=at
+        )
         self._session = replace(self._session, after_run=phase)
         self._schedule("after_run", phase.ends_at, phase.phase_id)
+        remaining_budget = (
+            self.heating_limit_seconds - self._session.heating.elapsed_seconds
+        )
+        if self._session.cooling is None and remaining_budget < self.parameters.seconds(
+            "minimum_heating_minutes"
+        ):
+            self._create_heating_budget_cooling(at)
+
+    def _uncredited_after_run_seconds(self):
+        """Abgeschlossene Nachläufe werden aus den Phasen, nicht als Guthaben, abgeleitet."""
+        session = self._session
+        completed = sum(phase.elapsed_seconds for phase in session.after_run_history)
+        cycles = session.cooling_history + (
+            (session.cooling,) if session.cooling else ()
+        )
+        credited = sum(cycle.credited_seconds for cycle in cycles)
+        return max(0.0, completed - credited)
+
+    def _create_heating_budget_cooling(self, at):
+        session = self._session
+        cycle = CoolingCycle(
+            uuid4().hex,
+            at,
+            self.parameters.seconds("forced_cooling_minutes"),
+            credited_seconds=self._uncredited_after_run_seconds(),
+        )
+        self._session = replace(session, cooling=cycle)
 
     def _ensure_cooling(self, at):
+        if self._session is None:
+            return
+        phase = self._session.after_run
+        if (
+            phase is not None
+            and phase.paused_at is not None
+            and self.heater_override is not True
+        ):
+            self._resume_after_run(at)
         self._ensure_temperature_cooling(at)
         session = self._session
-        if session.cooling is None and session.heating.elapsed_seconds >= self.heating_limit_seconds:
-            cycle = CoolingCycle(uuid4().hex, at, self.parameters.seconds("forced_cooling_minutes"))
-            self._session = replace(session, cooling=cycle)
+        if (
+            session.cooling is None
+            and session.heating.elapsed_seconds >= self.heating_limit_seconds
+        ):
+            self._create_heating_budget_cooling(at)
         session = self._session
-        if (session.cooling is not None and session.cooling.started_at is None
-                and session.timeline.active is None and session.after_run is None
-                and self.cooling_wait_until is None):
+        if (
+            session.cooling is not None
+            and session.cooling.started_at is None
+            and session.timeline.active is None
+            and session.after_run is None
+            and self.cooling_wait_until is None
+            and self.heater_override is None
+        ):
             self._start_cooling(at)
+        elif (
+            session.cooling is not None
+            and session.cooling.paused_at is not None
+            and session.timeline.active is None
+            and session.after_run is None
+            and self.cooling_wait_until is None
+            and self.heater_override is None
+        ):
+            self._resume_cooling(at)
 
     def _ensure_temperature_cooling(self, at):
-        if (self.overtemperature_since is None or self._temperature_cooling_requested
-                or (at - self.overtemperature_since).total_seconds() <= self.parameters.seconds("overtemperature_minutes")):
+        if (
+            self.overtemperature_since is None
+            or self._temperature_cooling_requested
+            or (at - self.overtemperature_since).total_seconds()
+            <= self.parameters.seconds("overtemperature_minutes")
+        ):
             return
         self._temperature_cooling_requested = True
-        duration = self.parameters.seconds("forced_cooling_minutes") * self.parameters.values["overtemperature_cooling_factor"]
+        duration = (
+            self.parameters.seconds("forced_cooling_minutes")
+            * self.parameters.values["overtemperature_cooling_factor"]
+        )
         cycle = self._session.cooling
         if cycle is None:
-            cycle = CoolingCycle(uuid4().hex, at, duration, reason="overtemperature")
+            cycle = CoolingCycle(
+                uuid4().hex,
+                at,
+                duration,
+                credited_seconds=self._uncredited_after_run_seconds(),
+                reason="overtemperature",
+            )
         else:
-            cycle = replace(cycle, duration_seconds=max(duration, cycle.duration_seconds), reason="overtemperature")
-            if cycle.started_at is not None:
-                cycle = replace(cycle, ends_at=cycle.started_at + timedelta(seconds=max(0, cycle.duration_seconds - cycle.credited_seconds)))
+            if self._cooling_active(cycle):
+                self._account_cooling(at)
+                cycle = self._session.cooling
+            cycle = replace(
+                cycle,
+                duration_seconds=max(duration, cycle.duration_seconds),
+                reason="overtemperature",
+            )
+            if self._cooling_active(cycle):
+                cycle = replace(
+                    cycle, ends_at=at + timedelta(seconds=cycle.remaining_seconds)
+                )
                 self._cancel("forced_cooling")
                 self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
         self._session = replace(self._session, cooling=cycle)
 
     def _start_cooling(self, at):
         cycle = self._session.cooling
-        remaining = max(0.0, cycle.duration_seconds - cycle.credited_seconds)
+        remaining = cycle.remaining_seconds
         if remaining == 0:
             # Es existiert kein zusätzlicher Kühlabschnitt; nur der abgeschlossene
             # Kühlvorgang mit seiner bereits verbrauchten Nachlaufanrechnung.
             self._finish_cooling(replace(cycle, ends_at=at), at)
             return
-        cycle = replace(cycle, started_at=at, ends_at=at + timedelta(seconds=remaining))
+        cycle = replace(
+            cycle,
+            started_at=at,
+            accounted_at=at,
+            paused_at=None,
+            ends_at=at + timedelta(seconds=remaining),
+        )
+        self._session = replace(self._session, cooling=cycle)
+        self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
+
+    def _account_cooling(self, at):
+        cycle = self._session.cooling if self._session else None
+        if (
+            not self._cooling_active(cycle)
+            or cycle.accounted_at is None
+            or at <= cycle.accounted_at
+        ):
+            return
+        elapsed = min(
+            cycle.remaining_seconds, (at - cycle.accounted_at).total_seconds()
+        )
+        self._session = replace(
+            self._session,
+            cooling=replace(
+                cycle, elapsed_seconds=cycle.elapsed_seconds + elapsed, accounted_at=at
+            ),
+        )
+
+    def _pause_cooling(self, at):
+        self._account_cooling(at)
+        cycle = self._session.cooling
+        if not self._cooling_active(cycle):
+            return
+        self._cancel("forced_cooling")
+        self._session = replace(
+            self._session, cooling=replace(cycle, ends_at=None, paused_at=at)
+        )
+
+    def _resume_cooling(self, at):
+        cycle = self._session.cooling
+        if cycle.remaining_seconds == 0:
+            self._finish_cooling(replace(cycle, ends_at=at), at)
+            return
+        cycle = replace(
+            cycle,
+            accounted_at=at,
+            paused_at=None,
+            ends_at=at + timedelta(seconds=cycle.remaining_seconds),
+        )
         self._session = replace(self._session, cooling=cycle)
         self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
 
     def _finish_cooling(self, cycle, at):
         session = self._session
-        self._session = replace(session, cooling=None,
+        self._session = replace(
+            session,
+            cooling=None,
             cooling_history=session.cooling_history + (cycle,),
             timeline=replace(session.timeline, anchor=None, preparation=None),
-            heating=replace(session.heating, elapsed_seconds=0, last_reset_at=at))
+            heating=replace(session.heating, elapsed_seconds=0, last_reset_at=at),
+        )
         if cycle.reason == "overtemperature":
             self._temperature_cooling_requested = False
-            self.overtemperature_since = at if self.temperature is not None and self.temperature > self.parameters.values["safety_temperature_c"] else None
+            self.overtemperature_since = (
+                at
+                if self.temperature is not None
+                and self.temperature > self.parameters.values["safety_temperature_c"]
+                else None
+            )
+
+    def _account_after_run(self, at):
+        phase = self._session.after_run if self._session else None
+        if (
+            phase is None
+            or phase.paused_at is not None
+            or phase.accounted_at is None
+            or at <= phase.accounted_at
+        ):
+            return
+        elapsed = min(
+            phase.remaining_seconds, (at - phase.accounted_at).total_seconds()
+        )
+        self._session = replace(
+            self._session,
+            after_run=replace(
+                phase, elapsed_seconds=phase.elapsed_seconds + elapsed, accounted_at=at
+            ),
+        )
+
+    def _pause_after_run(self, at):
+        self._account_after_run(at)
+        phase = self._session.after_run
+        if phase is None or phase.paused_at is not None:
+            return
+        self._cancel("after_run")
+        self._session = replace(
+            self._session, after_run=replace(phase, ends_at=None, paused_at=at)
+        )
+
+    def _resume_after_run(self, at):
+        phase = self._session.after_run
+        if phase is None or phase.paused_at is None:
+            return
+        if phase.remaining_seconds == 0:
+            self._finish_after_run(
+                replace(phase, ends_at=at, paused_at=None, accounted_at=at)
+            )
+            return
+        phase = replace(
+            phase,
+            ends_at=at + timedelta(seconds=phase.remaining_seconds),
+            accounted_at=at,
+            paused_at=None,
+        )
+        self._session = replace(self._session, after_run=phase)
+        self._schedule("after_run", phase.ends_at, phase.phase_id)
 
     def _finish_after_run(self, phase):
         session = self._session
-        self._session = replace(session, after_run=None,
+        self._session = replace(
+            session,
+            after_run=None,
             timeline=replace(session.timeline, anchor=None, preparation=None),
-            after_run_history=session.after_run_history + (phase,))
+            after_run_history=session.after_run_history + (phase,),
+        )
         if session.cooling is not None:
-            credit = (phase.ends_at - phase.started_at).total_seconds()
-            self._session = replace(self._session, cooling=replace(session.cooling,
-                credited_seconds=session.cooling.credited_seconds + credit))
-            self._start_cooling(phase.ends_at)
+            credit = phase.elapsed_seconds
+            self._session = replace(
+                self._session,
+                cooling=replace(
+                    session.cooling,
+                    credited_seconds=session.cooling.credited_seconds + credit,
+                ),
+            )
+        # Der normale Pfad wahrt Türwarte- und Gangschranken vor dem Kühlstart.
+        self._ensure_cooling(phase.ends_at)
 
     def finish_phase(self, purpose, token, at):
         """Eine konkret angezeigte Phase wie bei Fristablauf abschließen."""
         if purpose not in ("after_run", "forced_cooling"):
-            raise ValueError("Nur Nachlauf und laufende Zwangskühlung können manuell beendet werden.")
+            raise ValueError(
+                "Nur Nachlauf und laufende Zwangskühlung können manuell beendet werden."
+            )
         at = utc(at)
         self.advance(at)
         session = self._session
-        deadline = next((d for d in session.deadlines if d.purpose == purpose and d.token == token), None) if session else None
-        if deadline is None:
-            raise ValueError("Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren.")
+        if session is None:
+            raise ValueError(
+                "Es läuft keine Session mit einer manuell beendbaren Phase."
+            )
+        deadline = (
+            next(
+                (
+                    d
+                    for d in session.deadlines
+                    if d.purpose == purpose and d.token == token
+                ),
+                None,
+            )
+            if session
+            else None
+        )
         if purpose == "after_run":
             phase = session.after_run
             if phase is None or phase.phase_id != token:
                 raise ValueError("Es läuft kein passender Nachlauf.")
+            if deadline is None and phase.paused_at is None:
+                raise ValueError(
+                    "Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren."
+                )
+            self._account_after_run(at)
+            phase = self._session.after_run
             self._cancel(purpose)
             self._finish_after_run(replace(phase, ends_at=at))
         else:
             cycle = session.cooling
             if cycle is None or cycle.cycle_id != token or cycle.started_at is None:
                 raise ValueError("Es läuft keine passende Zwangskühlung.")
+            if deadline is None and cycle.paused_at is None:
+                raise ValueError(
+                    "Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren."
+                )
+            self._account_cooling(at)
+            cycle = self._session.cooling
             self._cancel(purpose)
             self._finish_cooling(replace(cycle, ends_at=at), at)
         self._evaluate(at)
         return deadline
 
-    def _evaluate(self, at):
+    def _current_phase_key(self):
+        return (self._session.session_id if self._session else None, self.phase)
+
+    def _automatic_signature(self):
+        decision = self.automatic_decision
+        # Diagnosegründe können sich bei gleicher Heizentscheidung ändern
+        # (etwa Mindestheizzeit). Das ist kein neuer automatischer Eingriff.
+        return (decision.heat,) if decision else (False,)
+
+    def _clear_heater_override(self):
+        self.heater_override = None
+        self._override_snapshot = None
+
+    def _manual_heating_allowed(self):
+        return (
+            not self.protection
+            and not self.inhibits
+            and self.temperature is not None
+            and isfinite(self.temperature)
+        )
+
+    def _automatic_restart_needs_cooling(self, decision, *, was_demanding):
+        """Admit a regular thermostat restart only when its minimum run fits.
+
+        A running heater is deliberately left alone: the minimum-heating rule
+        applies from its real feedback.  This admission only prevents a new,
+        regular restart from immediately leading into forced cooling.
+        """
+        session = self._session
+        if (
+            session is None
+            or was_demanding
+            or not decision.heat
+            or self.heater_override is not None
+            or session.timeline.active is not None
+            or session.after_run is not None
+            or session.cooling is not None
+            or self.cooling_wait_until is not None
+            or session.heating.reported_heating is True
+        ):
+            return False
+        # A configuration whose initial budget is shorter than the minimum run
+        # must still be able to start.  Without consumed heating time there is
+        # no restart to admit, and creating cooling here would loop forever.
+        if session.heating.elapsed_seconds <= 0:
+            return False
+        remaining = self.heating_limit_seconds - session.heating.elapsed_seconds
+        return remaining < self.parameters.seconds("minimum_heating_minutes")
+
+    def _evaluate(self, at, *, preserve_override=False):
         session = self._session
         if session is None:
             decision = thermostat.Decision(at, False, "operation_off")
         else:
+            was_demanding = session.thermostat.demand
             target = self.readiness_target
-            if (session.ready_at is None and target is not None and self.temperature is not None
-                    and self.temperature >= target and session.operation_enabled):
+            if (
+                session.ready_at is None
+                and target is not None
+                and self.temperature is not None
+                and self.temperature >= target
+                and session.operation_enabled
+            ):
                 self._session = session = replace(session, ready_at=at)
-            state, decision = thermostat.evaluate(session.thermostat, now=at, parameters=self.parameters,
+            state, decision = thermostat.evaluate(
+                session.thermostat,
+                now=at,
+                parameters=self.parameters,
                 target_temperature=self.target_temperature,
-                temperature=self.temperature, enabled=session.operation_enabled, gang=session.timeline.active is not None,
-                cooling=session.cooling is not None and session.cooling.started_at is not None,
-                after_run=session.after_run is not None, protection=tuple(sorted(self.protection)),
+                temperature=self.temperature,
+                enabled=session.operation_enabled,
+                gang=session.timeline.active is not None,
+                cooling=self._cooling_active(session.cooling),
+                after_run=session.after_run is not None,
+                protection=tuple(sorted(self.protection)),
                 inhibits=tuple(sorted(self.inhibits)),
-                heating_since=(session.heating.intervals[-1].started_at
-                    if session.heating.reported_heating is True else None))
+                heating_since=(
+                    session.heating.intervals[-1].started_at
+                    if session.heating.reported_heating is True
+                    else None
+                ),
+            )
             self._session = replace(session, thermostat=state)
-        if self.last_decision is None or (decision.heat, decision.reason) != (self.last_decision.heat, self.last_decision.reason):
-            self.decisions.append(decision)
-        self.last_decision = decision
-        phase_key = (session.session_id if session else None, self.phase)
+            if self._automatic_restart_needs_cooling(
+                decision, was_demanding=was_demanding
+            ):
+                self._create_heating_budget_cooling(at)
+                self._ensure_cooling(at)
+                # Cooling changes the thermostat's higher-priority phase.  Run
+                # the pure thermostat decision once more instead of recursing
+                # through evaluation and re-entering this admission check.
+                session = self._session
+                state, decision = thermostat.evaluate(
+                    session.thermostat,
+                    now=at,
+                    parameters=self.parameters,
+                    target_temperature=self.target_temperature,
+                    temperature=self.temperature,
+                    enabled=session.operation_enabled,
+                    gang=session.timeline.active is not None,
+                    cooling=self._cooling_active(session.cooling),
+                    after_run=session.after_run is not None,
+                    protection=tuple(sorted(self.protection)),
+                    inhibits=tuple(sorted(self.inhibits)),
+                    heating_since=(
+                        session.heating.intervals[-1].started_at
+                        if session.heating.reported_heating is True
+                        else None
+                    ),
+                )
+                self._session = replace(session, thermostat=state)
+        self.automatic_decision = decision
+        phase_key = self._current_phase_key()
+        if self.heater_override is True and not self._manual_heating_allowed():
+            self._clear_heater_override()
+            # Eine zuvor manuell pausierte Kühlung darf nach dem Entzug der
+            # Einschaltfreigabe nicht auf einen weiteren Eingang warten.
+            self._ensure_cooling(at)
+            return self._evaluate(at)
+        if (
+            self.heater_override is not None
+            and not preserve_override
+            and self._override_snapshot is not None
+        ):
+            if (phase_key, self._automatic_signature()) != self._override_snapshot:
+                self._clear_heater_override()
+                # Das Löschen der Bedienung darf die pausierte Kühlung nicht
+                # bis zum nächsten Eingang im Aufheizzustand lassen.
+                self._ensure_cooling(at)
+                return self._evaluate(at)
+        issued = decision
+        if (
+            self.heater_override is not None
+            and self._session is not None
+            and self._session.operation_enabled
+            and not self.protection
+            and not self.inhibits
+        ):
+            issued = thermostat.Decision(at, self.heater_override, "manual_override")
+        if self.last_decision is None or (issued.heat, issued.reason) != (
+            self.last_decision.heat,
+            self.last_decision.reason,
+        ):
+            self.decisions.append(issued)
+        self.last_decision = issued
         if phase_key != self._phase_key:
             self._phase_key, self.phase_since = phase_key, at
         return decision
@@ -447,8 +1065,14 @@ class Controller:
         session = self._session
         if session is None or deadline.session_id != session.session_id:
             raise ValueError("Frist ohne passende Session")
-        previous = next((d for d in session.deadlines if d.purpose == deadline.purpose), None)
-        if previous is not None and previous.token == deadline.token and previous != deadline:
+        previous = next(
+            (d for d in session.deadlines if d.purpose == deadline.purpose), None
+        )
+        if (
+            previous is not None
+            and previous.token == deadline.token
+            and previous != deadline
+        ):
             raise ValueError("Geänderte Frist benötigt ein neues Token")
         kept = tuple(d for d in session.deadlines if d.purpose != deadline.purpose)
         self._session = replace(session, deadlines=kept + (deadline,))
@@ -456,30 +1080,56 @@ class Controller:
     def consume_deadline(self, deadline: Deadline, now: datetime) -> bool:
         now = utc(now)
         session = self._session
-        if session is None or deadline.session_id != session.session_id or deadline not in session.deadlines:
+        if (
+            session is None
+            or deadline.session_id != session.session_id
+            or deadline not in session.deadlines
+        ):
             return False
         if now < deadline.due_at:
             raise ValueError("Frist ist noch nicht abgelaufen")
         self._cancel(deadline.purpose)
         if deadline.purpose == "confirmation":
             active = session.timeline.active
-            if active is not None and active.gang_id == deadline.token and not active.infusion_events:
-                event = Event(f"deadline:{deadline.token}", session.session_id,
-                              Kind.CONFIRMATION_EXPIRED, deadline.due_at, now)
-                self._session = replace(self._session, timeline=apply(session.timeline, event))
+            if (
+                active is not None
+                and active.gang_id == deadline.token
+                and not active.infusion_events
+            ):
+                event = Event(
+                    f"deadline:{deadline.token}",
+                    session.session_id,
+                    Kind.CONFIRMATION_EXPIRED,
+                    deadline.due_at,
+                    now,
+                )
+                self._session = replace(
+                    self._session, timeline=apply(session.timeline, event)
+                )
         elif deadline.purpose == "after_run":
             phase = session.after_run
             if phase is not None and phase.phase_id == deadline.token:
                 self._finish_after_run(phase)
         elif deadline.purpose == "forced_cooling":
-            if session.cooling is not None and session.cooling.cycle_id == deadline.token:
+            if (
+                session.cooling is not None
+                and session.cooling.cycle_id == deadline.token
+            ):
                 self._finish_cooling(session.cooling, deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
-            self.completed_sessions += (replace(self._session, ended_at=deadline.due_at, deadlines=()),)
-            self.light_after_run = LightAfterRun(session.session_id, deadline.due_at,
-                deadline.due_at + timedelta(seconds=self.parameters.seconds("session_light_minutes")),
-                self.parameters.values["session_light_brightness_percent"])
+            self.completed_sessions += (
+                replace(self._session, ended_at=deadline.due_at, deadlines=()),
+            )
+            self.light_after_run = LightAfterRun(
+                session.session_id,
+                deadline.due_at,
+                deadline.due_at
+                + timedelta(seconds=self.parameters.seconds("session_light_minutes")),
+                self.parameters.values["session_light_brightness_percent"],
+            )
             if session.timeline.gang_count:
-                self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
+                self.mechanical_timer = replace(
+                    self.mechanical_timer, reset_pending=True
+                )
             self._session = None
         return True

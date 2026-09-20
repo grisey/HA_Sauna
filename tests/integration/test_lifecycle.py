@@ -2,7 +2,7 @@ import unittest
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
-from custom_components.ha_sauna.core.parameters import DEFINITIONS
+from custom_components.ha_sauna.core.parameters import DEFINITIONS, EDITABLE_DEFINITIONS
 
 from harness import create_sauna, start_hass
 
@@ -19,7 +19,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         entry = await create_sauna(self.hass)
         self.assertEqual(entry.state, ConfigEntryState.LOADED)
         entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
-        self.assertEqual(len(entities), len(DEFINITIONS) + 5)
+        self.assertEqual(len(entities), len(EDITABLE_DEFINITIONS) + 7)
         self.assertTrue(all(self.hass.states.get(e.entity_id) is not None for e in entities))
         self.assertEqual(entry.data, {})
         self.assertIsNone(entry.runtime_data.session)
@@ -29,10 +29,12 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(old.closed)
             self.assertTrue(await self.hass.config_entries.async_setup(entry.entry_id))
             await self.hass.async_block_till_done()
-            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(DEFINITIONS) + 5)
+            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(EDITABLE_DEFINITIONS) + 7)
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
-        values = {**entry.options["parameters"], "heating_minutes": 7}
+        values = {key: value for key, value in entry.options["parameters"].items()
+                  if key != "temperature_increase_c"}
+        values["heating_minutes"] = 7
         await self.hass.config_entries.options.async_configure(form["flow_id"], values)
         await self.hass.async_block_till_done()
         self.assertEqual(entry.runtime_data.configuration.parameters.values["heating_minutes"], 7)
@@ -60,8 +62,15 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(flow["type"], "menu")
         flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
         self.assertEqual(flow["type"], "form")
-        self.assertEqual({str(key) for key in flow["data_schema"].schema}, {"target_temperature_c", "temperature_increase_c", "final_temperature_c"})
-        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"target_temperature_c":80,"temperature_increase_c":3,"final_temperature_c":95})
+        self.assertEqual({str(key) for key in flow["data_schema"].schema}, {
+            "target_temperature_c", "final_temperature_c", "temperature_gangs",
+            "program_mode", "button_program",
+        })
+        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {
+            "target_temperature_c": 80, "final_temperature_c": 95,
+            "temperature_gangs": 4, "program_mode": "progressive",
+            "button_program": "current",
+        })
         await self.hass.async_block_till_done()
         self.assertEqual(flow["type"], "create_entry")
         self.assertIs(entry.runtime_data,runtime)
@@ -120,8 +129,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [])
         await self.hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Test", **bindings})
         from homeassistant.data_entry_flow import InvalidData
-        from custom_components.ha_sauna.core.parameters import DEFINITIONS
-        values = {d.key: d.default if d.default is not None else 2.5 for d in DEFINITIONS}
+        values = {d.key: d.default if d.default is not None else 2.5 for d in EDITABLE_DEFINITIONS}
         values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
         with self.assertRaises(InvalidData):
             await self.hass.config_entries.flow.async_configure(flow["flow_id"], {**values, "heating_minutes": -1})

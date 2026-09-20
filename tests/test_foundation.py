@@ -54,7 +54,7 @@ class ParameterTests(unittest.TestCase):
     def test_required_values_have_defaults_and_saved_values_take_precedence(self):
         defaults = Parameters({})
         self.assertTrue(all(d.optional or d.key in defaults.values for d in DEFINITIONS))
-        self.assertEqual(defaults.values["operation_brightness_percent"], 35)
+        self.assertEqual(defaults.values["operation_brightness_percent"], 40)
         self.assertEqual(defaults.values["after_run_brightness_percent"], 15)
         self.assertEqual(defaults.values["cooling_brightness_percent"], 5)
         self.assertEqual(defaults.values["sensor_timeout_seconds"], 180)
@@ -350,7 +350,8 @@ class PackagingTests(unittest.TestCase):
         strings = json.loads((folder / "strings.json").read_text())
         translated = json.loads((folder / "translations/de.json").read_text())
         self.assertEqual(strings, translated)
-        self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]), {d.key for d in DEFINITIONS})
+        self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]),
+                         {d.key for d in DEFINITIONS} | {"program_mode", "button_program"})
         self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type"})
 
     def test_ha_transport_is_confined_to_device_adapter(self):
