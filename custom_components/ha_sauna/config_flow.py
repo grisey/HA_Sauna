@@ -11,7 +11,7 @@ from homeassistant.helpers import selector
 
 from .bindings import BindingError, Bindings, ROLES, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
-from .core.parameters import DEFINITIONS, ParameterError, Parameters, LIVE_TEMPERATURE_KEYS
+from .core.parameters import BY_KEY, EDITABLE_DEFINITIONS, ParameterError, Parameters, LIVE_TEMPERATURE_KEYS
 from .settings import async_set_parameters, ConfigurationLocked
 from .log import LEVELS
 
@@ -32,8 +32,8 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
     return vol.Schema(fields)
 
 
-def parameter_schema(*, live_only=False) -> vol.Schema:
-    return vol.Schema({
+def parameter_schema(*, live_only=False, include_program_choices=False) -> vol.Schema:
+    fields = {
         (vol.Optional if definition.optional else vol.Required)(
             definition.key, default=definition.default if definition.default is not None else vol.UNDEFINED,
         ): selector.NumberSelector({
@@ -43,8 +43,16 @@ def parameter_schema(*, live_only=False) -> vol.Schema:
             "mode": selector.NumberSelectorMode.BOX,
             "unit_of_measurement": definition.unit,
         })
-        for definition in DEFINITIONS if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
-    })
+        for definition in EDITABLE_DEFINITIONS
+        if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
+    }
+    if include_program_choices:
+        fields[vol.Required("program_mode", default="progressive")] = selector.SelectSelector({
+            "options": ["constant", "progressive"], "translation_key": "program_mode"})
+        fields[vol.Required("button_program", default="current")] = selector.SelectSelector({
+            "options": ["current", "constant", "program_1", "program_2"],
+            "translation_key": "button_program"})
+    return vol.Schema(fields)
 
 
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
@@ -107,7 +115,14 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             try:
-                parameters = Parameters(user_input)
+                values = dict(user_input)
+                program_mode = values.pop("program_mode", "progressive")
+                button_program = values.pop("button_program", "current")
+                if program_mode not in ("constant", "progressive"):
+                    raise ParameterError("program_mode", "invalid_program_mode")
+                if button_program not in ("current", "constant", "program_1", "program_2"):
+                    raise ParameterError("button_program", "invalid_button_program")
+                parameters = Parameters(values)
                 # Gegen parallel angelegte Einträge auch beim endgültigen Speichern prüfen.
                 if heater_is_used(self._async_current_entries(), self._bindings):
                     return self.async_abort(reason="heater_already_used")
@@ -121,11 +136,14 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                         **self._input_options,
                         CONF_BINDINGS: self._bindings.as_dict(),
                         CONF_PARAMETERS: parameters.as_dict(),
+                        "program_mode": program_mode,
+                        "button_program": button_program,
                     },
                 )
         return self.async_show_form(
             step_id="parameters",
-            data_schema=self.add_suggested_values_to_schema(parameter_schema(), user_input),
+            data_schema=self.add_suggested_values_to_schema(
+                parameter_schema(include_program_choices=True), user_input),
             errors=errors,
         )
 
@@ -202,14 +220,33 @@ class SaunaOptionsFlow(OptionsFlow):
             try:
                 if runtime and not runtime.closed:
                     values = dict(user_input)
+                    program_mode = values.pop("program_mode", self.config_entry.options.get("program_mode", "progressive"))
+                    button_program = values.pop("button_program", self.config_entry.options.get("button_program", "current"))
+                    if program_mode not in ("constant", "progressive"):
+                        raise ParameterError("program_mode", "invalid_program_mode")
+                    if button_program not in ("current", "constant", "program_1", "program_2"):
+                        raise ParameterError("button_program", "invalid_button_program")
                     if live_only:
                         if set(values) - LIVE_TEMPERATURE_KEYS:
                             raise ConfigurationLocked()
-                        values.setdefault("final_temperature_c", None)
+                        target_changed = ("target_temperature_c" in values
+                            and values["target_temperature_c"] != runtime.controller.target_temperature)
+                        if not target_changed and program_mode == runtime.configuration.program_mode:
+                            values.pop("target_temperature_c", None)
+                    else:
+                        target_changed = False
                     parameters = await async_set_parameters(self.hass, self.config_entry,
-                        values, partial=live_only)
+                        values, partial=live_only,
+                        explicit_target=target_changed and program_mode == "constant",
+                        program_mode=program_mode,
+                        new_program=target_changed or program_mode != self.config_entry.options.get("program_mode", "progressive"))
                 else:
-                    parameters = Parameters(user_input).as_dict()
+                    values = dict(user_input)
+                    program_mode = values.pop("program_mode", self.config_entry.options.get("program_mode", "progressive"))
+                    button_program = values.pop("button_program", self.config_entry.options.get("button_program", "current"))
+                    values.setdefault("temperature_increase_c", self.config_entry.options[
+                        CONF_PARAMETERS].get("temperature_increase_c", BY_KEY["temperature_increase_c"].default))
+                    parameters = Parameters(values).as_dict()
             except ParameterError as error:
                 errors[error.key] = error.code
             except ConfigurationLocked:
@@ -217,14 +254,19 @@ class SaunaOptionsFlow(OptionsFlow):
             else:
                 return self.async_create_entry(title="", data={
                     **self.config_entry.options, CONF_PARAMETERS: parameters,
+                    "program_mode": program_mode,
+                    "button_program": button_program,
                 })
         suggested = dict(self.config_entry.options[CONF_PARAMETERS])
+        suggested["program_mode"] = self.config_entry.options.get("program_mode", "progressive")
+        suggested["button_program"] = self.config_entry.options.get("button_program", "current")
         if live_only:
             suggested["target_temperature_c"] = runtime.controller.target_temperature
         return self.async_show_form(
             step_id="parameters",
             data_schema=self.add_suggested_values_to_schema(
-                parameter_schema(live_only=live_only), user_input if user_input is not None else suggested,
+                parameter_schema(live_only=live_only, include_program_choices=True),
+                user_input if user_input is not None else suggested,
             ),
             errors=errors,
         )

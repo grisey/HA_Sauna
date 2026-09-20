@@ -181,12 +181,19 @@ zur Anrechnung eines bereits abgeschlossenen Nachlaufs überholt.
   Eine direkte Sollwahl per Schieber oder Taste bedeutet dagegen konstantes
   Heizen ohne weitere Steigerung. Die beim Start am Außentaster verwendete
   Programmwahl ist konfigurierbar.
+  Die Zahl für die Temperaturverteilung ist ausschließlich eine Einstellung
+  der Steigerung, keine geplante oder maximale Zahl tatsächlicher Saunagänge.
+  Nach Erreichen der Endtemperatur gilt diese für beliebig viele weitere
+  Gänge. Der Parameter erscheint nur bei den Steigerungseinstellungen.
 - Zwangskühlung pausiert bei manueller Ofenübersteuerung und bei einem laufenden
   Gang. Nach dessen Ende wird nur die um den Nachlauf verkürzte Restkühlung
   angehängt; bei einem Phasenwechsel ohne Gang setzt die Kühlung fort. Jeder
   aktuell abgelaufene oder manuell beendete Nachlauf wird genau einmal der
   nächsten Kühlung gutgeschrieben, auch wenn diese erst später fällig wird.
   Damit ist die zuvor offen gelassene Nachlaufanrechnung entschieden.
+  Bei manuellem Heizen pausiert auch die Nachlaufuhr. Nach Rückkehr zur Automatik
+  läuft ihre Restzeit weiter; die Pause zählt weder als Nachlauf noch als Kühlung.
+  Ein manuell beendeter Nachlauf schreibt nur seine bis dahin gezählte Dauer gut.
 - Reicht beim Beginn eines Nachlaufs das verbleibende Heizbudget nicht für die
   Ofen-Mindestheizdauer, wird die Kühlung bereits an diesen Nachlauf angehängt
   und dessen Restzeit gutgeschrieben; ein Zwischenheizen findet nicht statt.
@@ -210,3 +217,6 @@ zur Anrechnung eines bereits abgeschlossenen Nachlaufs überholt.
   entkoppelt werden, und Handtuchwedeln nach einem Aufguss kann Temperaturstürze
   auslösen. Daraus ist noch keine fertige Detektionsregel abzuleiten oder zu
   behaupten; der bestehende Kandidat bleibt bis belastbarer Auswertung bestehen.
+  Produktive Regeln dürfen keine Sitzungs-IDs, Testzeitpunkte, Aufgussnummern
+  oder Sonderfälle einzelner Referenzereignisse enthalten. Die Aufzeichnungen
+  dienen der Prüfung allgemeiner Merkmale und ihrer Übertragbarkeit.

@@ -6,6 +6,7 @@ from math import ceil, isfinite
 from statistics import median
 
 from .models import Measurement, Position, Quantity
+from .moisture import absolute_humidity
 from .timeline import Kind, utc
 
 
@@ -47,6 +48,8 @@ class Detector:
         self.opened_at = None
         self.baseline = {}
         self.ventilated = False
+        self.ventilation_degraded = False
+        self.ventilation_positions = ()
         self.context = False
         self.counts = {}
         self.levels = {}
@@ -88,6 +91,7 @@ class Detector:
             if old and old.source != m.source:
                 self.frames[m.position].clear()
                 self.baseline.pop(m.position, None)
+                self.ventilation_degraded |= self.open and m.position in self.ventilation_positions
                 self.counts.clear()
                 self.levels.clear()
             self.latest[key] = m
@@ -135,6 +139,77 @@ class Detector:
         self.levels[name] = condition
         return condition and not old
 
+    @staticmethod
+    def _absolute_humidity(frame):
+        """Wassergehalt nur aus einem gemeinsamen geglätteten Messrahmen."""
+        temperature, humidity = frame.get("Tm"), frame.get("Hm")
+        if temperature is None or humidity is None:
+            return None
+        try:
+            return absolute_humidity(temperature, humidity)
+        except ValueError:
+            return None
+
+    def _remember_ventilation_baseline(self, position):
+        """Den wärmsten vollständigen Rahmen des Rückblicks als Referenz merken."""
+        window = list(self.frames[position])[-int(self.p["vent_baseline_seconds"]):]
+        if len(window) != self.p["vent_baseline_seconds"]:
+            return
+        usable = [frame for frame in window if self._absolute_humidity(frame) is not None
+                  and frame.get("Ts") is not None and frame.get("Hs") is not None]
+        if len(usable) != len(window):
+            return
+        reference = max(usable, key=lambda frame: frame["Tm"])
+        self.baseline[position] = {
+            "temperature": reference["Tm"],
+            "absolute_humidity": self._absolute_humidity(reference),
+            "sources": (reference["Ts"], reference["Hs"]),
+        }
+
+    def _ventilation_proof(self, channels, now, trace):
+        """Temperatur- und Wasserverlust gegen die beim Öffnen fixierte Referenz."""
+        evidence = {}
+        for position in self.ventilation_positions:
+            if position not in channels:
+                evidence[position] = None
+                continue
+            frame = self.frames[position][-1]
+            baseline = self.baseline.get(position)
+            current_water = self._absolute_humidity(frame)
+            if (baseline is None or current_water is None
+                    or (frame.get("Ts"), frame.get("Hs")) != baseline["sources"]):
+                self.baseline.pop(position, None)
+                evidence[position] = None
+                continue
+            temperature_loss = baseline["temperature"] - frame["Tm"]
+            water_loss = (baseline["absolute_humidity"] - current_water) / baseline["absolute_humidity"] \
+                if baseline["absolute_humidity"] > 0 else None
+            evidence[position] = (temperature_loss, water_loss)
+            trace["metrics"][position.value].update(
+                ventilation_temperature_loss=temperature_loss,
+                ventilation_absolute_humidity_loss=water_loss,
+            )
+
+        dual_sensor = len(self.ventilation_positions) == 2 and not self.ventilation_degraded
+        single_sensor = len(self.ventilation_positions) == 1 and not self.ventilation_degraded
+        temperature_drop = all(evidence.get(position) is not None
+            and evidence[position][0] >= self.p[f"vent_drop_{position.value}"]
+            for position in self.ventilation_positions)
+        water_loss = all(evidence.get(position) is not None and evidence[position][1] is not None
+            and evidence[position][1] >= self.p["vent_absolute_humidity_loss_percent"] / 100
+            for position in self.ventilation_positions)
+        time_held = (now - self.opened_at).total_seconds() >= self.p["vent_hold_seconds"]
+        proven = temperature_drop and water_loss and (dual_sensor or (single_sensor and time_held))
+        trace["conditions"].update(
+            ventilation_temperature_drop=temperature_drop,
+            ventilation_water_loss=water_loss,
+            ventilation_time_held=time_held if not dual_sensor else None,
+            ventilation_sources_coherent=not self.ventilation_degraded,
+            ventilation_proven=proven,
+        )
+        trace["checks"]["ventilation"] = True
+        return proven
+
     def advance(self, at, *, enabled, allowed=None, on_detection=None):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
@@ -162,6 +237,8 @@ class Detector:
                    "H": self._value(position, Quantity.HUMIDITY, now)}
             valid = all(v is not None for v in raw.values())
             frame = dict(raw)
+            frame["Ts"] = self.latest.get((position, Quantity.TEMPERATURE)).source if raw["T"] is not None else None
+            frame["Hs"] = self.latest.get((position, Quantity.HUMIDITY)).source if raw["H"] is not None else None
             for key in ("T", "H"):
                 last = [f[key] for f in list(frames)[-int(p["median_seconds"] - 1):]] if p["median_seconds"] > 1 else []
                 values = last + [raw[key]]
@@ -177,6 +254,13 @@ class Detector:
             self.counts.clear()
             self.levels.clear()
         self.active_positions, self.faults = channels, tuple(faults)
+        if self.open:
+            # Ein Ausfall nach dem Referenzzeitpunkt darf keinen leichteren
+            # Vergleich mit einem späteren oder anderen Quellpaar eröffnen.
+            for position in self.ventilation_positions:
+                if position not in channels:
+                    self.baseline.pop(position, None)
+                    self.ventilation_degraded = True
         trace = {"at": now, "channels": tuple(c.value for c in channels),
                  "metrics": {c.value: {} for c in channels}, "conditions": {}, "checks": {}}
         output = []
@@ -219,9 +303,8 @@ class Detector:
         trace["conditions"].update(door_open=opening, door_heating=temperature_opening if not self.open else None, door_close=closing)
         # Eine Lüftung kann am selben Rasterpunkt wie die Schließung belegt sein.
         # Dann wird zuerst ihr noch offener Kontext abgeschlossen.
-        if self.open and not self.ventilated and (now - self.opened_at).total_seconds() >= p["vent_hold_seconds"]:
-            if all(c in self.baseline and self.frames[c][-1]["Tm"] is not None
-                   and self.baseline[c] - self.frames[c][-1]["Tm"] >= p[f"vent_drop_{c.value}"] for c in channels):
+        if self.open and not self.ventilated:
+            if self._ventilation_proof(channels, now, trace):
                 self.ventilated = True
                 emit(Kind.VENTILATION)
         if toggle or temperature_toggle:
@@ -230,14 +313,17 @@ class Detector:
             self.counts["door_heating"] = 0
             if self.open:
                 self.opened_at, self.context, self.ventilated = now, False, False
+                self.ventilation_degraded = False
+                self.ventilation_positions = channels
                 self.baseline = {}
-                for c in self.positions:
-                    values = [f["Tm"] for f in list(self.frames[c])[-int(p["vent_baseline_seconds"]):]]
-                    if len(values) == p["vent_baseline_seconds"] and all(v is not None for v in values):
-                        self.baseline[c] = max(values)
+                for c in self.ventilation_positions:
+                    self._remember_ventilation_baseline(c)
                 emit(Kind.DOOR_OPEN)
             else:
                 self.context = self.ventilated
+                self.baseline = {}
+                self.ventilation_degraded = False
+                self.ventilation_positions = ()
                 emit(Kind.DOOR_CLOSE)
         eligible = bool(enabled and not self.open)
         infusion_check = eligible and (allowed is None or allowed(Kind.INFUSION))

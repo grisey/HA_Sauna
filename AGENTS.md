@@ -7,6 +7,9 @@ gehen den nachstehenden Regeln vom 19.09. vor. Die Umsetzung ist beauftragt und
 erfolgt in kleinen, abgegrenzten Terra-Aufgaben mit Prüfung durch den Hauptagenten.
 Insbesondere sind Lichtkurve, Temperaturprogramme, pausierbare Kühlung und die
 Anrechnung jedes Nachlaufs auf die nächste Kühlung inzwischen entschieden.
+Die Verteilungszahl der Temperatursteigerung begrenzt keine tatsächlichen Gänge.
+Produktive Erkennung darf keine Sonderregeln für IDs, Zeitpunkte oder einzelne
+Ereignisse der Testaufzeichnungen enthalten.
 
 ## Geltende Nutzerentscheidungen vom 19.09.2026
 

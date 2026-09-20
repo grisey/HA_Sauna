@@ -13,6 +13,10 @@ from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core.models import Measurement, Position, Quantity
 from .core import power
+from .core.timeline import Door
+from .core.warmup import WarmupTrend
+from .core.light import normal_brightness, phase_target
+from .core.light_output import LightOutput
 from .presentation import configuration_message, FAULTS
 
 
@@ -25,16 +29,20 @@ class HADevice:
         self.source_received_at = {}
         self.measurements = {}
         self.last_valid_temperature = None
+        self.warmup = WarmupTrend(self.values["warmup_estimation_minutes"] * 60)
+        self._warmup_key = None
+        self._warmup_started_at = None
         self.fault_since = {}
         self.faults = {}
         self.command = None
         self.command_at = None
         self.last_sent_at = None
         self.command_error = False
-        self.light_before = None
-        self.light_active = False
-        self.light_operation_enabled = False
-        self.session_light_command = None
+        self.light_output = LightOutput(self.runtime.configuration.parameters)
+        self._light_last_command_key = None
+        self._light_session_off_completed_key = None
+        self._light_session_off_superseded_key = None
+        self._light_override_dirty = False
         self.notified = set()
         self.heating_observation = {"source": "unknown", "heating": None, "power_w": None}
         self._saved_heating_observation = None
@@ -161,6 +169,43 @@ class HADevice:
     def feedback(self):
         return self.observe_heating(self.runtime._clock())["heating"]
 
+    def _refresh_warmup(self, now, upper):
+        """Keep a trend only during one uninterrupted, confirmed heating run."""
+        controller = self.runtime.controller
+        session = controller.session
+        eligible = (session is not None and session.operation_enabled
+                    and controller.phase == "aufheizen"
+                    and self.heating_observation["heating"] is True
+                    and not controller.protection and not controller.inhibits
+                    and session.timeline.door != Door.OPEN
+                    and upper is not None and upper.value is not None)
+        if not eligible:
+            self.warmup.reset()
+            self._warmup_key = None
+            self._warmup_started_at = None
+            return
+        key = (session.session_id, self.heating_observation["source"])
+        if key != self._warmup_key:
+            self.warmup.reset()
+            self._warmup_key = key
+            self._warmup_started_at = now
+        # A value received before the confirmed heating stretch is a useful
+        # current controller input, but not evidence about this warm-up rate.
+        if upper.received_at >= self._warmup_started_at:
+            self.warmup.accept(upper.received_at, upper.value)
+
+    def temperature_rate(self, now):
+        """Return an ETA-safe rate, never a control input."""
+        controller = self.runtime.controller
+        session = controller.session
+        if (session is None or not session.operation_enabled or controller.phase != "aufheizen"
+                or self.heating_observation["heating"] is not True
+                or controller.protection or controller.inhibits or controller.temperature is None
+                or session.timeline.door == Door.OPEN):
+            return None
+        timeout = self.values.get("sensor_timeout_seconds")
+        return self.warmup.rate(now, maximum_age_seconds=timeout)
+
     @property
     def missing_configuration(self):
         keys = ["target_temperature_c", "sensor_timeout_seconds",
@@ -273,6 +318,7 @@ class HADevice:
             self.faults.pop("configuration", None)
         if self.runtime.archive and self.runtime.archive.failure:
             self.faults["archive"] = str(self.runtime.archive.failure)
+        self._refresh_warmup(now, upper if temperature is not None else None)
         controller.advance(now)
 
     async def send(self, heat, now, *, force=False):
@@ -314,48 +360,200 @@ class HADevice:
         self.notify_mechanical_timer(now)
 
     async def apply_light(self, now):
-        light_after_run = self.runtime.controller.light_after_run
-        if light_after_run is not None:
-            await self.apply_session_light(now, light_after_run)
+        # Optionen können außerhalb einer Sitzung ersetzt werden, ohne dass der
+        # Planer dabei seinen laufenden Übergang oder Override verliert.
+        self.light_output.parameters = self.runtime.configuration.parameters
+        if not await self._finish_expired_session_light(now):
             return
-        self.session_light_command = None
-        self.faults.pop("session_light", None)
-        cooling = bool(self.runtime.session and self.runtime.session.cooling
-            and self.runtime.session.cooling.started_at)
-        after_run = bool(self.runtime.session and self.runtime.session.after_run)
-        dim = "cooling" if cooling else "after_run" if after_run else None
-        if dim and self.light_active != dim:
-            brightness = self.values[f"{dim}_brightness_percent"]
-            if not self.light_active:
-                state = self.hass.states.get(self.bindings["light"])
-                self.light_before = (state.state, state.attributes.get("brightness")) if state else None
-            phase = self.runtime.session.cooling if cooling else self.runtime.session.after_run
-            self.runtime.log.change("light_dim", (dim, phase.started_at), logging.INFO,
-                "Saunalicht für %s auf %s %% dimmen.", "Zwangskühlung" if cooling else "Nachlauf", brightness)
-            # Pro Phasenwechsel einmal versuchen. Ein Fehler darf weder jeden
-            # Messzyklus blockieren noch den ursprünglichen Lichtzustand ersetzen.
-            self.light_active = dim
-            try:
-                await self.light_call("turn_on", {
-                    "entity_id": self.bindings["light"], "brightness_pct": brightness})
-                self.faults.pop("cooling_light", None)
-                self.faults.pop("after_run_light", None)
-            except Exception:
-                self.faults[f"{dim}_light"] = "service_unavailable"
-        elif not dim and self.light_active:
-            await self.restore_light()
-        operation = bool(self.runtime.session and self.runtime.session.operation_enabled)
-        if not operation:
-            self.light_operation_enabled = False
-            self.faults.pop("operation_light", None)
-        elif not dim and not self.light_operation_enabled:
-            # Nur beim Übergang in den Betrieb einschalten. Normale Messzyklen
-            # und Thermostatpausen überschreiben keine manuelle Lichtbedienung.
-            self.light_operation_enabled = True
-            await self.start_light(now)
-        light = self.states.get("light")
-        if light is not None and light.state == "on":
-            self.faults.pop("operation_light", None)
+        phase = self._light_phase(now)
+        key, name, ends_at = phase
+        after_run = self.runtime.controller.session.after_run if self.runtime.controller.session else None
+        phase_paused = name == "nachlauf" and after_run is not None and after_run.paused_at is not None
+        state = self.hass.states.get(self.bindings["light"])
+        actual = self._light_brightness(state)
+        if name == "aus":
+            # Außerhalb der Sitzung ist die automatische Grundlage AUS. Das
+            # verhindert, dass ein gerade abgelaufener 50-%-Nachlauf beim
+            # Zurückkehren von einer manuellen Raumlichtwahl wieder auftaucht.
+            target = 0.0
+        elif name == "session_light":
+            target = 0.0
+        else:
+            elevation = self._sun_elevation()
+            normal = normal_brightness(elevation, self.runtime.configuration.parameters)
+            target = phase_target(name, self.runtime.controller.temperature,
+                self.runtime.controller.readiness_target, self.runtime.configuration.parameters, normal)
+        plan = self.light_output.update(
+            now, key, name, target, actual, ends_at,
+            phase_paused=phase_paused,
+            phase_brightness_percent=(self.runtime.controller.light_after_run.brightness_percent
+                                     if name == "session_light" else None),
+        )
+        # Der Plan enthält Fließkommawerte, HA erhält einen stabilen Prozentwert.
+        brightness = round(plan.brightness_percent, 2)
+        service = "turn_off" if brightness <= 0 else "turn_on"
+        command_key = (key, service, brightness if service == "turn_on" else None)
+        already_sent = (command_key == self._light_last_command_key
+                        or (service == "turn_on" and state is not None
+                            and state.state == "on"
+                            and round(actual * 255 / 100) == round(brightness * 255 / 100)))
+        if already_sent or (name == "aus" and plan.automatic and not self._light_override_dirty):
+            return
+        if await self._send_light_command(now, key=command_key, phase=name, service=service,
+                                          brightness=brightness if service == "turn_on" else None,
+                                          session_id=self._light_session_id()):
+            self._light_override_dirty = False
+
+    async def _finish_expired_session_light(self, now):
+        """Sendet das fällige Timer-AUS bis es erfolgreich quittiert ist."""
+        light_after_run = self.runtime.controller.light_after_run
+        if light_after_run is None or now < light_after_run.ends_at:
+            return True
+        key = ("session_light", light_after_run.session_id, light_after_run.started_at)
+        if key in (self._light_session_off_completed_key, self._light_session_off_superseded_key):
+            return True
+        if not await self._send_light_command(now, key=(key, "turn_off", None),
+                                              phase="session_light", service="turn_off",
+                                              brightness=None, session_id=light_after_run.session_id,
+                                              ends_at=light_after_run.ends_at):
+            return False
+        self._light_session_off_completed_key = key
+        return True
+
+    def _light_session_id(self):
+        session = self.runtime.controller.session
+        light_after_run = self.runtime.controller.light_after_run
+        return session.session_id if session is not None else (
+            light_after_run.session_id if light_after_run is not None else None)
+
+    async def finish_session_light(self, now, phase, *, purpose="light_reassignment"):
+        """Beendet den bisherigen Lichtnachlauf vor einem Lichtwechsel.
+
+        Der Aufrufer ersetzt anschließend die Gerätezuordnung. Der Dienstaufruf
+        bleibt deshalb beim alten Adapter und wird wie jeder andere Lichtbefehl
+        protokolliert.
+        """
+        key = ("session_light", phase.session_id, phase.started_at)
+        return await self._send_light_command(
+            now, key=(key, "turn_off", None), phase="session_light", service="turn_off",
+            brightness=None, session_id=phase.session_id, ends_at=phase.ends_at, purpose=purpose)
+
+    async def _send_light_command(self, now, *, key, phase, service, brightness, session_id,
+                                  ends_at=None, purpose=None):
+        """Führt einen geplanten Lichtdienst aus und hält Ergebnis und Archiv zusammen.
+
+        Nur ein erfolgreich abgeschlossener Dienstaufruf wird als deduplizierbar
+        gespeichert. Ein Fehler bleibt somit im nächsten Regelzyklus erneut
+        ausführbar; der Lichtzustand ist keine Rückmeldung über den Dienst.
+        """
+        fault = self._light_fault(phase)
+        data = {"entity_id": self.bindings["light"]}
+        if service == "turn_on":
+            data["brightness_pct"] = brightness
+        error = None
+        try:
+            await self.light_call(service, data)
+        except Exception as exc:
+            error = type(exc).__name__
+            self.faults[fault] = "service_unavailable"
+            self.runtime.log.change("light_command_error", (phase, service, error), logging.ERROR,
+                "Lichtdienst für %s (%s) fehlgeschlagen: %s.", phase, service, error)
+        else:
+            self._light_last_command_key = key
+            for known_fault in ("session_light", "operation_light", "after_run_light", "cooling_light"):
+                self.faults.pop(known_fault, None)
+            self.runtime.log.change("light_command", (phase, service), logging.INFO,
+                "Lichtdienst für %s abgeschlossen: %s.", phase, service)
+            if service == "turn_on":
+                self.runtime.log.debug("light_dimming", "Lichtwert für %s: %s %%.", phase, brightness)
+        if self.runtime.archive:
+            self.runtime.archive.append("light_command", now, {
+                "purpose": purpose or ("session_end" if phase == "session_light" else phase),
+                "phase": phase, "service": service, "brightness_pct": brightness,
+                "ends_at": ends_at, "service_error": error}, session_id)
+        return error is None
+
+    def _light_phase(self, now=None):
+        """Führt Licht strikt aus dem Controllerzustand und seinen Objekten ab."""
+        controller = self.runtime.controller
+        light_after_run = controller.light_after_run
+        if light_after_run is not None:
+            key = ("session_light", light_after_run.session_id, light_after_run.started_at)
+            # Das Objekt bleibt als Sitzungsnachweis erhalten, die logische
+            # Lichtphase endet aber exakt mit seiner Frist. Ein noch
+            # ausstehender OFF-Service wird unabhängig in ``apply_light``
+            # abgewickelt, damit ein neuer manueller Befehl nicht den alten
+            # ``session_light``-Schlüssel erbt.
+            if now is not None and now >= light_after_run.ends_at:
+                return (("aus",), "aus", None)
+            return (key, "session_light", light_after_run.ends_at)
+        session = controller.session
+        if session is None or not session.operation_enabled:
+            return (("aus",), "aus", None)
+        phase = controller.phase
+        if phase == "nachlauf" and session.after_run is not None:
+            return ((session.session_id, phase, session.after_run.phase_id), phase, session.after_run.ends_at)
+        if phase == "zwangskühlung" and session.cooling is not None:
+            return ((session.session_id, phase, session.cooling.cycle_id), phase, session.cooling.ends_at)
+        return ((session.session_id, phase), phase, None)
+
+    @staticmethod
+    def _light_brightness(state):
+        if state is None or state.state != "on":
+            return 0.0
+        try:
+            return max(0.0, min(100.0, float(state.attributes.get("brightness", 0)) * 100 / 255))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _sun_elevation(self):
+        sun = self.hass.states.get("sun.sun")
+        try:
+            return float(sun.attributes["elevation"]) if sun is not None else None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _light_fault(phase):
+        return {"session_light": "session_light", "nachlauf": "after_run_light",
+                "zwangskühlung": "cooling_light"}.get(phase, "operation_light")
+
+    def set_light_override(self, value):
+        """Eine spätere API kann diesen manuellen Wert bis zum Phasenwechsel halten."""
+        if value not in (None, True, False, "normal"):
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not isfinite(value) or not 0 <= value <= 100):
+                raise ValueError("Lichtwert muss zwischen 0 und 100 Prozent liegen.")
+        # Die Runtime ruft diese Methode vor ihrem nächsten Regelzyklus auf.
+        # Deshalb muss der aktuelle Controller-Schlüssel hier mitgegeben
+        # werden, statt den möglicherweise alten Planner-Schlüssel zu erben.
+        now = self.runtime._clock()
+        phase_key = self._light_phase(now)[0]
+        light_after_run = self.runtime.controller.light_after_run
+        if (value is not None and light_after_run is not None
+                and now >= light_after_run.ends_at):
+            # Eine neue Bedienung nach Ablauf gehört bereits zur Außenphase.
+            # Sie löst den noch nicht ausgeführten Timer-AUS-Befehl ab, damit
+            # der Adapter nicht erst AUS und unmittelbar danach EIN sendet.
+            self._light_session_off_superseded_key = (
+                "session_light", light_after_run.session_id, light_after_run.started_at)
+            # Der Timer ist fachlich beendet, auch wenn seine AUS-Ausgabe für
+            # die neue manuelle Wahl übersprungen wird. LightOutput besitzt
+            # dafür keine eigene Ablaufzeit und erhält den Grundwert hier vom
+            # führenden Adapter.
+            self.light_output.finish_automatic()
+        if value is None:
+            self.light_output.return_to_automatic()
+        elif value is True:
+            self.light_output.set_manual(self.values["session_light_brightness_percent"], phase_key=phase_key)
+        elif value is False:
+            self.light_output.set_manual(0, phase_key=phase_key)
+        elif value == "normal":
+            self.light_output.set_manual(normal_brightness(self._sun_elevation(),
+                self.runtime.configuration.parameters), phase_key=phase_key)
+        else:
+            self.light_output.set_manual(value, phase_key=phase_key)
+        self._light_override_dirty = True
 
     def notify_mechanical_timer(self, now):
         ends = self.runtime.controller.mechanical_timer_ends_at
@@ -374,71 +572,6 @@ class HADevice:
                     self.runtime.archive.append("notice", now, {"kind": "mechanical_timer_" + phase,
                         "estimated_ends_at": ends}, self.runtime.session.session_id)
 
-    async def apply_session_light(self, now, phase, *, finish=False):
-        service = "turn_on" if not finish and now < phase.ends_at else "turn_off"
-        key = (phase.session_id, service)
-        if key == self.session_light_command:
-            return
-        # Ein neuer Sitzungsstart verwirft diese Frist. Keine alte Wiederherstellung
-        # darf danach das Licht einer neuen Sitzung ausschalten oder aufhellen.
-        self.session_light_command = key
-        self.light_active = False
-        self.light_before = None
-        self.light_operation_enabled = False
-        data = {"entity_id": self.bindings["light"]}
-        if service == "turn_on":
-            data["brightness_pct"] = phase.brightness_percent
-        self.runtime.log.info("session_light", "Lichtnachlauf nach Sitzungsende: %s.",
-            f"{phase.brightness_percent:g} % bis {phase.ends_at.isoformat()}" if service == "turn_on" else "Licht ausschalten")
-        error = None
-        try:
-            await self.light_call(service, data)
-            for fault in ("session_light", "operation_light", "cooling_light", "after_run_light"):
-                self.faults.pop(fault, None)
-        except Exception as exc:
-            error = type(exc).__name__
-            self.faults["session_light"] = service + "_failed"
-        if self.runtime.archive:
-            self.runtime.archive.append("light_command", now, {
-                "purpose": "session_end", "service": service,
-                "brightness_pct": data.get("brightness_pct"),
-                "ends_at": phase.ends_at, "service_error": error}, phase.session_id)
-
-    async def start_light(self, now):
-        brightness = self.values["operation_brightness_percent"]
-        self.runtime.log.info("light_command", "Lichtbefehl beim Start des Saunabetriebs: EIN mit %s %% Helligkeit.", brightness)
-        error = None
-        try:
-            await self.light_call("turn_on", {
-                "entity_id": self.bindings["light"], "brightness_pct": brightness})
-            self.faults.pop("operation_light", None)
-        except Exception as exc:
-            error = type(exc).__name__
-            self.faults["operation_light"] = "service_unavailable"
-        if self.runtime.archive:
-            self.runtime.archive.append("light_command", now, {
-                "purpose": "operation_start", "service": "turn_on", "brightness_pct": brightness, "service_error": error},
-                self.runtime.session.session_id)
-
-    async def restore_light(self):
-        if not self.light_active:
-            return
-        mode, self.light_active = self.light_active, False
-        if self.light_before is None:
-            return
-        state, brightness = self.light_before
-        data = {"entity_id": self.bindings["light"]}
-        if state == "on" and brightness is not None:
-            data["brightness"] = brightness
-        try:
-            await self.light_call("turn_on" if state == "on" else "turn_off", data)
-        except Exception:
-            self.faults[f"{mode}_light"] = "restore_failed"
-        else:
-            self.light_before = None
-            self.faults.pop("cooling_light", None)
-            self.faults.pop("after_run_light", None)
-
     async def light_call(self, service, data):
         # Ein nicht antwortendes Licht darf den serialisierten Regelkreis nicht
         # unbegrenzt blockieren. Dieselbe Dienstfrist gilt für alle Aktoren.
@@ -447,4 +580,3 @@ class HADevice:
 
     async def close(self):
         await self.send(False, self.runtime._clock(), force=True)
-        await self.restore_light()

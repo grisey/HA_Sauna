@@ -1,11 +1,58 @@
 """Lesbare Zustände aus dem führenden Ablaufmodell."""
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.helpers.entity import EntityCategory
 
+from .core.models import Position
+from .core.moisture import current_absolute_humidity
 from .entity import SaunaEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([SaunaPhase(entry), SaunaEnergy(entry)])
+    async_add_entities([
+        SaunaPhase(entry),
+        SaunaEnergy(entry),
+        SaunaAbsoluteHumidity(entry, Position.UPPER),
+        SaunaAbsoluteHumidity(entry, Position.LOWER),
+    ])
+
+
+class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):
+    _attr_native_unit_of_measurement = "g/m³"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, entry, position: Position):
+        if not isinstance(position, Position):
+            raise ValueError("position must be a Position")
+        super().__init__(entry, f"absolute_humidity_{position.value}")
+        self.position = position
+        self._attr_name = f"Absoluter Wassergehalt {'oben' if position is Position.UPPER else 'unten'}"
+
+    @property
+    def available(self):
+        return not self.runtime.closed and self.native_value is not None
+
+    @property
+    def native_value(self):
+        device = self.runtime.device
+        if device is None:
+            return None
+        value = current_absolute_humidity(
+            device.measurements,
+            self.position,
+            self.runtime._clock(),
+            self.runtime.configuration.parameters.values.get("sensor_timeout_seconds"),
+        )
+        return round(value, 2) if value is not None else None
+
+    @property
+    def extra_state_attributes(self):
+        bindings = self.runtime.configuration.bindings.values
+        return {
+            "temperature_source": bindings[f"{self.position.value}_temperature"],
+            "humidity_source": bindings[f"{self.position.value}_humidity"],
+        }
 
 
 class SaunaEnergy(SaunaEntity, SensorEntity):

@@ -22,6 +22,7 @@ SPECS = (
     ("vent_hold_seconds", "Experte: Lüftungsmindestdauer", "s", 60, 1, 3600, True),
     ("vent_drop_upper", "Experte: Lüftungsabfall oben", "°C", 3, 0, 100, False),
     ("vent_drop_lower", "Experte: Lüftungsabfall unten", "°C", 3, 0, 100, False),
+    ("vent_absolute_humidity_loss_percent", "Experte: Absoluter Wasserverlust beim Durchlüften", "%", 30, 0, 100, False),
     ("person_step_seconds", "Experte: Personenprüfraster", "s", 5, 1, 60, True),
     ("strong_window_seconds", "Experte: Starkes Personenfenster", "s", 60, 1, 600, True),
     ("strong_humidity_upper", "Experte: Starker Feuchtetrend oben", "%/min", .5, 0, 100, False),

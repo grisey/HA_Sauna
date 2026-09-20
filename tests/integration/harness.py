@@ -52,7 +52,8 @@ async def start_hass(directory=None, *, with_recorder=False):
 
 
 async def credentials(hass):
-    user = await hass.auth.async_create_user("Isolierter Test")
+    from homeassistant.auth.const import GROUP_ID_ADMIN
+    user = await hass.auth.async_create_user("Isolierter Test", group_ids=[GROUP_ID_ADMIN])
     refresh = await hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
     return hass.auth.async_create_access_token(refresh)
 

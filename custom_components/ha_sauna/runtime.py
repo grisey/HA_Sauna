@@ -17,6 +17,7 @@ from .core.parameters import Parameters
 from .core.timeline import Door, Event
 from .log import SaunaLog, LEVELS
 from .presentation import fault_message, fault_resolved, decision_message, PHASES, EVENTS
+from .settings import program_parameters
 
 
 @dataclass(frozen=True)
@@ -26,11 +27,13 @@ class Configuration:
     log_level: str = "INFO"
     control_input_mode: str = "switch"
     button_event_type: str = ""
+    program_mode: str = "constant"
+    button_program: str = "current"
 
     @classmethod
     def from_options(cls, options: Mapping) -> Configuration:
         if (not isinstance(options, Mapping) or not {CONF_BINDINGS, CONF_PARAMETERS} <= set(options)
-                or set(options) - {CONF_BINDINGS, CONF_PARAMETERS, "log_level", "control_input_mode", "button_event_type"}):
+                or set(options) - {CONF_BINDINGS, CONF_PARAMETERS, "log_level", "control_input_mode", "button_event_type", "program_mode", "button_program"}):
             raise ValueError("Vollständige Entitäts- und Parameterkonfiguration erforderlich")
         level = options.get("log_level", "INFO")
         if level not in LEVELS:
@@ -40,13 +43,21 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
+        if "program_mode" in options:
+            program_mode = options["program_mode"]
+        else:
+            program_mode = "progressive" if "final_temperature_c" in values else "constant"
+        button_program = options.get("button_program", "current")
+        if program_mode not in ("constant", "progressive") or button_program not in ("current", "constant", "program_1", "program_2"):
+            raise ValueError("Ungültige Temperaturprogrammeinstellung")
         # Einmalige Übernahme der alten beidseitigen Bandbreite. Danach werden
         # ausschließlich die neuen, gemeinsam gespeicherten Parameter konsumiert.
         if "cold_tolerance_c" in values or "hot_tolerance_c" in values:
             cold = values.pop("cold_tolerance_c", 0)
             hot = values.pop("hot_tolerance_c", 0)
             values.setdefault("readiness_hysteresis_c", cold + hot)
-        return cls(Bindings(options[CONF_BINDINGS]), Parameters(values), level, mode, event_type.strip())
+        return cls(Bindings(options[CONF_BINDINGS]), Parameters(values), level, mode, event_type.strip(),
+            program_mode, button_program)
 
     def as_options(self) -> dict:
         return {
@@ -55,6 +66,8 @@ class Configuration:
             "log_level": self.log_level,
             "control_input_mode": self.control_input_mode,
             "button_event_type": self.button_event_type,
+            "program_mode": self.program_mode,
+            "button_program": self.button_program,
         }
 
 
@@ -67,7 +80,7 @@ class SaunaRuntime:
 
     def __init__(self, configuration: Configuration, clock: Callable[[], datetime] | None = None) -> None:
         self.configuration = configuration
-        self.controller = Controller(configuration.parameters)
+        self.controller = Controller(configuration.parameters, program_mode=configuration.program_mode)
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
         self._cleanup: list[Callable[[], None]] = []
@@ -156,6 +169,7 @@ class SaunaRuntime:
             action = self.device.physical_action(event)
             if action is not None:
                 try:
+                    self._prepare_operation(action, physical=True)
                     self._set_operation(action)
                 except ValueError as error:
                     self.device.faults["start_rejected"] = str(error)
@@ -264,12 +278,63 @@ class SaunaRuntime:
         self.log.info("operation", "Saunabetrieb %s angefordert.", "einschalten" if enabled else "ausschalten")
         return self.controller.set_operation(enabled, self._clock())
 
+    def _prepare_operation(self, enabled, *, physical=False):
+        if enabled and self.reconfiguring:
+            raise ValueError("Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten.")
+        # Der externe Taster startet mit dem konfigurierten Profil.  Ausschalten
+        # ist absichtlich zustandsneutral, damit ein späteres Einschalten die
+        # gleiche explizite Auswahl wieder anwenden kann.
+        if (physical and enabled and not (self.session and self.session.operation_enabled)
+                and self.configuration.button_program != "current"):
+            self._select_button_program()
+
+    def _select_button_program(self):
+        """Apply the configured physical-button profile; caller owns ``_lock``."""
+        parameters, mode = program_parameters(
+            self.configuration.parameters, self.configuration.button_program)
+        self.controller.update_temperature_parameters(parameters, self._clock(),
+            program_mode=mode, new_program=True)
+        self.configuration = replace(self.configuration, parameters=parameters,
+            program_mode=mode)
+        if self.device:
+            self.device.values = parameters.values
+
     async def set_operation(self, enabled: bool):
         async with self._lock:
             self._require_open()
+            self._prepare_operation(enabled)
             result = self._set_operation(enabled)
             await self._cycle()
             return result
+
+    async def set_light_override(self, value):
+        """Apply a manual light selection through the serialized runtime path."""
+        async with self._lock:
+            self._require_open()
+            if self.device is None:
+                raise ValueError("Lichtsteuerung ist nicht verfügbar")
+            now = self._clock()
+            self.device.set_light_override(value)
+            self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
+            if self.archive:
+                self.archive.append("manual_light", now, {"value": value},
+                    self.session.session_id if self.session else None)
+            await self._cycle()
+
+    async def set_heater_override(self, value: bool | None):
+        """Apply a manual heater selection through the serialized runtime path."""
+        async with self._lock:
+            self._require_open()
+            now = self._clock()
+            if self.device:
+                self.device.refresh(now)
+            decision = self.controller.set_heater_override(value, now)
+            self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
+            if self.archive:
+                self.archive.append("manual_heater", now, {"value": value,
+                    "decision": plain(decision)}, self.session.session_id if self.session else None)
+            await self._cycle()
+            return decision
 
     async def finish_phase(self, purpose, token):
         async with self._lock:
@@ -280,7 +345,8 @@ class SaunaRuntime:
             self.log.info("phase_finished_manually", "%s manuell beendet; regulärer Folgeablauf wird fortgesetzt.", label)
             if self.archive:
                 self.archive.append("manual_phase_end", now, {"purpose": purpose,
-                    "token": token, "planned_ends_at": deadline.due_at, "ended_at": now}, deadline.session_id)
+                    "token": token, "planned_ends_at": deadline.due_at if deadline else None,
+                    "ended_at": now}, deadline.session_id if deadline else self.session.session_id)
             await self._cycle()
 
     async def tick(self, _at=None):

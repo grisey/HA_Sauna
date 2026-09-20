@@ -2,13 +2,13 @@
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory
 
-from .core.parameters import DEFINITIONS
+from .core.parameters import EDITABLE_DEFINITIONS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities(SaunaNumber(entry, definition) for definition in DEFINITIONS)
+    async_add_entities(SaunaNumber(entry, definition) for definition in EDITABLE_DEFINITIONS)
 
 
 class SaunaNumber(SaunaEntity, NumberEntity):

@@ -270,6 +270,21 @@ class CoolingTests(unittest.TestCase):
         c.advance(at(603))
         self.assertEqual(c.session.cooling.ends_at, at(2402))
 
+    def test_persisting_overtemperature_requests_cooling_again_in_new_session(self):
+        c = controller(safety_temperature_c=105, overtemperature_minutes=1,
+            forced_cooling_minutes=15, session_gap_minutes=1)
+        c.set_temperature(106, at(1))
+        c.advance(at(62))
+        self.assertTrue(c._temperature_cooling_requested)
+        c.set_operation(False, at(63))
+        c.set_operation(True, at(123), session_id="new")
+
+        self.assertEqual(c.session.session_id, "new")
+        self.assertEqual(c.overtemperature_since, at(1))
+        self.assertEqual(c.phase, "zwangskühlung")
+        self.assertFalse(c.last_decision.heat)
+        self.assertEqual(c.last_decision.reason, "forced_cooling")
+
     def test_temperature_recovery_or_missing_measurement_restarts_continuity_proof(self):
         for recovered in (105, 104, None):
             with self.subTest(recovered=recovered):
@@ -335,16 +350,17 @@ class CoolingTests(unittest.TestCase):
         c.set_operation(True, at(200), session_id="s3")
         self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14400)
 
-    def test_temperature_steps_after_counted_gangs_and_stops_at_ceiling(self):
-        c = controller(target_temperature_c=75, final_temperature_c=82,
-                       temperature_increase_c=3, after_run_minutes=.1)
-        c.set_temperature(80, at(1))
+    def test_temperature_program_distributes_then_holds_for_unlimited_gangs(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+                       temperature_gangs=4, after_run_minutes=.1,
+                       heating_minutes=20)
+        c.program_mode = "progressive"
+        c.set_temperature(85, at(1))
         self.assertEqual(c.phase, "bereit")
-        for index, expected in enumerate((78, 81, 82, 82)):
+        for index, expected in enumerate((85, 90, 95, 95, 95, 95)):
             start=10+index*20
             c.process(event(f"close{index}", Kind.DOOR_CLOSE, start))
             c.process(event(f"infusion{index}", Kind.INFUSION, start+1))
-            self.assertEqual(c.target_temperature, (75,78,81,82)[index])
             c.process(event(f"open{index}", Kind.DOOR_OPEN, start+2))
             end_event=event(f"vent{index}", Kind.VENTILATION, start+3)
             c.process(end_event)
@@ -354,14 +370,14 @@ class CoolingTests(unittest.TestCase):
             self.assertFalse(c.last_decision.heat)  # Nachlauf hat Vorrang.
             c.advance(at(start+10))
             if index==0:
-                self.assertEqual(c.phase, "aufheizen")  # Neue Bereitschaft erst bei 83 °C.
-        c.set_operation(False, at(90))
-        c.set_operation(True, at(100))
-        self.assertEqual(c.target_temperature, 82)
-        c.set_operation(False, at(110))
-        c.advance(at(710))
-        c.set_operation(True, at(711))
-        self.assertEqual(c.target_temperature, 75)
+                self.assertEqual(c.phase, "aufheizen")
+        c.set_operation(False, at(140))
+        c.set_operation(True, at(150))
+        self.assertEqual(c.target_temperature, 95)
+        c.set_operation(False, at(160))
+        c.advance(at(760))
+        c.set_operation(True, at(761))
+        self.assertEqual(c.target_temperature, 80)
 
     def test_retracted_gang_does_not_increase_target(self):
         c = controller(final_temperature_c=95)

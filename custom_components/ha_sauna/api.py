@@ -2,15 +2,42 @@
 import asyncio
 from dataclasses import asdict
 from aiohttp import web
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components.http import HomeAssistantView, KEY_HASS
+from homeassistant.helpers import entity_registry as er
 from .archive import plain
-from .core.parameters import DEFINITIONS, ParameterError, LIVE_TEMPERATURE_KEYS
-from .core.display import phase_timer
+from .core.parameters import EDITABLE_DEFINITIONS, ParameterError, LIVE_TEMPERATURE_KEYS
+from .core.display import phase_timer, start_availability
 from .core.detection_parameters import SPECS
 from .const import DOMAIN
 from .presentation import issues, decision_message, fault_message, parameter_error
 from .log import LEVELS
-from .settings import async_set_parameters, ConfigurationLocked
+from .settings import async_set_parameters, async_set_program, ConfigurationLocked
+
+
+def can_control(request, entry_id):
+    """Use Home Assistant's normal control grant for this instance's switch."""
+    hass = request.app[KEY_HASS]
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry_id}_operation")
+    return bool(entity_id and request["hass_user"].permissions.check_entity(
+        entity_id, POLICY_CONTROL))
+
+
+def require_control(request, entry_id):
+    if not can_control(request, entry_id):
+        raise web.HTTPForbidden()
+
+
+def manual_controls(runtime):
+    """Expose the selected and automatic plans without exposing device ids."""
+    light = runtime.device.light_output if runtime.device else None
+    return {
+        "heater": {"manual": runtime.controller.heater_override,
+                   "automatic": runtime.controller.automatic_decision.heat if runtime.controller.automatic_decision else None},
+        "light": {"manual": light.manual_brightness if light else None,
+                  "automatic": light.last_automatic_brightness if light else None},
+    }
 
 
 def runtime_for(hass, entry_id):
@@ -50,7 +77,7 @@ class StateView(HomeAssistantView):
                 "session": session, "configuration": runtime.configuration.as_options(),
                 "last_session": controller.completed_sessions[-1] if controller.completed_sessions else None,
                 "parameters": [{**asdict(d), "expert": d.key in experts,
-                    "live_editable": d.key in LIVE_TEMPERATURE_KEYS} for d in DEFINITIONS],
+                    "live_editable": d.key in LIVE_TEMPERATURE_KEYS} for d in EDITABLE_DEFINITIONS],
                 "configuration_locked": session is not None,
                 "operation_enabled": bool(session and session.operation_enabled),
                 "heating_feedback": controller.feedback,
@@ -64,6 +91,8 @@ class StateView(HomeAssistantView):
                 "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
                 "mechanical_timer": controller.mechanical_timer_status,
                 "phase_timer": phase_timer(controller, now),
+                "start_availability": start_availability(
+                    controller, now, temperature_rate=device.temperature_rate(now) if device else None),
                 "light_after_run": controller.light_after_run,
                 "start_errors": device.start_errors() if device else [],
                 "issues": issues(runtime),
@@ -80,6 +109,13 @@ class StateView(HomeAssistantView):
                 "archive_error": str(runtime.archive.failure) if runtime.archive.failure else None,
                 "detection_channels": runtime.detector.active_positions if runtime.detector else [],
                 "detector_trace": runtime.detector.diagnostic if runtime.detector else None,
+                "manual_controls": manual_controls(runtime),
+                "permissions": {"admin": request["hass_user"].is_admin,
+                    "control": can_control(request, entry_id),
+                    "temperature": can_control(request, entry_id),
+                    "program": can_control(request, entry_id),
+                    "light": can_control(request, entry_id),
+                    "heater": request["hass_user"].is_admin},
             }))
 
 
@@ -89,8 +125,7 @@ class ControlView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
+        require_control(request, entry_id)
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         body = await request.json()
         if not isinstance(body, dict) or set(body) != {"enabled"} or not isinstance(body["enabled"], bool):
@@ -130,7 +165,9 @@ class ParametersView(HomeAssistantView):
     partial = False
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
+        if self.partial:
+            require_control(request, entry_id)
+        elif not request["hass_user"].is_admin:
             raise web.HTTPForbidden()
         hass = request.app[KEY_HASS]
         runtime_for(hass, entry_id)
@@ -150,6 +187,90 @@ class TemperatureView(ParametersView):
     url = "/api/ha_sauna/{entry_id}/temperature"
     name = "api:ha_sauna:temperature"
     partial = True
+
+
+class ProgramView(HomeAssistantView):
+    """Select a stored profile or an explicit start/end/distribution program."""
+    url = "/api/ha_sauna/{entry_id}/program"
+    name = "api:ha_sauna:program"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime_for(hass, entry_id)
+        body = await request.json()
+        try:
+            if isinstance(body, dict) and set(body) == {"profile"}:
+                if not isinstance(body["profile"], str):
+                    raise ValueError("Ungültiges Temperaturprogramm")
+                parameters = await async_set_program(hass, entry, body["profile"])
+            elif isinstance(body, dict) and set(body) == {"target_temperature_c", "final_temperature_c", "temperature_gangs"}:
+                start, end, gangs = (body["target_temperature_c"], body["final_temperature_c"],
+                                     body["temperature_gangs"])
+                if (isinstance(start, bool) or not isinstance(start, (int, float))
+                        or isinstance(end, bool) or not isinstance(end, (int, float))
+                        or isinstance(gangs, bool) or not isinstance(gangs, int)):
+                    raise ParameterError("base", "invalid_parameters")
+                parameters = await async_set_parameters(hass, entry, body, partial=True,
+                    explicit_target=False, program_mode="progressive",
+                    new_program=True)
+            else:
+                raise ParameterError("base", "invalid_parameters")
+        except ParameterError as error:
+            return self.json({"error": parameter_error(error)}, status_code=400)
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({"success": True, "parameters": parameters,
+            "program_mode": entry.runtime_data.configuration.program_mode})
+
+
+class LightView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/light"
+    name = "api:ha_sauna:light"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {"value"}:
+            raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
+        value = body["value"]
+        preset = value is True or value is False or value is None or value == "normal"
+        percentage = not isinstance(value, bool) and isinstance(value, (int, float))
+        if not preset and not percentage:
+            raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
+        if percentage and not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            await runtime.set_light_override(value)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({"success": True, "manual_controls": manual_controls(runtime)})
+
+
+class HeaterView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/heater"
+    name = "api:ha_sauna:heater"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        body = await request.json()
+        if (not isinstance(body, dict) or set(body) != {"value"}
+                or (body["value"] is not None and not isinstance(body["value"], bool))):
+            raise web.HTTPBadRequest(text="Heizwert muss wahr, falsch oder automatisch sein")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            await runtime.set_heater_override(body["value"])
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True, "manual_controls": manual_controls(runtime)})
 
 
 class LoggingView(HomeAssistantView):
@@ -202,6 +323,8 @@ class ExportView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         async with runtime._lock:
             if runtime.session:
@@ -236,5 +359,8 @@ def register(hass):
     hass.http.register_view(FinishPhaseView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
+    hass.http.register_view(ProgramView)
+    hass.http.register_view(LightView)
+    hass.http.register_view(HeaterView)
     hass.http.register_view(LoggingView)
     data["api_registered"] = True
