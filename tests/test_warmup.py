@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from custom_components.ha_sauna.core.warmup import WarmupTrend
+from custom_components.ha_sauna.core.warmup import WarmupTrend, historical_warmup_rate
 
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -21,6 +21,12 @@ class WarmupTrendTests(unittest.TestCase):
         rate = trend.rate(at(210), maximum_age_seconds=180)
 
         self.assertAlmostEqual(rate, 0.1)
+        self.assertIsNone(
+            historical_warmup_rate(
+                [(at(0), 20), (at(60), 26), (at(120), 32), (at(180), 38)],
+                minimum_observation_seconds=300,
+            )
+        )
         # 100 °C - 41 °C at 0.1 °C/s: independently calculated 590 s.
         self.assertEqual((100 - 41) / rate, 590)
 
@@ -88,3 +94,24 @@ class WarmupTrendTests(unittest.TestCase):
         self.assertIsNone(trend.rate(at(320), maximum_age_seconds=180))
         trend.accept(at(380), 58)
         self.assertIsNotNone(trend.rate(at(380), maximum_age_seconds=180))
+
+    def test_completed_initial_warmup_supplies_a_stable_historical_rate(self):
+        rate = historical_warmup_rate(
+            [(at(0), 20), (at(60), 26), (at(120), 32), (at(180), 38)],
+            minimum_observation_seconds=180,
+        )
+
+        self.assertAlmostEqual(rate, 0.1)
+
+    def test_incomplete_or_cooling_history_remains_unknown(self):
+        self.assertIsNone(
+            historical_warmup_rate(
+                [(at(0), 20), (at(60), 26)], minimum_observation_seconds=180
+            )
+        )
+        self.assertIsNone(
+            historical_warmup_rate(
+                [(at(0), 30), (at(60), 29), (at(120), 28)],
+                minimum_observation_seconds=180,
+            )
+        )

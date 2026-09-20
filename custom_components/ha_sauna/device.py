@@ -20,7 +20,7 @@ from .core.light import normal_brightness, phase_target
 from .core.light_output import LightOutput
 from .core.models import Measurement, Position, Quantity
 from .core.timeline import Door
-from .core.warmup import WarmupTrend
+from .core.warmup import WarmupTrend, historical_warmup_rate
 from .presentation import FAULTS, configuration_message
 
 
@@ -36,6 +36,11 @@ class HADevice:
         self.warmup = WarmupTrend(self.values["warmup_estimation_minutes"] * 60)
         self._warmup_key = None
         self._warmup_started_at = None
+        self._historical_warmup_rate = None
+        self._historical_warmup_session_id = None
+        self._historical_warmup_task = None
+        self._historical_warmup_loaded = False
+        self._historical_warmup_generation = 0
         self.fault_since = {}
         self.faults = {}
         self.command = None
@@ -283,10 +288,73 @@ class HADevice:
             self.warmup.reset()
             self._warmup_key = key
             self._warmup_started_at = now
+            self._load_historical_warmup()
         # A value received before the confirmed heating stretch is a useful
         # current controller input, but not evidence about this warm-up rate.
         if upper.received_at >= self._warmup_started_at:
             self.warmup.accept(upper.received_at, upper.value)
+
+    def _load_historical_warmup(self):
+        """Load one archived rate outside HA's event loop for this session."""
+        if self._historical_warmup_loaded or self._historical_warmup_task is not None:
+            return
+        archive = self.runtime.archive
+        if archive is None:
+            return
+        generation = self._historical_warmup_generation
+        source = self.bindings["upper_temperature"]
+        timeout = self.values.get("sensor_timeout_seconds")
+        minimum_observation = self.warmup.window_seconds
+
+        async def load():
+            try:
+                # A just-ended session may still be in the writer queue.  The
+                # fence runs asynchronously and makes this one-time read see it.
+                await archive.flush()
+                history = await asyncio.to_thread(
+                    archive.latest_completed_warmup, source, timeout
+                )
+                if history:
+                    rate = await asyncio.to_thread(
+                        historical_warmup_rate,
+                        history["measurements"],
+                        minimum_observation_seconds=minimum_observation,
+                    )
+                    result = history["session_id"], rate
+                else:
+                    result = None
+            except Exception:
+                return
+            else:
+                if (
+                    self.runtime.closed
+                    or generation != self._historical_warmup_generation
+                ):
+                    return
+                self._historical_warmup_loaded = True
+                if result:
+                    (
+                        self._historical_warmup_session_id,
+                        self._historical_warmup_rate,
+                    ) = result
+            finally:
+                if self._historical_warmup_task is asyncio.current_task():
+                    self._historical_warmup_task = None
+
+        self._historical_warmup_task = asyncio.create_task(load())
+
+    def invalidate_historical_warmup(self):
+        """Forget a cached rate after a newly completed session was archived."""
+        self._historical_warmup_rate = None
+        self._historical_warmup_session_id = None
+        self._historical_warmup_loaded = False
+        self._historical_warmup_generation += 1
+        task = self._historical_warmup_task
+        self._historical_warmup_task = None
+        if task is not None:
+            task.cancel()
+        if self._warmup_key is not None and not self.runtime.closed:
+            self._load_historical_warmup()
 
     def temperature_rate(self, now):
         """Return an ETA-safe rate, never a control input."""
@@ -304,7 +372,10 @@ class HADevice:
         ):
             return None
         timeout = self.values.get("sensor_timeout_seconds")
-        return self.warmup.rate(now, maximum_age_seconds=timeout)
+        current_rate = self.warmup.rate(now, maximum_age_seconds=timeout)
+        if current_rate is not None:
+            return current_rate
+        return self._historical_warmup_rate
 
     @property
     def missing_configuration(self):
@@ -1075,4 +1146,6 @@ class HADevice:
             await self.hass.services.async_call("light", service, data, blocking=True)
 
     async def close(self):
+        if self._historical_warmup_task is not None:
+            self._historical_warmup_task.cancel()
         await self.send(False, self.runtime._clock(), force=True)

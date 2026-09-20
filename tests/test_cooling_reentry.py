@@ -8,8 +8,8 @@ from test_cooling import at, controller
 from test_foundation import event
 
 
-def completed_after_run():
-    c = controller(after_run_minutes=8, forced_cooling_minutes=15)
+def completed_after_run(**overrides):
+    c = controller(after_run_minutes=8, forced_cooling_minutes=15, **overrides)
     c.report_heating(True, at(0))
     for key, kind, second in (("close", Kind.DOOR_CLOSE, 1), ("person", Kind.PERSON_STRONG, 2),
                               ("infusion", Kind.INFUSION, 3), ("open", Kind.DOOR_OPEN, 60),
@@ -21,19 +21,25 @@ def completed_after_run():
 
 
 class CoolingReentryTests(unittest.TestCase):
-    def test_new_gang_cancels_paused_after_run_and_credits_only_its_elapsed_time_once(self):
+    def test_confirmed_new_gang_cancels_paused_after_run_and_credits_only_its_elapsed_time_once(self):
         c = completed_after_run()
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertEqual(start_availability(c, at(181))["minimum_wait_seconds"], 0)
         c.process(event("close-new", Kind.DOOR_CLOSE, 182))
         c.process(event("person-new", Kind.PERSON_STRONG, 183))
         self.assertIsNotNone(c.session.timeline.active)
+        self.assertEqual(c.last_decision.reason, "gang")
+        self.assertEqual(c.session.after_run.remaining_seconds, 360)
+        self.assertIsNotNone(c.session.after_run.paused_at)
+        self.assertEqual(c.session.after_run_history, ())
+        self.assertEqual(c.session.cooling.credited_seconds, 0)
+
+        c.process(event("infusion-new", Kind.INFUSION, 184))
         self.assertIsNone(c.session.after_run)
-        # Der alte Nachlauf wird beim tatsächlichen Gangstart storniert: sein
+        # Erst der bestätigte Gang storniert den alten Nachlauf: sein
         # ungezählter Rest kehrt später nicht zurück.
         self.assertEqual(c.session.after_run_history[-1].elapsed_seconds, 120)
         self.assertEqual(c.session.cooling.credited_seconds, 120)
-        c.process(event("infusion-new", Kind.INFUSION, 184))
         c.process(event("open-new", Kind.DOOR_OPEN, 200))
         c.process(event("vent-new", Kind.VENTILATION, 201))
         c.advance(at(681))
@@ -41,6 +47,30 @@ class CoolingReentryTests(unittest.TestCase):
         self.assertEqual(c.session.cooling.credited_seconds, 600)
         self.assertEqual(c.cooling_remaining_seconds, 300)
         self.assertEqual(c.session.cooling.ends_at, at(981))
+
+    def test_retracted_provisional_gang_keeps_paused_after_run_across_override_end(self):
+        c = completed_after_run(manual_override_minutes=0.1, confirmation_minutes=1)
+        original = c.session.after_run
+        c.process(event("close-new", Kind.DOOR_CLOSE, 182))
+        c.process(event("person-new", Kind.PERSON_STRONG, 183))
+        self.assertEqual(c.last_decision.reason, "gang")
+
+        c.set_heater_override(True, at(184))
+        c.advance(at(190))  # Der neue Override endet vor Aufguss oder Aufhebung.
+        self.assertIsNone(c.heater_override)
+        self.assertEqual(c.last_decision.reason, "gang")
+        self.assertEqual(c.session.after_run.phase_id, original.phase_id)
+        self.assertEqual(c.session.after_run.remaining_seconds, 360)
+        self.assertIsNotNone(c.session.after_run.paused_at)
+
+        c.process(event("open-new", Kind.DOOR_OPEN, 200))
+        c.process(event("vent-new", Kind.VENTILATION, 201))
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.session.after_run.phase_id, original.phase_id)
+        self.assertEqual(c.session.after_run.remaining_seconds, 360)
+        self.assertIsNone(c.session.after_run.paused_at)
+        self.assertEqual(c.session.after_run.ends_at, at(561))
+        self.assertEqual(c.session.after_run_history, ())
 
     def test_manual_heat_without_a_gang_times_out_then_runs_the_after_run_remainder(self):
         c = completed_after_run()

@@ -20,7 +20,7 @@ const programs = [
 {
   const p=Object.create(Panel.prototype);
   assert.equal(p.programSteps(programs[0]),"80 → 85 → 90 °C");
-  assert.equal(p.programSteps({start_c:82,end_c:99,distribution_gangs:1}),"82 °C");
+  assert.equal(p.programSteps({start_c:82,end_c:99,distribution_gangs:1}),"82 → 99 °C", "one distribution step still reaches the configured end target");
 }
 
 assert.match(source,/configuration\.temperature_programs/);

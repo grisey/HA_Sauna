@@ -26,10 +26,13 @@ und zeigt die manuelle Ofen- und Lichtbedienung. Der Betriebsartwechsel ist nur
 zwischen abgeschlossenen Sitzungen möglich. Vorübergehende Übersteuerungen
 während des Automatikbetriebs sind davon unabhängig.
 
-Zeitangaben beantworten, wann ein Saunagang beginnen kann und wie lange der
-Beginn noch möglich ist. Während eines Gangs steht dessen Dauer im Vordergrund.
-Die Aufheizzeit ist ausdrücklich als Schätzung gekennzeichnet und wird nur bei
-einer brauchbaren Temperaturentwicklung angegeben. Nach Sitzungsende wird der
+Direkt neben der Phase stehen die Bereitschaft und das verbleibende Startfenster.
+Geschätzte Zeiten erscheinen in Fünf-Minuten-Schritten ohne Sekunden. Solange
+die aktuelle Aufheizphase noch keinen stabilen Anstieg liefert, verwendet die
+Prognose den durchschnittlichen Anstieg der letzten Sitzung. Fehlt auch dafür
+ein brauchbarer Verlauf, bleibt die Startzeit offen. Die Prognose ersetzt keine
+Heizsperre oder laufende Kühlzeit. Während eines Gangs steht dessen Dauer im
+Vordergrund. Nach Sitzungsende wird der
 verbleibende Lichtnachlauf angezeigt. Technische Fristen und die Schätzung des
 mechanischen Ofentimers stehen kompakt in den Details.
 

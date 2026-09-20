@@ -1,78 +1,85 @@
 # Parameter und Entitätsrollen
 
-Der einzige produktive Parametersatz liegt in `ConfigEntry.options`.
-Config Flow, Optionsdialog, Number-Entitäten, Climate-Ziel und Panel schreiben
-denselben Stand. Die `Parameters`-Validierung weist unbekannte Felder,
-nicht endliche Zahlen, ungültige Vorzeichen und inkonsistente Beziehungen ab.
-Heizzeitverkürzung muss kleiner als Anfangsbudget sein. Personenfenster müssen
-zum Abtastraster passen. Während einer Sitzung sind nur Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar. Die Änderung läuft durch denselben Ablaufkern, ohne Reload, Timerneustart oder Aufhebung einer Heizsperre. Andere Parameter und Gerätezuordnungen bleiben gesperrt, auch bei kurzem Betrieb-Aus.
+`Parameters` ist die einzige Quelle für veränderliche Betriebswerte. Config Flow,
+Einstellungen, Number-Entitäten, Klimaregelung und Panel lesen und schreiben
+denselben in `ConfigEntry.options` gespeicherten Stand. Die Prüfung weist
+unbekannte Felder, unendliche Werte und unzulässige Beziehungen ab. Fehlende
+Werte älterer Konfigurationen erhalten die zentralen Standardwerte; bereits
+gespeicherte Werte bleiben erhalten.
 
-## Ablauf und Darstellung
+Während einer offenen Sitzung lassen sich nur Solltemperatur, Endtemperatur und
+Verteilung der Temperaturautomatik ändern. Diese Änderung geht direkt an den
+führenden Controller; sie startet keine Timer neu und hebt weder Kühlung noch
+Schutz auf. Alle übrigen Werte und Entitätszuordnungen bleiben bis zum
+Sitzungsende gesperrt.
 
-Alle notwendigen Parameter haben auf Nutzeranweisung einstellbare Standardwerte. Fehlende Werte älterer Konfigurationen werden daraus ergänzt; ausdrücklich gespeicherte Werte bleiben erhalten. Vorwarnzeit und Endtemperatur sind optional. Die Startprüfung auf gültige Temperatur und Schützrückmeldung bleibt bestehen.
+## Temperatur und Programme
 
-| Parameter | Einheit | Ausgangswert |
-|---|---|---|
-| Session-Unterbrechungsfrist (`session_gap_minutes`) | min | 15 |
-| Aufgussbestätigungsfrist (`confirmation_minutes`) | min | 12 |
-| Heizzeit vor erster Kühlung (`heating_minutes`) | min | 90 |
-| Einmalige Heizzeitverkürzung (`heating_reduction_minutes`) | min | 30 |
-| Heizzeit-Rücksetz-Auszeit (`heat_reset_minutes`) | min | 10 |
-| Thermostat-Cooldown (`thermostat_cooldown_minutes`) | min | 5 |
-| Mindestheizzeit nach Einschalten (`minimum_heating_minutes`) | min | 10 |
-| Mechanischer Ofentimer (`mechanical_timer_minutes`) | min | 240 |
-| Vorwarnung Ofentimer (`mechanical_timer_warning_minutes`) | min | Optional leer |
-| Zwangskühlungsdauer (`forced_cooling_minutes`) | min | 15 |
-| Personenerkennung nach Türschließung abwarten (`person_wait_minutes`) | min | 4 |
-| Kühlaufschub bei offener Tür (`open_door_wait_minutes`) | min | 10 |
-| Nachlaufdauer (`after_run_minutes`) | min | 8 |
-| Bereitschaftsaufschlag (`readiness_offset_c`) | °C | 5 |
-| Bereitschaftshysterese (`readiness_hysteresis_c`) | °C | 3 |
-| Erste Temperaturkachel (`preset_start_c`) | °C | 70 |
-| Abstand der Temperaturkacheln (`preset_step_c`) | °C | 5 |
-| Anzahl der Temperaturkacheln (`preset_count`) | Anzahl | 6 |
-| Solltemperatur oben (`target_temperature_c`) | °C | 80 |
-| Temperaturgrenze für Zusatzkühlung (`safety_temperature_c`) | °C | 105 |
-| Auslösezeit für Zusatzkühlung (`overtemperature_minutes`) | min | 10 |
-| Faktor für Zusatzkühlung (`overtemperature_cooling_factor`) | × | 2 |
-| Bestätigungsfrist zentraler Ausfälle (`fault_confirmation_seconds`) | s | 60 |
-| Messwert-Gültigkeitsdauer (`sensor_timeout_seconds`) | s | 180 |
-| Rückmeldungsfrist (`feedback_timeout_seconds`) | s | 10 |
-| Heizen oberhalb dieser Ofenleistung (`power_heating_threshold_w`) | W | 50 |
-| Ofenleistung für Energieschätzung (`nominal_power_kw`) | kW | 4,5 |
-| Licht bei Zwangskühlung (`cooling_brightness_percent`) | % | 5 |
-| Licht beim Einschalten (`operation_brightness_percent`) | % | 35 |
-| Licht im Nachlauf (`after_run_brightness_percent`) | % | 15 |
-| Lichtnachlauf nach Sitzungsende (`session_light_minutes`) | min | 10; null schaltet am Sitzungsende direkt aus |
-| Lichthelligkeit nach Sitzungsende (`session_light_brightness_percent`) | % | 50 |
-| Erhöhung je gezähltem Gang (`temperature_increase_c`) | °C | 5 |
-| Endtemperatur (`final_temperature_c`) | °C | Optional leer, dann konstante Temperatur |
+Die wählbare Solltemperatur liegt zwischen **60 und 100 °C**. Die direkte
+Sollwahl startet bei **80 °C** und bleibt konstant. Die freie
+Temperaturautomatik verteilt den Weg von **80 auf 95 °C** über **vier Gänge**.
+Nach Erreichen des Endwerts gilt dieser auch für weitere Gänge; die Verteilung
+ist keine Obergrenze der Gangzahl. Benannte Programme werden separat als
+validierter Programmkatalog gespeichert und unterliegen demselben Bereich.
 
-## Erkennungsexpertenwerte
+Bereitschaft liegt standardmäßig 5 °C über dem Sollwert; die Hysterese beträgt
+3 °C. Nach einer regulären Temperaturabschaltung gilt ein Cooldown von 5 min,
+ein begonnenes Heizintervall dauert mindestens 10 min. Die vollständigen
+Ablaufbeziehungen stehen in [Betrieb](betrieb.md) und
+[Zeitmodell](zeitmodell.md).
 
-Alle Prüfgrenzen, Mess-/Medianfenster, Haltezeiten und Positionsschwellen des
-Detektors stehen im selben Katalog. Die ursprünglichen Defaults entsprechen weiterhin dem unveränderten Kandidaten; `test_detector.py` prüft diese Gleichheit. Zusätzlich wird unter standardmäßig 70 °C eine Türöffnung erkannt, wenn beide Temperaturtrends trotz durchgehend eingeschalteter Heizung mindestens 5 Sekunden unter −0,8 °C/min bleiben. Diese drei Werte sind einstellbar. Bei höherer Temperatur oder nur einer verfügbaren Messposition bleibt die ursprüngliche Regel mit Feuchteabfall maßgeblich. Die neue Regel ist anhand der aktuellen Testöffnungen kalibriert, keine unabhängige Validierung.
-`core/detection_parameters.py` beschreibt Einheiten, technische Grenzen und
-Ganzzahlvorgaben. Das Ein-Sekunden-Grundraster ist eine feste Voraussetzung des
-übernommenen Algorithmus, keine zweite frei kombinierbare Abtastregel.
+## Betrieb, Schutz und Energie
 
-Eine adaptive relative Erkennung ist lediglich ein früher diskutierter Vorschlag
-und wird nicht eingeführt. Experteneinstellungen ändern den bestehenden kausalen
-Detektor; die Kontrollansicht zeichnet seine tatsächlichen Merkmale auf.
+Die Standardwerte für die Sitzung sind: Unterbrechungsfrist 15 min,
+Aufgussbestätigung 12 min, Heizbudget 90 min und einmalige Verringerung nach
+der ersten abgeschlossenen Kühlung um 30 min. Zwangskühlung dauert 15 min,
+Nachlauf 8 min und die lokale Heizzeit-Rücksetz-Auszeit 10 min. Die
+Türwartewerte betragen 4 min nach dem Schließen und höchstens 10 min bei offen
+bleibender Tür.
 
-## Externe Entitäten
+Messwerte sind 180 s gültig. Rückmeldungen müssen innerhalb von 10 s vorliegen;
+ein Fehler wird nach 60 s bestätigt. Die Übertemperaturgrenze liegt bei 105 °C,
+mit 10 min Nachweis und doppelter Kühlvorgabe. Der mechanische Timer ist eine
+Anzeige mit 240 min; eine Vorwarnzeit kann leer bleiben.
 
-Temperatur und Luftfeuchte oben/unten, Heizaktor (Switch), Bedienquelle
-(Event oder Binary Sensor) und dimmbares Licht werden über HA-Selektoren gewählt.
-Leistungssensor (Geräteklasse power, W oder kW), unabhängiger binärer Heiznachweis
-und Statusquellen sind optional. Ohne Leistungsmesser zählt die Schützstellung.
-Eine mit dem Heizaktor identische binäre Rückmeldequelle gilt ebenfalls als Schätzung.
-Metadatenprüfung kontrolliert Domain, Geräteklasse, Einheit und Dimmbarkeit.
-Obere und untere Quellen derselben Messgröße dürfen nicht identisch sein.
-Konkrete Gerätebezeichnungen/Entity-IDs stehen nicht im Produktivcode.
+Der optionale Leistungssensor ersetzt, wo vorhanden, die Schätzung. Ohne ihn
+rechnet die Energieanzeige mit **4,5 kW** und der bestätigten Heizzeit; die
+Heizleistungsgrenze ist 50 W. Messung, Schätzung und fehlende Abschnitte bleiben
+in der Anzeige unterscheidbar.
 
-Vor Start braucht die Regelung insbesondere gültige obere Temperatur,
-Solltemperatur, Messgültigkeit, Schütz-Rückmeldungsfrist und Fehler-Bestätigungsfrist.
-Die Watt-Schwelle beträgt standardmäßig 50 W und kann an einen optionalen Leistungsmesser angepasst werden. Messausfälle bleiben sichtbar.
-Die untere Höhe wird nicht als feste Ersatztemperatur interpretiert. Ein-Sensor-
-Erkennung ist davon getrennt. Einheiten und Rollen: `bindings.py`.
+## Licht und Anzeige
+
+Die automatische Lichtkurve beginnt bei **5 % bei 30 °C** und steigt bis zur
+Bereitschaft. Die Normalhelligkeit beträgt tagsüber 40 % und nachts 25 %.
+Nachlauf verwendet 15 %, Zwangskühlung 5 %. Übergänge dauern 30 s. Nach dem
+endgültigen Sitzungsende leuchtet das Licht 10 min mit 50 % weiter. Eine
+manuelle Lichtwahl endet mit dem passenden Phasenwechsel, spätestens nach
+10 min.
+
+Die Aufheizschätzung verwendet ein 5-minütiges Fenster. Sie ist reine Anzeige:
+Sie nutzt zuerst einen stabilen Anstieg der aktuellen Aufheizphase und sonst den
+brauchbaren Durchschnitt der letzten archivierten Aufheizphase. Die Darstellung
+rundet auf Fünf-Minuten-Stufen und verändert weder Ofen noch Fristen; siehe
+[Darstellung](darstellung.md).
+
+## Erkennung und externe Entitäten
+
+Temperatur und relative Luftfeuchte oben und unten, Heizaktor, Bedienquelle und
+dimmbares Licht werden über HA-Selektoren zugeordnet. Leistungsmesser,
+unabhängige Heizrückmeldung und Statusquellen sind optional. Die Metadatenprüfung
+sichert Domain, Einheit, Geräteklasse und Dimmbarkeit; konkrete Entity-IDs
+gehören nicht in den Ablaufkern.
+
+Aus jedem gültigen, frischen Temperatur-/Feuchte-Paar erzeugt die Integration
+zusätzlich eine diagnostische Entität für den absoluten Wassergehalt oben bzw.
+unten. Sie wird bei einer Lücke, alten Quellen oder einem nicht passenden Paar
+unavailable und behält keinen alten berechneten Wert. Regeln und
+Expertenparameter der produktiven Erkennung stehen in [Erkennung](erkennung.md).
+
+## Migration statt Bedienoption
+
+Die frühere feste Steigerung von 5 °C, die frühere optionale Endtemperatur und
+die ergänzende Türgrenze von 70 °C sind keine aktiven Bedienwerte. Solche
+Altwerte bleiben beim Laden kompatibel, erscheinen aber nicht als neue
+Produktivkonfiguration. Neue Werte werden ausschließlich über die beschriebenen
+zentralen Parameter und den Programmkatalog festgelegt.

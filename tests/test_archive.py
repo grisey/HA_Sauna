@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -98,6 +99,29 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.archive.failure)
         saved = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)
+
+    async def test_latest_completed_warmup_reads_only_initial_heating_measurements(self):
+        for second, phase in ((0, "aufheizen"), (181, "bereit"), (220, "kuehlung")):
+            self.archive.append("phase", T0 + timedelta(seconds=second), {"phase": phase}, "s")
+        for second, value in ((0, 20), (60, 26), (120, 32), (180, 38), (240, 25)):
+            m = measurement(Position.UPPER, Quantity.TEMPERATURE, value, second)
+            self.archive.append("measurement", m.received_at, m, "s")
+        self.archive.save_session(
+            replace(self.c.session, ended_at=T0 + timedelta(seconds=300)),
+            T0 + timedelta(seconds=300),
+            self.config,
+        )
+        await self.archive.flush()
+
+        history = await asyncio.to_thread(
+            self.archive.latest_completed_warmup, "sensor.upper_temperature", 60
+        )
+
+        self.assertEqual(history["session_id"], "s")
+        self.assertEqual(
+            history["measurements"],
+            tuple((T0 + timedelta(seconds=second), value) for second, value in ((0, 20), (60, 26), (120, 32), (180, 38))),
+        )
 
     async def test_temperature_change_at_session_expiry_keeps_original_archive_configuration(self):
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime

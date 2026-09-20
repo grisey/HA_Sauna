@@ -100,8 +100,9 @@ class SaunaPanel extends HTMLElement {
       .diagnostic-grid .detector-chart{height:auto}
       /* Primärmarker liegen auf dem gespeicherten Merkmalswert, nicht auf einer separaten Zeitachse. */
       .diagnostic-marker{position:static;bottom:auto;width:auto;height:auto;padding:0;border:0;border-radius:0;background:none;color:inherit;font-size:inherit;font-weight:inherit;line-height:normal;transform:none;cursor:pointer;outline:none;pointer-events:all}.diagnostic-marker[data-selected=true]{outline:none;background:none}.diagnostic-marker .event-marker-dot{fill:#f4b183;stroke:#21150e;stroke-width:2}.diagnostic-marker .event-marker-point{fill:#f4b183;stroke:#111;stroke-width:1}.diagnostic-marker .event-marker-link{stroke:#f4b183;stroke-width:1.5;stroke-dasharray:2 2}.diagnostic-marker .event-marker-label{fill:#17110c;font:700 11px system-ui;paint-order:stroke;stroke:#fff4df;stroke-width:3px;stroke-linejoin:round}.diagnostic-marker[data-selected=true] .event-marker-dot{fill:#fff1db;stroke:#e58a55;stroke-width:3}.event-row[data-selected=true]{background:#fff1db;color:#1d2421;outline:3px solid var(--accent);outline-offset:-3px}.event-row[data-selected=true] button{background:#fff1db;color:#1d2421;border-color:#1d2421}
+      .state-line{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}.state-summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:15px}.availability-card{min-width:190px;padding:10px 13px;border:1px solid var(--divider-color,#333);border-left:4px solid var(--accent);border-radius:8px;background:color-mix(in srgb,var(--accent) 9%,transparent);font-variant-numeric:tabular-nums}.availability-card small,.availability-card strong{display:block}.availability-card strong{font-size:18px;line-height:1.25}.availability-card .availability-note{margin-top:3px}.availability-card.ready{border-left-color:#4f9a6a}.availability-card.wait{border-left-color:#d79a42}
       @media(max-width:1000px){.dashboard{grid-template-columns:1fr}.dashboard .gauge-card{max-width:none}.dial{max-width:210px}}
-      @media(max-width:600px){.detail-grid,.forms,.diagnostic-grid{grid-template-columns:1fr}.compact-times{grid-template-columns:1fr}.gauges{gap:4px}.gauges h2{font-size:14px}.card{padding:14px}.timer-strip strong{font-size:18px}.temperature-choice{gap:6px}header select{max-width:110px}}
+      @media(max-width:600px){.detail-grid,.forms,.diagnostic-grid{grid-template-columns:1fr}.compact-times{grid-template-columns:1fr}.gauges{gap:4px}.gauges h2{font-size:14px}.card{padding:14px}.timer-strip strong{font-size:18px}.temperature-choice{gap:6px}header select{max-width:110px}.state-line{grid-template-columns:1fr}.availability-card{margin-top:10px;min-width:0}}
     </style><main>
       <header><button data-action="menu" aria-label="Menü öffnen">☰</button><div><h1>Sauna</h1><small>Steuerung und Verlauf</small></div><span class="grow"></span><select id="instance" aria-label="Sauna auswählen"></select></header>
       <nav class="tabs main-tabs" aria-label="Ansicht"><button data-action="normal" aria-selected="true">Übersicht</button><button data-action="details" aria-selected="false">Details</button></nav>
@@ -206,11 +207,22 @@ class SaunaPanel extends HTMLElement {
     const targetBounds=this.temperatureBounds();
     const presets=Array.from({length:p.preset_count},(_,i)=>p.preset_start_c+i*p.preset_step_c).filter(value=>value<=(targetBounds?.maximum??Infinity));
     const availability=s.start_availability;
-    const availabilityText=s.operation_enabled&&availability?(availability.gang_elapsed_seconds!=null?`Saunagang seit ${duration(availability.gang_elapsed_seconds)}`:availability.minimum_wait_seconds>0?`Ein weiterer Saunagang ist frühestens in ${duration(availability.minimum_wait_seconds)} möglich. Die Temperaturbereitschaft wird danach erneut geprüft.`:availability.until_ready_seconds>0&&availability.ready_estimated?`Bereit in etwa ${duration(availability.until_ready_seconds)}.`:availability.until_ready_seconds===0?`Start jetzt möglich.${availability.start_window_seconds>0?` Ein weiterer Gang kann noch ${availability.start_window_label||"mindestens"} ${duration(availability.start_window_seconds)} lang begonnen werden.`:""}`:(availability.message||"Startzeit noch nicht abschätzbar.")):"";
+    const roughMinutes=(seconds,round)=>{
+      const minutes=Math[round](Math.max(0,Number(seconds)||0)/300)*5;
+      return minutes>0?`${minutes} Minuten`:"weniger als 5 Minuten";
+    };
+    const availabilityCard=s.operation_enabled&&availability&&availability.gang_elapsed_seconds==null?(
+      availability.minimum_wait_seconds>0?`<aside class="availability-card wait" aria-label="Startmöglichkeit"><small>Nächster Start frühestens in</small><strong>${roughMinutes(availability.minimum_wait_seconds,"ceil")}</strong><small class="availability-note">Die Temperaturbereitschaft wird danach erneut geprüft.</small></aside>`
+        :availability.until_ready_seconds>0&&availability.ready_estimated?`<aside class="availability-card" aria-label="Bereitschaft"><small>Bereit in etwa</small><strong>${roughMinutes(availability.until_ready_seconds,"ceil")}</strong></aside>`
+        :availability.until_ready_seconds===0?`<aside class="availability-card ready" aria-label="Bereitschaft"><small>Bereitschaft</small><strong>Jetzt bereit</strong>${availability.start_window_seconds>0?`<small class="availability-note">${availability.start_window_seconds<300?"Startfenster: unter 5 Minuten":`Start noch mindestens ${roughMinutes(availability.start_window_seconds,"floor")} möglich`}</small>`:""}</aside>`
+        :""
+    ):"";
+    const gangElapsedText=s.operation_enabled&&availability?.gang_elapsed_seconds!=null?`Saunagang seit ${duration(availability.gang_elapsed_seconds)}`:"";
+    const availabilityText=s.operation_enabled&&availability&&!availabilityCard&&!gangElapsedText?(availability.message||"Startzeit noch nicht abschätzbar."):"";
     const notices=s.issues.map(i=>`<p>${esc(i.message)}${i.action==="settings"?'<br><button data-action="configure">Einstellungen öffnen</button>':""}</p>`).join("");
     const alert=notices?`<div class="notice" role="alert">${notices}</div>`:"";
     const operation=`<button class="tile full operation ${s.operation_enabled?"stop":"primary"}" data-action="operation" ${canStart?"":"disabled"}>${s.operation_enabled?"Ausschalten":"Einschalten"}</button>`;
-    const stateLine=`<div class="state-line"><strong class="phase" data-phase="${esc(s.phase)}">${phases[s.phase]||"Unbekannt"}</strong><span class="badge">${count} ${count===1?"Saunagang":"Saunagänge"}</span></div><p id="phase-detail" class="muted">${esc(activity)}</p>`;
+    const stateLine=`<div class="state-line"><div class="state-summary"><strong class="phase" data-phase="${esc(s.phase)}">${phases[s.phase]||"Unbekannt"}</strong><span class="badge">${count} ${count===1?"Saunagang":"Saunagänge"}</span></div>${availabilityCard}</div><p id="phase-detail" class="muted">${esc(activity)}</p>`;
     const dial=(reading,unit,caption,color,maximum,valid,control="")=>`<svg class="dial ${control?"dial-temperature":""}" viewBox="0 0 300 235" role="${control?"group":"img"}" aria-label="${esc(control?`${caption} und Solltemperatur` : caption)}"><path d="${temperatureDial.path}" fill="none" stroke="var(--divider-color,#444)" stroke-width="16" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid?color:'#888'}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0,Math.min(100,(reading??0)/maximum*100))} 100"/><text class="reading" x="150" y="118" text-anchor="middle">${num(reading,1)} ${unit}</text><text class="caption" x="150" y="150" text-anchor="middle">${esc(caption)}</text>${control}</svg>`;
     const deadlineLabels={confirmation:"Aufgussbestätigung",person_opportunity:"Wartezeit auf Personenerkennung",session_gap:"Sitzungsende"};
     const phaseRemaining=phase=>Math.max(0,(phase.duration_seconds??0)-(phase.elapsed_seconds??0)-(phase.credited_seconds??0));
@@ -266,7 +278,8 @@ class SaunaPanel extends HTMLElement {
     };
     this.$(".main-tabs [data-action=\"details\"]").hidden=!permissions.admin;
     const overviewLightTimer=!session&&s.phase_timer?.kind==="session_light"?`<p class="muted">Lichtnachlauf noch ${duration(s.phase_timer.seconds)}</p>`:"";
-    this.$("#current").innerHTML=`<h2 class="greeting">Servus ${esc(this.hass.user?.name||"")}</h2><div class="dashboard"><div class="card">${stateLine}${modeControls}<div class="row muted"><span class="feedback ${s.heating_feedback===true?"on":s.heating_feedback===false?"off":"unknown"}">${heatCaption}</span><span data-door-status>${doorText}</span></div>${availabilityText?`<p class="muted">${esc(availabilityText)}</p>`:""}${overviewLightTimer}<div class="tiles">${operation}${manualMode?"":`<div class="program-buttons">${programSelect}</div><div class="temperature-presets">${presets.map(v=>`<button class="tile" data-action="preset:${v}" ${permissions.temperature?"":"disabled"}>${num(v,1)} °C</button>`).join("")}</div>`}</div>${manualMode?manualControls("overview"):lightControls}${alert}</div><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${dial(value("upper","temperature"),"°C",heatCaption,temperatureColor,120,quality("upper","temperature")==="current",targetControl)}<p class="muted">${qualityText("upper","temperature")}</p></div><div><h2>Luftfeuchte</h2>${dial(humidity,"%","Relative Luftfeuchte",humidityColor,100,quality("upper","humidity")==="current")}<p class="muted">${qualityText("upper","humidity")}</p></div></div>${manualMode?"":`<p class="muted center">Solltemperatur: ${num(s.target_temperature)} °C</p><details><summary>Temperaturautomatik</summary><p class="muted">Die Verteilungszahl verteilt Start und Ende der Steigerung. Sie begrenzt keine Saunagänge.</p><div class="row"><label class="field">Start (°C)<input id="progression-start" type="number" step="0.5" max="${targetBounds?.maximum??''}" value="${p.target_temperature_c??s.target_temperature??''}" ${permissions.program?'':'disabled'}></label><label class="field">Ende (°C)<input id="progression-end" type="number" step="0.5" max="${targetBounds?.maximum??''}" value="${p.final_temperature_c??''}" ${permissions.temperature?'':'disabled'}></label><label class="field">Verteilung<input id="progression-gangs" type="number" step="1" value="${p.temperature_gangs??''}" ${permissions.temperature?'':'disabled'}></label><button data-action="progression" ${(permissions.program||permissions.temperature)?'':'disabled'}>Übernehmen</button><button data-action="program-free" ${permissions.program?'':'disabled'}>Neue Steigerung</button></div></details>`}</div></div>`;
+    const programBounds=this.programBounds();
+    this.$("#current").innerHTML=`<h2 class="greeting">Servus ${esc(this.hass.user?.name||"")}</h2><div class="dashboard"><div class="card">${stateLine}${modeControls}<div class="row muted"><span class="feedback ${s.heating_feedback===true?"on":s.heating_feedback===false?"off":"unknown"}">${heatCaption}</span><span data-door-status>${doorText}</span></div>${gangElapsedText?`<p class="muted">${esc(gangElapsedText)}</p>`:""}${availabilityText?`<p class="muted">${esc(availabilityText)}</p>`:""}${overviewLightTimer}<div class="tiles">${operation}${manualMode?"":`<div class="program-buttons">${programSelect}</div><div class="temperature-presets">${presets.map(v=>`<button class="tile" data-action="preset:${v}" ${permissions.temperature?"":"disabled"}>${num(v,1)} °C</button>`).join("")}</div>`}</div>${manualMode?manualControls("overview"):lightControls}${alert}</div><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${dial(value("upper","temperature"),"°C",heatCaption,temperatureColor,120,quality("upper","temperature")==="current",targetControl)}<p class="muted">${qualityText("upper","temperature")}</p></div><div><h2>Luftfeuchte</h2>${dial(humidity,"%","Relative Luftfeuchte",humidityColor,100,quality("upper","humidity")==="current")}<p class="muted">${qualityText("upper","humidity")}</p></div></div>${manualMode?"":`<p class="muted center">Solltemperatur: ${num(s.target_temperature)} °C</p><details><summary>Temperaturautomatik</summary><p class="muted">Die Verteilungszahl verteilt Start und Ende der Steigerung. Sie begrenzt keine Saunagänge.</p><div class="row"><label class="field">Start (°C)<input id="progression-start" type="number" step="0.5" min="${programBounds.minimum}" max="${programBounds.maximum}" value="${p.target_temperature_c??s.target_temperature??''}" ${permissions.program?'':'disabled'}></label><label class="field">Ende (°C)<input id="progression-end" type="number" step="0.5" min="${programBounds.minimum}" max="${programBounds.maximum}" value="${p.final_temperature_c??''}" ${permissions.temperature?'':'disabled'}></label><label class="field">Verteilung<input id="progression-gangs" type="number" step="1" min="${programBounds.gangMinimum}" max="${programBounds.gangMaximum}" value="${p.temperature_gangs??''}" ${permissions.temperature?'':'disabled'}></label><button data-action="progression" ${(permissions.program||permissions.temperature)?'':'disabled'}>Übernehmen</button><button data-action="program-free" ${permissions.program?'':'disabled'}>Neue Steigerung</button></div></details>`}</div></div>`;
     const temperatureProgram=s.configuration.program_mode==="progressive"&&p.final_temperature_c!=null?`${num(p.target_temperature_c)} → ${num(p.final_temperature_c)} °C`:"Konstant";
     const restartThreshold=s.readiness_target==null?null:s.readiness_target-(p.readiness_hysteresis_c??0);
     const power=s.heating_observation?.power_w;
@@ -304,7 +317,16 @@ class SaunaPanel extends HTMLElement {
   programSteps(program) {
     const start=Number(program?.start_c), end=Number(program?.end_c), gangs=Number(program?.distribution_gangs);
     if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isInteger(gangs)||gangs<1)return "";
-    return Array.from({length:gangs},(_,index)=>num(gangs===1?start:start+(end-start)*index/(gangs-1),1)).join(" → ")+" °C";
+    const values=gangs===1?(start===end?[start]:[start,end]):Array.from({length:gangs},(_,index)=>start+(end-start)*index/(gangs-1));
+    return values.map(value=>num(value,1)).join(" → ")+" °C";
+  }
+  progressionValues() {
+    const start=Number(this.$("#progression-start").value), end=Number(this.$("#progression-end").value), gangs=Number(this.$("#progression-gangs").value);
+    const {minimum,maximum,gangMinimum,gangMaximum}=this.programBounds();
+    if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isInteger(gangs)
+      ||!Number.isFinite(minimum)||!Number.isFinite(maximum)||!Number.isFinite(gangMinimum)||!Number.isFinite(gangMaximum)
+      ||start<minimum||start>maximum||end<minimum||end>maximum||gangs<gangMinimum||gangs>gangMaximum)throw Error("Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben");
+    return {start,end,gangs};
   }
   clampTemperature(value, bounds=this.temperatureBounds()) {
     if(!bounds)return null;
@@ -806,9 +828,8 @@ class SaunaPanel extends HTMLElement {
     if(action==="program-save")return this.savePrograms();
     if(action==="button-program"){await this.api(`/${this.entry}/button-program`,"POST",{profile:this.$("#button-program").value});await this.refresh();return;}
     if(action==="progression"){
-      const start=Number(this.$("#progression-start").value), end=Number(this.$("#progression-end").value), gangs=Number(this.$("#progression-gangs").value);
+      const {start,end,gangs}=this.progressionValues();
       const entry=this.entry, draft=this.progressionDraft;
-      if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isInteger(gangs))throw Error("Start, Ende und Verteilung vollständig eingeben");
       if(this.progressionDraft&&Object.hasOwn(this.progressionDraft,"progression-start"))return this.action("program-free");
       if(!permissions.temperature)return;
       const changed={};
@@ -819,9 +840,8 @@ class SaunaPanel extends HTMLElement {
     }
     if(action==="program-free"){
       const entry=this.entry, draft=this.progressionDraft;
-      const start=Number(this.$("#progression-start").value), end=Number(this.$("#progression-end").value), gangs=Number(this.$("#progression-gangs").value);
+      const {start,end,gangs}=this.progressionValues();
       const explicitStart=Object.hasOwn(draft||{},"progression-start");
-      if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isInteger(gangs))throw Error("Start, Ende und Verteilung vollständig eingeben");
       const pendingTemperatureChange=this.temperatureChange, parameters=await pendingTemperatureChange;
       if(this.entry!==entry)return;
       const body={target_temperature_c:explicitStart?start:pendingTemperatureChange?Number(parameters?.target_temperature_c):start,final_temperature_c:end,temperature_gangs:gangs};

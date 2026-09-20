@@ -21,7 +21,7 @@ assert.match(source, /Temperaturautomatik/);
 const state = {
   permissions: {temperature: true}, target_temperature: 80,
   configuration: {parameters: {sauna_min_temperature_c: 60}},
-  parameters: [{key: "target_temperature_c", minimum: 60, maximum: 100}],
+  parameters: [{key: "target_temperature_c", minimum: 60, maximum: 100}, {key: "temperature_gangs", minimum: 1, maximum: 8}],
 };
 const calls=[];
 const panel=Object.assign(Object.create(Panel.prototype), {
@@ -34,6 +34,17 @@ assert.deepEqual(JSON.parse(JSON.stringify(panel.temperatureBounds())), {minimum
 assert.equal(panel.temperatureValueAt({}, 150, 25), 60, "the top of the gauge is the 60 °C scale point");
 assert.equal(panel.temperatureValueAt({}, 255, 130), 100, "pointer coordinates follow the dial arc before clamping");
 assert.equal(panel.clampTemperature(60.2, {minimum: 60.2, maximum: 100}), 60.2, "rounding cannot escape a fractional minimum");
+
+{
+  const inputs={"#progression-start":{value:"60"},"#progression-end":{value:"100"},"#progression-gangs":{value:"8"}};
+  const p=Object.assign(Object.create(Panel.prototype), {state, $:selector=>inputs[selector]});
+  assert.deepEqual(JSON.parse(JSON.stringify(p.progressionValues())), {start:60,end:100,gangs:8}, "free progression accepts the catalog's dynamic bounds");
+  inputs["#progression-start"].value="0";
+  assert.throws(()=>p.progressionValues(), /zulässigen Grenzen/, "free progression rejects an out-of-range temperature before the request");
+  inputs["#progression-start"].value="60";
+  inputs["#progression-gangs"].value="21";
+  assert.throws(()=>p.progressionValues(), /zulässigen Grenzen/, "free progression rejects an out-of-range distribution before the request");
+}
 
 (async () => {
   const svg={setPointerCapture: () => {}, releasePointerCapture: () => {}};
@@ -56,7 +67,7 @@ assert.equal(panel.clampTemperature(60.2, {minimum: 60.2, maximum: 100}), 60.2, 
     };
     const racing=Object.assign(Object.create(Panel.prototype), {
       entry:"entry-1", message:() => {}, $:selector => inputs[selector]||null,
-      state:{permissions:{program:true,temperature:true},configuration:{parameters:{target_temperature_c:80,final_temperature_c:95,temperature_gangs:4}}},
+      state:{permissions:{program:true,temperature:true},parameters:[{key:"target_temperature_c",minimum:60,maximum:100},{key:"temperature_gangs",minimum:1,maximum:8}],configuration:{parameters:{target_temperature_c:80,final_temperature_c:95,temperature_gangs:4}}},
       api:async (...args) => {
         progressionCalls.push(args);
         if(args[0]==="/entry-1/temperature"){await targetSaved;return {parameters:{target_temperature_c:75}};}

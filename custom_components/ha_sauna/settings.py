@@ -116,8 +116,6 @@ async def _async_set_parameters_locked(
     explicit_target=None,
     program_mode=None,
     new_program=False,
-    require_no_session=False,
-    option_updates=None,
 ):
     """Shared parameter write path; the caller holds ``runtime._lock``."""
     runtime = entry.runtime_data
@@ -130,7 +128,7 @@ async def _async_set_parameters_locked(
         raise ParameterError("base", "invalid_parameters")
     before = runtime.configuration.parameters.as_dict()
     merged = {**before, **values} if partial else dict(values)
-    # Optionalen Endwert in einer Teiländerung ausdrücklich entfernen.
+    # Ein leer übermittelter Endwert fällt auf den zentralen Standard zurück.
     if partial and merged.get("final_temperature_c", False) is None:
         merged.pop("final_temperature_c")
     parameters = Parameters(merged)
@@ -152,10 +150,6 @@ async def _async_set_parameters_locked(
         for k in before.keys() | parameters.values.keys()
         if before.get(k) != parameters.values.get(k)
     }
-    if require_no_session and runtime.session:
-        raise ConfigurationLocked(
-            "Einstellungen können erst nach Ende der Saunasitzung zurückgesetzt werden."
-        )
     if runtime.session and changed - LIVE_TEMPERATURE_KEYS:
         raise ConfigurationLocked(
             "Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar. Andere Einstellungen gelten nach Ende der Sitzung."
@@ -206,7 +200,6 @@ async def _async_set_parameters_locked(
             "parameters": parameters.as_dict(),
             **({"program_mode": selected_mode} if selected_mode is not None else {}),
             **({"selected_program_id": None} if clear_selected_program else {}),
-            **(option_updates or {}),
         },
     )
     return parameters.as_dict()

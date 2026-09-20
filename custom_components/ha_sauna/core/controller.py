@@ -373,7 +373,7 @@ class Controller:
             heat is True
             and self.control_mode == "manual"
             and self._session is not None
-            and self._session.cooling is not None
+            and self._cooling_active(self._session.cooling)
         ):
             raise ValueError(
                 "Manuelles Einschalten ist während der Zwangskühlung nicht möglich"
@@ -586,14 +586,13 @@ class Controller:
         if self.target_temperature != previous_target:
             self._session = replace(self._session, ready_at=None)
         active = timeline.active
-        # Das neue Gangobjekt steht bereits, bevor der pausierte Nachlauf
-        # abgeschlossen wird. Seine echte Restkühlung kann so nicht zwischen
-        # zwei Zuständen kurz anlaufen.
+        # Erst der Aufguss bestätigt den neuen Gang. Bis dahin bleibt ein
+        # pausierter alter Nachlauf unverändert; eine aufgehobene Erkennung
+        # darf ihn weder beenden noch seine Restzeit verbrauchen.
         paused_after_run = previous.after_run
         if (
-            previous.timeline.active is None
-            and active is not None
-            and self._paused_after_run_reentry_allowed(previous)
+            active is not None
+            and active.infusion_events
             and paused_after_run is not None
         ):
             self._cancel("after_run")
@@ -722,6 +721,7 @@ class Controller:
             phase is not None
             and phase.paused_at is not None
             and self.heater_override is not True
+            and self._session.timeline.active is None
         ):
             self._resume_after_run(at)
         self._ensure_temperature_cooling(at)
@@ -752,52 +752,53 @@ class Controller:
             self._resume_cooling(at)
 
     def _ensure_temperature_cooling(self, at):
+        due = self.overtemperature_since is not None and (
+            at - self.overtemperature_since
+        ).total_seconds() > self.parameters.seconds("overtemperature_minutes")
+        if due and not self._temperature_cooling_requested:
+            self._temperature_cooling_requested = True
+            duration = (
+                self.parameters.seconds("forced_cooling_minutes")
+                * self.parameters.values["overtemperature_cooling_factor"]
+            )
+            cycle = self._session.cooling
+            if cycle is None:
+                cycle = CoolingCycle(
+                    uuid4().hex,
+                    at,
+                    duration,
+                    credited_seconds=self._uncredited_after_run_seconds(),
+                    reason="overtemperature",
+                )
+            else:
+                if self._cooling_active(cycle):
+                    self._account_cooling(at)
+                    cycle = self._session.cooling
+                cycle = replace(
+                    cycle,
+                    duration_seconds=max(duration, cycle.duration_seconds),
+                    reason="overtemperature",
+                )
+                if self._cooling_active(cycle):
+                    cycle = replace(
+                        cycle, ends_at=at + timedelta(seconds=cycle.remaining_seconds)
+                    )
+                    self._cancel("forced_cooling")
+                    self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
+            self._session = replace(self._session, cooling=cycle)
+        cycle = self._session.cooling
         if (
-            self.overtemperature_since is None
-            or self._temperature_cooling_requested
-            or (at - self.overtemperature_since).total_seconds()
-            <= self.parameters.seconds("overtemperature_minutes")
+            self.control_mode != "manual"
+            or cycle is None
+            or cycle.reason != "overtemperature"
         ):
             return
-        self._temperature_cooling_requested = True
-        if self.control_mode == "manual":
-            self._clear_heater_override()
-        duration = (
-            self.parameters.seconds("forced_cooling_minutes")
-            * self.parameters.values["overtemperature_cooling_factor"]
-        )
-        cycle = self._session.cooling
-        if cycle is None:
-            cycle = CoolingCycle(
-                uuid4().hex,
-                at,
-                duration,
-                credited_seconds=self._uncredited_after_run_seconds(),
-                reason="overtemperature",
-            )
-        else:
-            if self._cooling_active(cycle):
-                self._account_cooling(at)
-                cycle = self._session.cooling
-            cycle = replace(
-                cycle,
-                duration_seconds=max(duration, cycle.duration_seconds),
-                reason="overtemperature",
-            )
-            if self._cooling_active(cycle):
-                cycle = replace(
-                    cycle, ends_at=at + timedelta(seconds=cycle.remaining_seconds)
-                )
-                self._cancel("forced_cooling")
-                self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
-        self._session = replace(self._session, cooling=cycle)
-        # A confirmed temperature shutdown is a technical safety action. It
-        # cannot be paused by manual control.
-        if (
-            self.control_mode == "manual"
-            and self._session.operation_enabled
-            and not self._cooling_active(cycle)
-        ):
+        # A confirmed overtemperature is remembered during a gang.  Its cooling
+        # time must not run, and manual heat remains available until the gang ends.
+        if self._session.timeline.active is not None:
+            return
+        self._clear_heater_override()
+        if self._session.operation_enabled and not self._cooling_active(cycle):
             if cycle.paused_at is not None:
                 self._resume_cooling(at)
             else:
@@ -1033,7 +1034,7 @@ class Controller:
             and (
                 self.control_mode != "manual"
                 or self._session is None
-                or self._session.cooling is None
+                or not self._cooling_active(self._session.cooling)
             )
             and self.temperature is not None
             and isfinite(self.temperature)
@@ -1075,6 +1076,32 @@ class Controller:
             return thermostat.Decision(at, True, "manual_override")
         return thermostat.Decision(at, False, "manual_mode")
 
+    def _evaluate_thermostat(self, at):
+        """Evaluate and retain the thermostat state for the current session."""
+        session = self._session
+        state, decision = thermostat.evaluate(
+            session.thermostat,
+            now=at,
+            parameters=self.parameters,
+            target_temperature=self.target_temperature,
+            temperature=self.temperature,
+            enabled=session.operation_enabled,
+            gang=session.timeline.active is not None,
+            cooling=self._cooling_active(session.cooling),
+            after_run=(
+                session.after_run is not None and session.timeline.active is None
+            ),
+            protection=tuple(sorted(self.protection)),
+            inhibits=tuple(sorted(self.inhibits)),
+            heating_since=(
+                session.heating.intervals[-1].started_at
+                if session.heating.reported_heating is True
+                else None
+            ),
+        )
+        self._session = replace(session, thermostat=state)
+        return decision
+
     def _evaluate(self, at, *, preserve_override=False):
         session = self._session
         if session is None:
@@ -1092,25 +1119,7 @@ class Controller:
                 and session.operation_enabled
             ):
                 self._session = session = replace(session, ready_at=at)
-            state, decision = thermostat.evaluate(
-                session.thermostat,
-                now=at,
-                parameters=self.parameters,
-                target_temperature=self.target_temperature,
-                temperature=self.temperature,
-                enabled=session.operation_enabled,
-                gang=session.timeline.active is not None,
-                cooling=self._cooling_active(session.cooling),
-                after_run=session.after_run is not None,
-                protection=tuple(sorted(self.protection)),
-                inhibits=tuple(sorted(self.inhibits)),
-                heating_since=(
-                    session.heating.intervals[-1].started_at
-                    if session.heating.reported_heating is True
-                    else None
-                ),
-            )
-            self._session = replace(session, thermostat=state)
+            decision = self._evaluate_thermostat(at)
             if self._automatic_restart_needs_cooling(
                 decision, was_demanding=was_demanding
             ):
@@ -1119,26 +1128,7 @@ class Controller:
                 # Cooling changes the thermostat's higher-priority phase.  Run
                 # the pure thermostat decision once more instead of recursing
                 # through evaluation and re-entering this admission check.
-                session = self._session
-                state, decision = thermostat.evaluate(
-                    session.thermostat,
-                    now=at,
-                    parameters=self.parameters,
-                    target_temperature=self.target_temperature,
-                    temperature=self.temperature,
-                    enabled=session.operation_enabled,
-                    gang=session.timeline.active is not None,
-                    cooling=self._cooling_active(session.cooling),
-                    after_run=session.after_run is not None,
-                    protection=tuple(sorted(self.protection)),
-                    inhibits=tuple(sorted(self.inhibits)),
-                    heating_since=(
-                        session.heating.intervals[-1].started_at
-                        if session.heating.reported_heating is True
-                        else None
-                    ),
-                )
-                self._session = replace(session, thermostat=state)
+                decision = self._evaluate_thermostat(at)
         self.automatic_decision = decision
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():

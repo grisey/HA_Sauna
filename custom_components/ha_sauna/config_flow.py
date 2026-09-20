@@ -47,8 +47,9 @@ def parameter_schema(
     live_only=False,
     include_program_choices=False,
     program_options=(),
-    target_minimum=None,
+    parameters=None,
 ) -> vol.Schema:
+    limits = parameters or Parameters({})
     fields = {
         (vol.Optional if definition.optional else vol.Required)(
             definition.key,
@@ -57,14 +58,7 @@ def parameter_schema(
             else vol.UNDEFINED,
         ): selector.NumberSelector(
             {
-                "min": (
-                    target_minimum
-                    if definition.key == "target_temperature_c"
-                    and target_minimum is not None
-                    else definition.minimum
-                )
-                if definition.minimum is not None
-                else 0,
+                "min": limits.minimum_for(definition.key),
                 "max": definition.maximum,
                 "step": 1 if definition.integer else "any",
                 "mode": selector.NumberSelectorMode.BOX,
@@ -83,6 +77,7 @@ def parameter_schema(
                 }
             )
         )
+    if include_program_choices and not live_only:
         fields[vol.Required("button_program", default="current")] = (
             selector.SelectSelector(
                 {
@@ -368,6 +363,8 @@ class SaunaOptionsFlow(OptionsFlow):
                     if button_program not in {"current", "constant", *program_ids}:
                         raise ParameterError("button_program", "invalid_button_program")
                     if live_only:
+                        if button_program != runtime.configuration.button_program:
+                            raise ConfigurationLocked()
                         if set(values) - LIVE_TEMPERATURE_KEYS:
                             raise ConfigurationLocked()
                         target_changed = (
@@ -444,9 +441,7 @@ class SaunaOptionsFlow(OptionsFlow):
                         {"value": program.id, "label": program.name}
                         for program in configuration.temperature_programs
                     ),
-                    target_minimum=configuration.parameters.minimum_for(
-                        "target_temperature_c"
-                    ),
+                    parameters=configuration.parameters,
                 ),
                 user_input if user_input is not None else suggested,
             ),

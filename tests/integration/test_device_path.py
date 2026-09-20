@@ -205,6 +205,66 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.event_id for e in persons], [provisional.recognition_event_id])
         self.assertGreater(self.runtime.session.heating.intervals[0].ended_at.timestamp() - self.base.timestamp(), 240)
 
+    async def test_warmup_history_falls_back_until_a_current_trend_is_ready(self):
+        """The real HA path replaces one completed warm-up with live reports."""
+        from dataclasses import replace
+        from custom_components.ha_sauna.core.models import (
+            Measurement,
+            Position,
+            Quantity,
+            Session,
+        )
+
+        source = self.entry.options["bindings"]["upper_temperature"]
+        started = self.base - timedelta(seconds=360)
+        completed = Session.create("completed-warmup", started)
+        self.runtime.archive.append(
+            "phase", started, {"phase": "aufheizen"}, completed.session_id
+        )
+        for second in range(0, 331, 30):
+            value = 20 + second * 0.05
+            measurement = Measurement(
+                Position.UPPER,
+                Quantity.TEMPERATURE,
+                value,
+                str(value),
+                source,
+                started + timedelta(seconds=second),
+            )
+            self.runtime.archive.append(
+                "measurement",
+                measurement.received_at,
+                measurement,
+                completed.session_id,
+            )
+        self.runtime.archive.append(
+            "phase", self.base, {"phase": "bereit"}, completed.session_id
+        )
+        self.runtime.archive.save_session(
+            replace(completed, ended_at=self.base),
+            self.base,
+            self.runtime.configuration.as_options(),
+        )
+        await self.runtime.archive.flush()
+
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_temperature", 40)
+            await self.set_source(f"{position}_humidity", 40)
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        task = self.runtime.device._historical_warmup_task
+        if task is not None:
+            await task
+        self.assertAlmostEqual(self.runtime.device.temperature_rate(self.now), 0.05)
+
+        for second in range(30, 181, 30):
+            self.now = self.base + timedelta(seconds=second)
+            await self.set_source("upper_temperature", 40 + second * 0.1)
+            await self.set_source("lower_temperature", 40)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+        self.assertAlmostEqual(self.runtime.device.temperature_rate(self.now), 0.1)
+
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
         from custom_components.ha_sauna.core.timeline import Kind
         await self.runtime.set_operation(True)

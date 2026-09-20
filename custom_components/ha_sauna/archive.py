@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 import zipfile
 from collections.abc import Mapping
+from math import isfinite
 
 
 def plain(value):
@@ -200,6 +201,103 @@ class Archive:
                 ],
                 "next_after": records[-1]["id"] if len(records) == limit else None,
             }
+
+    def latest_completed_warmup(self, source, maximum_gap_seconds):
+        """Read upper measurements of the last archived initial warm-up only.
+
+        This deliberately makes a few narrowly scoped queries for one completed
+        session.  Callers run it in a worker thread and cache its result; it is
+        not a history endpoint and never scans measurements from other sessions.
+        """
+        if (
+            not isinstance(source, str)
+            or not source
+            or isinstance(maximum_gap_seconds, bool)
+            or not isinstance(maximum_gap_seconds, (int, float))
+            or not isfinite(maximum_gap_seconds)
+            or maximum_gap_seconds <= 0
+        ):
+            return None
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute(
+                """SELECT session_id,ended_at FROM sessions
+                WHERE entry_id=? AND ended_at IS NOT NULL
+                ORDER BY ended_at DESC LIMIT 1""",
+                (self.entry_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            session_id, session_ended = row
+            phases = db.execute(
+                """SELECT received_at,payload FROM records
+                WHERE entry_id=? AND session_id=? AND kind='phase' ORDER BY id""",
+                (self.entry_id, session_id),
+            ).fetchall()
+            started_at = ended_at = None
+            for received_at, payload in phases:
+                try:
+                    at = datetime.fromisoformat(received_at)
+                    phase = json.loads(payload).get("phase")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if started_at is None:
+                    if phase == "aufheizen":
+                        started_at = at
+                elif phase != "aufheizen":
+                    ended_at = at
+                    break
+            if started_at is None:
+                return {"session_id": session_id, "measurements": ()}
+            if ended_at is None:
+                try:
+                    ended_at = datetime.fromisoformat(session_ended)
+                except (TypeError, ValueError):
+                    return {"session_id": session_id, "measurements": ()}
+            if ended_at <= started_at:
+                return {"session_id": session_id, "measurements": ()}
+
+            rows = db.execute(
+                """SELECT received_at,payload FROM records
+                WHERE entry_id=? AND session_id=? AND kind='measurement'
+                AND received_at>=? AND received_at<? ORDER BY id""",
+                (
+                    self.entry_id,
+                    session_id,
+                    started_at.isoformat(),
+                    ended_at.isoformat(),
+                ),
+            ).fetchall()
+        measurements = []
+        for received_at, payload in rows:
+            try:
+                data = json.loads(payload)
+                at = datetime.fromisoformat(received_at)
+                value = data["value"]
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return {"session_id": session_id, "measurements": ()}
+            if data.get("position") != "upper" or data.get("quantity") != "temperature":
+                continue
+            if (
+                data.get("source") != source
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or at < started_at
+                or at >= ended_at
+            ):
+                return {"session_id": session_id, "measurements": ()}
+            measurements.append((at, float(value)))
+        if (
+            not measurements
+            or (measurements[0][0] - started_at).total_seconds() > maximum_gap_seconds
+            or (ended_at - measurements[-1][0]).total_seconds() > maximum_gap_seconds
+            or any(
+                (right[0] - left[0]).total_seconds() > maximum_gap_seconds
+                for left, right in zip(measurements, measurements[1:])
+            )
+        ):
+            return {"session_id": session_id, "measurements": ()}
+        return {"session_id": session_id, "measurements": tuple(measurements)}
 
     async def export(self):
         await self.flush()

@@ -374,11 +374,14 @@ class SaunaRuntime:
     def persist_completed_sessions(self):
         if self.archive is None:
             return
-        for session in self.controller.completed_sessions[self._archived_completed :]:
+        completed = self.controller.completed_sessions[self._archived_completed :]
+        for session in completed:
             self.archive.save_session(
                 session, self._clock(), self.configuration.as_options()
             )
         self._archived_completed = len(self.controller.completed_sessions)
+        if completed and self.device:
+            self.device.invalidate_historical_warmup()
 
     def persist(self):
         if self.archive is None:

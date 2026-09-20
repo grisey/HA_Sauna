@@ -68,12 +68,19 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(flow["type"], "form")
         self.assertEqual({str(key) for key in flow["data_schema"].schema}, {
             "target_temperature_c", "final_temperature_c", "temperature_gangs",
-            "program_mode", "button_program",
+            "program_mode",
         })
+        from homeassistant.data_entry_flow import InvalidData
+        with self.assertRaises(InvalidData):
+            await self.hass.config_entries.options.async_configure(flow["flow_id"], {
+                "target_temperature_c": 80, "final_temperature_c": 95,
+                "temperature_gangs": 4, "program_mode": "progressive",
+                "button_program": "gipfelstuermer",
+            })
+        self.assertEqual(runtime.configuration.button_program, "current")
         flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {
             "target_temperature_c": 80, "final_temperature_c": 95,
             "temperature_gangs": 4, "program_mode": "progressive",
-            "button_program": "current",
         })
         await self.hass.async_block_till_done()
         self.assertEqual(flow["type"], "create_entry")

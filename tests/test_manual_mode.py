@@ -7,7 +7,6 @@ from test_foundation import T0, event, parameters
 
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
-from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Kind
 
@@ -79,7 +78,7 @@ class ManualModeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller.set_heater_override(True, at(4))
 
-    def test_confirmed_overtemperature_clears_demand_and_cools(self):
+    def test_confirmed_overtemperature_without_a_gang_clears_demand_and_cools(self):
         controller = self.controller(
             safety_temperature_c=80,
             overtemperature_minutes=1,
@@ -99,6 +98,73 @@ class ManualModeTests(unittest.TestCase):
         self.assertGreater(availability["minimum_wait_seconds"], 0)
         with self.assertRaises(ValueError):
             controller.set_heater_override(True, at(64))
+
+    def test_confirmed_overtemperature_during_gang_is_pending_and_keeps_manual_heat(self):
+        controller = self.controller(
+            safety_temperature_c=80,
+            overtemperature_minutes=1,
+            forced_cooling_minutes=2,
+            overtemperature_cooling_factor=2,
+        )
+        self.start(controller)
+        controller.set_heater_override(True, at(1))
+        controller.process(event("close", Kind.DOOR_CLOSE, 2))
+        controller.process(event("person", Kind.PERSON_STRONG, 3))
+        controller.process(event("infusion", Kind.INFUSION, 4))
+        controller.set_temperature(81, at(5))
+        controller.advance(at(66))
+
+        self.assertEqual(controller.phase, "saunagang")
+        self.assertTrue(controller.heater_override)
+        self.assertTrue(controller.last_decision.heat)
+        self.assertIsNotNone(controller.session.cooling)
+        self.assertIsNone(controller.session.cooling.started_at)
+        self.assertIsNone(controller.session.cooling.ends_at)
+
+    def test_pending_overtemperature_cooling_starts_after_manual_gang_ends(self):
+        controller = self.controller(
+            safety_temperature_c=80,
+            overtemperature_minutes=1,
+            forced_cooling_minutes=2,
+            overtemperature_cooling_factor=2,
+        )
+        self.start(controller)
+        controller.set_heater_override(True, at(1))
+        controller.process(event("close", Kind.DOOR_CLOSE, 2))
+        controller.process(event("person", Kind.PERSON_STRONG, 3))
+        controller.process(event("infusion", Kind.INFUSION, 4))
+        controller.set_temperature(81, at(5))
+        controller.advance(at(66))
+        controller.set_temperature(80, at(67))
+        self.assertFalse(controller._temperature_cooling_requested)
+        self.assertIsNone(controller.session.cooling.started_at)
+        controller.process(event("open", Kind.DOOR_OPEN, 67))
+        controller.process(event("ventilation", Kind.VENTILATION, 68))
+
+        self.assertIsNone(controller.heater_override)
+        self.assertEqual(controller.phase, "zwangskühlung")
+        self.assertEqual(controller.session.cooling.started_at, at(68))
+        self.assertEqual(controller.session.cooling.ends_at, at(308))
+        self.assertEqual(controller.session.cooling.elapsed_seconds, 0)
+
+    def test_technical_protection_still_revokes_manual_heat_during_pending_cooling(self):
+        controller = self.controller(
+            safety_temperature_c=80,
+            overtemperature_minutes=1,
+        )
+        self.start(controller)
+        controller.set_heater_override(True, at(1))
+        controller.process(event("close", Kind.DOOR_CLOSE, 2))
+        controller.process(event("person", Kind.PERSON_STRONG, 3))
+        controller.process(event("infusion", Kind.INFUSION, 4))
+        controller.set_temperature(81, at(5))
+        controller.protection.add("confirmed_controller_failure")
+        controller.advance(at(66))
+
+        self.assertEqual(controller.phase, "saunagang")
+        self.assertIsNone(controller.heater_override)
+        self.assertFalse(controller.last_decision.heat)
+        self.assertIsNone(controller.session.cooling.started_at)
 
     def test_finish_session_can_defer_then_start_light(self):
         controller = self.controller(session_light_minutes=2)

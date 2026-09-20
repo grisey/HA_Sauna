@@ -1,48 +1,37 @@
 # Gangmodell
 
-Der führende Kern liegt in `core/timeline.py`, fachliche Fristen in
-`core/controller.py`. Erkennung, Zuordnung und Aktorsteuerung sind getrennt.
+Der Ablaufkern führt Gänge, Fristen und Heizwirkung. Die Erkennung liefert nur
+Signale; sie verwaltet keine zweite Bestätigung. Kühlung, Nachlauf und
+Heizsteuerung stehen in [Betrieb](betrieb.md), die Zeitbezüge in
+[Zeitmodell](zeitmodell.md).
 
-Personenfrüherkennung legt einen vorläufigen Gang an. Ein zugeordneter Aufguss
-bestätigt denselben Gang; Bestätigung wird aus den Aufgussobjekten abgeleitet.
-ID und Beginn bleiben unverändert. Ohne Früherkennung kann ein Aufguss den Gang
-unmittelbar bestätigt anlegen. Ein schwaches Personensignal benötigt den
-vorherigen Durchlüftungskontext, starkes Signal und Aufguss nicht.
+Ein Personenzeichen legt einen vorläufigen Gang an. Ein zugeordneter Aufguss
+bestätigt denselben Gang: ID und Beginn bleiben gleich. Ein Aufguss ohne vorher
+erkannten Gang kann ihn sofort bestätigt anlegen. Der Beginn gehört zur passenden
+Türschließung derselben Episode und Sitzung; ohne solchen Anker ist ausdrücklich
+die Erkennungszeit der Beginn. Rückwirkende Zuordnung erzeugt keine historischen
+Heizbefehle.
 
-Der Beginn gehört zur passenden Türschließung derselben Episode und Session.
-Ohne bekannten Schließungsanker bei geschlossenem Türzustand beginnt der Gang
-mit der Erkennung (`recognition_only`); eine Schließung wird nicht erfunden.
-Ersterkennung und Aufgussbestätigung bleiben getrennte Zeitangaben. Eine
-nachträgliche Zuordnung erzeugt keine historischen Heizbefehle.
+| Ereignis | Wirkung |
+| --- | --- |
+| Personensignal | Legt einen vorläufigen Gang an und aktiviert die Gang-Heizbehandlung. |
+| Erster zugeordneter Aufguss | Bestätigt denselben Gang. |
+| Weitere Aufgüsse | Bleiben dem bestätigten Gang zugeordnet. |
+| Bestätigungsfrist ohne Aufguss | Hebt den vorläufigen Gang vollständig auf. |
+| Durchlüften vor Bestätigung | Hebt den vorläufigen Gang vollständig auf. |
+| Durchlüften nach Bestätigung | Beendet den Gang zum tatsächlichen Bestätigungszeitpunkt. |
+| Betrieb-Aus | Beendet den offenen Gang sofort; späteres Ein schließt ihn nicht wieder an. |
 
-## Aufhebung, Abschluss und Zählung
+Die Aufgussbestätigung muss innerhalb von 12 min erfolgen. Eine ungefähre
+Gangdauer ist keine automatische Endbedingung. Vorläufige oder aufgehobene Gänge
+zählen nicht und erzeugen keinen Nachlauf. Jeder bestätigte, beendete Gang zählt
+genau einmal, unabhängig vom Endgrund; die Zählbarkeit folgt aus dem Gang und
+seinen Aufgüssen, nicht aus einem separaten Merker.
 
-| Eingang | Wirkung |
-|---|---|
-| Personensignal | Vorläufiger Gang, sofortige Anzeige und Gang-Heizbehandlung. |
-| Zugeordneter Aufguss | Derselbe Gang bestätigt; keine Änderung von ID/Beginn. |
-| Weitere Personensignale | Bestätigungsfrist nicht neu starten. |
-| Kurze Türbetätigung | Gang bleibt bestehen. |
-| Fristablauf ohne Aufguss | Vorläufigen Gang vollständig aufheben, ohne Zählung, Abschluss oder Nachlauf. |
-| Bestätigtes Durchlüften vor Aufguss | Ebenso vollständig aufheben. |
-| Bestätigtes Durchlüften nach Aufguss | Gang zum tatsächlichen Bestätigungszeitpunkt abschließen. |
-| Ausdrückliches Betrieb-Aus | Gang sofort beenden, auch vorläufig; kein Wiederaufleben bei Aus/Ein. |
-
-Die Bestätigungsfrist bezieht sich auf den zugeordneten Beginn. 12 oder 13 Minuten
-waren Orientierung, kein gewählter Default; bei Einrichtung muss ein Wert gesetzt
-werden. Die ungefähre Gangdauer von 15 Minuten ist kein automatisches Gangende.
-Aufgehobene Erkennungen bleiben diagnostisch erhalten, sind aber keine Gänge im
-Verlauf oder Zähler. Wiederholte Personensignale derselben verworfenen Episode
-starten keine neue Frist. Ein späterer Aufguss kann die Erkennung nachholen.
-
-Jeder beendete Gang mit mindestens einem Aufguss zählt genau einmal, unabhängig
-vom Endgrund. Laufende, unbestätigte oder aufgehobene Gänge zählen nicht. Kein
-separat schreibbarer Bestätigungs- oder Zählmerker.
-
-Nachlauf und laufende Kühlung sperren neue Gangstarts. Ein bereits laufender
-Gang verschiebt fällige Kühlung. Türwartefrist vor einer möglichen Erkennung,
-Heizbehandlung und Nachlaufanrechnung: [Betrieb](betrieb.md).
-
-Tests: `test_timeline.py`, `test_operation.py`, `test_cooling.py`, reale HA-Ketten
-in `tests/integration/test_device_path.py` und Browserprüfung der unveränderten
-Gang-ID und rückzugeordneten Startzeit. Zeitmodell: [Zeitbezüge](zeitmodell.md).
+Nachlauf und aktive Kühlung sperren reguläre neue Gangsignale. Eine manuelle
+Ofenübersteuerung kann sie pausieren und einen neuen Gang zulassen. Trifft ein
+Personensignal während eines dadurch pausierten Nachlaufs ein, bleibt dieser
+Nachlauf erhalten, bis ein Aufguss den neuen Gang bestätigt. Bei Aufhebung oder
+Fristablauf läuft der alte Rest weiter; nur die Bestätigung storniert ihn. Die
+bis dahin wirklich gelaufene Nachlaufzeit wird höchstens einmal auf eine Kühlung
+angerechnet. Ein laufender Gang wird von fälliger Kühlung nicht unterbrochen.
