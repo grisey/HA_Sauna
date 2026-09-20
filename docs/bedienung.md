@@ -90,7 +90,8 @@ Im Automatikbetrieb folgt das Licht einer Temperaturkurve. Standardmäßig begin
 sie am einstellbaren Kaltpunkt von 30 °C bei 5 %, erreicht tagsüber 40 % und
 nachts 25 %. Nachlauf und Zwangskühlung verwenden eigene einstellbare
 Helligkeiten, standardmäßig 15 % beziehungsweise 5 %. Die automatischen
-Übergänge dauern standardmäßig 30 Sekunden. Nach dem endgültigen Ende der
+Übergänge dauern standardmäßig 30 Sekunden und verändern die Helligkeit in
+Schritten von einem Prozentpunkt. Nach dem endgültigen Ende der
 Saunasitzung leuchtet das Licht standardmäßig noch 10 Minuten mit 50 % und
 schaltet danach aus.
 
