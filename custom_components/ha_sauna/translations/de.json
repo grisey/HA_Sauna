@@ -242,12 +242,15 @@
       "integer_required": "Ganze Zahl erforderlich.",
       "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
       "invalid_log_level": "Bitte ERROR, INFO oder DEBUG auswählen.",
-      "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen."
+      "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
+      "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
+      "invalid_button_program": "Bitte ein vorhandenes Startprogramm auswählen.",
+      "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Erhöhung je Gang und Endtemperatur sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
+      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Endtemperatur und die Verteilung der Steigerung sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
     }
   },
   "options": {
@@ -508,12 +511,15 @@
       "integer_required": "Ganze Zahl erforderlich.",
       "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
       "invalid_log_level": "Bitte ERROR, INFO oder DEBUG auswählen.",
-      "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen."
+      "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
+      "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
+      "invalid_button_program": "Bitte ein vorhandenes Startprogramm auswählen.",
+      "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Erhöhung je Gang und Endtemperatur sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
+      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Endtemperatur und die Verteilung der Steigerung sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
     }
   },
   "selector": {

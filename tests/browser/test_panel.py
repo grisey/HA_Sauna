@@ -246,7 +246,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(target_arc).to_have_attribute("aria-valuenow", "75", timeout=10000)
         await self.panel.locator('#progression-end').fill("86")
         await self.panel.locator('#progression-gangs').fill("3")
-        await self.panel.locator('[data-action="program-free"]').click()
+        program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
+        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="program-free"]').click()
+        response=await result.value
+        self.assertTrue(response.ok)
+        saved=await response.json()
+        self.assertEqual(saved["parameters"]["target_temperature_c"],75)
+        self.assertEqual(saved["parameters"]["final_temperature_c"],86)
+        self.assertEqual(saved["parameters"]["temperature_gangs"],3)
         await expect(self.panel.locator('#progression-end')).to_have_value("86", timeout=15000)
         self.runtime=self.entry.runtime_data
         from datetime import UTC, datetime
@@ -256,12 +264,30 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["parameters"]["temperature_gangs"],3)
         await self.panel.locator('#current [data-action="operation"]').click()
         identity=self.runtime.session.session_id
+        next_target=self.runtime.controller.target_temperature
+        await self.panel.locator('#progression-end').fill("90")
+        temperature_url=f"/api/ha_sauna/{self.entry.entry_id}/temperature"
+        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="progression"]').click()
+        response=await result.value
+        self.assertTrue(response.ok)
+        self.assertEqual((await response.json())["parameters"]["final_temperature_c"],90)
+        await expect(self.panel.locator('#progression-end')).to_have_value("90")
+        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"],90)
+        self.assertEqual(self.runtime.controller.target_temperature,next_target)
+        self.assertEqual(self.entry.options["program_mode"],"progressive")
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await target_arc.focus()
         await target_arc.press("PageUp")
+        await self.panel.evaluate("p=>p.temperatureChange")
         await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
+        self.assertEqual(self.entry.options["program_mode"],"constant")
         await self.panel.locator('#progression-gangs').fill("2")
-        await self.panel.locator('[data-action="progression"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="progression"]').click()
+        response=await result.value
+        self.assertTrue(response.ok)
+        self.assertEqual((await response.json())["parameters"]["temperature_gangs"],2)
         await expect(self.panel.locator('#progression-gangs')).to_have_value("2")
         self.assertIs(self.entry.runtime_data,self.runtime)
         self.assertEqual(self.runtime.session.session_id,identity)

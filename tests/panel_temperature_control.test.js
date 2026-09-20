@@ -45,5 +45,34 @@ assert.equal(panel.clampTemperature(60.2, {minimum: 60.2, maximum: 100}), 60.2, 
   await panel.keyTemperatureTarget({key: "ArrowUp", preventDefault: () => { prevented=true; }});
   assert.equal(prevented, true, "slider keys suppress page scrolling");
   assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), ["/entry-1/temperature", "POST", {target_temperature_c: 80.5}]);
+
+  // A new progression clicked while a direct target request is pending starts
+  // at that target, unless the user explicitly replaced the Start field.
+  for(const explicitStart of [false,true]){
+    let releaseTarget, targetSaved=new Promise(resolve => { releaseTarget=resolve; });
+    const progressionCalls=[], inputs={
+      "#progression-start":{value:explicitStart?"82":"80"},
+      "#progression-end":{value:"86"}, "#progression-gangs":{value:"3"},
+    };
+    const racing=Object.assign(Object.create(Panel.prototype), {
+      entry:"entry-1", message:() => {}, $:selector => inputs[selector]||null,
+      state:{permissions:{program:true,temperature:true},configuration:{parameters:{target_temperature_c:80,final_temperature_c:95,temperature_gangs:4}}},
+      api:async (...args) => {
+        progressionCalls.push(args);
+        if(args[0]==="/entry-1/temperature"){await targetSaved;return {parameters:{target_temperature_c:75}};}
+      },
+      refresh:async () => {},
+    });
+    const target=racing.changeTarget(75);
+    racing.progressionDraft={"progression-end":"86","progression-gangs":"3",...(explicitStart?{"progression-start":"82"}:{})};
+    const program=racing.action("program-free");
+    await Promise.resolve();
+    assert.equal(progressionCalls.length,1,"program save waits for the direct target request");
+    releaseTarget();
+    await Promise.all([target,program]);
+    assert.deepEqual(JSON.parse(JSON.stringify(progressionCalls.at(-1))), ["/entry-1/program","POST",{
+      target_temperature_c:explicitStart?82:75,final_temperature_c:86,temperature_gangs:3,
+    }], explicitStart?"an edited Start is retained":"an unedited Start follows the completed direct target");
+  }
   console.log("panel temperature arc regressions passed");
 })().catch(error => { console.error(error); process.exitCode=1; });

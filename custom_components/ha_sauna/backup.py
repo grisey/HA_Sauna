@@ -1,4 +1,4 @@
-"""HA 2026.9 Backup-Hooks: Schreibpause mit weiterlaufender Eingangswarteschlange."""
+"""HA-Backup-Hooks: Schreibpause mit weiterlaufender Eingangswarteschlange."""
 
 from .const import DOMAIN
 

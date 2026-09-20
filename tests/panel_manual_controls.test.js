@@ -46,7 +46,7 @@ const renderCurrent = mode => {
     return nodes.get(selector);
   };
   const panel=Object.assign(Object.create(Panel.prototype), {
-    hass:{user:{name:"Admin"}}, $:node, draft:null, manualLightDraft:null,
+    hass:{user:{name:"Admin"}}, $:node, progressionDraft:null, manualLightDraft:null,
     state:{
       now:"2026-09-20T12:00:00Z", session:null, last_session:null,
       configuration:{control_mode:mode,program_mode:"constant",selected_program_id:null,
@@ -116,7 +116,7 @@ const renderCurrent = mode => {
     return detailNodes.get(selector);
   };
   const detailPanel=Object.assign(Object.create(Panel.prototype), {
-    hass:{user:{name:"Admin"}}, $:detailNode, draft:null, manualLightDraft:null,
+    hass:{user:{name:"Admin"}}, $:detailNode, progressionDraft:null, manualLightDraft:null,
     state:{
       now:"2026-09-20T12:00:00Z", phase:"nachlauf", operation_enabled:true,
       session:{timeline:{active:null,door:"closed",completed:[]},heating:{elapsed_seconds:120},

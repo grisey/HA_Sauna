@@ -23,7 +23,7 @@ const makePanel = ({admin=true, locked=false}={}) => {
   const calls=[], edited={dataset:{edited:"true"}};
   let stateReads=0, refreshed=false;
   const panel=Object.assign(Object.create(Panel.prototype), {
-    entry:"entry-1", draft:{target:"95"}, settingsEntry:"entry-1",
+    entry:"entry-1", progressionDraft:{"progression-end":"95"}, settingsEntry:"entry-1",
     state:{configuration_locked:locked, permissions:{admin}},
     message:() => {},
     shadowRoot:{
@@ -51,7 +51,7 @@ const makePanel = ({admin=true, locked=false}={}) => {
     ["/entry-1/parameters/reset","POST"],
   ], "one reset POST is sent");
   assert.equal(test.calls.filter(([path])=>path==="/entry-1/state").length,2, "waits through stale log and program state until defaults are loaded");
-  assert.equal(test.panel.draft,null, "draft values are cleared only after loaded state");
+  assert.equal(test.panel.progressionDraft,null, "draft values are cleared only after loaded state");
   assert.equal(test.panel.settingsEntry,null, "settings form is rebuilt from the loaded state");
   assert.equal(test.edited.dataset.edited,undefined, "edited input markers are cleared");
   assert.equal(test.refreshed,true, "loaded settings, program and logging state are refreshed");

@@ -12,6 +12,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.program_catalog import DEFAULT_PROGRAMS
 from custom_components.ha_sauna.bindings import ROLES
 
 HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
@@ -78,14 +79,20 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_complete_flow_stores_one_source(self):
         form = await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
         self.assertEqual(form["step_id"], "parameters")
-        values = form["data_schema"](self.values)
+        values = form["data_schema"](
+            {**self.values, "button_program": "gipfelstuermer"}
+        )
         result = await self.flow.async_step_parameters(values)
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(result["data"], {})
         self.assertEqual(result["options"]["parameters"], self.expected_values)
         self.assertEqual(result["options"]["bindings"], self.inputs)
         self.assertEqual(result["options"]["program_mode"], "progressive")
-        self.assertEqual(result["options"]["button_program"], "current")
+        self.assertEqual(result["options"]["button_program"], "gipfelstuermer")
+        self.assertEqual(
+            result["options"]["temperature_programs"],
+            [program.as_dict() for program in DEFAULT_PROGRAMS],
+        )
 
     async def test_duplicate_sensor_stays_in_form(self):
         inputs = {**self.inputs, "lower_temperature": self.inputs["upper_temperature"]}
@@ -103,6 +110,22 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
         form = await self.flow.async_step_parameters({**self.values, "heating_minutes": -1})
         self.assertEqual(form["errors"], {"heating_minutes": "positive"})
+
+    async def test_initial_catalog_must_fit_the_selected_minimum_temperature(self):
+        await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
+        form = await self.flow.async_step_parameters(
+            {
+                **self.values,
+                "sauna_min_temperature_c": 80,
+                "preset_start_c": 80,
+                "target_temperature_c": 80,
+                "final_temperature_c": 80,
+            }
+        )
+        self.assertEqual(
+            form["errors"],
+            {"sauna_min_temperature_c": "program_catalog_invalid"},
+        )
 
     async def test_existing_heater_cannot_be_claimed_twice(self):
         self.entries.append(self.entry)

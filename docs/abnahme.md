@@ -19,12 +19,14 @@ Die gezielten Steuerungsprüfungen bestätigen:
   wieder. Kurze Mehrfachbetätigungen werden vollständig verarbeitet.
 
 Lokal bestanden **327 Kerntests** und **acht JavaScript-Prüfprogramme**. Zwei
-private Replay-Tests wurden mangels eingebundenem Archiv übersprungen. Die
+Replay-Tests mit privaten Messdaten sind im öffentlichen Lauf ausgenommen. Die
 Kerntests liefen ohne Home-Assistant-Import in weniger als einer Sekunde.
 Die lokale Browserkontrolle nutzt ausschließlich synthetische Messreihen.
 Sie prüft Temperaturbedienung, Programmwahl, kontrollierten Zoom, Kurvenmarker
 und die Navigation zur passenden Ereigniszeile. Die Linux-Prüfung mit echter
-Home-Assistant-Instanz ist für diesen Arbeitsstand noch ausstehend.
+Home-Assistant-Instanz umfasst Einrichtung, Gerätepfad, API, Backup und
+Browserbedienung. Das Ergebnis für jeden Commit steht in den
+[GitHub-Prüfläufen](https://github.com/grisey/HA_Sauna/actions/workflows/tests.yml).
 
 Die physischen Lichttaster verändern direkt die zugeordnete Lichtentität.
 Externe Änderungen werden als manuelle Lichtwahl übernommen; eigene Befehle und
@@ -243,6 +245,9 @@ Das belegt noch nicht die neue Ergänzung am realen Ofen.
 ## Umgebung und Reproduktion
 
 - HA-Tests: Linux, Home Assistant **2026.9.2**, Python **3.14.2**.
+- Zusätzlicher Mindestversionslauf: Home Assistant **2024.7.0**, Python **3.12**,
+  mit vorhandenen Prüfungen für Einrichtung, Entitäten, Neuladen und Tastersteuerung.
+  Browser und vollständiges Backup/Restore laufen mit der oben genannten neueren Version.
 - Öffentliche Kerntests: Python **3.13**. Lokal: Homebrew-Python **3.14** ohne HA-Import.
 - Browser: zugehöriges HA-Frontend, Playwright/Chromium aus `tests/browser/requirements.txt`.
 - Versionen und Installationsschritte: [CI-Workflow](../.github/workflows/tests.yml).

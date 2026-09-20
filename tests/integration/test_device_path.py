@@ -308,8 +308,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.light.is_on)
         calls = len(self.light.calls)
         await self.time(1)
-        # Ein fehlgeschlagener Lichtdienst bleibt im nächsten Tick erneut fällig.
+        # Beim anfänglichen Nullwert ist das Licht bereits aus. Der vollständige
+        # sichtbare Zustand bestätigt deshalb diesen wirkungslosen AUS-Befehl.
+        self.assertEqual(len(self.light.calls), calls)
+        # Mit dem ersten darstellbaren Dimmwert bleibt der Fehler erneut fällig.
+        await self.time(2)
         self.assertEqual(len(self.light.calls), calls + 1)
+        self.assertIn("operation_light", self.runtime.device.faults)
+        self.assertTrue(self.heater.is_on)
         await self.runtime.set_operation(False)
         self.light.fail_commands=False
         await self.runtime.set_operation(True)
@@ -939,9 +945,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.now = self.runtime.device.input_started_at + timedelta(seconds=1)
 
         async def push(kind, *, at=None):
-            self.now = at or self.now + timedelta(milliseconds=100)
+            self.now += timedelta(milliseconds=100)
             self.hass.states.async_set(
-                "event.detached_button", self.now.isoformat(), {"event_type": kind}
+                "event.detached_button",
+                (at or self.now).isoformat(),
+                {"event_type": kind},
             )
             await self.hass.async_block_till_done()
 
@@ -970,6 +978,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_light_override(35)
         await self.runtime.set_operation(True)
         session_id = self.runtime.session.session_id
+        await self.runtime.receive(
+            Event("manual-door-close", session_id, Kind.DOOR_CLOSE, self.now, self.now)
+        )
         await self.runtime.receive(Event("manual-infusion", session_id, Kind.INFUSION, self.now, self.now))
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()

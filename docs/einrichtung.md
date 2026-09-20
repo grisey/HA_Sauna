@@ -1,7 +1,8 @@
 # Einrichtung
 
 Dieser Leitfaden richtet sich an Home-Assistant-Nutzer mit Administratorrechten.
-Diese Rechte reichen für die Einrichtung aus.
+Diese Rechte reichen für die Einrichtung aus. Voraussetzung ist Home Assistant
+ab **2024.7.0**; neuere Versionen sind ebenfalls zugelassen.
 
 1. Fügen Sie in HACS das Repository `https://github.com/grisey/HA_Sauna` als
    benutzerdefiniertes Repository vom Typ **Integration** hinzu und laden Sie es
@@ -23,9 +24,17 @@ Diese Rechte reichen für die Einrichtung aus.
    Rückmeldungen, die zur tatsächlichen Anlage passen.
 
 Für ein Update wählen Sie in HACS die gewünschte Veröffentlichung von **HA Sauna**
-und starten anschließend Home Assistant neu. Vorabversionen wie `1.0.0-rc1`
-lassen sich ebenfalls auswählen. Damit HACS sie als Update anbietet, aktivieren
-Sie den zugehörigen [Schalter für Vorabversionen](https://hacs.dev/docs/use/entities/switch/).
+und starten anschließend Home Assistant neu. Wenn Sie eine Vorabversion wie
+`1.0.0-rc1` verwenden, aktivieren Sie in Home Assistant den zu **HA Sauna**
+gehörenden HACS-[Schalter für Vorabversionen](https://hacs.dev/docs/use/entities/switch/)
+und schalten ihn ein. HACS legt diese Schalter standardmäßig als deaktivierte
+Entitäten an; gegebenenfalls müssen Sie die Entität zuerst aktivieren.
+
+Solange ausschließlich Vorabversionen veröffentlicht sind, kann HACS bei
+ausgeschaltetem Vorabversionsschalter einen Commit-Code statt einer Versionsnummer
+als Update anbieten – auch wenn derselbe Stand bereits installiert ist. Schalten
+Sie für die RC-Reihe den Vorabversionsschalter ein und aktualisieren Sie die
+HACS-Versionsprüfung.
 
 Die Bedienung beginnt in der **Übersicht**. Zusätzliche Einstellungen,
 Gerätezuordnungen nach Sitzungsende, Protokollierung und Archiv finden Sie unter

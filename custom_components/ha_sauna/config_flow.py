@@ -18,6 +18,7 @@ from .core.parameters import (
     ParameterError,
     Parameters,
 )
+from .core.program_catalog import DEFAULT_PROGRAMS, validate_programs
 from .log import LEVELS
 from .settings import ConfigurationLocked, async_set_parameters
 
@@ -180,14 +181,24 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                 button_program = values.pop("button_program", "current")
                 if program_mode not in ("constant", "progressive"):
                     raise ParameterError("program_mode", "invalid_program_mode")
-                if button_program not in (
+                if button_program not in {
                     "current",
                     "constant",
-                    "program_1",
-                    "program_2",
-                ):
+                    *(program.id for program in DEFAULT_PROGRAMS),
+                }:
                     raise ParameterError("button_program", "invalid_button_program")
                 parameters = Parameters(values)
+                try:
+                    validate_programs(
+                        DEFAULT_PROGRAMS,
+                        minimum_c=parameters.minimum_for("target_temperature_c"),
+                        maximum_c=BY_KEY["target_temperature_c"].maximum,
+                        maximum_gangs=BY_KEY["temperature_gangs"].maximum,
+                    )
+                except ValueError as error:
+                    raise ParameterError(
+                        "sauna_min_temperature_c", "program_catalog_invalid"
+                    ) from error
                 # Gegen parallel angelegte Einträge auch beim endgültigen Speichern prüfen.
                 if heater_is_used(self._async_current_entries(), self._bindings):
                     return self.async_abort(reason="heater_already_used")
@@ -203,12 +214,22 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_PARAMETERS: parameters.as_dict(),
                         "program_mode": program_mode,
                         "button_program": button_program,
+                        "temperature_programs": [
+                            program.as_dict() for program in DEFAULT_PROGRAMS
+                        ],
                     },
                 )
         return self.async_show_form(
             step_id="parameters",
             data_schema=self.add_suggested_values_to_schema(
-                parameter_schema(include_program_choices=True), user_input
+                parameter_schema(
+                    include_program_choices=True,
+                    program_options=(
+                        {"value": program.id, "label": program.name}
+                        for program in DEFAULT_PROGRAMS
+                    ),
+                ),
+                user_input,
             ),
             errors=errors,
         )

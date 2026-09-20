@@ -838,8 +838,9 @@ class HADevice:
 
         ``state_report`` events deliberately do not represent a new choice.
         Expected automatic values are consumed only when their complete visible
-        state arrives before the normal feedback timeout.  Thus a delayed
-        automatic dim step cannot erase a different physical dimmer choice.
+        state arrives before the normal feedback timeout. Such an echo leaves
+        a different physical dimmer choice intact. After that interval, state
+        alone cannot distinguish a late echo from a new physical selection.
         """
         if (
             event.event_type != "state_changed"

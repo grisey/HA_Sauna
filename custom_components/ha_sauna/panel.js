@@ -114,13 +114,13 @@ class SaunaPanel extends HTMLElement {
     </main>`;
     this.shadowRoot.addEventListener("click",e=>{const b=e.target.closest("[data-action]"); if(b)this.action(b.dataset.action).catch(err=>this.message(err));});
     this.shadowRoot.addEventListener("change",e=>{
-      if(e.target.id==="instance"){this.entry=e.target.value;this.highlightedEventId=null;this.generation++;this.selected="live";this.cache.clear();this.invalidateHistoryIndex();this.settingsEntry=null;this.draft=null;this.zoom=1;this.window=null;this.refresh();}
+      if(e.target.id==="instance"){this.entry=e.target.value;this.highlightedEventId=null;this.generation++;this.selected="live";this.cache.clear();this.invalidateHistoryIndex();this.settingsEntry=null;this.progressionDraft=null;this.temperatureChange=null;this.zoom=1;this.window=null;this.refresh();}
       if(e.target.id==="session"){this.selected=e.target.value;this.highlightedEventId=null;this.invalidateHistoryIndex();this.zoom=1;this.window=null;this.refresh();}
       if(e.target.id==="target")this.action("target").catch(err=>this.message(err));
       if(e.target.id==="program-select"&&e.target.value)this.action(`profile:${e.target.value}`).catch(err=>this.message(err));
       if(e.target.id==="button-program")this.action("button-program").catch(err=>this.message(err));
     });
-    this.shadowRoot.addEventListener("input",e=>{if(e.target.closest("#parameters"))e.target.dataset.edited="true";if(e.target.closest("#current"))this.draft={...this.draft,[e.target.id]:e.target.value};if(e.target.matches("[data-manual-light-value]"))this.manualLightDraft=e.target.value;});
+    this.shadowRoot.addEventListener("input",e=>{if(e.target.closest("#parameters"))e.target.dataset.edited="true";if(e.target.matches("#progression-start,#progression-end,#progression-gangs"))this.progressionDraft={...this.progressionDraft,[e.target.id]:e.target.value};if(e.target.matches("[data-manual-light-value]"))this.manualLightDraft=e.target.value;});
     this.shadowRoot.addEventListener("pointerdown",e=>{const overview=e.target.closest("#history-overview svg");if(overview)return this.beginHistoryGesture(e,overview);const target=e.target.closest("[data-target-arc]");if(target)return this.beginTemperatureDrag(e,target.closest("svg"),target);const svg=e.target.closest("svg.session-chart");if(svg&&e.pointerType!=="mouse"){svg.setPointerCapture?.(e.pointerId);this.chartPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});this.pinchDistance=null;}});
     this.shadowRoot.addEventListener("pointerup",e=>{if(this.temperatureInteraction?.pointerId===e.pointerId){this.endTemperatureDrag(e).catch(err=>this.message(err));return;}if(this.historyGesture?.pointerId===e.pointerId)return this.endHistoryGesture(e);this.endChartPointer(e);});
     this.shadowRoot.addEventListener("pointercancel",e=>{if(this.temperatureInteraction?.pointerId===e.pointerId)return this.cancelTemperatureDrag(e);if(this.historyGesture?.pointerId===e.pointerId)return this.endHistoryGesture(e);this.endChartPointer(e);});
@@ -274,12 +274,24 @@ class SaunaPanel extends HTMLElement {
     const detectionText=session?`Erkennung mit: ${(s.detection_channels||[]).map(position=>position==="upper"?"oberer Messposition":"unterer Messposition").join(" und ")||"noch keiner Messposition"}.`:"Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.";
     this.$("#details").innerHTML=`<div class="card hero">${stateLine}${finishPhase}${operation}${timers}${alert}</div>${manualControls("details")}<div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${num(s.target_temperature,1)} °C</dd><dt>Bereitschaftswert</dt><dd data-readiness>${num(s.readiness_target,1)} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${num(restartThreshold,1)} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${esc(s.decision_text)}</p></div><div class="card"><h2>Licht</h2><dl><dt>Lichtstatus</dt><dd>${lightStatus}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${["upper","lower"].map(pos=>`<h3>${pos==="upper"?"Obere":"Untere"} Messposition</h3><p>${formatValue(pos,"temperature","°C")} · ${qualityText(pos,"temperature")}</p><p>${formatValue(pos,"humidity","% relative Luftfeuchte")} · ${qualityText(pos,"humidity")}</p>`).join("")}<p class="muted">${esc(detectionText)}</p></div></div>`;
     if(progressionOpen)this.$("#current details").open=true;
-    for(const [id,value] of Object.entries(this.draft||{}))if(this.$(`#${id}`))this.$(`#${id}`).value=value;
+    for(const [id,value] of Object.entries(this.progressionDraft||{}))if(this.$(`#${id}`))this.$(`#${id}`).value=value;
   }
   async changeTarget(value) {
     if(!Number.isFinite(value))throw Error("Gültige Solltemperatur eingeben");
-    await this.api(`/${this.entry}/temperature`,"POST",{target_temperature_c:value});
-    this.draft=null; await this.refresh();
+    const entry=this.entry, previous=this.temperatureChange, draft=this.progressionDraft;
+    const change=(async()=>{
+      await previous;
+      if(this.entry!==entry)return;
+      const saved=await this.api(`/${entry}/temperature`,"POST",{target_temperature_c:value});
+      // A dial request may finish after the user has already filled the
+      // progression form. Keep that unsaved form until its own save succeeds.
+      if(this.entry!==entry)return;
+      if(this.progressionDraft===draft)this.progressionDraft=null;
+      await this.refresh();
+      return saved?.parameters;
+    })();
+    this.temperatureChange=change;
+    try { await change; } finally { if(this.temperatureChange===change)this.temperatureChange=null; }
   }
   temperatureDefinition() { return this.state?.parameters?.find(d=>d.key==="target_temperature_c"); }
   temperatureBounds() {
@@ -350,7 +362,7 @@ class SaunaPanel extends HTMLElement {
     const saved=await this.api(`/${entry}/${partial?"temperature":"parameters"}`,"POST",parameters);
     parameters=saved.parameters;
     await this.waitForConfiguration(entry,parameters);
-    this.settingsEntry=null;this.draft=null;
+    this.settingsEntry=null;this.progressionDraft=null;
     if(start)await this.api(`/${entry}/control`,"POST",{enabled:true});
     await this.refresh();
   }
@@ -734,7 +746,7 @@ class SaunaPanel extends HTMLElement {
     const entry=this.entry;
     const saved=await this.api(`/${entry}/parameters/reset`,"POST");
     await this.waitForConfiguration(entry,saved.parameters,saved.configuration);
-    this.settingsEntry=null;this.draft=null;
+    this.settingsEntry=null;this.progressionDraft=null;
     this.shadowRoot.querySelectorAll("#parameters input[data-edited]").forEach(input=>delete input.dataset.edited);
     await this.refresh();
     const status=this.shadowRoot.querySelector("#settings-reset-status");
@@ -781,8 +793,13 @@ class SaunaPanel extends HTMLElement {
     }
     if(action.startsWith("preset:"))return this.changeTarget(Number(action.slice(7)));
     if(action.startsWith("profile:")){
-      await this.api(`/${this.entry}/program`,"POST",{profile:action.slice(8)});
-      this.draft=null; await this.refresh(); return;
+      const entry=this.entry, draft=this.progressionDraft;
+      await this.temperatureChange;
+      if(this.entry!==entry)return;
+      await this.api(`/${entry}/program`,"POST",{profile:action.slice(8)});
+      if(this.entry!==entry)return;
+      if(this.progressionDraft===draft)this.progressionDraft=null;
+      await this.refresh(); return;
     }
     if(action==="program-add"){this.addProgram();return;}
     if(action.startsWith("program-remove:")){this.removeProgram(action.slice(15));return;}
@@ -790,19 +807,26 @@ class SaunaPanel extends HTMLElement {
     if(action==="button-program"){await this.api(`/${this.entry}/button-program`,"POST",{profile:this.$("#button-program").value});await this.refresh();return;}
     if(action==="progression"){
       const start=Number(this.$("#progression-start").value), end=Number(this.$("#progression-end").value), gangs=Number(this.$("#progression-gangs").value);
+      const entry=this.entry, draft=this.progressionDraft;
       if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isInteger(gangs))throw Error("Start, Ende und Verteilung vollständig eingeben");
-      if(this.draft&&Object.hasOwn(this.draft,"progression-start"))return this.action("program-free");
+      if(this.progressionDraft&&Object.hasOwn(this.progressionDraft,"progression-start"))return this.action("program-free");
       if(!permissions.temperature)return;
       const changed={};
       if(end!==this.state.configuration.parameters.final_temperature_c)changed.final_temperature_c=end;
       if(gangs!==this.state.configuration.parameters.temperature_gangs)changed.temperature_gangs=gangs;
-      if(Object.keys(changed).length){await this.api(`/${this.entry}/temperature`,"POST",changed);this.draft=null;await this.refresh();}
+      if(Object.keys(changed).length){await this.temperatureChange;if(this.entry!==entry)return;await this.api(`/${entry}/temperature`,"POST",changed);if(this.entry!==entry)return;if(this.progressionDraft===draft)this.progressionDraft=null;await this.refresh();}
       return;
     }
     if(action==="program-free"){
-      const body={target_temperature_c:Number(this.$("#progression-start").value),final_temperature_c:Number(this.$("#progression-end").value),temperature_gangs:Number(this.$("#progression-gangs").value)};
-      if(!Number.isFinite(body.target_temperature_c)||!Number.isFinite(body.final_temperature_c)||!Number.isInteger(body.temperature_gangs))throw Error("Start, Ende und Verteilung vollständig eingeben");
-      await this.api(`/${this.entry}/program`,"POST",body);this.draft=null;await this.refresh();return;
+      const entry=this.entry, draft=this.progressionDraft;
+      const start=Number(this.$("#progression-start").value), end=Number(this.$("#progression-end").value), gangs=Number(this.$("#progression-gangs").value);
+      const explicitStart=Object.hasOwn(draft||{},"progression-start");
+      if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isInteger(gangs))throw Error("Start, Ende und Verteilung vollständig eingeben");
+      const pendingTemperatureChange=this.temperatureChange, parameters=await pendingTemperatureChange;
+      if(this.entry!==entry)return;
+      const body={target_temperature_c:explicitStart?start:pendingTemperatureChange?Number(parameters?.target_temperature_c):start,final_temperature_c:end,temperature_gangs:gangs};
+      if(!Number.isFinite(body.target_temperature_c))throw Error("Start, Ende und Verteilung vollständig eingeben");
+      await this.api(`/${entry}/program`,"POST",body);if(this.entry!==entry)return;if(this.progressionDraft===draft)this.progressionDraft=null;await this.refresh();return;
     }
     if(action==="target")return this.changeTarget(Number(this.$("#target").value));
     if(action.startsWith("control-mode:")){

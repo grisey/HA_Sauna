@@ -38,6 +38,29 @@ jobs:
         timeout-minutes: 2
         env:
           HA_TEST_REQUIRED: '1'
+  ha-minimum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      # The frontend integration manifest for Core 2024.7.0 requires this
+      # package. Do not inherit later Core's unrelated dependency pins here.
+      - run: python -m pip install 'homeassistant==2024.7.0' 'home-assistant-frontend==20240703.0'
+      - run: python -m unittest discover -s tests/ha -p 'test_adapter.py' -k 'test_setup_unload_without_device_transport_never_starts_session' -v
+        timeout-minutes: 2
+        env:
+          HA_TEST_REQUIRED: '1'
+      - run: python -m unittest discover -s tests/integration -p 'test_lifecycle.py' -k 'test_flow_entities_options_and_repeated_reload' -v
+        timeout-minutes: 2
+        env:
+          HA_TEST_REQUIRED: '1'
+      - run: python -m unittest discover -s tests/integration -p 'test_device_path.py' -k 'test_detached_binary_button_starts_then_toggles_heater_override' -v
+        timeout-minutes: 2
+        env:
+          HA_TEST_REQUIRED: '1'
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 5

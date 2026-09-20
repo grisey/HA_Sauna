@@ -14,8 +14,8 @@ const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8
 
 // Overview controls use the narrow live endpoints.  In particular a direct
 // target must never start a session or re-submit the complete configuration.
-assert.ok(panelSource.includes("`/${this.entry}/temperature`"));
-assert.ok(panelSource.includes("`/${this.entry}/program`"));
+assert.ok(panelSource.includes("`/${entry}/temperature`"));
+assert.ok(panelSource.includes("`/${entry}/program`"));
 assert.match(panelSource, /data-target-arc[\s\S]*role="slider"/);
 assert.match(panelSource, /data-action="light:false"/);
 assert.match(panelSource, /permissions\.temperature/);
