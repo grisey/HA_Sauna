@@ -2,7 +2,7 @@
 
 Dieser Leitfaden richtet sich an Home-Assistant-Nutzer mit Administratorrechten.
 Diese Rechte reichen für die Einrichtung aus. Voraussetzung ist Home Assistant
-ab **2024.7.0**; neuere Versionen sind ebenfalls zugelassen.
+ab **2026.9.0**; neuere Versionen sind ebenfalls zugelassen.
 
 1. Fügen Sie in HACS das Repository `https://github.com/grisey/HA_Sauna` als
    benutzerdefiniertes Repository vom Typ **Integration** hinzu und laden Sie es

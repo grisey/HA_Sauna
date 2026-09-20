@@ -318,7 +318,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('#current [data-action="operation"]').click()
         await self.panel.locator('[data-action="details"]').click()
         timer=self.panel.locator('#details [data-mechanical-timer]')
-        await expect(timer).to_be_visible()
+        await expect(timer).to_contain_text("Angehalten · Saunabetrieb aus")
         frozen=await timer.inner_text()
         self.now+=timedelta(seconds=50)
         await self.runtime.tick()
@@ -343,7 +343,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await settings.locator('details.settings-group').filter(has_text="Überwachung").locator("summary").click()
         self.assertTrue(await self.panel.locator('#help-sensor_timeout_seconds').inner_text())
         await self.panel.locator('#log-level').select_option("DEBUG")
-        await self.panel.locator('[data-action="logging"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/logging") and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="logging"]').click()
+        self.assertTrue((await result.value).ok)
         await expect(self.panel.locator('#log-level')).to_have_value("DEBUG")
         await self.hass.async_block_till_done()
         self.assertIs(self.entry.runtime_data, self.runtime)
@@ -373,7 +375,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         if await monitoring.get_attribute("open") is None:
             await monitoring.locator("summary").click()
         await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_be_enabled()
-        await settings.locator('details.settings-group').filter(has_text="Licht").locator("summary").click()
+        await settings.get_by_text("Licht", exact=True).click()
         await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_value("10")
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Türerkennung ruht")
         await expect(self.panel.locator("#details")).to_contain_text("Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.")

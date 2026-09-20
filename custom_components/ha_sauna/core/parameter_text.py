@@ -7,8 +7,8 @@ PARAMETER_TEXT = {
         "light",
     ),
     "session_light_brightness_percent": (
-        "Helligkeit für Raumlicht und Lichtnachlauf",
-        "Helligkeit der Lichtstufe Raumlicht und des Lichtnachlaufs nach Sitzungsende. Standard: 50 %.",
+        "Helligkeit für „Hell“ und Lichtnachlauf",
+        "Helligkeit der Lichtstufe „Hell“ und des Lichtnachlaufs nach Sitzungsende. Standard: 50 %.",
         "light",
     ),
     "temperature_increase_c": (

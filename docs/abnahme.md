@@ -245,9 +245,8 @@ Das belegt noch nicht die neue Ergänzung am realen Ofen.
 ## Umgebung und Reproduktion
 
 - HA-Tests: Linux, Home Assistant **2026.9.2**, Python **3.14.2**.
-- Zusätzlicher Mindestversionslauf: Home Assistant **2024.7.0**, Python **3.12**,
-  mit vorhandenen Prüfungen für Einrichtung, Entitäten, Neuladen und Tastersteuerung.
-  Browser und vollständiges Backup/Restore laufen mit der oben genannten neueren Version.
+- Mindestversion: Home Assistant **2026.9.0**. Die vollständige Prüfung erfolgt
+  auf **2026.9.2**; ältere HA-Reihen gehören nicht zum unterstützten Bereich.
 - Öffentliche Kerntests: Python **3.13**. Lokal: Homebrew-Python **3.14** ohne HA-Import.
 - Browser: zugehöriges HA-Frontend, Playwright/Chromium aus `tests/browser/requirements.txt`.
 - Versionen und Installationsschritte: [CI-Workflow](../.github/workflows/tests.yml).
