@@ -71,6 +71,16 @@ class LightOutputTests(unittest.TestCase):
         self.assertEqual((plan.brightness_percent, plan.automatic, plan.manual_override), (73, True, False))
         self.assertEqual(self.update(41, "ready", "bereit", 40, 73).brightness_percent, 40)
 
+    def test_explicit_manual_override_expires_without_a_phase_change(self):
+        self.update(0, "heat", target=40)
+        self.light.set_manual(73, phase_key="heat", ends_at=10)
+        self.assertFalse(self.light.expire_manual(9))
+        self.assertEqual(self.update(9, "heat", target=20).brightness_percent, 73)
+        self.assertTrue(self.light.expire_manual(10))
+        self.assertEqual(self.light.manual_brightness, None)
+        self.assertEqual(self.light.manual_ends_at, None)
+        self.assertEqual(self.update(10, "heat", target=20).brightness_percent, 40)
+
     def test_return_to_automatic_starts_from_last_automatic_value(self):
         self.update(0, target=40)
         self.light.set_manual(70)

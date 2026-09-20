@@ -5,22 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
-from .bindings import BindingError, Bindings, ROLES, validate_metadata
+from .bindings import ROLES, BindingError, Bindings, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
 from .core.parameters import (
     BY_KEY,
     EDITABLE_DEFINITIONS,
+    LIVE_TEMPERATURE_KEYS,
     ParameterError,
     Parameters,
-    LIVE_TEMPERATURE_KEYS,
 )
-from .settings import async_set_parameters, ConfigurationLocked
 from .log import LEVELS
+from .settings import ConfigurationLocked, async_set_parameters
 
 
 def binding_schema(*, include_name: bool = False) -> vol.Schema:
@@ -42,7 +41,13 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
     return vol.Schema(fields)
 
 
-def parameter_schema(*, live_only=False, include_program_choices=False) -> vol.Schema:
+def parameter_schema(
+    *,
+    live_only=False,
+    include_program_choices=False,
+    program_options=(),
+    target_minimum=None,
+) -> vol.Schema:
     fields = {
         (vol.Optional if definition.optional else vol.Required)(
             definition.key,
@@ -51,7 +56,14 @@ def parameter_schema(*, live_only=False, include_program_choices=False) -> vol.S
             else vol.UNDEFINED,
         ): selector.NumberSelector(
             {
-                "min": definition.minimum if definition.minimum is not None else 0,
+                "min": (
+                    target_minimum
+                    if definition.key == "target_temperature_c"
+                    and target_minimum is not None
+                    else definition.minimum
+                )
+                if definition.minimum is not None
+                else 0,
                 "max": definition.maximum,
                 "step": 1 if definition.integer else "any",
                 "mode": selector.NumberSelectorMode.BOX,
@@ -59,7 +71,10 @@ def parameter_schema(*, live_only=False, include_program_choices=False) -> vol.S
             }
         )
         for definition in EDITABLE_DEFINITIONS
-        if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
+        if (
+            not definition.key.startswith(("program_1_", "program_2_"))
+            and (not live_only or definition.key in LIVE_TEMPERATURE_KEYS)
+        )
     }
     if include_program_choices:
         fields[vol.Required("program_mode", default="progressive")] = (
@@ -73,7 +88,11 @@ def parameter_schema(*, live_only=False, include_program_choices=False) -> vol.S
         fields[vol.Required("button_program", default="current")] = (
             selector.SelectSelector(
                 {
-                    "options": ["current", "constant", "program_1", "program_2"],
+                    "options": [
+                        {"value": "current", "label": "Aktuelle Auswahl"},
+                        {"value": "constant", "label": "Konstante Temperatur"},
+                        *program_options,
+                    ],
                     "translation_key": "button_program",
                 }
             )
@@ -302,6 +321,13 @@ class SaunaOptionsFlow(OptionsFlow):
     async def async_step_parameters(self, user_input: dict[str, Any] | None = None):
         live_only = self._has_session()
         runtime = getattr(self.config_entry, "runtime_data", None)
+        configuration = (
+            runtime.configuration if runtime and not runtime.closed else None
+        )
+        if configuration is None:
+            from .runtime import Configuration
+
+            configuration = Configuration.from_options(self.config_entry.options)
         errors = {}
         if user_input is not None:
             try:
@@ -317,12 +343,11 @@ class SaunaOptionsFlow(OptionsFlow):
                     )
                     if program_mode not in ("constant", "progressive"):
                         raise ParameterError("program_mode", "invalid_program_mode")
-                    if button_program not in (
-                        "current",
-                        "constant",
-                        "program_1",
-                        "program_2",
-                    ):
+                    program_ids = {
+                        program.id
+                        for program in runtime.configuration.temperature_programs
+                    }
+                    if button_program not in {"current", "constant", *program_ids}:
                         raise ParameterError("button_program", "invalid_button_program")
                     if live_only:
                         if set(values) - LIVE_TEMPERATURE_KEYS:
@@ -394,7 +419,17 @@ class SaunaOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="parameters",
             data_schema=self.add_suggested_values_to_schema(
-                parameter_schema(live_only=live_only, include_program_choices=True),
+                parameter_schema(
+                    live_only=live_only,
+                    include_program_choices=True,
+                    program_options=(
+                        {"value": program.id, "label": program.name}
+                        for program in configuration.temperature_programs
+                    ),
+                    target_minimum=configuration.parameters.minimum_for(
+                        "target_temperature_c"
+                    ),
+                ),
                 user_input if user_input is not None else suggested,
             ),
             errors=errors,

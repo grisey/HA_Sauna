@@ -22,6 +22,7 @@ const baseState = () => ({
   now: "2026-09-20T10:00:00Z", phase: "bereit", operation_enabled: true,
   session: {timeline: {active: null, door: "closed", completed: []}, heating: {elapsed_seconds: 0}, deadlines: []},
   configuration: {parameters}, last_session: null, measurements: [], measurement_status: {},
+  parameters: [{key: "target_temperature_c", minimum: 60, maximum: 100}],
   mechanical_timer: {state: "idle"}, heating_limit_seconds: 5400,
   heating_feedback: false, permissions: {control: true, temperature: true, program: true, light: true},
   start_errors: [], issues: [], detection_channels: [], target_temperature: 80,

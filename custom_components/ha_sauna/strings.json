@@ -78,6 +78,7 @@
           "sensor_timeout_seconds": "Höchstalter eines Messwerts",
           "feedback_timeout_seconds": "Wartezeit auf die Schützrückmeldung",
           "power_heating_threshold_w": "Leistungsschwelle für das Heizen",
+          "manual_override_minutes": "Höchstdauer manueller Übersteuerungen",
           "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
           "light_reference_temperature_c": "Referenztemperatur für das Licht",
           "light_transition_seconds": "Dauer des Lichtübergangs",
@@ -123,7 +124,10 @@
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
           "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
           "program_mode": "Temperaturprogramm",
-          "button_program": "Programm beim externen Einschalten"
+          "button_program": "Programm beim externen Einschalten",
+          "sauna_min_temperature_c": "Mindesttemperatur der Sauna",
+          "button_hold_seconds": "Langdruckdauer des Saunatasters",
+          "button_hold_brightness_percent": "Lichthelligkeit bei Langdruck"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -138,7 +142,7 @@
           "forced_cooling_minutes": "Zeit mit ausgeschaltetem Ofen. Ein vorausgehender Nachlauf wird vollständig angerechnet.",
           "person_wait_minutes": "Verschiebt eine fällige Zwangskühlung, damit eine eintretende Person erkannt werden kann.",
           "open_door_wait_minutes": "Längster Kühlaufschub ab der Türöffnung während Aufheizen oder Bereitschaft.",
-          "after_run_minutes": "Zeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Der Ofen bleibt aus; neue Saunagänge sind gesperrt.",
+          "after_run_minutes": "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert den alten Nachlauf.",
           "readiness_offset_c": "Für die Bereitschaft wird die Solltemperatur um diesen Wert angehoben.",
           "readiness_hysteresis_c": "Die Heizung darf wieder einschalten, wenn die Temperatur um diesen Wert unter die Bereitschaftstemperatur fällt.",
           "warmup_estimation_minutes": "Die Anzeige schätzt die Restzeit nur aus einem stabilen positiven Temperaturtrend in diesem Zeitraum. Die Schätzung steuert den Ofen nicht.",
@@ -162,6 +166,7 @@
           "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Fehlt ein gültiger oberer Temperaturwert, pausiert die Heizung sofort.",
           "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss.",
           "power_heating_threshold_w": "Nur bei zugeordnetem Leistungssensor: Oberhalb dieser Leistung zählt die Zeit als Heizzeit. Standby bleibt beim Energieverbrauch berücksichtigt.",
+          "manual_override_minutes": "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
           "nominal_power_kw": "Nennleistung des Ofens in kW. Ohne Leistungsmessung wird daraus und aus der Heizzeit der Verbrauch in kWh berechnet.",
           "light_reference_temperature_c": "Am Kaltpunkt dieser Temperatur beginnt die lineare Temperaturkurve für die Lichthelligkeit.",
           "light_transition_seconds": "Zeit für einen sanften Wechsel der automatisch vorgegebenen Lichthelligkeit. Null schaltet ohne Übergang.",
@@ -207,7 +212,10 @@
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "program_mode": "Konstante Temperatur oder gleichmäßige Steigerung vom Startwert zum Endwert.",
-          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird."
+          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird.",
+          "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
+          "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
+          "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf."
         }
       }
     },
@@ -326,6 +334,7 @@
           "sensor_timeout_seconds": "Höchstalter eines Messwerts",
           "feedback_timeout_seconds": "Wartezeit auf die Schützrückmeldung",
           "power_heating_threshold_w": "Leistungsschwelle für das Heizen",
+          "manual_override_minutes": "Höchstdauer manueller Übersteuerungen",
           "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
           "light_reference_temperature_c": "Referenztemperatur für das Licht",
           "light_transition_seconds": "Dauer des Lichtübergangs",
@@ -371,7 +380,10 @@
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
           "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
           "program_mode": "Temperaturprogramm",
-          "button_program": "Programm beim externen Einschalten"
+          "button_program": "Programm beim externen Einschalten",
+          "sauna_min_temperature_c": "Mindesttemperatur der Sauna",
+          "button_hold_seconds": "Langdruckdauer des Saunatasters",
+          "button_hold_brightness_percent": "Lichthelligkeit bei Langdruck"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -386,7 +398,7 @@
           "forced_cooling_minutes": "Zeit mit ausgeschaltetem Ofen. Ein vorausgehender Nachlauf wird vollständig angerechnet.",
           "person_wait_minutes": "Verschiebt eine fällige Zwangskühlung, damit eine eintretende Person erkannt werden kann.",
           "open_door_wait_minutes": "Längster Kühlaufschub ab der Türöffnung während Aufheizen oder Bereitschaft.",
-          "after_run_minutes": "Zeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Der Ofen bleibt aus; neue Saunagänge sind gesperrt.",
+          "after_run_minutes": "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert den alten Nachlauf.",
           "readiness_offset_c": "Für die Bereitschaft wird die Solltemperatur um diesen Wert angehoben.",
           "readiness_hysteresis_c": "Die Heizung darf wieder einschalten, wenn die Temperatur um diesen Wert unter die Bereitschaftstemperatur fällt.",
           "warmup_estimation_minutes": "Die Anzeige schätzt die Restzeit nur aus einem stabilen positiven Temperaturtrend in diesem Zeitraum. Die Schätzung steuert den Ofen nicht.",
@@ -410,6 +422,7 @@
           "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Fehlt ein gültiger oberer Temperaturwert, pausiert die Heizung sofort.",
           "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss.",
           "power_heating_threshold_w": "Nur bei zugeordnetem Leistungssensor: Oberhalb dieser Leistung zählt die Zeit als Heizzeit. Standby bleibt beim Energieverbrauch berücksichtigt.",
+          "manual_override_minutes": "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
           "nominal_power_kw": "Nennleistung des Ofens in kW. Ohne Leistungsmessung wird daraus und aus der Heizzeit der Verbrauch in kWh berechnet.",
           "light_reference_temperature_c": "Am Kaltpunkt dieser Temperatur beginnt die lineare Temperaturkurve für die Lichthelligkeit.",
           "light_transition_seconds": "Zeit für einen sanften Wechsel der automatisch vorgegebenen Lichthelligkeit. Null schaltet ohne Übergang.",
@@ -455,7 +468,10 @@
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "program_mode": "Konstante Temperatur oder gleichmäßige Steigerung vom Startwert zum Endwert.",
-          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird."
+          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird.",
+          "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
+          "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
+          "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf."
         }
       },
       "logging": {

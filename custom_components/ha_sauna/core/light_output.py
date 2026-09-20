@@ -66,19 +66,23 @@ class LightOutput:
         self._motion: _Motion | None = None
         self._manual: float | None = None
         self._manual_phase_key = None
+        self._manual_ends_at = None
         self._last_automatic: float = 0.0
         self._resume_pending = False
         self._phase_paused = False
         self._paused_automatic: float | None = None
         self._phase_ends_at = None
 
-    def set_manual(self, brightness_percent: float, *, phase_key=None) -> None:
-        """Hält den Wert bis der führende ``phase_key`` wechselt."""
+    def set_manual(
+        self, brightness_percent: float, *, phase_key=None, ends_at=None
+    ) -> None:
+        """Hält den Wert bis zum Phasenwechsel oder einer gesetzten Rückkehrfrist."""
         self._manual = _percent(brightness_percent)
         # Der Adapter kennt beim API-Aufruf den aktuellen Controllerzustand,
         # während der Planner noch den letzten Tick enthalten kann. Fehlt der
         # Schlüssel, bleibt das direkte Planer-API rückwärtskompatibel.
         self._manual_phase_key = self._phase_key if phase_key is None else phase_key
+        self._manual_ends_at = ends_at
         self._resume_pending = False
 
     def return_to_automatic(self) -> None:
@@ -86,7 +90,24 @@ class LightOutput:
         if self._manual is not None:
             self._manual = None
             self._manual_phase_key = None
+            self._manual_ends_at = None
             self._resume_pending = True
+
+    def expire_manual(self, now) -> bool:
+        """Return an automatic plan after an explicitly scheduled override ends."""
+        if (
+            self._manual is None
+            or self._manual_ends_at is None
+            or now < self._manual_ends_at
+        ):
+            return False
+        self.return_to_automatic()
+        return True
+
+    def keep_manual(self) -> None:
+        """Make an existing choice indefinite for genuine manual operation."""
+        if self._manual is not None:
+            self._manual_ends_at = None
 
     def finish_automatic(self) -> None:
         """Merkt das fachliche Ende der automatischen Ausgabe als AUS vor.
@@ -101,6 +122,10 @@ class LightOutput:
     @property
     def manual_brightness(self) -> float | None:
         return self._manual
+
+    @property
+    def manual_ends_at(self):
+        return self._manual_ends_at
 
     @property
     def last_automatic_brightness(self) -> float:
@@ -133,6 +158,7 @@ class LightOutput:
             if self._manual_phase_key == self._phase_key:
                 self._manual = None
                 self._manual_phase_key = None
+                self._manual_ends_at = None
             self._phase_key = phase_key
             self._motion = self._start_motion(
                 now,

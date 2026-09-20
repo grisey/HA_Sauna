@@ -68,6 +68,39 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
         self.assertIsNone(self.entry.runtime_data.session)
 
+    async def test_admin_program_and_mode_endpoints_persist_and_lock_with_the_session(self):
+        url = self.base + "/" + self.entry.entry_id
+        catalog = list(self.entry.options["temperature_programs"])
+        catalog.append({"id": "test_program", "name": "Testprogramm", "start_c": 76,
+                        "end_c": 88, "distribution_gangs": 4})
+        profile = "test_program"
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(self.entry.runtime_data.configuration.control_mode, "manual")
+            async with client.post(url + "/programs", json={"programs": catalog}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/button-program", json={"profile": profile}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.entry.options["button_program"], profile)
+            self.assertEqual(self.entry.options["temperature_programs"], catalog)
+
+            async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for suffix, body in (("/control-mode", {"mode": "automatic"}),
+                                 ("/programs", {"programs": catalog}),
+                                 ("/button-program", {"profile": "current"})):
+                async with client.post(url + suffix, json=body) as response:
+                    self.assertEqual(response.status, 409, await response.text())
+
+        user = await self.hass.auth.async_create_user("No program admin", group_ids=[])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
+                self.assertEqual(response.status, 403)
+
     async def test_standard_user_controls_only_the_permitted_panel_routes(self):
         """The normal HA user inherits control of the integration switch."""
         user = await self.hass.auth.async_create_user("Standard user", group_ids=[GROUP_ID_USER])

@@ -6,23 +6,36 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
-from .archive import encoded, plain
-from .core.detector import Detector
+from datetime import UTC, datetime, timedelta
 
+from .archive import encoded, plain
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
+from .core.button import (
+    END_HOLD,
+    END_RELEASE,
+    HEATER_TOGGLE_OVERRIDE,
+    START_STANDARD_PROGRAM,
+    ButtonGestures,
+)
 from .core.controller import Controller, Result
+from .core.detector import Detector
 from .core.models import Deadline, Session
-from .core.parameters import Parameters
+from .core.parameters import BY_KEY, Parameters
+from .core.program_catalog import (
+    DEFAULT_PROGRAMS,
+    NamedTemperatureProgram,
+    load_programs,
+    migrate_legacy_programs,
+)
 from .core.timeline import Door, Event
-from .log import SaunaLog, LEVELS
+from .log import LEVELS, SaunaLog
 from .presentation import (
+    EVENTS,
+    PHASES,
+    decision_message,
     fault_message,
     fault_resolved,
-    decision_message,
-    PHASES,
-    EVENTS,
 )
 from .settings import program_parameters
 
@@ -36,6 +49,34 @@ class Configuration:
     button_event_type: str = ""
     program_mode: str = "constant"
     button_program: str = "current"
+    temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
+    selected_program_id: str | None = None
+    control_mode: str = "automatic"
+
+    def __post_init__(self) -> None:
+        """Keep a direct legacy-button construction serializable as options."""
+        if self.button_program not in {"program_1", "program_2"} or any(
+            program.id == self.button_program for program in self.temperature_programs
+        ):
+            return
+        legacy_programs = migrate_legacy_programs(
+            {
+                "parameters": self.parameters.as_dict(),
+                "button_program": self.button_program,
+            },
+            minimum_c=self.parameters.minimum_for("target_temperature_c"),
+            maximum_c=BY_KEY["target_temperature_c"].maximum,
+            maximum_gangs=int(BY_KEY["temperature_gangs"].maximum),
+        )
+        missing = tuple(
+            program
+            for program in legacy_programs
+            if program.id in {"program_1", "program_2"}
+            and program.id not in {current.id for current in self.temperature_programs}
+        )
+        object.__setattr__(
+            self, "temperature_programs", (*self.temperature_programs, *missing)
+        )
 
     @classmethod
     def from_options(cls, options: Mapping) -> Configuration:
@@ -51,6 +92,9 @@ class Configuration:
                 "button_event_type",
                 "program_mode",
                 "button_program",
+                "temperature_programs",
+                "selected_program_id",
+                "control_mode",
             }
         ):
             raise ValueError(
@@ -70,28 +114,55 @@ class Configuration:
             program_mode = (
                 "progressive" if "final_temperature_c" in values else "constant"
             )
-        button_program = options.get("button_program", "current")
-        if program_mode not in ("constant", "progressive") or button_program not in (
-            "current",
-            "constant",
-            "program_1",
-            "program_2",
-        ):
-            raise ValueError("Ungültige Temperaturprogrammeinstellung")
         # Einmalige Übernahme der alten beidseitigen Bandbreite. Danach werden
         # ausschließlich die neuen, gemeinsam gespeicherten Parameter konsumiert.
         if "cold_tolerance_c" in values or "hot_tolerance_c" in values:
             cold = values.pop("cold_tolerance_c", 0)
             hot = values.pop("hot_tolerance_c", 0)
             values.setdefault("readiness_hysteresis_c", cold + hot)
+        parameters = Parameters(values)
+        minimum_c = parameters.minimum_for("target_temperature_c")
+        maximum_c = BY_KEY["target_temperature_c"].maximum
+        maximum_gangs = BY_KEY["temperature_gangs"].maximum
+        if "temperature_programs" in options:
+            programs = load_programs(
+                options["temperature_programs"],
+                minimum_c=minimum_c,
+                maximum_c=maximum_c,
+                maximum_gangs=maximum_gangs,
+            )
+        else:
+            programs = migrate_legacy_programs(
+                options,
+                minimum_c=minimum_c,
+                maximum_c=maximum_c,
+                maximum_gangs=maximum_gangs,
+            )
+        button_program = options.get("button_program", "current")
+        selected_program_id = options.get("selected_program_id")
+        control_mode = options.get("control_mode", "automatic")
+        program_ids = {program.id for program in programs}
+        if (
+            program_mode not in ("constant", "progressive")
+            or button_program not in {"current", "constant", *program_ids}
+            or (
+                selected_program_id is not None
+                and selected_program_id not in program_ids
+            )
+            or control_mode not in ("automatic", "manual")
+        ):
+            raise ValueError("Ungültige Temperaturprogrammeinstellung")
         return cls(
             Bindings(options[CONF_BINDINGS]),
-            Parameters(values),
+            parameters,
             level,
             mode,
             event_type.strip(),
             program_mode,
             button_program,
+            programs,
+            selected_program_id,
+            control_mode,
         )
 
     def as_options(self) -> dict:
@@ -103,6 +174,11 @@ class Configuration:
             "button_event_type": self.button_event_type,
             "program_mode": self.program_mode,
             "button_program": self.button_program,
+            "temperature_programs": [
+                program.as_dict() for program in self.temperature_programs
+            ],
+            "selected_program_id": self.selected_program_id,
+            "control_mode": self.control_mode,
         }
 
 
@@ -118,10 +194,17 @@ class SaunaRuntime:
     ) -> None:
         self.configuration = configuration
         self.controller = Controller(
-            configuration.parameters, program_mode=configuration.program_mode
+            configuration.parameters,
+            program_mode=configuration.program_mode,
+            control_mode=configuration.control_mode,
         )
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
+        self._button = ButtonGestures(
+            timedelta(seconds=configuration.parameters.values["button_hold_seconds"])
+        )
+        self._button_hold_session_id = None
+        self.save_configuration = None
         self._cleanup: list[Callable[[], None]] = []
         self._subscribers: set[Callable[[], None]] = set()
         self.closed = False
@@ -252,7 +335,12 @@ class SaunaRuntime:
                 if source == entity_id:
                     self.device.ingest(role, event.data.get("new_state"), received_at)
             action = self.device.physical_action(event)
-            if action is not None:
+            if self.configuration.control_input_mode == "button" and action is not None:
+                try:
+                    await self._handle_button_event(action, received_at)
+                except ValueError as error:
+                    self.device.faults["start_rejected"] = str(error)
+            elif action is not None:
                 try:
                     self._prepare_operation(action, physical=True)
                     self._set_operation(action)
@@ -397,7 +485,7 @@ class SaunaRuntime:
                 "Einstellungen können erst nach Ende der Saunasitzung geändert werden"
             )
 
-    def _set_operation(self, enabled):
+    def _set_operation(self, enabled, *, preserve_button=False):
         if enabled and self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
@@ -421,12 +509,41 @@ class SaunaRuntime:
             "Saunabetrieb %s angefordert.",
             "einschalten" if enabled else "ausschalten",
         )
-        return self.controller.set_operation(enabled, self._clock())
+        result = self.controller.set_operation(enabled, self._clock())
+        if enabled:
+            self._button_hold_session_id = None
+            if not preserve_button:
+                self._button = ButtonGestures(
+                    timedelta(
+                        seconds=self.configuration.parameters.values[
+                            "button_hold_seconds"
+                        ]
+                    )
+                )
+            if self.device:
+                self.device.finish_button_hold_light()
+            if self.save_configuration:
+                self.save_configuration(self.configuration)
+        return result
 
     def _prepare_operation(self, enabled, *, physical=False):
         if enabled and self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        if (
+            physical
+            and enabled
+            and not (self.session and self.session.operation_enabled)
+            and self.controller.control_mode == "manual"
+        ):
+            if self.session:
+                self.controller.finish_session(self._clock(), light_after_run=False)
+            self.controller.set_control_mode("automatic")
+            self.configuration = replace(self.configuration, control_mode="automatic")
+            self.log.info(
+                "button_control_mode",
+                "Saunataster startet das Standardprogramm im Automatikbetrieb.",
             )
         # Der externe Taster startet mit dem konfigurierten Profil.  Ausschalten
         # ist absichtlich zustandsneutral, damit ein späteres Einschalten die
@@ -442,16 +559,81 @@ class SaunaRuntime:
     def _select_button_program(self):
         """Apply the configured physical-button profile; caller owns ``_lock``."""
         parameters, mode = program_parameters(
-            self.configuration.parameters, self.configuration.button_program
+            self.configuration.parameters,
+            self.configuration.button_program,
+            catalog=self.configuration.temperature_programs,
         )
         self.controller.update_temperature_parameters(
             parameters, self._clock(), program_mode=mode, new_program=True
         )
         self.configuration = replace(
-            self.configuration, parameters=parameters, program_mode=mode
+            self.configuration,
+            parameters=parameters,
+            program_mode=mode,
+            selected_program_id=(
+                self.configuration.button_program
+                if self.configuration.button_program
+                in {program.id for program in self.configuration.temperature_programs}
+                else None
+            ),
         )
         if self.device:
             self.device.values = parameters.values
+
+    def _toggle_button_heater_override(self, now):
+        """Toggle the physical-button override while the runtime lock is held."""
+        if (
+            self.controller.heater_override is not None
+            and self.controller.control_mode != "manual"
+        ):
+            session = self.session
+            if (
+                self.controller.heater_override is False
+                and session is not None
+                and (session.after_run is not None or session.cooling is not None)
+            ):
+                return self.controller.set_heater_override(True, now)
+            return self.controller.set_heater_override(None, now)
+        if self.device:
+            self.device.refresh(now)
+            known = self.device.contactor_feedback()
+            current = self.device.command if known is None else known
+        else:
+            current = self.controller.contactor
+        return self.controller.set_heater_override(not bool(current), now)
+
+    async def _handle_button_event(self, event, now):
+        """Apply one already-normalized gesture; caller owns ``_lock``."""
+        enabled = bool(self.session and self.session.operation_enabled)
+        for action in self._button.handle_actions(event, enabled, now):
+            await self._apply_button_action(action, now)
+
+    async def _apply_button_action(self, action, now):
+        """Apply a semantic button action; caller owns ``_lock``."""
+        if action == START_STANDARD_PROGRAM:
+            if self._button_hold_session_id is not None:
+                if self.device:
+                    self.device.finish_button_hold_light(self._button_hold_session_id)
+                self._button_hold_session_id = None
+            self._prepare_operation(True, physical=True)
+            self._set_operation(True, preserve_button=True)
+        elif action == HEATER_TOGGLE_OVERRIDE:
+            self._toggle_button_heater_override(now)
+        elif action == END_HOLD and self.session is not None:
+            session_id = self.session.session_id
+            self.controller.finish_session(now, light_after_run=False)
+            self._button_hold_session_id = session_id
+            if self.device:
+                self.device.begin_button_hold_light(session_id)
+        elif action == END_RELEASE:
+            session_id = self._button_hold_session_id
+            if session_id is not None:
+                self._button_hold_session_id = None
+                if self.device:
+                    self.device.finish_button_hold_light(session_id)
+                self.controller.start_session_light(session_id, now)
+            elif self.session is not None:
+                self.controller.finish_session(now, light_after_run=True)
 
     async def set_operation(self, enabled: bool):
         async with self._lock:
@@ -527,6 +709,14 @@ class SaunaRuntime:
         async with self._lock:
             if self.closed:
                 return
+            if self.configuration.control_input_mode == "button":
+                now = self._clock()
+                await self._apply_button_action(
+                    self._button.advance(
+                        now, bool(self.session and self.session.operation_enabled)
+                    ),
+                    now,
+                )
             await self._cycle(sample=True)
 
     async def begin_session(self, session_id: str) -> Session:

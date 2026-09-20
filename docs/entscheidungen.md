@@ -226,3 +226,65 @@ zur Anrechnung eines bereits abgeschlossenen Nachlaufs überholt.
   Schalterkonfiguration bleiben erhalten. Die Rücksetzung ist für HA-Admins
   nach Sitzungsende verfügbar; laufende Sitzungen und Fristen können damit
   nicht zurückgesetzt werden.
+
+## Bedienungsüberarbeitung nach 1.0.0-rc1
+
+Dieser jüngste Abschnitt ersetzt abweichende frühere Vorgaben zur Bedienung.
+
+- Die Temperaturwahl liegt direkt auf dem Bogen der Temperaturanzeige. Klick,
+  Ziehen und Tastaturbedienung verwenden dieselben Koordinaten und denselben
+  übernommenen Sollwert. Der Regelbereich reicht standardmäßig von einstellbaren
+  60 °C bis zur vorhandenen Obergrenze 100 °C. Der Lichtbezugspunkt und gemessene
+  Isttemperaturen sind davon unabhängig. Die Zusatzregel für Türöffnungen bei
+  niedrigen Temperaturen verwendet die gemeinsame Untergrenze als ihre
+  Obergrenze; normale Türerkennung und Türschließung bleiben davon unabhängig.
+- Die freie Steigerung heißt **Temperaturautomatik**. Benannte Programme sind
+  in den Einstellungen mit Name, Start, Ende und Verteilung änderbar und
+  erweiterbar. Die Verteilung begrenzt weiterhin keine tatsächlichen Gänge.
+  Standards: Genusszeit 80/85/90; Gipfelstürmer 84/92/100; Ewigkeit
+  80/84/88/92/96; Liegewiese 75/80/85; Höhenwanderung 90/95/100;
+  Schnellstarter 70/90 °C. Die Auswahl zeigt den Namen und darunter die
+  berechneten Temperaturstufen als Nebeninformation.
+- Lichtstufen heißen **Gedimmt** und **Hell**. Prozentwerte werden nachgeordnet
+  angezeigt. Im Automatikbetrieb stehen auf der Übersicht nur Aus, Automatik
+  und Hell als manuelle Lichtübersteuerung bereit.
+- Zwischen abgeschlossenen Sitzungen kann die Betriebsart Automatik/Manuell
+  gewechselt werden. Im manuellen Betrieb schaltet der Nutzer Ofen und Licht;
+  normale Temperaturregelung, Heizzeit-Kühlpausen und automatische Lichtwechsel
+  entfallen. Messung, Archivierung, technische Schutzabschaltung und die
+  Reaktion auf bestätigte Übertemperatur bleiben aktiv. Diese Betriebsart ist
+  von vorübergehenden Übersteuerungen während der Automatik getrennt.
+- Details werden nach Heizungs- und Lichtsteuerung gegliedert. Alle Zeitwerte
+  stehen kompakt an einem Ort. Standard- und Detailverlauf sind ausdrücklich
+  erreichbar. Erkennungsmarker liegen in den zugehörigen Graphen und sind
+  mit der Ereignisliste verknüpft; markierte Zeilen bleiben kontrastreich lesbar.
+  Inaktive Bestätigungszeiten mit Wert null werden weggelassen.
+- Tooltip und Zoom müssen auch bei vollständigen Rohmessreihen flüssig bleiben.
+  Normales Scrollen zoomt nicht. Ein Überblick über die ganze Sitzung mit
+  markiertem Ausschnitt ersetzt den bisherigen Zeitausschnitt-Schieber.
+- Der Saunataster startet aus dem ausgeschalteten Zustand mit dem hinterlegten
+  Standardprogramm im Automatikbetrieb, auch wenn zuvor die Betriebsart Manuell
+  gewählt war. Während der Sitzung wechselt ein kurzer Druck zwischen
+  direkter Ofenübersteuerung und Rückkehr zur Automatik. Nur langes Drücken
+  beendet die Sitzung. Die Erkennung des langen Drucks schaltet den Ofen aus
+  und signalisiert den Abschluss mit 1 % Licht; nach dem Loslassen beginnt
+  der normale Lichtnachlauf. Beginn, Langdruck und Loslassen derselben
+  Betätigung dürfen nicht als mehrere unabhängige Bedienungen wirken.
+  Änderungen über Lichttaster gelten ebenfalls als Übersteuerung bis zum
+  nächsten vereinbarten Rückkehrpunkt.
+- Vorübergehende Ofen- und Lichtübersteuerungen enden spätestens nach einer
+  einstellbaren Höchstdauer, standardmäßig zehn Minuten. Ein früherer
+  Phasenwechsel beziehungsweise automatischer Heiz-Schaltwechsel oder die
+  ausdrückliche Rückkehr zur Automatik kann die jeweilige Übersteuerung zuvor
+  beenden. Messwerte und Statusabfragen verlängern diese Frist nicht. Die
+  eigenständige Betriebsart Manuell unterliegt dieser Frist nicht.
+- Ein kurzer Saunatasterdruck ermöglicht auch während Nachlauf und
+  Zwangskühlung den manuellen Heizstart und den Beginn eines neuen Saunagangs.
+  Technische Schutzsperren bleiben wirksam. Beginnt kein Gang, laufen pausierte
+  Nachlauf- und Kühlzeiten nach Rückkehr zur Automatik mit ihrem Rest weiter.
+  Beginnt tatsächlich ein neuer Gang, wird der pausierte Nachlauf storniert;
+  seine Restzeit wird nicht wieder aufgenommen. Nach dem neuen Gang beginnt
+  ein neuer vollständiger Nachlauf. Die bis zur Pause gezählte Nachlaufzeit
+  wird einmalig der nächsten Kühlung gutgeschrieben. Die manuelle Heizzeit ist keine
+  Kühlzeit. Ein weiterer kurzer Druck bei manuellem Ofen-Ein gibt wie bisher
+  an die Automatik zurück.

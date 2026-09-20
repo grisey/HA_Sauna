@@ -7,21 +7,21 @@ import logging
 from datetime import datetime, timedelta
 from math import isfinite
 
+from homeassistant.components import persistent_notification
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_state_report_event,
 )
-from homeassistant.components import persistent_notification
 
 from .archive import plain
 from .bindings import ROLE_BY_KEY
-from .core.models import Measurement, Position, Quantity
 from .core import power
-from .core.timeline import Door
-from .core.warmup import WarmupTrend
 from .core.light import normal_brightness, phase_target
 from .core.light_output import LightOutput
-from .presentation import configuration_message, FAULTS
+from .core.models import Measurement, Position, Quantity
+from .core.timeline import Door
+from .core.warmup import WarmupTrend
+from .presentation import FAULTS, configuration_message
 
 
 class HADevice:
@@ -56,6 +56,8 @@ class HADevice:
         self._saved_heating_observation = None
         self.input_started_at = runtime._clock()
         self.last_input_event = None
+        self.last_input_occurred_at = None
+        self._button_hold_session_id = None
 
     async def start(self):
         now = self.runtime._clock()
@@ -152,25 +154,50 @@ class HADevice:
             return None
         if old.state == new.state:
             return None
-        toggle = not bool(
-            self.runtime.session and self.runtime.session.operation_enabled
-        )
         if new.domain == "binary_sensor":
             if old.state in ("unknown", "unavailable"):
                 return None
             if self.runtime.configuration.control_input_mode == "button":
-                return toggle if old.state == "off" and new.state == "on" else None
+                if old.state == "off" and new.state == "on":
+                    return "on"
+                if old.state == "on" and new.state == "off":
+                    return "off"
+                return None
             return new.state == "on" if new.state in ("on", "off") else None
-        if new.state == self.last_input_event:
-            return None
         try:
             occurred = datetime.fromisoformat(new.state)
-            if occurred.tzinfo is None or occurred < self.input_started_at:
+            if (
+                occurred.tzinfo is None
+                or occurred < self.input_started_at
+                or (
+                    self.last_input_occurred_at is not None
+                    and occurred <= self.last_input_occurred_at
+                )
+            ):
                 return None
         except (ValueError, TypeError):
             return None
+        if new.state == self.last_input_event:
+            return None
         self.last_input_event = new.state
+        self.last_input_occurred_at = occurred
         event_type = new.attributes.get("event_type")
+        if self.runtime.configuration.control_input_mode == "button":
+            native = {
+                "btn_down": "press",
+                "btn_up": "release",
+                "single_push": "short",
+                "single": "short",
+                "double_push": "double",
+                "double": "double",
+                "triple_push": "triple",
+                "triple": "triple",
+                "long_push": "long",
+            }.get(event_type)
+            if native is not None:
+                return native
+            selected = self.runtime.configuration.button_event_type
+            return "short" if selected and event_type == selected else None
         selected = self.runtime.configuration.button_event_type
         if selected:
             if event_type != selected:
@@ -179,7 +206,7 @@ class HADevice:
             # Shelly meldet Drücken, Loslassen und die fertige Klickauswertung.
             # Nur die kurze Klickauswertung umschalten, niemals dreifach.
             return None
-        return toggle
+        return not bool(self.runtime.session and self.runtime.session.operation_enabled)
 
     def binary_state(self, role):
         state = self.states.get(role)
@@ -534,7 +561,28 @@ class HADevice:
         # Optionen können außerhalb einer Sitzung ersetzt werden, ohne dass der
         # Planer dabei seinen laufenden Übergang oder Override verliert.
         self.light_output.parameters = self.runtime.configuration.parameters
+        if self.runtime.controller.control_mode == "manual":
+            self.light_output.keep_manual()
+        if (
+            self.runtime.controller.control_mode == "automatic"
+            and self.light_output.expire_manual(now)
+        ):
+            self.runtime.log.info(
+                "light_override_expired",
+                "Manuelle Lichtwahl abgelaufen; Licht folgt wieder der Automatik.",
+            )
+            self._light_override_dirty = True
+        if self._button_hold_session_id is not None:
+            await self.show_button_hold_light(now, self._button_hold_session_id)
+            return
         if not await self._finish_expired_session_light(now):
+            return
+        light_after_run = self.runtime.controller.light_after_run
+        if (
+            self.runtime.controller.control_mode == "manual"
+            and (light_after_run is None or now >= light_after_run.ends_at)
+            and self.light_output.manual_brightness is None
+        ):
             return
         phase = self._light_phase(now)
         key, name, ends_at = phase
@@ -558,8 +606,7 @@ class HADevice:
         elif name == "session_light":
             target = 0.0
         else:
-            elevation = self._sun_elevation()
-            normal = normal_brightness(elevation, self.runtime.configuration.parameters)
+            normal = self.normal_light_brightness()
             target = phase_target(
                 name,
                 self.runtime.controller.temperature,
@@ -736,6 +783,13 @@ class HADevice:
         """Führt Licht strikt aus dem Controllerzustand und seinen Objekten ab."""
         controller = self.runtime.controller
         light_after_run = controller.light_after_run
+        if controller.control_mode == "manual" and (
+            light_after_run is None
+            or (now is not None and now >= light_after_run.ends_at)
+        ):
+            # Im manuellen Betrieb verändern Gang- und Heizphasen die explizite
+            # Lichtwahl nicht. Nur der Betriebsartwechsel gibt sie wieder frei.
+            return (("manual",), "manual", None)
         if light_after_run is not None:
             key = (
                 "session_light",
@@ -809,6 +863,11 @@ class HADevice:
         # Deshalb muss der aktuelle Controller-Schlüssel hier mitgegeben
         # werden, statt den möglicherweise alten Planner-Schlüssel zu erben.
         now = self.runtime._clock()
+        ends_at = (
+            now + timedelta(minutes=self.values["manual_override_minutes"])
+            if self.runtime.controller.control_mode == "automatic" and value is not None
+            else None
+        )
         phase_key = self._light_phase(now)[0]
         light_after_run = self.runtime.controller.light_after_run
         if (
@@ -833,20 +892,54 @@ class HADevice:
             self.light_output.return_to_automatic()
         elif value is True:
             self.light_output.set_manual(
-                self.values["session_light_brightness_percent"], phase_key=phase_key
+                self.values["session_light_brightness_percent"],
+                phase_key=phase_key,
+                ends_at=ends_at,
             )
         elif value is False:
-            self.light_output.set_manual(0, phase_key=phase_key)
+            self.light_output.set_manual(0, phase_key=phase_key, ends_at=ends_at)
         elif value == "normal":
             self.light_output.set_manual(
-                normal_brightness(
-                    self._sun_elevation(), self.runtime.configuration.parameters
-                ),
+                self.normal_light_brightness(),
                 phase_key=phase_key,
+                ends_at=ends_at,
             )
         else:
-            self.light_output.set_manual(value, phase_key=phase_key)
+            self.light_output.set_manual(value, phase_key=phase_key, ends_at=ends_at)
         self._light_override_dirty = True
+
+    def begin_button_hold_light(self, session_id):
+        """Mark acknowledgement for regular output after the heater command."""
+        self._button_hold_session_id = session_id
+        self.light_output.return_to_automatic()
+
+    async def show_button_hold_light(self, now, session_id):
+        """Keep the required long-press acknowledgement above all normal phases."""
+        self._button_hold_session_id = session_id
+        brightness = self.values["button_hold_brightness_percent"]
+        key = ("button_hold", session_id, "turn_on", brightness)
+        if key == self._light_last_command_key:
+            return True
+        await self._send_light_command(
+            now,
+            key=key,
+            phase="button_hold",
+            service="turn_on",
+            brightness=brightness,
+            session_id=session_id,
+            purpose="button_hold",
+        )
+
+    def finish_button_hold_light(self, session_id=None):
+        """Only the matching release may hand light control back to the timer."""
+        if session_id is None or self._button_hold_session_id == session_id:
+            self._button_hold_session_id = None
+
+    def normal_light_brightness(self):
+        """Return the current normal automatic brightness for UI consumers."""
+        return normal_brightness(
+            self._sun_elevation(), self.runtime.configuration.parameters
+        )
 
     def notify_mechanical_timer(self, now):
         ends = self.runtime.controller.mechanical_timer_ends_at

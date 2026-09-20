@@ -1,5 +1,35 @@
 # Funktionsprüfung der aktuellen Testfassung
 
+## Überarbeitung nach 1.0.0-rc1
+
+Der neue Arbeitsstand ergänzt benannte Temperaturprogramme, die Betriebsart
+Manuell, die Bedienung direkt am Temperaturbogen sowie die überarbeitete
+Verlaufs- und Detailansicht. Vorübergehende Ofen- und Lichtübersteuerungen kehren
+standardmäßig spätestens nach zehn Minuten zur Automatik zurück. Der Wert ist
+einstellbar; die eigenständige Betriebsart Manuell hat diese Frist nicht.
+
+Die gezielten Steuerungsprüfungen bestätigen:
+
+- Beginnt während eines manuell pausierten Nachlaufs ein neuer Gang, entfällt
+  dessen alter Rest. Nach dem neuen bestätigten Gang beginnt ein voller Nachlauf.
+  Bereits erbrachte Zeit wird genau einmal auf die folgende Kühlung angerechnet.
+- Ohne neuen Gang läuft nach Ablauf der Übersteuerung der alte Restnachlauf weiter.
+- Technische Schutzsperren verhindern weiterhin das Einschalten des Ofens.
+- Die beim Einschalten begonnene Tastergeste beendet die neue Sitzung nicht
+  wieder. Kurze Mehrfachbetätigungen werden vollständig verarbeitet.
+
+Lokal bestanden **327 Kerntests** und **acht JavaScript-Prüfprogramme**. Zwei
+private Replay-Tests wurden mangels eingebundenem Archiv übersprungen. Die
+Kerntests liefen ohne Home-Assistant-Import in weniger als einer Sekunde.
+Die lokale Browserkontrolle nutzt ausschließlich synthetische Messreihen.
+Sie prüft Temperaturbedienung, Programmwahl, kontrollierten Zoom, Kurvenmarker
+und die Navigation zur passenden Ereigniszeile. Die Linux-Prüfung mit echter
+Home-Assistant-Instanz ist für diesen Arbeitsstand noch ausstehend.
+
+Der Anschluss physischer Lichttaster ist noch offen: Dafür muss bekannt sein,
+ob sie eigene Ereignisse liefern oder direkt die Lichtentität verändern.
+Dieser Arbeitsstand wurde nicht auf dem Saunasystem installiert.
+
 ## Gemeinsame Heiz- und Lichtsteuerung vom 20.09.2026
 
 Der neue Stand umfasst Temperaturprogramme, die Lichtkurve, pausierbaren

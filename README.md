@@ -14,13 +14,26 @@ Standards vor dem ersten Einsatz sinnvoll sind.
 In der **Übersicht** starten und beenden Sie den Saunabetrieb, wählen eine
 Temperatur und sehen die Messwerte auf einen Blick. Die Zeitanzeige hilft bei
 zwei Fragen: Wann kann der nächste Gang beginnen, und wie lange ist ein Start
-noch möglich? Auch Normallicht, Raumlicht und die Rückkehr zur automatischen
-Lichtsteuerung sind hier direkt erreichbar.
+noch möglich? Das Licht lässt sich ausschalten, auf **Hell** stellen oder wieder
+der **Automatik** übergeben. Bei **Hell** steht die zugehörige Helligkeit als
+kleine Prozentangabe; **Automatik** bleibt ohne Prozentangabe.
 
-Der physische Bedieneingang kann weiterhin zum Ein- und Ausschalten dienen. Ein
-entkoppelter Taster löst dabei den Saunabetrieb aus; der Heizaktor bleibt davon
-getrennt und wird von der Regelung geführt. So bleibt eine vorhandene Bedienung
-verständlich, ohne den Heizaktor unmittelbar zu schalten.
+Der Saunataster startet immer im Automatikbetrieb mit dem hinterlegten
+Standardprogramm. Während der Sitzung übersteuert ein kurzer Druck den Ofen;
+der nächste kurze Druck gibt ihn
+wieder an die Automatik zurück. Zum Beenden halten Sie den Taster gedrückt, bis
+das Licht den Abschluss mit starkem Dimmen bestätigt. Nach dem Loslassen beginnt
+der Lichtnachlauf. Eine dauerhafte Schalterstellung kann alternativ als
+Bedieneingang eingerichtet werden.
+
+Zwischen den Sitzungen können Sie zur Betriebsart **Manuell** wechseln. Dann
+bedienen Sie Ofen und Licht selbst; die Temperaturautomatik wird ausgeblendet.
+Messung und Aufzeichnung laufen weiter. Technischer Schutz und die Reaktion auf
+bestätigte Übertemperatur bleiben aktiv. Für eine einzelne Korrektur im
+Automatikbetrieb stehen in den Details weiterhin vorübergehende Übersteuerungen
+bereit. Diese enden spätestens nach einer einstellbaren Dauer von standardmäßig
+zehn Minuten. So übernimmt die Automatik auch dann wieder, wenn Sie den Ofen
+während des Aufheizens vorübergehend ausgeschaltet haben.
 
 Unter **Details** finden Sie die weitergehende Bedienung: aktuelle Betriebs- und
 Fristinformationen, die manuelle Ofen- und Lichtsteuerung, Einstellungen,
@@ -29,17 +42,25 @@ Bedarf einzeln beenden; die verbleibende Regelung bleibt dabei erhalten.
 
 ## Temperatur wählen oder steigern
 
-Für eine direkte Sollwahl wählen Sie Temperatur per Taste oder Schieber. Diese
-Wahl bleibt konstant. Die Schnellauswahl kann angepasst werden; Temperaturen
-sind bis 100 °C begrenzt.
+Für eine direkte Sollwahl wählen Sie die Temperatur per Taste oder direkt auf
+dem Bogen der Temperaturanzeige. Diese Wahl bleibt konstant. Der Einstellbereich
+reicht standardmäßig von 60 bis 100 °C; seine Untergrenze und die Schnellauswahl
+sind anpassbar.
 
-Für eine steigende Temperatur stehen zwei anpassbare Profile bereit:
+Die **Temperaturautomatik** verteilt eine gewünschte Steigerung gleichmäßig von
+der Start- bis zur Endtemperatur. Benannte Programme machen wiederkehrende
+Auswahlen schnell erreichbar. Name und Temperaturfolge stehen zusammen:
 
-| Profil | Werkseinstellung |
+| Programm | Werkseinstellung |
 |---|---|
-| 4-Gang-Programm | 80 → 85 → 90 → 95 °C |
-| 3-Gang-Programm | 70 → 80 → 90 °C |
+| Genusszeit | 80 → 85 → 90 °C |
+| Gipfelstürmer | 84 → 92 → 100 °C |
+| Ewigkeit | 80 → 84 → 88 → 92 → 96 °C |
+| Liegewiese | 75 → 80 → 85 °C |
+| Höhenwanderung | 90 → 95 → 100 °C |
+| Schnellstarter | 70 → 90 °C |
 
+In den Einstellungen können Sie diese Programme ändern und eigene hinzufügen.
 Start, Ende und die Verteilung der Steigerung lassen sich anpassen. Die
 Verteilungszahl beschreibt nur, wie die Temperatur von Start zu Ende ansteigt.
 Sie plant und begrenzt keine Saunagänge. Ist die Endtemperatur erreicht, bleibt
@@ -60,7 +81,8 @@ Anschließend steigt die Helligkeit bis zum Ende der jeweiligen Phase wieder
 auf den zur Temperatur passenden Wert. Bei
 einem Saunagang bleibt das normale Licht auch dann erhalten, wenn die Temperatur
 fällt; während einer Kühlung hat deren Lichtvorgabe Vorrang. Eine manuelle
-Lichtwahl gilt bis zum nächsten Phasenwechsel.
+Lichtwahl gilt bis zum nächsten Phasenwechsel, höchstens jedoch bis zum Ende
+der eingestellten Übersteuerungsdauer.
 
 Nach dem Ende einer Sitzung leuchtet das Licht standardmäßig noch 10 Minuten mit
 50 % und schaltet dann aus. Dauer und Helligkeit sind einstellbar.
@@ -75,8 +97,11 @@ angerechnet. Die Kühlvorgabe beträgt standardmäßig 15 Minuten. Alle diese We
 sind Standards und können angepasst werden.
 
 Bei manueller Ofenübersteuerung bleibt die ausstehende Kühlung erhalten.
-Wird während des Nachlaufs manuell geheizt, hält dessen Uhr an und läuft danach
-mit der verbliebenen Zeit weiter.
+Wird während des Nachlaufs manuell geheizt, hält dessen Uhr an. Ohne neuen
+Saunagang läuft anschließend die verbliebene Zeit weiter. Beginnt ein neuer
+Gang, entfällt der alte Restnachlauf; nach Gangende beginnt ein vollständiger
+neuer Nachlauf. Bereits erbrachte Nachlaufzeit wird einmalig auf die nächste
+Kühlung angerechnet.
 
 Der mechanische Ofentimer bleibt eine Erinnerung: Die Anzeige schätzt seine
 Restzeit, steuert aber weder Ofen noch Schutzfunktionen. Für die Sitzungsenergie

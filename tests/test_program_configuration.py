@@ -1,11 +1,23 @@
 """Konfiguration der Temperaturprogramme ohne Laufzeitkopplung."""
+import asyncio
 import unittest
+from types import SimpleNamespace
 
-from custom_components.ha_sauna.bindings import Bindings, ROLES
+from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.const import CONF_BINDINGS, CONF_PARAMETERS
-from custom_components.ha_sauna.core.parameters import LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
-from custom_components.ha_sauna.runtime import Configuration
-from custom_components.ha_sauna.settings import program_parameters
+from custom_components.ha_sauna.core.parameters import (
+    EDITABLE_DEFINITIONS,
+    LIVE_TEMPERATURE_KEYS,
+    ParameterError,
+    Parameters,
+)
+from custom_components.ha_sauna.core.program_catalog import NamedTemperatureProgram
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+from custom_components.ha_sauna.settings import (
+    async_reset_parameters,
+    async_set_program_catalog,
+    program_parameters,
+)
 
 
 def bindings():
@@ -21,6 +33,39 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_common_temperature_minimum_validates_live_targets_and_ui_metadata(self):
+        for key in ("preset_start_c", "target_temperature_c", "final_temperature_c"):
+            with self.subTest(key=key, value=59):
+                with self.assertRaisesRegex(ParameterError, f"{key}: too_small"):
+                    Parameters({key: 59})
+            with self.subTest(key=key, value=60):
+                self.assertEqual(Parameters({key: 60}).values[key], 60)
+            with self.subTest(key=key, value=100):
+                self.assertEqual(Parameters({key: 100}).values[key], 100)
+
+        parameters = Parameters({"sauna_min_temperature_c": 65})
+        self.assertEqual(parameters.minimum_for("target_temperature_c"), 65)
+        self.assertEqual(parameters.minimum_for("final_temperature_c"), 65)
+        self.assertEqual(parameters.minimum_for("preset_start_c"), 65)
+        for key in ("preset_start_c", "target_temperature_c", "final_temperature_c"):
+            with self.subTest(key=key, minimum=65):
+                with self.assertRaisesRegex(ParameterError, f"{key}: too_small"):
+                    Parameters({"sauna_min_temperature_c": 65, key: 64})
+
+    def test_legacy_profiles_and_additional_door_limit_remain_loadable_but_hidden(self):
+        values = Parameters(
+            {
+                "program_1_start_c": 45,
+                "program_1_end_c": 55,
+                "door_heating_max_temperature_c": 70,
+            }
+        ).values
+        self.assertEqual((values["program_1_start_c"], values["program_1_end_c"]), (45, 55))
+        self.assertNotIn(
+            "door_heating_max_temperature_c",
+            {definition.key for definition in EDITABLE_DEFINITIONS},
+        )
+
     def test_legacy_without_final_temperature_is_constant(self):
         configuration = Configuration.from_options(options())
         self.assertEqual(configuration.program_mode, "constant")
@@ -33,9 +78,18 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_roundtrip_preserves_program_choices(self):
         configuration = Configuration(
             Bindings(bindings()), Parameters({"program_1_gangs": 6}),
-            program_mode="progressive", button_program="program_1",
+            program_mode="progressive", button_program="genusszeit",
+            selected_program_id="genusszeit",
         )
         self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
+
+    def test_direct_legacy_button_construction_serializes_a_valid_catalog(self):
+        configuration = Configuration(
+            Bindings(bindings()), Parameters({}), button_program="program_1"
+        )
+        restored = Configuration.from_options(configuration.as_options())
+        self.assertEqual(restored.button_program, "program_1")
+        self.assertIn("program_1", {program.id for program in restored.temperature_programs})
 
     def test_invalid_program_option_is_rejected(self):
         for key, value in (("program_mode", "automatic"), ("program_mode", None),
@@ -74,6 +128,106 @@ class ProgramConfigurationTests(unittest.TestCase):
         selected, mode = program_parameters(parameters, "progressive")
         self.assertEqual(mode, "progressive")
         self.assertEqual(selected, parameters)
+
+    def test_catalog_program_supplies_existing_controller_values(self):
+        configuration = Configuration.from_options(options())
+        selected, mode = program_parameters(
+            configuration.parameters,
+            "gipfelstuermer",
+            catalog=configuration.temperature_programs,
+        )
+        self.assertEqual(mode, "progressive")
+        self.assertEqual(
+            tuple(
+                selected.values[key]
+                for key in ("target_temperature_c", "final_temperature_c", "temperature_gangs")
+            ),
+            (84, 100, 3),
+        )
+
+    def test_catalog_and_selected_name_roundtrip(self):
+        configuration = Configuration.from_options(
+            options(
+                temperature_programs=[
+                    {
+                        "id": "ruhig",
+                        "name": "Ruhig",
+                        "start_c": 70,
+                        "end_c": 85,
+                        "distribution_gangs": 2,
+                    }
+                ],
+                selected_program_id="ruhig",
+                button_program="ruhig",
+                control_mode="manual",
+            )
+        )
+        self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
+
+    def test_explicit_catalog_does_not_accept_removed_legacy_profiles(self):
+        parameters = Parameters({})
+        with self.assertRaises(ValueError):
+            program_parameters(
+                parameters,
+                "program_1",
+                catalog=(NamedTemperatureProgram("neu", "Neu", 70, 80, 2),),
+            )
+
+    def test_renaming_selected_program_keeps_current_values(self):
+        program = NamedTemperatureProgram("ruhig", "Ruhig", 70, 85, 2)
+        configuration = Configuration(
+            Bindings(bindings()),
+            Parameters({"target_temperature_c": 82}),
+            temperature_programs=(program,),
+            selected_program_id="ruhig",
+        )
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+        asyncio.run(
+            async_set_program_catalog(
+                hass,
+                entry,
+                [{**program.as_dict(), "name": "Abendruhe"}],
+            )
+        )
+        self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 82)
+        self.assertEqual(runtime.configuration.temperature_programs[0].name, "Abendruhe")
+
+    def test_reset_restores_all_software_options_but_not_hardware_inputs(self):
+        configuration = Configuration(
+            Bindings(bindings()),
+            Parameters({"nominal_power_kw": 7}),
+            log_level="DEBUG",
+            control_input_mode="button",
+            button_event_type="press",
+            button_program="genusszeit",
+            selected_program_id="genusszeit",
+            control_mode="manual",
+        )
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+        asyncio.run(async_reset_parameters(hass, entry))
+        reset = Configuration.from_options(entry.options)
+        self.assertEqual(reset.parameters.values["nominal_power_kw"], 4.5)
+        self.assertEqual(reset.log_level, "INFO")
+        self.assertEqual(reset.button_program, "current")
+        self.assertEqual(reset.selected_program_id, None)
+        self.assertEqual(reset.control_mode, "automatic")
+        self.assertEqual(reset.bindings, configuration.bindings)
+        self.assertEqual(reset.control_input_mode, "button")
+        self.assertEqual(reset.button_event_type, "press")
+        self.assertTrue(runtime.reconfiguring)
+
+
+class _FakeConfigEntries:
+    def async_update_entry(self, entry, *, options):
+        entry.options = options
+
+
+class _FakeHass:
+    config_entries = _FakeConfigEntries()
 
 
 if __name__ == "__main__":

@@ -14,7 +14,9 @@ Diese Rechte reichen für die Einrichtung aus.
    auswählen.
 4. Verwenden Sie bei einem Taster einen entkoppelten Eingang als Bedienquelle
    und ordnen Sie den tatsächlichen Heizaktor getrennt zu. Die Integration
-   ändert die Geräteeinstellung des Tasters nicht.
+   ändert die Geräteeinstellung des Tasters nicht. Ein Ereignistaster sollte
+   Drücken, langes Drücken und Loslassen melden können, damit das Licht den
+   Abschluss bis zum Loslassen bestätigt.
 5. Prüfen Sie vor der ersten Sitzung die voreingestellten Temperatur-, Licht-,
    Heizzeit- und Kühlwerte. Sie sind anpassbare Standards; vorhandene
    Einstellungen bleiben erhalten. Wählen Sie insbesondere Messwerte und
@@ -29,6 +31,12 @@ Die Bedienung beginnt in der **Übersicht**. Zusätzliche Einstellungen,
 Gerätezuordnungen nach Sitzungsende, Protokollierung und Archiv finden Sie unter
 **Details**. Für das Protokoll wählen Sie bei Bedarf **INFO** für
 Betriebsereignisse, **ERROR** für Fehler oder **DEBUG** für die Diagnose.
+
+Unter **Temperaturprogramme** können Sie die benannten Programme ändern oder
+eigene hinzufügen. Jedes Programm hat einen Startwert, einen Endwert und die
+Anzahl der Temperaturstufen. Danach bleibt die Endtemperatur für beliebig viele
+weitere Saunagänge erhalten. Wählen Sie außerdem, welche Temperaturwahl der
+Saunataster beim Einschalten verwenden soll.
 
 Mit **Standardwerte wiederherstellen** setzen Sie nach Sitzungsende die
 Einstellungen einschließlich Temperaturprogrammen und Protokollstufe zurück.

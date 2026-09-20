@@ -1,22 +1,42 @@
 # Betrieb, Session und Heizregelung
 
-Stand 19.09.2026. Die folgenden Regeln sind implementiert; ausgeführte Prüfungen
+Stand 20.09.2026. Ausgeführte Prüfungen
 und Hardwaregrenzen stehen getrennt im [Abnahmebericht](abnahme.md).
 
 ## Bedienung und Session
 
 Physischer Eingang, Betriebsschalter, Climate-Entität und Panel bedienen denselben
-Controller. Eine Binary-Sensor-Bedienquelle folgt An/Aus; neue Event-Impulse
-schalten den logischen Betrieb um. Rückkehr eines ausgefallenen Eingangs startet
-keinen Betrieb. Eine normale Heizpause ändert den logischen Betrieb nicht.
+Controller. Ein als dauerhafter Schalter konfigurierter Eingang folgt seiner
+Ein-/Ausstellung. Ein Taster startet bei ausgeschaltetem Betrieb mit dem
+hinterlegten Temperaturprogramm im Automatikbetrieb. Im laufenden Betrieb wechselt ein kurzer Druck
+zwischen direkter Ofenübersteuerung und Rückkehr zur Automatik. Langes Drücken
+beendet die Sitzung und schaltet den Ofen aus; das Licht bestätigt dies bis zum
+Loslassen mit standardmäßig 1 %. Anschließend beginnt der Lichtnachlauf.
+Eine zum Start verwendete Betätigung kann dieselbe Sitzung nicht wieder beenden.
+Rückkehr eines ausgefallenen Eingangs startet keinen Betrieb. Eine normale
+Heizpause ändert den logischen Betrieb nicht.
 
 Ausdrückliches Aus beendet einen Gang sofort. Bei rechtzeitigem Wiedereinschalten
 bleibt die Session erhalten, der beendete Gang bleibt beendet. Nach der
 konfigurierten Session-Unterbrechungsfrist wird beim nächsten Einschalten eine
 neue Session samt Gang-, Heizzeit-, Nachlauf-, Kühlungs- und Fristobjekten angelegt.
 Übergeordnete Schutzfunktionen, Konfiguration und Archiv bleiben erhalten.
-Während einer Sitzung sind Solltemperatur, Erhöhung je Saunagang und Endtemperatur
+Während einer Sitzung sind Solltemperatur, Endtemperatur und Temperaturverteilung
 änderbar. Weitere Grundparameter und Entitätszuordnung bleiben gesperrt.
+
+Die Betriebsart **Manuell** wird nur zwischen abgeschlossenen Sitzungen gewählt.
+Ofen und Licht folgen dort der manuellen Bedienung. Messung, Archivierung,
+technische Schutzabschaltung und bestätigte Übertemperatur bleiben wirksam;
+Thermostat, reguläre Heizzeit-Kühlpausen und automatische Lichtwechsel entfallen.
+Eine bestätigte Übertemperatur beendet die manuelle Heizanforderung und löst
+die zusätzliche Kühlung aus. Danach ist eine neue manuelle Heizwahl erforderlich.
+Die vorübergehende Übersteuerung im Automatikbetrieb bleibt davon getrennt.
+Sie endet spätestens nach der eingestellten Übersteuerungsdauer, standardmäßig
+zehn Minuten. Phasenwechsel, ein neuer automatischer Heiz-Schaltbefehl oder die
+ausdrückliche Rückgabe an die Automatik können die Ofenübersteuerung früher
+beenden. Für Licht gilt als früherer Rückkehrpunkt der Phasenwechsel. Messwerte
+und Statusabfragen verlängern keine Übersteuerung. Die eigenständige Betriebsart
+Manuell hat keine solche Zeitbegrenzung.
 
 ## Temperatur und Heizzeit
 
@@ -29,8 +49,12 @@ reguläres Heizen mindestens 10 Minuten. Diese Mindestzeit verzögert niemals
 Betrieb-Aus, Nachlauf, Zwangskühlung oder technische Schutzabschaltung.
 
 Schon ein vorläufiger Gang unterdrückt reguläre Hysterese-/Ablaufabschaltungen.
-Eine manuelle Solltemperatur gilt sofort als neuer Ausgangspunkt weiterer
-Steigerungen. Bereits gezählte Gänge werden nicht erneut addiert. Änderungen
+Eine direkte Solltemperaturwahl gilt sofort und bedeutet konstantes Heizen.
+Die Temperaturautomatik verteilt Start- und Endwert gleichmäßig über die
+eingestellte Anzahl von Temperaturstufen. Nach Erreichen des Endwerts bleibt
+dieser für weitere Gänge erhalten. Wird nur der Endwert geändert, bleibt das
+nächste Ziel erhalten; die verbleibenden Steigerungen werden neu verteilt.
+Bereits gezählte Gänge werden nicht erneut addiert. Änderungen
 erhalten laufende Gänge, Fristen, Mindestheizzeit, Kühlung und Schutz. Ein unterer
 Messwert wird niemals durch Mittelwertbildung oder Höhenoffset zur oberen
 Regeltemperatur erklärt. Kurz fehlende Pakete überbrückt nur ein noch gültiger
@@ -72,14 +96,36 @@ Oberfläche, eigener Energiesensor und Sessionarchiv erhalten dieselben Werte.
 ## Nachlauf und Zwangskühlung
 
 Wird Kühlung im Gang fällig, bleibt dieser erhalten. Danach: Gangende → Nachlauf
-→ nur verbleibende Kühlung. Nachlauf hält den Ofen aus und sperrt neue Gänge.
-Sein ursprüngliches Ende bleibt auch bei Aus/Ein bestehen. Die tatsächlich
-verstrichene Nachlaufdauer wird genau einmal vollständig angerechnet:
+→ nur verbleibende Kühlung. Nachlauf hält den Ofen im automatischen Ablauf aus
+und sperrt neue Gänge. Ein manueller Heizstart per Taster oder Detailbedienung
+pausiert den Nachlauf und gibt den Beginn eines neuen Gangs frei.
+Eine Betriebsunterbrechung verwirft den Nachlauf nicht. Bei manuellem Heizen
+pausiert seine Uhr. Beginnt dabei kein Gang, läuft die Restzeit nach Rückkehr
+zur Automatik weiter. Bei einem neuen Gang wird der bisherige Nachlauf storniert;
+nach diesem Gang beginnt ein neuer vollständiger Nachlauf.
+Seine tatsächlich gezählte Dauer wird genau einmal auf die
+nächste Kühlung angerechnet, auch wenn diese erst später fällig wird:
 
 `Restkühlzeit = max(0, Kühlvorgabe − angerechneter Nachlauf)`
 
 Standard-Kühlvorgabe: einstellbare 15 Minuten. Bei Restzeit null entfällt ein
-weiterer Kühlabschnitt. Laufende Zwangskühlung sperrt neue Gänge. Betriebsstart schaltet das Licht auf standardmäßig 35 %, Nachlauf dimmt auf 15 %, Zwangskühlung auf 5 %. Alle Werte sind einstellbar. Beim Übergang vom Nachlauf zur Kühlung bleibt es gedimmt; erst anschließend wird der zuvor bestehende Lichtzustand wiederhergestellt. Ein reiner Lichtfehler wird gemeldet und beendet nicht den Heizbetrieb. Alte Startanker aus gesperrten Phasen werden verworfen.
+weiterer Kühlabschnitt. Laufende Zwangskühlung sperrt reguläre Gangstarts.
+Manuelle Ofenübersteuerung im Automatikbetrieb und ein dadurch möglicher Gang
+pausieren die Kühlung. Nach dessen Nachlauf setzt die verbleibende Kühlzeit fort.
+Reicht das Heizbudget beim Gangende nicht mehr für die Mindestheizdauer, folgt
+die Kühlung unmittelbar auf den Nachlauf. Ein unnötiges Zwischenheizen entfällt.
+
+Die Lichthelligkeit steigt linear mit der Temperatur: standardmäßig von 5 %
+bei 30 °C bis zur Bereitschaftshelligkeit. Diese beträgt tagsüber 40 % und
+nachts 25 %; während der bürgerlichen Dämmerung erfolgt der gleitende Wechsel.
+Ein laufender Gang hält die Bereitschaftshelligkeit auch bei Temperaturabfall.
+Nachlauf und Kühlung dimmen innerhalb von standardmäßig 30 Sekunden auf 15 %
+beziehungsweise den Grundlichtwert 5 %. Bis zum jeweiligen Timerende steigt
+die Helligkeit wieder zum temperaturabhängigen Ziel. Alle Ausgangswerte und
+die Übergangsdauer sind einstellbar. Eine manuelle Lichtwahl bleibt bis zum
+nächsten Phasenwechsel erhalten, höchstens bis zum Ende der eingestellten
+Übersteuerungsdauer. Reine Temperaturänderungen beenden sie nicht.
+Ein reiner Lichtfehler wird gemeldet und beendet nicht den Heizbetrieb.
 
 Eine Türöffnung beim Aufheizen/in Bereitschaft hält eine fällige Kühlung zurück:
 bei offener Tür maximal standardmäßig 10 Minuten ab Öffnung; bei rechtzeitiger
@@ -155,22 +201,11 @@ Heizabschnitt mit dem regulären Folgebudget. Betrieb-Aus, Thermostat und techni
 Schutzsperren bleiben wirksam. Die Bedienung steht im INFO-Protokoll und im Archiv.
 Ein alter oder wiederholter Klick darf keine spätere Phase beenden.
 
-Die frühere Steigerung über feste Temperaturszenen wird aus den gezählten Gängen
-abgeleitet: `min(Endtemperatur, Starttemperatur + Gangzahl × Schrittweite)`.
-Startwert ist die eingestellte Solltemperatur, die Schrittweite standardmäßig 5 °C.
-Eine leere Endtemperatur bedeutet konstanten Betrieb. Vorläufige oder aufgehobene
-Gänge erhöhen die Temperatur nicht. Neue Sitzungen beginnen wieder beim Startwert;
+Nur bestätigte, beendete Gänge erhöhen die Temperatur. Vorläufige oder aufgehobene
+Gänge verändern die Stufe nicht. Neue Sitzungen beginnen wieder beim Startwert;
 kurzes Aus-/Einschalten erhält die erreichte Stufe. Bereitschaftsaufschlag und
 Hysterese beziehen sich auf die aktuell berechnete Solltemperatur. Nachlauf und
 Kühlung behalten Vorrang. Erhöhte Bereitschaft muss zunächst erreicht werden.
-
-Ein entkoppelter Taster bedient den Saunabetrieb. Der Heizschütz wird ausschließlich
-von der Regelung geschaltet. Bei binären Tastern zählt nur die Flanke Aus → Ein;
-Loslassen schaltet nicht aus. Ereignistaster verarbeiten standardmäßig kurze
-Shelly-Klicks (`single_push` oder `single`); Drücken/Loslassen sowie Wiederholungen
-beim Wiederverbinden zählen nicht erneut. Andere Ereignisarten sind zuordenbar.
-Ein dauerhafter Betriebsschalter kann alternativ seine Ein-/Ausstellung übernehmen.
-Bestehende binäre Zuordnungen behalten bis zur Umstellung ihre Schalterauswertung.
 
 Ein Start mit fehlenden notwendigen Einstellungen, ohne gültige Regeltemperatur
 oder ohne Schützrückmeldung erzeugt keine Sitzung. Die Einrichtung bleibt damit

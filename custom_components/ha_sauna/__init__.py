@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
     from .runtime import SaunaRuntime
 
 
@@ -14,16 +15,25 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]
 ) -> bool:
     """Eine konfigurierte Instanz laden, ohne einen Saunabetrieb zu starten."""
-    from homeassistant.exceptions import ConfigEntryError
-    from .runtime import Configuration, SaunaRuntime
     from datetime import timedelta
+
+    from homeassistant.exceptions import ConfigEntryError
     from homeassistant.helpers.event import async_track_time_interval
+
+    from .runtime import Configuration, SaunaRuntime
 
     try:
         configuration = Configuration.from_options(entry.options)
     except (ValueError, TypeError) as error:
         raise ConfigEntryError("Ungültige HA-Sauna-Konfiguration") from error
     entry.runtime_data = SaunaRuntime(configuration)
+    # Der Laufzeitkern kann nach einem expliziten physischen Neustart seine
+    # bereits aktualisierte Konfiguration speichern. Weil sie vor diesem
+    # Callback gesetzt wird, erkennt der Optionenlistener keinen Fremdwechsel
+    # und startet keine Sitzung neu.
+    entry.runtime_data.save_configuration = lambda updated: (
+        hass.config_entries.async_update_entry(entry, options=updated.as_options())
+    )
     from .log import SaunaLog
 
     entry.runtime_data.log = SaunaLog(entry.entry_id, configuration.log_level)
@@ -66,7 +76,6 @@ async def async_options_updated(hass, entry):
     runtime = getattr(entry, "runtime_data", None)
     if runtime and not runtime.closed:
         from .runtime import Configuration
-        from dataclasses import replace
 
         updated = Configuration.from_options(entry.options)
         before = runtime.configuration.as_options()
@@ -77,12 +86,14 @@ async def async_options_updated(hass, entry):
             runtime.set_log_level(updated.log_level)
             return
         from .core.parameters import LIVE_TEMPERATURE_KEYS
-        from .settings import apply_temperature_parameters
+        from .settings import apply_temperature_parameters, program_parameters
 
         before_program_mode = before.pop("program_mode")
         after_program_mode = after.pop("program_mode")
         before_button_program = before.pop("button_program")
         after_button_program = after.pop("button_program")
+        before_selected_program = before.pop("selected_program_id")
+        after_selected_program = after.pop("selected_program_id")
         before_parameters = before.pop("parameters")
         after_parameters = after.pop("parameters")
         changed = {
@@ -90,24 +101,43 @@ async def async_options_updated(hass, entry):
             for k in before_parameters.keys() | after_parameters.keys()
             if before_parameters.get(k) != after_parameters.get(k)
         }
-        if before == after and not changed - LIVE_TEMPERATURE_KEYS:
+        if (
+            before == after
+            and before_button_program == after_button_program
+            and not changed - LIVE_TEMPERATURE_KEYS
+        ):
             async with runtime._lock:
+                selected_parameters = updated.parameters
+                selected_mode = (
+                    after_program_mode
+                    if before_program_mode != after_program_mode
+                    else None
+                )
+                if (
+                    before_selected_program != after_selected_program
+                    and after_selected_program is not None
+                ):
+                    selected_parameters, selected_mode = program_parameters(
+                        updated.parameters,
+                        after_selected_program,
+                        catalog=updated.temperature_programs,
+                    )
                 await apply_temperature_parameters(
                     runtime,
-                    updated.parameters,
+                    selected_parameters,
                     explicit_target=False,
-                    program_mode=(
-                        after_program_mode
-                        if before_program_mode != after_program_mode
-                        else None
+                    program_mode=selected_mode,
+                    new_program=(
+                        before_program_mode != after_program_mode
+                        or before_selected_program != after_selected_program
                     ),
-                    new_program=before_program_mode != after_program_mode,
+                    selected_program_id=after_selected_program,
                 )
-                if before_button_program != after_button_program:
-                    runtime.configuration = replace(
-                        runtime.configuration, button_program=after_button_program
-                    )
                 runtime.set_log_level(updated.log_level)
+                if before_selected_program != after_selected_program:
+                    hass.config_entries.async_update_entry(
+                        entry, options=runtime.configuration.as_options()
+                    )
             return
         if runtime.session:
             # Auch externe Optionsschreiber dürfen keine laufende Sitzung durch
