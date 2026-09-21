@@ -1150,7 +1150,7 @@ class SaunaPanel extends HTMLElement {
       }
       .history-window {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr);
         gap: 2px 10px;
         min-width: 0;
       }
@@ -1189,11 +1189,9 @@ class SaunaPanel extends HTMLElement {
         cursor: grabbing;
       }
       #range {
-        grid-column: 2;
         font-size: 12px;
         line-height: 1.2;
         text-align: right;
-        white-space: nowrap;
       }
       .diagnostic-grid .detector-chart {
         height: auto;
