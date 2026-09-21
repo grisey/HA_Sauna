@@ -15,7 +15,9 @@ Beobachtungsfenster bestätigen; sie müssen nicht im selben Moment melden.
 Während eines durchgehend bestätigten Heizvorgangs kann auch ein deutlicher
 Temperaturabfall an beiden Messpositionen die Öffnung belegen. Diese zusätzliche
 Regel gilt ebenfalls in der heißen Sauna. Eine Schließung wird erst nach einer
-erkannten Öffnung geprüft.
+erkannten Öffnung geprüft. Sie folgt der Temperaturerholung an den verfügbaren
+Messpositionen. Fällt dabei ein Feuchtesensor aus, kann die Tür weiterhin als
+geschlossen erkannt werden; der Sensorfehler bleibt sichtbar.
 
 Personen und Aufgüsse erhöhen die relative Luftfeuchte. Da diese aber auch
 allein durch Abkühlung steigen kann, prüft HA Sauna zusätzlich, ob der daraus

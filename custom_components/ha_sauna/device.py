@@ -983,14 +983,9 @@ class HADevice:
 
     def _expect_light_change(self, now, service, brightness):
         self._discard_expired_light_expectations(now)
-        signature = self._light_command_signature(service, brightness)
-        for expected in self._expected_light_changes:
-            if expected["signature"] == signature:
-                expected["sent_at"] = now
-                return
         self._expected_light_changes.append(
             {
-                "signature": signature,
+                "signature": self._light_command_signature(service, brightness),
                 "sent_at": now,
             }
         )

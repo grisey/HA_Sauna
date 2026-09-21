@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
@@ -32,6 +33,24 @@ class ButtonRuntimeTests(unittest.TestCase):
         async with self.runtime._lock:
             await self.runtime._handle_button_event(name, self.now)
             await self.runtime._cycle()
+
+    def _start_with_temperature(self):
+        self._event("short")
+        self.runtime.controller.set_temperature(70, self.now)
+        return self.now
+
+    def _complete_gang(self, started_at):
+        controller = self.runtime.controller
+        session_id = controller.session.session_id
+        for name, kind, seconds in (
+            ("close", Kind.DOOR_CLOSE, 300),
+            ("person", Kind.PERSON_STRONG, 360),
+            ("infusion", Kind.INFUSION, 480),
+            ("open", Kind.DOOR_OPEN, 1260),
+            ("vent", Kind.VENTILATION, 1290),
+        ):
+            self.now = started_at + timedelta(seconds=seconds)
+            controller.process(Event(name, session_id, kind, self.now, self.now))
 
     def test_press_release_single_starts_once_and_short_toggles_override(self):
         self._event("press")
@@ -97,6 +116,81 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("release")
         self.assertEqual(self.runtime.session.session_id, new_session_id)
         self.assertIsNone(self.runtime.controller.light_after_run)
+
+    def test_delayed_on_feedback_first_restarts_after_run_then_returns_to_auto(self):
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        controller.report_contactor(True, started_at + timedelta(seconds=1))
+        self._complete_gang(started_at)
+
+        self._event("short", 1)
+        self.assertTrue(controller.heater_override)
+        self.assertIsNotNone(controller.session.after_run.paused_at)
+        self.assertTrue(controller.last_decision.heat)
+
+        self._event("short", 1)
+        self.assertIsNone(controller.heater_override)
+        self.assertIsNone(controller.session.after_run.paused_at)
+        self.assertFalse(controller.last_decision.heat)
+
+    def test_delayed_on_feedback_first_restarts_active_cooling_then_returns_to_auto(self):
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        controller.report_heating(True, started_at)
+        self.now = started_at + timedelta(minutes=90)
+        controller.advance(self.now)
+        controller.report_contactor(True, self.now)
+        self.assertTrue(controller._cooling_active())
+
+        self._event("short", 1)
+        self.assertTrue(controller.heater_override)
+        self.assertIsNotNone(controller.session.cooling.paused_at)
+        self.assertTrue(controller.last_decision.heat)
+
+        self._event("short", 1)
+        self.assertIsNone(controller.heater_override)
+        self.assertTrue(controller._cooling_active())
+        self.assertFalse(controller.last_decision.heat)
+
+    def test_button_cannot_heat_through_protection_during_after_run(self):
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        self._complete_gang(started_at)
+        controller.protection.add("heater_service_unavailable")
+
+        with self.assertRaisesRegex(ValueError, "aktivem Schutz"):
+            self._event("short", 1)
+
+        self.assertIsNone(controller.heater_override)
+        self.assertFalse(controller.last_decision.heat)
+
+    def test_pending_cooling_during_a_gang_uses_the_ordinary_feedback_toggle(self):
+        self.runtime = SaunaRuntime(
+            Configuration(
+                Bindings(bindings()),
+                Parameters({"heating_minutes": 1, "heating_reduction_minutes": 0.25}),
+            ),
+            lambda: self.now,
+        )
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        session_id = controller.session.session_id
+        controller.report_heating(True, started_at)
+        for name, kind, seconds in (
+            ("close", Kind.DOOR_CLOSE, 1),
+            ("person", Kind.PERSON_STRONG, 2),
+        ):
+            self.now = started_at + timedelta(seconds=seconds)
+            controller.process(Event(name, session_id, kind, self.now, self.now))
+        self.now = started_at + timedelta(minutes=1)
+        controller.advance(self.now)
+        controller.report_contactor(True, self.now)
+        self.assertIsNotNone(controller.session.cooling)
+        self.assertFalse(controller._cooling_active())
+
+        self._event("short", 1)
+
+        self.assertFalse(controller.heater_override)
 
     def test_button_parameters_have_the_decided_defaults(self):
         values = Parameters({}).values

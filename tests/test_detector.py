@@ -111,6 +111,13 @@ class DetectorTests(unittest.TestCase):
             events += sample(detector, second, *values)
         return events
 
+    @staticmethod
+    def _opened_entry_episode(detector):
+        events = []
+        for second, values in enumerate(((80, 40), (78, 38), (76, 36))):
+            events += sample(detector, second, *values)
+        return events
+
     def test_brief_nonventing_open_close_enables_weak_person_signal(self):
         detector = self._entry_detector()
         events = self._entry_episode(detector)
@@ -121,6 +128,73 @@ class DetectorTests(unittest.TestCase):
         self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
         weak = next(event for event in events if event.kind is Kind.PERSON_WEAK)
         self.assertEqual(weak.effective_at, T0 + timedelta(seconds=5))
+
+    def test_close_recovers_when_lower_humidity_drops_out(self):
+        detector = self._entry_detector()
+        events = self._opened_entry_episode(detector)
+        for second, temperature in ((3, 78), (4, 80)):
+            for position in (Position.UPPER, Position.LOWER):
+                detector.accept(
+                    measurement(position, Quantity.TEMPERATURE, temperature, second)
+                )
+                detector.accept(
+                    measurement(
+                        position,
+                        Quantity.HUMIDITY,
+                        None if position is Position.LOWER else 40,
+                        second,
+                    )
+                )
+            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        close = next(event for event in events if event.kind is Kind.DOOR_CLOSE)
+        self.assertEqual(close.channels, ("upper", "lower"))
+
+    def test_close_recovers_without_humidity_pairs(self):
+        detector = self._entry_detector()
+        events = self._opened_entry_episode(detector)
+        for second, temperature in ((3, 78), (4, 80)):
+            for position in (Position.UPPER, Position.LOWER):
+                detector.accept(
+                    measurement(position, Quantity.TEMPERATURE, temperature, second)
+                )
+                detector.accept(measurement(position, Quantity.HUMIDITY, None, second))
+            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        self.assertIn(Kind.DOOR_CLOSE, [event.kind for event in events])
+        self.assertTrue(
+            {Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION}.isdisjoint(
+                event.kind for event in events
+            )
+        )
+
+    def test_close_can_recover_with_one_remaining_temperature_role(self):
+        detector = self._entry_detector()
+        events = self._opened_entry_episode(detector)
+        for second, temperature in ((3, 78), (4, 80)):
+            detector.accept(
+                measurement(Position.UPPER, Quantity.TEMPERATURE, temperature, second)
+            )
+            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 40, second))
+            detector.accept(
+                measurement(Position.LOWER, Quantity.TEMPERATURE, None, second)
+            )
+            detector.accept(
+                measurement(Position.LOWER, Quantity.HUMIDITY, None, second)
+            )
+            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        close = next(event for event in events if event.kind is Kind.DOOR_CLOSE)
+        self.assertEqual(close.channels, ("upper",))
+
+    def test_missing_temperatures_reset_the_close_hold(self):
+        detector = self._entry_detector(door_close_hold_seconds=2)
+        events = self._opened_entry_episode(detector)
+        events += sample(detector, 3, 78, 38)
+        for position in (Position.UPPER, Position.LOWER):
+            detector.accept(measurement(position, Quantity.TEMPERATURE, None, 4))
+            detector.accept(measurement(position, Quantity.HUMIDITY, 38, 4))
+        events += detector.advance(T0 + timedelta(seconds=4), enabled=True)
+        events += sample(detector, 5, 80, 40)
+        self.assertTrue(detector.open)
+        self.assertNotIn(Kind.DOOR_CLOSE, [event.kind for event in events])
 
     def test_preopening_recovery_hint_cannot_close_a_later_falling_opening(self):
         detector = self._entry_detector(

@@ -533,10 +533,6 @@ class Detector:
             if on_detection:
                 on_detection(detection)
 
-        if not channels:
-            self._update_moisture_state(None, now)
-            observe()
-            return output
         hints = {}
         for c in channels:
             trend = self._slope(c, "Tm", p["door_window_seconds"])
@@ -559,9 +555,6 @@ class Detector:
                     >= p["door_window_seconds"] + p["median_seconds"]
                     and trend is not None
                     and trend < p["door_heating_slope"]
-                ),
-                "closing": bool(
-                    self.open and trend is not None and trend > p["door_close_slope"]
                 ),
             }
         if (
@@ -588,14 +581,30 @@ class Detector:
                     self._remember_door_hint(position, name, hints[position][name], now)
 
         mixed_opening = thermal_opening = closing = None
+        closing_positions = ()
         if episode and complete_episode:
             mixed_opening = self._episode_route(
                 "temperature", now
             ) and self._episode_route("humidity", now)
             thermal_opening = self._episode_route("thermal", now)
-            closing = (
-                all(hints[position]["closing"] for position in episode["positions"])
-                and not episode["invalid"]
+        if episode and self.open:
+            closing_slopes = {
+                position: self._slope(position, "Tm", p["door_window_seconds"])
+                for position in episode["positions"]
+            }
+            closing_positions = tuple(
+                position
+                for position, slope in closing_slopes.items()
+                if slope is not None
+            )
+            for position, slope in closing_slopes.items():
+                if slope is not None:
+                    trace["metrics"].setdefault(position.value, {})[
+                        "door_temperature_slope"
+                    ] = slope
+            closing = bool(closing_positions) and all(
+                closing_slopes[position] > p["door_close_slope"]
+                for position in closing_positions
             )
         mixed_toggle = (
             self._sustain("door", mixed_opening, p["door_open_hold_seconds"])
@@ -610,8 +619,8 @@ class Detector:
             else False
         )
         close_toggle = (
-            self._sustain("door", closing, p["door_close_hold_seconds"])
-            if closing is not None and self.open
+            self._sustain("door", bool(closing), p["door_close_hold_seconds"])
+            if self.open
             else False
         )
         trace["checks"].update(door_open=not self.open, door_close=self.open)
@@ -628,8 +637,7 @@ class Detector:
             self.weak_anchor_at = now
             self.counts["door"] = 0
             self.counts["door_heating"] = 0
-            positions = self.door_episode["positions"]
-            emit(Kind.DOOR_CLOSE, now, positions)
+            emit(Kind.DOOR_CLOSE, now, closing_positions)
             self.baseline = {}
             self.ventilation_degraded = False
             self.ventilation_positions = ()
@@ -663,6 +671,10 @@ class Detector:
                 self.baseline = {}
                 self.ventilation_positions = ()
                 self.ventilation_invalid = set()
+        if not channels:
+            self._update_moisture_state(None, now)
+            observe()
+            return output
         eligible = bool(enabled and not self.open)
         infusion_check = eligible and (allowed is None or allowed(Kind.INFUSION))
         trace["checks"]["infusion"] = infusion_check

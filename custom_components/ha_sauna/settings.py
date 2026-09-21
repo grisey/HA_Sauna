@@ -101,10 +101,11 @@ async def async_reset_parameters(hass, entry):
             control_input_mode=runtime.configuration.control_input_mode,
             button_event_type=runtime.configuration.button_event_type,
         )
-        # Die neue Grundkonfiguration wird über den bestehenden Listener geladen.
-        # Bis dahin bleibt die laufende Konfiguration unverändert und gesperrt.
-        runtime.reconfiguring = True
-        hass.config_entries.async_update_entry(entry, options=reset.as_options())
+        # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
+        # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.
+        runtime.reconfiguring = hass.config_entries.async_update_entry(
+            entry, options=reset.as_options()
+        )
         return reset.parameters.as_dict()
 
 

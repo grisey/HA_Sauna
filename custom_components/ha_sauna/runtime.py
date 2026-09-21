@@ -637,18 +637,23 @@ class SaunaRuntime:
 
     def _toggle_button_heater_override(self, now):
         """Toggle the physical-button override while the runtime lock is held."""
+        session = self.session
+        cooling_or_after_run = bool(
+            session is not None
+            and (
+                session.after_run is not None
+                or self.controller._cooling_active(session.cooling)
+            )
+        )
         if (
             self.controller.heater_override is not None
             and self.controller.control_mode != "manual"
         ):
-            session = self.session
-            if (
-                self.controller.heater_override is False
-                and session is not None
-                and (session.after_run is not None or session.cooling is not None)
-            ):
+            if self.controller.heater_override is False and cooling_or_after_run:
                 return self.controller.set_heater_override(True, now)
             return self.controller.set_heater_override(None, now)
+        if self.controller.control_mode != "manual" and cooling_or_after_run:
+            return self.controller.set_heater_override(True, now)
         if self.device:
             self.device.refresh(now)
             known = self.device.contactor_feedback()

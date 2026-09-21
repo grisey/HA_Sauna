@@ -561,6 +561,23 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.light.is_on)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
 
+    async def test_repeated_light_echoes_consume_each_sent_command(self):
+        device = self.runtime.device
+        for brightness in (39, 40, 39):
+            device._expect_light_change(self.now, "turn_on", brightness)
+        self.assertEqual(len(device._expected_light_changes), 3)
+
+        for raw_brightness in (99, 102, 99):
+            await self.set_light_externally(True, raw_brightness)
+            self.assertIsNone(device.light_output.manual_brightness)
+
+        await self.set_light_externally(True, 128)
+        self.assertAlmostEqual(
+            device.light_output.manual_brightness, 128 * 100 / 255
+        )
+        await self.set_light_externally(False)
+        self.assertEqual(device.light_output.manual_brightness, 0)
+
     async def test_percent_step_light_echo_stays_automatic_after_fade(self):
         self.light.percent_steps = True
         self.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 10})

@@ -84,6 +84,7 @@ async def async_options_updated(hass, entry):
         after.pop("log_level")
         if before == after:
             runtime.set_log_level(updated.log_level)
+            runtime.reconfiguring = False
             return
         from .core.parameters import LIVE_TEMPERATURE_KEYS
         from .settings import apply_temperature_parameters, program_parameters
@@ -145,6 +146,7 @@ async def async_options_updated(hass, entry):
                     hass.config_entries.async_update_entry(
                         entry, options=runtime.configuration.as_options()
                     )
+                runtime.reconfiguring = False
             return
         if runtime.session:
             # Auch externe Optionsschreiber dürfen keine laufende Sitzung durch

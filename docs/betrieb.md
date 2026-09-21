@@ -131,6 +131,11 @@ Lichtübersteuerungen in Automatik enden spätestens nach 10 min; früher durch
 Rückgabe an Automatik sowie beim passenden Phasenwechsel oder automatischen
 Heizwechsel. Schutz hat stets Vorrang.
 
+Während Nachlauf oder laufender Zwangskühlung schaltet bereits ein kurzer Druck
+den Ofen manuell ein und pausiert die Phase. Der nächste kurze Druck gibt ihn
+an die Automatik zurück. Eine noch ausstehende Schützrückmeldung ändert diese
+Bedienfolge nicht.
+
 Wird ein manuell eingeschalteter Ofen frühzeitig an die Automatik zurückgegeben,
 läuft seine noch offene Mindestheizzeit ab dem tatsächlichen Heizbeginn weiter.
 Bewusstes manuelles Ausschalten hebt diesen Mindestlauf auf. Eine verzögerte

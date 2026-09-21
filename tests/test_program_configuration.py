@@ -3,6 +3,7 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
+from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.const import CONF_BINDINGS, CONF_PARAMETERS
 from custom_components.ha_sauna.core.parameters import (
@@ -318,10 +319,43 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(reset.button_event_type, "press")
         self.assertTrue(runtime.reconfiguring)
 
+    def test_reset_without_reload_allows_next_start(self):
+        async def reset_and_start(parameters, level):
+            configuration = Configuration(
+                Bindings(bindings()), Parameters(parameters), log_level=level
+            )
+            runtime = SaunaRuntime(configuration)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=configuration.as_options()
+            )
+            hass = _FakeHass()
+            previous_options = entry.options
+            await async_reset_parameters(hass, entry)
+            # Home Assistant calls listeners only for changed options.
+            if entry.options != previous_options:
+                await async_options_updated(hass, entry)
+            self.assertFalse(runtime.reconfiguring)
+            self.assertEqual(runtime.configuration.parameters, Parameters({}))
+            self.assertEqual(runtime.configuration.log_level, "INFO")
+            self.assertEqual(runtime.configuration.bindings, configuration.bindings)
+            await runtime.set_operation(True)
+            self.assertTrue(runtime.session.operation_enabled)
+
+        for parameters, level in (
+            ({}, "INFO"),
+            ({}, "DEBUG"),
+            ({"target_temperature_c": 81}, "INFO"),
+        ):
+            with self.subTest(parameters=parameters, level=level):
+                asyncio.run(reset_and_start(parameters, level))
+
 
 class _FakeConfigEntries:
     def async_update_entry(self, entry, *, options):
+        if entry.options == options:
+            return False
         entry.options = options
+        return True
 
 
 class _FakeHass:
