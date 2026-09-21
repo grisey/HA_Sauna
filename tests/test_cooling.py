@@ -209,24 +209,44 @@ class CoolingTests(unittest.TestCase):
         self.assertIsNone(c.session.after_run)
         self.assertEqual(c.session.timeline.completed, ())
         self.assertEqual(c.session.timeline.gang_count, 0)
+        self.assertIsNone(c.session.ready_at)
+        self.assertEqual(c.phase, "aufheizen")
         self.assertFalse(c.last_decision.heat)
 
-    def test_readiness_requires_reaching_offset_then_holds_configured_band(self):
+    def test_readiness_latches_at_setpoint_and_survives_a_temperature_drop(self):
         c = controller()
         self.assertEqual(c.phase, "aufheizen")
-        c.set_temperature(84, at(1))
+        c.set_temperature(79, at(1))
         self.assertEqual(c.phase, "aufheizen")
         self.assertTrue(c.last_decision.heat)
-        c.set_temperature(85, at(2))
+        c.set_temperature(80, at(2))
         self.assertEqual(c.phase, "bereit")
-        self.assertFalse(c.last_decision.heat)
-        c.set_temperature(83, at(3))
-        self.assertEqual(c.phase, "bereit")
-        self.assertFalse(c.last_decision.heat)
-        c.set_temperature(82, at(4))
+        self.assertTrue(c.last_decision.heat)
+        c.set_temperature(70, at(3))
         self.assertEqual(c.phase, "bereit")
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.session.session_id, "s")
+
+    def test_confirmed_gang_and_actual_cooling_clear_readiness(self):
+        c = controller()
+        c.set_temperature(80, at(1))
+        self.assertIsNotNone(c.session.ready_at)
+        c.process(event("close", Kind.DOOR_CLOSE, 2))
+        c.process(event("person", Kind.PERSON_STRONG, 3))
+        self.assertIsNotNone(c.session.ready_at)  # Vorläufige Erkennung rollt zurück.
+        c.process(event("infusion", Kind.INFUSION, 4))
+        self.assertIsNone(c.session.ready_at)
+        c.set_temperature(90, at(5))
+        self.assertIsNone(c.session.ready_at)
+
+        cooling = controller()
+        cooling.set_temperature(80, at(1))
+        cooling.report_heating(True, at(1))
+        cooling.advance(at(61))
+        self.assertEqual(cooling.phase, "zwangskühlung")
+        self.assertIsNone(cooling.session.ready_at)
+        cooling.set_temperature(90, at(62))
+        self.assertIsNone(cooling.session.ready_at)
 
     def test_actual_feedback_separate_from_demand_and_local_reset(self):
         c = controller(heat_reset_minutes=1)

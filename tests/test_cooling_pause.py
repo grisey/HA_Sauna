@@ -116,10 +116,12 @@ class CoolingPauseTests(unittest.TestCase):
         c.advance(at(92))
         self.assertEqual(c.phase, "zwangskühlung")
 
-    def test_phase_change_releases_override_and_resumes_cooling_without_heat_command(self):
+    def test_switch_change_releases_override_and_resumes_cooling_without_heat_command(self):
         c = self.cooling()
         c.set_temperature(85, at(120))
         c.set_heater_override(True, at(360))
+        # Beim Pausieren zählt die aktuelle gültige Temperatur wieder. Die
+        # Übersteuerung merkt sich die dadurch erreichte Bereitschaft mit.
         self.assertEqual(c.phase, "bereit")
 
         decisions_before = len(c.decisions)
@@ -130,6 +132,18 @@ class CoolingPauseTests(unittest.TestCase):
         self.assertFalse(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "forced_cooling")
         self.assertFalse(any(decision.heat for decision in c.decisions[decisions_before:]))
+
+    def test_manual_cooling_pause_survives_refresh_of_an_already_hot_temperature(self):
+        c = self.cooling()
+        c.set_temperature(85, at(120))
+        c.set_heater_override(True, at(360))
+
+        c.set_temperature(85, at(361))
+
+        self.assertTrue(c.heater_override)
+        self.assertTrue(c.last_decision.heat)
+        self.assertEqual(c.phase, "bereit")
+        self.assertIsNotNone(c.session.cooling.paused_at)
 
     def test_manual_on_is_rejected_without_pausing_or_leaving_a_later_command(self):
         c = self.cooling()

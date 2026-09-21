@@ -52,7 +52,13 @@ Temperaturprogramme** Vorlagen umbenennen, anpassen, ergänzen oder entfernen.
 ## Während der Saunasitzung
 
 Die Übersicht nennt die aktuelle Phase: **Aufheizen**, **Bereit**,
-**Saunagang**, **Nachlauf** oder **Zwangskühlung**. Neben der Phase sehen Sie,
+**Saunagang**, **Nachlauf** oder **Zwangskühlung**. **Bereit** erscheint, sobald
+die Solltemperatur erreicht ist, und bleibt bis zum nächsten Saunagang oder
+zur Zwangskühlung bestehen. Der Ofen kann dabei weiterheizen, um seine
+Temperaturreserve aufzubauen. Die höhere **obere Regeltemperatur** sehen
+Administratoren in den Details.
+
+Neben der Phase sehen Sie,
 wann die Sauna voraussichtlich bereit ist oder wie lange Sie noch einen Gang
 beginnen können. Geschätzte Zeiten sind auf Fünf-Minuten-Schritte gerundet.
 Bis der Temperaturanstieg der aktuellen Sitzung stabil ist, verwendet die

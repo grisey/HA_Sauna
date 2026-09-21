@@ -197,12 +197,12 @@ class Controller:
                     temperature_program_mode="progressive",
                     temperature_program_gangs=parameters.values["temperature_gangs"],
                 )
-            if self.target_temperature != before:
-                self._session = replace(self._session, ready_at=None)
+        self._latch_readiness(utc(at))
         self._evaluate(utc(at))
 
     @property
-    def readiness_target(self) -> float | None:
+    def thermostat_target(self) -> float | None:
+        """Higher switch-off threshold; readiness itself uses the setpoint."""
         target = self.target_temperature
         return (
             None
@@ -278,6 +278,36 @@ class Controller:
             and cycle.paused_at is None
         )
 
+    def _latch_readiness(self, at):
+        """Remember the first permitted measurement at the current setpoint."""
+        session = self._session
+        target = self.target_temperature
+        temperature = self.temperature
+        if (
+            session is None
+            or session.ready_at is not None
+            or not session.operation_enabled
+            or self.control_mode != "automatic"
+            or self.protection
+            or self.inhibits
+            or session.timeline.active is not None
+            or session.after_run is not None
+            or self._cooling_active(session.cooling)
+            or isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not isfinite(temperature)
+            or isinstance(target, bool)
+            or not isinstance(target, (int, float))
+            or not isfinite(target)
+            or temperature < target
+        ):
+            return
+        self._session = replace(session, ready_at=at)
+
+    def _clear_readiness(self):
+        if self._session is not None and self._session.ready_at is not None:
+            self._session = replace(self._session, ready_at=None)
+
     @property
     def phase(self) -> str:
         session = self._session
@@ -291,13 +321,7 @@ class Controller:
             return "zwangskühlung"
         if self.control_mode == "manual":
             return "manuell"
-        if (
-            session.ready_at is not None
-            and self.temperature is not None
-            and self.readiness_target is not None
-            and self.temperature
-            >= self.readiness_target - self.parameters.values["readiness_hysteresis_c"]
-        ):
+        if session.ready_at is not None:
             return "bereit"
         return "aufheizen"
 
@@ -327,6 +351,7 @@ class Controller:
         self._last_at = at
         self._sync_mechanical_timer(at)
         self._ensure_cooling(at)
+        self._latch_readiness(at)
         self._evaluate(at)
         return self._session
 
@@ -346,6 +371,7 @@ class Controller:
                 )
                 self._cancel("session_gap")
                 self._sync_mechanical_timer(at)
+                self._latch_readiness(at)
         elif self._session is not None and self._session.operation_enabled:
             self.process(
                 Event(uuid4().hex, self._session.session_id, Kind.OPERATION_OFF, at, at)
@@ -413,6 +439,7 @@ class Controller:
         if self._cooling_active() and self.control_mode == "automatic":
             self._account_cooling(at)
             self._pause_cooling(at)
+        self._latch_readiness(at)
         # Erst nach den durch die Bedienung ausgelösten Phasenänderungen merken.
         self._evaluate(at, preserve_override=True)
         if self.control_mode == "automatic":
@@ -432,6 +459,7 @@ class Controller:
         else:
             self.overtemperature_since = None
             self._temperature_cooling_requested = False
+        self._latch_readiness(utc(at))
         self._evaluate(utc(at))
 
     def report_heating(self, value: bool | None, at: datetime):
@@ -581,11 +609,21 @@ class Controller:
             self._evaluate(event.detected_at)
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
-        previous_target = self.target_temperature
         self._session = replace(previous, timeline=timeline)
-        if self.target_temperature != previous_target:
-            self._session = replace(self._session, ready_at=None)
         active = timeline.active
+        # A person signal is only provisional.  The latch is consumed when an
+        # infusion actually confirms the gang, so a retracted signal can keep
+        # an already established readiness without creating a new one from an
+        # old temperature sample.
+        if (
+            active is not None
+            and active.infusion_events
+            and (
+                previous.timeline.active is None
+                or not previous.timeline.active.infusion_events
+            )
+        ):
+            self._clear_readiness()
         # Erst der Aufguss bestätigt den neuen Gang. Bis dahin bleibt ein
         # pausierter alter Nachlauf unverändert; eine aufgehobene Erkennung
         # darf ihn weder beenden noch seine Restzeit verbrauchen.
@@ -820,6 +858,7 @@ class Controller:
             ends_at=at + timedelta(seconds=remaining),
         )
         self._session = replace(self._session, cooling=cycle)
+        self._clear_readiness()
         self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
 
     def _account_cooling(self, at):
@@ -862,6 +901,7 @@ class Controller:
             ends_at=at + timedelta(seconds=cycle.remaining_seconds),
         )
         self._session = replace(self._session, cooling=cycle)
+        self._clear_readiness()
         self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
 
     def _finish_cooling(self, cycle, at):
@@ -1110,15 +1150,6 @@ class Controller:
             decision = self._evaluate_manual(at, session)
         else:
             was_demanding = session.thermostat.demand
-            target = self.readiness_target
-            if (
-                session.ready_at is None
-                and target is not None
-                and self.temperature is not None
-                and self.temperature >= target
-                and session.operation_enabled
-            ):
-                self._session = session = replace(session, ready_at=at)
             decision = self._evaluate_thermostat(at)
             if self._automatic_restart_needs_cooling(
                 decision, was_demanding=was_demanding

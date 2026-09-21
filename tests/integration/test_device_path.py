@@ -308,13 +308,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        # Bei 70 °C auf dem Weg zum Bereitschaftsziel 85 °C folgt die Kurve:
-        # 5 % am Kaltpunkt 30 °C, 40 % am Bereitschaftsziel. Das sind
-        # 5 + (40 - 5) * (70 - 30) / (85 - 30) = 30,45 %.
+        # Bei 70 °C auf dem Weg zur Solltemperatur 80 °C folgt die Kurve:
+        # 5 % am Kaltpunkt 30 °C, 40 % an der Solltemperatur. Das sind
+        # 5 + (40 - 5) * (70 - 30) / (80 - 30) = 33 %.
         # Die Automatik übernimmt den vorhandenen Lichtwert erst über 30 s.
         self.assertAlmostEqual(self.light.brightness, 180, delta=1)
         await self.time(30)
-        self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
+        self.assertAlmostEqual(self.light.brightness, 255 * 33 / 100, delta=1)
         async def temperature(seconds):
             self.now = self.base + timedelta(seconds=seconds)
             await self.set_source("upper_temperature", 70)
@@ -357,7 +357,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(self.light.brightness, before_normal_ramp, delta=1)
         await self.time(363)
-        self.assertAlmostEqual(self.light.brightness, 255 * 30.454545 / 100, delta=1)
+        self.assertAlmostEqual(self.light.brightness, 255 * 33 / 100, delta=1)
 
     async def test_light_failure_is_reported_and_does_not_disable_heating(self):
         self.light.fail_commands=True

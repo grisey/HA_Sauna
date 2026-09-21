@@ -32,9 +32,15 @@ Darstellung und Parameter sind in [Darstellung](darstellung.md) beschrieben.
 
 ## Heizung und Temperatur
 
-Die Regelung verwendet die obere gültige Temperatur. Bereitschaft liegt bei
-Solltemperatur plus Aufschlag (5 °C); die Hysterese beträgt 3 °C, der
-Thermostat-Cooldown 5 min. Ein tatsächlich begonnenes Heizintervall läuft
+Die Regelung verwendet die obere gültige Temperatur. Sobald die Solltemperatur
+erreicht ist, gilt die Sauna als bereit. Dieser Zustand bleibt bis zum nächsten
+Saunagang oder Beginn einer Zwangskühlung erhalten, auch wenn die Temperatur
+danach sinkt oder die Sollwahl geändert wird. Ausschalten und bestehende
+Sperren behalten Vorrang.
+
+Der Ofen heizt weiter bis zur oberen Regeltemperatur: Solltemperatur plus
+Temperaturreserve (5 °C). Die Hysterese beträgt 3 °C, die Heizpause nach einer
+regulären Temperaturabschaltung 5 min. Ein tatsächlich begonnenes Heizintervall läuft
 mindestens 10 min. Betrieb-Aus, Nachlauf, Kühlung und technischer Schutz gehen
 dieser Mindestzeit vor. Schon ein vorläufiger Gang unterdrückt reguläre
 Thermostatabschaltungen.

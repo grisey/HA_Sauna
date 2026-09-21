@@ -22,8 +22,10 @@ Nach Erreichen des Endwerts gilt dieser auch für weitere Gänge; die Verteilung
 ist keine Obergrenze der Gangzahl. Benannte Programme werden separat als
 validierter Programmkatalog gespeichert und unterliegen demselben Bereich.
 
-Bereitschaft liegt standardmäßig 5 °C über dem Sollwert; die Hysterese beträgt
-3 °C. Nach einer regulären Temperaturabschaltung gilt ein Cooldown von 5 min,
+Bereit ist die Sauna ab Erreichen der Solltemperatur. Die obere Regeltemperatur
+des Ofens liegt durch die **Temperaturreserve** standardmäßig 5 °C darüber;
+der Schaltabstand beträgt 3 °C. Nach einer regulären Temperaturabschaltung gilt
+eine Heizpause von 5 min,
 ein begonnenes Heizintervall dauert mindestens 10 min. Die vollständigen
 Ablaufbeziehungen stehen in [Betrieb](betrieb.md) und
 [Zeitmodell](zeitmodell.md).

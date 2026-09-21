@@ -67,13 +67,13 @@ PARAMETER_TEXT = {
         "temperature",
     ),
     "readiness_offset_c": (
-        "Temperaturaufschlag für Bereitschaft",
-        "Für die Bereitschaft wird die Solltemperatur um diesen Wert angehoben.",
+        "Temperaturreserve",
+        "Aufschlag auf die Solltemperatur für die obere Regeltemperatur des Ofens. Die Sauna gilt bereits ab der Solltemperatur als bereit.",
         "temperature",
     ),
     "readiness_hysteresis_c": (
-        "Schaltabstand unter der Bereitschaftstemperatur",
-        "Die Heizung darf wieder einschalten, wenn die Temperatur um diesen Wert unter die Bereitschaftstemperatur fällt.",
+        "Schaltabstand der Temperaturregelung",
+        "Die Heizung darf wieder einschalten, wenn die Temperatur um diesen Wert unter die obere Regeltemperatur fällt.",
         "temperature",
     ),
     "warmup_estimation_minutes": (
@@ -82,8 +82,8 @@ PARAMETER_TEXT = {
         "display",
     ),
     "thermostat_cooldown_minutes": (
-        "Heizpause nach Erreichen der Bereitschaft",
-        "Wartezeit bis zum erneuten Heizen nach Erreichen der Bereitschaftstemperatur.",
+        "Heizpause nach Temperaturabschaltung",
+        "Wartezeit bis zum erneuten Heizen nach einer regulären Abschaltung an der oberen Regeltemperatur.",
         "temperature",
     ),
     "minimum_heating_minutes": (

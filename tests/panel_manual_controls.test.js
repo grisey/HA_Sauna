@@ -131,7 +131,7 @@ const renderCurrent = mode => {
       manual_controls:{light:{normal:25,automatic:40,override_ends_at:"2026-09-20T12:04:00Z"},heater:{}},
       permissions:{admin:true,control:true,heater:true,light:true,temperature:true,program:true},issues:[],start_errors:[],
       heating_feedback:false,heating_observation:{source:"unknown"},gang_count:0,energy_kwh:1.25,energy_source:"estimated",
-      heating_limit_seconds:5400,target_temperature:80,readiness_target:85,start_availability:null,
+      heating_limit_seconds:5400,target_temperature:80,thermostat_target:85,start_availability:null,
       phase_timer:{kind:"heating",label:"Aufheizen seit",seconds:600},light_after_run:{ends_at:"2026-09-20T12:09:00Z"},
       detection_channels:["upper"],decision_text:"Ofen bleibt aus.",
     },

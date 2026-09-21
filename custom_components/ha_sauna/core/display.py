@@ -79,7 +79,7 @@ def phase_timer(controller, now):
         return elapsed(
             "ready",
             "Bereit seit",
-            controller.phase_since or session.ready_at or session.started_at,
+            session.ready_at or controller.phase_since or session.started_at,
         )
     return elapsed(
         "heating", "Aufheizen seit", controller.phase_since or session.started_at
@@ -118,7 +118,7 @@ def start_availability(controller, now, temperature_rate=None):
         )
         return result
 
-    target = controller.readiness_target
+    target = controller.target_temperature
     temperature = controller.temperature
     valid_temperature = (
         not isinstance(temperature, bool)
@@ -147,19 +147,6 @@ def start_availability(controller, now, temperature_rate=None):
             message="Ein Saunagang ist derzeit gesperrt.",
         )
         return result
-    if not valid_target:
-        result.update(
-            blocker={"kind": "temperature_configuration"},
-            message="Die Regeltemperatur ist noch nicht verfügbar.",
-        )
-        return result
-    if not valid_temperature:
-        result.update(
-            blocker={"kind": "temperature_unavailable"},
-            message="Die aktuelle Temperatur ist noch nicht verfügbar.",
-        )
-        return result
-
     # A future start must include both the remaining wait and only the cooling
     # which remains after the complete running wait receives its credit.
     after_run = session.after_run
@@ -248,13 +235,20 @@ def start_availability(controller, now, temperature_rate=None):
             "Der nächste Saunagang hängt noch von der laufenden Erkennung ab."
         )
 
-    ready = (
-        session.ready_at is not None
-        and temperature is not None
-        and target is not None
-        and temperature
-        >= target - controller.parameters.values["readiness_hysteresis_c"]
-    )
+    if not valid_target:
+        result.update(
+            blocker={"kind": "temperature_configuration"},
+            message="Die Regeltemperatur ist noch nicht verfügbar.",
+        )
+        return result
+    if not valid_temperature:
+        result.update(
+            blocker={"kind": "temperature_unavailable"},
+            message="Die aktuelle Temperatur ist noch nicht verfügbar.",
+        )
+        return result
+
+    ready = session.ready_at is not None
     if ready:
         result["until_ready_seconds"] = 0
         result["start_window_seconds"] = max(

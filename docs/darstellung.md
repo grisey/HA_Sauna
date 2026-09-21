@@ -71,7 +71,7 @@ Verlauf wieder her.
 ## Details
 
 Die Betriebsdetails sind nach **Heizung**, **Licht**, **Messwerten** und
-**Zeiten** geordnet. Soll- und Bereitschaftstemperatur, Heizentscheidung,
+**Zeiten** geordnet. Soll- und obere Regeltemperatur, Heizentscheidung,
 Rückmeldungsquelle, Energieverbrauch und manuelle Bedienungen sind ihrem
 Steuerbereich zugeordnet. Alle laufenden Fristen stehen gemeinsam und kompakt
 an einem Ort.

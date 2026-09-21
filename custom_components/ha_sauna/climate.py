@@ -62,7 +62,7 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
     def extra_state_attributes(self):
         values = self.runtime.configuration.parameters.values
         return {
-            "readiness_target": self.runtime.controller.readiness_target,
+            "thermostat_target": self.runtime.controller.thermostat_target,
             "readiness_offset": values["readiness_offset_c"],
             "readiness_hysteresis": values["readiness_hysteresis_c"],
             "decision_reason": self.runtime.controller.last_decision.reason

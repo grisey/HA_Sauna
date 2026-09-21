@@ -141,7 +141,7 @@ class StateView(HomeAssistantView):
                         if session
                         else "estimated",
                         "heating_limit_seconds": controller.heating_limit_seconds,
-                        "readiness_target": controller.readiness_target,
+                        "thermostat_target": controller.thermostat_target,
                         "target_temperature": controller.target_temperature,
                         "cooling_wait_until": controller.cooling_wait_until,
                         "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,

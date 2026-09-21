@@ -8,10 +8,10 @@ from test_foundation import T0, event
 
 
 class StartAvailabilityTests(unittest.TestCase):
-    def test_ready_exposes_remaining_heating_budget_as_a_minimum_window(self):
+    def test_ready_latch_exposes_remaining_heating_budget_as_a_minimum_window(self):
         c = controller(target_temperature_c=70, readiness_offset_c=4,
                        readiness_hysteresis_c=2, heating_minutes=1)
-        c.set_temperature(74, T0)
+        c.set_temperature(70, T0)
         availability = start_availability(c, T0)
 
         self.assertEqual(availability["until_ready_seconds"], 0)
@@ -48,6 +48,15 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertFalse(availability["ready_estimated"])
         self.assertIn("Noch nicht abschätzbar", availability["message"])
 
+    def test_eta_uses_the_setpoint_not_the_thermostat_switch_off_threshold(self):
+        c = controller(target_temperature_c=80, readiness_offset_c=4)
+        c.set_temperature(70, T0)
+
+        availability = start_availability(c, T0, temperature_rate=1)
+
+        self.assertEqual(availability["until_ready_seconds"], 10)
+        self.assertTrue(availability["ready_estimated"])
+
     def test_active_round_has_its_own_elapsed_display(self):
         c = controller()
         c.process(event("close", Kind.DOOR_CLOSE, 1))
@@ -83,3 +92,38 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertEqual(availability["blocker"]["kind"], "protection")
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertIsNone(availability["start_window_seconds"])
+
+    def test_invalid_temperature_does_not_announce_an_existing_ready_latch(self):
+        c = controller(target_temperature_c=70)
+        c.set_temperature(70, T0)
+        self.assertIsNotNone(c.session.ready_at)
+        c.set_temperature(None, at(1))
+
+        availability = start_availability(c, at(1))
+
+        self.assertEqual(availability["blocker"], {"kind": "temperature_unavailable"})
+        self.assertIsNone(availability["until_ready_seconds"])
+        # Die Messstörung sperrt die Startankündigung, ohne einen künstlichen
+        # Phasenwechsel und damit einen Rückkehrpunkt für Bedienungen zu bilden.
+        self.assertEqual(c.phase, "bereit")
+
+    def test_live_setpoint_change_does_not_clear_readiness(self):
+        c = controller(target_temperature_c=70)
+        c.set_temperature(70, T0)
+        before = c.session.ready_at
+        changed = type(c.parameters)({**c.parameters.values, "target_temperature_c": 80})
+
+        c.update_temperature_parameters(changed, at(1), explicit_target=True)
+
+        self.assertEqual(c.session.ready_at, before)
+        self.assertEqual(c.phase, "bereit")
+
+    def test_lower_setpoint_uses_the_current_valid_temperature_immediately(self):
+        c = controller(target_temperature_c=90)
+        c.set_temperature(85, T0)
+        changed = type(c.parameters)({**c.parameters.values, "target_temperature_c": 80})
+
+        c.update_temperature_parameters(changed, at(1), explicit_target=True)
+
+        self.assertEqual(c.phase, "bereit")
+        self.assertEqual(start_availability(c, at(1))["until_ready_seconds"], 0)

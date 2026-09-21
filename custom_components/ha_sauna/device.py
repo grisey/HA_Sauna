@@ -682,7 +682,7 @@ class HADevice:
             target = phase_target(
                 name,
                 self.runtime.controller.temperature,
-                self.runtime.controller.readiness_target,
+                self.runtime.controller.target_temperature,
                 self.runtime.configuration.parameters,
                 normal,
             )
