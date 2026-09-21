@@ -150,7 +150,7 @@ class StateView(HomeAssistantView):
                         "start_availability": start_availability(
                             controller,
                             now,
-                            temperature_rate=device.temperature_rate(now)
+                            estimated_ready_seconds=device.estimated_ready_seconds(now)
                             if device
                             else None,
                         ),

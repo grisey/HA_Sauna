@@ -205,8 +205,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.event_id for e in persons], [provisional.recognition_event_id])
         self.assertGreater(self.runtime.session.heating.intervals[0].ended_at.timestamp() - self.base.timestamp(), 240)
 
-    async def test_warmup_history_falls_back_until_a_current_trend_is_ready(self):
-        """The real HA path replaces one completed warm-up with live reports."""
+    async def test_warmup_estimate_starts_from_history_and_moves_only_on_reports(self):
+        """The real HA path blends archived and current upper measurements."""
         from dataclasses import replace
         from custom_components.ha_sauna.core.models import (
             Measurement,
@@ -214,6 +214,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             Quantity,
             Session,
         )
+        from custom_components.ha_sauna.core.timeline import Event, Kind
 
         source = self.entry.options["bindings"]["upper_temperature"]
         started = self.base - timedelta(seconds=360)
@@ -255,7 +256,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         task = self.runtime.device._historical_warmup_task
         if task is not None:
             await task
-        self.assertAlmostEqual(self.runtime.device.temperature_rate(self.now), 0.05)
+        self.now = self.base + timedelta(seconds=1)
+        await self.set_source("upper_temperature", 40)
+        await self.runtime.tick()
+        historical = self.runtime.device.estimated_ready_seconds(self.now)
+        self.assertAlmostEqual(historical, 800)
+
+        self.now = self.base + timedelta(seconds=2)
+        await self.runtime.tick()
+        self.assertEqual(self.runtime.device.estimated_ready_seconds(self.now), historical)
 
         for second in range(30, 181, 30):
             self.now = self.base + timedelta(seconds=second)
@@ -263,7 +272,59 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source("lower_temperature", 40)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
-        self.assertAlmostEqual(self.runtime.device.temperature_rate(self.now), 0.1)
+        live = self.runtime.device.estimated_ready_seconds(self.now)
+        self.assertIsNotNone(live)
+        self.assertLess(live, historical)
+        self.assertGreater(live, 220)  # Reine 0,1-°C/s-Live-ETA wäre 220 s.
+
+        session_id = self.runtime.session.session_id
+        self.now += timedelta(seconds=1)
+        dropped = Measurement(
+            Position.UPPER,
+            Quantity.TEMPERATURE,
+            50,
+            "50",
+            source,
+            self.now,
+        )
+        self.runtime.device.measurements["upper_temperature"] = dropped
+        self.runtime.device.last_valid_temperature = dropped
+        await self.runtime.tick()
+
+        self.now += timedelta(seconds=3)
+        await self.runtime.receive(
+            Event(
+                "eta-door-open",
+                session_id,
+                Kind.DOOR_OPEN,
+                self.base + timedelta(seconds=180),
+                self.now,
+            )
+        )
+        self.now += timedelta(seconds=1)
+        await self.runtime.receive(
+            Event("eta-door-close", session_id, Kind.DOOR_CLOSE, self.now, self.now)
+        )
+        self.now += timedelta(seconds=1)
+        after_close = Measurement(
+            Position.UPPER,
+            Quantity.TEMPERATURE,
+            50,
+            "50",
+            source,
+            self.now,
+        )
+        self.runtime.device.measurements["upper_temperature"] = after_close
+        self.runtime.device.last_valid_temperature = after_close
+        await self.runtime.tick()
+        after_door = self.runtime.device.estimated_ready_seconds(self.now)
+        self.assertGreater(after_door, live)
+
+        await self.runtime.tick()
+        self.assertEqual(self.runtime.device.estimated_ready_seconds(self.now), after_door)
+
+        self.now += timedelta(seconds=31)
+        self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
 
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
         from custom_components.ha_sauna.core.timeline import Kind

@@ -86,12 +86,12 @@ def phase_timer(controller, now):
     )
 
 
-def start_availability(controller, now, temperature_rate=None):
+def start_availability(controller, now, estimated_ready_seconds=None):
     """Describe temperature readiness and known start blockers without changing state.
 
-    ``temperature_rate`` is an optional, externally validated rise in °C/s.
-    The controller deliberately does not derive it from short door-detection
-    samples: without a reliable positive rate an arrival time would be made up.
+    ``estimated_ready_seconds`` is prepared from current measurements by the
+    device adapter.  This read-only presentation function never progresses or
+    recalculates the estimate itself.
     """
     session = controller.session
     result = {
@@ -258,15 +258,15 @@ def start_availability(controller, now, temperature_rate=None):
             result["message"] = "Bereit für einen Saunagang."
         return result
 
-    valid_rate = (
-        not isinstance(temperature_rate, bool)
-        and isinstance(temperature_rate, (int, float))
-        and isfinite(temperature_rate)
-        and temperature_rate > 0
+    valid_estimate = (
+        not isinstance(estimated_ready_seconds, bool)
+        and isinstance(estimated_ready_seconds, (int, float))
+        and isfinite(estimated_ready_seconds)
+        and estimated_ready_seconds >= 0
     )
-    if valid_rate and valid_temperature and valid_target:
+    if valid_estimate and valid_temperature and valid_target:
         result.update(
-            until_ready_seconds=max(0, (target - temperature) / temperature_rate),
+            until_ready_seconds=estimated_ready_seconds,
             ready_estimated=True,
         )
         if result["blocker"] is None:

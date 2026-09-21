@@ -39,7 +39,9 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.phase, "manuell")
         self.assertFalse(controller.last_decision.heat)
         self.assertEqual(controller.last_decision.reason, "manual_mode")
-        availability = start_availability(controller, at(0), temperature_rate=0.1)
+        availability = start_availability(
+            controller, at(0), estimated_ready_seconds=100
+        )
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertIsNone(availability["start_window_seconds"])
         self.assertEqual(phase_timer(controller, at(0))["kind"], "manual")

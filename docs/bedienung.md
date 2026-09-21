@@ -58,14 +58,24 @@ zur Zwangskühlung bestehen. Der Ofen kann dabei weiterheizen, um seine
 Temperaturreserve aufzubauen. Die höhere **obere Regeltemperatur** sehen
 Administratoren in den Details.
 
-Neben der Phase sehen Sie,
-wann die Sauna voraussichtlich bereit ist oder wie lange Sie noch einen Gang
-beginnen können. Geschätzte Zeiten sind auf Fünf-Minuten-Schritte gerundet.
-Bis der Temperaturanstieg der aktuellen Sitzung stabil ist, verwendet die
-Schätzung die Aufheizphase der letzten Sitzung. Fehlt ein geeigneter Verlauf,
-zeigt HA Sauna noch keine Prognose. In **Details → Betrieb & Fristen** stehen zusätzlich
-Heizsumme, mechanischer Ofentimer, Nachlauf, Zwangskühlung und vorübergehende
-Übersteuerungen zusammen.
+Neben dem Zustand steht eine kurze Zeitangabe: beim Aufheizen etwa
+**Heizen – noch 10 min bis bereit**, nach Erreichen des Ziels etwa
+**Bereit – noch 20 min**. Geschätzte Aufheizzeiten erscheinen ohne Sekunden:
+unter fünf Minuten als **noch unter 5 min bis bereit**, sonst auf der nächstliegenden
+Fünf-Minuten-Stufe. Bei Bereit zeigt die Zeit, wie lange noch mindestens ein
+Gang begonnen werden kann; Heizpausen können diesen Zeitraum verlängern. Fehlt
+eine belastbare Schätzung, bleibt die Startzeit offen.
+
+Zu Beginn hilft der durchschnittliche Temperaturanstieg der letzten Sitzung.
+Der aktuelle Verlauf übernimmt die Schätzung schrittweise, sobald er stabil ist.
+Kurze Schwankungen verlängern eine bereits verkürzte Zeit nicht wieder.
+Ein anhaltend langsameres Aufheizen oder Wärmeverlust durch eine erkannte
+Türöffnung kann eine längere Prognose erforderlich machen.
+
+Bei Gang, Nachlauf, Kühlung oder einer Sperre zeigt die Zeile stattdessen die
+passende Phase oder Wartezeit. In
+**Details → Betrieb & Fristen** stehen zusätzlich Heizsumme, mechanischer
+Ofentimer, Nachlauf, Zwangskühlung und vorübergehende Übersteuerungen zusammen.
 
 Nach einem bestätigten Saunagang kann ein Nachlauf folgen. Eine Zwangskühlung
 schaltet den Ofen für ihre einstellbare Dauer aus. Administratoren können einen
