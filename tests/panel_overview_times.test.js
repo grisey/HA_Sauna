@@ -44,43 +44,75 @@ const render = state => {
 };
 
 let state = baseState();
+state.phase = "aufheizen";
 state.start_availability = {until_ready_seconds: 480, ready_estimated: true};
-assert.match(render(state), /class="availability-card"/, "availability is a distinct overview block beside the phase");
-assert.match(render(state), /Bereit in etwa<\/small><strong>10 Minuten/, "an estimated ETA uses calm five-minute increments");
+assert.doesNotMatch(render(state), /availability-card/, "readiness no longer occupies a separate overview card");
+assert.match(render(state), /Heizen<\/strong><span class="availability-line ">noch 10 min bis bereit/, "heating and the estimate share one compact state line without repeating its state");
 assert.doesNotMatch(render(state), /8:00 min/, "estimated readiness never exposes a changing seconds timer");
 
 state = baseState();
 state.start_availability = {until_ready_seconds: 0, ready_estimated: false, start_window_seconds: 1200, start_window_label: "mindestens"};
-assert.match(render(state), /Jetzt bereit/, "ready state is announced directly");
-assert.match(render(state), /Start noch mindestens 20 Minuten möglich/, "ready state includes the conservative usable start window");
+assert.match(render(state), /Bereit<\/strong><span class="availability-line ">noch 20 min/, "ready state shows the supplied conservative start window without repeating its state");
+assert.doesNotMatch(render(state), /Jetzt bereit|Bereitschaft/, "ready state is not repeated in a second announcement");
 
 state = baseState();
 state.start_availability = {minimum_wait_seconds: 300, until_ready_seconds: null};
-assert.match(render(state), /Nächster Start frühestens in<\/small><strong>5 Minuten/, "cooling waits remain distinct from a usable start window");
+state.start_availability.blocker = {kind: "cooling"};
+assert.match(render(state), /Start gesperrt – noch 5:00 min/, "a blocker remains distinct from readiness");
 
 state = baseState();
-state.start_availability = {minimum_wait_seconds: 61};
-assert.match(render(state), /Nächster Start frühestens in<\/small><strong>5 Minuten/, "a positive minimum wait is never shortened to zero");
+state.phase = "aufheizen";
+state.start_availability = {until_ready_seconds: 299, ready_estimated: true};
+assert.match(render(state), /noch unter 5 min bis bereit/, "an estimate below five minutes never reaches zero before readiness");
+
+state = baseState();
+state.phase = "aufheizen";
+state.start_availability = {until_ready_seconds: 360, ready_estimated: true};
+assert.match(render(state), /noch 5 min bis bereit/, "an estimate above five minutes uses the nearest five-minute step");
 
 state = baseState();
 state.start_availability = {until_ready_seconds: 0, start_window_seconds: 299};
-assert.match(render(state), /Startfenster: unter 5 Minuten/, "a positive start window never pretends it is already exhausted");
+assert.match(render(state), /Bereit<\/strong><span class="availability-line ">noch unter 5 min/, "a positive start window never pretends it is already exhausted");
 
 state = baseState();
 state.start_availability = {until_ready_seconds: null, message: "Startzeit noch nicht abschätzbar."};
 assert.match(render(state), /Startzeit noch nicht abschätzbar\./, "an unavailable estimate remains visible");
 
 state = baseState();
+state.phase = "saunagang";
 state.start_availability = {gang_elapsed_seconds: 61};
-assert.match(render(state), /Saunagang seit 1:01 min/, "an active round shows elapsed round time");
+state.phase_timer = {kind: "gang", seconds: 61};
+assert.match(render(state), /Saunagang<\/strong><span class="availability-line ">seit 1:01 min/, "an active round shows its elapsed time beside the state");
+
+state = baseState();
+state.phase = "nachlauf";
+state.start_availability = {blocker: {kind: "after_run"}, minimum_wait_seconds: 600};
+state.phase_timer = {kind: "after_run", seconds: 300, mode: "remaining"};
+assert.match(render(state), /Nachlauf<\/strong><span class="availability-line wait">noch 5:00 min/, "after-run time does not claim readiness");
 
 state = baseState();
 state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
 let overview = render(state);
-assert.doesNotMatch(overview, /Heizpause noch/, "technical phase timers stay out of the overview");
+assert.doesNotMatch(overview, /Heizpause/, "technical phase timers stay out of the overview");
 assert.equal((overview.match(/data-action="preset:/g) || []).length, 3, "presets over the 100 °C maximum are hidden");
 assert.match(overview, /class="program-buttons"/, "profiles have their own selection row");
 assert.match(overview, /role="group" aria-label="Ofen aus und Solltemperatur"/, "the slider remains exposed within an accessible group");
+
+state = baseState();
+state.phase = "aufheizen";
+state.start_availability = {until_ready_seconds: 480, ready_estimated: true};
+state.phase_timer = {kind: "minimum_heating", label: "Mindestheizzeit noch", seconds: 600};
+overview = render(state);
+assert.match(overview, /noch 10 min bis bereit/, "minimum heating does not displace the readiness estimate");
+assert.doesNotMatch(overview, /Mindestheizzeit/, "minimum heating stays in details");
+
+state = baseState();
+state.phase = "bereit";
+state.start_availability = {until_ready_seconds: 0, start_window_seconds: 1200};
+state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
+overview = render(state);
+assert.match(overview, /Bereit<\/strong><span class="availability-line ">noch 20 min/, "a heating pause does not displace the start window");
+assert.doesNotMatch(overview, /Heizpause/, "heating pauses remain in details when ready");
 
 state = baseState();
 state.operation_enabled = false;

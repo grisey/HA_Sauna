@@ -26,15 +26,22 @@ und zeigt die manuelle Ofen- und Lichtbedienung. Der Betriebsartwechsel ist nur
 zwischen abgeschlossenen Sitzungen möglich. Vorübergehende Übersteuerungen
 während des Automatikbetriebs sind davon unabhängig.
 
-Direkt neben der Phase stehen die Bereitschaft und das verbleibende Startfenster.
-Geschätzte Zeiten erscheinen in Fünf-Minuten-Schritten ohne Sekunden. Solange
-die aktuelle Aufheizphase noch keinen stabilen Anstieg liefert, verwendet die
-Prognose den durchschnittlichen Anstieg der letzten Sitzung. Fehlt auch dafür
-ein brauchbarer Verlauf, bleibt die Startzeit offen. Die Prognose ersetzt keine
-Heizsperre oder laufende Kühlzeit. Während eines Gangs steht dessen Dauer im
-Vordergrund. Nach Sitzungsende wird der
-verbleibende Lichtnachlauf angezeigt. Technische Fristen und die Schätzung des
-mechanischen Ofentimers stehen kompakt in den Details.
+Direkt neben dem Zustand steht eine schlichte Zeitzeile. Beim Aufheizen lautet
+sie beispielsweise **Heizen – noch 10 min bis bereit**, bei Bereitschaft
+**Bereit – noch 20 min**. Geschätzte Aufheizzeiten zeigen keine Sekunden und
+verwenden unter fünf Minuten den Text **noch unter 5 min bis bereit**. Bei
+Bereit zeigt die Zeit, wie lange noch mindestens ein Gang begonnen werden kann;
+Heizpausen können diesen Zeitraum verlängern. Gang, Nachlauf, Kühlung und
+Sperren zeigen ihre eigene kompakte Zeit statt einer Bereitschaft.
+Nach Sitzungsende wird der verbleibende
+Lichtnachlauf angezeigt. Technische Fristen und die Schätzung des mechanischen
+Ofentimers stehen kompakt in den Details.
+
+Die Aufheizprognose beginnt mit dem geeigneten Verlauf der letzten Sitzung
+und übernimmt den aktuellen Temperaturtrend schrittweise. Kurze Schwankungen
+führen nicht zu einem erneuten Anstieg der Restzeit. Eine Verlängerung kommt
+bei dauerhaft langsamerem Aufheizen oder Wärmeverlust durch eine erkannte
+Türöffnung infrage.
 
 Die Temperaturanzeige übernimmt die Farbe der aktuellen Phase. Die
 Luftfeuchteanzeige ist bis einschließlich 20 % grün, bis einschließlich 30 %

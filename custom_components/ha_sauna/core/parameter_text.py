@@ -78,7 +78,7 @@ PARAMETER_TEXT = {
     ),
     "warmup_estimation_minutes": (
         "Zeitfenster der Aufheizschätzung",
-        "Die Anzeige schätzt die Restzeit nur aus einem stabilen positiven Temperaturtrend in diesem Zeitraum. Die Schätzung steuert den Ofen nicht.",
+        "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
         "display",
     ),
     "thermostat_cooldown_minutes": (
