@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import isfinite
 
@@ -26,6 +27,18 @@ def _count(value: object, name: str) -> int:
     return value
 
 
+def temperature_steps(
+    value: object, name: str = "temperature_steps"
+) -> tuple[float, ...]:
+    """Validate explicit targets shared by free and named programs."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{name} must be a non-empty sequence of temperatures")
+    steps = tuple(_temperature(step, name) for step in value)
+    if not steps:
+        raise ValueError(f"{name} must not be empty")
+    return steps
+
+
 def evenly_distributed(
     start_c: object, end_c: object, gangs: object
 ) -> tuple[float, ...]:
@@ -46,11 +59,14 @@ class TemperatureProgram:
     start_c: float
     end_c: float
     gangs: int
+    steps: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "start_c", _temperature(self.start_c, "start_c"))
         object.__setattr__(self, "end_c", _temperature(self.end_c, "end_c"))
         object.__setattr__(self, "gangs", _count(self.gangs, "gangs"))
+        if self.steps is not None:
+            object.__setattr__(self, "steps", temperature_steps(self.steps))
 
     def target(self, completed: object) -> float:
         """Target after ``completed`` actual gangs."""
@@ -60,6 +76,8 @@ class TemperatureProgram:
             or completed < 0
         ):
             raise ValueError("completed must be a non-negative integer")
+        if self.steps is not None:
+            return self.steps[min(completed, len(self.steps) - 1)]
         # A one-gang distribution still begins at its configured start.  When
         # start and end differ, the first actual gang must be able to reach
         # the end instead of leaving it unreachable forever.

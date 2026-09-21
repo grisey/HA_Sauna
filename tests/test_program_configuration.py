@@ -15,6 +15,8 @@ from custom_components.ha_sauna.core.program_catalog import NamedTemperatureProg
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
     async_reset_parameters,
+    async_set_parameters,
+    async_set_temperature_steps,
     async_set_program_catalog,
     program_parameters,
 )
@@ -78,6 +80,15 @@ class ProgramConfigurationTests(unittest.TestCase):
         configuration = Configuration.from_options(options())
         self.assertEqual(configuration.program_mode, "constant")
         self.assertEqual(configuration.parameters.values["final_temperature_c"], 95)
+
+    def test_legacy_session_light_duration_is_ignored(self):
+        configuration = Configuration.from_options(
+            options({"session_light_minutes": 10, "session_gap_minutes": 17})
+        )
+        self.assertNotIn("session_light_minutes", configuration.parameters.values)
+        self.assertEqual(configuration.parameters.values["session_gap_minutes"], 17)
+        with self.assertRaisesRegex(ParameterError, "base: unknown_parameter"):
+            Configuration.from_options(options({"unexpected_parameter": 1}))
 
     def test_legacy_with_final_temperature_is_progressive(self):
         configuration = Configuration.from_options(options({"final_temperature_c": 92}))
@@ -195,6 +206,61 @@ class ProgramConfigurationTests(unittest.TestCase):
             )
         )
         self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
+
+    def test_free_manual_steps_roundtrip_and_respect_the_common_bounds(self):
+        configuration = Configuration(
+            Bindings(bindings()), Parameters({}), temperature_steps=(80, 86, 90)
+        )
+        self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
+        with self.assertRaises(ValueError):
+            Configuration(
+                Bindings(bindings()), Parameters({}), temperature_steps=(59, 80)
+            )
+
+    def test_manual_steps_use_the_live_program_path_and_direct_target_clears_them(self):
+        configuration = Configuration(Bindings(bindings()), Parameters({}))
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+        asyncio.run(async_set_temperature_steps(hass, entry, [80, 86, 90]))
+        self.assertEqual(runtime.configuration.temperature_steps, (80, 86, 90))
+        self.assertEqual(
+            tuple(
+                runtime.configuration.parameters.values[key]
+                for key in ("target_temperature_c", "final_temperature_c", "temperature_gangs")
+            ),
+            (80, 90, 3),
+        )
+        asyncio.run(
+            async_set_parameters(
+                hass, entry, {"target_temperature_c": 82}, partial=True
+            )
+        )
+        self.assertIsNone(runtime.configuration.temperature_steps)
+
+    def test_even_program_request_explicitly_replaces_free_steps(self):
+        configuration = Configuration(Bindings(bindings()), Parameters({}))
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+        asyncio.run(async_set_temperature_steps(hass, entry, [80, 86, 90]))
+        asyncio.run(
+            async_set_parameters(
+                hass,
+                entry,
+                {
+                    "target_temperature_c": 70,
+                    "final_temperature_c": 100,
+                    "temperature_gangs": 4,
+                },
+                partial=True,
+                explicit_target=False,
+                program_mode="progressive",
+                new_program=True,
+            )
+        )
+        self.assertIsNone(runtime.configuration.temperature_steps)
+        self.assertEqual(runtime.controller.target_temperature, 70)
 
     def test_explicit_catalog_does_not_accept_removed_legacy_profiles(self):
         parameters = Parameters({})

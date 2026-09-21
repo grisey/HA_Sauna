@@ -1,14 +1,9 @@
 """Gemeinsame deutsche Begriffe und Feldhilfen für Einrichtung und Oberfläche."""
 
 PARAMETER_TEXT = {
-    "session_light_minutes": (
-        "Lichtnachlauf nach Sitzungsende",
-        "Dauer ab dem endgültigen Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",
-        "light",
-    ),
     "session_light_brightness_percent": (
         "Helligkeit für „Hell“ und Lichtnachlauf",
-        "Helligkeit der Lichtstufe „Hell“ und des Lichtnachlaufs nach Sitzungsende. Standard: 50 %.",
+        "Helligkeit für „Hell“ und für den Lichtnachlauf beim Ausschalten.",
         "light",
     ),
     "temperature_increase_c": (
@@ -92,8 +87,8 @@ PARAMETER_TEXT = {
         "temperature",
     ),
     "session_gap_minutes": (
-        "Pause bis zum Sitzungsende",
-        "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
+        "Wiederaufnahmezeit",
+        "Dauer der Sitzungspause mit Lichtnachlauf. Erneutes Einschalten innerhalb dieser Zeit setzt die Sitzung fort.",
         "operation",
     ),
     "confirmation_minutes": (

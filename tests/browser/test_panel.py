@@ -238,17 +238,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await expect(target_arc).to_be_visible(timeout=10000)
         await expect(target_arc).to_have_attribute("aria-label", "Solltemperatur einstellen")
-        await self.panel.locator('#current details summary').click()
-        await self.panel.evaluate("p=>p.refresh()")
-        await expect(self.panel.locator("#progression-end")).to_be_visible()
         await target_arc.focus()
         await target_arc.press("PageDown")
         await expect(target_arc).to_have_attribute("aria-valuenow", "75", timeout=10000)
+        await self.panel.locator('[data-action="program-mode:individual"]').click()
+        await expect(self.panel.locator("#progression-end")).to_be_visible()
         await self.panel.locator('#progression-end').fill("86")
         await self.panel.locator('#progression-gangs').fill("3")
         program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
-            await self.panel.locator('[data-action="program-free"]').click()
+            await self.panel.locator('[data-action="program-apply"]').click()
         response=await result.value
         self.assertTrue(response.ok)
         saved=await response.json()
@@ -268,7 +267,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('#progression-end').fill("90")
         temperature_url=f"/api/ha_sauna/{self.entry.entry_id}/temperature"
         async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
-            await self.panel.locator('[data-action="progression"]').click()
+            await self.panel.locator('[data-action="program-apply"]').click()
         response=await result.value
         self.assertTrue(response.ok)
         self.assertEqual((await response.json())["parameters"]["final_temperature_c"],90)
@@ -282,9 +281,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.temperatureChange")
         await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
         self.assertEqual(self.entry.options["program_mode"],"constant")
+        await self.panel.locator('[data-action="program-mode:individual"]').click()
         await self.panel.locator('#progression-gangs').fill("2")
-        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
-            await self.panel.locator('[data-action="progression"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="program-apply"]').click()
         response=await result.value
         self.assertTrue(response.ok)
         self.assertEqual((await response.json())["parameters"]["temperature_gangs"],2)
@@ -357,7 +357,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="normal"]').click()
         await self.panel.evaluate("p=>p.refresh()")
         self.assertEqual(await self.panel.locator('#current [data-mechanical-timer]').count(),0)
-        await expect(self.panel.locator('#current')).to_contain_text("Lichtnachlauf noch")
+        await expect(self.panel.locator('#current')).not_to_contain_text("Lichtnachlauf noch")
         await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Türerkennung ruht")
         text=await self.panel.locator('#current').inner_text()
         for code in ("measurement_unavailable", "configuration_required", "pending", "sensor_timeout_seconds"):
@@ -376,7 +376,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await monitoring.locator("summary").click()
         await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_be_enabled()
         await settings.get_by_text("Licht", exact=True).click()
-        await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_value("10")
+        await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_count(0)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Türerkennung ruht")
         await expect(self.panel.locator("#details")).to_contain_text("Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.")
         await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_value("50")

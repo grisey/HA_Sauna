@@ -169,7 +169,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertIsNone(controller.session.cooling.started_at)
 
     def test_finish_session_can_defer_then_start_light(self):
-        controller = self.controller(session_light_minutes=2)
+        controller = self.controller(session_gap_minutes=2)
         self.start(controller)
         controller.finish_session(at(5), light_after_run=False)
         self.assertIsNone(controller.session)

@@ -13,20 +13,20 @@ const sandbox = {
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 vm.runInNewContext(source, sandbox);
 
-assert.match(source, /<h2>Manuelle Steuerung<\/h2>/);
+assert.match(source, /manual-section manual-heater/);
 assert.match(source, /data-action="heater:true"/);
 assert.match(source, /data-action="heater:false"/);
 assert.match(source, /data-action="heater:auto"/);
 assert.match(source, /data-action="control-mode:automatic"/);
 assert.match(source, /data-action="control-mode:manual"/);
 assert.match(source, /manual-light-overview/);
-assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,0\)\} %<\/small>/);
+assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,\s*0\)\} %<\/small>/);
 assert.doesNotMatch(source, /Normallicht/);
 assert.doesNotMatch(source, /Raumlicht/);
 assert.match(source, /Zwangskühlung pausiert/);
 assert.ok(source.includes("Übersteuerungen folgen spätestens nach"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
-assert.match(source, /s\.configuration\.program_mode==="progressive"/);
+assert.match(source, /s\.configuration\.program_mode\s*===\s*"progressive"/);
 assert.doesNotMatch(source, /Temperaturprogramm<\/dt><dd>\$\{p\.final_temperature_c!=null/);
 
 const makePanel = (permissions, lightValue="42") => {
@@ -39,14 +39,14 @@ const makePanel = (permissions, lightValue="42") => {
   return {panel,calls};
 };
 
-const renderCurrent = mode => {
+const renderCurrent = (mode, controls={}, heatingFeedback=false, target="#current") => {
   const nodes=new Map();
   const node=selector => {
     if(!nodes.has(selector))nodes.set(selector,{innerHTML:"",hidden:false});
     return nodes.get(selector);
   };
   const panel=Object.assign(Object.create(Panel.prototype), {
-    hass:{user:{name:"Admin"}}, $:node, progressionDraft:null, manualLightDraft:null,
+    hass:{user:{name:"Admin",is_admin:true}}, $:node, progressionDraft:null, manualLightDraft:null,
     state:{
       now:"2026-09-20T12:00:00Z", session:null, last_session:null,
       configuration:{control_mode:mode,program_mode:"constant",selected_program_id:null,
@@ -54,15 +54,15 @@ const renderCurrent = mode => {
           session_light_brightness_percent:50,manual_override_minutes:10}},
       parameters:[{key:"target_temperature_c",minimum:30,maximum:100,integer:false}],
       measurements:[],measurement_status:{},mechanical_timer:{state:"idle",remaining_seconds:0},
-      manual_controls:{light:{normal:25,automatic:12},heater:{}}, permissions:{admin:true,control:true,heater:true,light:true,temperature:true,program:true},
-      issues:[],start_errors:[],operation_enabled:false,heating_feedback:false,
+      manual_controls:{light:{normal:25,automatic:12,...controls.light},heater:controls.heater||{}}, permissions:{admin:true,control:true,heater:true,light:true,temperature:true,program:true},
+      issues:[],start_errors:[],operation_enabled:false,heating_feedback:heatingFeedback,
       heating_observation:{source:"unknown"},phase:"manuell",gang_count:0,energy_kwh:0,
       energy_source:"estimated",heating_limit_seconds:0,target_temperature:80,
       start_availability:null,phase_timer:null,
     },
   });
   panel.drawCurrent();
-  return nodes.get("#current").innerHTML;
+  return nodes.get(target).innerHTML;
 };
 
 (async () => {
@@ -99,16 +99,37 @@ const renderCurrent = mode => {
     ["/entry-1/heater","POST",{value:true}],
   ]);
   const automatic=renderCurrent("automatic"), manual=renderCurrent("manual");
-  assert.match(automatic,/Temperaturprogramm/);
-  assert.match(automatic,/Temperaturautomatik/);
+  assert.match(automatic,/Temperaturwahl/);
+  assert.match(automatic,/data-action="program-mode:program" aria-pressed="false"/);
+  assert.match(automatic,/data-action="program-mode:individual" aria-pressed="false"/);
+  assert.match(automatic,/data-action="program-mode:constant" aria-pressed="true"/);
+  assert.match(automatic,/temperature-presets/);
+  assert.doesNotMatch(automatic,/program-named-list|program-form/);
   assert.doesNotMatch(automatic,/Gedimmt/);
   assert.match(automatic,/data-action="light:auto"[^>]*>Automatik<\/button>/);
-  assert.doesNotMatch(manual,/Temperaturprogramm/);
-  assert.doesNotMatch(manual,/Temperaturautomatik/);
+  assert.doesNotMatch(manual,/Temperaturwahl|program-types|temperature-presets/);
   assert.match(manual,/data-action="manual-light-overview"/);
   assert.match(manual,/id="manual-light-value-overview"/);
   assert.match(manual,/Gedimmt <small>25 %<\/small>/);
   assert.match(manual,/Hell <small>50 %<\/small>/);
+
+  const automaticHeater=renderCurrent("automatic",{heater:{manual:null},light:{manual:null}},true,"#details");
+  assert.match(automaticHeater,/data-action="heater:auto" aria-pressed="true"/);
+  assert.match(automaticHeater,/data-action="heater:true" aria-pressed="false"/);
+  assert.match(automaticHeater,/Ofen an/,"physical feedback remains visible when the manual choice is automatic");
+  assert.doesNotMatch(automaticHeater,/data-action="heater:true" class="primary"/);
+  const automaticLight=renderCurrent("automatic",{light:{manual:null}});
+  assert.match(automaticLight,/data-action="light:auto" aria-pressed="true"/);
+
+  const lightOff=renderCurrent("manual",{heater:{manual:true},light:{manual:0}});
+  assert.match(lightOff,/data-action="heater:true" aria-pressed="true"/);
+  assert.match(lightOff,/data-action="light:false" aria-pressed="true"/);
+  const lightDimmed=renderCurrent("manual",{light:{manual:25.4}});
+  assert.match(lightDimmed,/data-action="light:normal" aria-pressed="true"/);
+  const lightBright=renderCurrent("manual",{light:{manual:50.4}});
+  assert.match(lightBright,/data-action="light:true" aria-pressed="true"/);
+  const freeLight=renderCurrent("manual",{light:{manual:42}});
+  assert.doesNotMatch(freeLight,/data-action="light:(?:false|normal|true)" aria-pressed="true"/,"a free brightness does not select a named preset");
 
   const detailNodes=new Map();
   const detailNode=selector => {
@@ -116,7 +137,7 @@ const renderCurrent = mode => {
     return detailNodes.get(selector);
   };
   const detailPanel=Object.assign(Object.create(Panel.prototype), {
-    hass:{user:{name:"Admin"}}, $:detailNode, progressionDraft:null, manualLightDraft:null,
+    hass:{user:{name:"Admin",is_admin:true}}, $:detailNode, progressionDraft:null, manualLightDraft:null,
     state:{
       now:"2026-09-20T12:00:00Z", phase:"nachlauf", operation_enabled:true,
       session:{timeline:{active:null,door:"closed",completed:[]},heating:{elapsed_seconds:120},
@@ -145,7 +166,7 @@ const renderCurrent = mode => {
   assert.match(details,/Nennleistung für die Verbrauchsschätzung/);
   assert.match(details,/Erkennung mit: oberer Messposition/);
 
-  const nodes={"#current":{},"#details":{},"#history":{hidden:true}};
+  const nodes={"#current":{},"#details":{},"#history":{hidden:true},"#settings":{},"#plots":{},"#detection-plots":{},"#gangs":{},"#event-list":{}};
   const detailTabs=[{dataset:{action:"detail"},setAttribute(name,value){this[name]=value;}},{dataset:{action:"detail-history"},setAttribute(name,value){this[name]=value;}}];
   const navigation=Object.assign(Object.create(Panel.prototype), {
     state:{permissions:{admin:true}}, message:() => {},

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from math import isfinite
 
 from .parameters import BY_KEY
-from .temperature_program import TemperatureProgram
+from .temperature_program import TemperatureProgram, temperature_steps
 
 MAXIMUM_DISTRIBUTION_GANGS = int(BY_KEY["temperature_gangs"].maximum)
 
@@ -42,9 +42,10 @@ class NamedTemperatureProgram:
 
     id: str
     name: str
-    start_c: float
-    end_c: float
-    distribution_gangs: int
+    start_c: float | None = None
+    end_c: float | None = None
+    distribution_gangs: int | None = None
+    temperature_steps: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, str) or not self.id.strip():
@@ -53,6 +54,21 @@ class NamedTemperatureProgram:
             raise ValueError("Der Programmname muss ein nicht leerer Text sein")
         object.__setattr__(self, "id", self.id.strip())
         object.__setattr__(self, "name", self.name.strip())
+        if self.temperature_steps is not None:
+            steps = temperature_steps(self.temperature_steps, "Temperaturstufen")
+            if len(steps) > MAXIMUM_DISTRIBUTION_GANGS:
+                raise ValueError("Die Anzahl der Temperaturstufen ist zu groß")
+            supplied = (self.start_c, self.end_c, self.distribution_gangs)
+            derived = (steps[0], steps[-1], len(steps))
+            if any(value is not None for value in supplied) and supplied != derived:
+                raise ValueError(
+                    "Start, Ende und Anzahl müssen zu den Temperaturstufen passen"
+                )
+            object.__setattr__(self, "temperature_steps", steps)
+            object.__setattr__(self, "start_c", steps[0])
+            object.__setattr__(self, "end_c", steps[-1])
+            object.__setattr__(self, "distribution_gangs", len(steps))
+            return
         object.__setattr__(
             self, "start_c", _finite_number(self.start_c, "Starttemperatur")
         )
@@ -73,17 +89,25 @@ class NamedTemperatureProgram:
         minimum, maximum = _limits(minimum_c, maximum_c)
         _within_limits(self.start_c, "Starttemperatur", minimum, maximum)
         _within_limits(self.end_c, "Endtemperatur", minimum, maximum)
-        return TemperatureProgram(self.start_c, self.end_c, self.distribution_gangs)
+        if self.temperature_steps is not None:
+            for step in self.temperature_steps:
+                _within_limits(step, "Temperaturstufe", minimum, maximum)
+        return TemperatureProgram(
+            self.start_c, self.end_c, self.distribution_gangs, self.temperature_steps
+        )
 
-    def as_dict(self) -> dict[str, str | float | int]:
+    def as_dict(self) -> dict[str, str | float | int | tuple[float, ...]]:
         """Return a JSON-safe representation for config-entry options."""
-        return {
+        result = {
             "id": self.id,
             "name": self.name,
             "start_c": self.start_c,
             "end_c": self.end_c,
             "distribution_gangs": self.distribution_gangs,
         }
+        if self.temperature_steps is not None:
+            result["temperature_steps"] = self.temperature_steps
+        return result
 
     def option(self) -> dict[str, str]:
         """Return the small representation used by a program selector."""
@@ -157,13 +181,11 @@ def load_programs(
     for value in stored:
         if not isinstance(value, Mapping):
             raise ValueError("Jedes Programm muss ein Objekt sein")
-        if set(value) != {
-            "id",
-            "name",
-            "start_c",
-            "end_c",
-            "distribution_gangs",
-        }:
+        fields = set(value)
+        standard = {"id", "name", "start_c", "end_c", "distribution_gangs"}
+        manual = {"id", "name", "temperature_steps"}
+        complete_manual = standard | {"temperature_steps"}
+        if fields not in (standard, manual, complete_manual):
             raise ValueError("Ein Programm enthält ungültige Felder")
         programs.append(NamedTemperatureProgram(**value))
     return validate_programs(

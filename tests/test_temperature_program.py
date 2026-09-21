@@ -27,8 +27,18 @@ class TemperatureProgramTests(unittest.TestCase):
         self.assertEqual(evenly_distributed(100, 100, 3), (100.0, 100.0, 100.0))
         self.assertEqual(program.target(1), 100.0)
 
+    def test_explicit_steps_hold_the_last_value_without_limiting_gangs(self):
+        program = TemperatureProgram(80, 90, 3, (80, 86, 90))
+        self.assertEqual(
+            tuple(program.target(gang) for gang in range(6)), (80, 86, 90, 90, 90, 90)
+        )
+
     def test_invalid_values_are_rejected(self):
         for args in ((0, 100.1, 1), (0, float("inf"), 1), (0, 100, 0), (0, 100, 1.0)):
             with self.subTest(args=args):
                 with self.assertRaises(ValueError):
                     evenly_distributed(*args)
+        for steps in ((), "80, 90", (80, True), (80, float("nan"))):
+            with self.subTest(steps=steps):
+                with self.assertRaises(ValueError):
+                    TemperatureProgram(80, 90, 2, steps)

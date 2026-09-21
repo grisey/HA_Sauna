@@ -61,6 +61,36 @@ const panel = () => Object.assign(Object.create(Panel.prototype), {
   assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_016_000).value,72,"binary lookup chooses the closest sample");
 }
 
+// New archive pages extend the existing numeric index.  Hover can therefore
+// continue to resolve values even while a visible tooltip suppresses no work.
+{
+  const p=panel(), records=[record(0,70)];
+  p.historyIndex(records);const index=p.chartDataIndex;
+  records.push(record(2,71));p.invalidateHistoryIndex();p.historyIndex(records);
+  assert.equal(p.chartDataIndex,index,"append-only history keeps its lookup index");
+  assert.equal(p.series("upper","temperature").length,2,"new archive value joins the lookup index");
+}
+
+// A long full-resolution session must not spread every sample into Math.min
+// or Math.max; JavaScript engines cap the number of function arguments.
+{
+  const p=panel(), records=[], values=[];
+  for(let index=0;index<200_000;index++)values.push({time:1_700_000_000_000+index/10,value:60+index%20,source:{received_at:iso(0)}});
+  p.shown={session,records};p.historyDatasetRevision=1;
+  p.chartDataIndex={records,indexedCount:0,series:new Map([["upper:temperature",values]]),byKind:new Map()};
+  assert.doesNotThrow(()=>p.minimapBackground(records,session),"large minimaps compute their bounds iteratively");
+  assert.doesNotThrow(()=>p.chart(records,session,[]),"large visible series avoid function argument limits");
+}
+
+// The curve receives one neighbour across each viewport edge before it is
+// reduced, so a continuous raw series does not begin as an artificial dot.
+{
+  const p=panel();p.window=[1_700_000_002_000,1_700_000_010_000];
+  const svg=p.chart([record(0,70),record(4,71)],session,[]);
+  const d=/data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
+  assert.match(d,/ C/,"the boundary neighbour keeps a continuous clipped line");
+}
+
 // An explicit missing measurement must remain a gap, never become zero.
 {
   const p=panel(), svg=p.chart([record(0,70),record(1,null),record(2,71)],session,[]);
@@ -84,6 +114,17 @@ const panel = () => Object.assign(Object.create(Panel.prototype), {
   const svg={getBoundingClientRect:()=>({left:0,top:0,width:1200}),closest:()=>svg};
   p.hoverChart({target:svg,clientX:600,clientY:100});
   assert.doesNotMatch(tooltip.innerHTML,/70/,"stale raw sample must stay out of hover");
+}
+
+// Updating an existing chart preserves its SVG node and immediately recomputes
+// a visible hover against the appended archive index.
+{
+  const p=panel(), current={setAttribute:()=>{},innerHTML:""};let hover;
+  p.chart=()=>'<svg class="session-chart" aria-label="history"><path/></svg>';
+  p.$=selector=>selector==="svg.session-chart"?current:null;
+  p.lastHistoryPointer={clientX:90,clientY:40};p.scheduleHover=event=>{hover=event;};
+  assert.equal(p.updateHistoryChart([],session,[]),true);
+  assert.equal(hover.svg,current,"tooltip is recomputed on the retained SVG node");
 }
 
 console.log("panel chart regressions passed");

@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import timedelta
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 import zipfile
@@ -24,6 +25,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.c.begin_session("s", T0)
         self.config = {"parameters": parameters().as_dict(), "bindings": bindings().as_dict()}
         self.archive.save_session(self.c.session, T0, self.config)
+        await self.archive.flush()
 
     async def asyncTearDown(self):
         await self.archive.close()
@@ -97,6 +99,152 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.record(2)
         await self.archive.post_backup()
         self.assertIsNone(self.archive.failure)
+        saved = await asyncio.to_thread(self.archive.read, "s")
+        self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)
+
+    async def test_transient_sqlite_lock_retries_oldest_record_before_newer_records(self):
+        original_write = self.archive._write
+        attempts = []
+
+        def write(record):
+            attempts.append(record)
+            if len(attempts) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            original_write(record)
+
+        self.archive._write = write
+        self.record(1)
+        await self.archive.queue.join()
+        self.assertIsInstance(self.archive.failure, sqlite3.OperationalError)
+        self.record(2)
+        await self.archive.flush()
+
+        saved = await asyncio.to_thread(self.archive.read, "s")
+        measurements = [
+            r["payload"]["received_at"]
+            for r in saved["records"]
+            if r["kind"] == "measurement"
+        ]
+        self.assertEqual(
+            measurements,
+            [
+                (T0 + timedelta(milliseconds=1)).isoformat(),
+                (T0 + timedelta(milliseconds=2)).isoformat(),
+            ],
+        )
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(attempts[0], attempts[1])
+        self.assertIsNone(self.archive.failure)
+        self.assertFalse(self.archive.failed_records)
+
+    async def test_permanent_writer_failure_remains_reported_until_recovered(self):
+        original_write = self.archive._write
+
+        def write(record):
+            raise sqlite3.DatabaseError("disk failure")
+
+        self.archive._write = write
+        self.record(1)
+        await self.archive.queue.join()
+        with self.assertRaisesRegex(sqlite3.DatabaseError, "disk failure"):
+            await self.archive.flush()
+        self.assertIsInstance(self.archive.failure, sqlite3.DatabaseError)
+        self.assertEqual(len(self.archive.failed_records), 1)
+
+        self.archive._write = original_write
+        await self.archive.flush()
+        self.assertIsNone(self.archive.failure)
+
+    async def test_recovery_does_not_clear_fault_before_current_record_is_saved(self):
+        original_write = self.archive._write
+        failure_visible_during_new_write = []
+        calls = 0
+
+        def write(record):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise sqlite3.OperationalError("database is locked")
+            if calls == 3:
+                failure_visible_during_new_write.append(self.archive.failure is not None)
+                raise sqlite3.OperationalError("database is locked again")
+            original_write(record)
+
+        self.archive._write = write
+        self.record(1)
+        await self.archive.queue.join()
+        self.record(2)
+        await self.archive.queue.join()
+
+        self.assertEqual(failure_visible_during_new_write, [True])
+        self.assertIsNotNone(self.archive.failure)
+        self.archive._write = original_write
+        await self.archive.flush()
+        self.assertIsNone(self.archive.failure)
+
+    async def test_recovered_session_snapshot_does_not_overwrite_newer_snapshot(self):
+        original_write = self.archive._write
+        failed_once = False
+
+        def write(record):
+            nonlocal failed_once
+            if record[0] == "session" and not failed_once:
+                failed_once = True
+                raise sqlite3.OperationalError("database is busy")
+            original_write(record)
+
+        self.archive._write = write
+        for second, revision in ((1, "older"), (2, "newer")):
+            self.archive.append(
+                "session",
+                T0 + timedelta(seconds=second),
+                {
+                    "timeline": {"session_started_at": T0.isoformat()},
+                    "ended_at": None,
+                    "revision": revision,
+                },
+                "s",
+            )
+        await self.archive.queue.join()
+        await self.archive.flush()
+
+        saved = await asyncio.to_thread(self.archive.read, "s")
+        self.assertEqual(saved["session"]["revision"], "newer")
+        self.assertEqual(
+            [
+                record["payload"].get("revision")
+                for record in saved["records"]
+                if record["kind"] == "session"
+            ],
+            [None, "older", "newer"],
+        )
+
+    async def test_failed_record_burst_retries_once_while_catching_up(self):
+        original_write = self.archive._write
+        attempts = []
+
+        def write(record):
+            attempts.append(record)
+            raise sqlite3.OperationalError("database is locked")
+
+        self.archive._write = write
+        for number in range(100):
+            self.record(number)
+        await self.archive.queue.join()
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(self.archive.failed_records), 100)
+        self.assertIsInstance(self.archive.failure, sqlite3.OperationalError)
+        self.archive._write = original_write
+
+    async def test_cancelled_pause_request_does_not_pause_the_writer(self):
+        future = asyncio.get_running_loop().create_future()
+        self.archive.queue.put_nowait(("pause", future))
+        future.cancel()
+        await self.archive.flush()
+        self.assertTrue(self.archive.resume.is_set())
+        self.record(1)
+        await self.archive.flush()
         saved = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)
 

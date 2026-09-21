@@ -1,5 +1,6 @@
 """Zusammenhängende Regelketten; Zeit und reale Rückmeldung separat steuerbar."""
 from datetime import timedelta
+from dataclasses import replace
 import unittest
 
 from custom_components.ha_sauna.core.controller import Controller
@@ -26,6 +27,18 @@ def controller(**overrides):
 
 
 class CoolingTests(unittest.TestCase):
+    def test_delayed_door_close_replaces_elapsed_open_door_wait(self):
+        c = controller()
+        c.report_heating(True, T0)
+        c.process(event("open", Kind.DOOR_OPEN, 60))
+        self.assertEqual(c.cooling_wait_until, at(660))
+
+        c.process(replace(event("close", Kind.DOOR_CLOSE, 90), detected_at=at(500)))
+
+        self.assertIsNone(c.cooling_wait_until)
+        self.assertEqual(c.session.cooling.started_at, at(500))
+        self.assertFalse(c.last_decision.heat)
+
     def test_door_opening_at_budget_boundary_waits_for_person_after_close(self):
         for ready in (False, True):
             with self.subTest(ready=ready):

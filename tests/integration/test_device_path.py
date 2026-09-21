@@ -456,28 +456,17 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()
         self.heater.calls.clear()
-        before_session_light = self.light.brightness
+        await self.time(30)
+        self.assertAlmostEqual(self.light.brightness, 255 * 0.5, delta=1)
         await self.time(149)
         self.assertIsNotNone(self.runtime.session)
-        self.assertAlmostEqual(self.light.brightness, before_session_light, delta=1)
+        self.assertAlmostEqual(self.light.brightness, 255 * 0.5, delta=1)
         await self.time(150)
         self.assertIsNone(self.runtime.session)
-        # Der Lichtnachlauf beginnt ebenfalls am vorhandenen Wert und dimmt
-        # erst anschließend auf seine eigene 50-%-Vorgabe.
-        self.assertAlmostEqual(self.light.brightness, before_session_light, delta=1)
-        self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
-        await self.time(180)
-        self.assertAlmostEqual(self.light.brightness, 255*.5, delta=1)
-        calls = len(self.light.calls)
-        await self.time(749)
-        self.assertEqual(len(self.light.calls), calls)
-        self.assertTrue(self.light.is_on)
-        await self.time(750)
         self.assertFalse(self.light.is_on)
         self.assertEqual(self.runtime.device.light_output.last_automatic_brightness, 0)
         self.assertIsNone(phase_timer(self.runtime.controller, self.now))
         await self.time(751)
-        self.assertEqual(len(self.light.calls), calls+1)
         self.assertNotIn(True, self.heater.calls)
         await self.runtime.archive.flush()
         stored = self.runtime.archive.read(session_id)
@@ -490,18 +479,21 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         await async_set_parameters(self.hass, self.entry, {
-            "session_light_minutes": .6, "session_light_brightness_percent": 64}, partial=True)
+            "session_gap_minutes": .6, "session_light_brightness_percent": 64}, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
-        await self.runtime.set_operation(False)
+        # An explicit session end permits settings while its light finishes;
+        # ordinary OFF keeps the session resumable and settings locked.
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
         await self.hass.async_block_till_done()
-        await self.time(150)
+        await self.time(30)
         phase = self.runtime.controller.light_after_run
-        self.assertEqual(phase.ends_at, self.base+timedelta(seconds=186))
-        await self.time(180)
+        self.assertEqual(phase.ends_at, self.base + timedelta(seconds=36))
         self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
         # Der laufende Lichtnachlauf besitzt sein Ziel als Controller-Snapshot;
         # ein Optionen-Reload darf ihn nicht auf den neuen Standard umstellen.
@@ -511,7 +503,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime = self.entry.runtime_data
         self.runtime._clock = lambda: self.now
         self.assertEqual(self.runtime.controller.light_after_run, phase)
-        await self.time(181)
+        await self.time(31)
         self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
@@ -520,22 +512,21 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         # Der Neustart ersetzt den Lichtnachlauf, blendet aber vom sichtbaren
         # 64-%-Wert in seine neue temperaturabhängige Vorgabe über.
         self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
-        await self.time(187)
+        await self.time(37)
         self.assertTrue(self.light.is_on)
         self.assertLess(self.light.brightness, 255*.64)
         self.assertGreater(self.light.brightness, 255*.05)
 
     async def test_failed_session_light_commands_are_archived_and_retried(self):
         await self.runtime.set_operation(True)
-        await self.runtime.set_operation(False)
-        await self.hass.async_block_till_done()
         self.light.fail_commands = True
-        await self.time(150)
+        await self.runtime.set_operation(False)
+        await self.time(1)  # The first distinct fade value requires a command.
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
         calls = len(self.light.calls)
-        await self.time(151)
+        await self.time(2)
         self.assertEqual(len(self.light.calls), calls + 1)
-        await self.time(750)
+        await self.time(150)
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
         off_calls = len([call for call in self.light.calls if call[0] == "off"])
         await self.time(751)
@@ -658,14 +649,16 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_light_deadline_survives_options_change_but_not_restart(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         await async_set_parameters(self.hass, self.entry, {
-            "session_light_minutes": .2, "session_light_brightness_percent": 64}, partial=True)
+            "session_gap_minutes": .2, "session_light_brightness_percent": 64}, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
-        await self.runtime.set_operation(False)
-        await self.time(150)
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
+        await self.time(5)
         phase = self.runtime.controller.light_after_run
         await async_set_parameters(self.hass, self.entry, {"nominal_power_kw": 5}, partial=True)
         await self.hass.async_block_till_done()

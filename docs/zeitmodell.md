@@ -8,7 +8,7 @@ Alle Dauern sind einstellbare Standardwerte; die Solltemperatur-Obergrenze von
 | --- | --- |
 | Gangbeginn | Passende Türschließung, sonst gekennzeichnete Erkennung. |
 | Aufgussbestätigung | Tatsächliche Zeit des ersten zugeordneten Aufgusses; Frist: Beginn + 12 min. |
-| Session-Unterbrechung | Betrieb-Aus + 15 min. |
+| Sitzungswiederaufnahme und Lichtnachlauf | Betrieb-Aus + 15 min, mit gemeinsamem Endzeitpunkt. Wiedereinschalten beendet den Lichtnachlauf. Nach langem Tasterdruck beginnt nur der Lichtnachlauf mit dem Loslassen, ebenfalls mit dieser Dauer. |
 | Nachlauf | Ende des bestätigten Gangs + 8 min tatsächliche Laufzeit. Manuelles Heizen pausiert die Uhr. |
 | Heizbudget | 90 min; nach erster abgeschlossener Kühlung einmalig 60 min. |
 | Mindestheizzeit | Tatsächlicher Beginn eines Heizintervalls + 10 min. |
@@ -16,7 +16,7 @@ Alle Dauern sind einstellbare Standardwerte; die Solltemperatur-Obergrenze von
 | Türwartefrist für fällige Kühlung | Öffnung + 10 min; bei rechtzeitiger Schließung Schließung + 4 min. |
 | Zwangskühlung | Kühlstart + noch nicht gelaufene oder gutgeschriebene Restdauer; Vorgabe 15 min. |
 | Übertemperatur | Durchgehend gültige obere Temperatur über 105 °C + 10 min. |
-| Lichtübergang | 30 s; Licht nach Sitzungsende: 10 min bei 50 %. |
+| Lichtübergang | 30 s; Lichtnachlauf bei 50 %, am Ende unmittelbar aus. |
 | Vorübergehende Übersteuerung | Wahl + höchstens 10 min, mit früheren Rückkehrpunkten gemäß Betrieb. |
 | Mechanischer Timer | Zählt maximal 240 min nur bei Betrieb-Ein und Schütz-Ein. |
 

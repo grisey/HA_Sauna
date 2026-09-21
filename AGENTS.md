@@ -1,5 +1,12 @@
 # Arbeitsregeln
 
+## Einheitlicher Codestil
+
+Python folgt Ruff mit der Konfiguration aus `pyproject.toml`. Die Oberfläche
+folgt Prettier 3.6.2 mit `.prettierrc.json`. Gemeinsame Zustandsregeln und
+Bedienelemente werden an einer Stelle gehalten; neue Ausnahmen brauchen einen
+konkreten, nachvollziehbaren Anwendungsfall.
+
 ## Vorrang des Entscheidungsstands vom 20.09.2026
 
 Die konsolidierten Fachregeln in `docs/betrieb.md`, `docs/gangmodell.md` und

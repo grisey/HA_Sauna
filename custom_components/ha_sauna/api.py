@@ -20,6 +20,7 @@ from .settings import (
     async_reset_parameters,
     async_set_button_program,
     async_set_control_mode,
+    async_set_temperature_steps,
     async_set_parameters,
     async_set_program,
     async_set_program_catalog,
@@ -364,6 +365,10 @@ class ProgramView(HomeAssistantView):
                     program_mode="progressive",
                     new_program=True,
                 )
+            elif isinstance(body, dict) and set(body) == {"temperature_steps"}:
+                parameters = await async_set_temperature_steps(
+                    hass, entry, body["temperature_steps"]
+                )
             else:
                 raise ParameterError("base", "invalid_parameters")
         except ParameterError as error:
@@ -377,6 +382,7 @@ class ProgramView(HomeAssistantView):
                 "success": True,
                 "parameters": parameters,
                 "program_mode": entry.runtime_data.configuration.program_mode,
+                "temperature_steps": entry.runtime_data.configuration.temperature_steps,
             }
         )
 

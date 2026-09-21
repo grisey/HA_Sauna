@@ -54,6 +54,33 @@ class CoolingPauseTests(unittest.TestCase):
         self.assertEqual(c.cooling_remaining_seconds, 600)
         self.assertEqual(c.session.cooling.ends_at, at(1140))
 
+    def test_manual_off_resumes_cooling_paused_by_manual_heating(self):
+        c = self.cooling()
+        c.set_heater_override(True, at(360))
+        c.set_heater_override(False, at(540))
+
+        self.assertIsNone(c.session.cooling.paused_at)
+        self.assertEqual(c.cooling_remaining_seconds, 600)
+        self.assertEqual(c.session.cooling.ends_at, at(1140))
+        self.assertFalse(c.last_decision.heat)
+
+    def test_manual_off_does_not_delay_cooling_after_after_run(self):
+        c = controller(after_run_minutes=0.5)
+        c.report_heating(True, at(0))
+        c.process(event("close", Kind.DOOR_CLOSE, 1))
+        c.process(event("person", Kind.PERSON_STRONG, 2))
+        c.process(event("infusion", Kind.INFUSION, 3))
+        c.process(event("open", Kind.DOOR_OPEN, 60))
+        c.process(event("vent", Kind.VENTILATION, 61))
+        c.report_heating(False, at(61))
+        c.set_heater_override(False, at(70))
+        c.advance(at(91))
+
+        self.assertIsNone(c.session.after_run)
+        self.assertEqual(c.session.cooling.started_at, at(91))
+        self.assertEqual(c.session.cooling.credited_seconds, 30)
+        self.assertFalse(c.last_decision.heat)
+
     def test_gang_and_after_run_credit_are_applied_to_paused_cycle(self):
         c = self.cooling()
         c.set_heater_override(True, at(360))

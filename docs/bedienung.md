@@ -13,8 +13,9 @@ Heizzustand. Eine Meldung auf der Übersicht erklärt, wenn ein Start noch nicht
 möglich ist oder Einstellungen beziehungsweise Messwerte fehlen.
 
 Wählen Sie die Solltemperatur direkt am Bogen der Temperaturanzeige: klicken,
-ziehen oder bedienen Sie ihn mit der Tastatur. Die Schnellwahltasten
-bieten weitere feste Werte. Der Bereich beginnt standardmäßig bei 60 °C und
+ziehen oder bedienen Sie ihn mit der Tastatur. Beschriftete Skalenpunkte helfen
+bei der Auswahl. Die Schnellwahltasten bieten weitere feste Werte; die Taste
+der aktuell geltenden Solltemperatur ist hervorgehoben. Der Bereich beginnt standardmäßig bei 60 °C und
 endet bei 100 °C; die Untergrenze und die Schnellwahl sind einstellbare
 Standards.
 
@@ -25,13 +26,23 @@ weiter über das tatsächliche Heizen.
 
 ## Konstante Wahl oder Temperaturautomatik
 
-Wählen Sie ein benanntes Temperaturprogramm im Feld **Temperaturprogramm**.
-Unter dem Namen zeigt HA Sauna die berechneten Temperaturstufen. Mit der freien
-**Temperaturautomatik** geben Sie Start, Ende und Verteilung selbst an.
+Unter **Temperaturwahl** wählen Sie **Programm**, **Individuell** oder
+**Konstant**. **Programm** zeigt die benannten Programme als Auswahlzeilen mit
+Name und Temperaturfolge. **Konstant** zeigt die festen Temperaturtasten.
+Mit **Individuell** öffnen Sie die Eingaben für Ihr eigenes Programm:
 
-Die Verteilung legt fest, über wie viele Saunagänge die Temperatur gleichmäßig
-von Start zu Ende steigt. Sie plant und begrenzt keine Saunagänge. Nach der
-Endtemperatur bleibt diese für weitere Saunagänge gültig. Während einer
+- **Gleichmäßig:** Start, Ende und Verteilung eingeben. Das Infosymbol bei
+  **Verteilung** erklärt die Stufenzahl mit einem Beispiel.
+- **Einzelne Stufen:** Anzahl wählen und jede Temperatur einzeln eintragen.
+
+**Übernehmen** wird bei einer geänderten Auswahl hervorgehoben und aktiviert.
+Nach erfolgreichem Speichern steht dort **Übernommen**. Die Auswahlzeilen und
+Eingaben bleiben bis zum Übernehmen ein Entwurf. Temperaturtasten und der
+Anzeigebogen stellen die konstante Temperatur unmittelbar ein.
+
+Die Verteilung legt fest, über wie viele Stufen die Temperatur von Start zu
+Ende steigt. Jeder beendete, bestätigte Saunagang führt zur nächsten Stufe.
+Nach der letzten Stufe bleibt deren Temperatur für weitere Saunagänge gültig. Während einer
 Saunasitzung dürfen Sie Solltemperatur, Ende und Verteilung ändern; laufende
 Gänge und Zeiten bleiben erhalten.
 
@@ -48,10 +59,11 @@ Die sechs mitgelieferten Programme sind ebenfalls einstellbare Vorlagen:
 
 Administratoren können unter **Details → Einstellungen & Export →
 Temperaturprogramme** Vorlagen umbenennen, anpassen, ergänzen oder entfernen.
+Auch dort können Temperaturen gleichmäßig verteilt oder einzeln festgelegt werden.
 
 ## Während der Saunasitzung
 
-Die Übersicht nennt die aktuelle Phase: **Aufheizen**, **Bereit**,
+Die Übersicht nennt die aktuelle Phase: **Heizen**, **Bereit**,
 **Saunagang**, **Nachlauf** oder **Zwangskühlung**. **Bereit** erscheint, sobald
 die Solltemperatur erreicht ist, und bleibt bis zum nächsten Saunagang oder
 zur Zwangskühlung bestehen. Der Ofen kann dabei weiterheizen, um seine
@@ -59,9 +71,9 @@ Temperaturreserve aufzubauen. Die höhere **obere Regeltemperatur** sehen
 Administratoren in den Details.
 
 Neben dem Zustand steht eine kurze Zeitangabe: beim Aufheizen etwa
-**Heizen – noch 10 min bis bereit**, nach Erreichen des Ziels etwa
-**Bereit – noch 20 min**. Geschätzte Aufheizzeiten erscheinen ohne Sekunden:
-unter fünf Minuten als **noch unter 5 min bis bereit**, sonst auf der nächstliegenden
+**Heizen – noch 10 Minuten bis bereit**, nach Erreichen des Ziels etwa
+**Bereit – noch 20 Minuten**. Geschätzte Aufheizzeiten erscheinen ohne Sekunden:
+unter fünf Minuten als **noch unter 5 Minuten bis bereit**, sonst auf der nächstliegenden
 Fünf-Minuten-Stufe. Bei Bereit zeigt die Zeit, wie lange noch mindestens ein
 Gang begonnen werden kann; Heizpausen können diesen Zeitraum verlängern. Fehlt
 eine belastbare Schätzung, bleibt die Startzeit offen.
@@ -87,8 +99,11 @@ zählt nur bei eingeschaltetem Saunabetrieb und bestätigtem Heizschütz; währe
 Heizpause, Nachlauf oder Zwangskühlung hält er an. Stellen Sie den tatsächlichen
 Drehschalter weiterhin selbst ein.
 
-Zum Beenden wählen Sie **Ausschalten**. Der Sitzungsabschluss und der
-anschließende Lichtnachlauf folgen den einstellbaren Standardzeiten.
+Zum Ausschalten wählen Sie **Ausschalten**. Der Ofen geht aus und der
+Lichtnachlauf beginnt sofort. Innerhalb der einstellbaren Wiederaufnahmezeit
+(standardmäßig 15 Minuten) setzt erneutes Einschalten dieselbe Sitzung fort.
+Mit Ablauf dieser Zeit endet die Sitzung und das Licht geht aus. Für den
+Lichtnachlauf gibt es keine zusätzliche Dauer.
 
 ## Licht
 
@@ -107,9 +122,10 @@ sie am einstellbaren Kaltpunkt von 30 °C bei 5 %, erreicht tagsüber 40 % und
 nachts 25 %. Nachlauf und Zwangskühlung verwenden eigene einstellbare
 Helligkeiten, standardmäßig 15 % beziehungsweise 5 %. Die automatischen
 Übergänge dauern standardmäßig 30 Sekunden und verändern die Helligkeit in
-Schritten von einem Prozentpunkt. Nach dem endgültigen Ende der
-Saunasitzung leuchtet das Licht standardmäßig noch 10 Minuten mit 50 % und
-schaltet danach aus.
+Schritten von einem Prozentpunkt. Beim Ausschalten fährt das Licht auf
+standardmäßig 50 % und bleibt bis zum Ende der Wiederaufnahmezeit an. Danach
+geht es ohne weiteren Dimmübergang aus. Wiedereinschalten beendet den
+Lichtnachlauf und gibt das Licht an die laufende Automatik zurück.
 
 Eine manuelle Lichtwahl gilt bis zum nächsten Phasenwechsel oder höchstens bis
 zum Ende der einstellbaren Übersteuerungsdauer von standardmäßig zehn Minuten.
@@ -123,7 +139,8 @@ der Saunasitzung schaltet den Ofen vorübergehend manuell; der nächste kurze
 Druck übergibt ihn wieder an die Automatik. Halten Sie den Taster gedrückt, um
 die Saunasitzung zu beenden. Das Licht zeigt den Abschluss mit einer stark
 gedimmten, einstellbaren Helligkeit an, bis Sie loslassen; danach beginnt der
-Lichtnachlauf.
+Lichtnachlauf. Auch dieser verwendet die eingestellte Wiederaufnahmezeit als
+Dauer; die mit langem Drücken beendete Sitzung selbst bleibt abgeschlossen.
 
 Auch in Nachlauf oder Zwangskühlung kann ein kurzer Druck den Ofen vorübergehend
 einschalten. Entsteht daraus kein neuer Saunagang, setzen Nachlauf und Kühlung
@@ -150,18 +167,27 @@ technische Schutzabschaltung bleibt sofort vorrangig.
 
 Davon getrennt ist die **vorübergehende Übersteuerung** während der
 Betriebsart Automatik. Administratoren finden sie unter **Details → Betrieb &
-Fristen** bei der manuellen Steuerung: Ofen **EIN**, **AUS** oder **Automatik**;
+Fristen** in den Kacheln **Ofen** und **Licht**: Ofen **EIN**, **AUS** oder **Automatik**;
 Licht Aus, Automatik, Gedimmt, Hell oder freie Helligkeit. Diese Eingriffe
 übernimmt die Automatik beim nächsten passenden Wechsel oder spätestens nach
 der einstellbaren Höchstdauer, standardmäßig zehn Minuten. Schutzabschaltungen
 behalten Vorrang.
 
+Die markierte Taste zeigt die gewählte Steuerung. Bei **Automatik** kann der
+Ofen deshalb tatsächlich ein- oder ausgeschaltet sein; seinen aktuellen
+Zustand lesen Sie getrennt als **Ofen an** beziehungsweise **Ofen aus**.
+
 ## Verlauf und Archiv
 
 Öffnen Sie **Übersicht → Verlauf und Archiv**, um die aktuelle oder eine frühere
-Saunasitzung auszuwählen. Der Standardverlauf zeigt Temperatur und Luftfeuchte,
+Saunasitzung auszuwählen. Die Auswahl bezeichnet eindeutig die **laufende**
+oder **letzte Sitzung**. Der Standardverlauf zeigt Temperatur und Luftfeuchte,
 Phasen, Türöffnungen, Saunagänge und Aufgüsse. Über **Messhöhen vergleichen**
 blenden Sie obere und untere Messposition ein oder aus.
+
+Vergrößern Sie mit den Zoomtasten, einer Vergrößerungsgeste oder Strg/Cmd und
+Mausrad. Normales Scrollen bewegt die Seite. Die schmale Übersicht am Verlauf
+zeigt den Ausschnitt innerhalb der gesamten Sitzung und lässt ihn verschieben.
 
 Administratoren können unter **Details → Detailverlauf** beide Messhöhen mit
 vollständigen Angaben betrachten. Die **Erkennungskontrolle** ordnet Marker und

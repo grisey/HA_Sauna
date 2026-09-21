@@ -36,6 +36,7 @@ class Controller:
         *,
         program_mode: str = "constant",
         control_mode: str = "automatic",
+        temperature_steps: tuple[float, ...] | None = None,
     ) -> None:
         if program_mode not in PROGRAM_MODES:
             raise ValueError("Ungültiger Temperaturprogrammmodus")
@@ -44,6 +45,7 @@ class Controller:
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
+        self.temperature_steps = temperature_steps
         self._session: Session | None = None
         self.completed_sessions: tuple[Session, ...] = ()
         self.light_after_run: LightAfterRun | None = None
@@ -117,6 +119,11 @@ class Controller:
             if session and session.temperature_program_gangs
             else self.parameters.values["temperature_gangs"]
         )
+        steps = (
+            session.temperature_program_steps
+            if session and session.temperature_program_steps is not None
+            else self.temperature_steps
+        )
         # The program anchor stays at the explicit program selection.  A live
         # edit only moves the temperature anchor, so repeated edits cannot
         # make already completed actual gangs disappear.
@@ -125,7 +132,9 @@ class Controller:
         if base_anchor > program_anchor:
             remaining = max(2, remaining)
         elapsed_after_base = max(0, completed - base_anchor)
-        return TemperatureProgram(start, end, remaining).target(elapsed_after_base)
+        return TemperatureProgram(start, end, remaining, steps).target(
+            elapsed_after_base
+        )
 
     def update_temperature_parameters(
         self,
@@ -135,6 +144,7 @@ class Controller:
         explicit_target=False,
         program_mode=None,
         new_program=False,
+        temperature_steps=...,
     ):
         """Change live temperature settings without altering the actual gang count.
 
@@ -155,6 +165,8 @@ class Controller:
             )
         self.advance(at, evaluate=False)
         before = self.target_temperature
+        if temperature_steps is not ...:
+            self.temperature_steps = temperature_steps
         self.parameters = parameters
         selected_mode = program_mode if program_mode is not None else self.program_mode
         if program_mode is not None:
@@ -170,6 +182,7 @@ class Controller:
                     temperature_base_gang_count=completed,
                     temperature_program_mode="constant",
                     temperature_program_gangs=None,
+                    temperature_program_steps=None,
                 )
             elif new_program:
                 self._session = replace(
@@ -180,6 +193,11 @@ class Controller:
                     temperature_program_gangs=parameters.values["temperature_gangs"]
                     if selected_mode == "progressive"
                     else None,
+                    temperature_program_steps=(
+                        self.temperature_steps
+                        if selected_mode == "progressive"
+                        else None
+                    ),
                     temperature_program_start_gang_count=completed,
                 )
             elif (
@@ -196,6 +214,7 @@ class Controller:
                     temperature_base_gang_count=completed,
                     temperature_program_mode="progressive",
                     temperature_program_gangs=parameters.values["temperature_gangs"],
+                    temperature_program_steps=self.temperature_steps,
                 )
         self._latch_readiness(utc(at))
         self._evaluate(utc(at))
@@ -370,6 +389,7 @@ class Controller:
                     self._session, operation_enabled=True, operation_off_at=None
                 )
                 self._cancel("session_gap")
+                self.light_after_run = None
                 self._sync_mechanical_timer(at)
                 self._latch_readiness(at)
         elif self._session is not None and self._session.operation_enabled:
@@ -440,11 +460,7 @@ class Controller:
             and self._session.after_run is not None
         ):
             self._pause_after_run(at)
-        if (
-            heat is True
-            and self._cooling_active()
-            and self.control_mode == "automatic"
-        ):
+        if heat is True and self._cooling_active() and self.control_mode == "automatic":
             self._account_cooling(at)
             self._pause_cooling(at)
         self._latch_readiness(at)
@@ -598,6 +614,8 @@ class Controller:
                     )
                     if due_at > event.detected_at:
                         self._schedule("person_opportunity", due_at, event.event_id)
+                    else:
+                        self._cancel("person_opportunity")
         self.advance(event.detected_at, evaluate=False, inclusive_confirmation=False)
         previous = self._session
         if previous is None:
@@ -683,11 +701,17 @@ class Controller:
                 operation_off_at=event.detected_at,
             )
             self.mechanical_timer = self.mechanical_timer.pause(event.detected_at)
+            ends_at = event.detected_at + timedelta(
+                seconds=self.parameters.seconds("session_gap_minutes")
+            )
             self._schedule(
                 "session_gap",
-                event.detected_at
-                + timedelta(seconds=self.parameters.seconds("session_gap_minutes")),
+                ends_at,
             )
+            if self.control_mode == "automatic":
+                self._create_session_light(
+                    self._session.session_id, event.detected_at, ends_at
+                )
         self.advance(event.detected_at)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
@@ -796,22 +820,15 @@ class Controller:
         session = self._session
         if (
             session.cooling is not None
-            and session.cooling.started_at is None
             and session.timeline.active is None
             and session.after_run is None
             and self.cooling_wait_until is None
-            and self.heater_override is None
+            and self.heater_override is not True
         ):
-            self._start_cooling(at)
-        elif (
-            session.cooling is not None
-            and session.cooling.paused_at is not None
-            and session.timeline.active is None
-            and session.after_run is None
-            and self.cooling_wait_until is None
-            and self.heater_override is None
-        ):
-            self._resume_cooling(at)
+            if session.cooling.started_at is None:
+                self._start_cooling(at)
+            elif session.cooling.paused_at is not None:
+                self._resume_cooling(at)
 
     def _ensure_temperature_cooling(self, at):
         due = self.overtemperature_since is not None and (
@@ -1269,7 +1286,7 @@ class Controller:
             self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
         self._session = None
         self._clear_heater_override()
-        if light_after_run:
+        if light_after_run and self.light_after_run is None:
             self.start_session_light(session.session_id, at)
         return session
 
@@ -1280,8 +1297,22 @@ class Controller:
             raise ValueError("Es läuft keine Session.")
         self.set_operation(False, at)
         self._cancel("session_gap")
+        if not light_after_run:
+            self.light_after_run = None
         self._complete_session(at, light_after_run=light_after_run)
         self._evaluate(at)
+
+    def _create_session_light(
+        self, session_id: str, started_at: datetime, ends_at: datetime
+    ):
+        """Create one light phase with the already determined session deadline."""
+        self.light_after_run = LightAfterRun(
+            session_id,
+            started_at,
+            ends_at,
+            self.parameters.values["session_light_brightness_percent"],
+        )
+        return self.light_after_run
 
     def start_session_light(self, session_id: str, at: datetime):
         """Start the post-session light after a deferred physical release."""
@@ -1292,13 +1323,11 @@ class Controller:
             or self.completed_sessions[-1].session_id != session_id
         ):
             raise ValueError("Die Session ist nicht die zuletzt beendete Session.")
-        self.light_after_run = LightAfterRun(
+        return self._create_session_light(
             session_id,
             at,
-            at + timedelta(seconds=self.parameters.seconds("session_light_minutes")),
-            self.parameters.values["session_light_brightness_percent"],
+            at + timedelta(seconds=self.parameters.seconds("session_gap_minutes")),
         )
-        return self.light_after_run
 
     def register_deadline(self, deadline: Deadline) -> None:
         session = self._session
@@ -1360,8 +1389,5 @@ class Controller:
             self._clear_heater_override()
             self._ensure_cooling(deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
-            self._complete_session(
-                deadline.due_at,
-                light_after_run=self.control_mode == "automatic",
-            )
+            self._complete_session(deadline.due_at, light_after_run=False)
         return True

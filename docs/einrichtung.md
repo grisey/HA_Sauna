@@ -54,7 +54,9 @@ Kontrollieren Sie unter **Details → Einstellungen & Export** die voreingestell
 Temperatur-, Licht-, Heizzeit- und Kühlwerte. Diese Werte sind einstellbare
 Standards; bereits gespeicherte örtliche Einstellungen bleiben erhalten.
 Prüfen Sie insbesondere, ob Messabstände, Schützrückmeldung und optionale
-Leistungsmessung zur Anlage passen.
+Leistungsmessung zur Anlage passen. Deaktivieren Sie vor dem ersten Betrieb
+die bisherigen Sauna-Automationen, die denselben Ofen oder dasselbe Licht
+steuern. Die entkoppelten Lichttaster können weiter unmittelbar bedient werden.
 
 Unter **Temperaturprogramme** können Sie Namen, Start, Ende und Verteilung
 ändern oder Programme hinzufügen. Wählen Sie außerdem die Vorgabe für den

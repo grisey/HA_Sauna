@@ -6,7 +6,8 @@ Saunagänge, Bedienung und Verlauf bleiben an einer Stelle sichtbar.
 In der Übersicht schalten Sie den Betrieb ein, wählen die Temperatur direkt am
 Anzeigebogen oder über Schnellwahltasten und sehen Temperatur, Luftfeuchte,
 Heizzustand und die nächste relevante Zeit. Die Temperatur kann konstant bleiben
-oder mit einem Programm von Gang zu Gang steigen. Im Automatikbetrieb bietet
+oder einem Programm mit gleichmäßig verteilten oder einzeln gewählten Stufen
+folgen. Im Automatikbetrieb bietet
 die Übersicht beim Licht **Aus**, **Automatik** und **Hell**. **Gedimmt** und
 freie Helligkeit stehen Administratoren in den Details zur Verfügung.
 

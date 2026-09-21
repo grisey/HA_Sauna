@@ -28,6 +28,7 @@ from .core.program_catalog import (
     load_programs,
     migrate_legacy_programs,
 )
+from .core.temperature_program import temperature_steps as validate_temperature_steps
 from .core.timeline import Door, Event
 from .log import LEVELS, SaunaLog
 from .presentation import (
@@ -52,9 +53,19 @@ class Configuration:
     temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
     selected_program_id: str | None = None
     control_mode: str = "automatic"
+    temperature_steps: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
+        if self.temperature_steps is not None:
+            steps = validate_temperature_steps(self.temperature_steps)
+            minimum = self.parameters.minimum_for("target_temperature_c")
+            maximum = BY_KEY["target_temperature_c"].maximum
+            if len(steps) > BY_KEY["temperature_gangs"].maximum or any(
+                step < minimum or step > maximum for step in steps
+            ):
+                raise ValueError("Ungültige manuelle Temperaturstufen")
+            object.__setattr__(self, "temperature_steps", steps)
         if self.button_program not in {"program_1", "program_2"} or any(
             program.id == self.button_program for program in self.temperature_programs
         ):
@@ -95,6 +106,7 @@ class Configuration:
                 "temperature_programs",
                 "selected_program_id",
                 "control_mode",
+                "temperature_steps",
             }
         ):
             raise ValueError(
@@ -108,6 +120,10 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
+        # Diese frühere, getrennte Lichtdauer ist durch die Sitzungspause
+        # ersetzt. Sie wird nur bei alten gespeicherten Optionen verworfen;
+        # andere unbekannte Werte bleiben weiterhin ungültig.
+        values.pop("session_light_minutes", None)
         if "program_mode" in options:
             program_mode = options["program_mode"]
         else:
@@ -158,6 +174,7 @@ class Configuration:
         button_program = options.get("button_program", "current")
         selected_program_id = options.get("selected_program_id")
         control_mode = options.get("control_mode", "automatic")
+        steps = options.get("temperature_steps")
         program_ids = {program.id for program in programs}
         if (
             program_mode not in ("constant", "progressive")
@@ -180,6 +197,7 @@ class Configuration:
             programs,
             selected_program_id,
             control_mode,
+            steps,
         )
 
     def as_options(self) -> dict:
@@ -196,6 +214,7 @@ class Configuration:
             ],
             "selected_program_id": self.selected_program_id,
             "control_mode": self.control_mode,
+            "temperature_steps": self.temperature_steps,
         }
 
 
@@ -214,6 +233,7 @@ class SaunaRuntime:
             configuration.parameters,
             program_mode=configuration.program_mode,
             control_mode=configuration.control_mode,
+            temperature_steps=configuration.temperature_steps,
         )
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
@@ -587,7 +607,18 @@ class SaunaRuntime:
             catalog=self.configuration.temperature_programs,
         )
         self.controller.update_temperature_parameters(
-            parameters, self._clock(), program_mode=mode, new_program=True
+            parameters,
+            self._clock(),
+            program_mode=mode,
+            new_program=True,
+            temperature_steps=next(
+                (
+                    program.temperature_steps
+                    for program in self.configuration.temperature_programs
+                    if program.id == self.configuration.button_program
+                ),
+                None,
+            ),
         )
         self.configuration = replace(
             self.configuration,
@@ -599,6 +630,7 @@ class SaunaRuntime:
                 in {program.id for program in self.configuration.temperature_programs}
                 else None
             ),
+            temperature_steps=self.controller.temperature_steps,
         )
         if self.device:
             self.device.values = parameters.values

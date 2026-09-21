@@ -148,7 +148,6 @@ DEFINITIONS = (
     definition("after_run_brightness_percent", "%", default=15, maximum=100),
     definition("cooling_brightness_percent", "%", default=5, maximum=100),
     definition("button_hold_brightness_percent", "%", True, default=1, maximum=100),
-    definition("session_light_minutes", "min", True, default=10),
     definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
 ) + tuple(
     definition(
@@ -171,6 +170,11 @@ EDITABLE_DEFINITIONS = tuple(
     not in {
         "temperature_increase_c",
         "door_heating_max_temperature_c",
+        "strong_temperature_upper",
+        "strong_temperature_lower",
+        "weak_temperature_upper",
+        "weak_temperature_lower",
+        "infusion_temperature",
         "program_1_start_c",
         "program_1_end_c",
         "program_1_gangs",

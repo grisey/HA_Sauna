@@ -630,6 +630,8 @@ class HADevice:
             self.faults.pop("configuration", None)
         if self.runtime.archive and self.runtime.archive.failure:
             self.faults["archive"] = str(self.runtime.archive.failure)
+        else:
+            self.faults.pop("archive", None)
         self._refresh_warmup(now)
         controller.advance(now)
 
