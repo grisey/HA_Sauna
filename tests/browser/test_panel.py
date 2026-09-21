@@ -397,7 +397,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('input[name="heating_minutes"]')).to_have_value("90")
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
-        await self.panel.locator('[data-action="detail"]').click()
+        await self.panel.locator('[data-action="details"]').click()
         await expect(self.panel.locator('#details').get_by_role("button", name="Hell 50 %", exact=True)).to_be_visible()
         self.assertEqual(self.errors,[])
         self.assertEqual(self.ws_errors,[])
