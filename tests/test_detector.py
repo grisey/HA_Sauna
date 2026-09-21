@@ -77,6 +77,65 @@ class DetectorTests(unittest.TestCase):
         self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
         return events
 
+    def _entry_detector(self, **overrides):
+        values = {
+            "median_seconds": 1, "door_window_seconds": 1, "door_humidity_seconds": 1,
+            "door_open_slope": -1, "door_open_humidity_upper": .1,
+            "door_open_humidity_lower": .1, "door_open_hold_seconds": 1,
+            "door_close_slope": .1, "door_close_hold_seconds": 1,
+            "vent_baseline_seconds": 1, "vent_drop_upper": 100, "vent_drop_lower": 100,
+            "person_step_seconds": 1, "strong_window_seconds": 1,
+            "strong_hold_seconds": 600, "infusion_hold_seconds": 600,
+            "weak_window_seconds": 2, "weak_temperature_upper": 1,
+            "weak_temperature_lower": 1, "weak_humidity_upper": .1,
+            "weak_humidity_lower": .1, "weak_hold_seconds": 1,
+            "confirmation_minutes": 1,
+        }
+        return Detector(detection_parameters(**{**values, **overrides}), T0)
+
+    @staticmethod
+    def _entry_episode(detector):
+        events = []
+        for second, values in enumerate(((80, 40), (78, 38), (76, 36),
+                                         (78, 38), (80, 40), (82, 42))):
+            events += sample(detector, second, *values)
+        return events
+
+    def test_brief_nonventing_open_close_enables_weak_person_signal(self):
+        detector = self._entry_detector()
+        events = self._entry_episode(detector)
+        self.assertEqual(
+            [event.kind for event in events if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
+            [Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
+        )
+        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
+        weak = next(event for event in events if event.kind is Kind.PERSON_WEAK)
+        self.assertEqual(weak.effective_at, T0 + timedelta(seconds=5))
+
+    def test_weak_needs_a_recent_actual_close_and_new_opening_resets_its_hold(self):
+        initial = self._entry_detector()
+        initial_events = []
+        for second in range(6):
+            initial_events += sample(initial, second, 80 + 2 * second, 40 + 2 * second)
+        self.assertNotIn(Kind.PERSON_WEAK, [event.kind for event in initial_events])
+
+        expired = self._entry_detector(confirmation_minutes=.01)
+        expired_events = self._entry_episode(expired)
+        for second in range(6, 10):
+            expired_events += sample(expired, second, 82 + 2 * (second - 5), 42 + 2 * (second - 5))
+        self.assertNotIn(Kind.PERSON_WEAK, [event.kind for event in expired_events])
+        self.assertFalse(expired.diagnostic["checks"]["weak"])
+        self.assertEqual(expired.diagnostic["holds"]["weak"], 0)
+
+        detector = self._entry_detector(weak_hold_seconds=3)
+        events = self._entry_episode(detector)
+        for second, values in ((6, (80, 40)), (7, (78, 38)), (8, (80, 40)),
+                               (9, (82, 42)), (10, (84, 44)), (11, (86, 46)),
+                               (12, (88, 48))):
+            events += sample(detector, second, *values)
+        weak = [event for event in events if event.kind is Kind.PERSON_WEAK]
+        self.assertEqual([event.effective_at for event in weak], [T0 + timedelta(seconds=12)])
+
     def test_two_sensor_water_loss_confirms_without_the_legacy_open_duration(self):
         detector = self._ventilation_detector()
         events = self._open_for_ventilation(detector)

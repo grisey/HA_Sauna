@@ -412,8 +412,12 @@ class Controller:
             )
         at = utc(at)
         self.advance(at, evaluate=False)
+        previous_override = self.heater_override
         self.heater_override = heat
+        if heat is False:
+            self._drop_manual_heating_demand()
         if heat is None:
+            self._handoff_manual_heating(previous_override, at)
             self._clear_heater_override()
             self._ensure_cooling(at)
             self._evaluate(at)
@@ -436,7 +440,11 @@ class Controller:
             and self._session.after_run is not None
         ):
             self._pause_after_run(at)
-        if self._cooling_active() and self.control_mode == "automatic":
+        if (
+            heat is True
+            and self._cooling_active()
+            and self.control_mode == "automatic"
+        ):
             self._account_cooling(at)
             self._pause_cooling(at)
         self._latch_readiness(at)
@@ -599,6 +607,22 @@ class Controller:
             if event.kind in GANG_SIGNALS and previous.timeline.active is None
             else None
         )
+        if (
+            blocked is None
+            and event.kind == Kind.PERSON_WEAK
+            and previous.timeline.active is None
+        ):
+            anchor = previous.timeline.anchor
+            if anchor is None:
+                blocked = "entry_context_missing"
+            elif event.effective_at < anchor.effective_at:
+                blocked = "entry_context_changed"
+            elif event.detected_at > anchor.effective_at + timedelta(
+                seconds=self.parameters.seconds("confirmation_minutes")
+            ):
+                # A catch-up sample may be old enough to match, but cannot
+                # start a gang after its real confirmation opportunity ended.
+                blocked = "entry_context_expired"
         if blocked:
             self._session = replace(
                 previous,
@@ -683,7 +707,7 @@ class Controller:
             )
             if source in session.timeline.rejected_start_sources:
                 return False
-            if kind == Kind.PERSON_WEAK and session.timeline.preparation is None:
+            if kind == Kind.PERSON_WEAK and session.timeline.anchor is None:
                 return False
         elif kind != Kind.INFUSION:
             return False
@@ -1056,6 +1080,40 @@ class Controller:
             self._cancel("manual_override")
         self._override_snapshot = None
 
+    def _handoff_manual_heating(self, previous_override, at):
+        """Retain one real manual heat run when automatic control takes over."""
+        session = self._session
+        if previous_override is False:
+            self._drop_manual_heating_demand()
+            return
+        if (
+            previous_override is not True
+            or self.control_mode != "automatic"
+            or session is None
+            or not session.operation_enabled
+            or session.heating.reported_heating is not True
+            or not session.heating.intervals
+            or self.protection
+            or self.inhibits
+        ):
+            return
+        started_at = session.heating.intervals[-1].started_at
+        if (at - started_at).total_seconds() >= self.parameters.seconds(
+            "minimum_heating_minutes"
+        ):
+            return
+        self._session = replace(
+            session, thermostat=replace(session.thermostat, demand=True)
+        )
+
+    def _drop_manual_heating_demand(self):
+        """An explicit manual OFF ends an earlier automatic minimum run."""
+        session = self._session
+        if session is not None and self.control_mode == "automatic":
+            self._session = replace(
+                session, thermostat=replace(session.thermostat, demand=False)
+            )
+
     @property
     def heater_override_ends_at(self) -> datetime | None:
         """The scheduled automatic-mode override deadline, if still active."""
@@ -1175,6 +1233,7 @@ class Controller:
             and self._override_snapshot is not None
             and (phase_key, self._automatic_signature()) != self._override_snapshot
         ):
+            self._handoff_manual_heating(self.heater_override, at)
             self._clear_heater_override()
             # Das Löschen der Bedienung darf die pausierte Kühlung nicht
             # bis zum nächsten Eingang im Aufheizzustand lassen.
@@ -1297,6 +1356,7 @@ class Controller:
             ):
                 self._finish_cooling(session.cooling, deadline.due_at)
         elif deadline.purpose == "manual_override":
+            self._handoff_manual_heating(self.heater_override, deadline.due_at)
             self._clear_heater_override()
             self._ensure_cooling(deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:

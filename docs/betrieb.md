@@ -124,6 +124,12 @@ Lichtübersteuerungen in Automatik enden spätestens nach 10 min; früher durch
 Rückgabe an Automatik sowie beim passenden Phasenwechsel oder automatischen
 Heizwechsel. Schutz hat stets Vorrang.
 
+Wird ein manuell eingeschalteter Ofen frühzeitig an die Automatik zurückgegeben,
+läuft seine noch offene Mindestheizzeit ab dem tatsächlichen Heizbeginn weiter.
+Bewusstes manuelles Ausschalten hebt diesen Mindestlauf auf. Eine verzögerte
+EIN-Rückmeldung darf ihn danach nicht erneut auslösen. Nachlauf, Kühlung und
+Schutz behalten bei jeder Rückgabe ihren Vorrang.
+
 Die Betriebsart **Manuell** kann nur außerhalb einer offenen Sitzung gewählt
 werden und ist nicht zeitbegrenzt. Dort bedienen Nutzer Ofen und Licht direkt;
 Thermostat, Heizbudget, reguläre Kühlpausen und Lichtautomatik wirken nicht.

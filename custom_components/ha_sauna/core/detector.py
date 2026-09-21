@@ -69,11 +69,11 @@ class Detector:
         self.frames = {p: deque(maxlen=self.capacity) for p in self.positions}
         self.open = False  # Anfangsannahme des Referenzkandidaten; kein Türereignis.
         self.opened_at = None
+        self.closed_at = None
         self.baseline = {}
         self.ventilated = False
         self.ventilation_degraded = False
         self.ventilation_positions = ()
-        self.context = False
         self.counts = {}
         self.levels = {}
         self.active_positions = ()
@@ -360,7 +360,7 @@ class Detector:
                 holds=dict(self.counts),
                 signals=tuple(d.kind for d in output),
                 door_open=self.open,
-                ventilation_context=self.context,
+                ventilation_context=self.ventilated,
             )
             self.diagnostic = trace
             if self.observer:
@@ -440,15 +440,17 @@ class Detector:
             self.counts["door"] = 0
             self.counts["door_heating"] = 0
             if self.open:
-                self.opened_at, self.context, self.ventilated = now, False, False
+                self.opened_at, self.closed_at, self.ventilated = now, None, False
                 self.ventilation_degraded = False
                 self.ventilation_positions = channels
                 self.baseline = {}
+                self.counts["weak"] = 0
+                self.levels["weak"] = False
                 for c in self.ventilation_positions:
                     self._remember_ventilation_baseline(c)
                 emit(Kind.DOOR_OPEN)
             else:
-                self.context = self.ventilated
+                self.closed_at = now
                 self.baseline = {}
                 self.ventilation_degraded = False
                 self.ventilation_positions = ()
@@ -474,6 +476,14 @@ class Detector:
         trace["conditions"]["infusion"] = infusion if infusion_check else None
         if self._edge("infusion", sustained):
             emit(Kind.INFUSION)
+        weak_opportunity = (
+            self.closed_at is not None
+            and now
+            <= self.closed_at + timedelta(minutes=p["confirmation_minutes"])
+        )
+        if not weak_opportunity:
+            self.counts["weak"] = 0
+            self.levels["weak"] = False
         if self.index % p["person_step_seconds"] == 0:
             for route, kind in (
                 ("strong", Kind.PERSON_STRONG),
@@ -481,7 +491,7 @@ class Detector:
             ):
                 checking = (
                     eligible
-                    and (route != "weak" or self.context)
+                    and (route != "weak" or weak_opportunity)
                     and (allowed is None or allowed(kind))
                 )
                 trace["checks"][route] = checking

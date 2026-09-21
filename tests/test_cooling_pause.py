@@ -165,9 +165,15 @@ class CoolingPauseTests(unittest.TestCase):
         self.assertIsNone(c.heater_override)
         self.assertFalse(c.last_decision.heat)
 
-    def test_cancelled_old_deadline_cannot_finish_a_paused_cycle(self):
+    def test_manual_off_preserves_the_running_cooling_deadline(self):
         c = self.cooling()
+        deadline = next(d for d in c.session.deadlines if d.purpose == "forced_cooling")
         c.set_heater_override(False, at(360))
-        c.advance(at(960))  # ursprüngliches Ende: 60 + 15 Minuten
-        self.assertIsNotNone(c.session.cooling)
+        self.assertIsNone(c.session.cooling.paused_at)
         self.assertEqual(c.cooling_remaining_seconds, 600)
+        self.assertIn(deadline, c.session.deadlines)
+        self.assertEqual(c.session.cooling.ends_at, at(960))
+
+        c.advance(at(960))  # ursprüngliches Ende: 60 + 15 Minuten
+        self.assertIsNone(c.session.cooling)
+        self.assertEqual(c.session.cooling_history[-1].ends_at, at(960))

@@ -12,6 +12,14 @@ Türschließung derselben Episode und Sitzung; ohne solchen Anker ist ausdrückl
 die Erkennungszeit der Beginn. Rückwirkende Zuordnung erzeugt keine historischen
 Heizbefehle.
 
+Vor dem Eintritt muss nicht vollständig durchgelüftet werden. Eine erkannte
+Türöffnung mit anschließender Schließung genügt als Ausgangspunkt für die
+empfindlichere Personenprüfung. Erst die passenden Temperatur- und
+Feuchteverläufe lösen den vorläufigen Gang aus. Diese Gelegenheit endet mit der
+Bestätigungsfrist ab Türschluss; eine erneute Öffnung verwirft sie. Nachträglich
+eingetroffene Signale aus einer abgelaufenen oder ersetzten Türöffnungsepisode
+starten keinen Gang.
+
 | Ereignis | Wirkung |
 | --- | --- |
 | Personensignal | Legt einen vorläufigen Gang an und aktiviert die Gang-Heizbehandlung. |

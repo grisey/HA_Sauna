@@ -135,8 +135,9 @@ def apply(state: Timeline, event: Event) -> Timeline:
     """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
     `active` umfasst vorläufige und bestätigte Gänge. Vorbereitung gehört zur
-    letzten abgeschlossenen Türöffnungsepisode. Beim schwachen Startsignal ist
-    sie erforderlich; der starke Pfad und Aufguss bleiben davon unabhängig.
+    letzten abgeschlossenen Türöffnungsepisode. Das schwache Startsignal
+    benötigt deren tatsächlichen Türschlussanker; der starke Pfad und Aufguss
+    bleiben davon unabhängig.
     Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
     """
     if event.session_id != state.session_id:
@@ -183,8 +184,8 @@ def apply(state: Timeline, event: Event) -> Timeline:
             source = state.anchor.event_id if state.anchor else "recognition_only"
             if event.kind != Kind.INFUSION and source in state.rejected_start_sources:
                 return replace(state, processed=state.processed + (event,))
-            if event.kind == Kind.PERSON_WEAK and state.preparation is None:
-                raise ValueError("Schwacher Gangstart benötigt vorheriges Durchlüften")
+            if event.kind == Kind.PERSON_WEAK and state.anchor is None:
+                raise ValueError("Schwacher Gangstart benötigt einen Türschlussanker")
             anchor = state.anchor
             gang = Gang(
                 gang_id=f"{state.session_id}:{event.event_id}",
