@@ -1302,6 +1302,42 @@ class Controller:
         self._complete_session(at, light_after_run=light_after_run)
         self._evaluate(at)
 
+    def finish_session_gap(self, token: str, at: datetime):
+        """End the currently paused session through its displayed gap deadline.
+
+        The token ties this action to the exact interruption the user saw.  The
+        post-session light object remains in place, but becomes due immediately,
+        so the device adapter can reliably retry its required OFF command.
+        """
+        at = utc(at)
+        session = self._session
+        deadline = (
+            next(
+                (
+                    candidate
+                    for candidate in session.deadlines
+                    if candidate.purpose == "session_gap" and candidate.token == token
+                ),
+                None,
+            )
+            if session is not None
+            else None
+        )
+        if session is None or session.operation_enabled or deadline is None:
+            raise ValueError("Diese Unterbrechungsfrist ist nicht mehr gültig.")
+        # Erst nach der unverändernden Tokenprüfung bis zur realen Uhrzeit
+        # abrechnen. Eine inzwischen regulär fällige Frist schließt dabei über
+        # ihren normalen Pfad mit dem ursprünglichen Endzeitpunkt ab.
+        self.advance(at, evaluate=False)
+        ends_at = min(at, deadline.due_at)
+        if self.light_after_run is None:
+            self._create_session_light(session.session_id, ends_at, ends_at)
+        else:
+            self.light_after_run = replace(self.light_after_run, ends_at=ends_at)
+        self._complete_session(ends_at, light_after_run=False)
+        self._evaluate(at)
+        return deadline
+
     def _create_session_light(
         self, session_id: str, started_at: datetime, ends_at: datetime
     ):

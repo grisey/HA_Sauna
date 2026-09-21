@@ -134,6 +134,13 @@ async def _async_set_parameters_locked(
     if partial and merged.get("final_temperature_c", False) is None:
         merged.pop("final_temperature_c")
     parameters = Parameters(merged)
+    button_temperature = runtime.configuration.button_temperature_c
+    if not (
+        parameters.minimum_for("target_temperature_c")
+        <= button_temperature
+        <= BY_KEY["target_temperature_c"].maximum
+    ):
+        raise ParameterError("sauna_min_temperature_c", "button_temperature_invalid")
     # A changed lower bound must be valid for the whole stored catalog before
     # options are written; otherwise the next reload would reject saved data.
     try:
@@ -360,6 +367,45 @@ async def apply_temperature_parameters(
     await runtime._cycle()
 
 
+async def async_set_button_program(hass, entry, profile, temperature_c=None):
+    """Atomically persist the physical button's named or constant program."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        runtime._require_open()
+        if runtime.reconfiguring or runtime.session:
+            raise ConfigurationLocked(
+                "Das Tasterprogramm kann gerade nicht geändert werden."
+            )
+        ids = {program.id for program in runtime.configuration.temperature_programs}
+        if (
+            not isinstance(profile, str)
+            or profile not in {"constant", *ids}
+            or (profile != "constant" and temperature_c is not None)
+        ):
+            raise ValueError("Ungültiges Tasterprogramm")
+        temperature = runtime.configuration.button_temperature_c
+        if profile == "constant" and temperature_c is not None:
+            temperature = Parameters(
+                {
+                    **runtime.configuration.parameters.as_dict(),
+                    "target_temperature_c": temperature_c,
+                }
+            ).values["target_temperature_c"]
+        configuration = replace(
+            runtime.configuration,
+            button_program=profile,
+            button_temperature_c=temperature,
+        )
+        # This selection has no effect on an already-running controller (which
+        # is excluded above), so it can be adopted immediately instead of
+        # waiting for the options listener to reload the runtime.
+        runtime.configuration = configuration
+        hass.config_entries.async_update_entry(
+            entry, options=configuration.as_options()
+        )
+        return configuration
+
+
 async def async_set_program_catalog(hass, entry, stored):
     """Replace the complete catalog atomically while no sauna session exists."""
     runtime = entry.runtime_data
@@ -484,28 +530,6 @@ async def async_set_temperature_steps(hass, entry, values):
             entry, options=runtime.configuration.as_options()
         )
         return parameters.as_dict()
-
-
-async def async_set_button_program(hass, entry, profile):
-    """Persist the physical-button profile only when no session is open."""
-    runtime = entry.runtime_data
-    async with runtime._lock:
-        runtime._require_open()
-        if runtime.reconfiguring:
-            raise ConfigurationLocked(
-                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
-            )
-        if runtime.session:
-            raise ConfigurationLocked(
-                "Das Tasterprogramm kann erst nach Ende der Saunasitzung geändert werden."
-            )
-        ids = {program.id for program in runtime.configuration.temperature_programs}
-        if not isinstance(profile, str) or profile not in {"current", "constant", *ids}:
-            raise ValueError("Ungültiges Tasterprogramm")
-        runtime.configuration = replace(runtime.configuration, button_program=profile)
-        hass.config_entries.async_update_entry(
-            entry, options=runtime.configuration.as_options()
-        )
 
 
 async def async_set_control_mode(hass, entry, mode):

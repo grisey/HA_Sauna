@@ -29,6 +29,12 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.now += timedelta(seconds=seconds)
         asyncio.run(self._handle(name))
 
+    def test_manual_only_heater_command_rechecks_mode_when_executed(self):
+        with self.assertRaisesRegex(ValueError, "Betriebsart"):
+            asyncio.run(self.runtime.set_heater_override(True, manual_only=True))
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.session)
+
     async def _handle(self, name):
         async with self.runtime._lock:
             await self.runtime._handle_button_event(name, self.now)
@@ -196,6 +202,36 @@ class ButtonRuntimeTests(unittest.TestCase):
         values = Parameters({}).values
         self.assertEqual(values["button_hold_seconds"], 2)
         self.assertEqual(values["button_hold_brightness_percent"], 1)
+
+    def test_button_start_uses_its_frozen_constant_temperature(self):
+        self.runtime = SaunaRuntime(
+            Configuration(
+                Bindings(bindings()),
+                Parameters({"target_temperature_c": 86}),
+                button_temperature_c=74,
+            ),
+            lambda: self.now,
+        )
+
+        self._event("short")
+
+        self.assertEqual(self.runtime.controller.target_temperature, 74)
+        self.assertEqual(self.runtime.configuration.button_temperature_c, 74)
+
+    def test_button_start_uses_the_selected_named_program(self):
+        self.runtime = SaunaRuntime(
+            Configuration(
+                Bindings(bindings()),
+                Parameters({"target_temperature_c": 70}),
+                button_program="gipfelstuermer",
+            ),
+            lambda: self.now,
+        )
+
+        self._event("short")
+
+        self.assertEqual(self.runtime.controller.program_mode, "progressive")
+        self.assertEqual(self.runtime.controller.target_temperature, 84)
 
 
 if __name__ == "__main__":

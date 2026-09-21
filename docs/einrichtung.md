@@ -14,7 +14,7 @@ Home Assistant ab **2026.9.0** voraus; geprüft wurde der aktuelle Stand mit
    hinzufügen** und richten Sie **HA Sauna** ein.
 
 Für ein Update wählen Sie die gewünschte Version in HACS und starten Home
-Assistant anschließend neu. Bei einer Vorabversion wie `1.0.0-rc3` aktivieren
+Assistant anschließend neu. Bei einer Vorabversion wie `1.0.0-rc4` aktivieren
 Sie den HACS-[Schalter für Vorabversionen](https://hacs.dev/docs/use/entities/switch/)
 von HA Sauna. HACS legt diesen Schalter zunächst deaktiviert an; aktivieren Sie
 gegebenenfalls zuerst die Entität. Solange nur Vorabversionen vorliegen, kann

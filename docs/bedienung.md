@@ -2,8 +2,17 @@
 
 HA Sauna begleitet eine **Saunasitzung** von der Temperaturwahl bis zum
 Lichtnachlauf. Sie kann mehrere **Saunagänge** enthalten. Ein erkannter Gang
-ist zunächst vorläufig; ein Aufguss bestätigt ihn. Die Übersicht ist für die tägliche Bedienung
-gedacht; Administratoren finden weitergehende Steuerungen unter **Details**.
+ist zunächst vorläufig; ein Aufguss bestätigt ihn. Oben neben der Sauna stehen **Übersicht**,
+**Details** und **Einstellungen**. Die Übersicht ist für die tägliche Bedienung
+mit den normalen Home-Assistant-Bedienrechten gedacht. Hier wählen Sie Betriebsart,
+Temperatur und Licht. Administratoren finden weitergehende Steuerungen unter **Details**.
+
+## Persönliche Startanzeige
+
+Unter **Einstellungen** finden Sie ganz unten **Als Startseite festlegen**.
+Damit wird die Saunaübersicht zur persönlichen Home-Assistant-Startseite des
+angemeldeten Benutzers. Eine andere Startseite wählen Sie später im
+Home-Assistant-Profil. Diese Einstellung gilt auch für normale Benutzer.
 
 ## Einschalten und Temperatur auswählen
 
@@ -57,9 +66,13 @@ Die sechs mitgelieferten Programme sind ebenfalls einstellbare Vorlagen:
 | Höhenwanderung | 90 → 95 → 100 °C |
 | Schnellstarter | 70 → 90 °C |
 
-Administratoren können unter **Details → Einstellungen & Export →
-Temperaturprogramme** Vorlagen umbenennen, anpassen, ergänzen oder entfernen.
-Auch dort können Temperaturen gleichmäßig verteilt oder einzeln festgelegt werden.
+Unter **Einstellungen → Programme** können Nutzer mit normalen
+Home-Assistant-Bedienrechten Vorlagen umbenennen, anpassen, ergänzen oder
+entfernen. Auch dort können Temperaturen gleichmäßig verteilt oder einzeln
+festgelegt werden. Unter **Einstellungen → Saunataster** wird die Startvorgabe gesetzt:
+Sie verwendet ein benanntes Programm oder eine unabhängig gespeicherte konstante
+Temperatur. Programme und Tasterwahl lassen sich nur zwischen abgeschlossenen
+Sitzungen ändern.
 
 ## Während der Saunasitzung
 
@@ -101,8 +114,10 @@ Drehschalter weiterhin selbst ein.
 
 Zum Ausschalten wählen Sie **Ausschalten**. Der Ofen geht aus und der
 Lichtnachlauf beginnt sofort. Innerhalb der einstellbaren Wiederaufnahmezeit
-(standardmäßig 15 Minuten) setzt erneutes Einschalten dieselbe Sitzung fort.
-Mit Ablauf dieser Zeit endet die Sitzung und das Licht geht aus. Für den
+(standardmäßig 15 Minuten) setzt **Fortsetzen** dieselbe Sitzung fort.
+**Endgültig beenden** schaltet das Licht sofort aus und beendet die Sitzung;
+beim nächsten Einschalten beginnt eine neue Sitzung. Mit Ablauf der
+Wiederaufnahmezeit endet die Sitzung ebenfalls und das Licht geht aus. Für den
 Lichtnachlauf gibt es keine zusätzliche Dauer.
 
 ## Licht
@@ -133,8 +148,8 @@ zum Ende der einstellbaren Übersteuerungsdauer von standardmäßig zehn Minuten
 ## Saunataster und Lichttaster
 
 Der Saunataster startet aus dem ausgeschalteten Zustand im Automatikbetrieb.
-Er verwendet die für den Taster gewählte Vorgabe: die aktuelle Auswahl, eine
-konstante Temperatur oder ein festgelegtes Temperaturprogramm. Ein kurzer Druck während
+Er verwendet die für den Taster gewählte Vorgabe: ein festgelegtes
+Temperaturprogramm oder eine unabhängig gespeicherte konstante Temperatur. Ein kurzer Druck während
 der Saunasitzung schaltet den Ofen vorübergehend manuell; der nächste kurze
 Druck übergibt ihn wieder an die Automatik. Halten Sie den Taster gedrückt, um
 die Saunasitzung zu beenden. Das Licht zeigt den Abschluss mit einer stark
@@ -156,9 +171,11 @@ vorigen Abschnitt.
 
 ## Betriebsart Manuell und zeitbegrenzte Übersteuerung
 
-Die Betriebsart **Manuell** wählen Administratoren zwischen abgeschlossenen
-Saunasitzungen auf der Übersicht. In dieser Betriebsart schalten Sie Ofen und
-Licht selbst. Messung, Archivierung und technische Schutzabschaltungen bleiben
+Die Betriebsarten **Automatik** und **Manuell** wählen Sie zwischen abgeschlossenen
+Saunasitzungen auf der Übersicht. Dafür genügen die normalen Home-Assistant-Bedienrechte.
+In **Manuell** schalten Sie den Ofen mit **EIN** und **AUS** und wählen für das
+Licht **Aus**, **Gedimmt** oder **Hell**. Zur Temperaturwahl wechseln Sie zurück
+zu **Automatik**. Messung, Archivierung und technische Schutzabschaltungen bleiben
 aktiv; die Temperaturautomatik, reguläre Heizzeit-Kühlpausen und automatische
 Lichtwechsel sind ausgesetzt. Manuell endet nicht nach einer festen Zeit.
 Eine bestätigte Übertemperatur löst auch dort eine zusätzliche Kühlung aus. Sie
@@ -176,6 +193,9 @@ behalten Vorrang.
 Die markierte Taste zeigt die gewählte Steuerung. Bei **Automatik** kann der
 Ofen deshalb tatsächlich ein- oder ausgeschaltet sein; seinen aktuellen
 Zustand lesen Sie getrennt als **Ofen an** beziehungsweise **Ofen aus**.
+Die Umgebungskachel unter Temperatur und Luftfeuchte zeigt im Automatikbetrieb
+Tür- und Ofenstatus. Im manuellen Betrieb erscheint kein Türhinweis und keine
+zweite Ofenstatuskachel.
 
 ## Verlauf und Archiv
 
@@ -191,18 +211,19 @@ zeigt den Ausschnitt innerhalb der gesamten Sitzung und lässt ihn verschieben.
 
 Administratoren können unter **Details → Detailverlauf** beide Messhöhen mit
 vollständigen Angaben betrachten. Die **Erkennungskontrolle** ordnet Marker und
-Ereignisliste einander zu. Unter **Einstellungen & Export** lädt der Button
+Ereignisliste einander zu. Unter **Einstellungen** lädt der Button
 **Archiv als ZIP herunterladen** Messwerte, Sitzungsverläufe und
 Ereigniszuordnungen herunter.
 
-## Admin-Einstellungen
+## Details und technische Einstellungen
 
-**Details** ist Administratoren vorbehalten. Unter **Einstellungen & Export**
-können Sie Werte nach Temperatur und Heizung, Temperatursteigerung und Profile,
-Betrieb und Kühlung, Licht, Überwachung, Timer und Anzeige ordnen. Änderungen
-an Grundeinstellungen und Gerätezuordnungen sind nach Ende einer Saunasitzung
-verfügbar. Während einer Sitzung bleiben Solltemperatur, Endtemperatur und
-Verteilung der Temperaturautomatik änderbar.
+**Details** sowie technische Bereiche der **Einstellungen** sind
+Administratoren vorbehalten. Dort liegen Grundeinstellungen und
+Gerätezuordnungen, Betrieb und Fristen, Erkennung, freie Lichtwerte,
+Übersteuerungen im Automatikbetrieb, Protokollierung und Archivexport.
+Änderungen an Grundeinstellungen und Gerätezuordnungen sind nach Ende einer
+Saunasitzung verfügbar. Während einer Sitzung bleiben Solltemperatur,
+Endtemperatur und Verteilung der Temperaturautomatik änderbar.
 
 **Standardwerte wiederherstellen** setzt die einstellbaren Werte,
 Temperaturprogramme und Protokollstufe auf zentrale Standards zurück. Es lässt

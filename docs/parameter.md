@@ -26,6 +26,10 @@ gewählter Temperaturen enthalten. Deren Länge bestimmt die Stufenzahl, und die
 erste sowie letzte Temperatur bestimmen Start und Ende. Nach der letzten Stufe
 wird die letzte Temperatur beibehalten.
 
+Die Tasterwahl verwendet ein benanntes Programm oder eine separat gespeicherte
+konstante Temperatur. Diese Temperatur unterliegt demselben Bereich wie die
+Solltemperatur und ist nicht an die aktuelle Temperaturwahl gekoppelt.
+
 Bereit ist die Sauna ab Erreichen der Solltemperatur. Die obere Regeltemperatur
 des Ofens liegt durch die **Temperaturreserve** standardmäßig 5 °C darüber;
 der Schaltabstand beträgt 3 °C. Nach einer regulären Temperaturabschaltung gilt

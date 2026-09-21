@@ -49,11 +49,12 @@ class Configuration:
     control_input_mode: str = "switch"
     button_event_type: str = ""
     program_mode: str = "constant"
-    button_program: str = "current"
+    button_program: str = "constant"
     temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
     selected_program_id: str | None = None
     control_mode: str = "automatic"
     temperature_steps: tuple[float, ...] | None = None
+    button_temperature_c: float | None = None
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
@@ -66,6 +67,18 @@ class Configuration:
             ):
                 raise ValueError("Ungültige manuelle Temperaturstufen")
             object.__setattr__(self, "temperature_steps", steps)
+        if self.button_temperature_c is None:
+            object.__setattr__(
+                self,
+                "button_temperature_c",
+                self.parameters.values["target_temperature_c"],
+            )
+        Parameters(
+            {
+                **self.parameters.as_dict(),
+                "target_temperature_c": self.button_temperature_c,
+            }
+        )
         if self.button_program not in {"program_1", "program_2"} or any(
             program.id == self.button_program for program in self.temperature_programs
         ):
@@ -107,6 +120,7 @@ class Configuration:
                 "selected_program_id",
                 "control_mode",
                 "temperature_steps",
+                "button_temperature_c",
             }
         ):
             raise ValueError(
@@ -171,14 +185,23 @@ class Configuration:
                 maximum_c=maximum_c,
                 maximum_gangs=maximum_gangs,
             )
-        button_program = options.get("button_program", "current")
+        button_program = options.get("button_program", "constant")
         selected_program_id = options.get("selected_program_id")
         control_mode = options.get("control_mode", "automatic")
         steps = options.get("temperature_steps")
         program_ids = {program.id for program in programs}
+        if button_program == "current":
+            button_program = (
+                selected_program_id
+                if selected_program_id in program_ids
+                else "constant"
+            )
+        button_temperature_c = options.get(
+            "button_temperature_c", parameters.values["target_temperature_c"]
+        )
         if (
             program_mode not in ("constant", "progressive")
-            or button_program not in {"current", "constant", *program_ids}
+            or button_program not in {"constant", *program_ids}
             or (
                 selected_program_id is not None
                 and selected_program_id not in program_ids
@@ -198,6 +221,7 @@ class Configuration:
             selected_program_id,
             control_mode,
             steps,
+            button_temperature_c,
         )
 
     def as_options(self) -> dict:
@@ -215,6 +239,7 @@ class Configuration:
             "selected_program_id": self.selected_program_id,
             "control_mode": self.control_mode,
             "temperature_steps": self.temperature_steps,
+            "button_temperature_c": self.button_temperature_c,
         }
 
 
@@ -606,6 +631,13 @@ class SaunaRuntime:
             self.configuration.button_program,
             catalog=self.configuration.temperature_programs,
         )
+        if self.configuration.button_program == "constant":
+            parameters = Parameters(
+                {
+                    **parameters.as_dict(),
+                    "target_temperature_c": self.configuration.button_temperature_c,
+                }
+            )
         self.controller.update_temperature_parameters(
             parameters,
             self._clock(),
@@ -725,10 +757,12 @@ class SaunaRuntime:
                 self.session.session_id if self.session else None,
             )
 
-    async def set_heater_override(self, value: bool | None):
+    async def set_heater_override(self, value: bool | None, *, manual_only=False):
         """Apply a manual heater selection through the serialized runtime path."""
         async with self._lock:
             self._require_open()
+            if manual_only and self.configuration.control_mode != "manual":
+                raise ValueError("Die Betriebsart wurde inzwischen geändert.")
             now = self._clock()
             if self.device:
                 self.device.refresh(now)
@@ -766,6 +800,36 @@ class SaunaRuntime:
                         "ended_at": now,
                     },
                     deadline.session_id if deadline else self.session.session_id,
+                )
+            await self._cycle()
+
+    async def finish_session_gap(self, token):
+        """Permanently finish the paused session selected by its gap token."""
+        async with self._lock:
+            self._require_open()
+            now = self._clock()
+            deadline = self.controller.finish_session_gap(token, now)
+            if self.device:
+                # A manual brightness must not be restored after the required
+                # session-light OFF.  The due LightAfterRun object keeps the
+                # adapter's normal OFF/retry path responsible for the output.
+                self.device.set_light_override(None)
+                self.device.light_output.finish_automatic()
+            self.log.info(
+                "session_finished_manually",
+                "Unterbrochene Saunasitzung endgültig beendet.",
+            )
+            if self.archive:
+                self.archive.append(
+                    "manual_session_end",
+                    now,
+                    {
+                        "purpose": "session_gap",
+                        "token": token,
+                        "planned_ends_at": deadline.due_at,
+                        "ended_at": min(now, deadline.due_at),
+                    },
+                    deadline.session_id,
                 )
             await self._cycle()
 

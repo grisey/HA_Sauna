@@ -20,10 +20,10 @@ from .settings import (
     async_reset_parameters,
     async_set_button_program,
     async_set_control_mode,
-    async_set_temperature_steps,
     async_set_parameters,
     async_set_program,
     async_set_program_catalog,
+    async_set_temperature_steps,
 )
 
 
@@ -42,6 +42,14 @@ def can_control(request, entry_id):
 def require_control(request, entry_id):
     if not can_control(request, entry_id):
         raise web.HTTPForbidden()
+
+
+def can_control_heater(request, entry_id, runtime):
+    """Allow manual heater control to switch controllers and administrators."""
+    return request["hass_user"].is_admin or (
+        can_control(request, entry_id)
+        and runtime.configuration.control_mode == "manual"
+    )
 
 
 def manual_controls(runtime):
@@ -190,7 +198,7 @@ class StateView(HomeAssistantView):
                             "temperature": can_control(request, entry_id),
                             "program": can_control(request, entry_id),
                             "light": can_control(request, entry_id),
-                            "heater": request["hass_user"].is_admin,
+                            "heater": can_control_heater(request, entry_id, runtime),
                         },
                     }
                 )
@@ -245,6 +253,32 @@ class FinishPhaseView(HomeAssistantView):
             )
         try:
             await runtime.finish_phase(body["purpose"], body["token"])
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True})
+
+
+class FinishSessionView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/finish-session"
+    name = "api:ha_sauna:finish_session"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        body = await request.json()
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"token"}
+            or not isinstance(body["token"], str)
+            or not body["token"]
+        ):
+            return self.json(
+                {"error": "Bitte die aktuelle Unterbrechungsfrist auswählen."},
+                status_code=400,
+            )
+        try:
+            await runtime.finish_session_gap(body["token"])
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
@@ -388,15 +422,14 @@ class ProgramView(HomeAssistantView):
 
 
 class ProgramsView(HomeAssistantView):
-    """Replace the named temperature-program catalog for administrators."""
+    """Replace the named temperature-program catalog for switch controllers."""
 
     url = "/api/ha_sauna/{entry_id}/programs"
     name = "api:ha_sauna:programs"
     requires_auth = True
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
+        require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime_for(hass, entry_id)
@@ -418,22 +451,42 @@ class ButtonProgramView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
+        require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime = runtime_for(hass, entry_id)
         body = await request.json()
-        if not isinstance(body, dict) or set(body) != {"profile"}:
+        if not isinstance(body, dict) or set(body) not in (
+            {"profile"},
+            {"profile", "temperature_c"},
+        ):
             raise web.HTTPBadRequest(text="Tasterprogramm fehlt oder ist ungültig")
+        if "temperature_c" in body and (
+            isinstance(body["temperature_c"], bool)
+            or not isinstance(body["temperature_c"], (int, float))
+        ):
+            raise web.HTTPBadRequest(text="Tastertemperatur fehlt oder ist ungültig")
         try:
-            await async_set_button_program(hass, entry, body["profile"])
+            await async_set_button_program(
+                hass, entry, body["profile"], body.get("temperature_c")
+            )
         except ConfigurationLocked as error:
             return self.json({"error": str(error)}, status_code=409)
+        except ParameterError:
+            return self.json(
+                {
+                    "error": "Tastertemperatur innerhalb des eingestellten Regelbereichs wählen."
+                },
+                status_code=400,
+            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=400)
         return self.json(
-            {"success": True, "button_program": runtime.configuration.button_program}
+            {
+                "success": True,
+                "button_program": runtime.configuration.button_program,
+                "button_temperature_c": runtime.configuration.button_temperature_c,
+            }
         )
 
 
@@ -443,8 +496,7 @@ class ControlModeView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
+        require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime = runtime_for(hass, entry_id)
@@ -491,7 +543,8 @@ class HeaterView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        if not can_control_heater(request, entry_id, runtime):
             raise web.HTTPForbidden()
         body = await request.json()
         if (
@@ -502,9 +555,10 @@ class HeaterView(HomeAssistantView):
             raise web.HTTPBadRequest(
                 text="Heizwert muss wahr, falsch oder automatisch sein"
             )
-        runtime = runtime_for(request.app[KEY_HASS], entry_id)
         try:
-            await runtime.set_heater_override(body["value"])
+            await runtime.set_heater_override(
+                body["value"], manual_only=not request["hass_user"].is_admin
+            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})
@@ -612,6 +666,7 @@ def register(hass):
     hass.http.register_view(StateView)
     hass.http.register_view(ControlView)
     hass.http.register_view(FinishPhaseView)
+    hass.http.register_view(FinishSessionView)
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
     hass.http.register_view(ResetParametersView)

@@ -341,6 +341,7 @@ class SaunaPanel extends HTMLElement {
           15px/1.5 system-ui,
           sans-serif;
         --accent: #197367;
+        --confirm: #315fba;
         --warm: #cd693a;
       }
       * {
@@ -352,10 +353,23 @@ class SaunaPanel extends HTMLElement {
         padding: 28px 32px 60px;
       }
       header {
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
         align-items: center;
         gap: 18px;
         margin-bottom: 24px;
+      }
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .header-context {
+        justify-self: end;
+        min-width: 0;
+      }
+      .header-context select {
+        max-width: 100%;
       }
       h1 {
         font-size: 28px;
@@ -411,6 +425,11 @@ class SaunaPanel extends HTMLElement {
         background: var(--accent);
         color: white;
         border-color: var(--accent);
+      }
+      button.confirm {
+        background: var(--confirm);
+        color: white;
+        border-color: var(--confirm);
       }
       button.stop {
         background: #a34029;
@@ -688,8 +707,16 @@ class SaunaPanel extends HTMLElement {
         height: 220px;
       }
       .main-tabs {
-        border-bottom: 1px solid var(--divider-color, #333);
-        padding-bottom: 8px;
+        justify-content: center;
+        margin: 0;
+        padding: 4px;
+        border: 1px solid var(--divider-color, #333);
+        border-radius: 11px;
+      }
+      .main-tabs button {
+        padding: 8px 12px;
+        font-size: 13px;
+        border-color: transparent;
       }
       .normal-tabs,
       .detail-tabs {
@@ -790,15 +817,13 @@ class SaunaPanel extends HTMLElement {
         width: 100%;
         text-align: center;
       }
+      .operation-control > button + button {
+        margin-top: 8px;
+      }
       .session-status {
         display: block;
         margin-top: 7px;
         text-align: center;
-      }
-      .greeting {
-        text-align: center;
-        font-size: 21px;
-        margin: 16px 0;
       }
       .dial {
         max-width: 240px;
@@ -825,6 +850,40 @@ class SaunaPanel extends HTMLElement {
       }
       .dashboard .card {
         margin-top: 0;
+      }
+      .environment {
+        display: grid;
+        gap: 16px;
+      }
+      .environment .card {
+        margin: 0;
+      }
+      .environment-status {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        padding: 18px 22px;
+        gap: 18px;
+      }
+      .environment-status > div {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .environment-status > div + div {
+        padding-left: 18px;
+        border-left: 1px solid var(--divider-color, #333);
+      }
+      .environment-status strong {
+        font-size: 16px;
+      }
+      .environment-status .feedback::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        margin-right: 8px;
       }
       .gauge-card h2 {
         text-align: center;
@@ -1435,6 +1494,22 @@ class SaunaPanel extends HTMLElement {
       .program-form {
         margin-top: 10px;
       }
+      .settings-programs .program-form + .program-form {
+        border-top: 1px solid var(--divider-color, #333);
+        margin-top: 22px;
+        padding-top: 22px;
+      }
+      .settings-footer {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        margin-top: 24px;
+      }
+      .settings-footer p {
+        flex-basis: 100%;
+        margin: 0;
+      }
       .program-form .field {
         position: relative;
         flex: 1 1 105px;
@@ -1479,8 +1554,15 @@ class SaunaPanel extends HTMLElement {
         align-items: center;
       }
       @media (max-width: 600px) {
+        header {
+          grid-template-columns: 1fr auto;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
         .main-tabs {
-          margin-bottom: 8px;
+          grid-row: 2;
+          grid-column: 1 / -1;
+          justify-self: center;
         }
         .main-tabs button {
           padding: 7px 10px;
@@ -1508,10 +1590,9 @@ class SaunaPanel extends HTMLElement {
         }
       }
     </style><main>
-      <header><button data-action="menu" aria-label="Menü öffnen">☰</button><div><h1>Sauna</h1><small>Steuerung und Verlauf</small></div><span class="grow"></span><select id="instance" aria-label="Sauna auswählen"></select></header>
-      <nav class="tabs main-tabs" aria-label="Ansicht"><button data-action="normal" aria-selected="true">Übersicht</button><button data-action="details" aria-selected="false">Details</button></nav>
+      <header><div class="header-brand"><button data-action="menu" aria-label="Menü öffnen">☰</button><h1>Sauna</h1></div><nav class="tabs main-tabs" aria-label="Ansicht"><button data-action="normal" aria-selected="true">Übersicht</button><button data-action="details" aria-selected="false">Details</button><button data-action="settings" aria-selected="false">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select></div></header>
       <nav class="tabs normal-tabs" aria-label="Übersicht"><button data-action="overview" aria-selected="true">Steuerung</button><button data-action="history" aria-selected="false">Verlauf und Archiv</button></nav>
-      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-selected="true">Betrieb & Fristen</button><button data-action="detail-history" aria-selected="false">Detailverlauf</button><button data-action="diagnostics" aria-selected="false">Erkennungskontrolle</button><button data-action="settings" aria-selected="false">Einstellungen & Export</button></nav>
+      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-selected="true">Betrieb & Fristen</button><button data-action="detail-history" aria-selected="false">Detailverlauf</button><button data-action="diagnostics" aria-selected="false">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="row"><h2 class="grow">Sitzungsverlauf</h2><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div>
         <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
@@ -1554,7 +1635,7 @@ class SaunaPanel extends HTMLElement {
           e.target.closest("[data-program-id]")?.dataset.programId,
         );
       }
-      if (e.target.id === "button-program")
+      if (["button-program", "button-temperature"].includes(e.target.id))
         this.action("button-program").catch((err) => this.message(err));
     });
     this.shadowRoot.addEventListener("input", (e) => {
@@ -1888,6 +1969,11 @@ class SaunaPanel extends HTMLElement {
     const disabled = !permissions.admin;
     const canStart =
       permissions.control && (s.operation_enabled || !s.start_errors.length);
+    const sessionGap = !s.operation_enabled
+      ? (session?.deadlines || []).find(
+          (deadline) => deadline.purpose === "session_gap",
+        )
+      : null;
     const targetBounds = this.temperatureBounds();
     const presets = Array.from(
       { length: p.preset_count },
@@ -1954,7 +2040,9 @@ class SaunaPanel extends HTMLElement {
       s.operation_enabled && session
         ? `<small class="session-status">${active ? (s.gang_confirmation === "confirmed" ? "Saunagang durch Aufguss bestätigt" : "Saunagang vorläufig · Aufguss ausstehend") : `Sitzung seit ${when(session.timeline.session_started_at)}`}</small>`
         : "";
-    const operation = `<div class="operation-control"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${sessionIndicator}</div>`;
+    const operation = sessionGap
+      ? `<div class="operation-control"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button data-action="operation" ${canStart ? "" : "disabled"}>Fortsetzen</button></div>`
+      : `<div class="operation-control"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${sessionIndicator}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
     const stateLine = `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong><span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityLine || availabilityText || "")}</span></div><span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span></div>`;
@@ -2012,9 +2100,6 @@ class SaunaPanel extends HTMLElement {
       if (!deadlineLabels[deadline.purpose]) continue;
       timerRows.push([deadlineLabels[deadline.purpose], remaining(deadline.due_at)]);
     }
-    const sessionGap = (session?.deadlines || []).find(
-      (deadline) => deadline.purpose === "session_gap",
-    );
     const lightAfterRun = s.light_after_run && stamp(s.light_after_run.ends_at) > now;
     if (sessionGap)
       timerRows.push([
@@ -2137,26 +2222,26 @@ class SaunaPanel extends HTMLElement {
     const manualLightValue =
       this.manualLightDraft ?? light.manual ?? light.automatic ?? 0;
     const isAdmin = !!this.hass.user?.is_admin;
-    const canManualHeater = isAdmin && permissions.heater;
+    const canManualHeater = permissions.heater;
     const canManualLight = isAdmin && permissions.light;
     const coolingPaused = session?.cooling?.paused_at
       ? '<p class="muted" data-cooling-status="paused">Zwangskühlung pausiert.</p>'
       : "";
-    const modeControls = isAdmin
-      ? `<div class="row"><small>Betriebsmodus</small><button data-action="control-mode:automatic" aria-selected="${!manualMode}" ${!modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-selected="${manualMode}" ${!modeLocked ? "" : "disabled"}>Manuell</button>${modeLocked ? '<small class="muted">Während der Sitzung gesperrt.</small>' : ""}</div>`
-      : "";
+    const modeControls = `<div class="row"><small>Betriebsmodus</small><button data-action="control-mode:automatic" aria-selected="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-selected="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button>${modeLocked ? '<small class="muted">Während der Sitzung gesperrt.</small>' : ""}</div>`;
     const heaterControls = (scope) =>
-      isAdmin
+      isAdmin || (scope === "overview" && manualMode)
         ? `<section class="manual-section manual-heater"><div class="row">${scope === "overview" ? "<h3>Ofen</h3>" : ""}<span class="manual-status ${heaterMode}" data-heater-status="${heaterMode}">${heaterStatus}</span></div><div class="row"><button data-action="heater:true" aria-pressed="${heater.manual === true}" ${canManualHeater ? "" : "disabled"}>EIN</button><button data-action="heater:false" aria-pressed="${heater.manual === false}" ${canManualHeater ? "" : "disabled"}>AUS</button>${manualMode ? "" : `<button data-action="heater:auto" aria-pressed="${heater.manual == null}" ${canManualHeater ? "" : "disabled"}>Automatik</button>`}</div>${!s.operation_enabled ? '<small class="muted">EIN startet zuerst den Saunabetrieb.</small>' : ""}${coolingPaused}</section>`
         : "";
     const lightControls = (scope) => {
+      if (!isAdmin && scope !== "overview") return "";
       const inputId =
           scope === "details" ? "manual-light-value" : "manual-light-value-overview",
         action = scope === "details" ? "manual-light" : "manual-light-overview";
       const fallback = `Vorübergehende Übersteuerungen folgen spätestens nach ${duration(p.manual_override_minutes * 60)} wieder der Automatik.`;
-      return isAdmin
-        ? `<section class="manual-section manual-light"><div class="row">${scope === "overview" ? "<h3>Licht</h3>" : ""}<span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(canManualLight, true)}</div><div class="row"><label for="${inputId}">Freie Helligkeit</label><input id="${inputId}" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="${action}" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div><small class="muted">${manualMode ? "Die Lichtwahl bleibt im manuellen Betrieb erhalten." : fallback}</small></section>`
+      const brightnessInput = isAdmin
+        ? `<div class="row"><label for="${inputId}">Freie Helligkeit</label><input id="${inputId}" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="${action}" class="confirm" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div><small class="muted">${manualMode ? "Die Lichtwahl bleibt im manuellen Betrieb erhalten." : fallback}</small>`
         : "";
+      return `<section class="manual-section manual-light"><div class="row">${scope === "overview" ? "<h3>Licht</h3>" : ""}<span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(permissions.light, true)}</div>${brightnessInput}</section>`;
     };
     this.$('.main-tabs [data-action="details"]').hidden = !permissions.admin;
     const overviewLightTimer =
@@ -2172,9 +2257,12 @@ class SaunaPanel extends HTMLElement {
       quality(position, quantity) === "current"
         ? ""
         : `<p class="muted">${qualityText(position, quantity)}</p>`;
+    const environmentStatus = manualMode
+      ? ""
+      : `<div class="card environment-status"><div><small>Tür</small><strong data-door-status>${doorText}</strong></div><div><small>Heizung</small><strong class="feedback ${s.heating_feedback === true ? "on" : s.heating_feedback === false ? "off" : "unknown"}">${heatCaption}</strong></div></div>`;
     this.updateMarkup(
       "#current",
-      `<h2 class="greeting">Servus ${esc(this.hass.user?.name || "")}</h2>${modeControls ? `<div class="card control-mode-card">${modeControls}</div>` : ""}<div class="dashboard"><div class="card">${stateLine}<div class="row muted"><span class="feedback ${s.heating_feedback === true ? "on" : s.heating_feedback === false ? "off" : "unknown"}">${heatCaption}</span></div>${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${manualMode ? `<div class="manual-overrides">${heaterControls("overview")}${lightControls("overview")}</div>` : automaticLightControls}${alert}</div><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${dial(value("upper", "temperature"), "°C", "", temperatureColor, targetBounds?.maximum ?? temperatureDial.scale, quality("upper", "temperature") === "current", targetControl, targetBounds?.minimum ?? 0)}${overviewQuality("upper", "temperature")}</div><div><h2>Luftfeuchte</h2>${dial(humidity, "%", "Relative Luftfeuchte", humidityColor, 100, quality("upper", "humidity") === "current")}${overviewQuality("upper", "humidity")}</div></div><p class="muted" data-door-status>${doorText}</p></div></div>`,
+      `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${manualMode ? `<div class="manual-overrides">${heaterControls("overview")}${lightControls("overview")}</div>` : automaticLightControls}${alert}</div><div class="environment"><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${dial(value("upper", "temperature"), "°C", "", temperatureColor, targetBounds?.maximum ?? temperatureDial.scale, quality("upper", "temperature") === "current", targetControl, targetBounds?.minimum ?? 0)}${overviewQuality("upper", "temperature")}</div><div><h2>Luftfeuchte</h2>${dial(humidity, "%", "Relative Luftfeuchte", humidityColor, 100, quality("upper", "humidity") === "current")}${overviewQuality("upper", "humidity")}</div></div></div>${environmentStatus}</div></div>`,
     );
     const temperatureProgram =
       s.configuration.program_mode === "progressive"
@@ -2389,7 +2477,7 @@ class SaunaPanel extends HTMLElement {
   }
   programApplyClass(dirty, saving) {
     return dirty && !saving
-      ? "primary"
+      ? "confirm"
       : this.programSaveState === "saved"
         ? "program-saved"
         : "";
@@ -3760,8 +3848,9 @@ class SaunaPanel extends HTMLElement {
     this.$("#detection-plots").innerHTML = html;
   }
   drawSettings() {
-    const state = this.state;
-    if (this.settingsEntry !== this.entry) {
+    const state = this.state,
+      admin = !!state.permissions?.admin;
+    if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
       const field = (d) =>
         `<label class="field">${esc(d.label)} (${esc(d.unit)})<input type="number" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.integer ? 1 : "any"}" min="${d.minimum ?? 0}" max="${d.maximum}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}><small id="help-${esc(d.key)}">${esc(d.description)}</small></label>`;
       const groups = [
@@ -3811,33 +3900,66 @@ class SaunaPanel extends HTMLElement {
             : "";
         })
         .join("");
+      const administration = admin
+        ? `<div class="card"><h2>Grundeinstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters">${temperatureGroups}${otherGroups}${experts ? `<details class="settings-group"><summary>Experteneinstellungen zur Erkennung</summary><p class="muted">Diese Werte verändern die Erkennung von Türöffnungen, Personen und Aufgüssen. Die Erkennungskontrolle zeigt ihre Wirkung.</p>${experts}</details>` : ""}<button type="submit" class="confirm">Einstellungen speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a></div></div><div class="card"><h2>Standardwerte</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten.</p><button data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div><div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv bleibt unabhängig davon vollständig.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sitzungsverläufe und Ereigniszuordnungen herunterladen.</p><button data-action="export">Archiv als ZIP herunterladen</button></div>`
+        : "";
       this.$("#settings").innerHTML =
-        `<div class="card"><h2>Einstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters">${temperatureGroups}<section class="settings-programs"><h3>Temperaturprogramme</h3><p class="muted">Programme verteilen Start und Ende über die eingetragene Verteilung. Sie begrenzen keine Saunagänge.</p><div id="program-library"></div></section>${otherGroups}${experts ? `<details class="settings-group"><summary>Experteneinstellungen zur Erkennung</summary><p class="muted">Diese Werte verändern die Erkennung von Türöffnungen, Personen und Aufgüssen. Die Erkennungskontrolle zeigt ihre Wirkung.</p>${experts}</details>` : ""}<button type="submit" class="primary">Einstellungen speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a></div></div><div class="card"><h2>Standardwerte</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten.</p><button data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div><div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv bleibt unabhängig davon vollständig.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sitzungsverläufe und Ereigniszuordnungen herunterladen.</p><button data-action="export">Archiv als ZIP herunterladen</button></div>`;
-      this.$("#log-level").value = state.configuration.log_level;
+        `<div class="card"><h2>Saunataster</h2><div id="button-settings"></div></div><div class="card settings-programs"><h2>Programme</h2><p id="program-lock" class="muted" hidden></p><div id="program-library"></div></div>${administration}<footer class="settings-footer"><button data-action="default-page" class="confirm">Als Startseite festlegen</button><small>Für dein Home-Assistant-Profil</small><p id="start-page-status" class="muted" role="status"></p></footer>`;
+      if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
+      this.settingsAdmin = admin;
       this.programDraft = null;
       this.programLibraryNeedsRender = true;
     }
-    this.$("#parameters").disabled = !this.hass.user?.is_admin;
     for (const d of state.parameters) {
       const input = this.$(`#parameters input[name="${d.key}"]`);
       if (!input) continue;
-      input.disabled =
-        !this.hass.user?.is_admin || (state.configuration_locked && !d.live_editable);
+      input.disabled = !admin || (state.configuration_locked && !d.live_editable);
       if (!input.dataset.edited && this.shadowRoot.activeElement !== input)
         input.value =
           d.key === "target_temperature_c"
             ? state.target_temperature
             : (state.configuration.parameters[d.key] ?? "");
     }
-    this.$("#log-level").disabled = !this.hass.user?.is_admin;
-    this.$('[data-action="logging"]').disabled = !this.hass.user?.is_admin;
-    this.$('[data-action="reset-settings"]').disabled =
-      !this.hass.user?.is_admin || state.configuration_locked;
-    this.$("#configuration-lock").textContent = state.configuration_locked
-      ? "Solltemperatur, Endtemperatur und Verteilung der Steigerung sind änderbar. Andere Einstellungen bleiben bis zum Ende der Saunasitzung gesperrt. Laufende Fristen und Heizsperren bleiben immer wirksam."
-      : "Alle erforderlichen Einstellungen haben Standardwerte. Änderungen der Grundeinstellungen gelten für die nächste Saunasitzung.";
+    if (admin) {
+      this.$('[data-action="reset-settings"]').disabled = state.configuration_locked;
+      this.$("#configuration-lock").textContent = state.configuration_locked
+        ? "Grundeinstellungen sind nach Ende der Sitzung wieder änderbar. Solltemperatur, Endtemperatur und Verteilung bleiben verfügbar."
+        : "Die Grundeinstellungen gelten für die nächste Sitzung.";
+    }
+    this.$("#program-lock").hidden = !state.configuration_locked;
+    this.$("#program-lock").textContent =
+      "Programme und Tasterwahl sind nach Ende der Sitzung wieder änderbar.";
     this.renderProgramLibrary();
+    this.drawButtonProgram();
+    if (this.hass.userData?.default_panel === "ha-sauna") {
+      const button = this.$('[data-action="default-page"]');
+      button.disabled = true;
+      button.textContent = "Als Startseite festgelegt";
+    }
+  }
+  async setDefaultPage() {
+    const button = this.$('[data-action="default-page"]'),
+      status = this.$("#start-page-status");
+    button.disabled = true;
+    status.textContent = "";
+    try {
+      const current = await this.hass.callWS({
+        type: "frontend/get_user_data",
+        key: "core",
+      });
+      await this.hass.callWS({
+        type: "frontend/set_user_data",
+        key: "core",
+        value: { ...current.value, default_panel: "ha-sauna" },
+      });
+      button.textContent = "Als Startseite festgelegt";
+      status.textContent =
+        "Diese Übersicht ist als deine Home-Assistant-Startseite gespeichert. Ändern kannst du die Auswahl in deinem Profil.";
+    } catch (error) {
+      button.disabled = false;
+      throw error;
+    }
   }
   programBounds() {
     const definitions = this.state?.parameters || [],
@@ -3922,16 +4044,25 @@ class SaunaPanel extends HTMLElement {
     if (!target) return;
     const state = this.state,
       bounds = this.programBounds(),
-      editable = !!this.hass.user?.is_admin && !state.configuration_locked,
-      programs = this.currentProgramDraft(),
-      button = state.configuration.button_program || "current";
+      editable = !!state.permissions?.program && !state.configuration_locked,
+      programs = this.currentProgramDraft();
     if (target.dataset.editable === String(editable) && !this.programLibraryNeedsRender)
       return;
-    const option = (value, label) =>
-      `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
-    target.innerHTML = `<div class="row"><label class="field">Tasterprogramm<select id="button-program" ${editable ? "" : "disabled"}>${option("current", "Aktuelle Temperaturwahl")}${option("constant", "Konstanttemperatur")}${programs.map((program) => option(program.id, program.name)).join("")}</select></label></div>${programs.map((program) => this.catalogProgramForm(program, bounds, editable)).join("")}<div class="row"><button type="button" data-action="program-add" ${editable ? "" : "disabled"}>Programm hinzufügen</button><button type="button" data-action="program-save" class="primary" ${editable ? "" : "disabled"}>Programme speichern</button></div>${editable ? "" : '<p class="muted">Nur Home-Assistant-Administratoren können Programme außerhalb einer Saunasitzung bearbeiten.</p>'}`;
+    target.innerHTML = `${programs.map((program) => this.catalogProgramForm(program, bounds, editable)).join("")}<div class="program-actions"><button type="button" data-action="program-add" ${editable ? "" : "disabled"}>Programm hinzufügen</button><button type="button" data-action="program-save" class="confirm" ${editable ? "" : "disabled"}>Programme speichern</button></div>`;
     target.dataset.editable = String(editable);
     this.programLibraryNeedsRender = false;
+  }
+  drawButtonProgram() {
+    const configuration = this.state.configuration,
+      editable = !!this.state.permissions?.program && !this.state.configuration_locked,
+      button = configuration.button_program,
+      bounds = this.temperatureBounds(),
+      option = (value, label) =>
+        `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
+    this.updateMarkup(
+      "#button-settings",
+      `<div class="row"><label class="field" for="button-program">Beim Einschalten<select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstant")}${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</select></label>${button === "constant" ? `<label class="field" for="button-temperature">Temperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>`,
+    );
   }
   newProgramId() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -4010,7 +4141,8 @@ class SaunaPanel extends HTMLElement {
     this.message(null);
     const permissions = this.state?.permissions || {};
     if (
-      (action === "operation" && !permissions.control) ||
+      ((action === "operation" || action.startsWith("finish-session:")) &&
+        !permissions.control) ||
       ((action === "target" || action.startsWith("preset:")) &&
         !permissions.temperature) ||
       ((action === "program-free" ||
@@ -4021,13 +4153,13 @@ class SaunaPanel extends HTMLElement {
         action === "program-save" ||
         action.startsWith("program-remove:") ||
         action === "button-program") &&
-        (!permissions.admin || this.state.configuration_locked)) ||
+        (!permissions.program || this.state.configuration_locked)) ||
       (action.startsWith("light:") && !permissions.light) ||
       ((action === "manual-light" || action === "manual-light-overview") &&
         (!permissions.admin || !permissions.light)) ||
-      (action.startsWith("heater:") && (!permissions.admin || !permissions.heater)) ||
+      (action.startsWith("heater:") && !permissions.heater) ||
       (action.startsWith("control-mode:") &&
-        (!permissions.admin || this.state.configuration_locked)) ||
+        (!permissions.control || this.state.configuration_locked)) ||
       (action.startsWith("end-phase:") && !permissions.admin) ||
       (action === "reset-settings" &&
         (!permissions.admin || this.state.configuration_locked)) ||
@@ -4035,14 +4167,13 @@ class SaunaPanel extends HTMLElement {
         action === "detail" ||
         action === "detail-history" ||
         action === "diagnostics" ||
-        action === "settings") &&
+        action === "logging" ||
+        action === "export") &&
         !permissions.admin)
     )
       return;
-    if (action === "configure") {
-      await this.action("details");
-      return this.action("settings");
-    }
+    if (action === "default-page") return this.setDefaultPage();
+    if (action === "configure") return this.action("settings");
     if (action === "reset-settings") return this.resetSettings();
     if (action === "logging") {
       await this.api(`/${this.entry}/logging`, "POST", {
@@ -4065,7 +4196,7 @@ class SaunaPanel extends HTMLElement {
       this.focusEvent(action.slice(10));
       return;
     }
-    if (action === "normal" || action === "details") {
+    if (["normal", "details", "settings"].includes(action)) {
       this.$(".normal-tabs").hidden = action !== "normal";
       this.$(".detail-tabs").hidden = action !== "details";
       this.shadowRoot
@@ -4073,9 +4204,14 @@ class SaunaPanel extends HTMLElement {
         .forEach((b) =>
           b.setAttribute("aria-selected", String(b.dataset.action === action)),
         );
+      if (action === "settings") {
+        this.setPanelView("settings");
+        this.drawSettings();
+        return;
+      }
       return this.action(action === "normal" ? "overview" : "detail");
     }
-    if (["overview", "history", "detail", "diagnostics", "settings"].includes(action)) {
+    if (["overview", "history", "detail", "diagnostics"].includes(action)) {
       if (action === "history") {
         this.historyDetail = false;
         this.positions = new Set(["upper"]);
@@ -4219,9 +4355,25 @@ class SaunaPanel extends HTMLElement {
     }
     if (action === "program-save") return this.savePrograms();
     if (action === "button-program") {
-      await this.api(`/${this.entry}/button-program`, "POST", {
-        profile: this.$("#button-program").value,
-      });
+      const profile = this.$("#button-program").value,
+        payload = { profile };
+      if (profile === "constant") {
+        const input = this.$("#button-temperature"),
+          value = input
+            ? Number(input.value)
+            : this.state.configuration.button_temperature_c,
+          bounds = this.temperatureBounds();
+        if (
+          !bounds ||
+          (input && !input.value.trim()) ||
+          !Number.isFinite(value) ||
+          value < bounds.minimum ||
+          value > bounds.maximum
+        )
+          throw Error("Temperatur innerhalb der zulässigen Grenzen eingeben");
+        payload.temperature_c = value;
+      }
+      await this.api(`/${this.entry}/button-program`, "POST", payload);
       await this.refresh();
       return;
     }
@@ -4331,6 +4483,14 @@ class SaunaPanel extends HTMLElement {
       const [, purpose, token] = action.split(":");
       await this.api(`/${this.entry}/finish_phase`, "POST", {
         purpose,
+        token: decodeURIComponent(token),
+      });
+      await this.refresh();
+      return;
+    }
+    if (action.startsWith("finish-session:")) {
+      const token = action.slice("finish-session:".length);
+      await this.api(`/${this.entry}/finish-session`, "POST", {
         token: decodeURIComponent(token),
       });
       await this.refresh();

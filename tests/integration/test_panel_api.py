@@ -68,6 +68,52 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
         self.assertIsNone(self.entry.runtime_data.session)
 
+    async def test_finish_session_requires_the_current_gap_token_and_control_permission(self):
+        from datetime import UTC, datetime
+
+        url = self.base + "/" + self.entry.entry_id + "/finish-session"
+        async with ClientSession() as client:
+            async with client.post(url, json={"token": "old"}) as response:
+                self.assertEqual(response.status, 401)
+
+        denied = await self.hass.auth.async_create_user("No session control", group_ids=[])
+        denied_token = await self.hass.auth.async_create_refresh_token(denied, client_id="http://localhost/")
+        denied_headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(denied_token)}
+        async with ClientSession(headers=denied_headers) as client:
+            async with client.post(url, json={"token": "old"}) as response:
+                self.assertEqual(response.status, 403)
+
+        async with ClientSession(headers=self.headers) as client:
+            for body in ([], {}, {"token": []}, {"token": "old", "extra": True}):
+                async with client.post(url, json=body) as response:
+                    self.assertEqual(response.status, 400, await response.text())
+
+        user = await self.hass.auth.async_create_user("Session control", group_ids=[GROUP_ID_USER])
+        user_token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(user_token)}
+        runtime = self.entry.runtime_data
+        runtime._clock = lambda: datetime.now(UTC)
+        await runtime.set_operation(True)
+        await runtime.set_operation(False)
+        gap_token = next(deadline.token for deadline in runtime.session.deadlines if deadline.purpose == "session_gap")
+
+        async with ClientSession(headers=headers) as client:
+            await runtime.set_operation(True)
+            resumed_session = runtime.session
+            async with client.post(url, json={"token": gap_token}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertIs(runtime.session, resumed_session)
+            self.assertTrue(runtime.session.operation_enabled)
+
+            await runtime.set_operation(False)
+            current_gap_token = next(deadline.token for deadline in runtime.session.deadlines if deadline.purpose == "session_gap")
+            async with client.post(url, json={"token": current_gap_token}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.get(self.base + "/" + self.entry.entry_id + "/state") as response:
+                state = await response.json()
+                self.assertIsNone(state["session"])
+                self.assertFalse(state["configuration_locked"])
+
     async def test_admin_program_and_mode_endpoints_persist_and_lock_with_the_session(self):
         url = self.base + "/" + self.entry.entry_id
         catalog = list(self.entry.options["temperature_programs"])
@@ -100,20 +146,78 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         async with ClientSession(headers=headers) as client:
             async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
                 self.assertEqual(response.status, 403)
+            async with client.post(url + "/heater", json={"value": False}) as response:
+                self.assertEqual(response.status, 403)
+            async with client.post(url + "/programs", json={"programs": catalog}) as response:
+                self.assertEqual(response.status, 403)
+            async with client.post(url + "/button-program", json={"profile": profile}) as response:
+                self.assertEqual(response.status, 403)
 
     async def test_standard_user_controls_only_the_permitted_panel_routes(self):
         """The normal HA user inherits control of the integration switch."""
+        from datetime import UTC, datetime, timedelta
+
         user = await self.hass.auth.async_create_user("Standard user", group_ids=[GROUP_ID_USER])
         token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
         headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
         runtime = self.entry.runtime_data
+        now = datetime.now(UTC)
+        runtime._clock = lambda: now
         url = self.base + "/" + self.entry.entry_id
+        catalog = list(self.entry.options["temperature_programs"])
+        catalog.append(
+            {
+                "id": "standard_program",
+                "name": "Standardprogramm",
+                "start_c": 76,
+                "end_c": 88,
+                "distribution_gangs": 4,
+            }
+        )
 
         async with ClientSession(headers=headers) as client:
+            async with client.post(url + "/programs", json={"programs": catalog}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(
+                url + "/button-program",
+                json={"profile": "constant", "temperature_c": 81},
+            ) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["button_temperature_c"], 81)
+            async with client.get(url + "/state") as response:
+                self.assertEqual(
+                    (await response.json())["configuration"]["button_temperature_c"],
+                    81,
+                )
+            for body in (
+                {"profile": "constant", "temperature_c": "81"},
+                {"profile": "constant", "temperature_c": 1000},
+                {"profile": "standard_program", "temperature_c": 81},
+            ):
+                async with client.post(url + "/button-program", json=body) as response:
+                    self.assertEqual(response.status, 400, await response.text())
+            async with client.post(url + "/button-program", json={"profile": "standard_program"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.configuration.button_program, "standard_program")
+            async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.configuration.control_mode, "manual")
             async with client.post(url + "/control", json={"enabled": True}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             self.assertIsNotNone(runtime.session)
             identity = runtime.session.session_id
+            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            async with client.post(url + "/programs", json={"programs": catalog}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            async with client.post(url + "/button-program", json={"profile": "constant"}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            async with client.post(url + "/heater", json={"value": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertTrue((await response.json())["manual_controls"]["heater"]["manual"])
+            async with client.post(url + "/heater", json={"value": False}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertFalse((await response.json())["manual_controls"]["heater"]["manual"])
             async with client.post(url + "/control", json={"enabled": False}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             self.assertEqual(runtime.session.session_id, identity)
@@ -128,7 +232,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.status, 200, await response.text())
             async with client.get(url + "/state") as response:
                 self.assertEqual(response.status, 200, await response.text())
-                self.assertTrue((await response.json())["permissions"]["control"])
+                permissions = (await response.json())["permissions"]
+                self.assertTrue(permissions["control"])
+                self.assertTrue(permissions["heater"])
             async with client.get(url + "/archive") as response:
                 self.assertEqual(response.status, 200, await response.text())
 
@@ -142,11 +248,22 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(runtime.session.operation_enabled)
 
             await forbidden(client.post(url + "/light", json={"value": 42}))
-            await forbidden(client.post(url + "/heater", json={"value": False}))
             await forbidden(client.post(url + "/finish_phase", json={"purpose": "after_run", "token": "valid-token"}))
             await forbidden(client.post(url + "/parameters", json=dict(self.entry.options["parameters"])))
             await forbidden(client.post(url + "/logging", json={"level": "INFO"}))
             await forbidden(client.get(url + "/export"))
+
+            now += timedelta(seconds=150)
+            await runtime.tick()
+            self.assertIsNone(runtime.session)
+            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.get(url + "/state") as response:
+                permissions = (await response.json())["permissions"]
+                self.assertTrue(permissions["control"])
+                self.assertFalse(permissions["heater"])
+            async with client.post(url + "/heater", json={"value": False}) as response:
+                self.assertEqual(response.status, 403, await response.text())
 
     async def test_manual_phase_end_checks_payload_identity_and_uses_real_runtime(self):
         from datetime import datetime, UTC, timedelta

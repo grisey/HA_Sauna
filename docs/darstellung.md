@@ -1,9 +1,10 @@
 # Oberfläche
 
-Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht enthält
-die alltägliche Bedienung sowie **Verlauf und Archiv**. Details stehen
-Home-Assistant-Administratoren zur Verfügung. Es gibt keine zusätzlichen
-Benutzerrollen der Integration.
+Die Topnavigation neben der Sauna enthält **Übersicht**, **Details** und **Einstellungen**.
+Die Übersicht enthält die alltägliche Bedienung mit den normalen
+Home-Assistant-Bedienrechten sowie **Verlauf und Archiv**. Details und
+technische Einstellbereiche stehen Home-Assistant-Administratoren zur Verfügung.
+Es gibt keine zusätzlichen Benutzerrollen der Integration.
 
 ## Übersicht
 
@@ -13,7 +14,9 @@ Saunagangzahl steht rechts. Die aktive Sitzungsangabe erscheint unter
 erscheint erst bei mehreren eingerichteten Saunen.
 
 Temperaturwahl und Temperaturautomatik stehen zusammen in der Bedienkachel.
-Temperatur, Luftfeuchte und Erkennungsstatus bilden den Umgebungsbereich.
+Im Automatikbetrieb zeigt der Umgebungsbereich unter Temperatur und Luftfeuchte
+Türstatus und Ofenstatus. Im manuellen Betrieb entfällt der Türhinweis; eine
+zweite Ofenstatuskachel wird nicht gezeigt.
 Bei der Temperaturwahl liegt der Schieber direkt auf der Skala. Klick, Ziehen
 und Pfeiltasten ändern das Soll; der einstellbare Regelbereich beginnt
 standardmäßig bei 60 °C und endet bei 100 °C. Eine direkte Wahl bedeutet
@@ -34,7 +37,8 @@ ist bei Änderungen aktiv und hervorgehoben; nach dem Speichern zeigt er
 Die Helligkeitsauswahl zeigt **Gedimmt** und **Hell** mit kleineren Prozentangaben.
 Im Automatikbetrieb stehen auf der Übersicht **Aus**, **Automatik** und **Hell**
 zur Verfügung. Die Betriebsart **Manuell** blendet die Temperaturautomatik aus
-und zeigt die manuelle Ofen- und Lichtbedienung. Der Betriebsartwechsel ist nur
+und zeigt **Ofen EIN/AUS** und die Lichtstufen **Aus**, **Gedimmt**, **Hell** auch für
+normale Benutzer. Der Betriebsartwechsel ist nur
 zwischen abgeschlossenen Sitzungen möglich. Vorübergehende Übersteuerungen
 während des Automatikbetriebs sind davon unabhängig.
 
@@ -116,11 +120,15 @@ Im Browser wird keine zweite Erkennung berechnet.
 
 ## Einstellungen
 
+Ganz unten setzt **Als Startseite festlegen** die Saunaübersicht als persönliche
+Home-Assistant-Startseite. Die Auswahl gehört zum angemeldeten Benutzerprofil.
+
 Die Einstellungen sind nach Temperatur, Betrieb, Licht, Überwachung, Timer,
-Energie und Darstellung geordnet. Die Programmbibliothek lässt Namen,
-Start- und Endtemperaturen sowie die Verteilung ändern und neue Programme
-hinzufügen. Die beim Start am Saunataster verwendete Wahl wird separat
-festgelegt. Erkennungsparameter stehen in einem eigenen Expertenbereich.
+Energie und Darstellung geordnet. Nutzer mit normalen Home-Assistant-
+Bedienrechten verwalten dort die Programmbibliothek und die Tasterwahl. Der
+Taster startet mit einem benannten Programm oder einer unabhängig gespeicherten
+konstanten Temperatur. Technische Konfiguration, Erkennungsparameter,
+Protokollierung und Export stehen nur Administratoren zur Verfügung.
 
 Während einer Sitzung sind nur die dafür vorgesehenen Temperaturwerte und die
 Protokollstufe änderbar. Grundwerte, Programmeinträge, Betriebsart und

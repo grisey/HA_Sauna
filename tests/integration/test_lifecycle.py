@@ -77,7 +77,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "temperature_gangs": 4, "program_mode": "progressive",
                 "button_program": "gipfelstuermer",
             })
-        self.assertEqual(runtime.configuration.button_program, "current")
+        self.assertEqual(runtime.configuration.button_program, "constant")
         flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {
             "target_temperature_c": 80, "final_temperature_c": 95,
             "temperature_gangs": 4, "program_mode": "progressive",

@@ -28,6 +28,7 @@ assert.ok(source.includes("Übersteuerungen folgen spätestens nach"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
 assert.match(source, /s\.configuration\.program_mode\s*===\s*"progressive"/);
 assert.doesNotMatch(source, /Temperaturprogramm<\/dt><dd>\$\{p\.final_temperature_c!=null/);
+assert.doesNotMatch(source, /Servus|greeting/);
 
 const makePanel = (permissions, lightValue="42") => {
   const calls=[];
@@ -39,23 +40,24 @@ const makePanel = (permissions, lightValue="42") => {
   return {panel,calls};
 };
 
-const renderCurrent = (mode, controls={}, heatingFeedback=false, target="#current") => {
+const renderCurrent = (mode, controls={}, heatingFeedback=false, target="#current", grants={}, locked=false, session=null, startErrors=[]) => {
+  const permissions={admin:true,control:true,heater:true,light:true,temperature:true,program:true,...grants};
   const nodes=new Map();
   const node=selector => {
     if(!nodes.has(selector))nodes.set(selector,{innerHTML:"",hidden:false});
     return nodes.get(selector);
   };
   const panel=Object.assign(Object.create(Panel.prototype), {
-    hass:{user:{name:"Admin",is_admin:true}}, $:node, progressionDraft:null, manualLightDraft:null,
+    hass:{user:{name:"Testperson",is_admin:permissions.admin}}, $:node, progressionDraft:null, manualLightDraft:null,
     state:{
-      now:"2026-09-20T12:00:00Z", session:null, last_session:null,
+      now:"2026-09-20T12:00:00Z", session, last_session:null,
       configuration:{control_mode:mode,program_mode:"constant",selected_program_id:null,
         temperature_programs:[],parameters:{preset_count:0,preset_start_c:70,preset_step_c:5,
           session_light_brightness_percent:50,manual_override_minutes:10}},
       parameters:[{key:"target_temperature_c",minimum:30,maximum:100,integer:false}],
       measurements:[],measurement_status:{},mechanical_timer:{state:"idle",remaining_seconds:0},
-      manual_controls:{light:{normal:25,automatic:12,...controls.light},heater:controls.heater||{}}, permissions:{admin:true,control:true,heater:true,light:true,temperature:true,program:true},
-      issues:[],start_errors:[],operation_enabled:false,heating_feedback:heatingFeedback,
+      manual_controls:{light:{normal:25,automatic:12,...controls.light},heater:controls.heater||{}}, permissions, configuration_locked:locked,
+      issues:[],start_errors:startErrors,operation_enabled:false,heating_feedback:heatingFeedback,
       heating_observation:{source:"unknown"},phase:"manuell",gang_count:0,energy_kwh:0,
       energy_source:"estimated",heating_limit_seconds:0,target_temperature:80,
       start_availability:null,phase_timer:null,
@@ -98,6 +100,29 @@ const renderCurrent = (mode, controls={}, heatingFeedback=false, target="#curren
     ["/entry-1/control","POST",{enabled:true}],
     ["/entry-1/heater","POST",{value:true}],
   ]);
+  const preferenceCalls=[], startButton={disabled:false,textContent:"Als Startseite festlegen"}, startStatus={textContent:""};
+  const startPage=Object.assign(Object.create(Panel.prototype), {
+    state:{permissions:{admin:false}}, message:()=>{}, api:async()=>{throw Error("Sauna API must not be called");},
+    hass:{user:{is_admin:false},callWS:async request=>{
+      preferenceCalls.push(request);
+      return request.type==="frontend/get_user_data" ? {value:{default_panel:"lovelace",theme:"night",sidebarHidden:true}} : undefined;
+    }},
+    $:selector=>selector==='[data-action="default-page"]'?startButton:selector==="#start-page-status"?startStatus:null,
+  });
+  await startPage.action("default-page");
+  assert.deepEqual(JSON.parse(JSON.stringify(preferenceCalls)),[
+    {type:"frontend/get_user_data",key:"core"},
+    {type:"frontend/set_user_data",key:"core",value:{default_panel:"ha-sauna",theme:"night",sidebarHidden:true}},
+  ]);
+  assert.equal(startButton.textContent,"Als Startseite festgelegt");
+
+  const failedButton={disabled:false}, failedStatus={textContent:"vorher"};
+  const failedStartPage=Object.assign(Object.create(Panel.prototype), {
+    state:{permissions:{admin:false}}, message:()=>{}, hass:{callWS:async()=>{throw Error("profile unavailable");}},
+    $:selector=>selector==='[data-action="default-page"]'?failedButton:selector==="#start-page-status"?failedStatus:null,
+  });
+  await assert.rejects(()=>failedStartPage.action("default-page"),/profile unavailable/);
+  assert.equal(failedButton.disabled,false,"a failed profile update leaves the button usable");
   const automatic=renderCurrent("automatic"), manual=renderCurrent("manual");
   assert.match(automatic,/Temperaturwahl/);
   assert.match(automatic,/data-action="program-mode:program" aria-pressed="false"/);
@@ -107,11 +132,85 @@ const renderCurrent = (mode, controls={}, heatingFeedback=false, target="#curren
   assert.doesNotMatch(automatic,/program-named-list|program-form/);
   assert.doesNotMatch(automatic,/Gedimmt/);
   assert.match(automatic,/data-action="light:auto"[^>]*>Automatik<\/button>/);
+  assert.match(automatic,/class="card environment-status"[\s\S]*data-door-status[\s\S]*Heizung/);
   assert.doesNotMatch(manual,/Temperaturwahl|program-types|temperature-presets/);
   assert.match(manual,/data-action="manual-light-overview"/);
   assert.match(manual,/id="manual-light-value-overview"/);
   assert.match(manual,/Gedimmt <small>25 %<\/small>/);
   assert.match(manual,/Hell <small>50 %<\/small>/);
+  assert.doesNotMatch(manual,/environment-status|data-door-status/,"manual overview has no environment status tile");
+
+  const userAutomatic=renderCurrent("automatic",{},false,"#current",{admin:false,heater:false});
+  assert.match(userAutomatic,/Temperaturwahl/);
+  assert.match(userAutomatic,/data-target-arc="true"/);
+  assert.match(userAutomatic,/data-action="control-mode:manual" aria-selected="false" >Manuell/);
+  assert.match(userAutomatic,/data-action="light:auto"/);
+  assert.doesNotMatch(userAutomatic,/data-action="heater:|manual-light-value/);
+  const userManual=renderCurrent("manual",{},false,"#current",{admin:false});
+  assert.match(userManual,/data-action="control-mode:automatic" aria-selected="false" >Automatik/);
+  assert.match(userManual,/data-action="heater:true" aria-pressed="false" >EIN/);
+  assert.match(userManual,/data-action="heater:false" aria-pressed="false" >AUS/);
+  for(const preset of ["false","normal","true"])assert.ok(userManual.includes(`data-action="light:${preset}"`));
+  assert.doesNotMatch(userManual,/Temperaturwahl|data-target-arc|heater:auto|manual-light-value|Freie Helligkeit/);
+  const userLocked=renderCurrent("manual",{},false,"#current",{admin:false},true);
+  assert.match(userLocked,/data-action="control-mode:automatic"[^>]*disabled/);
+  assert.match(userLocked,/data-action="control-mode:manual"[^>]*disabled/);
+  const readOnly=renderCurrent("manual",{},false,"#current",{admin:false,control:false,heater:false,light:false});
+  for(const action of ["control-mode:automatic","control-mode:manual","heater:true","heater:false","light:true"])
+    assert.match(readOnly,new RegExp(`data-action="${action}"[^>]*disabled`));
+
+  const pausedSession={
+    timeline:{active:null,completed:[],session_started_at:"2026-09-20T11:00:00Z"},
+    heating:{elapsed_seconds:0},
+    deadlines:[{purpose:"session_gap",token:"gap-current",due_at:"2026-09-20T12:10:00Z"}],
+  };
+  const pausedOverview=renderCurrent("automatic",{},false,"#current",{admin:false,control:true},false,pausedSession);
+  const pausedDetails=renderCurrent("automatic",{},false,"#details",{admin:false,control:true},false,pausedSession);
+  for(const markup of [pausedOverview,pausedDetails]) {
+    assert.match(markup,/class="tile operation stop" data-action="finish-session:gap-current"[^>]*>Endgültig beenden<\/button>/);
+    assert.match(markup,/data-action="operation"[^>]*>Fortsetzen<\/button>/);
+    assert.doesNotMatch(markup,/Einschalten/);
+  }
+  const pausedWithStartError=renderCurrent("automatic",{},false,"#current",{admin:false,control:true},false,pausedSession,["missing_sensor"]);
+  assert.match(pausedWithStartError,/data-action="finish-session:gap-current"(?![^>]*disabled)/);
+  assert.match(pausedWithStartError,/data-action="operation"[^>]*disabled>Fortsetzen<\/button>/);
+  ({panel,calls}=makePanel({admin:false,control:true}));
+  panel.state.operation_enabled=false;
+  await panel.action("finish-session:gap-current");
+  await panel.action("operation");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ["/entry-1/finish-session","POST",{token:"gap-current"}],
+    ["/entry-1/control","POST",{enabled:true}],
+  ],"finishing uses the displayed gap token while resuming stays a regular control request");
+  calls.length=0;
+  panel.state.permissions.control=false;
+  await panel.action("finish-session:gap-current");
+  assert.equal(calls.length,0,"finishing also requires control permission in the action handler");
+
+  ({panel,calls}=makePanel({admin:false,control:true,heater:true,light:true}));
+  panel.state.configuration={control_mode:"manual"};
+  panel.state.operation_enabled=false;
+  await panel.action("heater:true");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ["/entry-1/control","POST",{enabled:true}],
+    ["/entry-1/heater","POST",{value:true}],
+  ],"a regular user's manual ON starts the operation before the heater");
+  calls.length=0;
+  await panel.action("control-mode:automatic");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[["/entry-1/control-mode","POST",{mode:"automatic"}]]);
+  calls.length=0;
+  panel.state.configuration_locked=true;
+  await panel.action("control-mode:manual");
+  await panel.action("manual-light-overview");
+  await panel.action("details");
+  assert.equal(calls.length,0,"session locking and admin actions remain enforced");
+  panel.state.permissions.heater=false;
+  await panel.action("heater:true");
+  assert.equal(calls.length,0,"automatic heater overrides still require the server's permission");
+  panel.state.permissions.control=false;
+  panel.state.configuration_locked=false;
+  await panel.action("control-mode:automatic");
+  assert.equal(calls.length,0,"a user without control permission cannot change modes");
 
   const automaticHeater=renderCurrent("automatic",{heater:{manual:null},light:{manual:null}},true,"#details");
   assert.match(automaticHeater,/data-action="heater:auto" aria-pressed="true"/);

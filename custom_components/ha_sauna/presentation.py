@@ -163,5 +163,6 @@ def parameter_error(error):
         "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
         "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
+        "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail

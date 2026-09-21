@@ -351,7 +351,7 @@ class PackagingTests(unittest.TestCase):
         translated = json.loads((folder / "translations/de.json").read_text())
         self.assertEqual(strings, translated)
         self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]),
-                         {d.key for d in DEFINITIONS} | {"program_mode", "button_program"})
+                         {d.key for d in DEFINITIONS} | {"program_mode", "button_program", "button_temperature_c"})
         self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type"})
 
     def test_ha_transport_is_confined_to_device_adapter(self):

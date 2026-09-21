@@ -476,6 +476,40 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands[-1]["service"], "turn_off")
         self.assertTrue(all(c["service_error"] is None for c in commands))
 
+    async def test_manual_session_finish_ends_the_gap_light_in_both_modes(self):
+        from dataclasses import replace
+
+        for mode in ("automatic", "manual"):
+            with self.subTest(mode=mode):
+                if mode == "manual":
+                    self.runtime.controller.set_control_mode(mode)
+                    self.runtime.configuration = replace(self.runtime.configuration, control_mode=mode)
+                await self.runtime.set_operation(True)
+                await self.runtime.set_light_override(50)
+                await self.runtime.set_operation(False)
+                token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
+
+                await self.runtime.finish_session_gap(token)
+                await self.hass.async_block_till_done()
+                self.assertIsNone(self.runtime.session)
+                self.assertFalse(self.heater.is_on)
+                self.assertFalse(self.light.is_on)
+                await self.runtime.tick()
+                self.assertFalse(self.light.is_on)
+
+                await self.runtime.set_operation(True)
+                await self.runtime.set_light_override(50)
+                await self.runtime.set_operation(False)
+                token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
+                self.light.fail_commands = True
+                await self.runtime.finish_session_gap(token)
+                self.assertIsNone(self.runtime.session)
+                self.assertFalse(self.heater.is_on)
+                self.light.fail_commands = False
+                await self.runtime.tick()
+                await self.hass.async_block_till_done()
+                self.assertFalse(self.light.is_on)
+
     async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         await async_set_parameters(self.hass, self.entry, {

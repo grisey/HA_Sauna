@@ -126,7 +126,8 @@
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
           "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
           "program_mode": "Temperaturprogramm",
-          "button_program": "Programm beim externen Einschalten"
+          "button_program": "Programm beim externen Einschalten",
+          "button_temperature_c": "Konstante Temperatur beim externen Einschalten"
         },
         "data_description": {
           "session_gap_minutes": "Dauer der Sitzungspause mit Lichtnachlauf. Erneutes Einschalten innerhalb dieser Zeit setzt die Sitzung fort.",
@@ -213,7 +214,8 @@
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "program_mode": "Konstante Temperatur oder Temperatursteigerung vom Startwert zum Endwert.",
-          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird."
+          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird.",
+          "button_temperature_c": "Wird nur für die Auswahl „Konstante Temperatur“ verwendet und bleibt unabhängig von späteren Änderungen der Solltemperatur gespeichert."
         }
       }
     },
@@ -243,6 +245,7 @@
       "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
       "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
       "invalid_button_program": "Bitte ein vorhandenes Startprogramm auswählen.",
+      "button_temperature_invalid": "Die gespeicherte Tastertemperatur muss innerhalb der aktuellen Temperaturgrenzen liegen.",
       "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen."
     },
     "abort": {
@@ -382,8 +385,7 @@
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
           "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
-          "program_mode": "Temperaturprogramm",
-          "button_program": "Programm beim externen Einschalten"
+          "program_mode": "Temperaturprogramm"
         },
         "data_description": {
           "session_gap_minutes": "Dauer der Sitzungspause mit Lichtnachlauf. Erneutes Einschalten innerhalb dieser Zeit setzt die Sitzung fort.",
@@ -469,8 +471,7 @@
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
-          "program_mode": "Konstante Temperatur oder Temperatursteigerung vom Startwert zum Endwert.",
-          "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird."
+          "program_mode": "Konstante Temperatur oder Temperatursteigerung vom Startwert zum Endwert."
         }
       },
       "logging": {
@@ -510,6 +511,7 @@
       "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
       "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
       "invalid_button_program": "Bitte ein vorhandenes Startprogramm auswählen.",
+      "button_temperature_invalid": "Die gespeicherte Tastertemperatur muss innerhalb der aktuellen Temperaturgrenzen liegen.",
       "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen."
     },
     "abort": {
@@ -540,7 +542,6 @@
     },
     "button_program": {
       "options": {
-        "current": "Aktuelle Auswahl",
         "constant": "Konstante Temperatur",
         "program_1": "Temperaturprogramm 1",
         "program_2": "Temperaturprogramm 2"

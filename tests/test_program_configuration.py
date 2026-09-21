@@ -15,10 +15,12 @@ from custom_components.ha_sauna.core.parameters import (
 from custom_components.ha_sauna.core.program_catalog import NamedTemperatureProgram
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
+    ConfigurationLocked,
     async_reset_parameters,
+    async_set_button_program,
     async_set_parameters,
-    async_set_temperature_steps,
     async_set_program_catalog,
+    async_set_temperature_steps,
     program_parameters,
 )
 
@@ -81,6 +83,118 @@ class ProgramConfigurationTests(unittest.TestCase):
         configuration = Configuration.from_options(options())
         self.assertEqual(configuration.program_mode, "constant")
         self.assertEqual(configuration.parameters.values["final_temperature_c"], 95)
+
+    def test_button_constant_temperature_is_frozen_and_legacy_current_is_normalized(self):
+        configuration = Configuration.from_options(options({"target_temperature_c": 83}))
+        self.assertEqual((configuration.button_program, configuration.button_temperature_c), ("constant", 83))
+        current = Configuration.from_options(
+            options(
+                {"target_temperature_c": 83},
+                button_program="current",
+                selected_program_id="gipfelstuermer",
+            )
+        )
+        self.assertEqual(current.button_program, "gipfelstuermer")
+        fallback = Configuration.from_options(
+            options({"target_temperature_c": 83}, button_program="current")
+        )
+        self.assertEqual(
+            (fallback.button_program, fallback.button_temperature_c), ("constant", 83)
+        )
+
+    def test_button_constant_temperature_is_independent_of_live_ui_target(self):
+        configuration = Configuration(
+            Bindings(bindings()), Parameters({"target_temperature_c": 80}), button_temperature_c=72
+        )
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+
+        asyncio.run(async_set_button_program(hass, entry, "constant", 74))
+        self.assertIsNone(runtime.session)
+        self.assertEqual(runtime.controller.target_temperature, 80)
+        self.assertEqual(runtime.configuration.button_temperature_c, 74)
+        asyncio.run(
+            async_set_parameters(
+                hass, entry, {"target_temperature_c": 86}, partial=True
+            )
+        )
+
+        self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 86)
+        self.assertEqual(runtime.configuration.button_temperature_c, 74)
+        self.assertEqual(entry.options["button_temperature_c"], 74)
+
+    def test_invalid_button_temperature_has_no_side_effects(self):
+        configuration = Configuration(Bindings(bindings()), Parameters({}))
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+        before_configuration = runtime.configuration
+        before_options = dict(entry.options)
+
+        with self.assertRaisesRegex(ParameterError, "target_temperature_c: too_small"):
+            asyncio.run(async_set_button_program(hass, entry, "constant", 59))
+
+        self.assertEqual(runtime.configuration, before_configuration)
+        self.assertEqual(entry.options, before_options)
+
+    def test_raising_minimum_rejects_button_or_catalog_before_writing(self):
+        for configuration, minimum, error in (
+            (
+                Configuration(
+                    Bindings(bindings()),
+                    Parameters({"target_temperature_c": 90}),
+                    button_temperature_c=74,
+                ),
+                75,
+                "button_temperature_invalid",
+            ),
+            (
+                Configuration(
+                    Bindings(bindings()),
+                    Parameters({"target_temperature_c": 100}),
+                    button_temperature_c=80,
+                ),
+                75,
+                "program_catalog_invalid",
+            ),
+        ):
+            with self.subTest(minimum=minimum):
+                runtime = SaunaRuntime(configuration)
+                entry = SimpleNamespace(
+                    runtime_data=runtime, options=configuration.as_options()
+                )
+                before_configuration = runtime.configuration
+                before_options = dict(entry.options)
+
+                with self.assertRaisesRegex(ParameterError, error):
+                    asyncio.run(
+                        async_set_parameters(
+                            _FakeHass(),
+                            entry,
+                            {
+                                "sauna_min_temperature_c": minimum,
+                                "preset_start_c": minimum,
+                            },
+                            partial=True,
+                        )
+                    )
+
+                self.assertEqual(runtime.configuration, before_configuration)
+                self.assertEqual(entry.options, before_options)
+
+    def test_button_program_change_observes_session_and_reconfiguration_locks(self):
+        configuration = Configuration(Bindings(bindings()), Parameters({}))
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        hass = _FakeHass()
+        runtime.reconfiguring = True
+        with self.assertRaises(ConfigurationLocked):
+            asyncio.run(async_set_button_program(hass, entry, "constant", 75))
+        runtime.reconfiguring = False
+        runtime._set_operation(True)
+        with self.assertRaises(ConfigurationLocked):
+            asyncio.run(async_set_button_program(hass, entry, "constant", 75))
 
     def test_legacy_session_light_duration_is_ignored(self):
         configuration = Configuration.from_options(
@@ -311,7 +425,7 @@ class ProgramConfigurationTests(unittest.TestCase):
         reset = Configuration.from_options(entry.options)
         self.assertEqual(reset.parameters.values["nominal_power_kw"], 4.5)
         self.assertEqual(reset.log_level, "INFO")
-        self.assertEqual(reset.button_program, "current")
+        self.assertEqual(reset.button_program, "constant")
         self.assertEqual(reset.selected_program_id, None)
         self.assertEqual(reset.control_mode, "automatic")
         self.assertEqual(reset.bindings, configuration.bindings)
@@ -326,7 +440,9 @@ class ProgramConfigurationTests(unittest.TestCase):
             )
             runtime = SaunaRuntime(configuration)
             entry = SimpleNamespace(
-                runtime_data=runtime, options=configuration.as_options()
+                runtime_data=runtime,
+                options=configuration.as_options(),
+                entry_id="test-reset",
             )
             hass = _FakeHass()
             previous_options = entry.options
@@ -334,6 +450,7 @@ class ProgramConfigurationTests(unittest.TestCase):
             # Home Assistant calls listeners only for changed options.
             if entry.options != previous_options:
                 await async_options_updated(hass, entry)
+            runtime = entry.runtime_data
             self.assertFalse(runtime.reconfiguring)
             self.assertEqual(runtime.configuration.parameters, Parameters({}))
             self.assertEqual(runtime.configuration.log_level, "INFO")
@@ -352,10 +469,17 @@ class ProgramConfigurationTests(unittest.TestCase):
 
 class _FakeConfigEntries:
     def async_update_entry(self, entry, *, options):
+        self.entry = entry
         if entry.options == options:
             return False
         entry.options = options
         return True
+
+    async def async_reload(self, entry_id):
+        assert entry_id == self.entry.entry_id
+        self.entry.runtime_data = SaunaRuntime(
+            Configuration.from_options(self.entry.options)
+        )
 
 
 class _FakeHass:
