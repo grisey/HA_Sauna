@@ -31,8 +31,10 @@ const panel=Object.assign(Object.create(Panel.prototype), {
 });
 
 assert.deepEqual(JSON.parse(JSON.stringify(panel.temperatureBounds())), {minimum: 60, maximum: 100});
-assert.equal(panel.temperatureValueAt({}, 150, 25), 60, "the top of the gauge is the 60 °C scale point");
-assert.equal(panel.temperatureValueAt({}, 255, 130), 100, "pointer coordinates follow the dial arc before clamping");
+assert.equal(panel.temperatureValueAt({}, 75.75, 204.25), 60, "the arc starts at the configured minimum");
+assert.equal(panel.temperatureValueAt({}, 150, 25), 80, "the top of the dial is the middle of the configured range");
+assert.equal(panel.temperatureValueAt({}, 224.25, 204.25), 100, "the arc ends at the configured maximum");
+assert.deepEqual(JSON.parse(JSON.stringify(panel.temperatureTickValues())), [60,70,80,90,100], "reference ticks derive from the configured range");
 assert.equal(panel.clampTemperature(60.2, {minimum: 60.2, maximum: 100}), 60.2, "rounding cannot escape a fractional minimum");
 
 {
@@ -48,7 +50,7 @@ assert.equal(panel.clampTemperature(60.2, {minimum: 60.2, maximum: 100}), 60.2, 
 
 (async () => {
   const svg={setPointerCapture: () => {}, releasePointerCapture: () => {}};
-  panel.beginTemperatureDrag({pointerId: 4, clientX: 255, clientY: 130, preventDefault: () => {}}, svg);
+  panel.beginTemperatureDrag({pointerId: 4, clientX: 224.25, clientY: 204.25, preventDefault: () => {}}, svg);
   await panel.endTemperatureDrag({pointerId: 4});
   assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), ["/entry-1/temperature", "POST", {target_temperature_c: 100}]);
 

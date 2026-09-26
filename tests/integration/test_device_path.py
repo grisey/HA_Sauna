@@ -54,6 +54,7 @@ class TestLight(LightEntity):
         self.calls = []
         self.fail_commands = False
         self.defer_state_writes = False
+        self.percent_steps = False
 
     async def async_turn_on(self, **kwargs):
         self.calls.append(("on", kwargs))
@@ -61,7 +62,11 @@ class TestLight(LightEntity):
             from homeassistant.exceptions import HomeAssistantError
             raise HomeAssistantError("Synthetic light failure")
         self._attr_is_on = True
-        self._attr_brightness = kwargs.get("brightness", self._attr_brightness)
+        brightness = kwargs.get("brightness", self._attr_brightness)
+        if self.percent_steps:
+            percentage = int(100 * (brightness + 1) / 255)
+            brightness = round(255 * percentage / 100)
+        self._attr_brightness = brightness
         if not self.defer_state_writes:
             self.async_write_ha_state()
 
@@ -205,8 +210,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.event_id for e in persons], [provisional.recognition_event_id])
         self.assertGreater(self.runtime.session.heating.intervals[0].ended_at.timestamp() - self.base.timestamp(), 240)
 
-    async def test_warmup_history_falls_back_until_a_current_trend_is_ready(self):
-        """The real HA path replaces one completed warm-up with live reports."""
+    async def test_warmup_estimate_starts_from_history_and_moves_only_on_reports(self):
+        """The real HA path blends archived and current upper measurements."""
         from dataclasses import replace
         from custom_components.ha_sauna.core.models import (
             Measurement,
@@ -214,6 +219,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             Quantity,
             Session,
         )
+        from custom_components.ha_sauna.core.timeline import Event, Kind
 
         source = self.entry.options["bindings"]["upper_temperature"]
         started = self.base - timedelta(seconds=360)
@@ -255,7 +261,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         task = self.runtime.device._historical_warmup_task
         if task is not None:
             await task
-        self.assertAlmostEqual(self.runtime.device.temperature_rate(self.now), 0.05)
+        self.now = self.base + timedelta(seconds=1)
+        await self.set_source("upper_temperature", 40)
+        await self.runtime.tick()
+        historical = self.runtime.device.estimated_ready_seconds(self.now)
+        self.assertAlmostEqual(historical, 800)
+
+        self.now = self.base + timedelta(seconds=2)
+        await self.runtime.tick()
+        self.assertEqual(self.runtime.device.estimated_ready_seconds(self.now), historical)
 
         for second in range(30, 181, 30):
             self.now = self.base + timedelta(seconds=second)
@@ -263,7 +277,59 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source("lower_temperature", 40)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
-        self.assertAlmostEqual(self.runtime.device.temperature_rate(self.now), 0.1)
+        live = self.runtime.device.estimated_ready_seconds(self.now)
+        self.assertIsNotNone(live)
+        self.assertLess(live, historical)
+        self.assertGreater(live, 220)  # Reine 0,1-°C/s-Live-ETA wäre 220 s.
+
+        session_id = self.runtime.session.session_id
+        self.now += timedelta(seconds=1)
+        dropped = Measurement(
+            Position.UPPER,
+            Quantity.TEMPERATURE,
+            50,
+            "50",
+            source,
+            self.now,
+        )
+        self.runtime.device.measurements["upper_temperature"] = dropped
+        self.runtime.device.last_valid_temperature = dropped
+        await self.runtime.tick()
+
+        self.now += timedelta(seconds=3)
+        await self.runtime.receive(
+            Event(
+                "eta-door-open",
+                session_id,
+                Kind.DOOR_OPEN,
+                self.base + timedelta(seconds=180),
+                self.now,
+            )
+        )
+        self.now += timedelta(seconds=1)
+        await self.runtime.receive(
+            Event("eta-door-close", session_id, Kind.DOOR_CLOSE, self.now, self.now)
+        )
+        self.now += timedelta(seconds=1)
+        after_close = Measurement(
+            Position.UPPER,
+            Quantity.TEMPERATURE,
+            50,
+            "50",
+            source,
+            self.now,
+        )
+        self.runtime.device.measurements["upper_temperature"] = after_close
+        self.runtime.device.last_valid_temperature = after_close
+        await self.runtime.tick()
+        after_door = self.runtime.device.estimated_ready_seconds(self.now)
+        self.assertGreater(after_door, live)
+
+        await self.runtime.tick()
+        self.assertEqual(self.runtime.device.estimated_ready_seconds(self.now), after_door)
+
+        self.now += timedelta(seconds=31)
+        self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
 
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
         from custom_components.ha_sauna.core.timeline import Kind
@@ -314,7 +380,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         # Die Automatik übernimmt den vorhandenen Lichtwert erst über 30 s.
         self.assertAlmostEqual(self.light.brightness, 180, delta=1)
         await self.time(30)
-        self.assertAlmostEqual(self.light.brightness, 255 * 33 / 100, delta=1)
+        self.assertEqual(self.light.brightness, round(255 * .33))
         async def temperature(seconds):
             self.now = self.base + timedelta(seconds=seconds)
             await self.set_source("upper_temperature", 70)
@@ -357,12 +423,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.light.is_on)
         calls = len(self.light.calls)
         await self.time(1)
-        # Beim anfänglichen Nullwert ist das Licht bereits aus. Der vollständige
-        # sichtbare Zustand bestätigt deshalb diesen wirkungslosen AUS-Befehl.
-        self.assertEqual(len(self.light.calls), calls)
-        # Mit dem ersten darstellbaren Dimmwert bleibt der Fehler erneut fällig.
-        await self.time(2)
+        # Die ersten Fade-Werte runden noch auf 0 %. Ein fehlgeschlagener
+        # AUS-Dienst bleibt wiederholbar; er sperrt die Heizregelung nicht.
         self.assertEqual(len(self.light.calls), calls + 1)
+        await self.time(2)
+        self.assertEqual(len(self.light.calls), calls + 2)
         self.assertIn("operation_light", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
         await self.runtime.set_operation(False)
@@ -380,28 +445,17 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()
         self.heater.calls.clear()
-        before_session_light = self.light.brightness
+        await self.time(30)
+        self.assertAlmostEqual(self.light.brightness, 255 * 0.5, delta=1)
         await self.time(149)
         self.assertIsNotNone(self.runtime.session)
-        self.assertAlmostEqual(self.light.brightness, before_session_light, delta=1)
+        self.assertAlmostEqual(self.light.brightness, 255 * 0.5, delta=1)
         await self.time(150)
         self.assertIsNone(self.runtime.session)
-        # Der Lichtnachlauf beginnt ebenfalls am vorhandenen Wert und dimmt
-        # erst anschließend auf seine eigene 50-%-Vorgabe.
-        self.assertAlmostEqual(self.light.brightness, before_session_light, delta=1)
-        self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
-        await self.time(180)
-        self.assertAlmostEqual(self.light.brightness, 255*.5, delta=1)
-        calls = len(self.light.calls)
-        await self.time(749)
-        self.assertEqual(len(self.light.calls), calls)
-        self.assertTrue(self.light.is_on)
-        await self.time(750)
         self.assertFalse(self.light.is_on)
         self.assertEqual(self.runtime.device.light_output.last_automatic_brightness, 0)
         self.assertIsNone(phase_timer(self.runtime.controller, self.now))
         await self.time(751)
-        self.assertEqual(len(self.light.calls), calls+1)
         self.assertNotIn(True, self.heater.calls)
         await self.runtime.archive.flush()
         stored = self.runtime.archive.read(session_id)
@@ -411,21 +465,58 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands[-1]["service"], "turn_off")
         self.assertTrue(all(c["service_error"] is None for c in commands))
 
+    async def test_manual_session_finish_ends_the_gap_light_in_both_modes(self):
+        from dataclasses import replace
+
+        for mode in ("automatic", "manual"):
+            with self.subTest(mode=mode):
+                if mode == "manual":
+                    self.runtime.controller.set_control_mode(mode)
+                    self.runtime.configuration = replace(self.runtime.configuration, control_mode=mode)
+                await self.runtime.set_operation(True)
+                await self.runtime.set_light_override(50)
+                await self.runtime.set_operation(False)
+                token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
+
+                await self.runtime.finish_session_gap(token)
+                await self.hass.async_block_till_done()
+                self.assertIsNone(self.runtime.session)
+                self.assertFalse(self.heater.is_on)
+                self.assertFalse(self.light.is_on)
+                await self.runtime.tick()
+                self.assertFalse(self.light.is_on)
+
+                await self.runtime.set_operation(True)
+                await self.runtime.set_light_override(50)
+                await self.runtime.set_operation(False)
+                token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
+                self.light.fail_commands = True
+                await self.runtime.finish_session_gap(token)
+                self.assertIsNone(self.runtime.session)
+                self.assertFalse(self.heater.is_on)
+                self.light.fail_commands = False
+                await self.runtime.tick()
+                await self.hass.async_block_till_done()
+                self.assertFalse(self.light.is_on)
+
     async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         await async_set_parameters(self.hass, self.entry, {
-            "session_light_minutes": .6, "session_light_brightness_percent": 64}, partial=True)
+            "session_gap_minutes": .6, "session_light_brightness_percent": 64}, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
-        await self.runtime.set_operation(False)
+        # An explicit session end permits settings while its light finishes;
+        # ordinary OFF keeps the session resumable and settings locked.
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
         await self.hass.async_block_till_done()
-        await self.time(150)
+        await self.time(30)
         phase = self.runtime.controller.light_after_run
-        self.assertEqual(phase.ends_at, self.base+timedelta(seconds=186))
-        await self.time(180)
+        self.assertEqual(phase.ends_at, self.base + timedelta(seconds=36))
         self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
         # Der laufende Lichtnachlauf besitzt sein Ziel als Controller-Snapshot;
         # ein Optionen-Reload darf ihn nicht auf den neuen Standard umstellen.
@@ -435,7 +526,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime = self.entry.runtime_data
         self.runtime._clock = lambda: self.now
         self.assertEqual(self.runtime.controller.light_after_run, phase)
-        await self.time(181)
+        await self.time(31)
         self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
@@ -444,22 +535,21 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         # Der Neustart ersetzt den Lichtnachlauf, blendet aber vom sichtbaren
         # 64-%-Wert in seine neue temperaturabhängige Vorgabe über.
         self.assertAlmostEqual(self.light.brightness, 255*.64, delta=1)
-        await self.time(187)
+        await self.time(37)
         self.assertTrue(self.light.is_on)
         self.assertLess(self.light.brightness, 255*.64)
         self.assertGreater(self.light.brightness, 255*.05)
 
     async def test_failed_session_light_commands_are_archived_and_retried(self):
         await self.runtime.set_operation(True)
-        await self.runtime.set_operation(False)
-        await self.hass.async_block_till_done()
         self.light.fail_commands = True
-        await self.time(150)
+        await self.runtime.set_operation(False)
+        await self.time(1)  # The first distinct fade value requires a command.
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
         calls = len(self.light.calls)
-        await self.time(151)
+        await self.time(2)
         self.assertEqual(len(self.light.calls), calls + 1)
-        await self.time(750)
+        await self.time(150)
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
         off_calls = len([call for call in self.light.calls if call[0] == "off"])
         await self.time(751)
@@ -493,6 +583,47 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(30)
         self.assertTrue(self.light.is_on)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+
+    async def test_repeated_light_echoes_consume_each_sent_command(self):
+        device = self.runtime.device
+        for brightness in (39, 40, 39):
+            device._expect_light_change(self.now, "turn_on", brightness)
+        self.assertEqual(len(device._expected_light_changes), 3)
+
+        for raw_brightness in (99, 102, 99):
+            await self.set_light_externally(True, raw_brightness)
+            self.assertIsNone(device.light_output.manual_brightness)
+
+        await self.set_light_externally(True, 128)
+        self.assertAlmostEqual(
+            device.light_output.manual_brightness, 128 * 100 / 255
+        )
+        await self.set_light_externally(False)
+        self.assertEqual(device.light_output.manual_brightness, 0)
+
+    async def test_percent_step_light_echo_stays_automatic_after_fade(self):
+        self.light.percent_steps = True
+        self.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 10})
+        await self.set_source("upper_temperature", 70)
+        await self.runtime.set_operation(True)
+        await self.time(30)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        await self.set_source("upper_temperature", 70)
+        calls = len(self.light.calls)
+        await self.time(31)
+        await self.time(32)
+        self.assertEqual(len(self.light.calls), calls)
+
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(self.runtime.session.session_id)["records"]
+        brightnesses = [
+            record["payload"]["brightness_pct"]
+            for record in records
+            if record["kind"] == "light_command"
+            and record["payload"]["service"] == "turn_on"
+        ]
+        self.assertTrue(brightnesses)
+        self.assertTrue(all(value == round(value) for value in brightnesses))
 
     async def test_external_light_selection_expires_but_unchanged_report_does_not_extend_it(self):
         await self.runtime.set_operation(True)
@@ -542,17 +673,32 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
         self.assertEqual(self.light.calls[-1], ("on", {"brightness": 128}))
 
+    async def test_pending_light_command_is_not_repeated_and_external_choice_still_applies(self):
+        self.light.defer_state_writes = True
+        await self.runtime.set_light_override(37)
+        calls = len(self.light.calls)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertEqual(len(self.light.calls), calls)
+
+        await self.set_light_externally(True, 128)
+        self.assertAlmostEqual(
+            self.runtime.device.light_output.manual_brightness, 128 * 100 / 255
+        )
+
     async def test_session_light_deadline_survives_options_change_but_not_restart(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         await async_set_parameters(self.hass, self.entry, {
-            "session_light_minutes": .2, "session_light_brightness_percent": 64}, partial=True)
+            "session_gap_minutes": .2, "session_light_brightness_percent": 64}, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
-        await self.runtime.set_operation(False)
-        await self.time(150)
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
+        await self.time(5)
         phase = self.runtime.controller.light_after_run
         await async_set_parameters(self.hass, self.entry, {"nominal_power_kw": 5}, partial=True)
         await self.hass.async_block_till_done()

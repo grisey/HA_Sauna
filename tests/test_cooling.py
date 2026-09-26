@@ -1,5 +1,6 @@
 """Zusammenhängende Regelketten; Zeit und reale Rückmeldung separat steuerbar."""
 from datetime import timedelta
+from dataclasses import replace
 import unittest
 
 from custom_components.ha_sauna.core.controller import Controller

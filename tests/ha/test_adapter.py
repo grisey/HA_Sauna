@@ -80,7 +80,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         form = await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
         self.assertEqual(form["step_id"], "parameters")
         values = form["data_schema"](
-            {**self.values, "button_program": "gipfelstuermer"}
+            {
+                **self.values,
+                "button_program": "gipfelstuermer",
+                "button_temperature_c": 82,
+            }
         )
         result = await self.flow.async_step_parameters(values)
         self.assertEqual(result["type"], "create_entry")
@@ -90,9 +94,18 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["options"]["program_mode"], "progressive")
         self.assertEqual(result["options"]["button_program"], "gipfelstuermer")
         self.assertEqual(
+            result["options"]["button_temperature_c"],
+            82,
+        )
+        self.assertEqual(
             result["options"]["temperature_programs"],
             [program.as_dict() for program in DEFAULT_PROGRAMS],
         )
+
+    async def test_initial_button_default_is_constant(self):
+        form = await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
+        values = form["data_schema"](self.values)
+        self.assertEqual(values["button_program"], "constant")
 
     async def test_duplicate_sensor_stays_in_form(self):
         inputs = {**self.inputs, "lower_temperature": self.inputs["upper_temperature"]}
@@ -138,17 +151,42 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         result = await self.flow.async_step_parameters(self.values)
         self.assertEqual(result["reason"], "heater_already_used")
 
-    async def test_options_change_uses_same_parameter_validation(self):
+    async def test_options_preserve_normalized_button_settings_without_runtime(self):
+        self.entry.options = {
+            **self.entry.options,
+            "button_program": "current",
+            "button_temperature_c": 79,
+            "selected_program_id": "gipfelstuermer",
+            "temperature_programs": [
+                program.as_dict() for program in DEFAULT_PROGRAMS
+            ],
+        }
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         flow.handler = self.entry.entry_id
         flow.context = {"source": "options"}
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            form = await flow.async_step_parameters()
+            self.assertNotIn(
+                "button_program", {str(key) for key in form["data_schema"].schema}
+            )
+            self.assertNotIn(
+                "button_temperature_c", {str(key) for key in form["data_schema"].schema}
+            )
             form = await flow.async_step_parameters({**self.values, "session_gap_minutes": -1})
             self.assertEqual(form["errors"], {"session_gap_minutes": "positive"})
             result = await flow.async_step_parameters({**self.values, "session_gap_minutes": 7})
             self.assertEqual(result["data"]["parameters"]["session_gap_minutes"], 7)
             self.assertEqual(result["data"]["bindings"], self.inputs)
+            self.assertEqual(result["data"]["button_program"], "gipfelstuermer")
+            self.assertEqual(result["data"]["button_temperature_c"], 79)
+            from custom_components.ha_sauna.runtime import Configuration
+
+            self.assertEqual(
+                Configuration.from_options(result["data"]).button_program,
+                "gipfelstuermer",
+            )
+            self.assertFalse(hasattr(self.entry, "runtime_data"))
 
     async def test_options_can_remove_optional_binding(self):
         self.entry.options["bindings"] = {**self.inputs, "upper_status": "sensor.optional"}

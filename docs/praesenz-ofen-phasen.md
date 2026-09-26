@@ -4,7 +4,51 @@ Dieser Folgeauftrag ergänzt [Ofenkühlung](ofenkuehlung.md) und ersetzt ältere
 Aussagen zu „Gang fordert EIN“ sowie zur Unterdrückung der Bereitschaftserfassung
 während eines vorläufigen Gangs. Die eigenständige Zwangskühlung bleibt entfernt.
 Die mathematischen Tür-, Personen-, Feuchte- und Aufgussdetektoren sowie ihre
-Schwellen und fachlichen Erkennungszeitpunkte wurden nicht verändert.
+Schwellen entsprechen dem bereits vorhandenen rc4-Stand `becfdb5464e1219e42f75f03f9c5feea723c0d61`.
+
+## Korrigierte Zusammenführung vom 26.09.2026
+
+Die erste Übergabe `7f6fae2e8e3439fc5d99ee827be862960f5c6b42` entstand auf
+`323c57e648f41622025330bfc7ecdfcad8c9c5ec` und enthielt die danach entstandenen
+rc4-Commits nicht. Beide Entwicklungslinien werden nun zusammengeführt:
+rc4-Erkennung, Temperaturprogramme, Bedienung und Archivkorrekturen bleiben
+erhalten; die neue Quellenkapselung, Ofenübersteuerung und Phasenprojektion bauen
+darauf auf. Die vorhandene Versionskennung `1.0.0-rc4` wird übernommen.
+
+Die anschließende Produktivprüfung führte zu folgenden Korrekturen:
+
+- Eine bestätigte manuelle Heizperiode wird bei Rückkehr zur Automatik samt
+  tatsächlicher Mindestheizzeit übernommen. Ein Gang verhindert auch unterhalb
+  der Abschaltgrenze das Abschalten bereits laufenden Heizens durch einen alten
+  Thermostatzustand. Ausdrückliches AUS und technische Sperren behalten Vorrang.
+- Heizen während einer frühen Türöffnung verbraucht nicht die spätere
+  Schließanforderung. Eine fällige Öffnungsanforderung wird bei dann laufender
+  Heizung erfüllt; Ofenkühlung verwirft ausstehende Anforderungen unmittelbar.
+- Zurückgenommene Altarchivgänge geben ihre belegte Grundphase wieder frei,
+  wenn Phasenereignis, Sessionrevision und endgültige Gangrücknahme zusammenpassen.
+  Lüftung bleibt als eigene Annotation neben den exklusiven Hauptphasen sichtbar.
+- Eine verspätete Gangrücknahme oder ein verspätetes Gangende invalidiert nur
+  den zugehörigen Personenbeleg. Auch bereits abgeschlossene Sessions werden
+  dafür berücksichtigt. Beim Entladen werden Gangende und Präsenzkorrektur vor
+  Archivschluss veröffentlicht; ein Persistenzfehler verhindert den Ofen-AUS-
+  Versuch nicht.
+- Der physische Taster berücksichtigt ausschließlich die aktuelle Ofenkühlung.
+  Der überholte Zugriff auf die entfernte Zwangskühlungssteuerung entfällt.
+
+Der produktive Detector ist bytegleich mit rc4. Vorhandene private Originaldaten
+wurden erneut durch Runtime, Geräteadapter, Detector, Controller und Thermostat
+geführt; die zuvor belegten Gang-Heizunterbrechungen sind beseitigt. Die Prüfung
+verwendet aufgezeichnete Temperatur-/Feuchteverläufe und eine simulierte
+erfolgreiche Schützrückmeldung. Private Messungen und Nutzungszeitpunkte bleiben
+außerhalb des Repositorys.
+
+Die Korrekturprüfung umfasst `python3 -m unittest discover -s tests` mit
+445 Tests (443 erfolgreich, zwei optionale private Replays übersprungen) sowie
+`node --test tests/panel_*.test.js` mit zwölf erfolgreichen Prüfungen in zehn
+Testdateien. Die
+zusätzlichen privaten Runtime-Replays wurden separat ausgeführt. Der vollständige
+HA-Lauf aus dem untenstehenden historischen Übergabeprotokoll wurde in dieser
+Umgebung mangels HA-Laufzeitabhängigkeiten nicht wiederholt.
 
 ## Status und Produktivpfade
 
@@ -12,7 +56,7 @@ Schwellen und fachlichen Erkennungszeitpunkte wurden nicht verändert.
 | --- | --- |
 | 2, 3, 5 | `core/contracts.py`, `core/presence.py`, `presence_adapter.py`: normalisierte Proxy-/HA-Meldungen mit stabiler Identität, Aussageart, Herkunft, fachlicher Zeit, Empfang, Verfügbarkeit und unbekanntem Zustand. Direkte zusammenhängende Beobachtungen bestehen unabhängig von Aufgüssen. |
 | 2, 3, 7 | `runtime.py`, `__init__.py`, `bindings.py`, `device.py`: ein eigener Präsenzlistener, Anfangszustand, Zustand/Verfügbarkeit, Reload und Abmeldung. Proxy bleibt die einzige führende Quelle. Ein konfiguriertes externes Entity ist ausschließlich beobachtend; kein ODER und kein Ausfall-Fallback. |
-| 4.1 | `core/heater_overrides.py`, `core/controller.py`, `core/parameters.py`: Türschließen verarbeitet eine vorbereitete Anforderung sofort; `door_request_minutes` aktiviert optional eine Öffnungsfrist ab verfügbarer Öffnungsmeldung. Kein Default. Eine verbrauchte/unterdrückte Anforderung wird nicht nachgeholt. Alte Timer, Betrieb-AUS, laufende Heizung und Ofenkühlung sperren Wiederholungen. |
+| 4.1 | `core/heater_overrides.py`, `core/controller.py`, `core/parameters.py`: Türschließen verarbeitet eine vorbereitete Anforderung sofort; `door_request_minutes` aktiviert optional eine Öffnungsfrist ab verfügbarer Öffnungsmeldung. Kein Default. Eine verbrauchte/unterdrückte Anforderung wird nicht nachgeholt. Betrieb-AUS und Ofenkühlung verwerfen ausstehende Anforderungen. Bereits laufendes Heizen erfüllt die Anforderung beim tatsächlichen Frist- oder Schließzeitpunkt, nicht schon bei einer früheren Öffnung. |
 | 4.2 | `core/thermostat.py`, `core/controller.py`: Gang als Abschaltveto. Er verhindert eine reguläre Temperaturabschaltung einer bereits angeforderten Heizung oder einer zuletzt EIN angesteuerten, tatsächlich rückgemeldeten manuellen Heizung. Ein zuvor AUS angesteuerter Ofen startet allein wegen des Gangs nicht. Verhinderte Abschaltungen erzeugen keine Thermostatpause. |
 | 4.3, 6 | `core/models.py`, `core/controller.py`, `core/phases.py`, `archive.py`: unabhängige Grundphasenmarken, echte Schützmeldungen, laufende Abschnitte pausierbarer Ofenkühlung, exklusive Phasenprojektion und einzelne Bereitschaftspausen. Die Dauermittlung erhält die korrigierten Pausen, liefert aber weiterhin ausschließlich `after_run_minutes`. |
 | 7 | `core/consumer_events.py`, `core/contracts.py`, `runtime.py`, `archive.py`: stabile Verbraucherereignisse, Live- und Korrekturkennzeichnung, Deduplizierung über Reload. `media_player` als optionales Audioziel gespeichert; keinerlei Wiedergabe, Ankündigungsplanung oder Musikregeln. |
@@ -103,7 +147,7 @@ gültiges `on` verfällt hier nicht durch sein altes `last_changed`.
 Die [HA-Listener](https://developers.home-assistant.io/docs/integration_listen_events/)
 werden beim Entladen abgemeldet.
 
-## Prüfprotokoll und Übergabe
+## Historisches Prüfprotokoll der ersten Übergabe
 
 Ausgangscommit: `323c57e648f41622025330bfc7ecdfcad8c9c5ec`, Branch
 `codex/rc2-ready-state`, Remote `https://github.com/grisey/HA_Sauna.git`.

@@ -6,14 +6,9 @@ PARAMETER_TEXT = {
         "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
         "operation",
     ),
-    "session_light_minutes": (
-        "Lichtnachlauf nach Sitzungsende",
-        "Dauer ab dem endgültigen Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",
-        "light",
-    ),
     "session_light_brightness_percent": (
         "Helligkeit für „Hell“ und Lichtnachlauf",
-        "Helligkeit der Lichtstufe „Hell“ und des Lichtnachlaufs nach Sitzungsende. Standard: 50 %.",
+        "Helligkeit für „Hell“ und für den Lichtnachlauf beim Ausschalten.",
         "light",
     ),
     "temperature_increase_c": (
@@ -83,7 +78,7 @@ PARAMETER_TEXT = {
     ),
     "warmup_estimation_minutes": (
         "Zeitfenster der Aufheizschätzung",
-        "Die Anzeige schätzt die Restzeit nur aus einem stabilen positiven Temperaturtrend in diesem Zeitraum. Die Schätzung steuert den Ofen nicht.",
+        "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
         "display",
     ),
     "thermostat_cooldown_minutes": (
@@ -97,8 +92,8 @@ PARAMETER_TEXT = {
         "temperature",
     ),
     "session_gap_minutes": (
-        "Pause bis zum Sitzungsende",
-        "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
+        "Wiederaufnahmezeit",
+        "Dauer der Sitzungspause mit Lichtnachlauf. Erneutes Einschalten innerhalb dieser Zeit setzt die Sitzung fort.",
         "operation",
     ),
     "confirmation_minutes": (

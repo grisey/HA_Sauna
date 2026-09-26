@@ -39,10 +39,11 @@ führt Übergänge und vorübergehende manuelle Wahl aus.
 ## Laufzeit, Archiv und Darstellung
 
 `runtime.py` serialisiert Eingänge, hält den Lebenszyklus zusammen und stößt
-Archivierung sowie Entitätsaktualisierung an. `core/warmup.py` liefert nur eine
-ETA-taugliche Aufheizrate: zunächst aus dem stabilen Anstieg der aktuellen
-Sitzung, ersatzweise aus der letzten abgeschlossenen archivierten Aufheizphase.
-Diese Rate ist kein Regelwert.
+Archivierung sowie Entitätsaktualisierung an. `core/warmup.py` berechnet die
+voraussichtliche Aufheizzeit. Der Anstieg der letzten abgeschlossenen
+Aufheizphase geht schrittweise in den stabilen aktuellen Trend über.
+Nur neue Messungen verändern die Schätzung; Statusabfragen lesen das Ergebnis.
+Diese Anzeige beeinflusst keine Heizentscheidung.
 
 `archive.py` und `backup.py` speichern Messungen, Merkmale, Ereignisse und
 Parameterstände in SQLite, sichern sie konsistent über HA und exportieren sie

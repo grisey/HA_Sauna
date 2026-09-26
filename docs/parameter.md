@@ -28,6 +28,14 @@ Temperaturautomatik verteilt den Weg von **80 auf 95 °C** über **vier Gänge**
 Nach Erreichen des Endwerts gilt dieser auch für weitere Gänge; die Verteilung
 ist keine Obergrenze der Gangzahl. Benannte Programme werden separat als
 validierter Programmkatalog gespeichert und unterliegen demselben Bereich.
+Individuelle Programme und Katalogvorlagen können außerdem eine Liste einzeln
+gewählter Temperaturen enthalten. Deren Länge bestimmt die Stufenzahl, und die
+erste sowie letzte Temperatur bestimmen Start und Ende. Nach der letzten Stufe
+wird die letzte Temperatur beibehalten.
+
+Die Tasterwahl verwendet ein benanntes Programm oder eine separat gespeicherte
+konstante Temperatur. Diese Temperatur unterliegt demselben Bereich wie die
+Solltemperatur und ist nicht an die aktuelle Temperaturwahl gekoppelt.
 
 Bereit ist die Sauna ab Erreichen der Solltemperatur. Die obere Regeltemperatur
 des Ofens liegt durch die **Temperaturreserve** standardmäßig 5 °C darüber;
@@ -60,8 +68,9 @@ in der Anzeige unterscheidbar.
 
 Die automatische Lichtkurve beginnt bei **5 % bei 30 °C** und steigt bis zur
 Bereitschaft. Die Normalhelligkeit beträgt tagsüber 40 % und nachts 25 %.
-Nachlauf verwendet 15 %, Zwangskühlung 5 %. Übergänge dauern 30 s. Nach dem
-endgültigen Sitzungsende leuchtet das Licht 10 min mit 50 % weiter. Eine
+Nachlauf verwendet 15 %, Zwangskühlung 5 %. Übergänge dauern 30 s. Beim
+Ausschalten leuchtet das Licht mit 50 % bis zum Ende der Wiederaufnahmezeit
+(standardmäßig 15 min). Dafür gibt es keine separate Dauer. Eine
 manuelle Lichtwahl endet mit dem passenden Phasenwechsel, spätestens nach
 10 min.
 

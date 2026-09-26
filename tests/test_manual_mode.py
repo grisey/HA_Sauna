@@ -39,7 +39,9 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.phase, "manuell")
         self.assertFalse(controller.last_decision.heat)
         self.assertEqual(controller.last_decision.reason, "manual_mode")
-        availability = start_availability(controller, at(0), temperature_rate=0.1)
+        availability = start_availability(
+            controller, at(0), estimated_ready_seconds=100
+        )
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
         self.assertEqual(phase_timer(controller, at(0))["kind"], "manual")
@@ -133,7 +135,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertFalse(controller.last_decision.heat)
 
     def test_finish_session_can_defer_then_start_light(self):
-        controller = self.controller(session_light_minutes=2)
+        controller = self.controller(session_gap_minutes=2)
         self.start(controller)
         controller.finish_session(at(5), light_after_run=False)
         self.assertIsNone(controller.session)

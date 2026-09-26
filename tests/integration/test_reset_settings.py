@@ -46,7 +46,7 @@ class ResetSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["control_input_mode"], "button")
         self.assertEqual(self.entry.options["button_event_type"], "custom_press")
         self.assertEqual(self.entry.options["program_mode"], "constant")
-        self.assertEqual(self.entry.options["button_program"], "current")
+        self.assertEqual(self.entry.options["button_program"], "constant")
         self.assertEqual(self.entry.options["log_level"], "INFO")
 
     async def test_active_or_stopped_session_rejects_reset_without_changes(self):

@@ -37,6 +37,37 @@ class DetectionContextTests(unittest.TestCase):
         self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertTrue(c.recognition_allowed(Kind.INFUSION))
 
+    def test_fresh_weak_signal_after_close_needs_no_ventilation(self):
+        c = controller()
+        c.process(event("close", Kind.DOOR_CLOSE, 0))
+        self.assertTrue(c.recognition_allowed(Kind.PERSON_WEAK))
+        result = c.process(event("weak", Kind.PERSON_WEAK, 1))
+        self.assertTrue(result.changed)
+        self.assertEqual(c.session.timeline.active.recognition_kind, Kind.PERSON_WEAK)
+        self.assertIsNone(c.session.timeline.active.preparation_event_id)
+
+    def test_weak_without_close_anchor_is_a_processed_non_effect(self):
+        c = controller()
+        result = c.process(event("weak", Kind.PERSON_WEAK, 1))
+        self.assertFalse(result.changed)
+        self.assertEqual(result.reason, "entry_context_missing")
+        self.assertIsNone(c.session.timeline.active)
+
+    def test_late_or_replaced_weak_context_is_a_processed_non_effect(self):
+        c = controller(confirmation_minutes=1)
+        c.process(event("close", Kind.DOOR_CLOSE, 0))
+        late = Event("late", "s", Kind.PERSON_WEAK, at(30), at(61))
+        result = c.process(late)
+        self.assertFalse(result.changed)
+        self.assertEqual(result.reason, "entry_context_expired")
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.process(late).reason, "duplicate")
+
+        c.process(event("open", Kind.DOOR_OPEN, 62))
+        c.process(event("close2", Kind.DOOR_CLOSE, 63))
+        old = Event("old", "s", Kind.PERSON_WEAK, at(0), at(64))
+        self.assertEqual(c.process(old).reason, "entry_context_changed")
+
     def test_retracted_start_stays_suppressed_until_new_door_episode_but_infusion_can_confirm(self):
         c = controller(confirmation_minutes=1)
         c.process(event("close", Kind.DOOR_CLOSE, 0))

@@ -19,8 +19,8 @@ from .core import power
 from .core.light import normal_brightness, phase_target
 from .core.light_output import LightOutput
 from .core.models import Measurement, Position, Quantity
-from .core.timeline import Door
-from .core.warmup import WarmupTrend, historical_warmup_rate
+from .core.timeline import Door, Kind
+from .core.warmup import WarmupEstimate, historical_warmup_rate
 from .presentation import FAULTS, configuration_message
 
 
@@ -33,9 +33,13 @@ class HADevice:
         self.source_received_at = {}
         self.measurements = {}
         self.last_valid_temperature = None
-        self.warmup = WarmupTrend(self.values["warmup_estimation_minutes"] * 60)
+        self.warmup = WarmupEstimate(self.values["warmup_estimation_minutes"] * 60)
         self._warmup_key = None
+        self._warmup_target = None
         self._warmup_started_at = None
+        self._warmup_last_received_at = None
+        self._warmup_door_opening_id = None
+        self._warmup_door_before_c = None
         self._historical_warmup_rate = None
         self._historical_warmup_session_id = None
         self._historical_warmup_task = None
@@ -266,36 +270,111 @@ class HADevice:
     def feedback(self):
         return self.observe_heating(self.runtime._clock())["heating"]
 
-    def _refresh_warmup(self, now, upper):
-        """Keep a trend only during one uninterrupted, confirmed heating run."""
+    def _reset_warmup(self):
+        self.warmup.reset()
+        self._warmup_key = None
+        self._warmup_target = None
+        self._warmup_started_at = None
+        self._warmup_last_received_at = None
+        self._warmup_door_opening_id = None
+        self._warmup_door_before_c = None
+
+    def _remember_warmup_door_opening(self, session):
+        opening = next(
+            (
+                event
+                for event in reversed(session.timeline.processed)
+                if event.kind == Kind.DOOR_OPEN
+            ),
+            None,
+        )
+        if opening is not None and opening.event_id != self._warmup_door_opening_id:
+            self._warmup_door_opening_id = opening.event_id
+            self._warmup_door_before_c = self.warmup.trend.temperature_before(
+                opening.effective_at
+            )
+
+    def _current_upper_temperature(self, now):
+        upper = self.measurements.get("upper_temperature")
+        timeout = self.values.get("sensor_timeout_seconds")
+        if (
+            upper is None
+            or upper.value is None
+            or timeout is None
+            or (age := (now - upper.received_at).total_seconds()) < 0
+            or age > timeout
+        ):
+            return None
+        return upper
+
+    def _refresh_warmup(self, now):
+        """Advance the display estimate only from a new, current upper value."""
         controller = self.runtime.controller
         session = controller.session
-        eligible = (
+        active_warmup = (
             session is not None
             and session.operation_enabled
             and controller.phase == "aufheizen"
             and self.heating_observation["heating"] is True
             and not controller.protection
             and not controller.inhibits
-            and session.timeline.door != Door.OPEN
-            and upper is not None
-            and upper.value is not None
         )
-        if not eligible:
-            self.warmup.reset()
-            self._warmup_key = None
-            self._warmup_started_at = None
+        if not active_warmup:
+            if (
+                session is None
+                or not session.operation_enabled
+                or controller.phase != "aufheizen"
+            ):
+                self._reset_warmup()
             return
         key = (session.session_id, self.heating_observation["source"])
-        if key != self._warmup_key:
-            self.warmup.reset()
+        target = controller.target_temperature
+        if key != self._warmup_key or target != self._warmup_target:
+            self._reset_warmup()
             self._warmup_key = key
+            self._warmup_target = target
             self._warmup_started_at = now
             self._load_historical_warmup()
+        self._remember_warmup_door_opening(session)
+        if session.timeline.door == Door.OPEN:
+            return
+        upper = self._current_upper_temperature(now)
         # A value received before the confirmed heating stretch is a useful
-        # current controller input, but not evidence about this warm-up rate.
-        if upper.received_at >= self._warmup_started_at:
-            self.warmup.accept(upper.received_at, upper.value)
+        # controller input, but not evidence about this warm-up estimate.
+        if (
+            upper is None
+            or upper.received_at < self._warmup_started_at
+            or (
+                self._warmup_last_received_at is not None
+                and upper.received_at <= self._warmup_last_received_at
+            )
+        ):
+            return
+        if self._warmup_door_before_c is not None:
+            closing = next(
+                (
+                    event
+                    for event in reversed(session.timeline.processed)
+                    if event.kind == Kind.DOOR_CLOSE
+                ),
+                None,
+            )
+            if closing is None or upper.received_at <= closing.effective_at:
+                return
+        door_loss_c = (
+            max(0, self._warmup_door_before_c - upper.value)
+            if self._warmup_door_before_c is not None
+            else None
+        )
+        self.warmup.accept(
+            upper.received_at,
+            upper.value,
+            target_c=target,
+            historical_rate=self._historical_warmup_rate,
+            door_loss_c=door_loss_c,
+        )
+        self._warmup_last_received_at = upper.received_at
+        self._warmup_door_before_c = None
 
     def _load_historical_warmup(self):
         """Load one archived rate outside HA's event loop for this session."""
@@ -307,7 +386,7 @@ class HADevice:
         generation = self._historical_warmup_generation
         source = self.bindings["upper_temperature"]
         timeout = self.values.get("sensor_timeout_seconds")
-        minimum_observation = self.warmup.window_seconds
+        minimum_observation = self.warmup.trend.window_seconds
 
         async def load():
             try:
@@ -359,8 +438,8 @@ class HADevice:
         if self._warmup_key is not None and not self.runtime.closed:
             self._load_historical_warmup()
 
-    def temperature_rate(self, now):
-        """Return an ETA-safe rate, never a control input."""
+    def estimated_ready_seconds(self, now):
+        """Return the cached ETA only while its upper source is current."""
         controller = self.runtime.controller
         session = controller.session
         if (
@@ -370,15 +449,12 @@ class HADevice:
             or self.heating_observation["heating"] is not True
             or controller.protection
             or controller.inhibits
-            or controller.temperature is None
             or session.timeline.door == Door.OPEN
+            or self._current_upper_temperature(now) is None
         ):
             return None
         timeout = self.values.get("sensor_timeout_seconds")
-        current_rate = self.warmup.rate(now, maximum_age_seconds=timeout)
-        if current_rate is not None:
-            return current_rate
-        return self._historical_warmup_rate
+        return self.warmup.remaining_seconds(now, maximum_age_seconds=timeout)
 
     @property
     def missing_configuration(self):
@@ -557,7 +633,9 @@ class HADevice:
             self.faults.pop("configuration", None)
         if self.runtime.archive and self.runtime.archive.failure:
             self.faults["archive"] = str(self.runtime.archive.failure)
-        self._refresh_warmup(now, upper if temperature is not None else None)
+        else:
+            self.faults.pop("archive", None)
+        self._refresh_warmup(now)
         controller.advance(now)
 
     async def send(self, heat, now, *, force=False):
@@ -703,8 +781,11 @@ class HADevice:
                 else None
             ),
         )
-        # Der Plan enthält Fließkommawerte, HA erhält einen stabilen Prozentwert.
-        brightness = round(plan.brightness_percent, 2)
+        # Der Plan darf intern fließend bleiben; die Hardwareausgabe folgt den
+        # festgelegten ganzen Prozentpunkten. Damit bleibt die sichtbare
+        # Rückmeldung eines eigenen ``brightness_pct``-Befehls bei derselben
+        # Rohhelligkeit wie die erwartete Signatur.
+        brightness = round(plan.brightness_percent)
         service = "turn_off" if brightness <= 0 else "turn_on"
         command_key = (key, service, brightness if service == "turn_on" else None)
         desired = self._light_command_signature(service, brightness)
@@ -713,6 +794,16 @@ class HADevice:
         )
         if already_sent or (
             name == "aus" and plan.automatic and not self._light_override_dirty
+        ):
+            return
+        # Genau die zuletzt angeforderte sichtbare Änderung kann wegen des
+        # Gerätepfads noch unterwegs sein. Ein anderer Prozentpunkt erhält
+        # einen anderen Befehlsschlüssel und bleibt ausführbar, auch wenn sein
+        # Wert als ältere Erwartung noch vorhanden ist.
+        if (
+            not self._light_override_dirty
+            and command_key == self._light_last_command_key
+            and self._light_change_is_pending(now, service, brightness)
         ):
             return
         if await self._send_light_command(
@@ -894,16 +985,20 @@ class HADevice:
 
     def _expect_light_change(self, now, service, brightness):
         self._discard_expired_light_expectations(now)
-        signature = self._light_command_signature(service, brightness)
-        for expected in self._expected_light_changes:
-            if expected["signature"] == signature:
-                expected["sent_at"] = now
-                return
         self._expected_light_changes.append(
             {
-                "signature": signature,
+                "signature": self._light_command_signature(service, brightness),
                 "sent_at": now,
             }
+        )
+
+    def _light_change_is_pending(self, now, service, brightness):
+        """Whether this exact visible change still awaits its feedback."""
+        self._discard_expired_light_expectations(now)
+        signature = self._light_command_signature(service, brightness)
+        return any(
+            expected["signature"] == signature
+            for expected in self._expected_light_changes
         )
 
     def external_light_selection(self, event, received_at):

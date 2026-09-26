@@ -83,7 +83,25 @@ class PresenceProjection:
             return False
         self.reports[report.report_id] = report
         if report.source == "proxy":
-            self.current = report
+            # A retraction removes only the proxy evidence it names.  Detector
+            # catch-up can emit an old retraction after a newer person signal
+            # in the same runtime cycle; that historical correction must not
+            # replace the currently observed newer evidence.
+            if (
+                report.assertion != "proxy_retraction"
+                or (
+                    self.current is not None
+                    and self.current.source == "proxy"
+                    and (
+                        self.current.source_ref == report.source_ref
+                        # Availability is not a competing person evidence.  It
+                        # may be recorded after the candidate and before its
+                        # delayed, otherwise valid retraction is delivered.
+                        or self.current.occupancy != "present"
+                    )
+                )
+            ):
+                self.current = report
         else:
             previous = self.external.get(report.source)
             if previous is None or report.effective_at >= previous.effective_at:

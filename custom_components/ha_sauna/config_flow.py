@@ -49,6 +49,7 @@ def parameter_schema(
     *,
     live_only=False,
     include_program_choices=False,
+    include_button_choices=False,
     program_options=(),
     parameters=None,
 ) -> vol.Schema:
@@ -80,18 +81,31 @@ def parameter_schema(
                 }
             )
         )
-    if include_program_choices and not live_only:
-        fields[vol.Required("button_program", default="current")] = (
+    if include_button_choices:
+        fields[vol.Required("button_program", default="constant")] = (
             selector.SelectSelector(
                 {
                     "options": [
-                        {"value": "current", "label": "Aktuelle Auswahl"},
                         {"value": "constant", "label": "Konstante Temperatur"},
                         *program_options,
                     ],
                     "translation_key": "button_program",
                 }
             )
+        )
+        fields[
+            vol.Required(
+                "button_temperature_c",
+                default=limits.values["target_temperature_c"],
+            )
+        ] = selector.NumberSelector(
+            {
+                "min": limits.minimum_for("target_temperature_c"),
+                "max": BY_KEY["target_temperature_c"].maximum,
+                "step": "any",
+                "mode": selector.NumberSelectorMode.BOX,
+                "unit_of_measurement": "°C",
+            }
         )
     return vol.Schema(fields)
 
@@ -179,16 +193,24 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 values = dict(user_input)
                 program_mode = values.pop("program_mode", "progressive")
-                button_program = values.pop("button_program", "current")
+                button_program = values.pop("button_program", "constant")
                 if program_mode not in ("constant", "progressive"):
                     raise ParameterError("program_mode", "invalid_program_mode")
                 if button_program not in {
-                    "current",
                     "constant",
                     *(program.id for program in DEFAULT_PROGRAMS),
                 }:
                     raise ParameterError("button_program", "invalid_button_program")
+                button_temperature_c = values.pop("button_temperature_c", None)
                 parameters = Parameters(values)
+                button_temperature_c = Parameters(
+                    {
+                        **parameters.as_dict(),
+                        "target_temperature_c": button_temperature_c
+                        if button_temperature_c is not None
+                        else parameters.values["target_temperature_c"],
+                    }
+                ).values["target_temperature_c"]
                 try:
                     validate_programs(
                         DEFAULT_PROGRAMS,
@@ -215,6 +237,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_PARAMETERS: parameters.as_dict(),
                         "program_mode": program_mode,
                         "button_program": button_program,
+                        "button_temperature_c": button_temperature_c,
                         "temperature_programs": [
                             program.as_dict() for program in DEFAULT_PROGRAMS
                         ],
@@ -225,6 +248,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=self.add_suggested_values_to_schema(
                 parameter_schema(
                     include_program_choices=True,
+                    include_button_choices=True,
                     program_options=(
                         {"value": program.id, "label": program.name}
                         for program in DEFAULT_PROGRAMS
@@ -352,27 +376,23 @@ class SaunaOptionsFlow(OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
+                values = dict(user_input)
+                button_keys = {"button_program", "button_temperature_c"}
+                if live_only and button_keys & values.keys():
+                    raise ConfigurationLocked()
+                # The panel owns the external-button start choice.  The schema
+                # never contains these keys; discard direct callers as well so
+                # an ordinary technical settings save cannot replace them.
+                values.pop("button_program", None)
+                values.pop("button_temperature_c", None)
                 if runtime and not runtime.closed:
-                    values = dict(user_input)
                     program_mode = values.pop(
                         "program_mode",
                         self.config_entry.options.get("program_mode", "progressive"),
                     )
-                    button_program = values.pop(
-                        "button_program",
-                        self.config_entry.options.get("button_program", "current"),
-                    )
                     if program_mode not in ("constant", "progressive"):
                         raise ParameterError("program_mode", "invalid_program_mode")
-                    program_ids = {
-                        program.id
-                        for program in runtime.configuration.temperature_programs
-                    }
-                    if button_program not in {"current", "constant", *program_ids}:
-                        raise ParameterError("button_program", "invalid_button_program")
                     if live_only:
-                        if button_program != runtime.configuration.button_program:
-                            raise ConfigurationLocked()
                         if set(values) - LIVE_TEMPERATURE_KEYS:
                             raise ConfigurationLocked()
                         target_changed = (
@@ -399,15 +419,12 @@ class SaunaOptionsFlow(OptionsFlow):
                         != self.config_entry.options.get("program_mode", "progressive"),
                     )
                 else:
-                    values = dict(user_input)
                     program_mode = values.pop(
                         "program_mode",
                         self.config_entry.options.get("program_mode", "progressive"),
                     )
-                    button_program = values.pop(
-                        "button_program",
-                        self.config_entry.options.get("button_program", "current"),
-                    )
+                    if program_mode not in ("constant", "progressive"):
+                        raise ParameterError("program_mode", "invalid_program_mode")
                     values.setdefault(
                         "temperature_increase_c",
                         self.config_entry.options[CONF_PARAMETERS].get(
@@ -416,26 +433,46 @@ class SaunaOptionsFlow(OptionsFlow):
                         ),
                     )
                     parameters = Parameters(values).as_dict()
+                    try:
+                        from .runtime import Configuration
+
+                        configuration = Configuration.from_options(
+                            {
+                                **configuration.as_options(),
+                                CONF_PARAMETERS: parameters,
+                                "program_mode": program_mode,
+                            }
+                        )
+                    except ValueError as error:
+                        raise ParameterError(
+                            "sauna_min_temperature_c", "program_catalog_invalid"
+                        ) from error
             except ParameterError as error:
                 errors[error.key] = error.code
             except ConfigurationLocked:
                 return self.async_abort(reason="session_exists")
             else:
+                # ``Configuration`` turns legacy ``current`` selections into a
+                # concrete profile and supplies a valid stored button
+                # temperature.  Keep those normalized values through every
+                # technical-options save.
+                options = {
+                    **configuration.as_options(),
+                    **{
+                        key: value
+                        for key, value in self.config_entry.options.items()
+                        if key not in {"button_program", "button_temperature_c"}
+                    },
+                    CONF_PARAMETERS: parameters,
+                    "program_mode": program_mode,
+                }
                 return self.async_create_entry(
                     title="",
-                    data={
-                        **self.config_entry.options,
-                        CONF_PARAMETERS: parameters,
-                        "program_mode": program_mode,
-                        "button_program": button_program,
-                    },
+                    data=options,
                 )
         suggested = dict(self.config_entry.options[CONF_PARAMETERS])
         suggested["program_mode"] = self.config_entry.options.get(
             "program_mode", "progressive"
-        )
-        suggested["button_program"] = self.config_entry.options.get(
-            "button_program", "current"
         )
         if live_only:
             suggested["target_temperature_c"] = runtime.controller.target_temperature
@@ -445,10 +482,6 @@ class SaunaOptionsFlow(OptionsFlow):
                 parameter_schema(
                     live_only=live_only,
                     include_program_choices=True,
-                    program_options=(
-                        {"value": program.id, "label": program.name}
-                        for program in configuration.temperature_programs
-                    ),
                     parameters=configuration.parameters,
                 ),
                 user_input if user_input is not None else suggested,

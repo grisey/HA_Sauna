@@ -1,4 +1,4 @@
-"""Lichtnachlauf beginnt einmalig am Sitzungsende, ohne Heizwirkung."""
+"""Lichtnachlauf nutzt dieselbe Frist wie die pausierte Saunasitzung."""
 from datetime import timedelta
 import unittest
 
@@ -9,37 +9,62 @@ from test_foundation import T0
 
 
 class SessionLightTests(unittest.TestCase):
-    def test_default_deadline_and_new_session_cancel_old_light_timer(self):
-        c = Controller(Parameters({"session_gap_minutes": 1}))
-        c.set_temperature(70, T0)
-        c.set_operation(True, T0)
-        c.set_operation(False, T0 + timedelta(seconds=1))
-        c.advance(T0 + timedelta(seconds=60))
-        self.assertIsNone(c.light_after_run)
-        c.advance(T0 + timedelta(seconds=80))  # verspäteter Tick verlängert nicht
-        light = c.light_after_run
-        self.assertEqual(light.started_at, T0 + timedelta(seconds=61))
-        self.assertEqual(light.ends_at, T0 + timedelta(seconds=661))
+    def test_operation_off_starts_light_with_the_shared_session_deadline(self):
+        controller = Controller(Parameters({"session_gap_minutes": 1}))
+        controller.set_temperature(70, T0)
+        controller.set_operation(True, T0)
+        controller.set_operation(False, T0 + timedelta(seconds=1))
+
+        light = controller.light_after_run
+        self.assertEqual(light.started_at, T0 + timedelta(seconds=1))
+        self.assertEqual(light.ends_at, T0 + timedelta(seconds=61))
         self.assertEqual(light.brightness_percent, 50)
-        self.assertIsNone(c.session)
-        self.assertFalse(c.last_decision.heat)
-        self.assertEqual(phase_timer(c, T0 + timedelta(seconds=80))["seconds"], 581)
-        c.advance(T0 + timedelta(seconds=90))
-        self.assertIs(c.light_after_run, light)
-        c.set_operation(True, T0 + timedelta(seconds=100))
-        self.assertIsNone(c.light_after_run)
-        self.assertNotEqual(phase_timer(c, T0 + timedelta(seconds=662))["kind"], "session_light")
+        gap = next(
+            deadline
+            for deadline in controller.session.deadlines
+            if deadline.purpose == "session_gap"
+        )
+        self.assertEqual(gap.due_at, light.ends_at)
 
-    def test_custom_duration_brightness_and_zero_duration(self):
-        for minutes in (0, 3):
-            with self.subTest(minutes=minutes):
-                c = Controller(Parameters({"session_gap_minutes": 1,
-                    "session_light_minutes": minutes, "session_light_brightness_percent": 64}))
-                c.set_operation(True, T0)
-                c.set_operation(False, T0)
-                c.advance(T0 + timedelta(seconds=60))
-                self.assertEqual(c.light_after_run.brightness_percent, 64)
-                self.assertEqual(c.light_after_run.ends_at, T0 + timedelta(seconds=60 + minutes*60))
-                self.assertIsNone(phase_timer(c, c.light_after_run.ends_at))
-                self.assertFalse(c.last_decision.heat)
+        controller.advance(T0 + timedelta(seconds=60))
+        self.assertIs(controller.light_after_run, light)
+        self.assertIsNotNone(controller.session)
+        controller.advance(T0 + timedelta(seconds=61))
+        self.assertIsNone(controller.session)
+        self.assertIs(controller.light_after_run, light)
+        self.assertFalse(controller.last_decision.heat)
+        self.assertIsNone(phase_timer(controller, T0 + timedelta(seconds=61)))
 
+    def test_resuming_the_same_session_cancels_light_and_gap(self):
+        controller = Controller(Parameters({"session_gap_minutes": 1}))
+        controller.set_operation(True, T0)
+        controller.set_operation(False, T0 + timedelta(seconds=1))
+        controller.set_operation(True, T0 + timedelta(seconds=30))
+
+        self.assertIsNone(controller.light_after_run)
+        self.assertFalse(
+            any(
+                deadline.purpose == "session_gap"
+                for deadline in controller.session.deadlines
+            )
+        )
+
+    def test_light_uses_the_session_gap_and_configured_brightness(self):
+        controller = Controller(
+            Parameters(
+                {
+                    "session_gap_minutes": 3,
+                    "session_light_brightness_percent": 64,
+                }
+            )
+        )
+        controller.set_operation(True, T0)
+        controller.set_operation(False, T0)
+
+        self.assertEqual(controller.light_after_run.brightness_percent, 64)
+        self.assertEqual(
+            controller.light_after_run.ends_at, T0 + timedelta(minutes=3)
+        )
+        controller.advance(controller.light_after_run.ends_at)
+        self.assertIsNone(phase_timer(controller, controller.light_after_run.ends_at))
+        self.assertFalse(controller.last_decision.heat)

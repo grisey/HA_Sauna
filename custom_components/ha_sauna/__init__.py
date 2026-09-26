@@ -93,6 +93,7 @@ async def async_options_updated(hass, entry):
         after.pop("log_level")
         if before == after:
             runtime.set_log_level(updated.log_level)
+            runtime.reconfiguring = False
             return
         from .core.parameters import LIVE_TEMPERATURE_KEYS
         from .settings import apply_temperature_parameters, program_parameters
@@ -122,6 +123,7 @@ async def async_options_updated(hass, entry):
                     if before_program_mode != after_program_mode
                     else None
                 )
+                selected_steps = updated.temperature_steps
                 if (
                     before_selected_program != after_selected_program
                     and after_selected_program is not None
@@ -130,6 +132,11 @@ async def async_options_updated(hass, entry):
                         updated.parameters,
                         after_selected_program,
                         catalog=updated.temperature_programs,
+                    )
+                    selected_steps = next(
+                        program.temperature_steps
+                        for program in updated.temperature_programs
+                        if program.id == after_selected_program
                     )
                 await apply_temperature_parameters(
                     runtime,
@@ -141,12 +148,14 @@ async def async_options_updated(hass, entry):
                         or before_selected_program != after_selected_program
                     ),
                     selected_program_id=after_selected_program,
+                    temperature_steps=selected_steps,
                 )
                 runtime.set_log_level(updated.log_level)
                 if before_selected_program != after_selected_program:
                     hass.config_entries.async_update_entry(
                         entry, options=runtime.configuration.as_options()
                     )
+                runtime.reconfiguring = False
             return
         if runtime.session:
             # Auch externe Optionsschreiber dürfen keine laufende Sitzung durch

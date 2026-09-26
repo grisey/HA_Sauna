@@ -85,19 +85,24 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(state.active.confirmation, Confirmation.PROVISIONAL)
         self.assertIsNone(state.active.preparation_event_id)
 
-    def test_weak_start_requires_preparation(self):
+    def test_weak_start_uses_close_anchor_without_preparation(self):
         closed = apply(self.empty, e("c", Kind.DOOR_CLOSE, "21:15:51"))
-        with self.assertRaises(ValueError):
-            apply(closed, self.person)
-        self.assertIsNone(closed.active)
+        state = apply(closed, self.person)
+        self.assertEqual(state.active.start_source_event_id, "c")
+        self.assertIsNone(state.active.preparation_event_id)
 
-    def test_new_opening_drops_unused_preparation(self):
+    def test_weak_start_requires_actual_close_anchor(self):
+        known_closed = Timeline("s", t("18:55:42"), door=Door.CLOSED)
+        with self.assertRaises(ValueError):
+            apply(known_closed, self.person)
+
+    def test_new_opening_replaces_weak_start_anchor(self):
         opened = apply(self.closed, e("o", Kind.DOOR_OPEN, "21:16:00"))
         self.assertIsNone(opened.preparation)
         closed = apply(opened, e("c2", Kind.DOOR_CLOSE, "21:17:00"))
         self.assertIsNone(closed.preparation)
-        with self.assertRaises(ValueError):
-            apply(closed, self.person)
+        state = apply(closed, self.person)
+        self.assertEqual(state.active.start_source_event_id, "c2")
 
     def test_current_episode_replaces_previous_preparation(self):
         state = apply(self.closed, e("o", Kind.DOOR_OPEN, "21:16:00"))

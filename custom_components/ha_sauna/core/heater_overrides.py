@@ -49,12 +49,18 @@ def update_door_request(
             door_open=state.door_open if door_open is None else door_open,
             seen_event_ids=state.seen_event_ids | ({event_id} if event_id else set()),
         ), False
-    if heating or cooling:
+    if cooling:
+        # Cooling invalidates the pending request immediately.  Finishing a
+        # cooling interval must not revive an older opening deadline or close.
         state = replace(state, consumed=True, deadline=None, timer_token=None)
     if door_open is not None:
         if not event_id:
             raise ValueError("door events require a stable event_id")
         if event_id in state.seen_event_ids:
+            # A repeated event is still an observation at the current time.
+            # A due opening request is satisfied by heat already running now.
+            if heating and state.deadline is not None and now >= state.deadline:
+                state = replace(state, consumed=True, deadline=None, timer_token=None)
             return state, False
         state = replace(state, seen_event_ids=state.seen_event_ids | {event_id})
         if door_open == state.door_open:
@@ -64,7 +70,11 @@ def update_door_request(
                 not isfinite(open_delay_seconds) or open_delay_seconds < 0
             ):
                 raise ValueError("opening delay must be finite and nonnegative")
-            suppressed = heating or cooling
+            # Existing heat is not a fulfilled close request.  It can stop
+            # before this same door cycle closes, in which case the close must
+            # still get exactly one chance to request heat.  Cooling is already
+            # a higher-priority suppression at the opening itself.
+            suppressed = cooling
             state = replace(
                 state, door_open=True, consumed=suppressed,
                 timer_token=event_id if not suppressed else None,
@@ -75,10 +85,15 @@ def update_door_request(
             pulse = not state.consumed and not heating and not cooling
             return replace(state, door_open=False, consumed=True,
                            deadline=None, timer_token=None), pulse
-    elif timer_token is not None and timer_token != state.timer_token:
-        return state, False
     if heating or cooling:
-        return replace(state, consumed=True, deadline=None, timer_token=None), False
+        # A running heater does not retrospectively fulfil an open door cycle.
+        # It suppresses only an optional opening deadline once that deadline is
+        # actually due; the later close still decides the ordinary no-timer case.
+        if state.deadline is not None and now >= state.deadline:
+            return replace(state, consumed=True, deadline=None, timer_token=None), False
+        return state, False
+    if timer_token is not None and timer_token != state.timer_token:
+        return state, False
     if (not state.consumed and state.deadline is not None
             and now >= state.deadline):
         return replace(state, consumed=True, deadline=None, timer_token=None), True

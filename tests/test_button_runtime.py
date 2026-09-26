@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
@@ -28,10 +29,34 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.now += timedelta(seconds=seconds)
         asyncio.run(self._handle(name))
 
+    def test_manual_only_heater_command_rechecks_mode_when_executed(self):
+        with self.assertRaisesRegex(ValueError, "Betriebsart"):
+            asyncio.run(self.runtime.set_heater_override(True, manual_only=True))
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.session)
+
     async def _handle(self, name):
         async with self.runtime._lock:
             await self.runtime._handle_button_event(name, self.now)
             await self.runtime._cycle()
+
+    def _start_with_temperature(self):
+        self._event("short")
+        self.runtime.controller.set_temperature(70, self.now)
+        return self.now
+
+    def _complete_gang(self, started_at):
+        controller = self.runtime.controller
+        session_id = controller.session.session_id
+        for name, kind, seconds in (
+            ("close", Kind.DOOR_CLOSE, 300),
+            ("person", Kind.PERSON_STRONG, 360),
+            ("infusion", Kind.INFUSION, 480),
+            ("open", Kind.DOOR_OPEN, 1260),
+            ("vent", Kind.VENTILATION, 1290),
+        ):
+            self.now = started_at + timedelta(seconds=seconds)
+            controller.process(Event(name, session_id, kind, self.now, self.now))
 
     def test_press_release_single_starts_once_and_short_toggles_override(self):
         self._event("press")
@@ -98,10 +123,114 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.session.session_id, new_session_id)
         self.assertIsNone(self.runtime.controller.light_after_run)
 
+    def test_delayed_on_feedback_first_restarts_after_run_then_returns_to_auto(self):
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        controller.report_contactor(True, started_at + timedelta(seconds=1))
+        self._complete_gang(started_at)
+
+        self._event("short", 1)
+        self.assertTrue(controller.heater_override)
+        self.assertIsNotNone(controller.session.after_run.paused_at)
+        self.assertTrue(controller.last_decision.heat)
+
+        self._event("short", 1)
+        self.assertIsNone(controller.heater_override)
+        self.assertIsNone(controller.session.after_run.paused_at)
+        self.assertFalse(controller.last_decision.heat)
+
+    def test_long_heat_has_no_independent_cooling_and_button_uses_feedback(self):
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        controller.report_heating(True, started_at)
+        self.now = started_at + timedelta(minutes=90)
+        controller.advance(self.now)
+        controller.report_contactor(True, self.now)
+        self.assertIsNone(controller.session.cooling)
+        self.assertIsNone(controller.session.after_run)
+
+        self._event("short", 1)
+        self.assertFalse(controller.heater_override)
+        self.assertFalse(controller.last_decision.heat)
+
+        self._event("short", 1)
+        self.assertIsNone(controller.heater_override)
+        self.assertIsNone(controller.session.cooling)
+        self.assertTrue(controller.last_decision.heat)
+
+    def test_button_cannot_heat_through_protection_during_after_run(self):
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        self._complete_gang(started_at)
+        controller.protection.add("heater_service_unavailable")
+
+        with self.assertRaisesRegex(ValueError, "aktivem Schutz"):
+            self._event("short", 1)
+
+        self.assertIsNone(controller.heater_override)
+        self.assertFalse(controller.last_decision.heat)
+
+    def test_legacy_budget_does_not_create_cooling_during_a_gang(self):
+        self.runtime = SaunaRuntime(
+            Configuration(
+                Bindings(bindings()),
+                Parameters({"heating_minutes": 1, "heating_reduction_minutes": 0.25}),
+            ),
+            lambda: self.now,
+        )
+        started_at = self._start_with_temperature()
+        controller = self.runtime.controller
+        session_id = controller.session.session_id
+        controller.report_heating(True, started_at)
+        for name, kind, seconds in (
+            ("close", Kind.DOOR_CLOSE, 1),
+            ("person", Kind.PERSON_STRONG, 2),
+        ):
+            self.now = started_at + timedelta(seconds=seconds)
+            controller.process(Event(name, session_id, kind, self.now, self.now))
+        self.now = started_at + timedelta(minutes=1)
+        controller.advance(self.now)
+        controller.report_contactor(True, self.now)
+        self.assertIsNone(controller.session.cooling)
+
+        self._event("short", 1)
+
+        self.assertFalse(controller.heater_override)
+
     def test_button_parameters_have_the_decided_defaults(self):
         values = Parameters({}).values
         self.assertEqual(values["button_hold_seconds"], 2)
         self.assertEqual(values["button_hold_brightness_percent"], 1)
+
+    def test_button_start_uses_its_frozen_constant_temperature(self):
+        self.runtime = SaunaRuntime(
+            Configuration(
+                Bindings(bindings()),
+                Parameters({"target_temperature_c": 86}),
+                button_temperature_c=74,
+            ),
+            lambda: self.now,
+        )
+
+        self._event("short")
+
+        self.assertEqual(self.runtime.controller.target_temperature, 74)
+        self.assertEqual(self.runtime.configuration.button_temperature_c, 74)
+
+    def test_button_start_uses_the_selected_named_program(self):
+        self.runtime = SaunaRuntime(
+            Configuration(
+                Bindings(bindings()),
+                Parameters({"target_temperature_c": 70}),
+                button_program="gipfelstuermer",
+            ),
+            lambda: self.now,
+        )
+
+        self._event("short")
+
+        self.assertEqual(self.runtime.controller.program_mode, "progressive")
+        self.assertEqual(self.runtime.controller.target_temperature, 84)
 
 
 if __name__ == "__main__":

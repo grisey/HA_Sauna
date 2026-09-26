@@ -18,7 +18,8 @@ Werte bleiben erhalten. Einzig die Solltemperatur hat eine feste Obergrenze von
 
 Eine Sitzung ist das führende Laufzeitobjekt für Heizung, Gänge, Nachlauf,
 Kühlung und Licht. Betrieb-Ein startet sie, Betrieb-Aus beendet einen offenen
-Gang sofort und beginnt die Unterbrechungsfrist. Ein rechtzeitiges Einschalten
+Gang sofort und beginnt gemeinsam die Wiederaufnahmefrist und den Lichtnachlauf.
+Ein rechtzeitiges Einschalten
 setzt nur dieselbe Sitzung fort; nach der Session-Unterbrechungsfrist (15 min)
 beginnt die nächste Einschaltung eine neue Sitzung. Konfiguration, Archiv und
 Schutzgründe sind davon getrennt.
@@ -26,7 +27,8 @@ Schutzgründe sind davon getrennt.
 Während einer offenen Sitzung sind Solltemperatur, Endtemperatur und Verteilung
 der Temperaturautomatik änderbar. Andere Grundeinstellungen und
 Gerätezuordnungen bleiben gesperrt. Eine neue Sitzung beendet einen alten
-Lichtnachlauf. Nach einem HA-Neustart bleibt die Historie erhalten, der Betrieb
+Lichtnachlauf; auch die Wiederaufnahme derselben Sitzung beendet ihn.
+Nach einem HA-Neustart bleibt die Historie erhalten, der Betrieb
 und offene Fristen werden nicht automatisch fortgesetzt.
 
 Die Phase zeigt Aufheizen, Bereit, Saunagang, Nachlauf, Zwangskühlung, Manuell
@@ -110,12 +112,17 @@ laufende Kühlung wird nicht zurückgenommen.
 
 Im Automatikbetrieb steigt das Licht linear von 5 % bei 30 °C zur
 Normalhelligkeit: tagsüber 40 %, nachts 25 %, mit linearem Übergang in der
-bürgerlichen Dämmerung. Ein Gang hält die Normalhelligkeit auch bei fallender
+bürgerlichen Dämmerung. Die Ausgabe erfolgt in ganzen Prozentpunkten; ein
+unveränderter Zielwert erzeugt während der Rückmeldungsfrist keinen erneuten
+Lichtbefehl. Ein Gang hält die Normalhelligkeit auch bei fallender
 Temperatur. Nachlauf verwendet 15 %, Kühlung 5 %. Der Übergang dauert 30 s;
 danach steigt das Licht bis zum Ende der Phase wieder zum temperaturbezogenen
-Ziel. Nach endgültigem
-Sitzungsende leuchtet es 10 min mit 50 % und schaltet dann aus. Diese Lichtfrist
-hat keine Wirkung auf Ofen oder Kühlung.
+Ziel. Betrieb-Aus beginnt unmittelbar den Lichtnachlauf bei 50 % bis zum
+Ende derselben Wiederaufnahmefrist, standardmäßig 15 min. Der spätere
+Sitzungsabschluss verlängert das Licht nicht. Beim langen Tasterdruck bleibt
+zunächst die Rückmeldung mit 1 % aktiv; Loslassen startet den Lichtnachlauf
+mit derselben konfigurierten Dauer. Das Licht hat keine Wirkung auf Ofen oder
+Kühlung.
 
 Eine manuelle Lichtwahl gilt bis zum Phasenwechsel oder höchstens 10 min.
 Tatsächliches Ausschalten und Dimmen am Lichttaster sind solche Wahlen; eigene
@@ -130,6 +137,17 @@ Ofenübersteuerung und Automatik, langes Drücken beendet die Sitzung. Ofen- und
 Lichtübersteuerungen in Automatik enden spätestens nach 10 min; früher durch
 Rückgabe an Automatik sowie beim passenden Phasenwechsel oder automatischen
 Heizwechsel. Schutz hat stets Vorrang.
+
+Während Nachlauf oder laufender Zwangskühlung schaltet bereits ein kurzer Druck
+den Ofen manuell ein und pausiert die Phase. Der nächste kurze Druck gibt ihn
+an die Automatik zurück. Eine noch ausstehende Schützrückmeldung ändert diese
+Bedienfolge nicht.
+
+Wird ein manuell eingeschalteter Ofen frühzeitig an die Automatik zurückgegeben,
+läuft seine noch offene Mindestheizzeit ab dem tatsächlichen Heizbeginn weiter.
+Bewusstes manuelles Ausschalten hebt diesen Mindestlauf auf. Eine verzögerte
+EIN-Rückmeldung darf ihn danach nicht erneut auslösen. Nachlauf, Kühlung und
+Schutz behalten bei jeder Rückgabe ihren Vorrang.
 
 Die Betriebsart **Manuell** kann nur außerhalb einer offenen Sitzung gewählt
 werden und ist nicht zeitbegrenzt. Dort bedienen Nutzer Ofen und Licht direkt;

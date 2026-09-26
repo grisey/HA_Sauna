@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from contextlib import closing
 import csv
 from dataclasses import fields, is_dataclass
@@ -51,7 +52,7 @@ class Archive:
         self.resume.set()
         self.worker = None
         self.failure = None
-        self.failed_records = []
+        self.failed_records = deque()
         self.closed = False
 
     async def start(self):
@@ -103,28 +104,55 @@ class Archive:
             try:
                 if kind == "stop":
                     return
-                if kind == "fence":
-                    if payload.cancelled():
-                        continue
-                    if self.failure:
+                if kind in {"fence", "pause"} and payload.cancelled():
+                    continue
+                # A long-lived SQLite reader can make each attempt block for
+                # seconds.  While records already form one queue burst, keep
+                # their originals in order and retry only when catching up.
+                if kind == "record" and self.failed_records and not self.queue.empty():
+                    self.failed_records.append(payload)
+                    continue
+                if not await self._drain_failed_records():
+                    if kind == "record":
+                        self.failed_records.append(payload)
+                    elif kind in {"fence", "pause"} and not payload.cancelled():
                         payload.set_exception(self.failure)
-                    else:
-                        payload.set_result(None)
+                    continue
+                if kind in {"fence", "pause"} and payload.cancelled():
+                    continue
+                if kind == "record":
+                    await asyncio.to_thread(self._write, payload)
+                self.failure = None
+                if kind == "fence":
+                    payload.set_result(None)
                 elif kind == "pause":
                     self.resume.clear()
-                    if self.failure:
-                        payload.set_exception(self.failure)
-                    else:
-                        payload.set_result(None)
+                    payload.set_result(None)
                     await self.resume.wait()
-                else:
-                    await asyncio.to_thread(self._write, payload)
             except Exception as error:
                 self.failure = error
                 if kind == "record":
                     self.failed_records.append(payload)
+                elif kind in {"fence", "pause"} and not payload.cancelled():
+                    payload.set_exception(error)
             finally:
                 self.queue.task_done()
+
+    async def _drain_failed_records(self):
+        """Persist the oldest failed records once, without a retry loop.
+
+        A record stays at the head until it was committed.  This makes a later
+        session snapshot unable to overtake an earlier one, and leaves the
+        current error observable until every pending original has been saved.
+        """
+        while self.failed_records:
+            try:
+                await asyncio.to_thread(self._write, self.failed_records[0])
+            except Exception as error:
+                self.failure = error
+                return False
+            self.failed_records.popleft()
+        return True
 
     def _write(self, record):
         kind, at, payload, session_id = record

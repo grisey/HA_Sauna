@@ -62,8 +62,8 @@ class DoorRequestTests(unittest.TestCase):
         _, pulse = self.update(state, seconds=60, timer_token="open-2")
         self.assertTrue(pulse)
 
-    def test_running_cooling_off_and_session_switch_consume_without_replay(self):
-        for block in ({"heating": True}, {"cooling": True}, {"enabled": False},
+    def test_cooling_off_and_session_switch_consume_without_replay(self):
+        for block in ({"cooling": True}, {"enabled": False},
                       {"session_id": "s2"}):
             with self.subTest(block=block):
                 state = self.opened(open_delay_seconds=60)
@@ -76,8 +76,8 @@ class DoorRequestTests(unittest.TestCase):
                                        door_open=False, event_id="close-1")
                 self.assertFalse(pulse)
 
-    def test_opening_during_running_or_cooling_is_not_queued(self):
-        for block in ({"heating": True}, {"cooling": True}, {"enabled": False}):
+    def test_opening_during_cooling_or_off_is_not_queued(self):
+        for block in ({"cooling": True}, {"enabled": False}):
             state = self.opened(open_delay_seconds=60, **block)
             _, pulse = self.update(state, seconds=20, door_open=False, event_id="close-1")
             self.assertFalse(pulse)
@@ -89,12 +89,31 @@ class DoorRequestTests(unittest.TestCase):
         _, pulse = self.update(state, door_open=False, event_id="close-2")
         self.assertFalse(pulse)
 
-    def test_duplicate_event_during_running_heat_consumes_pending_cycle(self):
+    def test_duplicate_open_during_early_heat_preserves_later_close(self):
         state = self.opened(open_delay_seconds=60)
         state, pulse = self.update(state, seconds=10, heating=True,
                                    door_open=True, event_id="open-1")
         self.assertFalse(pulse)
-        _, pulse = self.update(state, seconds=20, door_open=False, event_id="close-1")
+        state, pulse = self.update(state, seconds=20, door_open=False, event_id="close-1")
+        self.assertTrue(pulse)
+        _, pulse = self.update(state, seconds=21, door_open=False, event_id="close-1")
+        self.assertFalse(pulse)
+
+    def test_heating_before_deadline_does_not_consume_a_future_request(self):
+        state = self.opened(open_delay_seconds=60, heating=True)
+        state, pulse = self.update(state, seconds=10, heating=True)
+        self.assertFalse(pulse)
+        state, pulse = self.update(state, seconds=60)
+        self.assertTrue(pulse)
+        _, pulse = self.update(state, seconds=61, door_open=False, event_id="close-1")
+        self.assertFalse(pulse)
+
+    def test_duplicate_open_at_deadline_consumes_request_satisfied_by_heating(self):
+        state = self.opened(open_delay_seconds=60)
+        state, pulse = self.update(state, seconds=60, heating=True,
+                                   door_open=True, event_id="open-1")
+        self.assertFalse(pulse)
+        _, pulse = self.update(state, seconds=61, door_open=False, event_id="close-1")
         self.assertFalse(pulse)
 
     def test_cooling_duration_retains_saved_value_regardless_of_pause_history(self):

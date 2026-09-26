@@ -36,13 +36,13 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertFalse(availability["ready_estimated"])
         self.assertIn("Noch nicht abschätzbar", availability["message"])
 
-    def test_eta_uses_the_setpoint_not_the_thermostat_switch_off_threshold(self):
+    def test_eta_uses_the_prepared_estimate(self):
         c = controller(target_temperature_c=80, readiness_offset_c=4)
         c.set_temperature(70, T0)
 
-        availability = start_availability(c, T0, temperature_rate=1)
+        availability = start_availability(c, T0, estimated_ready_seconds=123)
 
-        self.assertEqual(availability["until_ready_seconds"], 10)
+        self.assertEqual(availability["until_ready_seconds"], 123)
         self.assertTrue(availability["ready_estimated"])
 
     def test_active_round_has_its_own_elapsed_display(self):

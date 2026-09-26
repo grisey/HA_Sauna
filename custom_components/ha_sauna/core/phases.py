@@ -108,14 +108,22 @@ def project_session(session, now) -> PhaseProjection:
 def project_archive(session, records, now) -> PhaseProjection:
     """Read-only compatibility projection from evidence in original records.
 
-    Old observed gang phases cannot establish a hidden readiness transition.
-    Such ranges stay explicitly unknown instead of inventing a temperature rule.
-    All records must be supplied independently of history endpoint pagination.
+    A legacy gang record is an overlay, not a new background-phase mark.  When
+    that gang was later retracted, the preceding independently stored base mark
+    remains the evidence for the exposed interval.  Without such a mark the
+    interval remains unknown; this function never infers heating from missing
+    data or from temperatures alone.  All records must be supplied
+    independently of history endpoint pagination.
     """
     if session.get("base_phases"):
         return project_session(session, now)
     reconstructed = dict(session)
-    marks, contacts = [], []
+    retracted_ids = {
+        _get(gang, "gang_id")
+        for gang in _get(_get(session, "timeline"), "retracted", ())
+        if _get(gang, "gang_id")
+    }
+    marks, contacts, legacy_gangs, revisions = [], [], [], []
     for record in records:
         payload = record["payload"]
         at = record["received_at"]
@@ -123,9 +131,19 @@ def project_archive(session, records, now) -> PhaseProjection:
             phase = payload.get("phase")
             if phase in ("aus", "aufheizen", "bereit", "manuell"):
                 marks.append({"at": at, "phase": phase, "operation_enabled": phase != "aus"})
-            elif phase in ("saunagang", "nachlauf", "kuehlung", "zwangskühlung"):
+            # A legacy gang record is an overlay, so it must not erase the
+            # most recent independently observed background phase.  In
+            # particular, a retracted gang exposes that phase again.
+            elif phase == "saunagang":
+                marks.append({"at": at, "phase": "unknown", "operation_enabled": True})
+                legacy_gangs.append(at)
+            # Unlike a gang, old cooling records can continue after their
+            # independent session object is absent.  Do not extend a former
+            # readiness mark over this unknown legacy background.
+            elif phase in ("nachlauf", "kuehlung", "zwangskühlung"):
                 marks.append({"at": at, "phase": "unknown", "operation_enabled": True})
         elif record["kind"] == "session":
+            revisions.append((at, payload))
             # A stored ready timestamp is direct evidence of the former
             # controller decision. Raw temperatures alone do not prove that
             # decision without all contemporary validity and target rules.
@@ -137,6 +155,33 @@ def project_archive(session, records, now) -> PhaseProjection:
                 marks.append({"at": off, "phase": "aus", "operation_enabled": False})
         elif record["kind"] == "source_state" and payload.get("role") == "heater":
             contacts.append({"at": at, "state": {"on": True, "off": False}.get(payload.get("state"))})
+    # The preceding phase is sufficient only after a stored revision confirms
+    # that operation continued, readiness was still absent and no cooling was
+    # active.  This repairs a retracted legacy candidate without turning every
+    # missing old gang background into heating.
+    for gang_at in legacy_gangs:
+        next_mark = next((item["at"] for item in marks if item["at"] > gang_at), None)
+        retracted = any(
+            at == gang_at
+            and _get(_get(_get(payload, "timeline"), "active", {}), "gang_id")
+            in retracted_ids
+            for at, payload in revisions
+        )
+        confirmed = retracted and any(
+            at >= gang_at
+            and (next_mark is None or at < next_mark)
+            and payload.get("operation_enabled") is True
+            and payload.get("ready_at") is None
+            and not payload.get("after_run")
+            and not payload.get("cooling")
+            for at, payload in revisions
+        )
+        if confirmed:
+            marks = [
+                mark
+                for mark in marks
+                if not (mark["at"] == gang_at and mark["phase"] == "unknown")
+            ]
     reconstructed["base_phases"] = marks
     reconstructed["contactor_history"] = contacts
     projection = project_session(reconstructed, now)

@@ -40,6 +40,25 @@ class ProgramCatalogTests(unittest.TestCase):
                 minimum_c=60,
                 maximum_c=100,
             )
+
+    def test_manual_steps_are_canonical_and_reject_conflicting_metadata(self):
+        program = NamedTemperatureProgram(
+            "manuell", "Manuell", temperature_steps=(80, 86, 90)
+        )
+        self.assertEqual(
+            (program.start_c, program.end_c, program.distribution_gangs), (80, 90, 3)
+        )
+        self.assertEqual(
+            program.temperature_program(minimum_c=60, maximum_c=100).target(8), 90
+        )
+        loaded = load_programs(
+            [{"id": "manuell", "name": "Manuell", "temperature_steps": [80, 86, 90]}],
+            minimum_c=60,
+            maximum_c=100,
+        )
+        self.assertEqual(loaded, (program,))
+        with self.assertRaises(ValueError):
+            NamedTemperatureProgram("manuell", "Manuell", 80, 90, 4, (80, 86, 90))
         with self.assertRaises(ValueError):
             load_programs(
                 [{**DEFAULT_PROGRAMS[0].as_dict(), "start_c": 59}],

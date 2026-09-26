@@ -30,6 +30,7 @@ from .core.program_catalog import (
     load_programs,
     migrate_legacy_programs,
 )
+from .core.temperature_program import temperature_steps as validate_temperature_steps
 from .core.timeline import Door, Event, Kind
 from .log import LEVELS, SaunaLog
 from .presentation import (
@@ -50,16 +51,39 @@ class Configuration:
     control_input_mode: str = "switch"
     button_event_type: str = ""
     program_mode: str = "constant"
-    button_program: str = "current"
+    button_program: str = "constant"
     temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
     selected_program_id: str | None = None
     control_mode: str = "automatic"
     presence_source: str = "proxy"
+    temperature_steps: tuple[float, ...] | None = None
+    button_temperature_c: float | None = None
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
+        if self.temperature_steps is not None:
+            steps = validate_temperature_steps(self.temperature_steps)
+            minimum = self.parameters.minimum_for("target_temperature_c")
+            maximum = BY_KEY["target_temperature_c"].maximum
+            if len(steps) > BY_KEY["temperature_gangs"].maximum or any(
+                step < minimum or step > maximum for step in steps
+            ):
+                raise ValueError("Ungültige manuelle Temperaturstufen")
+            object.__setattr__(self, "temperature_steps", steps)
+        if self.button_temperature_c is None:
+            object.__setattr__(
+                self,
+                "button_temperature_c",
+                self.parameters.values["target_temperature_c"],
+            )
+        Parameters(
+            {
+                **self.parameters.as_dict(),
+                "target_temperature_c": self.button_temperature_c,
+            }
+        )
         if self.button_program not in {"program_1", "program_2"} or any(
             program.id == self.button_program for program in self.temperature_programs
         ):
@@ -101,6 +125,8 @@ class Configuration:
                 "selected_program_id",
                 "control_mode",
                 "presence_source",
+                "temperature_steps",
+                "button_temperature_c",
             }
         ):
             raise ValueError(
@@ -114,6 +140,10 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
+        # Diese frühere, getrennte Lichtdauer ist durch die Sitzungspause
+        # ersetzt. Sie wird nur bei alten gespeicherten Optionen verworfen;
+        # andere unbekannte Werte bleiben weiterhin ungültig.
+        values.pop("session_light_minutes", None)
         if "program_mode" in options:
             program_mode = options["program_mode"]
         else:
@@ -161,13 +191,23 @@ class Configuration:
                 maximum_c=maximum_c,
                 maximum_gangs=maximum_gangs,
             )
-        button_program = options.get("button_program", "current")
+        button_program = options.get("button_program", "constant")
         selected_program_id = options.get("selected_program_id")
         control_mode = options.get("control_mode", "automatic")
+        steps = options.get("temperature_steps")
         program_ids = {program.id for program in programs}
+        if button_program == "current":
+            button_program = (
+                selected_program_id
+                if selected_program_id in program_ids
+                else "constant"
+            )
+        button_temperature_c = options.get(
+            "button_temperature_c", parameters.values["target_temperature_c"]
+        )
         if (
             program_mode not in ("constant", "progressive")
-            or button_program not in {"current", "constant", *program_ids}
+            or button_program not in {"constant", *program_ids}
             or (
                 selected_program_id is not None
                 and selected_program_id not in program_ids
@@ -187,6 +227,8 @@ class Configuration:
             selected_program_id,
             control_mode,
             options.get("presence_source", "proxy"),
+            steps,
+            button_temperature_c,
         )
 
     def as_options(self) -> dict:
@@ -204,6 +246,8 @@ class Configuration:
             "selected_program_id": self.selected_program_id,
             "control_mode": self.control_mode,
             "presence_source": self.presence_source,
+            "temperature_steps": self.temperature_steps,
+            "button_temperature_c": self.button_temperature_c,
         }
 
 
@@ -222,6 +266,7 @@ class SaunaRuntime:
             configuration.parameters,
             program_mode=configuration.program_mode,
             control_mode=configuration.control_mode,
+            temperature_steps=configuration.temperature_steps,
         )
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
@@ -466,19 +511,53 @@ class SaunaRuntime:
             self._record_presence(report)
         return result
 
+    def _proxy_evidence_for(self, event):
+        """Return the proxy person signal represented by a consumer event."""
+        if event.kind == "gang_retracted":
+            return event.source_ref
+        if event.kind != "gang_ended" or event.gang_id is None:
+            return None
+        sessions = (*self.controller.completed_sessions,)
+        if self.session is not None:
+            sessions = (*sessions, self.session)
+        session = next(
+            (item for item in sessions if item.session_id == event.session_id), None
+        )
+        if session is None:
+            return None
+        timeline = session.timeline
+        gangs = (*timeline.completed, *timeline.retracted)
+        if timeline.active is not None:
+            gangs = (*gangs, timeline.active)
+        for gang in gangs:
+            if gang.gang_id == event.gang_id:
+                return gang.recognition_event_id
+        return None
+
     def _publish_controller_events(self):
         for event in self.controller.consumer_events[self._saved_consumer_events:]:
             self._publish_consumer(event)
             current = self.presence.current
-            if (event.kind == "gang_retracted" or
-                    (event.kind == "gang_ended" and current and current.occupancy == "present")):
-                # Only invalidate an existing proxy observation. A confirmed gang
-                # never creates occupancy in the reverse direction.
+            source_ref = self._proxy_evidence_for(event)
+            if (
+                source_ref is not None
+                and current is not None
+                and current.source == "proxy"
+                and (
+                    current.source_ref == source_ref
+                    or current.occupancy != "present"
+                )
+            ):
+                # A delayed correction can name an old gang after a new proxy
+                # person signal has become current.  Only matching person
+                # evidence may be invalidated; an intervening availability
+                # marker is not person evidence.  A matching gang end retains
+                # Head's ``unknown`` projection; it is not an absence assertion.
                 report = PresenceReport(
-                    f"presence:proxy:end:{event.event_id}", "unknown", "proxy_retraction",
-                    "proxy", event.source_ref if event.kind == "gang_retracted" else current.source_ref,
-                    event.received_at, event.received_at,
-                    current.available if current else True, event.kind,
+                    f"presence:proxy:end:{event.event_id}:{source_ref}",
+                    "unknown", "proxy_retraction", "proxy", source_ref,
+                    event.effective_at, event.received_at, current.available,
+                    event.kind,
                 )
                 self._record_presence(report)
         self._saved_consumer_events = len(self.controller.consumer_events)
@@ -692,8 +771,26 @@ class SaunaRuntime:
             self.configuration.button_program,
             catalog=self.configuration.temperature_programs,
         )
+        if self.configuration.button_program == "constant":
+            parameters = Parameters(
+                {
+                    **parameters.as_dict(),
+                    "target_temperature_c": self.configuration.button_temperature_c,
+                }
+            )
         self.controller.update_temperature_parameters(
-            parameters, self._clock(), program_mode=mode, new_program=True
+            parameters,
+            self._clock(),
+            program_mode=mode,
+            new_program=True,
+            temperature_steps=next(
+                (
+                    program.temperature_steps
+                    for program in self.configuration.temperature_programs
+                    if program.id == self.configuration.button_program
+                ),
+                None,
+            ),
         )
         self.configuration = replace(
             self.configuration,
@@ -705,24 +802,29 @@ class SaunaRuntime:
                 in {program.id for program in self.configuration.temperature_programs}
                 else None
             ),
+            temperature_steps=self.controller.temperature_steps,
         )
         if self.device:
             self.device.values = parameters.values
 
     def _toggle_button_heater_override(self, now):
         """Toggle the physical-button override while the runtime lock is held."""
+        session = self.session
+        # The current model has only the active Ofenkühlung (`after_run`).
+        # Legacy cooling objects remain archival data and must not steer a
+        # physical-button override.
+        cooling_or_after_run = bool(
+            session is not None and session.after_run is not None
+        )
         if (
             self.controller.heater_override is not None
             and self.controller.control_mode != "manual"
         ):
-            session = self.session
-            if (
-                self.controller.heater_override is False
-                and session is not None
-                and session.after_run is not None
-            ):
+            if self.controller.heater_override is False and cooling_or_after_run:
                 return self.controller.set_heater_override(True, now)
             return self.controller.set_heater_override(None, now)
+        if self.controller.control_mode != "manual" and cooling_or_after_run:
+            return self.controller.set_heater_override(True, now)
         if self.device:
             self.device.refresh(now)
             known = self.device.contactor_feedback()
@@ -794,10 +896,12 @@ class SaunaRuntime:
                 self.session.session_id if self.session else None,
             )
 
-    async def set_heater_override(self, value: bool | None):
+    async def set_heater_override(self, value: bool | None, *, manual_only=False):
         """Apply a manual heater selection through the serialized runtime path."""
         async with self._lock:
             self._require_open()
+            if manual_only and self.configuration.control_mode != "manual":
+                raise ValueError("Die Betriebsart wurde inzwischen geändert.")
             now = self._clock()
             if self.device:
                 self.device.refresh(now)
@@ -835,6 +939,36 @@ class SaunaRuntime:
                         "ended_at": now,
                     },
                     deadline.session_id if deadline else self.session.session_id,
+                )
+            await self._cycle()
+
+    async def finish_session_gap(self, token):
+        """Permanently finish the paused session selected by its gap token."""
+        async with self._lock:
+            self._require_open()
+            now = self._clock()
+            deadline = self.controller.finish_session_gap(token, now)
+            if self.device:
+                # A manual brightness must not be restored after the required
+                # session-light OFF.  The due LightAfterRun object keeps the
+                # adapter's normal OFF/retry path responsible for the output.
+                self.device.set_light_override(None)
+                self.device.light_output.finish_automatic()
+            self.log.info(
+                "session_finished_manually",
+                "Unterbrochene Saunasitzung endgültig beendet.",
+            )
+            if self.archive:
+                self.archive.append(
+                    "manual_session_end",
+                    now,
+                    {
+                        "purpose": "session_gap",
+                        "token": token,
+                        "planned_ends_at": deadline.due_at,
+                        "ended_at": min(now, deadline.due_at),
+                    },
+                    deadline.session_id,
                 )
             await self._cycle()
 
@@ -893,23 +1027,35 @@ class SaunaRuntime:
             if self.device:
                 try:
                     self.controller.set_operation(False, self._clock())
+                    # ``set_operation`` may end a confirmed gang.  Archive and
+                    # later consumers must receive its durable end before the
+                    # archive is closed, just as they do in a normal cycle.
+                    self._publish_controller_events()
+                except Exception as error:
+                    failures.append(error)
+                try:
+                    # Event persistence must never prevent the physical OFF
+                    # attempt during teardown.
                     await self.device.close()
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:
-                if self.session is not None:
-                    now = self._clock()
-                    self.archive.append(
-                        "interruption",
-                        now,
-                        {"reason": "integration_unloaded"},
-                        self.session.session_id,
-                    )
-                    self.archive.save_session(
-                        replace(self.session, ended_at=now),
-                        now,
-                        self.configuration.as_options(),
-                    )
+                try:
+                    if self.session is not None:
+                        now = self._clock()
+                        self.archive.append(
+                            "interruption",
+                            now,
+                            {"reason": "integration_unloaded"},
+                            self.session.session_id,
+                        )
+                        self.archive.save_session(
+                            replace(self.session, ended_at=now),
+                            now,
+                            self.configuration.as_options(),
+                        )
+                except Exception as error:
+                    failures.append(error)
                 try:
                     await self.archive.close()
                 except Exception as error:

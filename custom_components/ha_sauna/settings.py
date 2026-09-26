@@ -5,6 +5,7 @@ from dataclasses import replace
 
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .core.program_catalog import load_programs, validate_programs
+from .core.temperature_program import temperature_steps as validate_temperature_steps
 from .presentation import parameter_error
 
 
@@ -100,10 +101,11 @@ async def async_reset_parameters(hass, entry):
             control_input_mode=runtime.configuration.control_input_mode,
             button_event_type=runtime.configuration.button_event_type,
         )
-        # Die neue Grundkonfiguration wird über den bestehenden Listener geladen.
-        # Bis dahin bleibt die laufende Konfiguration unverändert und gesperrt.
-        runtime.reconfiguring = True
-        hass.config_entries.async_update_entry(entry, options=reset.as_options())
+        # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
+        # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.
+        runtime.reconfiguring = hass.config_entries.async_update_entry(
+            entry, options=reset.as_options()
+        )
         return reset.parameters.as_dict()
 
 
@@ -132,6 +134,13 @@ async def _async_set_parameters_locked(
     if partial and merged.get("final_temperature_c", False) is None:
         merged.pop("final_temperature_c")
     parameters = Parameters(merged)
+    button_temperature = runtime.configuration.button_temperature_c
+    if not (
+        parameters.minimum_for("target_temperature_c")
+        <= button_temperature
+        <= BY_KEY["target_temperature_c"].maximum
+    ):
+        raise ParameterError("sauna_min_temperature_c", "button_temperature_invalid")
     # A changed lower bound must be valid for the whole stored catalog before
     # options are written; otherwise the next reload would reject saved data.
     try:
@@ -173,6 +182,10 @@ async def _async_set_parameters_locked(
         and selected_mode != runtime.configuration.program_mode
     )
     clear_selected_program = bool(set(values) & LIVE_TEMPERATURE_KEYS)
+    # The legacy start/end/count form is always the evenly distributed form.
+    # Passing ``None`` explicitly also lets a live end edit retain its current
+    # target as the new anchor instead of continuing an old explicit list.
+    selected_steps = None if clear_selected_program else ...
     if not changed - LIVE_TEMPERATURE_KEYS:
         await apply_temperature_parameters(
             runtime,
@@ -188,6 +201,7 @@ async def _async_set_parameters_locked(
                 if clear_selected_program
                 else runtime.configuration.selected_program_id
             ),
+            temperature_steps=selected_steps,
         )
     else:
         runtime.reconfiguring = True
@@ -200,6 +214,11 @@ async def _async_set_parameters_locked(
             "parameters": parameters.as_dict(),
             **({"program_mode": selected_mode} if selected_mode is not None else {}),
             **({"selected_program_id": None} if clear_selected_program else {}),
+            **(
+                {"temperature_steps": runtime.configuration.temperature_steps}
+                if selected_steps is not ...
+                else {}
+            ),
         },
     )
     return parameters.as_dict()
@@ -237,6 +256,16 @@ async def async_set_program(hass, entry, profile):
             parameters,
             program_mode=mode,
             new_program=True,
+            temperature_steps=(
+                next(
+                    (
+                        program.temperature_steps
+                        for program in runtime.configuration.temperature_programs
+                        if program.id == profile
+                    ),
+                    None,
+                )
+            ),
             selected_program_id=(
                 profile
                 if profile in {p.id for p in runtime.configuration.temperature_programs}
@@ -255,6 +284,7 @@ async def async_set_program(hass, entry, profile):
                     in {p.id for p in runtime.configuration.temperature_programs}
                     else None
                 ),
+                "temperature_steps": runtime.configuration.temperature_steps,
             },
         )
         return parameters.as_dict()
@@ -268,6 +298,7 @@ async def apply_temperature_parameters(
     program_mode=None,
     new_program=False,
     selected_program_id=...,
+    temperature_steps=...,
 ):
     """Aufrufer hält runtime._lock; niemals Sitzung oder Regelzustände ersetzen."""
     before = runtime.configuration.parameters.as_dict()
@@ -279,6 +310,7 @@ async def apply_temperature_parameters(
         explicit_target=explicit_target,
         program_mode=program_mode,
         new_program=new_program,
+        temperature_steps=temperature_steps,
     )
     # Eine gerade abgelaufene Sitzung erhält ihren bisherigen Parameterstand.
     runtime.persist_completed_sessions()
@@ -292,6 +324,11 @@ async def apply_temperature_parameters(
             runtime.configuration.selected_program_id
             if selected_program_id is ...
             else selected_program_id
+        ),
+        temperature_steps=(
+            runtime.configuration.temperature_steps
+            if temperature_steps is ...
+            else temperature_steps
         ),
     )
     if runtime.device:
@@ -328,6 +365,45 @@ async def apply_temperature_parameters(
             )
         runtime._archive_signature = None
     await runtime._cycle()
+
+
+async def async_set_button_program(hass, entry, profile, temperature_c=None):
+    """Atomically persist the physical button's named or constant program."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        runtime._require_open()
+        if runtime.reconfiguring or runtime.session:
+            raise ConfigurationLocked(
+                "Das Tasterprogramm kann gerade nicht geändert werden."
+            )
+        ids = {program.id for program in runtime.configuration.temperature_programs}
+        if (
+            not isinstance(profile, str)
+            or profile not in {"constant", *ids}
+            or (profile != "constant" and temperature_c is not None)
+        ):
+            raise ValueError("Ungültiges Tasterprogramm")
+        temperature = runtime.configuration.button_temperature_c
+        if profile == "constant" and temperature_c is not None:
+            temperature = Parameters(
+                {
+                    **runtime.configuration.parameters.as_dict(),
+                    "target_temperature_c": temperature_c,
+                }
+            ).values["target_temperature_c"]
+        configuration = replace(
+            runtime.configuration,
+            button_program=profile,
+            button_temperature_c=temperature,
+        )
+        # This selection has no effect on an already-running controller (which
+        # is excluded above), so it can be adopted immediately instead of
+        # waiting for the options listener to reload the runtime.
+        runtime.configuration = configuration
+        hass.config_entries.async_update_entry(
+            entry, options=configuration.as_options()
+        )
+        return configuration
 
 
 async def async_set_program_catalog(hass, entry, stored):
@@ -385,11 +461,13 @@ async def async_set_program_catalog(hass, entry, stored):
                 previous.start_c,
                 previous.end_c,
                 previous.distribution_gangs,
+                previous.temperature_steps,
             )
             != (
                 selected_program.start_c,
                 selected_program.end_c,
                 selected_program.distribution_gangs,
+                selected_program.temperature_steps,
             )
         )
         if changed_values:
@@ -402,6 +480,7 @@ async def async_set_program_catalog(hass, entry, stored):
                 program_mode=mode,
                 new_program=True,
                 selected_program_id=selected,
+                temperature_steps=selected_program.temperature_steps,
             )
         runtime.configuration = replace(
             runtime.configuration,
@@ -414,8 +493,8 @@ async def async_set_program_catalog(hass, entry, stored):
         return [program.as_dict() for program in programs]
 
 
-async def async_set_button_program(hass, entry, profile):
-    """Persist the physical-button profile only when no session is open."""
+async def async_set_temperature_steps(hass, entry, values):
+    """Select explicitly entered stages through the same controller path."""
     runtime = entry.runtime_data
     async with runtime._lock:
         runtime._require_open()
@@ -423,17 +502,34 @@ async def async_set_button_program(hass, entry, profile):
             raise ConfigurationLocked(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
             )
-        if runtime.session:
-            raise ConfigurationLocked(
-                "Das Tasterprogramm kann erst nach Ende der Saunasitzung geändert werden."
-            )
-        ids = {program.id for program in runtime.configuration.temperature_programs}
-        if not isinstance(profile, str) or profile not in {"current", "constant", *ids}:
-            raise ValueError("Ungültiges Tasterprogramm")
-        runtime.configuration = replace(runtime.configuration, button_program=profile)
+        steps = validate_temperature_steps(values, "temperature_steps")
+        maximum = int(BY_KEY["temperature_gangs"].maximum)
+        minimum = runtime.configuration.parameters.minimum_for("target_temperature_c")
+        if len(steps) > maximum or any(
+            step < minimum or step > BY_KEY["target_temperature_c"].maximum
+            for step in steps
+        ):
+            raise ParameterError("base", "invalid_parameters")
+        parameters = Parameters(
+            {
+                **runtime.configuration.parameters.as_dict(),
+                "target_temperature_c": steps[0],
+                "final_temperature_c": steps[-1],
+                "temperature_gangs": len(steps),
+            }
+        )
+        await apply_temperature_parameters(
+            runtime,
+            parameters,
+            program_mode="progressive",
+            new_program=True,
+            selected_program_id=None,
+            temperature_steps=steps,
+        )
         hass.config_entries.async_update_entry(
             entry, options=runtime.configuration.as_options()
         )
+        return parameters.as_dict()
 
 
 async def async_set_control_mode(hass, entry, mode):

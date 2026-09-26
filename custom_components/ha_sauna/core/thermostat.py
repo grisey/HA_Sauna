@@ -60,17 +60,24 @@ def evaluate(
     if temperature is None or not isfinite(temperature):
         return result(False, "upper_temperature_unavailable")
     if (
-        state.demand
+        (state.demand or heating_active)
         and heating_since is not None
         and now
         < heating_since
         + timedelta(seconds=parameters.seconds("minimum_heating_minutes"))
     ):
+        # A manual command may hand a real, confirmed heat run back to the
+        # regulator without changing its previous demand bit.  Minimum runtime
+        # begins at that feedback, never at the command or gang signal.
         return result(True, "minimum_heating")
     readiness_target = target + values["readiness_offset_c"]
+    if controls.gang_veto and (state.demand or heating_active):
+        # A gang only vetoes an otherwise regular switch-off of heat that is
+        # already demanded or actually running.  It does not create an OFF→ON
+        # start, and protection, operation, cooling and invalid-temperature
+        # rules above keep their priority.
+        return result(True, "gang_veto")
     if temperature >= readiness_target:
-        if (state.demand or heating_active) and controls.gang_veto:
-            return result(True, "gang_veto")
         if controls.door_request and not state.demand:
             # Actual feedback starts minimum heating; a pulse cannot fabricate
             # that history or introduce a new holding period at the limit.

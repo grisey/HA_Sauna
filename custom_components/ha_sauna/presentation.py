@@ -53,8 +53,8 @@ REASONS = {
     "forced_cooling": "Historische Zwangskühlung; der Ofen blieb aus.",
     "after_run": "Die Ofenkühlung läuft; der Ofen bleibt aus.",
     "minimum_heating": "Die Mindestheizzeit ist noch nicht abgelaufen.",
-    "temperature_reached": "Die Bereitschaftstemperatur ist erreicht.",
-    "thermostat_cooldown": "Die Heizpause nach Erreichen der Bereitschaft läuft.",
+    "temperature_reached": "Die obere Regeltemperatur ist erreicht.",
+    "thermostat_cooldown": "Die Heizpause nach der Temperaturabschaltung läuft.",
     "below_target": "Die Temperatur liegt unter der Einschaltgrenze.",
     "hysteresis_band": "Die Temperatur liegt im eingestellten Schaltbereich.",
     "manual_mode": "Der Ofen wird von Hand bedient und ist ausgeschaltet.",
@@ -161,5 +161,6 @@ def parameter_error(error):
         "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
         "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
+        "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail
