@@ -123,7 +123,7 @@
           "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Fehlt ein gültiger oberer Temperaturwert, pausiert die Heizung sofort.",
           "door_heating_slope": "Zusätzliche Erkennung ohne Feuchteabfall: Beide Temperaturtrends müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Bei nur einer verfügbaren Messposition bleibt die bisherige Regel mit Luftfeuchte maßgeblich.",
           "weak_humidity_upper": "Mindestanstieg am oberen Sensor in Prozentpunkten pro Minute.",
-          "after_run_minutes": "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert die alte Ofenkühlung.",
+          "after_run_minutes": "Mindestens diese Zeit bleibt der Ofen nach einem beendeten, durch Aufguss bestätigten Saunagang aus.",
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "vent_drop_upper": "Mindestabfall am oberen Sensor gegenüber der Temperatur vor der Öffnung.",
@@ -144,7 +144,6 @@
           "operation_brightness_percent": "Automatische Lichthelligkeit tagsüber. Manuelle Lichtänderungen bleiben bis zum nächsten Phasenwechsel erhalten.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
           "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird.",
-          "door_request_minutes": "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
           "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
           "program_1_start_c": "Solltemperatur vor dem ersten gezählten Saunagang.",
           "door_humidity_seconds": "Zeitraum für den ergänzenden Luftfeuchteabfall bei einer Türöffnung.",
@@ -157,7 +156,10 @@
           "session_light_brightness_percent": "Helligkeit für „Hell“ und für den Lichtnachlauf beim Ausschalten.",
           "light_reference_temperature_c": "Am Kaltpunkt dieser Temperatur beginnt die lineare Temperaturkurve für die Lichthelligkeit.",
           "program_2_start_c": "Solltemperatur vor dem ersten gezählten Saunagang.",
-          "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung."
+          "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
+          "oven_cooling_max_minutes": "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
+          "oven_cooling_half_life_minutes": "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
+          "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten aus."
         },
         "title": "Temperatur, Zeiten und Erkennung",
         "data": {
@@ -205,7 +207,7 @@
           "sensor_timeout_seconds": "Höchstalter eines Messwerts",
           "door_heating_slope": "Türöffnung: Temperaturabfall trotz eingeschalteter Heizung",
           "weak_humidity_upper": "Luftfeuchtetrend bei schwachem Personensignal oben",
-          "after_run_minutes": "Ofenkühlung nach einem Saunagang",
+          "after_run_minutes": "Mindestdauer der Ofenkühlung",
           "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "vent_drop_upper": "Temperaturabfall beim Durchlüften oben",
@@ -226,7 +228,6 @@
           "operation_brightness_percent": "Lichthelligkeit tagsüber",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
           "button_program": "Programm beim externen Einschalten",
-          "door_request_minutes": "Türwartezeit für die Heizanforderung",
           "button_hold_seconds": "Langdruckdauer des Saunatasters",
           "program_1_start_c": "Programm 1: Starttemperatur",
           "door_humidity_seconds": "Zeitfenster für die Luftfeuchteänderung an der Tür",
@@ -239,7 +240,10 @@
           "session_light_brightness_percent": "Helligkeit für „Hell“ und Lichtnachlauf",
           "light_reference_temperature_c": "Referenztemperatur für das Licht",
           "program_2_start_c": "Programm 2: Starttemperatur",
-          "warmup_estimation_minutes": "Zeitfenster der Aufheizschätzung"
+          "warmup_estimation_minutes": "Zeitfenster der Aufheizschätzung",
+          "oven_cooling_max_minutes": "Höchstdauer der Ofenkühlung",
+          "oven_cooling_half_life_minutes": "Halbwertszeit der Ofenkühlung",
+          "oven_cooling_heat_idle_ratio": "Heizminuten je Bereitschaftsminute"
         },
         "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
       }
@@ -375,7 +379,7 @@
           "sensor_timeout_seconds": "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Fehlt ein gültiger oberer Temperaturwert, pausiert die Heizung sofort.",
           "door_heating_slope": "Zusätzliche Erkennung ohne Feuchteabfall: Beide Temperaturtrends müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Bei nur einer verfügbaren Messposition bleibt die bisherige Regel mit Luftfeuchte maßgeblich.",
           "weak_humidity_upper": "Mindestanstieg am oberen Sensor in Prozentpunkten pro Minute.",
-          "after_run_minutes": "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert die alte Ofenkühlung.",
+          "after_run_minutes": "Mindestens diese Zeit bleibt der Ofen nach einem beendeten, durch Aufguss bestätigten Saunagang aus.",
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "vent_drop_upper": "Mindestabfall am oberen Sensor gegenüber der Temperatur vor der Öffnung.",
@@ -395,7 +399,6 @@
           "door_open_slope": "Die Temperatur muss mindestens so stark fallen. Negative Werte bezeichnen eine Abkühlung.",
           "operation_brightness_percent": "Automatische Lichthelligkeit tagsüber. Manuelle Lichtänderungen bleiben bis zum nächsten Phasenwechsel erhalten.",
           "infusion_temperature": "Untergrenze der Temperaturänderung innerhalb des Aufgussfensters.",
-          "door_request_minutes": "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
           "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
           "program_1_start_c": "Solltemperatur vor dem ersten gezählten Saunagang.",
           "door_humidity_seconds": "Zeitraum für den ergänzenden Luftfeuchteabfall bei einer Türöffnung.",
@@ -408,7 +411,10 @@
           "session_light_brightness_percent": "Helligkeit für „Hell“ und für den Lichtnachlauf beim Ausschalten.",
           "light_reference_temperature_c": "Am Kaltpunkt dieser Temperatur beginnt die lineare Temperaturkurve für die Lichthelligkeit.",
           "program_2_start_c": "Solltemperatur vor dem ersten gezählten Saunagang.",
-          "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung."
+          "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
+          "oven_cooling_max_minutes": "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
+          "oven_cooling_half_life_minutes": "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
+          "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten aus."
         },
         "title": "Temperatur, Zeiten und Erkennung",
         "data": {
@@ -455,7 +461,7 @@
           "sensor_timeout_seconds": "Höchstalter eines Messwerts",
           "door_heating_slope": "Türöffnung: Temperaturabfall trotz eingeschalteter Heizung",
           "weak_humidity_upper": "Luftfeuchtetrend bei schwachem Personensignal oben",
-          "after_run_minutes": "Ofenkühlung nach einem Saunagang",
+          "after_run_minutes": "Mindestdauer der Ofenkühlung",
           "infusion_hold_seconds": "Bestätigungsdauer des Aufgusssignals",
           "infusion_humidity": "Luftfeuchteanstieg bei einem Aufguss",
           "vent_drop_upper": "Temperaturabfall beim Durchlüften oben",
@@ -475,7 +481,6 @@
           "door_open_slope": "Temperaturtrend bei Türöffnung",
           "operation_brightness_percent": "Lichthelligkeit tagsüber",
           "infusion_temperature": "Temperaturänderung bei einem Aufguss",
-          "door_request_minutes": "Türwartezeit für die Heizanforderung",
           "button_hold_seconds": "Langdruckdauer des Saunatasters",
           "program_1_start_c": "Programm 1: Starttemperatur",
           "door_humidity_seconds": "Zeitfenster für die Luftfeuchteänderung an der Tür",
@@ -488,7 +493,10 @@
           "session_light_brightness_percent": "Helligkeit für „Hell“ und Lichtnachlauf",
           "light_reference_temperature_c": "Referenztemperatur für das Licht",
           "program_2_start_c": "Programm 2: Starttemperatur",
-          "warmup_estimation_minutes": "Zeitfenster der Aufheizschätzung"
+          "warmup_estimation_minutes": "Zeitfenster der Aufheizschätzung",
+          "oven_cooling_max_minutes": "Höchstdauer der Ofenkühlung",
+          "oven_cooling_half_life_minutes": "Halbwertszeit der Ofenkühlung",
+          "oven_cooling_heat_idle_ratio": "Heizminuten je Bereitschaftsminute"
         },
         "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
       },

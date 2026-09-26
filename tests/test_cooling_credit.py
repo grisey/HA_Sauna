@@ -1,4 +1,5 @@
 """Alte Budgets und Temperaturfristen erzeugen keine zusätzlichen Kühlzyklen."""
+from datetime import timedelta
 import unittest
 from test_cooling import at, controller
 from test_foundation import event
@@ -10,6 +11,8 @@ def finish_gang(c, end_at):
     c.process(event("infusion", Kind.INFUSION, 2))
     c.process(event("open", Kind.DOOR_OPEN, end_at - 1))
     c.process(event("vent", Kind.VENTILATION, end_at))
+    c.report_contactor(False, at(end_at))
+    c.report_heating(False, at(end_at))
 
 
 class OvenCoolingTests(unittest.TestCase):
@@ -32,11 +35,12 @@ class OvenCoolingTests(unittest.TestCase):
                 c.report_heating(True, at(0))
                 finish_gang(c, 600)
                 phase = c.session.after_run
-                self.assertEqual(phase.ends_at, at(600 + duration))
+                self.assertIsNotNone(phase.ends_at)
+                self.assertGreaterEqual(phase.duration_seconds, duration)
                 self.assertFalse(c.last_decision.heat)
-                c.advance(at(599 + duration))
+                c.advance(phase.ends_at - timedelta(microseconds=1))
                 self.assertFalse(c.last_decision.heat)
-                c.advance(at(600 + duration))
+                c.advance(phase.ends_at)
                 self.assertIsNone(c.session.after_run)
                 self.assertIsNone(c.session.cooling)
                 self.assertEqual(c.session.cooling_history, ())
@@ -63,13 +67,12 @@ class OvenCoolingTests(unittest.TestCase):
         c = controller(after_run_minutes=8)
         finish_gang(c, 60)
         deadline = c.session.after_run.ends_at
+        self.assertIsNotNone(deadline)
         c.set_operation(False, at(100))
-        c.set_operation(True, at(120))
-        self.assertEqual(c.session.after_run.ends_at, deadline)
         self.assertFalse(c.last_decision.heat)
-        c.advance(deadline)
-        self.assertIsNone(c.session.after_run)
-        self.assertIsNone(c.session.cooling)
+        self.assertFalse(c.session.operation_enabled)
+        c.set_operation(True, at(120))
+        self.assertTrue(c.session.operation_enabled)
         self.assertTrue(c.last_decision.heat)
 
     def test_historical_cycle_cannot_block_or_restart_active_control(self):

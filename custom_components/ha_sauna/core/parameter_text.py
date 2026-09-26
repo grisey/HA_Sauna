@@ -1,11 +1,6 @@
 """Gemeinsame deutsche Begriffe und Feldhilfen für Einrichtung und Oberfläche."""
 
 PARAMETER_TEXT = {
-    "door_request_minutes": (
-        "Türwartezeit für die Heizanforderung",
-        "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
-        "operation",
-    ),
     "session_light_brightness_percent": (
         "Helligkeit für „Hell“ und Lichtnachlauf",
         "Helligkeit für „Hell“ und für den Lichtnachlauf beim Ausschalten.",
@@ -107,8 +102,23 @@ PARAMETER_TEXT = {
         "operation",
     ),
     "after_run_minutes": (
-        "Ofenkühlung nach einem Saunagang",
-        "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert die alte Ofenkühlung.",
+        "Mindestdauer der Ofenkühlung",
+        "Mindestens diese Zeit bleibt der Ofen nach einem beendeten, durch Aufguss bestätigten Saunagang aus.",
+        "operation",
+    ),
+    "oven_cooling_max_minutes": (
+        "Höchstdauer der Ofenkühlung",
+        "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
+        "operation",
+    ),
+    "oven_cooling_half_life_minutes": (
+        "Halbwertszeit der Ofenkühlung",
+        "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
+        "operation",
+    ),
+    "oven_cooling_heat_idle_ratio": (
+        "Heizminuten je Bereitschaftsminute",
+        "Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten aus.",
         "operation",
     ),
     "light_reference_temperature_c": (

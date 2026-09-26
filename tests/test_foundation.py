@@ -60,6 +60,24 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(defaults.values["sensor_timeout_seconds"], 180)
         self.assertEqual(Parameters({"sensor_timeout_seconds": 7}).values["sensor_timeout_seconds"], 7)
 
+    def test_oven_cooling_defaults_and_legacy_base_compatibility(self):
+        defaults = Parameters({})
+        self.assertEqual(defaults.values["after_run_minutes"], 5)
+        self.assertEqual(defaults.values["oven_cooling_max_minutes"], 15)
+        self.assertEqual(defaults.values["oven_cooling_half_life_minutes"], 15)
+        self.assertEqual(defaults.values["oven_cooling_heat_idle_ratio"], 2)
+
+        # Older saved options contain only the former fixed cooling duration.
+        # Retain a value above the new default cap by deriving that cap once.
+        legacy = Parameters({"after_run_minutes": 30})
+        self.assertEqual(legacy.values["after_run_minutes"], 30)
+        self.assertEqual(legacy.values["oven_cooling_max_minutes"], 30)
+        self.assertEqual(legacy.minimum_for("oven_cooling_max_minutes"), 30)
+
+        with self.assertRaises(ParameterError) as raised:
+            Parameters({"after_run_minutes": 16, "oven_cooling_max_minutes": 15})
+        self.assertEqual(raised.exception.key, "oven_cooling_max_minutes")
+
     def test_unknown_parameter_fails(self):
         with self.assertRaises(ParameterError):
             Parameters({**parameters().as_dict(), "unknown": 3})

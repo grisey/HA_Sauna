@@ -36,10 +36,15 @@ def phase_timer(controller, now):
             (d.due_at for d in session.deadlines if d.purpose == "session_gap"), None
         )
         return remaining("session_gap", "Sitzung endet in", end) if end else None
-    if session.timeline.active:
-        return elapsed("gang", "Saunagang seit", session.timeline.active.started_at)
     if session.after_run:
         phase = session.after_run
+        if phase.pending_start or phase.ends_at is None and phase.paused_at is None:
+            return {
+                "kind": "after_run",
+                "label": "Ofenkühlung wartet auf Schütz-Aus",
+                "seconds": None,
+                "mode": "pending",
+            }
         if phase.paused_at is not None:
             return {
                 "kind": "after_run",
@@ -48,6 +53,8 @@ def phase_timer(controller, now):
                 "mode": "paused",
             }
         return remaining("after_run", "Ofenkühlung noch", phase.ends_at)
+    if session.timeline.active:
+        return elapsed("gang", "Saunagang seit", session.timeline.active.started_at)
     if controller.control_mode == "manual":
         return elapsed(
             "manual",
@@ -94,7 +101,7 @@ def start_availability(controller, now, estimated_ready_seconds=None):
         return result
 
     active = session.timeline.active
-    if active is not None:
+    if active is not None and session.after_run is None:
         result.update(
             blocker={"kind": "gang"},
             gang_elapsed_seconds=max(0, (now - active.started_at).total_seconds()),
@@ -133,6 +140,12 @@ def start_availability(controller, now, estimated_ready_seconds=None):
         return result
     after_run = session.after_run
     if after_run is not None:
+        if after_run.pending_start or after_run.ends_at is None and after_run.paused_at is None:
+            result.update(
+                blocker={"kind": "after_run_pending"},
+                message="Die Ofenkühlung wartet auf die bestätigte Ausschaltung des Ofens.",
+            )
+            return result
         after_seconds = (
             after_run.remaining_seconds
             if after_run.paused_at is not None
@@ -141,14 +154,8 @@ def start_availability(controller, now, estimated_ready_seconds=None):
         if after_run.paused_at is not None:
             result.update(
                 blocker={"kind": "after_run_paused", "seconds": after_seconds},
-                minimum_wait_seconds=(
-                    0 if controller._paused_after_run_reentry_allowed(session) else None
-                ),
-                message=(
-                    "Das manuelle Heizen läuft; ein manueller Wiedereinstieg ist jetzt möglich."
-                    if controller._paused_after_run_reentry_allowed(session)
-                    else "Die Ofenkühlung ist während des manuellen Heizens pausiert; ein neuer Saunagang ist noch nicht abschätzbar."
-                ),
+                minimum_wait_seconds=None,
+                message="Eine pausierte Ofenkühlung aus dem früheren Ablauf liegt vor.",
             )
             return result
         result.update(

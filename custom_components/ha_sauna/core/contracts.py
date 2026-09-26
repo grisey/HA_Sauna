@@ -19,11 +19,46 @@ class PresenceReport:
     reason: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class ControlInputs:
-    door_request: bool = False  # einmaliger Impuls, keine zusätzliche Haltezeit
-    gang_veto: bool = False
-    cooling: bool = False  # bestehende Ofenkühlung
+    """Live demands that the thermostat may honour after safety checks.
+
+    ``gang_heat_demand`` and ``temporary_door_heat`` are levels, not events.
+    Their owner keeps them asserted until its own completion condition is met.
+    The old names remain readable and constructible during the controller
+    migration, but are compatibility aliases only.
+    """
+
+    gang_heat_demand: bool
+    temporary_door_heat: bool
+    cooling: bool
+
+    def __init__(
+        self,
+        gang_heat_demand: bool | None = None,
+        temporary_door_heat: bool | None = None,
+        cooling: bool = False,
+        *,
+        gang_veto: bool | None = None,
+        door_request: bool | None = None,
+    ) -> None:
+        if gang_heat_demand is None:
+            gang_heat_demand = bool(gang_veto)
+        if temporary_door_heat is None:
+            temporary_door_heat = bool(door_request)
+        object.__setattr__(self, "gang_heat_demand", bool(gang_heat_demand))
+        object.__setattr__(self, "temporary_door_heat", bool(temporary_door_heat))
+        object.__setattr__(self, "cooling", bool(cooling))
+
+    @property
+    def gang_veto(self) -> bool:
+        """Compatibility alias; new control code must use gang_heat_demand."""
+        return self.gang_heat_demand
+
+    @property
+    def door_request(self) -> bool:
+        """Compatibility alias; new control code must use temporary_door_heat."""
+        return self.temporary_door_heat
 
 
 @dataclass(frozen=True)

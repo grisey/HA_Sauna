@@ -101,8 +101,15 @@ state.phase_timer = {kind: "after_run", seconds: 300, mode: "remaining"};
 assert.match(render(state), /Ofenkühlung<\/strong><span class="availability-line wait">noch 5:00 Minuten/, "after-run time does not claim readiness");
 
 state = baseState();
-state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
+state.phase = "nachlauf";
+state.phase_timer = {kind: "after_run", label: "Ofenkühlung wartet auf Schütz-Aus", seconds: null, mode: "pending"};
 let overview = render(state);
+assert.match(overview, /Ofenkühlung wartet auf Schütz-Aus/, "a pending cooling phase states what it is waiting for");
+assert.doesNotMatch(overview, /noch 0:00 Minuten/, "a pending cooling phase does not invent a zero duration");
+
+state = baseState();
+state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
+overview = render(state);
 assert.doesNotMatch(overview, /Heizpause/, "technical phase timers stay out of the overview");
 assert.equal((overview.match(/data-action="preset:/g) || []).length, 3, "presets over the 100 °C maximum are hidden");
 assert.match(overview, /data-action="program-mode:program" aria-pressed="false"/, "the named-program type remains selectable");

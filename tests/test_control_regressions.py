@@ -67,17 +67,17 @@ class ControlRegressionTests(unittest.TestCase):
         event(value, Kind.PERSON_STRONG, 760)
 
         assert value.last_decision.heat is True
-        assert value.last_decision.reason == "minimum_heating"
+        assert value.last_decision.reason == "gang_heat_demand"
         assert value.heater_override is None
 
-    def test_gang_veto_keeps_confirmed_heat_after_minimum_runtime(self):
+    def test_live_gang_demand_keeps_confirmed_heat_after_minimum_runtime(self):
         value = controller()
         stop_then_manually_restart(value)
         event(value, Kind.PERSON_STRONG, 760)
 
         value.advance(at(1400))
         assert value.last_decision.heat is True
-        assert value.last_decision.reason == "gang_veto"
+        assert value.last_decision.reason == "gang_heat_demand"
 
         idle = controller()
         idle.set_temperature(83, at(700))
@@ -89,7 +89,7 @@ class ControlRegressionTests(unittest.TestCase):
     def test_open_while_heating_leaves_one_close_request_if_heat_stops_before_close(self):
         value = controller()
         event(value, Kind.DOOR_OPEN, 700)
-        assert value.door_request.consumed is False
+        assert value.door_request.eligible_open is True
 
         value.set_temperature(83, at(720))
         value.report_contactor(False, at(721))
@@ -98,7 +98,7 @@ class ControlRegressionTests(unittest.TestCase):
         event(value, Kind.DOOR_CLOSE, 750)
 
         assert value.last_decision.heat is True
-        assert value.last_decision.reason == "door_request"
-        assert value.door_request.consumed is True
+        assert value.last_decision.reason == "temporary_door_heat"
+        assert value.door_request.eligible_open is False
         assert value.door_request.door_open is False
         assert event(value, Kind.DOOR_CLOSE, 750).changed is False

@@ -123,7 +123,7 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.session.session_id, new_session_id)
         self.assertIsNone(self.runtime.controller.light_after_run)
 
-    def test_delayed_on_feedback_first_restarts_after_run_then_returns_to_auto(self):
+    def test_button_cannot_pause_or_reenter_active_after_run(self):
         started_at = self._start_with_temperature()
         controller = self.runtime.controller
         controller.report_contactor(True, started_at + timedelta(seconds=1))
@@ -131,8 +131,8 @@ class ButtonRuntimeTests(unittest.TestCase):
 
         self._event("short", 1)
         self.assertTrue(controller.heater_override)
-        self.assertIsNotNone(controller.session.after_run.paused_at)
-        self.assertTrue(controller.last_decision.heat)
+        self.assertIsNone(controller.session.after_run.paused_at)
+        self.assertFalse(controller.last_decision.heat)
 
         self._event("short", 1)
         self.assertIsNone(controller.heater_override)

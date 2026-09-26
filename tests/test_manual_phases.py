@@ -13,6 +13,7 @@ def after_run(**values):
     c.process(event("infusion", Kind.INFUSION, 2))
     c.process(event("open", Kind.DOOR_OPEN, 69))
     c.process(event("vent", Kind.VENTILATION, 70))
+    c.report_contactor(False, at(70))
     c.report_heating(False, at(70))
     return c
 
@@ -21,13 +22,12 @@ class ManualPhaseTests(unittest.TestCase):
     def test_early_oven_cooling_returns_to_regulation_without_extra_cycle(self):
         c = after_run()
         phase = c.session.after_run
-        original = next(d for d in c.session.deadlines if d.purpose == "after_run")
         c.finish_phase("after_run", phase.phase_id, at(80))
         self.assertIsNone(c.session.cooling)
         self.assertEqual(c.session.after_run_history[-1].ends_at, at(80))
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertTrue(c.last_decision.heat)
-        self.assertFalse(c.consume_deadline(original, at(100)))
+        self.assertIsNone(c.session.after_run)
         with self.assertRaises(ValueError):
             c.finish_phase("after_run", phase.phase_id, at(80))
         self.assertIsNone(c.session.cooling)
@@ -51,7 +51,8 @@ class ManualPhaseTests(unittest.TestCase):
                     c.set_operation(False, at(75))
                 else:
                     c.protection.add("heater_service_unavailable")
-                c.finish_phase("after_run", c.session.after_run.phase_id, at(80))
+                if c.session.after_run is not None:
+                    c.finish_phase("after_run", c.session.after_run.phase_id, at(80))
                 self.assertFalse(c.last_decision.heat)
                 self.assertEqual(c.session.operation_enabled, not disabled)
                 if not disabled:
@@ -77,6 +78,7 @@ class ManualPhaseTests(unittest.TestCase):
     def test_expired_phase_is_not_processed_twice(self):
         c = after_run()
         token = c.session.after_run.phase_id
+        c.advance(c.session.after_run.ends_at)
         with self.assertRaises(ValueError):
             c.finish_phase("after_run", token, at(100))
         self.assertEqual(len(c.session.after_run_history), 1)

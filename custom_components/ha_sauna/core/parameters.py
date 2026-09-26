@@ -82,6 +82,7 @@ LIVE_TEMPERATURE_KEYS = frozenset(
 # no defaults, validation constraints, editable fields, or control effect.
 LEGACY_COOLING_KEYS = frozenset(
     {
+        "door_request_minutes",
         "forced_cooling_minutes",
         "heating_minutes",
         "heating_reduction_minutes",
@@ -100,8 +101,10 @@ DEFINITIONS = (
     definition("minimum_heating_minutes", "min", True, default=10),
     definition("mechanical_timer_minutes", "min", default=240),
     definition("mechanical_timer_warning_minutes", "min", optional=True),
-    definition("after_run_minutes", "min", default=8),
-    definition("door_request_minutes", "min", True, optional=True),
+    definition("after_run_minutes", "min", default=5),
+    definition("oven_cooling_max_minutes", "min", default=15),
+    definition("oven_cooling_half_life_minutes", "min", default=15, maximum=240),
+    definition("oven_cooling_heat_idle_ratio", "Verhältnis", default=2, maximum=20),
     definition("readiness_offset_c", "°C", True, default=5),
     definition("readiness_hysteresis_c", "°C", default=3),
     definition("warmup_estimation_minutes", "min", default=5),
@@ -204,16 +207,35 @@ class Parameters:
         unknown = set(self.values) - BY_KEY.keys() - LEGACY_COOLING_KEYS
         if unknown:
             raise ParameterError("base", "unknown_parameter")
+        # Configurations from before the adaptive cooling limit only contain the
+        # former fixed duration.  Preserve an explicitly saved value above the
+        # new default cap by supplying an equal cap on first load.  The next
+        # normal configuration write persists that effective value.
+        supplied = self.values
+        values = dict(supplied)
+        base = values.get("after_run_minutes")
+        max_key = "oven_cooling_max_minutes"
+        if (
+            max_key not in values
+            and isinstance(base, (int, float))
+            and not isinstance(base, bool)
+            and base > BY_KEY[max_key].default
+        ):
+            values[max_key] = base
+
         checked = {}
         for definition in DEFINITIONS:
-            if definition.key not in self.values:
+            if definition.key not in values:
                 if definition.default is not None:
                     checked[definition.key] = definition.validate(definition.default)
                     continue
                 if definition.optional:
                     continue
                 raise ParameterError(definition.key, "required")
-            checked[definition.key] = definition.validate(self.values[definition.key])
+            checked[definition.key] = definition.validate(values[definition.key])
+        if checked["oven_cooling_max_minutes"] < checked["after_run_minutes"]:
+            raise ParameterError("oven_cooling_max_minutes", "too_small")
+
         sauna_minimum = checked["sauna_min_temperature_c"]
         for key in (
             "preset_start_c",
@@ -243,6 +265,8 @@ class Parameters:
             "final_temperature_c",
         }:
             return self.values["sauna_min_temperature_c"]
+        if key == "oven_cooling_max_minutes":
+            return self.values["after_run_minutes"]
         definition = BY_KEY[key]
         return definition.minimum if definition.minimum is not None else 0
 

@@ -1,7 +1,12 @@
 # Bedienungsanleitung
 
-> Ergänzender Vorrang: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
-> beschreibt den Produktivstand des Folgeauftrags vom 26.09.2026.
+> Maßgeblicher Stand vom 26.09.2026: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
+> und [Ofenkühlung](ofenkuehlung.md). Jeder aktive Gang fordert vorläufig wie
+> bestätigt durchgehend Heizen an; Ofenkühlung und technische Sperren haben Vorrang.
+> Die vorübergehende Türhilfe wirkt nur nach geeignetem Türschluss. Ofenkühlung
+> ist dynamisch und wird durch Tür, Präsenz oder manuelles Heizen nicht unterbrochen.
+> Entgegenstehende ältere Angaben unten zu Öffnungsfristen, Gangveto, Kühlpausen,
+> Wiedereinstieg, Heizbudgets und Zwangskühlung sind ausschließlich historisch.
 
 > Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
 > beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
@@ -164,12 +169,11 @@ gedimmten, einstellbaren Helligkeit an, bis Sie loslassen; danach beginnt der
 Lichtnachlauf. Auch dieser verwendet die eingestellte Wiederaufnahmezeit als
 Dauer; die mit langem Drücken beendete Sitzung selbst bleibt abgeschlossen.
 
-Auch in Nachlauf oder Zwangskühlung kann ein kurzer Druck den Ofen vorübergehend
-einschalten. Entsteht daraus kein neuer Saunagang, setzen Nachlauf und Kühlung
-nach der Rückgabe an die Automatik mit ihrer Restzeit fort. Beginnt ein neuer
-Saunagang, bleibt der pausierte Nachlauf bis zur Aufgussbestätigung erhalten.
-Wird der vorläufige Gang aufgehoben, läuft sein Rest weiter. Mit der Bestätigung
-endet der alte Nachlauf; nach diesem Gang folgt ein neuer vollständiger Nachlauf.
+Während der Ofenkühlung bleibt der Ofen ausgeschaltet. Ein kurzer Tastendruck,
+eine Türschließung oder ein Personensignal kann die Kühlung nicht unterbrechen.
+In den Details kann die Ofenkühlung ausdrücklich beendet werden; die dabei
+verkürzte Kühlzeit gilt nicht als vollständig abgeschlossene Kühlung für die
+nächste Dauerberechnung. Die eigenständige Zwangskühlung ist entfernt.
 
 Ein kurzer Lichttasterdruck schaltet das Licht aus. Gehaltenes Drücken dimmt je
 nach Taster heller oder dunkler. Diese tatsächliche Lichtwahl wird als manuelle
@@ -183,11 +187,9 @@ Saunasitzungen auf der Übersicht. Dafür genügen die normalen Home-Assistant-B
 In **Manuell** schalten Sie den Ofen mit **EIN** und **AUS** und wählen für das
 Licht **Aus**, **Gedimmt** oder **Hell**. Zur Temperaturwahl wechseln Sie zurück
 zu **Automatik**. Messung, Archivierung und technische Schutzabschaltungen bleiben
-aktiv; die Temperaturautomatik, reguläre Heizzeit-Kühlpausen und automatische
-Lichtwechsel sind ausgesetzt. Manuell endet nicht nach einer festen Zeit.
-Eine bestätigte Übertemperatur löst auch dort eine zusätzliche Kühlung aus. Sie
-erhält einen bereits laufenden Saunagang und beginnt anschließend; eine
-technische Schutzabschaltung bleibt sofort vorrangig.
+aktiv; die Temperaturautomatik und automatische Lichtwechsel sind ausgesetzt.
+Manuell endet nicht nach einer festen Zeit. Technische Schutzsperren und
+fehlende gültige Regeltemperatur verhindern auch manuelles Heizen.
 
 Davon getrennt ist die **vorübergehende Übersteuerung** während der
 Betriebsart Automatik. Administratoren finden sie unter **Details → Betrieb &

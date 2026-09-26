@@ -1,4 +1,5 @@
 """Die Timeranzeige folgt der Schützrückmeldung, nicht der Heizentscheidung."""
+from datetime import timedelta
 import unittest
 
 from test_cooling import at, controller
@@ -52,14 +53,15 @@ class MechanicalTimerTests(unittest.TestCase):
         self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14328)
         c.report_contactor(False, at(72))
         c.report_heating(False, at(72))
-        c.advance(at(100))
+        ended_at = c.session.after_run.ends_at
+        c.advance(ended_at)
         self.assertIsNone(c.session.after_run)
         self.assertIsNone(c.session.cooling)
-        c.advance(at(130))
+        c.advance(ended_at + timedelta(seconds=30))
         self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14328)
         self.assertTrue(c.last_decision.heat)
-        c.report_contactor(True, at(132))
-        c.advance(at(142))
+        c.report_contactor(True, ended_at + timedelta(seconds=32))
+        c.advance(ended_at + timedelta(seconds=42))
         self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14318)
 
     def test_expiry_and_warning_time_move_with_contactor_pauses(self):

@@ -34,10 +34,10 @@ class ThermostatTests(unittest.TestCase):
         _, decision = self.decide(state, now=T0 + timedelta(seconds=60), temperature=70)
         self.assertTrue(decision.heat)
 
-    def test_provisional_gang_suppresses_regular_temperature_stops(self):
-        _, decision = self.decide(ThermostatState(demand=True), gang=True, temperature=100)
+    def test_live_gang_demand_starts_heat_even_above_the_upper_cutoff(self):
+        _, decision = self.decide(gang=True, temperature=100)
         self.assertTrue(decision.heat)
-        self.assertEqual(decision.reason, "gang_veto")
+        self.assertEqual(decision.reason, "gang_heat_demand")
 
     def test_safety_and_explicit_off_always_override_gang(self):
         for kwargs in ({"enabled": False},
@@ -85,46 +85,66 @@ class ThermostatTests(unittest.TestCase):
                     now=T0 + timedelta(seconds=60), heating_since=T0, **args)
                 self.assertFalse(decision.heat)
 
-    def test_gang_alone_never_starts_stopped_heater(self):
-        for temperature in (83, 100):
-            _, decision = self.decide(gang=True, temperature=temperature,
-                                      heating_since=T0)
-            self.assertFalse(decision.heat)
-        _, decision = self.decide(gang=True, temperature=75)
-        self.assertTrue(decision.heat)
-        self.assertEqual(decision.reason, "below_target")
+    def test_live_gang_demand_is_a_positive_continuous_on_input(self):
+        for temperature in (75, 83, 100):
+            _, decision = self.decide(
+                inputs=ControlInputs(gang_heat_demand=True), temperature=temperature
+            )
+            self.assertTrue(decision.heat)
+            self.assertEqual(decision.reason, "gang_heat_demand")
 
-    def test_veto_defers_cooldown_until_actual_regular_stop(self):
-        state, decision = self.decide(ThermostatState(demand=True),
-            inputs=ControlInputs(gang_veto=True), temperature=90)
-        self.assertTrue(decision.heat)
-        self.assertIsNone(state.cooldown_until)
-        state, decision = self.decide(state, now=T0 + timedelta(seconds=5),
-            inputs=ControlInputs(), temperature=90)
-        self.assertFalse(decision.heat)
-        self.assertEqual(state.cooldown_until, T0 + timedelta(seconds=65))
-
-    def test_door_pulse_bypasses_cooldown_but_invents_no_hold_at_limit(self):
+    def test_gang_demand_bypasses_cooldown_until_the_live_level_clears(self):
         waiting = ThermostatState(cooldown_until=T0 + timedelta(seconds=60))
-        state, decision = self.decide(waiting, temperature=84,
-            inputs=ControlInputs(door_request=True))
+        state, decision = self.decide(
+            waiting, temperature=100, inputs=ControlInputs(gang_heat_demand=True)
+        )
         self.assertTrue(decision.heat)
-        self.assertEqual(decision.reason, "door_request")
-        self.assertIsNone(state.cooldown_until)
-        state, decision = self.decide(waiting, temperature=85,
-            inputs=ControlInputs(door_request=True))
+        self.assertEqual(decision.reason, "gang_heat_demand")
+        _, decision = self.decide(state, temperature=100, inputs=ControlInputs())
         self.assertFalse(decision.heat)
-        self.assertEqual(decision.reason, "door_request_at_limit")
-        self.assertEqual(state.cooldown_until, waiting.cooldown_until)
+        self.assertEqual(decision.reason, "temperature_reached")
+
+    def test_temporary_door_level_bypasses_upper_cutoff_and_cooldown(self):
+        waiting = ThermostatState(cooldown_until=T0 + timedelta(seconds=60))
+        state, decision = self.decide(
+            waiting, temperature=100, inputs=ControlInputs(temporary_door_heat=True)
+        )
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "temporary_door_heat")
+        self.assertIsNone(state.cooldown_until)
+
+    def test_priority_is_cooling_then_gang_then_temporary_door_heat(self):
+        _, decision = self.decide(
+            temperature=100,
+            inputs=ControlInputs(
+                gang_heat_demand=True, temporary_door_heat=True, cooling=True
+            ),
+        )
+        self.assertFalse(decision.heat)
+        self.assertEqual(decision.reason, "after_run")
+        _, decision = self.decide(
+            temperature=100,
+            inputs=ControlInputs(gang_heat_demand=True, temporary_door_heat=True),
+        )
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "gang_heat_demand")
+
+    def test_invalid_critical_temperature_beats_every_positive_demand(self):
+        _, decision = self.decide(
+            temperature=None,
+            inputs=ControlInputs(gang_heat_demand=True, temporary_door_heat=True),
+        )
+        self.assertFalse(decision.heat)
+        self.assertEqual(decision.reason, "upper_temperature_unavailable")
 
     def test_door_pulse_preserves_feedback_minimum_and_superior_blocks(self):
         running = ThermostatState(demand=True)
         _, decision = self.decide(running, temperature=90, heating_since=T0,
-            inputs=ControlInputs(door_request=True))
-        self.assertEqual(decision.reason, "minimum_heating")
+            inputs=ControlInputs(temporary_door_heat=True))
+        self.assertEqual(decision.reason, "temporary_door_heat")
         for kwargs in ({"enabled": False}, {"protection": ("fault",)},
                        {"inhibits": ("fault",)}, {"temperature": None},
-                       {"inputs": ControlInputs(door_request=True, cooling=True)}):
-            args = {"inputs": ControlInputs(door_request=True), **kwargs}
+                       {"inputs": ControlInputs(temporary_door_heat=True, cooling=True)}):
+            args = {"inputs": ControlInputs(temporary_door_heat=True), **kwargs}
             _, decision = self.decide(**args)
             self.assertFalse(decision.heat)

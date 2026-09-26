@@ -70,7 +70,7 @@ test("details render includes the reachable presence and rule card", () => {
     start_errors: [], issues: [], target_temperature: 80, heating_limit_seconds: 0,
     manual_controls: { light: {}, heater: {} }, start_availability: {}, phase_timer: null,
     presence: { configured_source: "ha_presence", current: { available: true, occupancy: "unknown", assertion: "proxy_retraction", effective_at: start, received_at: start }, external: {} },
-    rule_inputs: { gang_veto: true },
+    rule_inputs: { gang_heat_demand: true, temporary_door_heat: false },
   };
   const value = Object.assign(Object.create(Panel.prototype), {
     state, hass: { user: { is_admin: true } },

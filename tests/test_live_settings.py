@@ -23,6 +23,8 @@ def gang(c, index, start):
     c.process(event(f"infusion-{index}", Kind.INFUSION, start+1))
     c.process(event(f"open-{index}", Kind.DOOR_OPEN, start+2))
     c.process(event(f"vent-{index}", Kind.VENTILATION, start+3))
+    c.report_contactor(False, at(start + 3))
+    c.report_heating(False, at(start + 3))
 
 
 class LiveTemperatureTests(unittest.TestCase):
@@ -214,8 +216,10 @@ class LiveTemperatureTests(unittest.TestCase):
                 if before.after_run is not None:
                     self.assertEqual(c.session.after_run.phase_id, before.after_run.phase_id)
                     self.assertEqual(c.session.after_run.ends_at, before.after_run.ends_at)
-                    self.assertEqual(c.session.after_run.remaining_seconds,
-                                     before.after_run.remaining_seconds - 1)
+                    self.assertEqual(
+                        c.session.after_run.remaining_seconds,
+                        before.after_run.remaining_seconds - 1,
+                    )
                 else:
                     self.assertIsNone(c.session.after_run)
                 self.assertEqual(c.session.deadlines, before.deadlines)
@@ -284,9 +288,10 @@ class PhaseTimerTests(unittest.TestCase):
         c.process(event("infusion", Kind.INFUSION, 6))
         c.process(event("open2", Kind.DOOR_OPEN, 61))
         c.process(event("vent", Kind.VENTILATION, 62))
+        c.report_contactor(False, at(62))
         c.report_heating(False, at(62))
         self.assertEqual(phase_timer(c, at(63))["kind"], "after_run")
-        c.advance(at(92))
+        c.advance(c.session.after_run.ends_at)
         self.assertIsNone(c.session.after_run)
         self.assertIsNone(c.session.cooling)
         before = c.session

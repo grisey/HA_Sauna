@@ -32,9 +32,15 @@ def evaluate(
     heating_active: bool = False,
     target_temperature: float | None = None,
 ):
+    """Return the present heat command using the fixed demand priority.
+
+    Positive live gang and temporary-door levels bypass the normal upper
+    cut-off and thermostat cooldown. They never bypass operation, protection,
+    inhibitions, or a missing/invalid critical upper temperature.
+    """
     values = parameters.values
     controls = inputs if inputs is not None else ControlInputs(
-        gang_veto=gang, cooling=after_run
+        gang_heat_demand=gang, cooling=after_run
     )
 
     def result(demand, reason, cooldown=state.cooldown_until):
@@ -55,10 +61,16 @@ def evaluate(
     )
     if target is None:
         return result(False, "temperature_configuration_required")
-    if controls.cooling:
-        return result(False, "after_run")
     if temperature is None or not isfinite(temperature):
         return result(False, "upper_temperature_unavailable")
+    if controls.cooling:
+        return result(False, "after_run")
+
+    if controls.gang_heat_demand:
+        return result(True, "gang_heat_demand", None)
+    if controls.temporary_door_heat:
+        return result(True, "temporary_door_heat", None)
+
     if (
         (state.demand or heating_active)
         and heating_since is not None
@@ -66,30 +78,16 @@ def evaluate(
         < heating_since
         + timedelta(seconds=parameters.seconds("minimum_heating_minutes"))
     ):
-        # A manual command may hand a real, confirmed heat run back to the
-        # regulator without changing its previous demand bit.  Minimum runtime
-        # begins at that feedback, never at the command or gang signal.
         return result(True, "minimum_heating")
+
     readiness_target = target + values["readiness_offset_c"]
-    if controls.gang_veto and (state.demand or heating_active):
-        # A gang only vetoes an otherwise regular switch-off of heat that is
-        # already demanded or actually running.  It does not create an OFF→ON
-        # start, and protection, operation, cooling and invalid-temperature
-        # rules above keep their priority.
-        return result(True, "gang_veto")
     if temperature >= readiness_target:
-        if controls.door_request and not state.demand:
-            # Actual feedback starts minimum heating; a pulse cannot fabricate
-            # that history or introduce a new holding period at the limit.
-            return result(False, "door_request_at_limit")
         cooldown = (
             now + timedelta(seconds=parameters.seconds("thermostat_cooldown_minutes"))
             if state.demand
             else state.cooldown_until
         )
         return result(False, "temperature_reached", cooldown)
-    if controls.door_request and not state.demand:
-        return result(True, "door_request", None)
     if state.cooldown_until and now < state.cooldown_until:
         return result(False, "thermostat_cooldown")
     if temperature <= readiness_target - values["readiness_hysteresis_c"]:

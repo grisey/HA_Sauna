@@ -9,6 +9,7 @@ from math import isfinite
 
 from .timeline import Timeline, utc
 from .contracts import BasePhaseMark, ContactorMark
+from .oven_cooling import OvenCoolingResult
 
 
 class Position(StrEnum):
@@ -145,6 +146,11 @@ class TimedPhase:
     accounted_at: datetime | None = None
     paused_at: datetime | None = None
     active_intervals: tuple[tuple[datetime, datetime | None], ...] = ()
+    # New cooling starts counting only after an actual contactor-OFF report.
+    # Existing archived phases have no calculation and retain their old fields.
+    pending_start: bool = False
+    requested_at: datetime | None = None
+    cooling_calculation: OvenCoolingResult | None = None
 
     def __post_init__(self) -> None:
         # Ältere Aufrufer kannten nur Start und Ende. Die Dauer wird einmal
@@ -222,6 +228,7 @@ class Session:
     thermostat: ThermostatState = field(default_factory=ThermostatState)
     after_run: TimedPhase | None = None
     after_run_history: tuple[TimedPhase, ...] = ()
+    last_completed_oven_cooling_at: datetime | None = None
     # Nur zum Lesen historischer Sitzungen; keine aktive Kühlsteuerung.
     cooling: CoolingCycle | None = None
     cooling_history: tuple[CoolingCycle, ...] = ()

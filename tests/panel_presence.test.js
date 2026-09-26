@@ -8,7 +8,7 @@ vm.runInNewContext(fs.readFileSync('custom_components/ha_sauna/panel.js','utf8')
 });
 const t='2026-01-01T12:00:00Z', end='2026-01-01T12:10:00Z';
 const panel=Object.assign(Object.create(Panel.prototype),{
-  state:{now:end,configuration:{parameters:{sensor_timeout_seconds:60}},presence:{configured_source:'ha_presence',current:{available:true,occupancy:'unknown',assertion:'proxy_retraction',effective_at:t},external:{'<sensor>':{available:false,assertion:'direct_presence',effective_at:t}}},rule_inputs:{gang_veto:true}},
+  state:{now:end,configuration:{parameters:{sensor_timeout_seconds:60}},presence:{configured_source:'ha_presence',current:{available:true,occupancy:'unknown',assertion:'proxy_retraction',effective_at:t},external:{'<sensor>':{available:false,assertion:'direct_presence',effective_at:t}}},rule_inputs:{gang_heat_demand:true,temporary_door_heat:true}},
   window:[Date.parse(t),Date.parse(end)],positions:new Set(),historyIndex:()=>{},series:()=>[],
 });
 const detail=panel.presenceDetails();
@@ -17,6 +17,8 @@ assert.match(detail,/Externe Präsenz \(vorbereitet\)/);
 assert.match(detail,/Nicht verfügbar/);
 assert.match(detail,/&lt;sensor&gt;/);
 assert.match(detail,/keine Wiedergabe/);
+assert.match(detail,/Heizanforderung im Saunagang[\s\S]*Aktiv/);
+assert.match(detail,/Temporäres Heizen nach Türschluss[\s\S]*Aktiv/);
 const session={ended_at:end,timeline:{processed:[]},heating:{intervals:[{started_at:t,ended_at:end}]}};
 const gangs=[{gang_id:'g',started_at:t,ended_at:end,infusion_events:[{}]}];
 const records=[{kind:'phase',received_at:t,payload:{phase:'aufheizen'}}];

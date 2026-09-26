@@ -1,7 +1,12 @@
 # Zeitmodell
 
-> Ergänzender Vorrang: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
-> beschreibt den Produktivstand des Folgeauftrags vom 26.09.2026.
+> Maßgeblicher Stand vom 26.09.2026: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
+> und [Ofenkühlung](ofenkuehlung.md). Jeder aktive Gang fordert vorläufig wie
+> bestätigt durchgehend Heizen an; Ofenkühlung und technische Sperren haben Vorrang.
+> Die vorübergehende Türhilfe wirkt nur nach geeignetem Türschluss. Ofenkühlung
+> ist dynamisch und wird durch Tür, Präsenz oder manuelles Heizen nicht unterbrochen.
+> Entgegenstehende ältere Angaben unten zu Öffnungsfristen, Gangveto, Kühlpausen,
+> Wiedereinstieg, Heizbudgets und Zwangskühlung sind ausschließlich historisch.
 
 > Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
 > beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.

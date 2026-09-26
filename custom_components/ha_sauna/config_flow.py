@@ -470,7 +470,14 @@ class SaunaOptionsFlow(OptionsFlow):
                     title="",
                     data=options,
                 )
-        suggested = dict(self.config_entry.options[CONF_PARAMETERS])
+        # Use the validated effective values.  This preserves a historical
+        # cooling base above the new default cap and shows that derived cap in
+        # the form instead of suggesting an invalid replacement.
+        suggested = {
+            definition.key: configuration.parameters.values[definition.key]
+            for definition in EDITABLE_DEFINITIONS
+            if definition.key in configuration.parameters.values
+        }
         suggested["program_mode"] = self.config_entry.options.get(
             "program_mode", "progressive"
         )

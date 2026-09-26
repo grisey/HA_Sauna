@@ -7,6 +7,18 @@ from test_cooling import at, controller
 from test_foundation import T0, event
 
 
+def after_run():
+    c = controller(after_run_minutes=2)
+    c.report_heating(True, at(0))
+    c.process(event("close", Kind.DOOR_CLOSE, 1))
+    c.process(event("infusion", Kind.INFUSION, 2))
+    c.process(event("open", Kind.DOOR_OPEN, 299))
+    c.process(event("vent", Kind.VENTILATION, 300))
+    c.report_contactor(False, at(300))
+    c.report_heating(False, at(300))
+    return c
+
+
 class StartAvailabilityTests(unittest.TestCase):
     def test_ready_latch_has_no_budget_based_start_window(self):
         c = controller(target_temperature_c=70, readiness_offset_c=4,
@@ -20,12 +32,11 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertNotIn("Mindestheizzeit", availability["message"])
 
     def test_after_run_wait_is_only_its_configured_remainder(self):
-        from test_after_run_pause import after_run
         c = after_run()
-        availability = start_availability(c, at(421))
+        availability = start_availability(c, at(301))
         self.assertIsNone(availability["until_ready_seconds"])
-        self.assertEqual(availability["minimum_wait_seconds"], 120)
-        self.assertEqual(availability["blocker"], {"kind": "after_run", "seconds": 120})
+        self.assertGreater(availability["minimum_wait_seconds"], 0)
+        self.assertEqual(availability["blocker"]["kind"], "after_run")
         self.assertNotIn("pending_cooling", availability)
 
     def test_heating_without_a_valid_rate_does_not_invent_an_eta(self):
@@ -55,13 +66,11 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
 
-    def test_paused_oven_cooling_has_no_made_up_expiry(self):
-        from test_after_run_pause import after_run
+    def test_active_oven_cooling_has_a_real_remaining_wait(self):
         c = after_run()
-        c.set_heater_override(True, at(181))
-        availability = start_availability(c, at(181))
-        self.assertEqual(availability["blocker"], {"kind": "after_run_paused", "seconds": 360})
-        self.assertEqual(availability["minimum_wait_seconds"], 0)
+        availability = start_availability(c, at(301))
+        self.assertEqual(availability["blocker"]["kind"], "after_run")
+        self.assertGreater(availability["minimum_wait_seconds"], 0)
         self.assertIsNone(availability["until_ready_seconds"])
 
     def test_protection_never_reports_ready_even_at_the_temperature_target(self):

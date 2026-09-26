@@ -26,10 +26,14 @@ Automatikbetrieb, freie Helligkeitswahl und Archivexport bleiben Administratoren
 vorbehalten.
 
 Nach einem bestätigten Saunagang folgt die [Ofenkühlung](docs/ofenkuehlung.md)
-mit der bisher eingestellten Dauer. Die eigenständige Zwangskühlung entfällt.
+mit einer dynamischen Dauer: standardmäßig 5 bis 15 Minuten, berechnet aus
+den seit der letzten vollständigen Ofenkühlung beobachteten Heizzeiten und
+Bereitschaftspausen. Gespeicherte Grunddauern bleiben erhalten. Die eigenständige
+Zwangskühlung entfällt.
 
 Der [Folgeauftrag zu Präsenz, Ofen und Phasen](docs/praesenz-ofen-phasen.md)
-beschreibt die vorbereitete externe Präsenzquelle, Türanforderung, Gangveto und
+beschreibt die vorbereitete externe Präsenzquelle, die vorübergehende
+Türschlussanforderung, durchgehendes Heizen im aktiven Gang und die
 korrigierte Historie einschließlich der noch offenen Aktivierungsregeln.
 
 ## Start

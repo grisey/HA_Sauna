@@ -35,6 +35,7 @@ class CoolingTests(unittest.TestCase):
     def finish(self, c):
         c.process(event("open", Kind.DOOR_OPEN, 70))
         c.process(event("vent", Kind.VENTILATION, 71))
+        c.report_contactor(False, at(71))
         c.report_heating(False, at(71))
 
     def test_provisional_retraction_has_no_after_run_or_count(self):
@@ -152,6 +153,8 @@ class CoolingTests(unittest.TestCase):
             c.process(event(f"open{index}", Kind.DOOR_OPEN, start+2))
             end_event=event(f"vent{index}", Kind.VENTILATION, start+3)
             c.process(end_event)
+            c.report_contactor(False, at(start + 3))
+            c.report_heating(False, at(start + 3))
             self.assertEqual(c.target_temperature, expected)
             self.assertFalse(c.process(end_event).changed)
             self.assertEqual(c.target_temperature, expected)

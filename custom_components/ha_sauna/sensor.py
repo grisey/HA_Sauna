@@ -116,8 +116,14 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "after_run_paused": bool(
                 session and session.after_run and session.after_run.paused_at
             ),
+            "oven_cooling_pending": bool(
+                session and session.after_run and session.after_run.pending_start
+            ),
+            "oven_cooling_waiting_for_off": bool(
+                session and session.after_run and session.after_run.ends_at is None
+            ),
             "after_run_remaining_seconds": session.after_run.remaining_seconds
-            if session and session.after_run
+            if session and session.after_run and not session.after_run.pending_start
             else None,
             "mechanical_timer_ends_at": self.runtime.controller.mechanical_timer_ends_at.isoformat()
             if self.runtime.controller.mechanical_timer_ends_at

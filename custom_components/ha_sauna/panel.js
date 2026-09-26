@@ -2000,7 +2000,9 @@ class SaunaPanel extends HTMLElement {
       s.operation_enabled && timerLine
         ? {
             gang: `seit ${duration(timerLine.seconds, "Minuten")}`,
-            after_run: `${timerLine.mode === "paused" ? "pausiert – noch" : "noch"} ${duration(timerLine.seconds, "Minuten")}`,
+            after_run: timerLine.mode === "pending"
+              ? timerLine.label || "Ofenkühlung wird vorbereitet"
+              : `${timerLine.mode === "paused" ? "pausiert – noch" : "noch"} ${duration(timerLine.seconds, "Minuten")}`,
             cooling: `noch ${duration(timerLine.seconds, "Minuten")}`,
           }[timerLine.kind] || ""
         : "";
@@ -2083,8 +2085,16 @@ class SaunaPanel extends HTMLElement {
     if (session?.after_run) {
       const phase = session.after_run;
       timerRows.push([
-        phase.paused_at ? "Ofenkühlung pausiert" : "Ofenkühlung",
-        duration(phaseRemaining(phase)),
+        phase.pending_start || (!phase.ends_at && !phase.paused_at)
+          ? "Ofenkühlung wartet auf Schütz-Aus"
+          : phase.paused_at
+            ? "Ofenkühlung pausiert"
+            : "Ofenkühlung",
+        phase.pending_start
+          ? "Ausschaltung noch nicht bestätigt"
+          : !phase.ends_at && !phase.paused_at
+            ? `Noch ${duration(phaseRemaining(phase))} bestätigte Auszeit erforderlich`
+            : duration(phaseRemaining(phase)),
       ]);
     }
     for (const deadline of session?.deadlines || []) {
@@ -2119,7 +2129,7 @@ class SaunaPanel extends HTMLElement {
         true,
       ]);
     const timers = `<dl class="compact-times">${timerRows.map(([label, value, html]) => `<dt>${esc(label)}</dt><dd>${html || label === "Mechanischer Ofentimer" ? value : esc(value)}</dd>`).join("")}</dl>`;
-    const manualPhase = session?.after_run
+    const manualPhase = session?.after_run && !session.after_run.pending_start
       ? {
           purpose: "after_run",
           token: session.after_run.phase_id,
@@ -2292,7 +2302,7 @@ class SaunaPanel extends HTMLElement {
             : "Direkte Präsenz";
       return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${item.reason ? ` · ${item.reason}` : ""}`;
     };
-    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Gewünschte Quelle</dt><dd>${presence?.configured_source === "ha_presence" ? "Externe Präsenz (vorbereitet)" : "Proxy"}</dd><dt>Wirksame Quelle</dt><dd>Proxy</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(presence?.external || {}).map(([source, item]) => `<dt>${esc(source)}</dt><dd>${esc(report(item))}</dd>`).join("")}<dt>Gang-Abschaltveto</dt><dd>${rules?.gang_veto ? "Freigegeben; aktuelle Wirkung siehe Regelursache" : "Inaktiv"}</dd><dt>Türanforderung</dt><dd>${rules?.door_request ? "Einmalige Anforderung liegt an" : "Keine aktuelle Anforderung"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl><p class="muted">Externe Präsenz wird beobachtet und ersetzt den Proxy noch nicht. Die Aktivierungsregeln sind offen. Das optionale Audioziel ist vorbereitet; es findet keine Wiedergabe statt.</p></div>`;
+    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Gewünschte Quelle</dt><dd>${presence?.configured_source === "ha_presence" ? "Externe Präsenz (vorbereitet)" : "Proxy"}</dd><dt>Wirksame Quelle</dt><dd>Proxy</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(presence?.external || {}).map(([source, item]) => `<dt>${esc(source)}</dt><dd>${esc(report(item))}</dd>`).join("")}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl><p class="muted">Externe Präsenz wird beobachtet und ersetzt den Proxy noch nicht. Die Aktivierungsregeln sind offen. Das optionale Audioziel ist vorbereitet; es findet keine Wiedergabe statt.</p></div>`;
   }
   async changeTarget(value) {
     if (!Number.isFinite(value)) throw Error("Gültige Solltemperatur eingeben");

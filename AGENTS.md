@@ -7,6 +7,16 @@
 Gang-Heiz- und Phasenregeln. Externe Präsenz bleibt bis zur Entscheidung der
 offenen Gangregeln beobachtend; die Proxyquelle führt weiterhin.
 
+Der abschließend vereinbarte Stand desselben Tages fordert im aktiven Gang
+durchgehend Heizen an. Die austauschbare Türhilfe wirkt ausschließlich nach
+einem geeigneten Türschluss mit der vorhandenen tatsächlichen Mindestheizzeit;
+eine Öffnungsfrist entfällt. Ofenkühlung bleibt übergeordnet und wird nicht
+durch Tür, Präsenz oder manuelles Heizen unterbrochen. Ihre einstellbaren
+Standardwerte sind 5 bis 15 Minuten, 15 Minuten Halbwertszeit und zwei
+gewichtete Heizminuten je gewichteter Bereitschaftspause von einer Minute.
+Gespeicherte Werte bleiben erhalten. Die nachfolgenden historischen Regeln
+zu pausierbarer Kühlung, Gang-Abschaltveto und Heizbudgets gelten dafür nicht.
+
 ## Einheitlicher Codestil
 
 Python folgt Ruff mit der Konfiguration aus `pyproject.toml`. Die Oberfläche

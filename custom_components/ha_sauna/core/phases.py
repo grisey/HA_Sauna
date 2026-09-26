@@ -61,6 +61,20 @@ def project_session(session, now) -> PhaseProjection:
     if retracted:
         notes.append("retracted_gangs_removed")
     for phase in (*_get(session, "after_run_history", ()), *([_get(session, "after_run")] if _get(session, "after_run") else [])):
+        requested = _get(phase, "requested_at")
+        if requested:
+            # The cooling phase blocks heating immediately. Its timed physical
+            # cooling starts later, with confirmed OFF. Neither interval is
+            # readiness idle; the actual start remains separately auditable.
+            waiting_end = (
+                _get(phase, "ends_at") or end
+                if _get(phase, "pending_start", False)
+                else _get(phase, "started_at")
+            )
+            if _time(requested) < _time(waiting_end):
+                overlays.append((_time(requested), _time(waiting_end), "nachlauf", _get(phase, "phase_id"), True))
+            if _get(phase, "pending_start", False):
+                continue
         spans = _get(phase, "active_intervals", ())
         complete = bool(spans)
         if not spans:
