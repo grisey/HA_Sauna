@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import zipfile
 
-from custom_components.ha_sauna.archive import Archive
+from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.core.models import Position, Quantity
@@ -156,3 +156,28 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["session"]["configuration"]["parameters"]["target_temperature_c"], old_target)
         self.assertEqual(runtime.controller.target_temperature, 91)
         self.assertIsNone(runtime.session)
+
+    async def test_projection_uses_full_evidence_even_on_paginated_read(self):
+        self.archive.append("phase", T0, {"phase": "aufheizen"}, "s")
+        self.archive.append("phase", T0 + timedelta(seconds=10), {"phase": "bereit"}, "s")
+        self.archive.append("source_state", T0, {"role": "heater", "state": "off"}, "s")
+        legacy = plain(self.c.session)
+        legacy.pop("base_phases", None)
+        legacy.pop("contactor_history", None)
+        self.archive.append("session", T0 + timedelta(seconds=20), legacy, "s")
+        await self.archive.flush()
+        full = self.archive.read("s")
+        page = self.archive.read("s", after=2, limit=1)
+        self.assertEqual(full["phase_projection"], page["phase_projection"])
+        self.assertEqual(full["phase_projection"]["intervals"][-1]["phase"], "bereit")
+        self.assertEqual(full["phase_projection"]["readiness_pauses"][0]["started_at"], (T0 + timedelta(seconds=10)).isoformat())
+        self.assertFalse(full["phase_projection"]["complete"])
+
+    async def test_consumer_identities_survive_reload_and_are_scoped_to_entry(self):
+        self.archive.append("consumer_event", T0, {"event_id": "present-1"}, "s")
+        self.archive.append("consumer_event", T0, {"event_id": "present-1"}, "s")
+        self.archive.append("event", T0, {"event_id": "other"}, "s")
+        await self.archive.flush()
+        self.assertEqual(self.archive.consumer_event_ids(), {"present-1"})
+        other = Archive(self.archive.path, "different-entry")
+        self.assertEqual(other.consumer_event_ids(), set())

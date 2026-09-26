@@ -17,6 +17,8 @@ import zipfile
 from collections.abc import Mapping
 from math import isfinite
 
+from .core.phases import project_archive
+
 
 def plain(value):
     if is_dataclass(value):
@@ -185,7 +187,7 @@ class Archive:
                 )
                 return [dict(row) for row in rows]
             row = db.execute(
-                "SELECT payload FROM sessions WHERE entry_id=? AND session_id=?",
+                "SELECT payload,updated_at FROM sessions WHERE entry_id=? AND session_id=?",
                 (self.entry_id, session_id),
             ).fetchone()
             if row is None:
@@ -194,12 +196,37 @@ class Archive:
                 "SELECT * FROM records WHERE entry_id=? AND session_id=? AND id>? ORDER BY id LIMIT ?",
                 (self.entry_id, session_id, after, limit),
             ).fetchall()
+            session = json.loads(row["payload"])
+            # Projection needs the complete evidence stream, independent of the
+            # caller's pagination. Original rows and snapshots are never edited.
+            evidence = [
+                {"kind": r["kind"], "received_at": r["received_at"],
+                 "payload": json.loads(r["payload"])}
+                for r in db.execute(
+                    "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
+                    (self.entry_id, session_id),
+                )
+            ]
+            projection = project_archive(session, evidence, row["updated_at"])
             return {
-                "session": json.loads(row["payload"]),
+                "session": session,
+                "phase_projection": plain(projection),
                 "records": [
                     {**dict(r), "payload": json.loads(r["payload"])} for r in records
                 ],
                 "next_after": records[-1]["id"] if len(records) == limit else None,
+            }
+
+    def consumer_event_ids(self):
+        """Stable delivered identities for reload deduplication, read only."""
+        with closing(sqlite3.connect(self.path)) as db:
+            return {
+                event_id
+                for (payload,) in db.execute(
+                    "SELECT payload FROM records WHERE entry_id=? AND kind='consumer_event'",
+                    (self.entry_id,),
+                )
+                if isinstance((event_id := json.loads(payload).get("event_id")), str)
             }
 
     def latest_completed_warmup(self, source, maximum_gap_seconds):
