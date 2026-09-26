@@ -3,7 +3,7 @@
 PARAMETER_TEXT = {
     "door_request_minutes": (
         "Türwartezeit für die Heizanforderung",
-        "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die Anforderung; es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
+        "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
         "operation",
     ),
     "session_light_minutes": (

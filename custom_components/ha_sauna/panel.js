@@ -161,13 +161,15 @@ class SaunaPanel extends HTMLElement {
             page=await this.api(`/${entry}/archive?session_id=${encodeURIComponent(id)}&after=${cache.after}`);
             if(generation!==this.generation || !this.isConnected)return;
             cache.session=page.session;
+            cache.phase_projection=page.phase_projection;
             const additions=page.records.filter(r=>["measurement","source_snapshot","diagnostic","phase","detector_trace"].includes(r.kind));
             if(additions.length){cache.records.push(...additions);this.invalidateHistoryIndex();}
             cache.after=page.records.at(-1)?.id||cache.after;
           }while(page.next_after);
           cache.loaded=true;this.cache.set(id,cache);
         }
-        this.shown={session:this.selected==="live"?(state.session||cache.session):cache.session,records:cache.records};
+        const liveSession=this.selected==="live"&&state.session;
+        this.shown={session:liveSession||cache.session,records:cache.records,phase_projection:liveSession?state.phase_projection:cache.phase_projection};
       }else this.shown=null;
       const focused=this.shadowRoot.activeElement;
       if(!this.temperatureInteraction&&!(focused?.tagName==="INPUT"&&focused.closest("#current"))){

@@ -207,7 +207,7 @@
           "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
           "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
           "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
-          "door_request_minutes": "Optional: Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert sie; kein Standardwert. Schutz, Betrieb-Aus, Ofenkühlung und obere Temperaturgrenze bleiben wirksam."
+          "door_request_minutes": "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung."
         }
       }
     },
@@ -458,7 +458,7 @@
           "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
           "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
           "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
-          "door_request_minutes": "Optional: Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert sie; kein Standardwert. Schutz, Betrieb-Aus, Ofenkühlung und obere Temperaturgrenze bleiben wirksam."
+          "door_request_minutes": "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die zusätzliche Öffnungsfrist, der Schließauslöser bleibt erhalten. Es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung."
         }
       },
       "logging": {
