@@ -1,5 +1,12 @@
 # Arbeitsregeln
 
+## Vorrang des Folgeauftrags vom 26.09.2026
+
+[Präsenz, Ofen und Phasen](docs/praesenz-ofen-phasen.md) und
+[Ofenkühlung](docs/ofenkuehlung.md) ersetzen entgegenstehende ältere Kühl-,
+Gang-Heiz- und Phasenregeln. Externe Präsenz bleibt bis zur Entscheidung der
+offenen Gangregeln beobachtend; die Proxyquelle führt weiterhin.
+
 ## Vorrang des Entscheidungsstands vom 20.09.2026
 
 Die konsolidierten Fachregeln in `docs/betrieb.md`, `docs/gangmodell.md` und

@@ -29,6 +29,7 @@ def evaluate(
     protection: tuple[str, ...] = (),
     inhibits: tuple[str, ...] = (),
     heating_since: datetime | None = None,
+    heating_active: bool = False,
     target_temperature: float | None = None,
 ):
     values = parameters.values
@@ -68,7 +69,7 @@ def evaluate(
         return result(True, "minimum_heating")
     readiness_target = target + values["readiness_offset_c"]
     if temperature >= readiness_target:
-        if state.demand and controls.gang_veto:
+        if (state.demand or heating_active) and controls.gang_veto:
             return result(True, "gang_veto")
         if controls.door_request and not state.demand:
             # Actual feedback starts minimum heating; a pulse cannot fabricate

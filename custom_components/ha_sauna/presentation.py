@@ -47,7 +47,7 @@ REASONS = {
     "temperature_configuration_required": "Die Temperatureinstellungen sind noch unvollständig.",
     "upper_temperature_unavailable": "Ein gültiger oberer Temperaturwert fehlt.",
     "gang_veto": "Der Saunagang verhindert eine reguläre Abschaltung; er schaltet einen ausgeschalteten Ofen nicht selbst ein.",
-    "door_request": "Die Türwartezeit ist abgelaufen; die einmalige Heizanforderung wurde angenommen.",
+    "door_request": "Die einmalige Heizanforderung aus dem Türereignis wurde angenommen.",
     "door_request_at_limit": "Die Türanforderung wurde verbraucht; die obere Temperaturgrenze verhindert das Einschalten.",
     "gang": "Die Heizung bleibt während des Saunagangs eingeschaltet.",
     "forced_cooling": "Historische Zwangskühlung; der Ofen blieb aus.",

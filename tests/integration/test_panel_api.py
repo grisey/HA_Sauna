@@ -40,7 +40,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
                 self.assertEqual(state["session"]["timeline"]["session_id"], identity)
                 self.assertTrue(state["configuration_locked"])
-            async with client.post(url + "/parameters", json={**values,"heating_minutes":20}) as response:
+            async with client.post(url + "/parameters", json={**values,"after_run_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
             async with client.post(url + "/control", json={"enabled": False}) as response:
                 self.assertEqual(response.status, 200)
@@ -48,7 +48,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
                 self.assertEqual(state["mechanical_timer"]["state"], "paused")
                 self.assertIsNone(state["mechanical_timer_ends_at"])
-            async with client.post(url + "/parameters", json={**values,"heating_minutes":20}) as response:
+            async with client.post(url + "/parameters", json={**values,"after_run_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
 
     async def test_unauthenticated_and_non_admin_writes_are_rejected(self):
@@ -209,17 +209,16 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(phase_entity.attributes["after_run_ends_at"])
             self.assertTrue(phase_entity.attributes["after_run_paused"])
             self.assertEqual(phase_entity.attributes["after_run_remaining_seconds"], paused.remaining_seconds)
-            decisions_before_finish = len(runtime.controller.decisions)
             now = base + timedelta(seconds=20)
             async with client.post(url + "/finish_phase", json={"purpose": "after_run", "token": token}) as response:
                 self.assertEqual(response.status, 200, await response.text())
 
         self.assertIsNone(runtime.session.after_run)
         self.assertEqual(runtime.session.after_run_history[-1].elapsed_seconds, 6)
-        self.assertEqual(runtime.session.cooling.credited_seconds, 6)
+        self.assertIsNone(runtime.session.cooling)
         self.assertIsNone(runtime.controller.heater_override)
-        self.assertIsNotNone(runtime.session.cooling.started_at)
-        self.assertFalse(any(decision.heat for decision in runtime.controller.decisions[decisions_before_finish:]))
+        self.assertEqual(runtime.session.cooling_history, ())
+        self.assertTrue(runtime.controller.last_decision.heat)
         await runtime.archive.flush()
         archived = await asyncio.to_thread(runtime.archive.read, identity, limit=10000)
         record = next(row for row in archived["records"] if row["kind"] == "manual_phase_end")
@@ -327,7 +326,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await runtime.set_operation(True)
         identity=runtime.session.session_id
         options=dict(self.entry.options)
-        self.hass.config_entries.async_update_entry(self.entry,options={**options,"parameters":{**options["parameters"],"heating_minutes":999}})
+        self.hass.config_entries.async_update_entry(self.entry,options={**options,"parameters":{**options["parameters"],"after_run_minutes":999}})
         await self.hass.async_block_till_done()
         self.assertIs(self.entry.runtime_data,runtime)
         self.assertEqual(runtime.session.session_id,identity)

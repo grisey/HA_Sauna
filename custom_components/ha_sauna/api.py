@@ -112,6 +112,9 @@ class StateView(HomeAssistantView):
                     {
                         "now": now,
                         "phase": controller.phase,
+                        "presence": runtime.presence_status,
+                        "rule_inputs": controller.regulation_inputs,
+                        "phase_projection": controller.phase_projection(now),
                         "session": session,
                         "configuration": runtime.configuration.as_options(),
                         "last_session": controller.completed_sessions[-1]

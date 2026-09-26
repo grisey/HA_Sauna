@@ -20,7 +20,7 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
+    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key not in {"final_temperature_c", "door_request_minutes"}},
                        "session_gap_minutes": 2.5})
 
 
@@ -352,7 +352,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(strings, translated)
         self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]),
                          {d.key for d in DEFINITIONS} | {"program_mode", "button_program"})
-        self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type"})
+        self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type", "presence_source"})
 
     def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"

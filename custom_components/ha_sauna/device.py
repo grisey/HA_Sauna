@@ -68,6 +68,8 @@ class HADevice:
     async def start(self):
         now = self.runtime._clock()
         for role, entity_id in self.bindings.items():
+            if role in {"presence", "audio_output"}:
+                continue
             state = self.hass.states.get(entity_id)
             self.ingest(
                 role, state, state.last_reported if state else now, initial=True
@@ -76,7 +78,8 @@ class HADevice:
         async def changed(event):
             await self.runtime.device_input(event)
 
-        entities = list(self.bindings.values())
+        entities = [entity for role, entity in self.bindings.items()
+                    if role not in {"presence", "audio_output"}]
         self.runtime.on_close(
             async_track_state_change_event(self.hass, entities, changed)
         )

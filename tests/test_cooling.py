@@ -46,8 +46,8 @@ class CoolingTests(unittest.TestCase):
         self.assertIsNone(c.session.after_run)
         self.assertEqual(c.session.timeline.completed, ())
         self.assertEqual(c.session.timeline.gang_count, 0)
-        self.assertIsNone(c.session.ready_at)
-        self.assertEqual(c.phase, "aufheizen")
+        self.assertEqual(c.session.ready_at, at(3))
+        self.assertEqual(c.phase, "bereit")
         self.assertFalse(c.last_decision.heat)
 
     def test_readiness_latches_at_setpoint_and_survives_a_temperature_drop(self):

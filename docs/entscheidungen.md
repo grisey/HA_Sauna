@@ -1,5 +1,8 @@
 # Entscheidungen
 
+> Ergänzender Vorrang: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
+> beschreibt den Produktivstand des Folgeauftrags vom 26.09.2026.
+
 > Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
 > beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
 > Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.

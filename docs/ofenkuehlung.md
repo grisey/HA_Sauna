@@ -40,5 +40,6 @@ Offen bleiben:
 3. Wie daraus die Ofenkühldauer folgt und wann sie aktualisiert wird.
 
 Alte Heizbudgets, Rücksetzfristen und Zwangskühlzeiten werden nicht als Kriterien
-übernommen. Tür-Heizanforderung, Änderung der Gang-Heizwirkung, Präsenzsensoren,
-allgemeine Phasenhistorienreparatur und Neukalibrierung sind nicht Teil der Änderung.
+übernommen. Tür-Heizanforderung, Gang-Abschaltveto, beobachtende Präsenzquelle und
+Phasenprojektion wurden im [Folgeauftrag](praesenz-ofen-phasen.md) ergänzt.
+Eine Neukalibrierung bleibt ausgeschlossen.

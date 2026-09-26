@@ -33,6 +33,8 @@ ROLES = (
     Role("heater", "Schalter des Heizschützes", ("switch",)),
     Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
     Role("light", "Dimmbares Saunalicht", ("light",)),
+    Role("presence", "Präsenzentität (beobachtend)", ("binary_sensor",), optional=True),
+    Role("audio_output", "Audioziel (vorbereitet)", ("media_player",), optional=True),
     Role(
         "upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True
     ),

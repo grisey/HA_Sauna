@@ -60,6 +60,15 @@ async def async_setup_entry(
 
     entry.runtime_data.device = HADevice(hass, entry.runtime_data)
     await entry.runtime_data.device.start()
+    from .presence_adapter import HAPresenceAdapter
+
+    presence = HAPresenceAdapter(
+        hass, entry.runtime_data.accept_presence,
+        configuration.bindings.values.get("presence"), clock=entry.runtime_data._clock,
+    )
+    entry.runtime_data.presence_adapter = presence
+    entry.runtime_data.on_close(presence.close)
+    await presence.start()
     entry.runtime_data.on_close(
         async_track_time_interval(hass, entry.runtime_data.tick, timedelta(seconds=1))
     )

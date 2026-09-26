@@ -8,7 +8,10 @@ from math import isfinite
 from uuid import uuid4
 
 from . import energy, heating, thermostat
+from .consumer_events import gang_changes
 from .mechanical_timer import MechanicalTimer
+from .contracts import BasePhaseMark, ContactorMark, ControlInputs
+from .heater_overrides import DoorRequestState, update_door_request, cooling_duration
 from .models import Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
@@ -66,6 +69,10 @@ class Controller:
             None
         )
         self.decisions: list[thermostat.Decision] = []
+        self.consumer_events = []
+        self._consumer_snapshot = None
+        self.door_request = DoorRequestState()
+        self._door_request_pending = False
         self.mechanical_timer = MechanicalTimer()
         self.phase_since = None
         self._phase_key = (None, "aus")
@@ -236,7 +243,15 @@ class Controller:
         """Stromversorgung des Timerantriebs, getrennt von gemessener Heizleistung."""
         self.advance(at, evaluate=False)
         self.contactor = value
+        if self._session is not None:
+            marks = self._session.contactor_history
+            if not marks or marks[-1].state is not value:
+                self._session = replace(
+                    self._session,
+                    contactor_history=marks + (ContactorMark(utc(at), value),),
+                )
         self._sync_mechanical_timer(utc(at))
+        self._update_door_request(utc(at))
 
     def _latch_readiness(self, at):
         """Remember the first permitted measurement at the current setpoint."""
@@ -250,7 +265,7 @@ class Controller:
             or self.control_mode != "automatic"
             or self.protection
             or self.inhibits
-            or session.timeline.active is not None
+            or (session.timeline.active is not None and session.timeline.active.infusion_events)
             or session.after_run is not None
             or isinstance(temperature, bool)
             or not isinstance(temperature, (int, float))
@@ -291,6 +306,7 @@ class Controller:
             Session.create(session_id, at),
             operation_enabled=True,
             energy=Energy(accounted_at=at),
+            contactor_history=(ContactorMark(at, self.contactor),),
         )
         self._session = replace(
             self._session,
@@ -304,6 +320,7 @@ class Controller:
         self._last_at = at
         self._sync_mechanical_timer(at)
         self._ensure_after_run(at)
+        self._update_door_request(at)
         self._latch_readiness(at)
         self._evaluate(at)
         return self._session
@@ -410,6 +427,7 @@ class Controller:
                 ),
             )
             self._ensure_after_run(utc(at))
+            self._update_door_request(utc(at))
         self._evaluate(utc(at))
 
     def report_power(
@@ -478,9 +496,26 @@ class Controller:
         self._last_at = at
         if self._session is not None:
             self._ensure_after_run(at)
+            self._update_door_request(at)
         if evaluate:
             self._evaluate(at)
         return self._session
+
+    def process_presence(self, report, event):
+        """Proxy occupancy is the source boundary for unchanged gang assignment.
+
+        Direct reports are observed by the runtime only until their gang rules
+        are decided. No infusion or gang is converted into presence evidence.
+        """
+        if (
+            report.source != "proxy" or report.assertion != "provisional_proxy"
+            or report.occupancy != "present" or not report.available
+            or event.kind not in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
+            or (report.source_ref, report.effective_at, report.received_at)
+            != (event.event_id, event.effective_at, event.detected_at)
+        ):
+            raise ValueError("Keine passende führende Proxy-Präsenzmeldung")
+        return self.process(event)
 
     def process(self, event: Event) -> Result:
         if self._session is None:
@@ -577,6 +612,7 @@ class Controller:
                 event.detected_at
                 + timedelta(seconds=self.parameters.seconds("session_gap_minutes")),
             )
+        self._update_door_request(event.detected_at, event=event)
         self.advance(event.detected_at)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
@@ -627,7 +663,8 @@ class Controller:
     def _begin_after_run(self, gang_id, at):
         duration = self.oven_cooling_duration_seconds()
         phase = TimedPhase(
-            gang_id, at, at + timedelta(seconds=duration), duration, accounted_at=at
+            gang_id, at, at + timedelta(seconds=duration), duration, accounted_at=at,
+            active_intervals=((at, None),)
         )
         self._session = replace(self._session, after_run=phase)
         self._schedule("after_run", phase.ends_at, phase.phase_id)
@@ -642,7 +679,8 @@ class Controller:
         Zeitraum, ausreichende Dauer/Verteilung und Ableitung/Aktualisierung
         der Kühldauer sind noch offen. Kein zusätzlicher Pausenzähler.
         """
-        return self.parameters.seconds("after_run_minutes")
+        projection = self.phase_projection(self._last_at) if self._session else None
+        return cooling_duration(self.parameters, projection.readiness_pauses if projection else ())
 
     def _ensure_after_run(self, at):
         if self._session is None or self.control_mode == "manual":
@@ -682,7 +720,10 @@ class Controller:
             return
         self._cancel("after_run")
         self._session = replace(
-            self._session, after_run=replace(phase, ends_at=None, paused_at=at)
+            self._session, after_run=replace(
+                phase, ends_at=None, paused_at=at,
+                active_intervals=self._closed_cooling_intervals(phase, at),
+            )
         )
 
     def _resume_after_run(self, at):
@@ -699,11 +740,18 @@ class Controller:
             ends_at=at + timedelta(seconds=phase.remaining_seconds),
             accounted_at=at,
             paused_at=None,
+            active_intervals=phase.active_intervals + ((at, None),),
         )
         self._session = replace(self._session, after_run=phase)
         self._schedule("after_run", phase.ends_at, phase.phase_id)
 
+    @staticmethod
+    def _closed_cooling_intervals(phase, at):
+        return tuple((start, end if end is not None else at)
+                     for start, end in phase.active_intervals)
+
     def _finish_after_run(self, phase):
+        phase = replace(phase, active_intervals=self._closed_cooling_intervals(phase, phase.ends_at))
         session = self._session
         self._session = replace(
             session,
@@ -785,6 +833,46 @@ class Controller:
             and isfinite(self.temperature)
         )
 
+    @property
+    def regulation_inputs(self):
+        session = self._session
+        return ControlInputs(
+            door_request=self._door_request_pending,
+            gang_veto=bool(session and session.timeline.active),
+            cooling=bool(session and session.after_run and session.timeline.active is None),
+        )
+
+    def _update_door_request(self, at, *, event=None, timer_token=None):
+        session = self._session
+        enabled = bool(session and session.operation_enabled and self.control_mode == "automatic")
+        delay = self.parameters.values.get("door_request_minutes")
+        door_open = (
+            event.kind == Kind.DOOR_OPEN
+            if event and event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE) else None
+        )
+        heating = bool(self.feedback is True or self.contactor is True
+                       or (self.last_decision and self.last_decision.heat))
+        cooling = bool(session and session.after_run)
+        self.door_request, pulse = update_door_request(
+            self.door_request, now=at,
+            session_id=session.session_id if session else None,
+            enabled=enabled,
+            heating=heating, cooling=cooling,
+            door_open=door_open, event_id=event.event_id if door_open is not None else None,
+            open_delay_seconds=None if delay is None else delay * 60,
+            timer_token=timer_token,
+        )
+        if not enabled or heating or cooling:
+            self._door_request_pending = False
+        else:
+            self._door_request_pending |= pulse
+        if session:
+            current = next((d for d in self._session.deadlines if d.purpose == "door_request"), None)
+            if self.door_request.deadline is None:
+                self._cancel("door_request")
+            elif current is None or current.token != self.door_request.timer_token:
+                self._schedule("door_request", self.door_request.deadline, self.door_request.timer_token)
+
     def _evaluate_manual(self, at, session):
         """Issue only an explicit heater demand while retaining interlocks."""
         if not session.operation_enabled:
@@ -803,10 +891,9 @@ class Controller:
             target_temperature=self.target_temperature,
             temperature=self.temperature,
             enabled=session.operation_enabled,
-            gang=session.timeline.active is not None,
-            after_run=(
-                session.after_run is not None and session.timeline.active is None
-            ),
+            inputs=self.regulation_inputs,
+            heating_active=bool(self.last_decision and self.last_decision.heat
+                                and session.heating.reported_heating is True),
             protection=tuple(sorted(self.protection)),
             inhibits=tuple(sorted(self.inhibits)),
             heating_since=(
@@ -862,9 +949,34 @@ class Controller:
         ):
             self.decisions.append(issued)
         self.last_decision = issued
+        self._door_request_pending = False
+        self.consumer_events.extend(gang_changes(self._consumer_snapshot, self._session, at))
+        self._consumer_snapshot = self._session
+        self._record_base_phase(at)
         if phase_key != self._phase_key:
             self._phase_key, self.phase_since = phase_key, at
         return decision
+
+    def _record_base_phase(self, at):
+        session = self._session
+        if session is None:
+            return
+        phase = (
+            "aus" if not session.operation_enabled else
+            "manuell" if self.control_mode == "manual" else
+            "bereit" if session.ready_at is not None else "aufheizen"
+        )
+        mark = BasePhaseMark(at, phase, session.operation_enabled)
+        history = session.base_phases
+        if history and (history[-1].phase, history[-1].operation_enabled) == (phase, session.operation_enabled):
+            return
+        if history and history[-1].at == at:
+            history = history[:-1]
+        self._session = replace(session, base_phases=history + (mark,))
+
+    def phase_projection(self, now):
+        from .phases import project_session
+        return project_session(self._session, now) if self._session else None
 
     def _complete_session(self, at, *, light_after_run):
         """Archive the current session and perform its one-time timer reset."""
@@ -956,6 +1068,8 @@ class Controller:
             phase = session.after_run
             if phase is not None and phase.phase_id == deadline.token:
                 self._finish_after_run(phase)
+        elif deadline.purpose == "door_request":
+            self._update_door_request(deadline.due_at, timer_token=deadline.token)
         elif deadline.purpose == "manual_override":
             self._clear_heater_override()
             self._ensure_after_run(deadline.due_at)

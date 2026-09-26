@@ -174,24 +174,24 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(gang.gang_id, provisional.gang_id)
                 self.assertEqual(gang.started_at, provisional.started_at)
                 self.assertTrue(self.heater.is_on)
-            if self.runtime.controller.phase == "zwangskühlung":
+            if self.runtime.controller.phase == "nachlauf":
                 break
         self.assertIsNotNone(provisional)
         self.assertIsNotNone(confirmed)
         self.assertEqual(self.runtime.session.timeline.gang_count, 1)
         self.assertEqual(self.runtime.session.session_id, session_id)
-        self.assertEqual(self.runtime.controller.phase, "zwangskühlung")
+        self.assertEqual(self.runtime.controller.phase, "nachlauf")
         self.assertFalse(self.heater.is_on)
-        self.assertIsNotNone(self.runtime.session.cooling)
-        end = self.runtime.session.cooling.ends_at
-        self.assertEqual(self.runtime.session.cooling.credited_seconds, 30)
+        self.assertIsNotNone(self.runtime.session.after_run)
+        end = self.runtime.session.after_run.ends_at
+        self.assertEqual(self.runtime.session.after_run.duration_seconds, 30)
         self.now = end
         await self.set_source("upper_temperature", last_temperature)
         await self.runtime.tick()
         await self.hass.async_block_till_done()
         self.assertIsNone(self.runtime.session.cooling)
         self.assertTrue(self.heater.is_on)
-        self.assertEqual(self.runtime.session.heating.elapsed_seconds, 0)
+        self.assertGreater(self.runtime.session.heating.elapsed_seconds, 0)
         await self.runtime.archive.flush()
         import asyncio
         archived = await asyncio.to_thread(self.runtime.archive.read, session_id, limit=10000)
@@ -343,20 +343,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(288)
         self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
         await temperature(303)
-        self.assertEqual(self.runtime.controller.phase,"zwangskühlung")
-        self.assertGreater(self.light.brightness,255*.05)
-        await self.time(310)
-        self.assertGreater(self.light.brightness,255*.05)
-        self.assertLess(self.light.brightness,255*.15)
-        await self.time(318)
-        self.assertAlmostEqual(self.light.brightness,255*.05,delta=1)
-        before_normal_ramp = self.light.brightness
-        self.now=self.base+timedelta(seconds=333)
-        await self.set_source("upper_temperature",70)
-        await self.runtime.tick()
-        await self.hass.async_block_till_done()
-        self.assertAlmostEqual(self.light.brightness, before_normal_ramp, delta=1)
-        await self.time(363)
+        self.assertEqual(self.runtime.controller.phase,"aufheizen")
+        self.assertIsNone(self.runtime.session.cooling)
+        await temperature(333)
         self.assertAlmostEqual(self.light.brightness, 255 * 33 / 100, delta=1)
 
     async def test_light_failure_is_reported_and_does_not_disable_heating(self):
@@ -576,7 +565,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime._clock = lambda: self.now
         self.assertIsNone(self.runtime.controller.light_after_run)
 
-    async def test_additional_door_signal_updates_timeline_and_cooling_wait(self):
+    async def test_additional_door_signal_updates_timeline_without_obsolete_cooling_wait(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         for second in range(70):
@@ -590,19 +579,22 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.core.timeline import Kind
         doors=[e for e in self.runtime.session.timeline.processed if e.kind in (Kind.DOOR_OPEN,Kind.DOOR_CLOSE)]
         self.assertEqual([e.kind for e in doors],[Kind.DOOR_OPEN,Kind.DOOR_CLOSE])
-        self.assertEqual(self.runtime.controller.cooling_wait_until,doors[-1].effective_at+timedelta(minutes=4))
+        self.assertFalse(any(d.purpose == "person_opportunity" for d in self.runtime.session.deadlines))
         self.assertTrue(self.heater.is_on)
 
     async def test_temperature_entities_cannot_override_running_cooling(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        self.now=self.base+timedelta(seconds=240)
-        await self.set_source("upper_temperature",70)
-        await self.runtime.tick()
-        await self.hass.async_block_till_done()
-        self.assertEqual(self.runtime.controller.phase,"zwangskühlung")
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        identity = self.runtime.session.session_id
+        for kind, second in ((Kind.DOOR_CLOSE, 1), (Kind.INFUSION, 2),
+                             (Kind.DOOR_OPEN, 3), (Kind.VENTILATION, 4)):
+            self.now = self.base + timedelta(seconds=second)
+            await self.runtime.receive(Event(f"cool:{second}", identity, kind, self.now, self.now))
+            await self.hass.async_block_till_done()
+        self.assertEqual(self.runtime.controller.phase,"nachlauf")
         self.assertFalse(self.heater.is_on)
-        cycle=self.runtime.session.cooling
+        cycle=self.runtime.session.after_run
         deadlines=self.runtime.session.deadlines
         self.heater.calls.clear()
         await self.hass.services.async_call("climate","set_temperature",{"entity_id":self.climate,"temperature":95},blocking=True)
@@ -611,7 +603,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.services.async_call("number","set_value",{"entity_id":end,"value":100},blocking=True)
         await self.hass.async_block_till_done()
         self.assertIs(self.entry.runtime_data,self.runtime)
-        self.assertEqual(self.runtime.session.cooling,cycle)
+        self.assertEqual(self.runtime.session.after_run,cycle)
         self.assertEqual(self.runtime.session.deadlines,deadlines)
         self.assertFalse(self.heater.is_on)
         self.assertNotIn(True,self.heater.calls)

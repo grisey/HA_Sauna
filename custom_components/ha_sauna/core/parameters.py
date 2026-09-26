@@ -101,6 +101,7 @@ DEFINITIONS = (
     definition("mechanical_timer_minutes", "min", default=240),
     definition("mechanical_timer_warning_minutes", "min", optional=True),
     definition("after_run_minutes", "min", default=8),
+    definition("door_request_minutes", "min", True, optional=True),
     definition("readiness_offset_c", "°C", True, default=5),
     definition("readiness_hysteresis_c", "°C", default=3),
     definition("warmup_estimation_minutes", "min", default=5),

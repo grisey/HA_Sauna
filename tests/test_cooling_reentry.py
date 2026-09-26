@@ -28,7 +28,7 @@ class CoolingReentryTests(unittest.TestCase):
         c.process(event("close-new", Kind.DOOR_CLOSE, 182))
         c.process(event("person-new", Kind.PERSON_STRONG, 183))
         self.assertIsNotNone(c.session.timeline.active)
-        self.assertEqual(c.last_decision.reason, "gang")
+        self.assertEqual(c.last_decision.reason, "minimum_heating")
         self.assertEqual(c.session.after_run.remaining_seconds, 360)
         self.assertIsNotNone(c.session.after_run.paused_at)
         self.assertEqual(c.session.after_run_history, ())
@@ -51,12 +51,12 @@ class CoolingReentryTests(unittest.TestCase):
         original = c.session.after_run
         c.process(event("close-new", Kind.DOOR_CLOSE, 182))
         c.process(event("person-new", Kind.PERSON_STRONG, 183))
-        self.assertEqual(c.last_decision.reason, "gang")
+        self.assertEqual(c.last_decision.reason, "minimum_heating")
 
         c.set_heater_override(True, at(184))
         c.advance(at(190))  # Der neue Override endet vor Aufguss oder Aufhebung.
         self.assertIsNone(c.heater_override)
-        self.assertEqual(c.last_decision.reason, "gang")
+        self.assertEqual(c.last_decision.reason, "minimum_heating")
         self.assertEqual(c.session.after_run.phase_id, original.phase_id)
         self.assertEqual(c.session.after_run.remaining_seconds, 360)
         self.assertIsNotNone(c.session.after_run.paused_at)

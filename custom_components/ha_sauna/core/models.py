@@ -8,6 +8,7 @@ from enum import StrEnum
 from math import isfinite
 
 from .timeline import Timeline, utc
+from .contracts import BasePhaseMark, ContactorMark
 
 
 class Position(StrEnum):
@@ -143,6 +144,7 @@ class TimedPhase:
     elapsed_seconds: float = 0.0
     accounted_at: datetime | None = None
     paused_at: datetime | None = None
+    active_intervals: tuple[tuple[datetime, datetime | None], ...] = ()
 
     def __post_init__(self) -> None:
         # Ältere Aufrufer kannten nur Start und Ende. Die Dauer wird einmal
@@ -224,6 +226,8 @@ class Session:
     cooling: CoolingCycle | None = None
     cooling_history: tuple[CoolingCycle, ...] = ()
     ready_at: datetime | None = None
+    base_phases: tuple[BasePhaseMark, ...] = ()
+    contactor_history: tuple[ContactorMark, ...] = ()
     # Anker verweisen in die Timeline; sie zählen keine Gänge selbst.
     temperature_base_c: float | None = None
     temperature_base_gang_count: int = 0

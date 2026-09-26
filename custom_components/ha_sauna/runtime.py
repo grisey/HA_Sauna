@@ -21,6 +21,8 @@ from .core.button import (
 from .core.controller import Controller, Result
 from .core.detector import Detector
 from .core.models import Deadline, Session
+from .core.contracts import ConsumerEvent, PresenceReport
+from .core.presence import PresenceProjection, ProxyPresenceSource
 from .core.parameters import BY_KEY, Parameters
 from .core.program_catalog import (
     DEFAULT_PROGRAMS,
@@ -28,7 +30,7 @@ from .core.program_catalog import (
     load_programs,
     migrate_legacy_programs,
 )
-from .core.timeline import Door, Event
+from .core.timeline import Door, Event, Kind
 from .log import LEVELS, SaunaLog
 from .presentation import (
     EVENTS,
@@ -52,9 +54,12 @@ class Configuration:
     temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
     selected_program_id: str | None = None
     control_mode: str = "automatic"
+    presence_source: str = "proxy"
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
+        if self.presence_source not in {"proxy", "ha_presence"}:
+            raise ValueError("Ungültige Präsenzquelle")
         if self.button_program not in {"program_1", "program_2"} or any(
             program.id == self.button_program for program in self.temperature_programs
         ):
@@ -95,6 +100,7 @@ class Configuration:
                 "temperature_programs",
                 "selected_program_id",
                 "control_mode",
+                "presence_source",
             }
         ):
             raise ValueError(
@@ -180,6 +186,7 @@ class Configuration:
             programs,
             selected_program_id,
             control_mode,
+            options.get("presence_source", "proxy"),
         )
 
     def as_options(self) -> dict:
@@ -196,6 +203,7 @@ class Configuration:
             ],
             "selected_program_id": self.selected_program_id,
             "control_mode": self.control_mode,
+            "presence_source": self.presence_source,
         }
 
 
@@ -233,6 +241,11 @@ class SaunaRuntime:
         self._detector_session = None
         self._archive_signature = None
         self._saved_decisions = 0
+        self.presence = PresenceProjection()
+        self.presence_adapter = None
+        self._saved_consumer_events = 0
+        self._consumer_ids = set()
+        self.consumer_events = []
         self._saved_phase = None
         self._saved_faults = None
         self.log = SaunaLog(id(self), configuration.log_level)
@@ -248,6 +261,19 @@ class SaunaRuntime:
         if session_id == self._detector_session:
             return
         self._detector_session = session_id
+        if session_id:
+            now = self._clock()
+            self._record_presence(PresenceReport(
+                f"presence:proxy:initial:{session_id}", "unknown", "provisional_proxy",
+                "proxy", session_id, now, now, True, "no_proxy_evidence",
+            ))
+        if session_id and self.archive:
+            self.archive.append("presence_source", self._clock(), {
+                "configured_source": self.configuration.presence_source,
+                "effective_source": "proxy",
+                "entity_id": self.configuration.bindings.values.get("presence"),
+                "external_snapshot": self.presence.external,
+            }, session_id)
 
         def observed(trace):
             self.log.debug("detection_check", "Erkennungsprüfung: %s", trace)
@@ -312,7 +338,7 @@ class SaunaRuntime:
                     detection.effective_at,
                     now,
                 )
-                self.controller.process(event)
+                self._process_event(event)
                 self.log.info(
                     "detection",
                     "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.",
@@ -334,6 +360,14 @@ class SaunaRuntime:
                 on_detection=detected,
             )
             initialize_door()
+            available = bool(self.detector.active_positions)
+            current = self.presence.current
+            if current is None or current.available != available:
+                self._record_presence(PresenceReport(
+                    f"presence:proxy:availability:{self.session.session_id}:{now.isoformat()}",
+                    "unknown", "provisional_proxy", "proxy", "detector_availability",
+                    now, now, available, "no_proxy_evidence" if available else "source_unavailable",
+                ))
         if self.device:
             self.device.refresh(now)
         else:
@@ -387,6 +421,78 @@ class SaunaRuntime:
 
         self.archive = Archive(path, entry_id)
         await self.archive.start()
+        self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
+        self.archive.append("presence_source", self._clock(), {
+            "configured_source": self.configuration.presence_source,
+            "effective_source": "proxy",
+            "entity_id": self.configuration.bindings.values.get("presence"),
+            "reason": "configuration_loaded",
+        })
+
+    def _publish_consumer(self, event):
+        if event.event_id in self._consumer_ids:
+            return False
+        self._consumer_ids.add(event.event_id)
+        self.consumer_events.append(event)
+        if self.archive:
+            self.archive.append("consumer_event", event.received_at, event, event.session_id)
+        return True
+
+    def _record_presence(self, report):
+        if not self.presence.accept(report):
+            return
+        event = ConsumerEvent(
+            report.report_id, "occupancy", self.session.session_id if self.session else None,
+            report.effective_at, report.received_at, report.source_ref, presence=report,
+        )
+        if self._publish_consumer(event) and self.archive:
+            self.archive.append("presence", report.received_at, report, event.session_id)
+
+    async def accept_presence(self, report):
+        """Observe the configured external source without any actuator evaluation."""
+        async with self._lock:
+            if self.closed:
+                return
+            self._record_presence(report)
+            self.notify()
+
+    def _process_event(self, event):
+        report = (ProxyPresenceSource.present(event)
+                  if event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) else None)
+        # The source adapter retains the event identity and both original times.
+        result = (self.controller.process_presence(report, event)
+                  if report is not None else self.controller.process(event))
+        if report is not None and result.changed:
+            self._record_presence(report)
+        return result
+
+    def _publish_controller_events(self):
+        for event in self.controller.consumer_events[self._saved_consumer_events:]:
+            self._publish_consumer(event)
+            current = self.presence.current
+            if (event.kind == "gang_retracted" or
+                    (event.kind == "gang_ended" and current and current.occupancy == "present")):
+                # Only invalidate an existing proxy observation. A confirmed gang
+                # never creates occupancy in the reverse direction.
+                report = PresenceReport(
+                    f"presence:proxy:end:{event.event_id}", "unknown", "proxy_retraction",
+                    "proxy", event.source_ref if event.kind == "gang_retracted" else current.source_ref,
+                    event.received_at, event.received_at,
+                    current.available if current else True, event.kind,
+                )
+                self._record_presence(report)
+        self._saved_consumer_events = len(self.controller.consumer_events)
+
+    @property
+    def presence_status(self):
+        return {
+            "configured_source": self.configuration.presence_source,
+            "effective_source": "proxy",
+            "external_activation": "pending_rules",
+            "current": self.presence.current,
+            "external": self.presence.external,
+            "observations": self.presence.observations,
+        }
 
     def persist_completed_sessions(self):
         if self.archive is None:
@@ -401,6 +507,7 @@ class SaunaRuntime:
             self.device.invalidate_historical_warmup()
 
     def persist(self):
+        self._publish_controller_events()
         if self.archive is None:
             return
         now = self._clock()
@@ -757,7 +864,7 @@ class SaunaRuntime:
             self._require_open()
             if event.detected_at > self._clock():
                 raise ValueError("Erkennungszeit liegt nach der Laufzeituhr")
-            result = self.controller.process(event)
+            result = self._process_event(event)
             await self._cycle()
             return result
 

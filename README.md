@@ -22,6 +22,10 @@ Fristen, Erkennung, Einstellungen und Archivexport.
 Nach einem bestätigten Saunagang folgt die [Ofenkühlung](docs/ofenkuehlung.md)
 mit der bisher eingestellten Dauer. Die eigenständige Zwangskühlung entfällt.
 
+Der [Folgeauftrag zu Präsenz, Ofen und Phasen](docs/praesenz-ofen-phasen.md)
+beschreibt die vorbereitete externe Präsenzquelle, Türanforderung, Gangveto und
+korrigierte Historie einschließlich der noch offenen Aktivierungsregeln.
+
 ## Start
 
 Für die Installation und Gerätezuordnung lesen Sie das kurze
