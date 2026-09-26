@@ -1,6 +1,7 @@
 from datetime import timedelta
 import unittest
 
+from custom_components.ha_sauna.core.contracts import ControlInputs
 from custom_components.ha_sauna.core.models import ThermostatState
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.thermostat import evaluate
@@ -34,9 +35,9 @@ class ThermostatTests(unittest.TestCase):
         self.assertTrue(decision.heat)
 
     def test_provisional_gang_suppresses_regular_temperature_stops(self):
-        _, decision = self.decide(gang=True, temperature=100)
+        _, decision = self.decide(ThermostatState(demand=True), gang=True, temperature=100)
         self.assertTrue(decision.heat)
-        self.assertEqual(decision.reason, "gang")
+        self.assertEqual(decision.reason, "gang_veto")
 
     def test_safety_and_explicit_off_always_override_gang(self):
         for kwargs in ({"enabled": False},
@@ -83,3 +84,47 @@ class ThermostatTests(unittest.TestCase):
                 _, decision = self.decide(ThermostatState(demand=True),
                     now=T0 + timedelta(seconds=60), heating_since=T0, **args)
                 self.assertFalse(decision.heat)
+
+    def test_gang_alone_never_starts_stopped_heater(self):
+        for temperature in (83, 100):
+            _, decision = self.decide(gang=True, temperature=temperature,
+                                      heating_since=T0)
+            self.assertFalse(decision.heat)
+        _, decision = self.decide(gang=True, temperature=75)
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "below_target")
+
+    def test_veto_defers_cooldown_until_actual_regular_stop(self):
+        state, decision = self.decide(ThermostatState(demand=True),
+            inputs=ControlInputs(gang_veto=True), temperature=90)
+        self.assertTrue(decision.heat)
+        self.assertIsNone(state.cooldown_until)
+        state, decision = self.decide(state, now=T0 + timedelta(seconds=5),
+            inputs=ControlInputs(), temperature=90)
+        self.assertFalse(decision.heat)
+        self.assertEqual(state.cooldown_until, T0 + timedelta(seconds=65))
+
+    def test_door_pulse_bypasses_cooldown_but_invents_no_hold_at_limit(self):
+        waiting = ThermostatState(cooldown_until=T0 + timedelta(seconds=60))
+        state, decision = self.decide(waiting, temperature=84,
+            inputs=ControlInputs(door_request=True))
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.reason, "door_request")
+        self.assertIsNone(state.cooldown_until)
+        state, decision = self.decide(waiting, temperature=85,
+            inputs=ControlInputs(door_request=True))
+        self.assertFalse(decision.heat)
+        self.assertEqual(decision.reason, "door_request_at_limit")
+        self.assertEqual(state.cooldown_until, waiting.cooldown_until)
+
+    def test_door_pulse_preserves_feedback_minimum_and_superior_blocks(self):
+        running = ThermostatState(demand=True)
+        _, decision = self.decide(running, temperature=90, heating_since=T0,
+            inputs=ControlInputs(door_request=True))
+        self.assertEqual(decision.reason, "minimum_heating")
+        for kwargs in ({"enabled": False}, {"protection": ("fault",)},
+                       {"inhibits": ("fault",)}, {"temperature": None},
+                       {"inputs": ControlInputs(door_request=True, cooling=True)}):
+            args = {"inputs": ControlInputs(door_request=True), **kwargs}
+            _, decision = self.decide(**args)
+            self.assertFalse(decision.heat)

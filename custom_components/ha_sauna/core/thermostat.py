@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import isfinite
 
+from .contracts import ControlInputs
 from .models import ThermostatState
 from .parameters import Parameters
 
@@ -22,14 +23,18 @@ def evaluate(
     parameters: Parameters,
     temperature: float | None,
     enabled: bool,
-    gang: bool,
-    after_run: bool,
+    gang: bool = False,
+    after_run: bool = False,
+    inputs: ControlInputs | None = None,
     protection: tuple[str, ...] = (),
     inhibits: tuple[str, ...] = (),
     heating_since: datetime | None = None,
     target_temperature: float | None = None,
 ):
     values = parameters.values
+    controls = inputs if inputs is not None else ControlInputs(
+        gang_veto=gang, cooling=after_run
+    )
 
     def result(demand, reason, cooldown=state.cooldown_until):
         return replace(state, demand=demand, cooldown_until=cooldown), Decision(
@@ -49,12 +54,10 @@ def evaluate(
     )
     if target is None:
         return result(False, "temperature_configuration_required")
-    if after_run:
+    if controls.cooling:
         return result(False, "after_run")
     if temperature is None or not isfinite(temperature):
         return result(False, "upper_temperature_unavailable")
-    if gang:
-        return result(True, "gang")
     if (
         state.demand
         and heating_since is not None
@@ -65,12 +68,20 @@ def evaluate(
         return result(True, "minimum_heating")
     readiness_target = target + values["readiness_offset_c"]
     if temperature >= readiness_target:
+        if state.demand and controls.gang_veto:
+            return result(True, "gang_veto")
+        if controls.door_request and not state.demand:
+            # Actual feedback starts minimum heating; a pulse cannot fabricate
+            # that history or introduce a new holding period at the limit.
+            return result(False, "door_request_at_limit")
         cooldown = (
             now + timedelta(seconds=parameters.seconds("thermostat_cooldown_minutes"))
             if state.demand
             else state.cooldown_until
         )
         return result(False, "temperature_reached", cooldown)
+    if controls.door_request and not state.demand:
+        return result(True, "door_request", None)
     if state.cooldown_until and now < state.cooldown_until:
         return result(False, "thermostat_cooldown")
     if temperature <= readiness_target - values["readiness_hysteresis_c"]:
