@@ -21,7 +21,7 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
     return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
-                       "heating_minutes": 2.5, "heating_reduction_minutes": 0.5, "session_gap_minutes": 2.5})
+                       "session_gap_minutes": 2.5})
 
 
 def bindings():
@@ -67,8 +67,8 @@ class ParameterTests(unittest.TestCase):
     def test_invalid_numbers_fail_with_field_context(self):
         for value in (True, "2", None, float("nan"), float("inf"), -1, 10**400):
             with self.subTest(value=type(value)), self.assertRaises(ParameterError) as raised:
-                Parameters({**parameters().as_dict(), "heating_minutes": value})
-            self.assertEqual(raised.exception.key, "heating_minutes")
+                Parameters({**parameters().as_dict(), "session_gap_minutes": value})
+            self.assertEqual(raised.exception.key, "session_gap_minutes")
 
     def test_zero_policy_is_explicit(self):
         for d in DEFINITIONS:
@@ -81,21 +81,21 @@ class ParameterTests(unittest.TestCase):
                         Parameters(data)
 
     def test_seconds_are_derived_from_the_only_value(self):
-        self.assertEqual(parameters().seconds("heating_minutes"), 150)
+        self.assertEqual(parameters().seconds("session_gap_minutes"), 150)
         with self.assertRaises(ParameterError):
             parameters().seconds("readiness_hysteresis_c")
 
     def test_caller_cannot_mutate_parameters(self):
         original = parameters().as_dict()
         result = Parameters(original)
-        original["heating_minutes"] = 999
-        self.assertEqual(result.values["heating_minutes"], 2.5)
+        original["session_gap_minutes"] = 999
+        self.assertEqual(result.values["session_gap_minutes"], 2.5)
         with self.assertRaises(TypeError):
-            result.values["heating_minutes"] = 3
+            result.values["session_gap_minutes"] = 3
 
     def test_time_conversion_must_stay_finite(self):
         with self.assertRaises(ParameterError):
-            Parameters({**parameters().as_dict(), "heating_minutes": 1e308})
+            Parameters({**parameters().as_dict(), "session_gap_minutes": 1e308})
 
 
 class BindingTests(unittest.TestCase):
@@ -290,8 +290,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         options = self.runtime.configuration.as_options()
         rebuilt = Configuration.from_options(options)
         self.assertEqual(rebuilt, self.runtime.configuration)
-        options["parameters"]["heating_minutes"] = 999
-        self.assertEqual(rebuilt.parameters.values["heating_minutes"], 2.5)
+        options["parameters"]["session_gap_minutes"] = 999
+        self.assertEqual(rebuilt.parameters.values["session_gap_minutes"], 2.5)
 
     async def test_configuration_cannot_silently_fill_missing_values(self):
         with self.assertRaises(ValueError):

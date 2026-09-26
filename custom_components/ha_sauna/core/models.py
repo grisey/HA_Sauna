@@ -179,6 +179,8 @@ class TimedPhase:
 
 @dataclass(frozen=True)
 class CoolingCycle:
+    """Historisches Archivformat; wird von der aktiven Steuerung nicht erzeugt."""
+
     cycle_id: str
     requested_at: datetime
     duration_seconds: float
@@ -218,6 +220,7 @@ class Session:
     thermostat: ThermostatState = field(default_factory=ThermostatState)
     after_run: TimedPhase | None = None
     after_run_history: tuple[TimedPhase, ...] = ()
+    # Nur zum Lesen historischer Sitzungen; keine aktive Kühlsteuerung.
     cooling: CoolingCycle | None = None
     cooling_history: tuple[CoolingCycle, ...] = ()
     ready_at: datetime | None = None

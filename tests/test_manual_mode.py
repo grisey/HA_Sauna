@@ -41,7 +41,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.last_decision.reason, "manual_mode")
         availability = start_availability(controller, at(0), temperature_rate=0.1)
         self.assertIsNone(availability["until_ready_seconds"])
-        self.assertIsNone(availability["start_window_seconds"])
+        self.assertNotIn("start_window_seconds", availability)
         self.assertEqual(phase_timer(controller, at(0))["kind"], "manual")
 
     def test_explicit_demand_survives_normal_gang_changes(self):
@@ -78,7 +78,7 @@ class ManualModeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             controller.set_heater_override(True, at(4))
 
-    def test_confirmed_overtemperature_without_a_gang_clears_demand_and_cools(self):
+    def test_old_temperature_threshold_without_a_gang_keeps_manual_demand(self):
         controller = self.controller(
             safety_temperature_c=80,
             overtemperature_minutes=1,
@@ -89,17 +89,12 @@ class ManualModeTests(unittest.TestCase):
         controller.set_heater_override(True, at(1))
         controller.set_temperature(81, at(2))
         controller.advance(at(63))
-        self.assertIsNone(controller.heater_override)
-        self.assertEqual(controller.phase, "zwangskühlung")
-        self.assertEqual(controller.session.cooling.duration_seconds, 240)
-        self.assertFalse(controller.last_decision.heat)
-        availability = start_availability(controller, at(63))
-        self.assertEqual(availability["blocker"]["kind"], "cooling")
-        self.assertGreater(availability["minimum_wait_seconds"], 0)
-        with self.assertRaises(ValueError):
-            controller.set_heater_override(True, at(64))
+        self.assertTrue(controller.heater_override)
+        self.assertEqual(controller.phase, "manuell")
+        self.assertIsNone(controller.session.cooling)
+        self.assertTrue(controller.last_decision.heat)
 
-    def test_confirmed_overtemperature_during_gang_is_pending_and_keeps_manual_heat(self):
+    def test_old_temperature_threshold_during_gang_creates_no_cooling(self):
         controller = self.controller(
             safety_temperature_c=80,
             overtemperature_minutes=1,
@@ -117,37 +112,9 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.phase, "saunagang")
         self.assertTrue(controller.heater_override)
         self.assertTrue(controller.last_decision.heat)
-        self.assertIsNotNone(controller.session.cooling)
-        self.assertIsNone(controller.session.cooling.started_at)
-        self.assertIsNone(controller.session.cooling.ends_at)
+        self.assertIsNone(controller.session.cooling)
 
-    def test_pending_overtemperature_cooling_starts_after_manual_gang_ends(self):
-        controller = self.controller(
-            safety_temperature_c=80,
-            overtemperature_minutes=1,
-            forced_cooling_minutes=2,
-            overtemperature_cooling_factor=2,
-        )
-        self.start(controller)
-        controller.set_heater_override(True, at(1))
-        controller.process(event("close", Kind.DOOR_CLOSE, 2))
-        controller.process(event("person", Kind.PERSON_STRONG, 3))
-        controller.process(event("infusion", Kind.INFUSION, 4))
-        controller.set_temperature(81, at(5))
-        controller.advance(at(66))
-        controller.set_temperature(80, at(67))
-        self.assertFalse(controller._temperature_cooling_requested)
-        self.assertIsNone(controller.session.cooling.started_at)
-        controller.process(event("open", Kind.DOOR_OPEN, 67))
-        controller.process(event("ventilation", Kind.VENTILATION, 68))
-
-        self.assertIsNone(controller.heater_override)
-        self.assertEqual(controller.phase, "zwangskühlung")
-        self.assertEqual(controller.session.cooling.started_at, at(68))
-        self.assertEqual(controller.session.cooling.ends_at, at(308))
-        self.assertEqual(controller.session.cooling.elapsed_seconds, 0)
-
-    def test_technical_protection_still_revokes_manual_heat_during_pending_cooling(self):
+    def test_technical_protection_still_revokes_manual_heat(self):
         controller = self.controller(
             safety_temperature_c=80,
             overtemperature_minutes=1,
@@ -164,7 +131,6 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.phase, "saunagang")
         self.assertIsNone(controller.heater_override)
         self.assertFalse(controller.last_decision.heat)
-        self.assertIsNone(controller.session.cooling.started_at)
 
     def test_finish_session_can_defer_then_start_light(self):
         controller = self.controller(session_light_minutes=2)

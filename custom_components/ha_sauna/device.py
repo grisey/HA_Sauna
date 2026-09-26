@@ -822,7 +822,6 @@ class HADevice:
                 "session_light",
                 "operation_light",
                 "after_run_light",
-                "cooling_light",
             ):
                 self.faults.pop(known_fault, None)
             self.runtime.log.change(
@@ -975,12 +974,6 @@ class HADevice:
                 phase,
                 session.after_run.ends_at,
             )
-        if phase == "zwangskühlung" and session.cooling is not None:
-            return (
-                (session.session_id, phase, session.cooling.cycle_id),
-                phase,
-                session.cooling.ends_at,
-            )
         return ((session.session_id, phase), phase, None)
 
     @staticmethod
@@ -1007,7 +1000,6 @@ class HADevice:
         return {
             "session_light": "session_light",
             "nachlauf": "after_run_light",
-            "zwangskühlung": "cooling_light",
         }.get(phase, "operation_light")
 
     def set_light_override(self, value):

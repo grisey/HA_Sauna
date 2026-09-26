@@ -23,7 +23,7 @@ const baseState = () => ({
   session: {timeline: {active: null, door: "closed", completed: []}, heating: {elapsed_seconds: 0}, deadlines: []},
   configuration: {parameters}, last_session: null, measurements: [], measurement_status: {},
   parameters: [{key: "target_temperature_c", minimum: 60, maximum: 100}, {key: "temperature_gangs", minimum: 1, maximum: 8}],
-  mechanical_timer: {state: "idle"}, heating_limit_seconds: 5400,
+  mechanical_timer: {state: "idle"},
   heating_feedback: false, permissions: {control: true, temperature: true, program: true, light: true},
   start_errors: [], issues: [], detection_channels: [], target_temperature: 80,
   manual_controls: {light: {}}, start_availability: {}, phase_timer: null,
@@ -50,9 +50,9 @@ assert.match(render(state), /Bereit in etwa<\/small><strong>10 Minuten/, "an est
 assert.doesNotMatch(render(state), /8:00 min/, "estimated readiness never exposes a changing seconds timer");
 
 state = baseState();
-state.start_availability = {until_ready_seconds: 0, ready_estimated: false, start_window_seconds: 1200, start_window_label: "mindestens"};
+state.start_availability = {until_ready_seconds: 0, ready_estimated: false};
 assert.match(render(state), /Jetzt bereit/, "ready state is announced directly");
-assert.match(render(state), /Start noch mindestens 20 Minuten möglich/, "ready state includes the conservative usable start window");
+assert.doesNotMatch(render(state), /Start noch mindestens/, "readiness no longer advertises a heating-budget window");
 
 state = baseState();
 state.start_availability = {minimum_wait_seconds: 300, until_ready_seconds: null};
@@ -63,9 +63,6 @@ state.start_availability = {minimum_wait_seconds: 61};
 assert.match(render(state), /Nächster Start frühestens in<\/small><strong>5 Minuten/, "a positive minimum wait is never shortened to zero");
 
 state = baseState();
-state.start_availability = {until_ready_seconds: 0, start_window_seconds: 299};
-assert.match(render(state), /Startfenster: unter 5 Minuten/, "a positive start window never pretends it is already exhausted");
-
 state = baseState();
 state.start_availability = {until_ready_seconds: null, message: "Startzeit noch nicht abschätzbar."};
 assert.match(render(state), /Startzeit noch nicht abschätzbar\./, "an unavailable estimate remains visible");

@@ -1,4 +1,4 @@
-"""Admission of normal thermostat restarts close to the heating budget."""
+"""Reguläre Thermostatstarts bleiben trotz alter Heizbudget-Einstellungen frei."""
 from datetime import timedelta
 import unittest
 
@@ -30,7 +30,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         c.set_temperature(85, at(1020))
         c.report_heating(False, at(1020))
 
-    def test_short_remainder_starts_cooling_before_regular_restart(self):
+    def test_old_short_remainder_does_not_block_regular_restart(self):
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
                        minimum_heating_minutes=10, thermostat_cooldown_minutes=5,
                        forced_cooling_minutes=15)
@@ -38,17 +38,13 @@ class HeatingAdmissionTests(unittest.TestCase):
 
         c.set_temperature(80, at(1320))
 
-        self.assertEqual(c.phase, "zwangskühlung")
-        self.assertEqual(c.session.cooling.started_at, at(1320))
-        self.assertFalse(c.last_decision.heat)
-        self.assertEqual(c.last_decision.reason, "forced_cooling")
-        self.assertFalse(any(d.heat and d.at == at(1320) for d in c.decisions))
-        # Even an inconsistent late feedback cannot turn this cooling phase
-        # into a shortened minimum-heating run.
+        self.assertIsNone(c.session.cooling)
+        self.assertTrue(c.last_decision.heat)
+        self.assertEqual(c.last_decision.reason, "below_target")
         c.report_heating(True, at(1320))
         c.advance(at(1800))
-        self.assertEqual(c.phase, "zwangskühlung")
-        self.assertFalse(c.last_decision.heat)
+        self.assertIsNone(c.session.cooling)
+        self.assertTrue(c.last_decision.heat)
 
     def test_exact_minimum_remainder_allows_regular_restart(self):
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
@@ -63,7 +59,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "below_target")
 
-    def test_running_gang_and_door_wait_keep_their_existing_priority(self):
+    def test_running_gang_and_open_door_do_not_create_cooling(self):
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
                        minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         self.prepare_regular_restart(c)
@@ -71,7 +67,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         c.set_temperature(80, at(1320))
 
         self.assertIsNone(c.session.cooling)
-        self.assertEqual(c.cooling_wait_until, at(1630))
+        self.assertFalse(any(d.purpose in ("person_opportunity", "forced_cooling") for d in c.session.deadlines))
         self.assertTrue(c.last_decision.heat)
 
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
@@ -118,7 +114,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertTrue(c.last_decision.heat)
         c.report_heating(True, at(0))
         c.advance(at(300))
-        self.assertEqual(c.phase, "zwangskühlung")
+        self.assertIsNone(c.session.cooling)
         c.report_heating(False, at(300))
         c.advance(at(600))
 

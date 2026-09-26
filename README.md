@@ -19,6 +19,9 @@ Für eine Saunasitzung stehen die Ansichten **Steuerung** sowie **Verlauf und
 Archiv** bereit. Administratoren erhalten zusätzlich Details zu Betrieb,
 Fristen, Erkennung, Einstellungen und Archivexport.
 
+Nach einem bestätigten Saunagang folgt die [Ofenkühlung](docs/ofenkuehlung.md)
+mit der bisher eingestellten Dauer. Die eigenständige Zwangskühlung entfällt.
+
 ## Start
 
 Für die Installation und Gerätezuordnung lesen Sie das kurze

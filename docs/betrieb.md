@@ -1,5 +1,9 @@
 # Betrieb
 
+> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
+> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
+> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+
 Diese Seite beschreibt den geltenden Ablauf. Die tägliche Bedienung steht in
 [Bedienung](bedienung.md), die Zuordnung von Erkennung und Aufguss in
 [Gangmodell](gangmodell.md) und Fristen in [Zeitmodell](zeitmodell.md).

@@ -7,8 +7,9 @@ PHASES = {
     "aufheizen": "Aufheizen",
     "bereit": "Bereit",
     "saunagang": "Saunagang",
-    "nachlauf": "Nachlauf",
-    "zwangskühlung": "Zwangskühlung",
+    "nachlauf": "Ofenkühlung",
+    # Alte Archivphasen bleiben verständlich, werden aber nicht mehr erzeugt.
+    "zwangskühlung": "Zwangskühlung (historisch)",
     "manuell": "Manueller Betrieb",
 }
 EVENTS = {
@@ -37,7 +38,7 @@ FAULTS = {
     "heater_no_power": "Der Heizschütz ist eingeschaltet, es wird jedoch keine Heizleistung gemessen.",
     "archive": "Das Sitzungsarchiv konnte nicht geschrieben werden.",
     "operation_light": "Das Saunalicht konnte beim Start des Saunabetriebs nicht eingeschaltet werden.",
-    "after_run_light": "Das Saunalicht konnte für den Nachlauf nicht gedimmt werden.",
+    "after_run_light": "Das Saunalicht konnte für die Ofenkühlung nicht gedimmt werden.",
     "session_light": "Das Saunalicht konnte nach dem Sitzungsende nicht eingestellt werden.",
     "start_rejected": "Der Start wurde verhindert. Bitte die fehlenden Einstellungen und Messwerte prüfen.",
 }
@@ -46,8 +47,8 @@ REASONS = {
     "temperature_configuration_required": "Die Temperatureinstellungen sind noch unvollständig.",
     "upper_temperature_unavailable": "Ein gültiger oberer Temperaturwert fehlt.",
     "gang": "Die Heizung bleibt während des Saunagangs eingeschaltet.",
-    "forced_cooling": "Die Zwangskühlung läuft; der Ofen bleibt aus.",
-    "after_run": "Der Nachlauf läuft; der Ofen bleibt aus.",
+    "forced_cooling": "Historische Zwangskühlung; der Ofen blieb aus.",
+    "after_run": "Die Ofenkühlung läuft; der Ofen bleibt aus.",
     "minimum_heating": "Die Mindestheizzeit ist noch nicht abgelaufen.",
     "temperature_reached": "Die Bereitschaftstemperatur ist erreicht.",
     "thermostat_cooldown": "Die Heizpause nach Erreichen der Bereitschaft läuft.",
@@ -75,7 +76,6 @@ def fault_resolved(key):
         "heater_still_heating": "Heizabschaltung",
         "heater_no_power": "Heizleistung",
         "archive": "Sitzungsarchiv",
-        "cooling_light": "Saunalicht",
         "operation_light": "Saunalicht",
         "after_run_light": "Saunalicht",
         "session_light": "Lichtnachlauf",
@@ -97,11 +97,6 @@ def fault_message(key, value):
             "validity_unconfigured": "Das Höchstalter eines Messwerts ist noch nicht eingestellt.",
         }.get(value, "Zurzeit ist kein gültiger Messwert verfügbar.")
         return ROLES[key] + ": " + detail
-    if key == "cooling_light":
-        return {
-            "brightness_required": "Die Lichthelligkeit für die Zwangskühlung ist noch nicht eingestellt.",
-            "restore_failed": "Die vorherige Lichthelligkeit konnte nicht wiederhergestellt werden.",
-        }.get(value, "Das Saunalicht konnte nicht eingestellt werden.")
     text = FAULTS.get(
         key, "Eine Störung wurde erkannt. Bitte die Gerätediagnose prüfen."
     )

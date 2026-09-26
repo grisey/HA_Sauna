@@ -16,7 +16,7 @@ class ThermostatTests(unittest.TestCase):
 
     def decide(self, state=None, **kwargs):
         args = dict(now=T0, parameters=self.parameters, temperature=75,
-                    enabled=True, gang=False, cooling=False, after_run=False)
+                    enabled=True, gang=False, after_run=False)
         args.update(kwargs)
         return evaluate(state or ThermostatState(), **args)
 
@@ -56,13 +56,13 @@ class ThermostatTests(unittest.TestCase):
         self.assertFalse(decision.heat)
         self.assertEqual(decision.reason, "upper_temperature_unavailable")
 
-    def test_started_cooling_and_after_run_override_even_inconsistent_gang_state(self):
-        for field in ("after_run", "cooling"):
+    def test_oven_cooling_overrides_even_inconsistent_gang_state(self):
+        for field in ("after_run",):
             for gang in (False, True):
                 with self.subTest(field=field, gang=gang):
                     _, decision = self.decide(gang=gang, **{field: True})
                     self.assertFalse(decision.heat)
-                    self.assertEqual(decision.reason, "forced_cooling" if field == "cooling" else "after_run")
+                    self.assertEqual(decision.reason, "after_run")
 
     def test_minimum_heating_defers_regular_stop_then_starts_cooldown(self):
         state = ThermostatState(demand=True)
@@ -75,8 +75,8 @@ class ThermostatTests(unittest.TestCase):
         self.assertFalse(decision.heat)
         self.assertEqual(state.cooldown_until, T0 + timedelta(seconds=660))
 
-    def test_minimum_heating_never_delays_cooling_after_run_off_or_safety(self):
-        for args in ({"cooling": True}, {"after_run": True}, {"enabled": False},
+    def test_minimum_heating_never_delays_oven_cooling_off_or_safety(self):
+        for args in ({"after_run": True}, {"enabled": False},
                      {"temperature": None},
                      {"protection": ("missing_feedback",)}):
             with self.subTest(args=args):

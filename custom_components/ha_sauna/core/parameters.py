@@ -78,19 +78,28 @@ def definition(key, unit, allow_zero=False, **kwargs):
 LIVE_TEMPERATURE_KEYS = frozenset(
     {"target_temperature_c", "final_temperature_c", "temperature_gangs"}
 )
+# Read compatibility only: obsolete values in saved options and archives have
+# no defaults, validation constraints, editable fields, or control effect.
+LEGACY_COOLING_KEYS = frozenset(
+    {
+        "forced_cooling_minutes",
+        "heating_minutes",
+        "heating_reduction_minutes",
+        "open_door_wait_minutes",
+        "overtemperature_cooling_factor",
+        "overtemperature_minutes",
+        "person_wait_minutes",
+        "safety_temperature_c",
+    }
+)
 DEFINITIONS = (
     definition("session_gap_minutes", "min", default=15),
     definition("confirmation_minutes", "min", default=12),
-    definition("heating_minutes", "min", default=90),
-    definition("heating_reduction_minutes", "min", True, default=30),
     definition("heat_reset_minutes", "min", default=10),
     definition("thermostat_cooldown_minutes", "min", True, default=5),
     definition("minimum_heating_minutes", "min", True, default=10),
     definition("mechanical_timer_minutes", "min", default=240),
     definition("mechanical_timer_warning_minutes", "min", optional=True),
-    definition("forced_cooling_minutes", "min", default=15),
-    definition("person_wait_minutes", "min", default=4),
-    definition("open_door_wait_minutes", "min", default=10),
     definition("after_run_minutes", "min", default=8),
     definition("readiness_offset_c", "°C", True, default=5),
     definition("readiness_hysteresis_c", "°C", default=3),
@@ -131,9 +140,6 @@ DEFINITIONS = (
     definition(
         "program_2_gangs", "Anzahl", default=3, minimum=1, maximum=20, integer=True
     ),
-    definition("safety_temperature_c", "°C", default=105),
-    definition("overtemperature_minutes", "min", default=10),
-    definition("overtemperature_cooling_factor", "×", default=2, minimum=1),
     definition("fault_confirmation_seconds", "s", default=60),
     definition("sensor_timeout_seconds", "s", default=180),
     definition("feedback_timeout_seconds", "s", default=10),
@@ -190,7 +196,7 @@ class Parameters:
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
             raise ParameterError("base", "invalid_parameters")
-        unknown = set(self.values) - BY_KEY.keys()
+        unknown = set(self.values) - BY_KEY.keys() - LEGACY_COOLING_KEYS
         if unknown:
             raise ParameterError("base", "unknown_parameter")
         checked = {}
@@ -211,8 +217,6 @@ class Parameters:
         ):
             if checked[key] < sauna_minimum:
                 raise ParameterError(key, "too_small")
-        if checked["heating_reduction_minutes"] >= checked["heating_minutes"]:
-            raise ParameterError("heating_reduction_minutes", "reduction_too_large")
         for route in ("strong", "weak"):
             if checked[f"{route}_window_seconds"] % checked["person_step_seconds"]:
                 raise ParameterError(f"{route}_window_seconds", "window_not_divisible")

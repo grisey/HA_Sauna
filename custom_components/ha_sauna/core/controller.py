@@ -1,4 +1,4 @@
-"""Führender Sessionablauf mit Gang-, Heizzeit-, Nachlauf- und Kühlungsregeln."""
+"""Führender Sessionablauf mit Gang-, Heizzeit- und Ofenkühlungsregeln."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from . import energy, heating, thermostat
 from .mechanical_timer import MechanicalTimer
-from .models import CoolingCycle, Deadline, Energy, LightAfterRun, Session, TimedPhase
+from .models import Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
 from .timeline import Event, Kind, apply, utc
@@ -66,8 +66,6 @@ class Controller:
             None
         )
         self.decisions: list[thermostat.Decision] = []
-        self.overtemperature_since: datetime | None = None
-        self._temperature_cooling_requested = False
         self.mechanical_timer = MechanicalTimer()
         self.phase_since = None
         self._phase_key = (None, "aus")
@@ -87,13 +85,6 @@ class Controller:
     @property
     def session(self) -> Session | None:
         return self._session
-
-    @property
-    def heating_limit_seconds(self) -> float:
-        limit = self.parameters.seconds("heating_minutes")
-        if self._session and self._session.cooling_history:
-            limit -= self.parameters.seconds("heating_reduction_minutes")
-        return limit
 
     @property
     def target_temperature(self) -> float | None:
@@ -247,37 +238,6 @@ class Controller:
         self.contactor = value
         self._sync_mechanical_timer(utc(at))
 
-    @property
-    def cooling_wait_until(self):
-        if self._session is None:
-            return None
-        return next(
-            (
-                d.due_at
-                for d in self._session.deadlines
-                if d.purpose == "person_opportunity"
-            ),
-            None,
-        )
-
-    @property
-    def cooling_remaining_seconds(self) -> float | None:
-        """Unveränderliche Restzeit der aktuellen Kühlung, auch in Pause."""
-        cycle = self._session.cooling if self._session else None
-        return cycle.remaining_seconds if cycle is not None else None
-
-    def _cooling_active(self, cycle=None) -> bool:
-        cycle = (
-            cycle
-            if cycle is not None
-            else (self._session.cooling if self._session else None)
-        )
-        return bool(
-            cycle is not None
-            and cycle.started_at is not None
-            and cycle.paused_at is None
-        )
-
     def _latch_readiness(self, at):
         """Remember the first permitted measurement at the current setpoint."""
         session = self._session
@@ -292,7 +252,6 @@ class Controller:
             or self.inhibits
             or session.timeline.active is not None
             or session.after_run is not None
-            or self._cooling_active(session.cooling)
             or isinstance(temperature, bool)
             or not isinstance(temperature, (int, float))
             or not isfinite(temperature)
@@ -317,8 +276,6 @@ class Controller:
             return "saunagang"
         if session.after_run:
             return "nachlauf"
-        if self._cooling_active(session.cooling):
-            return "zwangskühlung"
         if self.control_mode == "manual":
             return "manuell"
         if session.ready_at is not None:
@@ -344,13 +301,9 @@ class Controller:
                 self.parameters.seconds("heat_reset_minutes"),
             ),
         )
-        # Der Übertemperatur-Nachweis gehört zur realen Messlage und bleibt
-        # sitzungsübergreifend. Die zugehörige Kühlanforderung dagegen bezog
-        # sich auf den verworfenen Sitzungszyklus und muss neu angelegt werden.
-        self._temperature_cooling_requested = False
         self._last_at = at
         self._sync_mechanical_timer(at)
-        self._ensure_cooling(at)
+        self._ensure_after_run(at)
         self._latch_readiness(at)
         self._evaluate(at)
         return self._session
@@ -395,15 +348,6 @@ class Controller:
             raise ValueError(
                 "Manuelles Einschalten ist bei aktivem Schutz oder einer Heizsperre nicht möglich"
             )
-        if (
-            heat is True
-            and self.control_mode == "manual"
-            and self._session is not None
-            and self._cooling_active(self._session.cooling)
-        ):
-            raise ValueError(
-                "Manuelles Einschalten ist während der Zwangskühlung nicht möglich"
-            )
         if heat is True and (
             self.temperature is None or not isfinite(self.temperature)
         ):
@@ -415,7 +359,7 @@ class Controller:
         self.heater_override = heat
         if heat is None:
             self._clear_heater_override()
-            self._ensure_cooling(at)
+            self._ensure_after_run(at)
             self._evaluate(at)
             return self.last_decision
         if self.control_mode == "automatic" and self._session is not None:
@@ -427,8 +371,8 @@ class Controller:
             )
         if heat is False:
             # Ein manueller AUS-Befehl ist kein manuelles Heizen und darf die
-            # Nachlaufuhr daher nicht stillstehen lassen.
-            self._ensure_cooling(at)
+            # Ofenkühluhr daher nicht stillstehen lassen.
+            self._ensure_after_run(at)
         if (
             heat is True
             and self.control_mode == "automatic"
@@ -436,9 +380,6 @@ class Controller:
             and self._session.after_run is not None
         ):
             self._pause_after_run(at)
-        if self._cooling_active() and self.control_mode == "automatic":
-            self._account_cooling(at)
-            self._pause_cooling(at)
         self._latch_readiness(at)
         # Erst nach den durch die Bedienung ausgelösten Phasenänderungen merken.
         self._evaluate(at, preserve_override=True)
@@ -452,13 +393,6 @@ class Controller:
     def set_temperature(self, value: float | None, at: datetime):
         self.advance(at, evaluate=False)
         self.temperature = value
-        limit = self.parameters.values.get("safety_temperature_c")
-        if value is not None and limit is not None and value > limit:
-            if self.overtemperature_since is None:
-                self.overtemperature_since = utc(at)
-        else:
-            self.overtemperature_since = None
-            self._temperature_cooling_requested = False
         self._latch_readiness(utc(at))
         self._evaluate(utc(at))
 
@@ -475,7 +409,7 @@ class Controller:
                     self.parameters.seconds("heat_reset_minutes"),
                 ),
             )
-            self._ensure_cooling(utc(at))
+            self._ensure_after_run(utc(at))
         self._evaluate(utc(at))
 
     def report_power(
@@ -528,7 +462,7 @@ class Controller:
                     if d.due_at <= at
                     and (
                         inclusive_confirmation
-                        or d.purpose not in ("confirmation", "person_opportunity")
+                        or d.purpose != "confirmation"
                         or d.due_at < at
                     )
                 ),
@@ -538,14 +472,12 @@ class Controller:
                 break
             self._account_heat(due[0].due_at)
             self._account_after_run(due[0].due_at)
-            self._account_cooling(due[0].due_at)
             self.consume_deadline(due[0], at)
         self._account_heat(at)
         self._account_after_run(at)
-        self._account_cooling(at)
         self._last_at = at
         if self._session is not None:
-            self._ensure_cooling(at)
+            self._ensure_after_run(at)
         if evaluate:
             self._evaluate(at)
         return self._session
@@ -571,25 +503,8 @@ class Controller:
         # Fehlerhafte Eingänge dürfen nicht beiläufig Timer oder Zustand verändern.
         if event.effective_at < previous.started_at:
             raise ValueError("Ereignis liegt vor dem Sessionbeginn")
-        # Eine gerade erkannte Öffnung hat am gleichen Zeitpunkt Vorrang vor
-        # dem Heizbudget. Bereits laufende Kühlung wird niemals zurückgenommen.
         if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
-            apply(previous.timeline, event)  # Erst prüfen, dann Fristen ändern.
-            if self.phase in ("aufheizen", "bereit"):
-                parameter = None
-                if event.kind == Kind.DOOR_OPEN:
-                    parameter = "open_door_wait_minutes"
-                elif (
-                    self.cooling_wait_until is not None
-                    and self.cooling_wait_until >= event.detected_at
-                ):
-                    parameter = "person_wait_minutes"
-                if parameter:
-                    due_at = event.effective_at + timedelta(
-                        seconds=self.parameters.seconds(parameter)
-                    )
-                    if due_at > event.detected_at:
-                        self._schedule("person_opportunity", due_at, event.event_id)
+            apply(previous.timeline, event)  # Validieren vor Fortschreiben der Uhr.
         self.advance(event.detected_at, evaluate=False, inclusive_confirmation=False)
         previous = self._session
         if previous is None:
@@ -625,7 +540,7 @@ class Controller:
         ):
             self._clear_readiness()
         # Erst der Aufguss bestätigt den neuen Gang. Bis dahin bleibt ein
-        # pausierter alter Nachlauf unverändert; eine aufgehobene Erkennung
+        # pausierter alter Ofenkühlung unverändert; eine aufgehobene Erkennung
         # darf ihn weder beenden noch seine Restzeit verbrauchen.
         paused_after_run = previous.after_run
         if (
@@ -635,8 +550,6 @@ class Controller:
         ):
             self._cancel("after_run")
             self._finish_after_run(replace(paused_after_run, ends_at=event.detected_at))
-        if active is not None or event.kind == Kind.OPERATION_OFF:
-            self._cancel("person_opportunity")
         if active is None or active.infusion_events:
             self._cancel("confirmation")
         elif previous.timeline.active is None:
@@ -709,50 +622,30 @@ class Controller:
             session
         ):
             return "after_run"
-        if self._cooling_active(session.cooling):
-            return "forced_cooling"
         return None
 
     def _begin_after_run(self, gang_id, at):
-        duration = self.parameters.seconds("after_run_minutes")
+        duration = self.oven_cooling_duration_seconds()
         phase = TimedPhase(
             gang_id, at, at + timedelta(seconds=duration), duration, accounted_at=at
         )
         self._session = replace(self._session, after_run=phase)
         self._schedule("after_run", phase.ends_at, phase.phase_id)
-        remaining_budget = (
-            self.heating_limit_seconds - self._session.heating.elapsed_seconds
-        )
-        if self._session.cooling is None and remaining_budget < self.parameters.seconds(
-            "minimum_heating_minutes"
-        ):
-            self._create_heating_budget_cooling(at)
 
-    def _uncredited_after_run_seconds(self):
-        """Abgeschlossene Nachläufe werden aus den Phasen, nicht als Guthaben, abgeleitet."""
-        session = self._session
-        completed = sum(phase.elapsed_seconds for phase in session.after_run_history)
-        cycles = session.cooling_history + (
-            (session.cooling,) if session.cooling else ()
-        )
-        credited = sum(cycle.credited_seconds for cycle in cycles)
-        return max(0.0, completed - credited)
+    def oven_cooling_duration_seconds(self) -> float:
+        """Konfigurierte Ofenkühlung; zentrale Stelle für die spätere Bemessung.
 
-    def _create_heating_budget_cooling(self, at):
-        session = self._session
-        cycle = CoolingCycle(
-            uuid4().hex,
-            at,
-            self.parameters.seconds("forced_cooling_minutes"),
-            credited_seconds=self._uncredited_after_run_seconds(),
-        )
-        self._session = replace(session, cooling=cycle)
+        Die spätere Datengrundlage sind vorhandene Phasenzeitstempel und reale
+        Schützrückmeldungen: Bereitschaft ∩ Betrieb EIN ∩ Schütz bestätigt AUS.
+        Bereitschaft umfasst Heiz- und Idle-Intervalle; unbekannter Schütz,
+        Betrieb AUS und Ofenkühlung liefern keine Bereitschafts-Auszeit.
+        Zeitraum, ausreichende Dauer/Verteilung und Ableitung/Aktualisierung
+        der Kühldauer sind noch offen. Kein zusätzlicher Pausenzähler.
+        """
+        return self.parameters.seconds("after_run_minutes")
 
-    def _ensure_cooling(self, at):
-        if self._session is None:
-            return
-        if self.control_mode == "manual":
-            self._ensure_temperature_cooling(at)
+    def _ensure_after_run(self, at):
+        if self._session is None or self.control_mode == "manual":
             return
         phase = self._session.after_run
         if (
@@ -762,165 +655,6 @@ class Controller:
             and self._session.timeline.active is None
         ):
             self._resume_after_run(at)
-        self._ensure_temperature_cooling(at)
-        session = self._session
-        if (
-            session.cooling is None
-            and session.heating.elapsed_seconds >= self.heating_limit_seconds
-        ):
-            self._create_heating_budget_cooling(at)
-        session = self._session
-        if (
-            session.cooling is not None
-            and session.cooling.started_at is None
-            and session.timeline.active is None
-            and session.after_run is None
-            and self.cooling_wait_until is None
-            and self.heater_override is None
-        ):
-            self._start_cooling(at)
-        elif (
-            session.cooling is not None
-            and session.cooling.paused_at is not None
-            and session.timeline.active is None
-            and session.after_run is None
-            and self.cooling_wait_until is None
-            and self.heater_override is None
-        ):
-            self._resume_cooling(at)
-
-    def _ensure_temperature_cooling(self, at):
-        due = self.overtemperature_since is not None and (
-            at - self.overtemperature_since
-        ).total_seconds() > self.parameters.seconds("overtemperature_minutes")
-        if due and not self._temperature_cooling_requested:
-            self._temperature_cooling_requested = True
-            duration = (
-                self.parameters.seconds("forced_cooling_minutes")
-                * self.parameters.values["overtemperature_cooling_factor"]
-            )
-            cycle = self._session.cooling
-            if cycle is None:
-                cycle = CoolingCycle(
-                    uuid4().hex,
-                    at,
-                    duration,
-                    credited_seconds=self._uncredited_after_run_seconds(),
-                    reason="overtemperature",
-                )
-            else:
-                if self._cooling_active(cycle):
-                    self._account_cooling(at)
-                    cycle = self._session.cooling
-                cycle = replace(
-                    cycle,
-                    duration_seconds=max(duration, cycle.duration_seconds),
-                    reason="overtemperature",
-                )
-                if self._cooling_active(cycle):
-                    cycle = replace(
-                        cycle, ends_at=at + timedelta(seconds=cycle.remaining_seconds)
-                    )
-                    self._cancel("forced_cooling")
-                    self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
-            self._session = replace(self._session, cooling=cycle)
-        cycle = self._session.cooling
-        if (
-            self.control_mode != "manual"
-            or cycle is None
-            or cycle.reason != "overtemperature"
-        ):
-            return
-        # A confirmed overtemperature is remembered during a gang.  Its cooling
-        # time must not run, and manual heat remains available until the gang ends.
-        if self._session.timeline.active is not None:
-            return
-        self._clear_heater_override()
-        if self._session.operation_enabled and not self._cooling_active(cycle):
-            if cycle.paused_at is not None:
-                self._resume_cooling(at)
-            else:
-                self._start_cooling(at)
-
-    def _start_cooling(self, at):
-        cycle = self._session.cooling
-        remaining = cycle.remaining_seconds
-        if remaining == 0:
-            # Es existiert kein zusätzlicher Kühlabschnitt; nur der abgeschlossene
-            # Kühlvorgang mit seiner bereits verbrauchten Nachlaufanrechnung.
-            self._finish_cooling(replace(cycle, ends_at=at), at)
-            return
-        cycle = replace(
-            cycle,
-            started_at=at,
-            accounted_at=at,
-            paused_at=None,
-            ends_at=at + timedelta(seconds=remaining),
-        )
-        self._session = replace(self._session, cooling=cycle)
-        self._clear_readiness()
-        self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
-
-    def _account_cooling(self, at):
-        cycle = self._session.cooling if self._session else None
-        if (
-            not self._cooling_active(cycle)
-            or cycle.accounted_at is None
-            or at <= cycle.accounted_at
-        ):
-            return
-        elapsed = min(
-            cycle.remaining_seconds, (at - cycle.accounted_at).total_seconds()
-        )
-        self._session = replace(
-            self._session,
-            cooling=replace(
-                cycle, elapsed_seconds=cycle.elapsed_seconds + elapsed, accounted_at=at
-            ),
-        )
-
-    def _pause_cooling(self, at):
-        self._account_cooling(at)
-        cycle = self._session.cooling
-        if not self._cooling_active(cycle):
-            return
-        self._cancel("forced_cooling")
-        self._session = replace(
-            self._session, cooling=replace(cycle, ends_at=None, paused_at=at)
-        )
-
-    def _resume_cooling(self, at):
-        cycle = self._session.cooling
-        if cycle.remaining_seconds == 0:
-            self._finish_cooling(replace(cycle, ends_at=at), at)
-            return
-        cycle = replace(
-            cycle,
-            accounted_at=at,
-            paused_at=None,
-            ends_at=at + timedelta(seconds=cycle.remaining_seconds),
-        )
-        self._session = replace(self._session, cooling=cycle)
-        self._clear_readiness()
-        self._schedule("forced_cooling", cycle.ends_at, cycle.cycle_id)
-
-    def _finish_cooling(self, cycle, at):
-        session = self._session
-        self._session = replace(
-            session,
-            cooling=None,
-            cooling_history=session.cooling_history + (cycle,),
-            timeline=replace(session.timeline, anchor=None, preparation=None),
-            heating=replace(session.heating, elapsed_seconds=0, last_reset_at=at),
-        )
-        if cycle.reason == "overtemperature":
-            self._temperature_cooling_requested = False
-            self.overtemperature_since = (
-                at
-                if self.temperature is not None
-                and self.temperature > self.parameters.values["safety_temperature_c"]
-                else None
-            )
 
     def _account_after_run(self, at):
         phase = self._session.after_run if self._session else None
@@ -977,23 +711,12 @@ class Controller:
             timeline=replace(session.timeline, anchor=None, preparation=None),
             after_run_history=session.after_run_history + (phase,),
         )
-        if session.cooling is not None:
-            credit = phase.elapsed_seconds
-            self._session = replace(
-                self._session,
-                cooling=replace(
-                    session.cooling,
-                    credited_seconds=session.cooling.credited_seconds + credit,
-                ),
-            )
-        # Der normale Pfad wahrt Türwarte- und Gangschranken vor dem Kühlstart.
-        self._ensure_cooling(phase.ends_at)
 
     def finish_phase(self, purpose, token, at):
         """Eine konkret angezeigte Phase wie bei Fristablauf abschließen."""
-        if purpose not in ("after_run", "forced_cooling"):
+        if purpose != "after_run":
             raise ValueError(
-                "Nur Nachlauf und laufende Zwangskühlung können manuell beendet werden."
+                "Nur Ofenkühlung kann manuell beendet werden."
             )
         at = utc(at)
         self.advance(at)
@@ -1014,30 +737,17 @@ class Controller:
             if session
             else None
         )
-        if purpose == "after_run":
-            phase = session.after_run
-            if phase is None or phase.phase_id != token:
-                raise ValueError("Es läuft kein passender Nachlauf.")
-            if deadline is None and phase.paused_at is None:
-                raise ValueError(
-                    "Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren."
-                )
-            self._account_after_run(at)
-            phase = self._session.after_run
-            self._cancel(purpose)
-            self._finish_after_run(replace(phase, ends_at=at))
-        else:
-            cycle = session.cooling
-            if cycle is None or cycle.cycle_id != token or cycle.started_at is None:
-                raise ValueError("Es läuft keine passende Zwangskühlung.")
-            if deadline is None and cycle.paused_at is None:
-                raise ValueError(
-                    "Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren."
-                )
-            self._account_cooling(at)
-            cycle = self._session.cooling
-            self._cancel(purpose)
-            self._finish_cooling(replace(cycle, ends_at=at), at)
+        phase = session.after_run
+        if phase is None or phase.phase_id != token:
+            raise ValueError("Es läuft keine passende Ofenkühlung.")
+        if deadline is None and phase.paused_at is None:
+            raise ValueError(
+                "Diese Phase ist bereits beendet oder wurde inzwischen ersetzt. Bitte die Anzeige aktualisieren."
+            )
+        self._account_after_run(at)
+        phase = self._session.after_run
+        self._cancel(purpose)
+        self._finish_after_run(replace(phase, ends_at=at))
         self._evaluate(at)
         return deadline
 
@@ -1071,42 +781,9 @@ class Controller:
         return (
             not self.protection
             and not self.inhibits
-            and (
-                self.control_mode != "manual"
-                or self._session is None
-                or not self._cooling_active(self._session.cooling)
-            )
             and self.temperature is not None
             and isfinite(self.temperature)
         )
-
-    def _automatic_restart_needs_cooling(self, decision, *, was_demanding):
-        """Admit a regular thermostat restart only when its minimum run fits.
-
-        A running heater is deliberately left alone: the minimum-heating rule
-        applies from its real feedback.  This admission only prevents a new,
-        regular restart from immediately leading into forced cooling.
-        """
-        session = self._session
-        if (
-            session is None
-            or was_demanding
-            or not decision.heat
-            or self.heater_override is not None
-            or session.timeline.active is not None
-            or session.after_run is not None
-            or session.cooling is not None
-            or self.cooling_wait_until is not None
-            or session.heating.reported_heating is True
-        ):
-            return False
-        # A configuration whose initial budget is shorter than the minimum run
-        # must still be able to start.  Without consumed heating time there is
-        # no restart to admit, and creating cooling here would loop forever.
-        if session.heating.elapsed_seconds <= 0:
-            return False
-        remaining = self.heating_limit_seconds - session.heating.elapsed_seconds
-        return remaining < self.parameters.seconds("minimum_heating_minutes")
 
     def _evaluate_manual(self, at, session):
         """Issue only an explicit heater demand while retaining interlocks."""
@@ -1127,7 +804,6 @@ class Controller:
             temperature=self.temperature,
             enabled=session.operation_enabled,
             gang=session.timeline.active is not None,
-            cooling=self._cooling_active(session.cooling),
             after_run=(
                 session.after_run is not None and session.timeline.active is None
             ),
@@ -1149,24 +825,14 @@ class Controller:
         elif self.control_mode == "manual":
             decision = self._evaluate_manual(at, session)
         else:
-            was_demanding = session.thermostat.demand
             decision = self._evaluate_thermostat(at)
-            if self._automatic_restart_needs_cooling(
-                decision, was_demanding=was_demanding
-            ):
-                self._create_heating_budget_cooling(at)
-                self._ensure_cooling(at)
-                # Cooling changes the thermostat's higher-priority phase.  Run
-                # the pure thermostat decision once more instead of recursing
-                # through evaluation and re-entering this admission check.
-                decision = self._evaluate_thermostat(at)
         self.automatic_decision = decision
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():
             self._clear_heater_override()
             # Eine zuvor manuell pausierte Kühlung darf nach dem Entzug der
             # Einschaltfreigabe nicht auf einen weiteren Eingang warten.
-            self._ensure_cooling(at)
+            self._ensure_after_run(at)
             return self._evaluate(at)
         if (
             self.control_mode == "automatic"
@@ -1178,7 +844,7 @@ class Controller:
             self._clear_heater_override()
             # Das Löschen der Bedienung darf die pausierte Kühlung nicht
             # bis zum nächsten Eingang im Aufheizzustand lassen.
-            self._ensure_cooling(at)
+            self._ensure_after_run(at)
             return self._evaluate(at)
         issued = decision
         if (
@@ -1290,15 +956,9 @@ class Controller:
             phase = session.after_run
             if phase is not None and phase.phase_id == deadline.token:
                 self._finish_after_run(phase)
-        elif deadline.purpose == "forced_cooling":
-            if (
-                session.cooling is not None
-                and session.cooling.cycle_id == deadline.token
-            ):
-                self._finish_cooling(session.cooling, deadline.due_at)
         elif deadline.purpose == "manual_override":
             self._clear_heater_override()
-            self._ensure_cooling(deadline.due_at)
+            self._ensure_after_run(deadline.due_at)
         elif deadline.purpose == "session_gap" and not session.operation_enabled:
             self._complete_session(
                 deadline.due_at,

@@ -307,7 +307,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(runtime.session.operation_enabled)
             async with client.post(url+"/temperature",json={"temperature_increase_c":2}) as response:
                 self.assertEqual(response.status,400)
-            async with client.post(url+"/temperature",json={"forced_cooling_minutes":0}) as response:
+            async with client.post(url+"/temperature",json={"removed_cooling_option":0}) as response:
                 self.assertEqual(response.status,400)
             await runtime.set_operation(False)
             deadline=runtime.session.after_run

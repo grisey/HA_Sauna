@@ -29,7 +29,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.inputs = {r.key: f"{r.domains[0]}.test_{r.key}" for r in ROLES if not r.optional}
         self.values = {d.key: d.default if d.default is not None else 2.5
                        for d in EDITABLE_DEFINITIONS}
-        self.values.update(heating_minutes=2.5, heating_reduction_minutes=0.5)
+        self.values.update(session_gap_minutes=2.5)
         self.expected_values = Parameters(self.values).as_dict()
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
@@ -108,8 +108,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_parameter_error_is_field_specific(self):
         await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
-        form = await self.flow.async_step_parameters({**self.values, "heating_minutes": -1})
-        self.assertEqual(form["errors"], {"heating_minutes": "positive"})
+        form = await self.flow.async_step_parameters({**self.values, "session_gap_minutes": -1})
+        self.assertEqual(form["errors"], {"session_gap_minutes": "positive"})
 
     async def test_initial_catalog_must_fit_the_selected_minimum_temperature(self):
         await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
@@ -144,10 +144,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow.handler = self.entry.entry_id
         flow.context = {"source": "options"}
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            form = await flow.async_step_parameters({**self.values, "heating_minutes": -1})
-            self.assertEqual(form["errors"], {"heating_minutes": "positive"})
-            result = await flow.async_step_parameters({**self.values, "heating_minutes": 7})
-            self.assertEqual(result["data"]["parameters"]["heating_minutes"], 7)
+            form = await flow.async_step_parameters({**self.values, "session_gap_minutes": -1})
+            self.assertEqual(form["errors"], {"session_gap_minutes": "positive"})
+            result = await flow.async_step_parameters({**self.values, "session_gap_minutes": 7})
+            self.assertEqual(result["data"]["parameters"]["session_gap_minutes"], 7)
             self.assertEqual(result["data"]["bindings"], self.inputs)
 
     async def test_options_can_remove_optional_binding(self):

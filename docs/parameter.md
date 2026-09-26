@@ -1,5 +1,9 @@
 # Parameter und Entitätsrollen
 
+> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
+> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
+> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+
 `Parameters` ist die einzige Quelle für veränderliche Betriebswerte. Config Flow,
 Einstellungen, Number-Entitäten, Klimaregelung und Panel lesen und schreiben
 denselben in `ConfigEntry.options` gespeicherten Stand. Die Prüfung weist

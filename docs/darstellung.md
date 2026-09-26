@@ -1,5 +1,9 @@
 # Oberfläche
 
+> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
+> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
+> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+
 Die Hauptansichten heißen **Übersicht** und **Details**. Die Übersicht enthält
 die alltägliche Bedienung sowie **Verlauf und Archiv**. Details stehen
 Home-Assistant-Administratoren zur Verfügung. Es gibt keine zusätzlichen

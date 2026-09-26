@@ -88,7 +88,7 @@ PARAMETER_TEXT = {
     ),
     "minimum_heating_minutes": (
         "Mindestheizzeit nach dem Einschalten",
-        "Verhindert kurze Heizintervalle. Nachlauf, Zwangskühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
+        "Verhindert kurze Heizintervalle. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
         "temperature",
     ),
     "session_gap_minutes": (
@@ -101,39 +101,14 @@ PARAMETER_TEXT = {
         "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
         "operation",
     ),
-    "heating_minutes": (
-        "Heizzeit bis zur ersten Zwangskühlung",
-        "Gezählte Heizzeit, nach der die erste Zwangskühlung fällig wird.",
-        "operation",
-    ),
-    "heating_reduction_minutes": (
-        "Verkürzung der Heizzeit nach erster Kühlung",
-        "Wird nach der ersten abgeschlossenen Kühlung einmal von der Heizzeitgrenze abgezogen. Danach bleibt die Grenze gleich.",
-        "operation",
-    ),
     "heat_reset_minutes": (
         "Ofen-Auszeit zum Zurücksetzen der Heizzeit",
         "Nach dieser zusammenhängenden Auszeit beginnt der Heizzeitzähler wieder bei null. Die Saunasitzung und ihr Energieverbrauch bleiben erhalten.",
         "operation",
     ),
-    "forced_cooling_minutes": (
-        "Dauer der Zwangskühlung",
-        "Zeit mit ausgeschaltetem Ofen. Ein vorausgehender Nachlauf wird vollständig angerechnet.",
-        "operation",
-    ),
     "after_run_minutes": (
-        "Nachlauf nach einem Saunagang",
-        "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert den alten Nachlauf.",
-        "operation",
-    ),
-    "person_wait_minutes": (
-        "Wartezeit nach dem Schließen der Tür",
-        "Verschiebt eine fällige Zwangskühlung, damit eine eintretende Person erkannt werden kann.",
-        "operation",
-    ),
-    "open_door_wait_minutes": (
-        "Wartezeit bei offen bleibender Tür",
-        "Längster Kühlaufschub ab der Türöffnung während Aufheizen oder Bereitschaft.",
+        "Ofenkühlung nach einem Saunagang",
+        "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert die alte Ofenkühlung.",
         "operation",
     ),
     "light_reference_temperature_c": (
@@ -153,7 +128,7 @@ PARAMETER_TEXT = {
     ),
     "cooling_brightness_percent": (
         "Grundhelligkeit",
-        "Helligkeit am Kaltpunkt der Temperaturkurve. Zu Beginn einer Zwangskühlung wird ebenfalls auf diesen Wert gedimmt; anschließend steigt das Licht bis zum Kühlende wieder temperaturabhängig an.",
+        "Helligkeit am Kaltpunkt der normalen temperaturabhängigen Lichtkurve.",
         "light",
     ),
     "operation_brightness_percent": (
@@ -162,24 +137,9 @@ PARAMETER_TEXT = {
         "light",
     ),
     "after_run_brightness_percent": (
-        "Lichthelligkeit zu Nachlaufbeginn",
-        "Auf diesen Wert wird zu Beginn des Nachlaufs gedimmt. Anschließend steigt die Helligkeit bis zum Nachlaufende wieder auf das temperaturabhängige Niveau.",
+        "Lichthelligkeit zu Beginn der Ofenkühlung",
+        "Auf diesen Wert wird zu Beginn der Ofenkühlung gedimmt. Anschließend steigt die Helligkeit bis zum Ende der Ofenkühlung wieder auf das temperaturabhängige Niveau.",
         "light",
-    ),
-    "safety_temperature_c": (
-        "Temperaturgrenze für zusätzliche Kühlung",
-        "Wird diese Temperatur anhaltend überschritten, ist eine verlängerte Zwangskühlung fällig; die Sitzung wird nicht abgebrochen.",
-        "monitoring",
-    ),
-    "overtemperature_minutes": (
-        "Dauer der Temperaturüberschreitung",
-        "Die Temperaturgrenze muss länger als diese Zeit ununterbrochen überschritten sein.",
-        "monitoring",
-    ),
-    "overtemperature_cooling_factor": (
-        "Verlängerung der Kühlzeit bei Übertemperatur",
-        "Faktor für die eingestellte Kühlzeit. Der Wert 2 bedeutet doppelte Kühlzeit.",
-        "monitoring",
     ),
     "sensor_timeout_seconds": (
         "Höchstalter eines Messwerts",
@@ -198,7 +158,7 @@ PARAMETER_TEXT = {
     ),
     "mechanical_timer_minutes": (
         "Laufzeit des mechanischen Ofentimers",
-        "Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb und eingeschaltetem Schütz. Bei ausgeschaltetem oder nicht verfügbarem Schütz hält die Anzeige an, auch während Heizpause, Nachlauf und Kühlung. Nach einer beendeten Sitzung mit gezählten Saunagängen beginnt sie beim nächsten Start neu. Die Anzeige schaltet nichts.",
+        "Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb und eingeschaltetem Schütz. Bei ausgeschaltetem oder nicht verfügbarem Schütz hält die Anzeige an, auch während Heizpause und Ofenkühlung. Nach einer beendeten Sitzung mit gezählten Saunagängen beginnt sie beim nächsten Start neu. Die Anzeige schaltet nichts.",
         "timer",
     ),
     "mechanical_timer_warning_minutes": (

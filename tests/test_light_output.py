@@ -59,9 +59,9 @@ class LightOutputTests(unittest.TestCase):
     def test_new_phase_and_deadline_begin_from_observed_value(self):
         self.update(0, "run-a", "nachlauf", 40, 60, 120)
         self.assertEqual(self.update(20, "run-a", "nachlauf", 40, 60, 120).brightness_percent, 30)
-        plan = self.update(20, "cool-b", "zwangskühlung", 40, 30, 80)
+        plan = self.update(20, "run-b", "nachlauf", 40, 30, 140)
         self.assertEqual(plan.brightness_percent, 30)
-        self.assertEqual(self.update(50, "cool-b", "zwangskühlung", 40, 30, 80).brightness_percent, 5)
+        self.assertEqual(self.update(50, "run-b", "nachlauf", 40, 30, 140).brightness_percent, 15)
 
     def test_manual_override_holds_until_phase_key_changes(self):
         self.update(0, "heat", target=40)

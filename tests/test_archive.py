@@ -56,6 +56,19 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["session"]["configuration"], self.config)
         self.assertFalse(str(self.archive.path).endswith("www"))
 
+    async def test_historical_cooling_cycles_remain_readable(self):
+        from custom_components.ha_sauna.core.models import CoolingCycle
+        cycle = CoolingCycle("legacy", T0, 900, credited_seconds=480,
+                             started_at=T0, ends_at=T0 + timedelta(seconds=420))
+        historical = replace(self.c.session, cooling_history=(cycle,))
+        self.archive.save_session(historical, T0, self.config)
+        await self.archive.flush()
+        stored = await asyncio.to_thread(self.archive.read, "s")
+        saved = stored["session"]["cooling_history"][0]
+        self.assertEqual(saved["cycle_id"], "legacy")
+        self.assertEqual(saved["duration_seconds"], 900)
+        self.assertEqual(saved["credited_seconds"], 480)
+
     async def test_backup_pause_buffers_without_blocking_received_measurements(self):
         self.record(1)
         await self.archive.pre_backup()

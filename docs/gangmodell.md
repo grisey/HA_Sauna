@@ -1,5 +1,9 @@
 # Gangmodell
 
+> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
+> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
+> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+
 Der Ablaufkern führt Gänge, Fristen und Heizwirkung. Die Erkennung liefert nur
 Signale; sie verwaltet keine zweite Bestätigung. Kühlung, Nachlauf und
 Heizsteuerung stehen in [Betrieb](betrieb.md), die Zeitbezüge in

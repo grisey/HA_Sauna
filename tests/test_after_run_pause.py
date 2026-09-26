@@ -19,7 +19,7 @@ def after_run():
 
 
 class AfterRunPauseTests(unittest.TestCase):
-    def test_manual_heating_pauses_remaining_after_run_then_credits_only_eight_real_minutes(self):
+    def test_manual_heating_pauses_then_completes_exactly_eight_real_minutes(self):
         c = after_run()
         c.advance(at(181))  # Zwei echte Nachlaufminuten.
         c.set_heater_override(True, at(181))
@@ -28,7 +28,7 @@ class AfterRunPauseTests(unittest.TestCase):
         self.assertEqual(phase.remaining_seconds, 360)
         self.assertIsNone(phase.ends_at)
         self.assertEqual(phase_timer(c, at(400)), {
-            "kind": "after_run", "label": "Nachlauf pausiert, noch",
+            "kind": "after_run", "label": "Ofenkühlung pausiert, noch",
             "seconds": 360, "mode": "paused"})
         self.assertEqual(start_availability(c, at(400))["blocker"],
                          {"kind": "after_run_paused", "seconds": 360})
@@ -37,14 +37,12 @@ class AfterRunPauseTests(unittest.TestCase):
         self.assertEqual(c.session.after_run.elapsed_seconds, 120)
         c.set_heater_override(None, at(481))
         self.assertEqual(c.session.after_run.ends_at, at(841))
-        decisions = len(c.decisions)
         c.advance(at(841))
 
-        self.assertEqual(c.phase, "zwangskühlung")
-        self.assertEqual(c.session.cooling.credited_seconds, 480)
-        self.assertEqual(c.cooling_remaining_seconds, 420)
-        self.assertEqual(c.session.cooling.ends_at, at(1261))
-        self.assertFalse(any(decision.heat for decision in c.decisions[decisions:]))
+        self.assertIsNone(c.session.after_run)
+        self.assertIsNone(c.session.cooling)
+        self.assertEqual(c.session.after_run_history[-1].elapsed_seconds, 480)
+        self.assertTrue(c.last_decision.heat)
 
     def test_repeated_pause_resume_cancels_old_deadlines_without_consuming_paused_time(self):
         c = after_run()
@@ -62,9 +60,10 @@ class AfterRunPauseTests(unittest.TestCase):
         c.set_heater_override(None, at(901))
         self.assertEqual(c.session.after_run.ends_at, at(1201))
         c.advance(at(1201))
-        self.assertEqual(c.session.cooling.credited_seconds, 480)
+        self.assertEqual(c.session.after_run_history[-1].elapsed_seconds, 480)
+        self.assertIsNone(c.session.cooling)
 
-    def test_finish_paused_phase_uses_identity_and_only_elapsed_after_run_for_credit(self):
+    def test_finish_paused_phase_uses_identity_and_records_only_elapsed_time(self):
         c = after_run()
         c.advance(at(181))
         phase = c.session.after_run
@@ -73,8 +72,8 @@ class AfterRunPauseTests(unittest.TestCase):
 
         self.assertIsNone(c.session.after_run)
         self.assertEqual(c.session.after_run_history[-1].elapsed_seconds, 120)
-        self.assertEqual(c.session.cooling.credited_seconds, 120)
-        with self.assertRaisesRegex(ValueError, "passender Nachlauf"):
+        self.assertIsNone(c.session.cooling)
+        with self.assertRaisesRegex(ValueError, "passende Ofenkühlung"):
             c.finish_phase("after_run", phase.phase_id, at(482))
 
     def test_operation_off_ends_manual_heating_and_resumes_paused_after_run(self):

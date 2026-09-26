@@ -23,7 +23,7 @@ assert.match(source, /manual-light-overview/);
 assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,0\)\} %<\/small>/);
 assert.doesNotMatch(source, /Normallicht/);
 assert.doesNotMatch(source, /Raumlicht/);
-assert.match(source, /Zwangskühlung pausiert/);
+assert.doesNotMatch(source, /Zwangskühlung pausiert/);
 assert.ok(source.includes("Übersteuerungen folgen spätestens nach"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
 assert.match(source, /s\.configuration\.program_mode==="progressive"/);
@@ -57,7 +57,7 @@ const renderCurrent = mode => {
       manual_controls:{light:{normal:25,automatic:12},heater:{}}, permissions:{admin:true,control:true,heater:true,light:true,temperature:true,program:true},
       issues:[],start_errors:[],operation_enabled:false,heating_feedback:false,
       heating_observation:{source:"unknown"},phase:"manuell",gang_count:0,energy_kwh:0,
-      energy_source:"estimated",heating_limit_seconds:0,target_temperature:80,
+      energy_source:"estimated",target_temperature:80,
       start_availability:null,phase_timer:null,
     },
   });
@@ -121,8 +121,7 @@ const renderCurrent = mode => {
       now:"2026-09-20T12:00:00Z", phase:"nachlauf", operation_enabled:true,
       session:{timeline:{active:null,door:"closed",completed:[]},heating:{elapsed_seconds:120},
         deadlines:[{purpose:"confirmation",due_at:"2026-09-20T12:03:00Z"}],
-        after_run:{paused_at:"2026-09-20T11:59:00Z",duration_seconds:300,elapsed_seconds:120},
-        cooling:{paused_at:"2026-09-20T11:59:00Z",duration_seconds:900,credited_seconds:120,elapsed_seconds:180}},
+        after_run:{paused_at:"2026-09-20T11:59:00Z",duration_seconds:300,elapsed_seconds:120}},
       last_session:null, configuration:{control_mode:"automatic",program_mode:"constant",selected_program_id:null,
         temperature_programs:[],parameters:{preset_count:0,preset_start_c:70,preset_step_c:5,
           session_light_brightness_percent:50,manual_override_minutes:10,readiness_hysteresis_c:3,nominal_power_kw:4.5}},
@@ -131,15 +130,15 @@ const renderCurrent = mode => {
       manual_controls:{light:{normal:25,automatic:40,override_ends_at:"2026-09-20T12:04:00Z"},heater:{}},
       permissions:{admin:true,control:true,heater:true,light:true,temperature:true,program:true},issues:[],start_errors:[],
       heating_feedback:false,heating_observation:{source:"unknown"},gang_count:0,energy_kwh:1.25,energy_source:"estimated",
-      heating_limit_seconds:5400,target_temperature:80,thermostat_target:85,start_availability:null,
+      target_temperature:80,thermostat_target:85,start_availability:null,
       phase_timer:{kind:"heating",label:"Aufheizen seit",seconds:600},light_after_run:{ends_at:"2026-09-20T12:09:00Z"},
       detection_channels:["upper"],decision_text:"Ofen bleibt aus.",
     },
   });
   detailPanel.drawCurrent();
   const details=detailNodes.get("#details").innerHTML;
-  assert.match(details,/Nachlauf pausiert[\s\S]*3:00 min/);
-  assert.match(details,/Zwangskühlung pausiert[\s\S]*10:00 min/);
+  assert.match(details,/Ofenkühlung pausiert[\s\S]*3:00 min/);
+  assert.doesNotMatch(details,/Zwangskühlung/);
   assert.match(details,/data-phase-timer="heating"/);
   assert.match(details,/Lichtnachlauf/);
   assert.match(details,/Nennleistung für die Verbrauchsschätzung/);

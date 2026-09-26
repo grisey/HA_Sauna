@@ -36,7 +36,7 @@ class MechanicalTimerTests(unittest.TestCase):
         self.assertEqual(c.mechanical_timer.cycle_id, cycle)
         self.assertTrue(c.session.operation_enabled)
 
-    def test_after_run_and_cooling_pause_only_when_contactor_is_actually_off(self):
+    def test_timer_during_oven_cooling_pauses_only_when_contactor_is_actually_off(self):
         c = controller()
         c.report_contactor(True, at(0))
         c.report_heating(True, at(0))
@@ -53,7 +53,8 @@ class MechanicalTimerTests(unittest.TestCase):
         c.report_contactor(False, at(72))
         c.report_heating(False, at(72))
         c.advance(at(100))
-        self.assertEqual(c.phase, "zwangskühlung")
+        self.assertIsNone(c.session.after_run)
+        self.assertIsNone(c.session.cooling)
         c.advance(at(130))
         self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14328)
         self.assertTrue(c.last_decision.heat)

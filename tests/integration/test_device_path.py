@@ -856,7 +856,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
         self.assertEqual(self.runtime.controller.phase, "nachlauf")
 
-    async def test_manual_phase_end_preserves_cooling_light_and_heater_sequence(self):
+    async def test_manual_phase_end_returns_to_regulation_without_a_cooling_cycle(self):
         await self.prepare_gang_after_run()
         identity = self.runtime.session.session_id
         self.assertFalse(self.heater.is_on)
@@ -865,29 +865,17 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(72)
         self.assertGreater(self.light.brightness, 255*.15)
         self.assertLess(self.light.brightness, after_run_start)
-        before_cooling = self.light.brightness
         await self.runtime.finish_phase("after_run", self.runtime.session.after_run.phase_id)
         await self.hass.async_block_till_done()
-        self.assertEqual(self.runtime.controller.phase, "zwangskühlung")
-        self.assertEqual(self.runtime.session.cooling.credited_seconds, 10)
-        self.assertFalse(self.heater.is_on)
-        self.assertAlmostEqual(self.light.brightness, before_cooling, delta=1)
-        await self.time(82)
-        self.assertLess(self.light.brightness, before_cooling)
-        before_normal = self.light.brightness
-        await self.runtime.finish_phase("forced_cooling", self.runtime.session.cooling.cycle_id)
-        await self.hass.async_block_till_done()
         self.assertTrue(self.heater.is_on)
-        self.assertAlmostEqual(self.light.brightness, before_normal, delta=1)
         self.assertEqual(self.runtime.session.timeline.gang_count, 1)
         self.assertEqual(self.runtime.session.session_id, identity)
-        self.assertEqual(self.runtime.controller.heating_limit_seconds, 45)
         self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14400-62)
         import asyncio
         await self.runtime.archive.flush()
         archived = await asyncio.to_thread(self.runtime.archive.read, identity, limit=10000)
         actions = [r["payload"]["purpose"] for r in archived["records"] if r["kind"] == "manual_phase_end"]
-        self.assertEqual(actions, ["after_run", "forced_cooling"])
+        self.assertEqual(actions, ["after_run"])
 
     async def test_contactor_only_counts_without_invented_temperature_cutoff(self):
         await self.configure_feedback()

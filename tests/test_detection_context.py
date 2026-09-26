@@ -49,14 +49,14 @@ class DetectionContextTests(unittest.TestCase):
         c.process(event("close2", Kind.DOOR_CLOSE, 62))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
 
-    def test_after_run_cooling_and_operation_off_suppress_gang_signals_without_losing_next_start(self):
+    def test_oven_cooling_and_operation_off_suppress_gang_signals_without_losing_next_start(self):
         c = after_run()
-        for second, phase in ((70,"nachlauf"),(100,"zwangskühlung")):
+        for second, phase in ((70,"nachlauf"),(99,"nachlauf")):
             c.advance(at(second))
             self.assertEqual(c.phase,phase)
             for kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK,Kind.INFUSION):
                 self.assertFalse(c.recognition_allowed(kind))
-        c.advance(at(130))
+        c.advance(at(100))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertTrue(c.recognition_allowed(Kind.INFUSION))
         # Alte Lüftung darf nach beendetem Nachlauf keine neue schwache

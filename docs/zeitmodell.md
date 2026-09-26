@@ -1,5 +1,9 @@
 # Zeitmodell
 
+> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
+> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
+> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+
 Diese Bezüge ergänzen [Betrieb](betrieb.md) und [Gangmodell](gangmodell.md).
 Alle Dauern sind einstellbare Standardwerte; die Solltemperatur-Obergrenze von
 100 °C ist davon ausgenommen.

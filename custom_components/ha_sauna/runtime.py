@@ -483,7 +483,6 @@ class SaunaRuntime:
                     or key
                     in (
                         "archive",
-                        "cooling_light",
                         "operation_light",
                         "after_run_light",
                         "session_light",
@@ -613,7 +612,7 @@ class SaunaRuntime:
             if (
                 self.controller.heater_override is False
                 and session is not None
-                and (session.after_run is not None or session.cooling is not None)
+                and session.after_run is not None
             ):
                 return self.controller.set_heater_override(True, now)
             return self.controller.set_heater_override(None, now)
@@ -712,7 +711,7 @@ class SaunaRuntime:
             self._require_open()
             now = self._clock()
             deadline = self.controller.finish_phase(purpose, token, now)
-            label = "Nachlauf" if purpose == "after_run" else "Zwangskühlung"
+            label = "Ofenkühlung"
             self.log.info(
                 "phase_finished_manually",
                 "%s manuell beendet; regulärer Folgeablauf wird fortgesetzt.",

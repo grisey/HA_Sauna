@@ -23,7 +23,6 @@ def evaluate(
     temperature: float | None,
     enabled: bool,
     gang: bool,
-    cooling: bool,
     after_run: bool,
     protection: tuple[str, ...] = (),
     inhibits: tuple[str, ...] = (),
@@ -48,11 +47,8 @@ def evaluate(
         if target_temperature is not None
         else values.get("target_temperature_c")
     )
-    limit = values.get("safety_temperature_c")
-    if target is None or limit is None:
+    if target is None:
         return result(False, "temperature_configuration_required")
-    if cooling:
-        return result(False, "forced_cooling")
     if after_run:
         return result(False, "after_run")
     if temperature is None or not isfinite(temperature):

@@ -8,7 +8,7 @@ from test_foundation import T0, event
 
 
 class StartAvailabilityTests(unittest.TestCase):
-    def test_ready_latch_exposes_remaining_heating_budget_as_a_minimum_window(self):
+    def test_ready_latch_has_no_budget_based_start_window(self):
         c = controller(target_temperature_c=70, readiness_offset_c=4,
                        readiness_hysteresis_c=2, heating_minutes=1)
         c.set_temperature(70, T0)
@@ -16,29 +16,17 @@ class StartAvailabilityTests(unittest.TestCase):
 
         self.assertEqual(availability["until_ready_seconds"], 0)
         self.assertFalse(availability["ready_estimated"])
-        self.assertEqual(availability["start_window_seconds"], 60)
-        self.assertEqual(availability["start_window_label"], "mindestens")
+        self.assertNotIn("start_window_seconds", availability)
         self.assertNotIn("Mindestheizzeit", availability["message"])
 
-    def test_after_run_prospectively_credits_its_complete_duration_to_cooling(self):
-        c = controller(forced_cooling_minutes=15, after_run_minutes=8)
-        c.report_heating(True, at(0))
-        c.advance(at(60))
-        c.set_heater_override(True, at(360))  # Fünf Minuten Kühlung sind echt abgelaufen.
-        self.assertEqual(c.cooling_remaining_seconds, 600)
-
-        c.process(event("close", Kind.DOOR_CLOSE, 361))
-        c.process(event("person", Kind.PERSON_STRONG, 362))
-        c.process(event("infusion", Kind.INFUSION, 363))
-        c.process(event("open", Kind.DOOR_OPEN, 364))
-        c.process(event("vent", Kind.VENTILATION, 365))
-        availability = start_availability(c, at(725))  # Zwei Minuten Nachlauf bleiben.
-
+    def test_after_run_wait_is_only_its_configured_remainder(self):
+        from test_after_run_pause import after_run
+        c = after_run()
+        availability = start_availability(c, at(421))
         self.assertIsNone(availability["until_ready_seconds"])
-        self.assertEqual(availability["minimum_wait_seconds"], 240)
-        self.assertEqual(availability["blocker"], {
-            "kind": "after_run", "seconds": 120, "following_cooling_seconds": 120})
-        self.assertTrue(availability["pending_cooling"])
+        self.assertEqual(availability["minimum_wait_seconds"], 120)
+        self.assertEqual(availability["blocker"], {"kind": "after_run", "seconds": 120})
+        self.assertNotIn("pending_cooling", availability)
 
     def test_heating_without_a_valid_rate_does_not_invent_an_eta(self):
         c = controller()
@@ -65,21 +53,15 @@ class StartAvailabilityTests(unittest.TestCase):
 
         self.assertEqual(availability["gang_elapsed_seconds"], 61)
         self.assertIsNone(availability["until_ready_seconds"])
-        self.assertIsNone(availability["start_window_seconds"])
+        self.assertNotIn("start_window_seconds", availability)
 
-    def test_paused_cooling_has_no_made_up_expiry(self):
-        c = controller()
-        c.report_heating(True, T0)
-        c.advance(at(60))
-        c.set_heater_override(True, at(61))
-
-        availability = start_availability(c, at(61))
-
-        self.assertEqual(availability["blocker"], {"kind": "cooling_paused"})
+    def test_paused_oven_cooling_has_no_made_up_expiry(self):
+        from test_after_run_pause import after_run
+        c = after_run()
+        c.set_heater_override(True, at(181))
+        availability = start_availability(c, at(181))
+        self.assertEqual(availability["blocker"], {"kind": "after_run_paused", "seconds": 360})
         self.assertEqual(availability["minimum_wait_seconds"], 0)
-        self.assertEqual(
-            availability["message"], "Ein manueller Wiedereinstieg ist jetzt möglich."
-        )
         self.assertIsNone(availability["until_ready_seconds"])
 
     def test_protection_never_reports_ready_even_at_the_temperature_target(self):
@@ -91,7 +73,7 @@ class StartAvailabilityTests(unittest.TestCase):
 
         self.assertEqual(availability["blocker"]["kind"], "protection")
         self.assertIsNone(availability["until_ready_seconds"])
-        self.assertIsNone(availability["start_window_seconds"])
+        self.assertNotIn("start_window_seconds", availability)
 
     def test_invalid_temperature_does_not_announce_an_existing_ready_latch(self):
         c = controller(target_temperature_c=70)

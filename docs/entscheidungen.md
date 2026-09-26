@@ -1,5 +1,9 @@
 # Entscheidungen
 
+> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
+> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
+> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+
 ## Geltender Regelstand
 
 Der verbindliche Regelstand steht in [Betrieb](betrieb.md),

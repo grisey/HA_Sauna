@@ -140,10 +140,8 @@ class StateView(HomeAssistantView):
                         "energy_source": session.energy.source
                         if session
                         else "estimated",
-                        "heating_limit_seconds": controller.heating_limit_seconds,
                         "thermostat_target": controller.thermostat_target,
                         "target_temperature": controller.target_temperature,
-                        "cooling_wait_until": controller.cooling_wait_until,
                         "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
                         "mechanical_timer": controller.mechanical_timer_status,
                         "phase_timer": phase_timer(controller, now),
@@ -232,13 +230,13 @@ class FinishPhaseView(HomeAssistantView):
             not isinstance(body, dict)
             or set(body) != {"purpose", "token"}
             or not isinstance(body["purpose"], str)
-            or body["purpose"] not in ("after_run", "forced_cooling")
+            or body["purpose"] != "after_run"
             or not isinstance(body["token"], str)
             or not body["token"]
         ):
             return self.json(
                 {
-                    "error": "Bitte einen laufenden Nachlauf oder eine laufende Zwangskühlung auswählen."
+                    "error": "Bitte eine laufende Ofenkühlung auswählen."
                 },
                 status_code=400,
             )

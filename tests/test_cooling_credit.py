@@ -1,6 +1,5 @@
-"""Nachlaufanrechnung folgt den abgeschlossenen Phasen genau einmal."""
+"""Alte Budgets und Temperaturfristen erzeugen keine zusätzlichen Kühlzyklen."""
 import unittest
-
 from test_cooling import at, controller
 from test_foundation import event
 from custom_components.ha_sauna.core.timeline import Kind
@@ -13,56 +12,78 @@ def finish_gang(c, end_at):
     c.process(event("vent", Kind.VENTILATION, end_at))
 
 
-class CoolingCreditTests(unittest.TestCase):
-    def test_insufficient_remaining_budget_attaches_cooling_to_after_run(self):
-        c = controller(heating_minutes=15, forced_cooling_minutes=15,
-                       after_run_minutes=8, minimum_heating_minutes=10)
+class OvenCoolingTests(unittest.TestCase):
+    def test_old_budget_never_creates_a_cycle_or_blocks_a_new_gang(self):
+        c = controller(heating_minutes=1, heating_reduction_minutes=.5)
         c.report_heating(True, at(0))
-        finish_gang(c, 600)  # Noch fünf Minuten Heizbudget.
-        self.assertIsNotNone(c.session.cooling)
-        self.assertFalse(c.last_decision.heat)
-        c.advance(at(1080))
-        self.assertEqual(c.phase, "zwangskühlung")
-        self.assertEqual(c.session.cooling.credited_seconds, 480)
-        self.assertEqual(c.session.cooling.ends_at, at(1500))  # Noch sieben Minuten.
+        for second in (60, 600, 5400):
+            c.advance(at(second))
+            self.assertIsNone(c.session.cooling)
+            self.assertEqual(c.session.cooling_history, ())
+            self.assertTrue(c.last_decision.heat)
+        c.process(event("close", Kind.DOOR_CLOSE, 5401))
+        c.process(event("infusion", Kind.INFUSION, 5402))
+        self.assertIsNotNone(c.session.timeline.active)
 
-    def test_exact_minimum_budget_does_not_attach_cooling_to_after_run(self):
-        c = controller(heating_minutes=15, after_run_minutes=8,
-                       minimum_heating_minutes=10)
-        c.report_heating(True, at(0))
-        finish_gang(c, 300)  # Genau zehn Minuten Heizbudget.
+    def test_gang_end_has_exactly_one_configured_oven_cooling(self):
+        for duration in (30, 60, 90, 480):
+            with self.subTest(duration=duration):
+                c = controller(after_run_minutes=duration / 60)
+                c.report_heating(True, at(0))
+                finish_gang(c, 600)
+                phase = c.session.after_run
+                self.assertEqual(phase.ends_at, at(600 + duration))
+                self.assertFalse(c.last_decision.heat)
+                c.advance(at(599 + duration))
+                self.assertFalse(c.last_decision.heat)
+                c.advance(at(600 + duration))
+                self.assertIsNone(c.session.after_run)
+                self.assertIsNone(c.session.cooling)
+                self.assertEqual(c.session.cooling_history, ())
+                self.assertEqual(len(c.session.after_run_history), 1)
+                self.assertTrue(c.last_decision.heat)
+                c.advance(at(660 + duration))
+                self.assertEqual(len(c.session.after_run_history), 1)
+                self.assertIsNone(c.session.cooling)
+
+    def test_old_temperature_threshold_has_no_pending_or_remaining_cooling(self):
+        c = controller(safety_temperature_c=105, overtemperature_minutes=1,
+                       forced_cooling_minutes=15, overtemperature_cooling_factor=2,
+                       minimum_heating_minutes=0)
+        c.set_temperature(106, at(0))
+        c.advance(at(601))
         self.assertIsNone(c.session.cooling)
-        c.advance(at(780))
+        self.assertFalse(c.last_decision.heat)
+        c.set_temperature(70, at(602))
+        self.assertTrue(c.last_decision.heat)
+        self.assertIsNone(c.session.cooling)
+        self.assertEqual(c.session.cooling_history, ())
+
+    def test_operation_interruption_preserves_oven_cooling_deadline(self):
+        c = controller(after_run_minutes=8)
+        finish_gang(c, 60)
+        deadline = c.session.after_run.ends_at
+        c.set_operation(False, at(100))
+        c.set_operation(True, at(120))
+        self.assertEqual(c.session.after_run.ends_at, deadline)
+        self.assertFalse(c.last_decision.heat)
+        c.advance(deadline)
+        self.assertIsNone(c.session.after_run)
         self.assertIsNone(c.session.cooling)
         self.assertTrue(c.last_decision.heat)
 
-    def test_completed_after_run_credits_later_cooling_once(self):
-        c = controller(heating_minutes=20, forced_cooling_minutes=15,
-                       after_run_minutes=8, minimum_heating_minutes=10)
-        c.report_heating(True, at(0))
-        finish_gang(c, 300)
-        c.advance(at(780))
-        self.assertIsNone(c.session.cooling)
-        c.advance(at(1200))
-        self.assertEqual(c.session.cooling.credited_seconds, 480)
-        self.assertEqual(c.session.cooling.ends_at, at(1620))
-        c.advance(at(1620))
-        c.advance(at(2820))
-        self.assertEqual(c.session.cooling.credited_seconds, 0)
-
-    def test_multiple_after_runs_are_all_assigned_to_one_cooling_cycle(self):
-        c = controller(heating_minutes=40, forced_cooling_minutes=15,
-                       after_run_minutes=8, minimum_heating_minutes=10)
-        c.report_heating(True, at(0))
-        finish_gang(c, 300)
-        c.advance(at(780))
-        c.process(event("close-again", Kind.DOOR_CLOSE, 800))
-        c.process(event("infusion-again", Kind.INFUSION, 801))
-        c.process(event("open-again", Kind.DOOR_OPEN, 899))
-        c.process(event("vent-again", Kind.VENTILATION, 900))
-        c.advance(at(1380))
-        c.advance(at(2400))
-        self.assertIsNone(c.session.cooling)
-        self.assertEqual(c.session.cooling_history[-1].credited_seconds, 960)
-        c.advance(at(4800))
-        self.assertEqual(c.session.cooling.credited_seconds, 0)
+    def test_historical_cycle_cannot_block_or_restart_active_control(self):
+        from dataclasses import replace
+        from custom_components.ha_sauna.core.models import CoolingCycle
+        c = controller()
+        cycle = CoolingCycle("old", at(0), 900, started_at=at(0), ends_at=at(900))
+        c._session = replace(c.session, cooling=cycle, cooling_history=(cycle,))
+        c.advance(at(60))
+        self.assertTrue(c.last_decision.heat)
+        self.assertTrue(c.recognition_allowed(Kind.INFUSION))
+        c.process(event("close-legacy", Kind.DOOR_CLOSE, 61))
+        c.process(event("infusion-legacy", Kind.INFUSION, 62))
+        self.assertIsNotNone(c.session.timeline.active)
+        self.assertEqual(c.session.cooling_history, (cycle,))
+        with self.assertRaises(ValueError):
+            c.finish_phase("forced_cooling", "old", at(63))

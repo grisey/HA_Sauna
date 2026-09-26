@@ -57,7 +57,7 @@ class LightOutput:
     bleibt Eigentum des Controllers und wird bei jedem ``update`` neu gelesen.
     """
 
-    _DIM_PHASES = frozenset(("nachlauf", "zwangskühlung"))
+    _DIM_PHASES = frozenset(("nachlauf",))
     _SESSION_PHASES = frozenset(("session_light",))
 
     def __init__(self, parameters: Parameters) -> None:
@@ -230,11 +230,7 @@ class LightOutput:
         duration = self.parameters.values["light_transition_seconds"]
         remaining = _remaining(now, ends_at)
         if phase in self._DIM_PHASES:
-            low = (
-                self.parameters.values["after_run_brightness_percent"]
-                if phase == "nachlauf"
-                else self.parameters.values["cooling_brightness_percent"]
-            )
+            low = self.parameters.values["after_run_brightness_percent"]
             fade = min(duration, remaining / 2) if remaining is not None else duration
             return _Motion("dim", now, actual, low, fade)
         if phase in self._SESSION_PHASES:
