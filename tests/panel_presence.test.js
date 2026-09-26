@@ -52,11 +52,14 @@ console.log('presence and phase projection panel tests passed');
     },
   });
   await refreshing.refresh();
+  // Archive pagination finishes independently from the status refresh.
+  await refreshing.historyLoad?.promise;
   assert.equal(refreshing.shown.phase_projection,liveProjection,'active session uses current runtime projection');
   assert.equal((rendered.match(/class="gang"/g)||[]).length,1);
   assert.doesNotMatch(rendered,/class="heat"/,'refresh preserves projection into chart');
   refreshing.selected='s';
   await refreshing.refresh();
+  await refreshing.historyLoad?.promise;
   assert.equal(archiveCalls,1,'archive selection reuses loaded cache');
   assert.equal(refreshing.shown.phase_projection,archivedProjection,'cached archive keeps its own projection');
   assert.match(rendered,/class="ready"/);
@@ -64,6 +67,7 @@ console.log('presence and phase projection panel tests passed');
   refreshing.selected='live';
   apiState={...apiState,session:null};
   await refreshing.refresh();
+  await refreshing.historyLoad?.promise;
   assert.equal(refreshing.shown.phase_projection,archivedProjection,'last-session view uses archive projection when live session is absent');
   console.log('refresh projection transport tests passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -89,16 +89,23 @@ test("hoverChart only labels a valid supplied measurement time", () => {
   }
 });
 
-test("hoverChart uses a nullish raw-value fallback and escapes raw strings", () => {
+test("hoverChart labels a missing raw value and escapes supplied raw strings", () => {
   const zero = tooltipFor(measurement({ value: 0, raw_value: 0 }));
-  const derived = tooltipFor(
-    measurement({ raw_value: undefined, value: 79.123456 }),
+  const missing = tooltipFor(
+    measurement({
+      raw_value: undefined,
+      value: 12.3456789,
+      received_at: "2032-01-01T08:00:20.987654Z",
+      measured_at: undefined,
+    }),
     "source_snapshot",
   );
   const escaped = tooltipFor(measurement({ raw_value: '<raw&"value>' }));
 
   assert.match(zero, /Originalwert 0 °C/);
-  assert.match(derived, /Originalwert 79,123456 °C/);
+  assert.match(missing, /Wert 12,345679 °C · kein Originalwert gespeichert/);
+  assert.doesNotMatch(missing, /Originalwert 12,345679 °C/);
+  assert.doesNotMatch(missing, /Gemessen/);
   assert.match(escaped, /Originalwert &lt;raw&amp;&quot;value&gt; °C/);
   assert.doesNotMatch(escaped, /<raw&"value>/);
 });

@@ -122,7 +122,9 @@ const historySegments = (values, start, end, ttl) => {
     if (
       segment.length &&
       ttl &&
-      time - (segment.at(-1).time ?? stamp(segment.at(-1).received_at)) > ttl
+      (point.displayGap ||
+        (!Object.hasOwn(point, "displayGap") &&
+          time - (segment.at(-1).time ?? stamp(segment.at(-1).received_at)) > ttl))
     ) {
       segments.push(segment);
       segment = [];
@@ -193,6 +195,16 @@ const lowerBoundHistory = (values, time) => {
   while (low < high) {
     const middle = (low + high) >> 1;
     if (values[middle].time < time) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+const lowerBoundNumber = (values, value) => {
+  let low = 0,
+    high = values.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (values[middle] < value) low = middle + 1;
     else high = middle;
   }
   return low;
@@ -1624,7 +1636,7 @@ class SaunaPanel extends HTMLElement {
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-selected="true">Betrieb & Fristen</button><button data-action="detail-history" aria-selected="false">Detailverlauf</button><button data-action="diagnostics" aria-selected="false">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="row"><h2 class="grow">Sitzungsverlauf</h2><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div>
-        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><p id="history-loading" class="muted" role="status" hidden></p><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
@@ -1638,6 +1650,8 @@ class SaunaPanel extends HTMLElement {
         this.generation++;
         this.selected = "live";
         this.cache.clear();
+        this.historyLoad = null;
+        this.shown = null;
         this.invalidateHistoryIndex();
         this.settingsEntry = null;
         this.programSelectionDraft = null;
@@ -1650,6 +1664,8 @@ class SaunaPanel extends HTMLElement {
       }
       if (e.target.id === "session") {
         this.selected = e.target.value;
+        this.historyLoad = null;
+        this.shown = null;
         this.highlightedEventId = null;
         this.invalidateHistoryIndex();
         this.zoom = 1;
@@ -1806,7 +1822,7 @@ class SaunaPanel extends HTMLElement {
   message(error, source = "action") {
     this.messages ??= {};
     this.messages[source] = error;
-    const shown = this.messages.action || this.messages.refresh;
+    const shown = this.messages.action || this.messages.refresh || this.messages.history;
     const node = this.$("#message");
     node.className = shown ? "notice error" : "";
     node.textContent = shown ? errorText(shown) : "";
@@ -1839,75 +1855,6 @@ class SaunaPanel extends HTMLElement {
       // The status cards remain live every two seconds.  Archive list/pages
       // are only useful while the history section is actually on screen.
       const historyVisible = !this.$("#history")?.hidden;
-      if (historyVisible) {
-        const list = await this.api(`/${entry}/archive`);
-        if (generation !== this.generation || !this.isConnected) return;
-        this.sessions = list;
-        const liveLabel =
-          state.operation_enabled && state.session
-            ? "Laufende Sitzung"
-            : "Letzte Sitzung";
-        const optionHtml =
-          `<option value="live">${liveLabel}</option>` +
-          list
-            .filter((s) => s.session_id !== state.session?.timeline.session_id)
-            .map(
-              (s) =>
-                `<option value="${esc(s.session_id)}">Sitzung vom ${esc(when(s.started_at))}${s.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
-            )
-            .join("");
-        const sessionSelect = this.$("#session");
-        if (sessionSelect.innerHTML !== optionHtml) {
-          this.updateMarkup("#session", optionHtml);
-          sessionSelect.value = this.selected;
-        }
-        const id =
-          this.selected === "live"
-            ? state.session?.timeline.session_id || list[0]?.session_id
-            : this.selected;
-        if (id !== this.historySessionId) {
-          this.historySessionId = id;
-          this.window = null;
-          this.invalidateHistoryIndex();
-          this.historyTimelineSignature = null;
-        }
-        if (id) {
-          const cache = this.cache.get(id) || { records: [], after: 0 };
-          if (this.selected === "live" || !cache.loaded) {
-            let page;
-            do {
-              page = await this.api(
-                `/${entry}/archive?session_id=${encodeURIComponent(id)}&after=${cache.after}`,
-              );
-              if (generation !== this.generation || !this.isConnected) return;
-              cache.session = page.session;
-              cache.phase_projection = page.phase_projection;
-              const additions = page.records.filter((r) =>
-                [
-                  "measurement",
-                  "source_snapshot",
-                  "diagnostic",
-                  "phase",
-                  "detector_trace",
-                ].includes(r.kind),
-              );
-              if (additions.length) {
-                cache.records.push(...additions);
-                this.invalidateHistoryIndex();
-              }
-              cache.after = page.records.at(-1)?.id || cache.after;
-            } while (page.next_after);
-            cache.loaded = true;
-            this.cache.set(id, cache);
-          }
-          const liveSession = this.selected === "live" && state.session;
-          this.shown = {
-            session: liveSession || cache.session,
-            records: cache.records,
-            phase_projection: liveSession ? state.phase_projection : cache.phase_projection,
-          };
-        } else this.shown = null;
-      }
       if (!this.temperatureInteraction) {
         const restoreTargetFocus = this.shadowRoot.activeElement?.matches?.(
           '[data-target-arc][role="slider"]',
@@ -1915,7 +1862,11 @@ class SaunaPanel extends HTMLElement {
         this.drawCurrent();
         if (restoreTargetFocus) this.$('[data-target-arc][role="slider"]')?.focus?.();
       }
-      if (historyVisible) this.drawHistory();
+      if (historyVisible) {
+        this.showHistoryCache();
+        this.drawHistory();
+        this.startHistoryLoad();
+      }
       this.drawSettings();
       this.message(null, "refresh");
     } catch (error) {
@@ -1927,6 +1878,147 @@ class SaunaPanel extends HTMLElement {
         void this.refresh(true);
       }
     }
+  }
+  historySelectionId() {
+    return this.selected === "live"
+      ? this.state?.session?.timeline.session_id || this.sessions?.[0]?.session_id
+      : this.selected;
+  }
+  showHistoryCache() {
+    const id = this.historySelectionId();
+    if (id !== this.historySessionId) {
+      this.historySessionId = id;
+      this.window = null;
+      this.invalidateHistoryIndex();
+      this.historyTimelineSignature = null;
+    }
+    const cache = this.cache.get(id),
+      live = this.selected === "live" && this.state?.session,
+      session = live || cache?.session;
+    this.shown = session
+      ? {
+          session,
+          records: cache?.records || (this.emptyHistoryRecords ??= []),
+          phase_projection: live
+            ? this.state.phase_projection
+            : cache?.phase_projection,
+        }
+      : null;
+  }
+  renderHistoryLoading(load) {
+    const node = this.$("#history-loading");
+    if (!node) return;
+    node.hidden = !load;
+    node.textContent = load
+      ? `Verlauf wird geladen · ${load.count || 0} Mess- und Ereignispunkte verfügbar`
+      : "";
+  }
+  startHistoryLoad() {
+    const entry = this.entry,
+      generation = this.generation,
+      selected = this.selected,
+      liveId = this.state?.session?.timeline.session_id,
+      key = `${generation}:${entry}:${selected}:${liveId || ""}`;
+    if (this.historyLoad?.key === key) return this.historyLoad.promise;
+    const load = { key, count: 0 };
+    this.historyLoad = load;
+    const current = () =>
+      this.historyLoad === load &&
+      generation === this.generation &&
+      entry === this.entry &&
+      selected === this.selected &&
+      liveId === this.state?.session?.timeline.session_id &&
+      this.isConnected &&
+      !this.$("#history")?.hidden;
+    this.renderHistoryLoading(load);
+    load.promise = (async () => {
+      try {
+        const list = await this.api(`/${entry}/archive`);
+        if (!current()) return;
+        this.sessions = list;
+        const liveLabel =
+          this.state.operation_enabled && this.state.session
+            ? "Laufende Sitzung"
+            : "Letzte Sitzung";
+        const options =
+          `<option value="live">${liveLabel}</option>` +
+          list
+            .filter((session) => session.session_id !== liveId)
+            .map(
+              (session) =>
+                `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
+            )
+            .join("");
+        const select = this.$("#session");
+        if (select.innerHTML !== options) {
+          this.updateMarkup("#session", options);
+          select.value = selected;
+        }
+        const id = this.historySelectionId();
+        if (!id) {
+          this.showHistoryCache();
+          this.drawHistory();
+          return;
+        }
+        const cache = this.cache.get(id) || { records: [], after: 0 };
+        this.cache.set(id, cache);
+        if (
+          (selected === "live" && this.state.session && !this.state.session.ended_at) ||
+          !cache.loaded
+        ) {
+          let more;
+          do {
+            const after = cache.after,
+              page = await this.api(
+                `/${entry}/archive?session_id=${encodeURIComponent(id)}&after=${after}`,
+              );
+            if (!current()) return;
+            // Persist each complete page before the next request. A failed
+            // later page retries at this cursor and cannot duplicate records.
+            const fresh = page.records.filter((record) => record.id > after),
+              next = Math.max(after, ...fresh.map((record) => record.id));
+            if (page.next_after && next <= after)
+              throw Error("Archivabruf ohne Fortschritt. Erneuter Versuch folgt.");
+            cache.session = page.session;
+            cache.phase_projection = page.phase_projection;
+            const additions = fresh.filter((record) =>
+              [
+                "measurement",
+                "source_snapshot",
+                "diagnostic",
+                "phase",
+                "detector_trace",
+              ].includes(record.kind),
+            );
+            if (additions.length) {
+              cache.records.push(...additions);
+              this.invalidateHistoryIndex();
+            }
+            cache.after = next;
+            more = page.next_after;
+            cache.loaded = !more;
+            load.count = cache.records.length;
+            this.showHistoryCache();
+            if (!this.$("#history")?.hidden) this.drawHistory();
+            this.renderHistoryLoading(more ? load : null);
+            // Let input, paint and the independent status poll run between pages.
+            if (more) await new Promise((resolve) => setTimeout(resolve, 0));
+          } while (more && current());
+        } else {
+          this.showHistoryCache();
+          this.drawHistory();
+        }
+        if (current()) this.message(null, "history");
+      } catch (error) {
+        if (current()) this.message(error, "history");
+      } finally {
+        if (this.historyLoad === load) {
+          this.historyLoad = null;
+          this.renderHistoryLoading(null);
+        }
+      }
+    })();
+    return load.promise;
   }
   drawCurrent() {
     const progressionOpen = this.$("#current details")?.open;
@@ -2916,7 +3008,9 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     const historyTitle = this.historyTitle(session);
-    const chromeKey = `${this.selected}:${this.state.operation_enabled}:${session.timeline?.session_id || ""}:${historyTitle}:${this.historyDetail}:${positions}:${projectionKey}`;
+    // Projection intervals end at the advancing live time.  They belong to
+    // the SVG update above, not the surrounding controls and legends.
+    const chromeKey = `${this.selected}:${this.state.operation_enabled}:${session.timeline?.session_id || ""}:${historyTitle}:${this.historyDetail}:${positions}`;
     if (this.historyChromeKey !== chromeKey || !this.$("svg.session-chart")) {
       this.historyChromeKey = chromeKey;
       this.updateMarkup(
@@ -2940,16 +3034,14 @@ class SaunaPanel extends HTMLElement {
         `<div class="card"><h2>Saunagänge</h2>${energySummary}${gangs.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Beginn</th><th>Erkannt</th><th>Bestätigung</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g, i) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i + 1} · ${g.infusion_events.length ? "Bestätigt" : "Vorläufig"}</td><td>${when(g.started_at)}</td><td>${when(g.detected_at)}</td><td>${g.infusion_events.length ? when(g.infusion_events[0].detected_at) : "Aufguss ausstehend"}</td><td>${duration((stamp(g.ended_at || session.ended_at || this.state.now) - stamp(g.started_at)) / 1000)}</td><td>${when(g.ended_at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
       );
     }
-    const eventKey = `${this.historyTimelineRevision}:${this.historyDatasetRevision}`;
+    const eventKey = `${this.historyTimelineRevision}:${this.historyEventRevision || 0}`;
     if (this.historyEventKey !== eventKey) {
       this.historyEventKey = eventKey;
       const openEvents = [
         ...this.shadowRoot.querySelectorAll("#event-list details"),
       ].map((d) => d.open);
-      const diagnostics = records.filter((r) => r.kind === "diagnostic"),
-        traces = records
-          .filter((r) => r.kind === "detector_trace")
-          .map((r) => r.payload);
+      const diagnostics = this.historyRecords("diagnostic"),
+        traces = this.historyRecords("detector_trace").map((r) => r.payload);
       const eventRows = [...t.processed]
         .map((e, index) => ({ ...e, event_id: e.event_id || `legacy-${index}` }))
         .reverse();
@@ -3073,12 +3165,20 @@ class SaunaPanel extends HTMLElement {
       rebuild =
         !index || index.records !== records || index.indexedCount > records.length;
     if (rebuild)
-      index = { records, series: new Map(), byKind: new Map(), indexedCount: 0 };
+      index = {
+        records,
+        series: new Map(),
+        byKind: new Map(),
+        display: new Map(),
+        indexedCount: 0,
+      };
     for (let i = index.indexedCount; i < records.length; i++) {
       const record = records[i],
         grouped = index.byKind.get(record.kind) || [];
       grouped.push(record);
       index.byKind.set(record.kind, grouped);
+      if (["diagnostic", "detector_trace"].includes(record.kind))
+        this.historyEventRevision = (this.historyEventRevision || 0) + 1;
       if (!["measurement", "source_snapshot"].includes(record.kind)) continue;
       const source = record.payload,
         time = stamp(source.received_at),
@@ -3088,8 +3188,17 @@ class SaunaPanel extends HTMLElement {
       const key = `${source.position}:${source.quantity}`,
         values = index.series.get(key) || [],
         point = { time, value, source };
-      if (rebuild || !values.length || values.at(-1).time <= time) values.push(point);
-      else values.splice(lowerBoundHistory(values, time), 0, point);
+      const display = index.display.get(values);
+      if (rebuild || !values.length || values.at(-1).time <= time) {
+        values.push(point);
+        if (display) this.appendHistoryDisplay(display, point, values.length - 1);
+      } else {
+        values.splice(lowerBoundHistory(values, time), 0, point);
+        // Normal archive additions are chronological.  A late item or a
+        // duplicate that needs insertion is rare; rebuild only this series'
+        // display tree before it is next queried.
+        index.display.delete(values);
+      }
       index.series.set(key, values);
     }
     if (rebuild)
@@ -3097,6 +3206,143 @@ class SaunaPanel extends HTMLElement {
         values.sort((a, b) => a.time - b.time);
     index.indexedCount = records.length;
     return (this.chartDataIndex = index);
+  }
+  historyDisplay(values) {
+    const key = values;
+    const displays = (this.chartDataIndex.display ??= new Map());
+    let display = displays.get(key);
+    if (!display) {
+      display = { values, levels: new Map() };
+      displays.set(key, display);
+    }
+    return display;
+  }
+  historyDisplayLevel(display, width) {
+    let level = display.levels.get(width);
+    if (level) return level;
+    level = { width, nodes: new Map(), keys: [] };
+    const child = display.levels.get(width / 2);
+    if (child) {
+      for (const key of child.keys)
+        this.appendHistoryDisplayNode(level, child.nodes.get(key));
+    } else
+      for (let index = 0; index < display.values.length; index++)
+        this.appendHistoryDisplayLevel(level, display.values[index], index);
+    display.levels.set(width, level);
+    return level;
+  }
+  appendHistoryDisplay(display, point, index) {
+    for (const level of display.levels.values())
+      this.appendHistoryDisplayLevel(level, point, index);
+  }
+  appendHistoryDisplayLevel(level, point, index) {
+    const key = Math.floor(point.time / level.width);
+    let node = level.nodes.get(key);
+    if (!node) {
+      node = {
+        firstIndex: index,
+        lastIndex: index,
+        first: point,
+        last: point,
+        minimum: point.value == null ? null : point,
+        maximum: point.value == null ? null : point,
+        firstValid: point.value == null ? null : point,
+        lastValid: point.value == null ? null : point,
+        missing: point.value == null,
+        maximumGap: 0,
+      };
+      level.nodes.set(key, node);
+      level.keys.push(key);
+      return;
+    }
+    node.lastIndex = index;
+    node.last = point;
+    if (point.value == null) {
+      node.missing = true;
+      return;
+    }
+    if (node.lastValid)
+      node.maximumGap = Math.max(node.maximumGap, point.time - node.lastValid.time);
+    node.lastValid = point;
+    if (!node.firstValid) node.firstValid = point;
+    if (!node.minimum || point.value < node.minimum.value) node.minimum = point;
+    if (!node.maximum || point.value > node.maximum.value) node.maximum = point;
+  }
+  appendHistoryDisplayNode(level, child) {
+    const key = Math.floor(child.first.time / level.width);
+    let node = level.nodes.get(key);
+    if (!node) {
+      node = { ...child };
+      level.nodes.set(key, node);
+      level.keys.push(key);
+      return;
+    }
+    node.lastIndex = child.lastIndex;
+    node.last = child.last;
+    node.missing ||= child.missing;
+    node.maximumGap = Math.max(
+      node.maximumGap,
+      child.maximumGap,
+      node.lastValid && child.firstValid
+        ? child.firstValid.time - node.lastValid.time
+        : 0,
+    );
+    if (!node.firstValid) node.firstValid = child.firstValid;
+    if (child.lastValid) node.lastValid = child.lastValid;
+    if (child.minimum && (!node.minimum || child.minimum.value < node.minimum.value))
+      node.minimum = child.minimum;
+    if (child.maximum && (!node.maximum || child.maximum.value > node.maximum.value))
+      node.maximum = child.maximum;
+  }
+  historyDisplayValues(position, quantity, start, end, ttl, pixels) {
+    const values = this.series(position, quantity);
+    if (!values.length) return values;
+    // A dyadic bucket is at most two display pixels wide.  Its first, last
+    // and extrema remain visible; a null or timeout descends to raw points.
+    const width = Math.max(1, 2 ** Math.ceil(Math.log2((end - start) / pixels || 1)));
+    const display = this.historyDisplay(values),
+      level = this.historyDisplayLevel(display, width),
+      first = Math.max(0, lowerBoundNumber(level.keys, Math.floor(start / width)) - 1),
+      after = Math.min(
+        level.keys.length,
+        lowerBoundNumber(level.keys, Math.floor(end / width) + 1) + 1,
+      ),
+      output = [];
+    let previous = null;
+    for (let offset = first; offset < after; offset++) {
+      const node = level.nodes.get(level.keys[offset]);
+      if (!node) continue;
+      const displayGap = !!previous && !!ttl && node.first.time - previous.time > ttl;
+      const edge = node.first.time < start || node.last.time > end;
+      if (edge || node.missing || (ttl && node.maximumGap > ttl)) {
+        const firstRaw = edge
+            ? Math.max(node.firstIndex, lowerBoundHistory(values, start) - 1)
+            : node.firstIndex,
+          afterRaw = edge
+            ? Math.min(node.lastIndex + 1, lowerBoundHistory(values, end + 1) + 1)
+            : node.lastIndex + 1;
+        for (let index = firstRaw; index < afterRaw; index++) {
+          const point = values[index];
+          output.push({
+            ...point,
+            displayGap:
+              index === firstRaw
+                ? displayGap
+                : !!ttl && point.time - values[index - 1].time > ttl,
+          });
+        }
+        previous = node.last;
+        continue;
+      }
+      const points = [node.first, node.minimum, node.maximum, node.last]
+        .filter(Boolean)
+        .sort((a, b) => a.time - b.time);
+      for (const point of points)
+        if (output.at(-1)?.source !== point.source)
+          output.push({ ...point, displayGap: point === points[0] && displayGap });
+      previous = node.last;
+    }
+    return output;
   }
   series(position, quantity) {
     return this.chartDataIndex?.series.get(`${position}:${quantity}`) || [];
@@ -3277,7 +3523,14 @@ class SaunaPanel extends HTMLElement {
     )
       return cached.background;
     this.historyIndex(records);
-    const values = this.series("upper", "temperature");
+    const values = this.historyDisplayValues(
+      "upper",
+      "temperature",
+      start,
+      end,
+      ttl,
+      1160,
+    );
     let low = Infinity,
       high = -Infinity;
     for (const point of values)
@@ -3347,7 +3600,10 @@ class SaunaPanel extends HTMLElement {
       stamp(records.find((item) => item.received_at)?.received_at) ??
       stamp(session.ended_at) ??
       stamp(this.state.now);
-    const [start, end] = this.window || [fallbackStart, stamp(session.ended_at) ?? stamp(this.state.now)],
+    const [start, end] = this.window || [
+        fallbackStart,
+        stamp(session.ended_at) ?? stamp(this.state.now),
+      ],
       W = 1200,
       H = 480,
       left = 65,
@@ -3356,14 +3612,22 @@ class SaunaPanel extends HTMLElement {
       bottom = 435;
     const x = (t) => left + ((t - start) / (end - start)) * (right - left);
     this.historyIndex(records);
+    const ttl =
+      (session.configuration?.parameters || this.state.configuration.parameters)
+        .sensor_timeout_seconds * 1000;
+    const displaySeries = new Map();
+    const displayValues = (position, quantity) => {
+      const key = `${position}:${quantity}`;
+      if (!displaySeries.has(key))
+        displaySeries.set(
+          key,
+          this.historyDisplayValues(position, quantity, start, end, ttl, right - left),
+        );
+      return displaySeries.get(key);
+    };
     const visible = [];
     for (const position of this.positions)
-      for (const value of historyWindowValues(
-        this.series(position, "temperature"),
-        start,
-        end,
-      ))
-        visible.push(value);
+      for (const point of displayValues(position, "temperature")) visible.push(point);
     const validTemperatures = visible.filter((m) => m.value != null),
       bounds = validTemperatures.reduce(
         ([lo, hi], m) => [Math.min(lo, m.value), Math.max(hi, m.value)],
@@ -3372,11 +3636,8 @@ class SaunaPanel extends HTMLElement {
     const low = validTemperatures.length ? Math.floor((bounds[0] - 2) / 10) * 10 : 20,
       high = validTemperatures.length ? Math.ceil((bounds[1] + 2) / 10) * 10 : 100;
     const humidities = [];
-    for (const position of this.positions) {
-      const values = this.series(position, "humidity");
-      for (const value of historyWindowValues(values, start, end))
-        humidities.push(value);
-    }
+    for (const position of this.positions)
+      for (const point of displayValues(position, "humidity")) humidities.push(point);
     const humidityHigh = Math.max(
       60,
       Math.ceil((humidities.reduce((max, m) => Math.max(max, m.value), 0) + 2) / 20) *
@@ -3393,16 +3654,18 @@ class SaunaPanel extends HTMLElement {
     };
     let svg = `<svg class="chart session-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Sitzungsverlauf: Temperatur und Luftfeuchte${this.historyDetail ? " beider Messhöhen" : ""}"><defs><clipPath id="plot-clip"><rect x="${left}" y="${top}" width="${right - left}" height="${bottom - top}"/></clipPath></defs><g clip-path="url(#plot-clip)">`;
     const indexedPhases = this.historyRecords("phase");
-    const phases = indexedPhases.length || !records.some((item) => item.kind === "phase")
-      ? indexedPhases
-      : records.filter((item) => item.kind === "phase");
-    const styles =
-      {
-        aufheizen: "heat",
-        bereit: "ready",
-        zwangskühlung: "cool",
-        nachlauf: "after",
-      };
+    // The real indexed path never rereads all records.  Keep the unindexed
+    // fallback for a minimal legacy/test caller that supplies no index.
+    const phases =
+      indexedPhases.length || this.chartDataIndex
+        ? indexedPhases
+        : records.filter((item) => item.kind === "phase");
+    const styles = {
+      aufheizen: "heat",
+      bereit: "ready",
+      zwangskühlung: "cool",
+      nachlauf: "after",
+    };
     const projection = this.shown?.phase_projection;
     if (projection) {
       for (const phase of projection.intervals || []) {
@@ -3487,16 +3750,8 @@ class SaunaPanel extends HTMLElement {
     }
     for (const position of this.positions)
       for (const quantity of ["temperature", "humidity"]) {
-        const values = this.series(position, quantity);
-        const ttl =
-          (session.configuration?.parameters || this.state.configuration.parameters)
-            .sensor_timeout_seconds * 1000;
-        const path = historySegments(
-          historyWindowValues(values, start, end),
-          start,
-          end,
-          ttl,
-        )
+        const values = displayValues(position, quantity);
+        const path = historySegments(values, start, end, ttl)
           .map((segment) =>
             monotoneHistoryPath(
               reduceHistorySegment(segment, x),
@@ -3534,16 +3789,16 @@ class SaunaPanel extends HTMLElement {
       for (const q of ["temperature", "humidity"]) {
         const nearest = this.nearestMeasurement(p, q, time);
         if (nearest?.value != null && (!ttl || Math.abs(nearest.time - time) <= ttl)) {
-          const rawValue = nearest.source.raw_value ?? nearest.value,
-            rawText =
-              nearest.source.raw_value == null
-                ? num(rawValue, 6)
-                : String(rawValue),
+          const rawPresent = nearest.source.raw_value != null,
+            valueText = rawPresent
+              ? String(nearest.source.raw_value)
+              : num(nearest.value, 6),
+            valueLabel = rawPresent ? "Originalwert" : "Wert",
             receivedAt = tooltipWhen(nearest.source.received_at),
             measuredAt = tooltipWhen(nearest.source.measured_at),
             unit = q === "temperature" ? "°C" : "%";
           rows.push(
-            `<span style="color:${q === "temperature" ? "#e25d40" : "#2f8bde"}">${q === "temperature" ? "Temperatur" : "Luftfeuchte"}${this.historyDetail ? ` ${p === "upper" ? "oben" : "unten"}` : ""}</span><br>Originalwert ${esc(rawText)} ${unit} · Empfangen ${esc(receivedAt || "–")}${measuredAt ? ` · Gemessen ${esc(measuredAt)}` : ""}`,
+            `<span style="color:${q === "temperature" ? "#e25d40" : "#2f8bde"}">${q === "temperature" ? "Temperatur" : "Luftfeuchte"}${this.historyDetail ? ` ${p === "upper" ? "oben" : "unten"}` : ""}</span><br>${valueLabel} ${esc(valueText)} ${unit}${rawPresent ? "" : " · kein Originalwert gespeichert"} · Empfangen ${esc(receivedAt || "–")}${measuredAt ? ` · Gemessen ${esc(measuredAt)}` : ""}`,
           );
         }
       }
