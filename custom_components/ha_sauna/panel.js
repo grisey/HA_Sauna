@@ -2129,7 +2129,7 @@ class SaunaPanel extends HTMLElement {
         true,
       ]);
     const timers = `<dl class="compact-times">${timerRows.map(([label, value, html]) => `<dt>${esc(label)}</dt><dd>${html || label === "Mechanischer Ofentimer" ? value : esc(value)}</dd>`).join("")}</dl>`;
-    const manualPhase = session?.after_run && !session.after_run.pending_start
+    const manualPhase = session?.after_run
       ? {
           purpose: "after_run",
           token: session.after_run.phase_id,

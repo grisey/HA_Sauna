@@ -86,7 +86,20 @@ async def async_options_updated(hass, entry):
     if runtime and not runtime.closed:
         from .runtime import Configuration
 
-        updated = Configuration.from_options(entry.options)
+        try:
+            # An external writer persists options before notifying this
+            # listener.  Validate its complete payload before comparing or
+            # applying anything to the live runtime.
+            updated = Configuration.from_options(entry.options)
+        except (ValueError, TypeError):
+            # Keep the persisted entry in step with the still-valid runtime;
+            # otherwise the next reload would fail although this listener
+            # rejected the external change.
+            runtime.reconfiguring = False
+            hass.config_entries.async_update_entry(
+                entry, options=runtime.configuration.as_options()
+            )
+            return
         before = runtime.configuration.as_options()
         after = updated.as_options()
         before.pop("log_level")

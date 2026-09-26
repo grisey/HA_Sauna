@@ -409,6 +409,11 @@ class Controller:
         self.heater_override = heat
         if heat is False:
             self._drop_manual_heating_demand()
+            self._door_request_pending = False
+            if self.door_request.door_open:
+                self.door_request = replace(
+                    self.door_request, eligible_open=False, invalidated=True
+                )
         if heat is None:
             self._handoff_manual_heating(previous_override, at)
             self._clear_heater_override()
@@ -450,10 +455,9 @@ class Controller:
                     self.parameters.seconds("heat_reset_minutes"),
                 ),
             )
-            if value is True and self.contactor is True:
-                # Once both physical observations confirm the requested run,
-                # normal feedback-based minimum heating owns its remaining
-                # hold.  Until then this remains a real level demand.
+            if value is True:
+                # Actual heating feedback transfers the request to the existing
+                # minimum run; a contactor acknowledgement alone cannot do so.
                 self._door_request_pending = False
         self._evaluate(utc(at))
 
@@ -581,7 +585,7 @@ class Controller:
                 cooling=previous.after_run is not None,
             )
             self.door_request = transition.state
-            if transition.request and self.contactor is not True:
+            if transition.request and self.feedback is not True:
                 self._door_request_pending = True
         blocked = (
             self._gang_phase_blocked(previous)
@@ -800,6 +804,7 @@ class Controller:
             phase,
             accounted_at=at,
             ends_at=at + timedelta(seconds=phase.remaining_seconds),
+            active_intervals=phase.active_intervals + ((at, None),),
         )
         self._session = replace(session, after_run=phase)
         self._cancel("after_run")
@@ -813,7 +818,12 @@ class Controller:
             return
         self._cancel("after_run")
         self._session = replace(
-            self._session, after_run=replace(phase, ends_at=None)
+            self._session,
+            after_run=replace(
+                phase,
+                ends_at=None,
+                active_intervals=self._closed_cooling_intervals(phase, at),
+            ),
         )
 
     def _abort_after_run(self, at):
@@ -847,8 +857,11 @@ class Controller:
 
     @staticmethod
     def _closed_cooling_intervals(phase, at):
-        return tuple((start, end if end is not None else at)
-                     for start, end in phase.active_intervals)
+        return tuple(
+            (start, end if end is not None else at)
+            for start, end in phase.active_intervals
+            if (end if end is not None else at) > start
+        )
 
     def _finish_after_run(self, phase):
         phase = replace(

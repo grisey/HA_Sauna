@@ -189,7 +189,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.heater.is_on)
         self.assertIsNotNone(self.runtime.session.after_run)
         end = self.runtime.session.after_run.ends_at
-        self.assertEqual(self.runtime.session.after_run.duration_seconds, 30)
+        # All preceding time is confirmed heat; no readiness idle occurred.
+        # Integrate that known interval independently at the actual OFF time.
+        from math import log
+        heat_seconds = (self.runtime.session.after_run.started_at - self.base).total_seconds()
+        expected_seconds = 30 + 900 / log(2) * (1 - 2 ** (-heat_seconds / 900)) / 2
+        self.assertAlmostEqual(
+            self.runtime.session.after_run.duration_seconds, expected_seconds, places=5
+        )
         self.now = end
         await self.set_source("upper_temperature", last_temperature)
         await self.runtime.tick()
@@ -406,12 +413,16 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(281)
         self.assertGreater(self.light.brightness, 255*.15)
         self.assertLess(self.light.brightness, normal)
-        await self.time(288)
-        self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
+        # Adaptive cooling is longer than the old fixed 30 s; its fade is
+        # bounded by the configured 30-s light transition.
+        cooling_end = (self.runtime.session.after_run.ends_at - self.base).total_seconds()
         await temperature(303)
+        self.assertAlmostEqual(self.light.brightness,255*.15,delta=1)
+        self.assertEqual(self.runtime.controller.phase, "nachlauf")
+        await temperature(cooling_end)
         self.assertEqual(self.runtime.controller.phase,"aufheizen")
-        self.assertIsNone(self.runtime.session.cooling)
-        await temperature(333)
+        self.assertIsNone(self.runtime.session.after_run)
+        await temperature(cooling_end + 30)
         self.assertAlmostEqual(self.light.brightness, 255 * 33 / 100, delta=1)
 
     async def test_light_failure_is_reported_and_does_not_disable_heating(self):

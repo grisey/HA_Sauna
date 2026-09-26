@@ -40,7 +40,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
                 self.assertEqual(state["session"]["timeline"]["session_id"], identity)
                 self.assertTrue(state["configuration_locked"])
-            async with client.post(url + "/parameters", json={**values,"after_run_minutes":20}) as response:
+            async with client.post(url + "/parameters", json={**values,"after_run_minutes":20,"oven_cooling_max_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
             async with client.post(url + "/control", json={"enabled": False}) as response:
                 self.assertEqual(response.status, 200)
@@ -48,7 +48,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 state = await response.json()
                 self.assertEqual(state["mechanical_timer"]["state"], "paused")
                 self.assertIsNone(state["mechanical_timer_ends_at"])
-            async with client.post(url + "/parameters", json={**values,"after_run_minutes":20}) as response:
+            async with client.post(url + "/parameters", json={**values,"after_run_minutes":20,"oven_cooling_max_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
 
     async def test_unauthenticated_and_non_admin_writes_are_rejected(self):
@@ -296,7 +296,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url, json={"purpose":"after_run","token":token}) as response:
                 self.assertEqual(response.status,409)
 
-    async def test_paused_after_run_ends_through_api_without_a_fictitious_deadline(self):
+    async def test_manual_heating_does_not_pause_cooling_before_explicit_api_end(self):
         from datetime import datetime, UTC, timedelta
         from custom_components.ha_sauna.core.timeline import Event, Kind
         import asyncio
@@ -317,21 +317,24 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         async with ClientSession(headers=self.headers) as client:
             async with client.post(url + "/heater", json={"value": True}) as response:
                 self.assertEqual(response.status, 200, await response.text())
-            paused = runtime.session.after_run
-            self.assertIsNone(paused.ends_at)
-            self.assertEqual(paused.elapsed_seconds, 6)
+            phase = runtime.session.after_run
+            planned_end = phase.ends_at
+            self.assertIsNotNone(planned_end)
+            self.assertIsNone(phase.paused_at)
+            self.assertEqual(phase.elapsed_seconds, 6)
+            self.assertFalse(runtime.controller.last_decision.heat)
             phase_entity = next(state for state in self.hass.states.async_all("sensor")
                                 if state.attributes.get("session_id") == identity
                                 and "after_run_paused" in state.attributes)
-            self.assertIsNone(phase_entity.attributes["after_run_ends_at"])
-            self.assertTrue(phase_entity.attributes["after_run_paused"])
-            self.assertEqual(phase_entity.attributes["after_run_remaining_seconds"], paused.remaining_seconds)
+            self.assertEqual(phase_entity.attributes["after_run_ends_at"], planned_end.isoformat())
+            self.assertFalse(phase_entity.attributes["after_run_paused"])
+            self.assertEqual(phase_entity.attributes["after_run_remaining_seconds"], phase.remaining_seconds)
             now = base + timedelta(seconds=20)
             async with client.post(url + "/finish_phase", json={"purpose": "after_run", "token": token}) as response:
                 self.assertEqual(response.status, 200, await response.text())
 
         self.assertIsNone(runtime.session.after_run)
-        self.assertEqual(runtime.session.after_run_history[-1].elapsed_seconds, 6)
+        self.assertEqual(runtime.session.after_run_history[-1].elapsed_seconds, 16)
         self.assertIsNone(runtime.session.cooling)
         self.assertIsNone(runtime.controller.heater_override)
         self.assertEqual(runtime.session.cooling_history, ())
@@ -341,7 +344,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         record = next(row for row in archived["records"] if row["kind"] == "manual_phase_end")
         self.assertEqual(record["session_id"], identity)
         self.assertEqual(record["payload"], {"purpose": "after_run", "token": token,
-                                             "planned_ends_at": None, "ended_at": now.isoformat()})
+                                             "planned_ends_at": planned_end.isoformat(), "ended_at": now.isoformat()})
 
     async def test_logging_is_live_persistent_and_does_not_reload_or_end_session(self):
         import logging
@@ -426,15 +429,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url+"/temperature",json={"removed_cooling_option":0}) as response:
                 self.assertEqual(response.status,400)
             await runtime.set_operation(False)
-            deadline=runtime.session.after_run
+            self.assertIsNone(runtime.session.after_run)
+            deadlines = runtime.session.deadlines
             async with client.post(url+"/temperature",json={"target_temperature_c":95}) as response:
                 self.assertEqual(response.status,200,await response.text())
-            after_run = runtime.session.after_run
-            self.assertEqual(after_run.phase_id, deadline.phase_id)
-            self.assertEqual(after_run.ends_at, deadline.ends_at)
-            self.assertGreaterEqual(after_run.elapsed_seconds, deadline.elapsed_seconds)
-            self.assertAlmostEqual(after_run.remaining_seconds,
-                (after_run.ends_at - after_run.accounted_at).total_seconds())
+            self.assertIsNone(runtime.session.after_run)
+            self.assertEqual(runtime.session.deadlines, deadlines)
             self.assertFalse(runtime.controller.last_decision.heat)
             self.assertFalse(runtime.session.operation_enabled)
 
