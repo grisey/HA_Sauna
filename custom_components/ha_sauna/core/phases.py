@@ -68,6 +68,18 @@ def project_session(session, now) -> PhaseProjection:
             spans = ((_get(phase, "started_at"), _get(phase, "paused_at") or _get(phase, "ends_at") or end),)
         for left, right in spans:
             overlays.append((_time(left), _time(right or end), "nachlauf", _get(phase, "phase_id"), complete))
+    # Historical forced cooling is read-only evidence, never a request to the
+    # current controller. A requested but unstarted cycle has no running span.
+    for cycle in (*_get(session, "cooling_history", ()), *([_get(session, "cooling")] if _get(session, "cooling") else [])):
+        if not _get(cycle, "started_at"):
+            continue
+        spans = _get(cycle, "active_intervals", ())
+        complete = bool(spans)
+        if not spans:
+            notes.append("legacy_forced_cooling_pause_history_incomplete")
+            spans = ((_get(cycle, "started_at"), _get(cycle, "paused_at") or _get(cycle, "ends_at") or end),)
+        for left, right in spans:
+            overlays.append((_time(left), _time(right or end), "zwangskühlung", _get(cycle, "cycle_id"), complete))
     points = {start, end}
     points.update(at for at, *_ in marks + contacts if start < at < end)
     points.update(at for left, right, *_ in overlays for at in (left, right) if start < at < end)
@@ -82,7 +94,7 @@ def project_session(session, now) -> PhaseProjection:
         else:
             active = [o for o in overlays if o[0] <= left < o[1]]
             # Cooling takes precedence over contradictory imported gang evidence.
-            active.sort(key=lambda o: (o[2] == "nachlauf", o[0]))
+            active.sort(key=lambda o: (o[2] in ("nachlauf", "zwangskühlung"), o[0]))
             if active:
                 _, _, phase, source, complete = active[-1]
         _merge(intervals, PhaseInterval(left, right, phase, source, complete))
@@ -111,7 +123,7 @@ def project_archive(session, records, now) -> PhaseProjection:
             phase = payload.get("phase")
             if phase in ("aus", "aufheizen", "bereit", "manuell"):
                 marks.append({"at": at, "phase": phase, "operation_enabled": phase != "aus"})
-            elif phase in ("saunagang", "nachlauf", "kuehlung"):
+            elif phase in ("saunagang", "nachlauf", "kuehlung", "zwangskühlung"):
                 marks.append({"at": at, "phase": "unknown", "operation_enabled": True})
         elif record["kind"] == "session":
             # A stored ready timestamp is direct evidence of the former

@@ -86,3 +86,29 @@ class PhaseTests(unittest.TestCase):
         projected = project_archive(state, [], at(20))
         self.assertEqual([p.phase for p in projected.intervals], ["unknown", "saunagang", "unknown"])
         self.assertFalse(projected.complete)
+
+    def test_historical_forced_cooling_remains_visible_with_pause_uncertainty(self):
+        state = session()
+        state["cooling_history"] = [
+            {"cycle_id": "old", "started_at": at(15), "ends_at": at(30), "paused_at": at(25)},
+            {"cycle_id": "pending", "started_at": None, "ends_at": None},
+        ]
+        projected = project_session(state, at(35))
+        cooling = [p for p in projected.intervals if p.phase == "zwangskühlung"]
+        self.assertEqual(len(cooling), 1)
+        self.assertEqual((cooling[0].started_at, cooling[0].ended_at, cooling[0].source_id), (at(15), at(25), "old"))
+        self.assertFalse(cooling[0].complete)
+        self.assertIn("legacy_forced_cooling_pause_history_incomplete", projected.corrections)
+        self.assertEqual([(p.started_at, p.ended_at) for p in projected.readiness_pauses], [(at(12), at(15)), (at(25), at(35))])
+
+    def test_old_forced_cooling_phase_record_cannot_extend_ready_background(self):
+        state = {"timeline": {"session_started_at": T0}, "cooling": {
+            "cycle_id": "old", "started_at": at(10), "ends_at": at(20)
+        }}
+        records = [
+            {"kind": "phase", "received_at": at(0), "payload": {"phase": "bereit"}},
+            {"kind": "phase", "received_at": at(10), "payload": {"phase": "zwangskühlung"}},
+        ]
+        projected = project_archive(state, records, at(30))
+        self.assertEqual([p.phase for p in projected.intervals], ["bereit", "zwangskühlung", "unknown"])
+        self.assertFalse(projected.complete)
