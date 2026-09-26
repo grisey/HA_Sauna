@@ -38,6 +38,9 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
             {"options": ["button", "switch"], "translation_key": "control_input_mode"}
         )
     )
+    fields[vol.Required("presence_source", default="proxy")] = selector.SelectSelector(
+        {"options": ["proxy", "ha_presence"], "translation_key": "presence_source"}
+    )
     fields[vol.Optional("button_event_type", default="")] = selector.TextSelector()
     return vol.Schema(fields)
 
@@ -94,11 +97,13 @@ def parameter_schema(
 
 
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
+    if user_input.get("presence_source", "proxy") not in ("proxy", "ha_presence"):
+        raise BindingError("presence_source", "invalid_presence_source")
     bindings = Bindings(
         {
             k: v
             for k, v in user_input.items()
-            if k not in ("control_input_mode", "button_event_type")
+            if k not in ("control_input_mode", "button_event_type", "presence_source")
         }
     )
     metadata = {
@@ -146,6 +151,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                     raise BindingError("heater", "heater_already_used")
                 self._bindings = bindings
                 self._input_options = {
+                    "presence_source": user_input.get("presence_source", "proxy"),
                     "control_input_mode": user_input.get(
                         "control_input_mode", "button"
                     ),
@@ -301,6 +307,7 @@ class SaunaOptionsFlow(OptionsFlow):
                     data={
                         **self.config_entry.options,
                         CONF_BINDINGS: bindings.as_dict(),
+                        "presence_source": user_input.get("presence_source", self.config_entry.options.get("presence_source", "proxy")),
                         "control_input_mode": user_input.get(
                             "control_input_mode",
                             self.config_entry.options.get(
@@ -320,6 +327,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 if user_input is not None
                 else {
                     **self.config_entry.options[CONF_BINDINGS],
+                    "presence_source": self.config_entry.options.get("presence_source", "proxy"),
                     "control_input_mode": self.config_entry.options.get(
                         "control_input_mode", "switch"
                     ),

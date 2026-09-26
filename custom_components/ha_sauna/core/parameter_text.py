@@ -1,6 +1,11 @@
 """Gemeinsame deutsche Begriffe und Feldhilfen für Einrichtung und Oberfläche."""
 
 PARAMETER_TEXT = {
+    "door_request_minutes": (
+        "Türwartezeit für die Heizanforderung",
+        "Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert die Anforderung; es gibt keinen Standardwert. Eine Anforderung übergeht weder die obere Temperaturgrenze noch Schutz, Betrieb-Aus oder Ofenkühlung.",
+        "operation",
+    ),
     "session_light_minutes": (
         "Lichtnachlauf nach Sitzungsende",
         "Dauer ab dem endgültigen Sitzungsende. Danach wird das Licht ausgeschaltet. Eine neue Sitzung beendet den Lichtnachlauf. Null schaltet das Licht direkt am Sitzungsende aus.",

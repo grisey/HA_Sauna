@@ -19,7 +19,10 @@
           "heater_feedback": "Unabhängige Heizrückmeldung",
           "heater_power": "Leistungssensor des Ofens",
           "control_input_mode": "Art der Bedienung",
-          "button_event_type": "Auslösendes Tasterereignis"
+          "button_event_type": "Auslösendes Tasterereignis",
+          "presence": "Externer Präsenzsensor (optional)",
+          "audio_output": "Audio-Ausgabeziel (optional)",
+          "presence_source": "Gewünschte Präsenzquelle"
         },
         "data_description": {
           "name": "Name zur Unterscheidung mehrerer Saunen.",
@@ -35,7 +38,10 @@
           "heater_feedback": "Optionaler Binärsensor, der tatsächliches Heizen meldet. Keine zweite Zuordnung des Heizschützes erforderlich.",
           "heater_power": "Optionaler Leistungssensor in W oder kW. Seine gültigen Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
           "control_input_mode": "Taster: Jeder Druck schaltet den Saunabetrieb um; Loslassen hat keine Wirkung. Schalter: Ein/Aus wird übernommen. Der Heizschütz ist getrennt zuzuordnen.",
-          "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen."
+          "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen.",
+          "presence": "Optionaler Binärsensor. Seine Meldungen werden beobachtet. Die externe Präsenz ersetzt den Proxy noch nicht; Aktivierungsregeln sind noch offen.",
+          "audio_output": "Vorbereitetes Ausgabeziel für spätere Audioreaktionen. Es wird noch kein Audio abgespielt.",
+          "presence_source": "Proxy bleibt die wirksame Quelle. Externe Präsenz ist nur als gewünschte Quelle vorbereitet und steuert noch keine Gänge oder den Ofen."
         }
       },
       "parameters": {
@@ -119,7 +125,8 @@
           "button_program": "Programm beim externen Einschalten",
           "sauna_min_temperature_c": "Mindesttemperatur der Sauna",
           "button_hold_seconds": "Langdruckdauer des Saunatasters",
-          "button_hold_brightness_percent": "Lichthelligkeit bei Langdruck"
+          "button_hold_brightness_percent": "Lichthelligkeit bei Langdruck",
+          "door_request_minutes": "Türwartezeit für die Heizanforderung"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -199,7 +206,8 @@
           "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird.",
           "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
           "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
-          "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf."
+          "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
+          "door_request_minutes": "Optional: Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert sie; kein Standardwert. Schutz, Betrieb-Aus, Ofenkühlung und obere Temperaturgrenze bleiben wirksam."
         }
       }
     },
@@ -228,7 +236,8 @@
       "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
       "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
       "invalid_button_program": "Bitte ein vorhandenes Startprogramm auswählen.",
-      "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen."
+      "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen.",
+      "invalid_presence_source": "Bitte eine angebotene Präsenzquelle auswählen."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
@@ -262,7 +271,10 @@
           "heater_feedback": "Unabhängige Heizrückmeldung",
           "heater_power": "Leistungssensor des Ofens",
           "control_input_mode": "Art der Bedienung",
-          "button_event_type": "Auslösendes Tasterereignis"
+          "button_event_type": "Auslösendes Tasterereignis",
+          "presence": "Externer Präsenzsensor (optional)",
+          "audio_output": "Audio-Ausgabeziel (optional)",
+          "presence_source": "Gewünschte Präsenzquelle"
         },
         "data_description": {
           "upper_temperature": "Oberer Temperaturwert in °C. Er bestimmt die Heizregelung und dient der Erkennung.",
@@ -277,7 +289,10 @@
           "heater_feedback": "Optionaler Binärsensor, der tatsächliches Heizen meldet. Keine zweite Zuordnung des Heizschützes erforderlich.",
           "heater_power": "Optionaler Leistungssensor in W oder kW. Seine gültigen Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
           "control_input_mode": "Taster: Jeder Druck schaltet den Saunabetrieb um; Loslassen hat keine Wirkung. Schalter: Ein/Aus wird übernommen. Der Heizschütz ist getrennt zuzuordnen.",
-          "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen."
+          "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen.",
+          "presence": "Optionaler Binärsensor. Seine Meldungen werden beobachtet. Die externe Präsenz ersetzt den Proxy noch nicht; Aktivierungsregeln sind noch offen.",
+          "audio_output": "Vorbereitetes Ausgabeziel für spätere Audioreaktionen. Es wird noch kein Audio abgespielt.",
+          "presence_source": "Proxy bleibt die wirksame Quelle. Externe Präsenz ist nur als gewünschte Quelle vorbereitet und steuert noch keine Gänge oder den Ofen."
         }
       },
       "parameters": {
@@ -361,7 +376,8 @@
           "button_program": "Programm beim externen Einschalten",
           "sauna_min_temperature_c": "Mindesttemperatur der Sauna",
           "button_hold_seconds": "Langdruckdauer des Saunatasters",
-          "button_hold_brightness_percent": "Lichthelligkeit bei Langdruck"
+          "button_hold_brightness_percent": "Lichthelligkeit bei Langdruck",
+          "door_request_minutes": "Türwartezeit für die Heizanforderung"
         },
         "data_description": {
           "session_gap_minutes": "Nach dieser Zeit mit ausgeschaltetem Saunabetrieb endet die Saunasitzung. Vorheriges Einschalten setzt sie fort.",
@@ -441,7 +457,8 @@
           "button_program": "Programm, das beim Einschalten über den zugeordneten Taster oder Betriebsschalter gewählt wird.",
           "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
           "button_hold_seconds": "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
-          "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf."
+          "button_hold_brightness_percent": "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
+          "door_request_minutes": "Optional: Wartezeit nach Türöffnung bis zur einmaligen Heizanforderung; bei früherem Türschluss erfolgt sie sofort. Leer deaktiviert sie; kein Standardwert. Schutz, Betrieb-Aus, Ofenkühlung und obere Temperaturgrenze bleiben wirksam."
         }
       },
       "logging": {
@@ -480,7 +497,8 @@
       "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
       "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
       "invalid_button_program": "Bitte ein vorhandenes Startprogramm auswählen.",
-      "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen."
+      "program_catalog_invalid": "Die Mindesttemperatur liegt über einer Temperatur der mitgelieferten Programme. Wählen Sie zur Einrichtung eine niedrigere Mindesttemperatur. Anschließend können Sie die Programme in den Einstellungen anpassen.",
+      "invalid_presence_source": "Bitte eine angebotene Präsenzquelle auswählen."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
@@ -514,6 +532,12 @@
         "constant": "Konstante Temperatur",
         "program_1": "Temperaturprogramm 1",
         "program_2": "Temperaturprogramm 2"
+      }
+    },
+    "presence_source": {
+      "options": {
+        "proxy": "Proxy aus Personen- und Aufgusserkennung",
+        "ha_presence": "Externe Präsenz (nur vorbereitet)"
       }
     }
   }
