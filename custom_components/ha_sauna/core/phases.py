@@ -79,7 +79,7 @@ def project_session(session, now) -> PhaseProjection:
         source, complete = None, phase != "unknown"
         if enabled is False:
             phase = "aus"
-        elif enabled is True:
+        else:
             active = [o for o in overlays if o[0] <= left < o[1]]
             # Cooling takes precedence over contradictory imported gang evidence.
             active.sort(key=lambda o: (o[2] == "nachlauf", o[0]))

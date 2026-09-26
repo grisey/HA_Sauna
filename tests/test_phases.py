@@ -78,3 +78,11 @@ class PhaseTests(unittest.TestCase):
         self.assertEqual([p.phase for p in projected.intervals], ["aufheizen", "unknown", "bereit"])
         self.assertEqual(projected.readiness_pauses[0].started_at, at(15))
         self.assertNotIn("base_phases", state)
+
+    def test_legacy_gang_is_evidence_even_without_base_track(self):
+        state = {"timeline": {"session_started_at": T0, "completed": [
+            {"gang_id": "g", "started_at": at(5), "ended_at": at(10)}
+        ]}}
+        projected = project_archive(state, [], at(20))
+        self.assertEqual([p.phase for p in projected.intervals], ["unknown", "saunagang", "unknown"])
+        self.assertFalse(projected.complete)
