@@ -15,6 +15,32 @@ const when = (v) =>
         second: "2-digit",
       })
     : "–";
+const tooltipWhen = (v) => {
+  if (
+    (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||
+    (typeof v === "string" && !v.trim())
+  )
+    return null;
+  const date = new Date(v);
+  if (!Number.isFinite(date.getTime())) return null;
+  const fraction =
+    typeof v === "string"
+      ? v.match(/\.(\d+)(?:Z|[+-]\d\d:\d\d)?$/i)?.[1]
+      : null;
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(date)
+    .map((part) =>
+      part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,
+    )
+    .join("");
+};
 const clock = (v) =>
   new Date(v).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
 const num = (v, d = 1) =>
@@ -3507,10 +3533,19 @@ class SaunaPanel extends HTMLElement {
     for (const p of this.positions)
       for (const q of ["temperature", "humidity"]) {
         const nearest = this.nearestMeasurement(p, q, time);
-        if (nearest?.value != null && (!ttl || Math.abs(nearest.time - time) <= ttl))
+        if (nearest?.value != null && (!ttl || Math.abs(nearest.time - time) <= ttl)) {
+          const rawValue = nearest.source.raw_value ?? nearest.value,
+            rawText =
+              nearest.source.raw_value == null
+                ? num(rawValue, 6)
+                : String(rawValue),
+            receivedAt = tooltipWhen(nearest.source.received_at),
+            measuredAt = tooltipWhen(nearest.source.measured_at),
+            unit = q === "temperature" ? "°C" : "%";
           rows.push(
-            `<span style="color:${q === "temperature" ? "#e25d40" : "#2f8bde"}">${q === "temperature" ? "Temperatur" : "Luftfeuchte"}${this.historyDetail ? ` ${p === "upper" ? "oben" : "unten"}` : ""}</span><br>${num(nearest.value, 3)} ${q === "temperature" ? "°C" : "%"} · ${when(nearest.source.received_at)}`,
+            `<span style="color:${q === "temperature" ? "#e25d40" : "#2f8bde"}">${q === "temperature" ? "Temperatur" : "Luftfeuchte"}${this.historyDetail ? ` ${p === "upper" ? "oben" : "unten"}` : ""}</span><br>Originalwert ${esc(rawText)} ${unit} · Empfangen ${esc(receivedAt || "–")}${measuredAt ? ` · Gemessen ${esc(measuredAt)}` : ""}`,
           );
+        }
       }
     const tip = this.$("#tooltip");
     tip.innerHTML = `<strong>${when(time)}</strong><br>${rows.join("<br>")}`;

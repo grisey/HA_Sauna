@@ -366,8 +366,8 @@ class ProgramView(HomeAssistantView):
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime_for(hass, entry_id)
-        body = await request.json()
         try:
+            body = await request.json()
             if isinstance(body, dict) and set(body) == {"profile"}:
                 if not isinstance(body["profile"], str):
                     raise ValueError("Ungültiges Temperaturprogramm")
@@ -434,10 +434,10 @@ class ProgramsView(HomeAssistantView):
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime_for(hass, entry_id)
-        body = await request.json()
-        if not isinstance(body, dict) or set(body) != {"programs"}:
-            raise web.HTTPBadRequest(text="Programmliste fehlt oder ist ungültig")
         try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) != {"programs"}:
+                raise web.HTTPBadRequest(text="Programmliste fehlt oder ist ungültig")
             programs = await async_set_program_catalog(hass, entry, body["programs"])
         except ConfigurationLocked as error:
             return self.json({"error": str(error)}, status_code=409)

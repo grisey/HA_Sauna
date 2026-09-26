@@ -594,12 +594,13 @@ class Controller:
         )
         if (
             blocked is None
-            and event.kind == Kind.PERSON_WEAK
+            and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
             and previous.timeline.active is None
         ):
             anchor = previous.timeline.anchor
             if anchor is None:
-                blocked = "entry_context_missing"
+                if event.kind == Kind.PERSON_WEAK:
+                    blocked = "entry_context_missing"
             elif event.effective_at < anchor.effective_at:
                 blocked = "entry_context_changed"
             elif event.detected_at > anchor.effective_at + timedelta(

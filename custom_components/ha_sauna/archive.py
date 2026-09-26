@@ -18,7 +18,7 @@ import zipfile
 from collections.abc import Mapping
 from math import isfinite
 
-from .core.phases import project_archive
+from .core.phases import project_archive, project_session
 
 
 def plain(value):
@@ -190,8 +190,12 @@ class Archive:
         # pausiert; Regelung und Eingangserfassung dürfen weiterarbeiten.
         await self._barrier("pause")
 
-    async def post_backup(self):
+    def release_backup(self):
+        """Release a backup pause without waiting for pending writes."""
         self.resume.set()
+
+    async def post_backup(self):
+        self.release_backup()
         await self.flush()
 
     async def close(self):
@@ -225,17 +229,23 @@ class Archive:
                 (self.entry_id, session_id, after, limit),
             ).fetchall()
             session = json.loads(row["payload"])
-            # Projection needs the complete evidence stream, independent of the
-            # caller's pagination. Original rows and snapshots are never edited.
-            evidence = [
-                {"kind": r["kind"], "received_at": r["received_at"],
-                 "payload": json.loads(r["payload"])}
-                for r in db.execute(
-                    "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
-                    (self.entry_id, session_id),
-                )
-            ]
-            projection = project_archive(session, evidence, row["updated_at"])
+            if session.get("base_phases"):
+                projection = project_session(session, row["updated_at"])
+            else:
+                # Legacy snapshots need the complete evidence stream,
+                # independent of pagination. Original records stay unchanged.
+                evidence = [
+                    {
+                        "kind": r["kind"],
+                        "received_at": r["received_at"],
+                        "payload": json.loads(r["payload"]),
+                    }
+                    for r in db.execute(
+                        "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
+                        (self.entry_id, session_id),
+                    )
+                ]
+                projection = project_archive(session, evidence, row["updated_at"])
             return {
                 "session": session,
                 "phase_projection": plain(projection),
