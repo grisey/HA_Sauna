@@ -1882,9 +1882,11 @@ class SaunaPanel extends HTMLElement {
       #appearance-status[data-kind="error"] { color: var(--sauna-ink-status-error, var(--sauna-color-status-error)); }
       #appearance-status[data-kind="pending"] { border-left: 3px solid var(--sauna-color-status-info); padding-left: 8px; }
       @media (max-width: 540px) {
-        .appearance-color-row { grid-template-columns: minmax(0, 1fr) 48px auto; }
+        .appearance-color-row { grid-template-columns: 48px minmax(0, 1fr) auto; }
         .appearance-color-row label { grid-column: 1 / -1; }
-        .appearance-color-row input:not([type="color"]) { grid-column: 1; }
+        .appearance-color-row input[type="color"] { grid-column: 1; }
+        .appearance-color-row input:not([type="color"]) { grid-column: 2; }
+        .appearance-color-row button { grid-column: 3; }
         .appearance-scale { flex-wrap: wrap; }
       }
       .phase {
@@ -2943,6 +2945,7 @@ class SaunaPanel extends HTMLElement {
       }
       .program-actions {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-top: 16px;
         padding-top: 14px;

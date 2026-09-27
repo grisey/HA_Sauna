@@ -3,8 +3,10 @@ import asyncio
 from datetime import timedelta
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 import unittest
 import zipfile
@@ -173,8 +175,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_appearance_preview_validation_persistence_and_display_scales(self):
-        screenshots = Path("/private/tmp/sauna-ui-review/appearance")
+        artifact_dir = os.environ.get("HA_SAUNA_BROWSER_ARTIFACTS")
+        screenshots = (
+            Path(artifact_dir) / "appearance"
+            if artifact_dir
+            else Path(tempfile.mkdtemp(prefix="ha-sauna-appearance-"))
+        )
         screenshots.mkdir(parents=True, exist_ok=True)
+        print(f"BROWSER_SCREENSHOTS {screenshots}")
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         session_id = self.entry.runtime_data.session.session_id
