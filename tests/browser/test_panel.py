@@ -615,7 +615,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(self.panel.get_by_role("link", name=link)).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
         await chart.hover(position={"x": sample_x, "y": 200})
-        label = self.panel.locator("#tooltip span").filter(has_text="Temperatur oben")
+        # Returning through the main History tab selects the single-height
+        # overview, whose label intentionally omits the height suffix.
+        label = self.panel.locator("#tooltip").get_by_text("Temperatur", exact=True)
         await expect(label).to_be_visible()
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
         await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(0, 0, 0)")
