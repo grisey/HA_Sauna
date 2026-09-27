@@ -67,3 +67,10 @@ class NumberPermissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.entry.options["parameters"]["sensor_timeout_seconds"], 3600
         )
+        # The service persists options before HA's update listener finishes
+        # reloading. Verify the applied value before tearing down its files.
+        await self.hass.async_block_till_done()
+        self.assertEqual(
+            self.entry.runtime_data.configuration.parameters.values["sensor_timeout_seconds"],
+            3600,
+        )

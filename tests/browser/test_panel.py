@@ -606,7 +606,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         editor = self.panel.locator("#appearance-settings")
         for group in ("Grunddarstellung", "Bedienung", "Messungen und Ereignisse"):
-            await editor.locator("summary").filter(has_text=group).click()
+            summary = editor.locator("summary").filter(has_text=group)
+            if await summary.locator("..").get_attribute("open") is None:
+                await summary.click()
         for role in ("card_background", "text", "ui_accent", "series_temperature", "series_humidity"):
             await editor.locator(f'[data-appearance-color="{role}"]').fill("#000000")
         for link in ("Sensoren und Geräte zuordnen", "Home-Assistant-Protokoll öffnen"):
