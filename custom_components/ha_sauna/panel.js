@@ -5,17 +5,56 @@ const esc = (v) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 const stamp = (v) => (v ? new Date(v).getTime() : null);
-const when = (v) =>
-  v
-    ? new Date(v).toLocaleString("de-DE", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      })
-    : "–";
-const tooltipWhen = (v) => {
+const timestampFormatterLimit = 12;
+const timestampFormatOptions = Object.freeze({
+  when: Object.freeze({
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }),
+  tooltip: Object.freeze({
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "shortOffset",
+  }),
+  clock: Object.freeze({ hour: "2-digit", minute: "2-digit" }),
+});
+const timestampFormatters = new Map();
+// Resolve once for a tooltip/axis batch. Zone names matter: two zones with the
+// same current offset can have different rules at the measurement's timestamp.
+const localTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
+const timestampFormatter = (style, timeZone = localTimeZone()) => {
+  const key = `${style}:${timeZone || "default"}`;
+  let formatter = timestampFormatters.get(key);
+  if (formatter) {
+    timestampFormatters.delete(key);
+    timestampFormatters.set(key, formatter);
+    return formatter;
+  }
+  formatter = new Intl.DateTimeFormat("de-DE", {
+    ...timestampFormatOptions[style],
+    ...(timeZone ? { timeZone } : {}),
+  });
+  timestampFormatters.set(key, formatter);
+  if (timestampFormatters.size > timestampFormatterLimit)
+    timestampFormatters.delete(timestampFormatters.keys().next().value);
+  return formatter;
+};
+const when = (v, timeZone) => {
+  if (!v) return "–";
+  const date = new Date(v);
+  // Intl.DateTimeFormat#format throws for an invalid date, while the original
+  // Date#toLocaleString path returns its established fallback text.
+  return Number.isFinite(date.getTime())
+    ? timestampFormatter("when", timeZone).format(date)
+    : date.toLocaleString("de-DE", timestampFormatOptions.when);
+};
+const tooltipWhen = (v, timeZone) => {
   if (
     (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||
     (typeof v === "string" && !v.trim())
@@ -25,22 +64,19 @@ const tooltipWhen = (v) => {
   if (!Number.isFinite(date.getTime())) return null;
   const fraction =
     typeof v === "string" ? v.match(/\.(\d+)(?:Z|[+-]\d\d:\d\d)?$/i)?.[1] : null;
-  return new Intl.DateTimeFormat("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "shortOffset",
-  })
+  return timestampFormatter("tooltip", timeZone)
     .formatToParts(date)
     .map((part) =>
       part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,
     )
     .join("");
 };
-const clock = (v) =>
-  new Date(v).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+const clock = (v, timeZone) => {
+  const date = new Date(v);
+  return Number.isFinite(date.getTime())
+    ? timestampFormatter("clock", timeZone).format(date)
+    : date.toLocaleTimeString("de-DE", timestampFormatOptions.clock);
+};
 const num = (v, d = 1) =>
   v == null ? "–" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: d });
 const duration = (v, unit = "min") =>
@@ -134,22 +170,37 @@ const historySegments = (values, start, end, ttl) => {
 };
 const reduceHistorySegment = (segment, x) => {
   const output = [];
-  let bucket = [],
-    key = null;
+  let key = null,
+    bucket = [],
+    first,
+    last,
+    minimum,
+    maximum;
   const flush = () => {
     if (!bucket.length) return;
-    const keep = new Set([
-      bucket[0],
-      bucket.at(-1),
-      bucket.reduce((a, b) => (a.value < b.value ? a : b)),
-      bucket.reduce((a, b) => (a.value > b.value ? a : b)),
-    ]);
-    output.push(...bucket.filter((point) => keep.has(point)));
-    bucket = [];
+    // Scan the original bucket so a repeated reference has the same Set/filter
+    // behavior and source ordering as before, without creating either helper.
+    for (const point of bucket)
+      if (point === first || point === last || point === minimum || point === maximum)
+        output.push(point);
+    bucket.length = 0;
   };
   for (const point of segment) {
     const next = Math.floor(x(point.time ?? stamp(point.received_at)));
     if (key !== null && next !== key) flush();
+    if (!bucket.length) {
+      first = last = minimum = maximum = point;
+    } else {
+      last = point;
+      // Negating the comparisons keeps the prior reducer's last-tie choice,
+      // including JavaScript's behavior for non-comparable values.
+      if (!(minimum.value < point.value)) {
+        minimum = point;
+      }
+      if (!(maximum.value > point.value)) {
+        maximum = point;
+      }
+    }
     key = next;
     bucket.push(point);
   }
@@ -197,49 +248,59 @@ const roundHistoryCoordinate = (value) => Number(value.toFixed(2));
 // two-decimal rounding intentionally match monotoneHistoryPath exactly.
 const monotoneHistoryCommands = (points, x, y, target) => {
   const commands = [];
-  // Tests may collect commands; production writes the identical numeric
-  // controls straight into Path2D without a second array/replay allocation.
-  const path = target || {
-    moveTo: (px, py) => commands.push(["M", px, py]),
-    bezierCurveTo: (...values) => commands.push(["C", ...values]),
-  };
   if (!points.length) return [];
-  const xy = points.map((point) => [
-    x(point.time ?? stamp(point.received_at)),
-    y(point.value),
-  ]);
   const at = (value) => roundHistoryCoordinate(value);
-  path.moveTo(at(xy[0][0]), at(xy[0][1]));
-  if (xy.length === 1) return commands;
-  const slopes = xy
-    .slice(1)
-    .map(
-      ([nextX, nextY], index) => (nextY - xy[index][1]) / (nextX - xy[index][0] || 1),
-    );
-  const tangents = xy.map((_, index) => {
-    if (index === 0) return slopes[0];
-    if (index === xy.length - 1) return slopes.at(-1);
-    const previous = slopes[index - 1],
-      next = slopes[index];
-    if (previous * next <= 0) return 0;
-    const before = xy[index][0] - xy[index - 1][0],
-      after = xy[index + 1][0] - xy[index][0],
-      w1 = 2 * after + before,
-      w2 = after + 2 * before;
-    return (w1 + w2) / (w1 / previous + w2 / next);
-  });
-  for (let index = 0; index < xy.length - 1; index++) {
-    const [x0, y0] = xy[index],
-      [x1, y1] = xy[index + 1],
-      dx = (x1 - x0) / 3;
-    path.bezierCurveTo(
-      at(x0 + dx),
-      at(y0 + tangents[index] * dx),
-      at(x1 - dx),
-      at(y1 - tangents[index + 1] * dx),
-      at(x1),
-      at(y1),
-    );
+  const firstPoint = points[0];
+  let x0 = x(firstPoint.time ?? stamp(firstPoint.received_at)),
+    y0 = y(firstPoint.value);
+  if (target) target.moveTo(at(x0), at(y0));
+  else commands.push(["M", at(x0), at(y0)]);
+  if (points.length === 1) return commands;
+
+  let next = points[1],
+    x1 = x(next.time ?? stamp(next.received_at)),
+    y1 = y(next.value),
+    previousSlope = (y1 - y0) / (x1 - x0 || 1),
+    currentTangent = previousSlope;
+  for (let index = 0; index < points.length - 1; index++) {
+    let nextTangent = previousSlope,
+      after,
+      x2,
+      y2,
+      nextSlope;
+    if (index + 2 < points.length) {
+      after = points[index + 2];
+      x2 = x(after.time ?? stamp(after.received_at));
+      y2 = y(after.value);
+      nextSlope = (y2 - y1) / (x2 - x1 || 1);
+      if (previousSlope * nextSlope <= 0) nextTangent = 0;
+      else {
+        const before = x1 - x0,
+          afterDistance = x2 - x1,
+          w1 = 2 * afterDistance + before,
+          w2 = afterDistance + 2 * before;
+        nextTangent = (w1 + w2) / (w1 / previousSlope + w2 / nextSlope);
+      }
+    }
+    const dx = (x1 - x0) / 3,
+      controlX0 = at(x0 + dx),
+      controlY0 = at(y0 + currentTangent * dx),
+      controlX1 = at(x1 - dx),
+      controlY1 = at(y1 - nextTangent * dx),
+      endX = at(x1),
+      endY = at(y1);
+    if (target)
+      target.bezierCurveTo(controlX0, controlY0, controlX1, controlY1, endX, endY);
+    else commands.push(["C", controlX0, controlY0, controlX1, controlY1, endX, endY]);
+    if (index + 2 < points.length) {
+      x0 = x1;
+      y0 = y1;
+      next = after;
+      x1 = x2;
+      y1 = y2;
+      previousSlope = nextSlope;
+    }
+    currentTangent = nextTangent;
   }
   return commands;
 };
@@ -574,20 +635,47 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     media: null,
     mediaListener: null,
     resizeObserver: null,
+    rowTextCache: new WeakMap(),
   };
 
   const number = (value, digits) =>
     typeof num === "function"
       ? num(value, digits)
       : Number(value).toLocaleString("de-DE", { maximumFractionDigits: digits });
-  const dateLabel = (value) =>
-    typeof when === "function" ? when(value) : new Date(value).toLocaleString("de-DE");
-  const sourceDateLabel = (value) =>
+  const dateLabel = (value, timeZone) =>
+    typeof when === "function"
+      ? when(value, timeZone)
+      : new Date(value).toLocaleString("de-DE");
+  const sourceDateLabel = (value, timeZone) =>
     typeof tooltipWhen === "function"
-      ? tooltipWhen(value)
+      ? tooltipWhen(value, timeZone)
       : value == null
         ? null
         : String(value);
+  const sourceValue = (value) => `${typeof value}:${String(value)}`;
+  const rowText = (nearest, quantity, timeZone) => {
+    const source = nearest.source;
+    const cacheable = source && typeof source === "object";
+    const rawPresent = source?.raw_value != null;
+    const key = [
+      timeZone,
+      quantity,
+      sourceValue(nearest.value),
+      sourceValue(source?.raw_value),
+      sourceValue(source?.received_at),
+      sourceValue(source?.measured_at),
+    ].join("|");
+    const cached = cacheable ? state.rowTextCache.get(source) : null;
+    if (cached?.key === key) return cached.value;
+    const valueText = rawPresent ? String(source.raw_value) : number(nearest.value, 6);
+    const valueLabel = rawPresent ? "Originalwert" : "Wert";
+    const receivedAt = sourceDateLabel(source?.received_at, timeZone);
+    const measuredAt = sourceDateLabel(source?.measured_at, timeZone);
+    const unit = quantity === "temperature" ? "°C" : "%";
+    const value = `${valueLabel} ${valueText} ${unit}${rawPresent ? "" : " · kein Originalwert gespeichert"} · Empfangen ${receivedAt || "–"}${measuredAt ? ` · Gemessen ${measuredAt}` : ""}`;
+    if (cacheable) state.rowTextCache.set(source, { key, value });
+    return value;
+  };
   const pixelRatio = () => Math.max(1, Number(view.devicePixelRatio) || 1);
   const rectFor = (node) => {
     const rect = node?.getBoundingClientRect?.();
@@ -745,6 +833,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
       {};
     const ttl = Number(parameters.sensor_timeout_seconds) * 1000;
     const nodes = tooltipNodes();
+    const timeZone = localTimeZone();
     const visible = new Set();
     for (const position of panel.positions || ["upper"])
       for (const quantity of ["temperature", "humidity"]) {
@@ -754,28 +843,17 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         const key = `${position}:${quantity}`;
         const row = nodes.series.get(key);
         if (!row) continue;
-        const rawPresent = nearest.source?.raw_value != null;
-        const valueText = rawPresent
-          ? String(nearest.source.raw_value)
-          : number(nearest.value, 6);
-        const valueLabel = rawPresent ? "Originalwert" : "Wert";
-        const receivedAt = sourceDateLabel(nearest.source?.received_at);
-        const measuredAt = sourceDateLabel(nearest.source?.measured_at);
-        const unit = quantity === "temperature" ? "°C" : "%";
         setText(
           row.label,
           `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}`,
         );
-        setText(
-          row.value,
-          `${valueLabel} ${valueText} ${unit}${rawPresent ? "" : " · kein Originalwert gespeichert"} · Empfangen ${receivedAt || "–"}${measuredAt ? ` · Gemessen ${measuredAt}` : ""}`,
-        );
+        setText(row.value, rowText(nearest, quantity, timeZone));
         if (row.row.hidden) row.row.hidden = false;
         visible.add(key);
       }
     for (const [key, row] of nodes.series)
       if (!visible.has(key) && !row.row.hidden) row.row.hidden = true;
-    setText(nodes.heading, dateLabel(time));
+    setText(nodes.heading, dateLabel(time, timeZone));
     if (!state.tooltipVisible) tooltip.hidden = false;
     state.tooltipVisible = true;
     const x = Math.max(
@@ -4160,17 +4238,34 @@ class SaunaPanel extends HTMLElement {
         previous = node.last;
         continue;
       }
-      const points = [node.first, node.minimum, node.maximum, node.last]
-        .filter(Boolean)
-        .sort((a, b) => a.time - b.time);
+      // A changing viewport still uses the same interior aggregation bins.
+      // Retain their selected points instead of sorting and copying every bin
+      // on each wheel event or live tick. Appends change lastIndex; a late
+      // insertion discards this series' display tree in historyIndex().
+      let points = node.displayPoints;
+      if (
+        !points ||
+        node.displayLastIndex !== node.lastIndex ||
+        node.displayGap !== displayGap
+      ) {
+        const selected = [node.first, node.minimum, node.maximum, node.last]
+          .filter(Boolean)
+          .sort((a, b) => a.time - b.time);
+        points = [];
+        for (const point of selected)
+          if (points.at(-1)?.source !== point.source)
+            points.push({
+              time: point.time,
+              value: point.value,
+              source: point.source,
+              displayGap: point === selected[0] && displayGap,
+            });
+        node.displayPoints = points;
+        node.displayLastIndex = node.lastIndex;
+        node.displayGap = displayGap;
+      }
       for (const point of points)
-        if (output.at(-1)?.source !== point.source)
-          output.push({
-            time: point.time,
-            value: point.value,
-            source: point.source,
-            displayGap: point === points[0] && displayGap,
-          });
+        if (output.at(-1)?.source !== point.source) output.push(point);
       previous = node.last;
     }
     return output;
@@ -4602,12 +4697,13 @@ class SaunaPanel extends HTMLElement {
   }
   historyAxes(model) {
     const { start, end, left, right, top, bottom, low, high, humidityHigh, x } = model;
+    const timeZone = localTimeZone();
     let svg = "";
     for (let n = 0; n <= 8; n++) {
       const f = n / 8,
         yy = bottom - (bottom - top) * f,
         t = start + (end - start) * f;
-      svg += `<text class="axis-temperature" x="${left - 10}" text-anchor="end" y="${yy + 4}">${(low + (high - low) * f).toFixed(0)}</text><text class="axis-humidity" x="${right + 10}" y="${yy + 4}">${(humidityHigh * f).toFixed(0)}</text><text text-anchor="middle" x="${x(t)}" y="${bottom + 27}">${clock(t)}</text>`;
+      svg += `<text class="axis-temperature" x="${left - 10}" text-anchor="end" y="${yy + 4}">${(low + (high - low) * f).toFixed(0)}</text><text class="axis-humidity" x="${right + 10}" y="${yy + 4}">${(humidityHigh * f).toFixed(0)}</text><text text-anchor="middle" x="${x(t)}" y="${bottom + 27}">${clock(t, timeZone)}</text>`;
     }
     return (
       svg +

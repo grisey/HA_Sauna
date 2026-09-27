@@ -60,8 +60,17 @@ class Node extends EventTarget {
 }
 
 const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
+// Freeze the previous timestamp functions only; the product interaction and
+// its existing explicit text assertions remain the behavior under test.
+const frozenTimestampSource =
+  'const when = (v) =>\n  v\n    ? new Date(v).toLocaleString("de-DE", {\n        day: "2-digit",\n        month: "2-digit",\n        hour: "2-digit",\n        minute: "2-digit",\n        second: "2-digit",\n      })\n    : "\u2013";\nconst tooltipWhen = (v) => {\n  if (\n    (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||\n    (typeof v === "string" && !v.trim())\n  )\n    return null;\n  const date = new Date(v);\n  if (!Number.isFinite(date.getTime())) return null;\n  const fraction =\n    typeof v === "string" ? v.match(/\\.(\\d+)(?:Z|[+-]\\d\\d:\\d\\d)?$/i)?.[1] : null;\n  return new Intl.DateTimeFormat("de-DE", {\n    day: "2-digit",\n    month: "2-digit",\n    hour: "2-digit",\n    minute: "2-digit",\n    second: "2-digit",\n    timeZoneName: "shortOffset",\n  })\n    .formatToParts(date)\n    .map((part) =>\n      part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,\n    )\n    .join("");\n};\nconst clock = (v) =>\n  new Date(v).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });\nconst localTimeZone = () => undefined;\n';
+const frozenPanelSource =
+  panelSource.slice(0, panelSource.indexOf("const timestampFormatterLimit")) +
+  frozenTimestampSource +
+  panelSource.slice(panelSource.indexOf("const num ="));
+
 let Panel;
-const loadHelper = (window) => {
+const loadHelper = (window, source = panelSource, intl = Intl) => {
   const context = {
     ...window,
     Date,
@@ -70,14 +79,15 @@ const loadHelper = (window) => {
     String,
     Map,
     Set,
-    Intl,
+    Intl: intl,
     HTMLElement: class {},
     customElements: { get: () => null, define: (_, value) => (Panel = value) },
   };
   vm.runInNewContext(
-    `${panelSource}\nglobalThis.HistoryInteraction = HistoryInteraction;`,
+    `${source}\nglobalThis.HistoryInteraction = HistoryInteraction; globalThis.timestampFunctions = { when, tooltipWhen, clock };`,
     context,
   );
+  context.HistoryInteraction.timestampFunctions = context.timestampFunctions;
   return context.HistoryInteraction;
 };
 
@@ -102,7 +112,12 @@ const inTimeZone = (timeZone, run) => {
   }
 };
 
-const tooltipFor = (source, kind = "measurement") => {
+const tooltipFor = (
+  source,
+  kind = "measurement",
+  panelCode = panelSource,
+  intl = Intl,
+) => {
   const received =
     typeof source.received_at === "number"
       ? source.received_at
@@ -119,7 +134,7 @@ const tooltipFor = (source, kind = "measurement") => {
   const tooltip = new Node(document, "tooltip");
   const cursor = new Node(document, "line");
   const overview = new Node(document, "overview", { width: 1200, height: 46 });
-  const interactionFactory = loadHelper(window);
+  const interactionFactory = loadHelper(window, panelCode, intl);
   const panel = Object.assign(Object.create(Panel.prototype), {
     positions: new Set(["upper"]),
     window: [received - 30000, received + 30000],
@@ -140,6 +155,21 @@ const tooltipFor = (source, kind = "measurement") => {
   );
   interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
   return { tooltip, interaction };
+};
+
+const trackingIntl = () => {
+  let constructions = 0;
+  return {
+    intl: Object.assign(Object.create(Intl), {
+      DateTimeFormat: function (...args) {
+        constructions++;
+        return new Intl.DateTimeFormat(...args);
+      },
+    }),
+    get constructions() {
+      return constructions;
+    },
+  };
 };
 
 test("persistent hover text preserves original value and both precise source times", () => {
@@ -228,4 +258,92 @@ test("persistent tooltip nodes are reused", () => {
   const nodes = [...tooltip.children];
   interaction.hover({ clientX: 600, clientY: 100 });
   assert.deepEqual(tooltip.children, nodes);
+});
+
+test("cached tooltip text matches frozen formatter behavior and refreshes its zone", () => {
+  const formatterInputs = {
+    when: [undefined, null, false, 0, "", "not-a-time", "2026-01-01T08:00:20Z"],
+    tooltipWhen: [
+      undefined,
+      null,
+      false,
+      0,
+      "",
+      " ",
+      "not-a-time",
+      "2026-01-01T08:00:20.987654+02:00",
+    ],
+    clock: [undefined, null, false, 0, "", "not-a-time", "2026-01-01T08:00:20Z"],
+  };
+  for (const timeZone of ["UTC", "Europe/Berlin", "America/New_York"])
+    inTimeZone(timeZone, () => {
+      const current = loadHelper(new EventTarget()).timestampFunctions;
+      const frozen = loadHelper(
+        new EventTarget(),
+        frozenPanelSource,
+      ).timestampFunctions;
+      for (const [name, values] of Object.entries(formatterInputs))
+        for (const value of values)
+          assert.equal(current[name](value), frozen[name](value), `${name}: ${value}`);
+    });
+
+  const cases = [
+    measurement(),
+    measurement({ raw_value: 0, measured_at: null }),
+    measurement({
+      raw_value: undefined,
+      value: 12.3456789,
+      received_at: "2026-07-01T08:00:20.987654+02:00",
+      measured_at: false,
+    }),
+  ];
+  for (const timeZone of ["UTC", "Europe/Berlin", "America/New_York"])
+    for (const source of cases) {
+      const expected = inTimeZone(
+        timeZone,
+        () => tooltipFor(source, "measurement", frozenPanelSource).tooltip.textContent,
+      );
+      const actual = inTimeZone(timeZone, () => tooltipFor(source).tooltip.textContent);
+      assert.equal(actual, expected);
+    }
+
+  const tracker = trackingIntl();
+  const { tooltip, interaction } = inTimeZone("UTC", () =>
+    tooltipFor(measurement(), "measurement", panelSource, tracker.intl),
+  );
+  const initialConstructions = tracker.constructions;
+  const utc = inTimeZone("UTC", () => {
+    interaction.hover({ clientX: 600, clientY: 100 });
+    return tooltip.textContent;
+  });
+  assert.equal(
+    tracker.constructions,
+    initialConstructions + 1,
+    "one zone lookup; timestamp formatters and source-point text are reused",
+  );
+  const expectedNewYork = inTimeZone(
+    "America/New_York",
+    () =>
+      tooltipFor(measurement(), "measurement", frozenPanelSource).tooltip.textContent,
+  );
+  const newYork = inTimeZone("America/New_York", () => {
+    interaction.hover({ clientX: 600, clientY: 100 });
+    return tooltip.textContent;
+  });
+  assert.equal(newYork, expectedNewYork);
+  assert.notEqual(newYork, utc, "a local-zone change invalidates cached tooltip text");
+  assert.ok(
+    tracker.constructions > initialConstructions,
+    "the new zone receives its own cached formatters",
+  );
+});
+
+test("zone changes with equal current offsets still refresh historical formatting", () => {
+  const current = loadHelper(new EventTarget()).timestampFunctions;
+  const frozen = loadHelper(new EventTarget(), frozenPanelSource).timestampFunctions;
+  const past = "1900-01-01T12:00:00.123456Z";
+  for (const zone of ["Europe/Berlin", "Europe/Paris", "Europe/Berlin"])
+    inTimeZone(zone, () =>
+      assert.equal(current.tooltipWhen(past), frozen.tooltipWhen(past)),
+    );
 });

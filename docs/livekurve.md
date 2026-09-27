@@ -45,6 +45,13 @@ gültig. Neue Punkte innerhalb des Bereichs verändern seine Anzahl; neue
 Randnachbarn verändern ihre Identität. Ein neues Extremum aktualisiert die
 zugehörige Temperatur- oder Feuchteskala und alle davon abhängigen Pfade.
 
+Unveränderte innere Aggregationsgruppen behalten ihre bereits ausgewählten
+Displaypunkte auch während Zoom, Pan und mitlaufender Zeitachse. Ein Nachtrag
+erneuert die betroffenen Gruppen; ein verspäteter Punkt verwirft die Hierarchie
+seiner Reihe. Fensterränder und Lücken werden weiterhin anhand der tatsächlichen
+Punkte ausgewertet. Dieser Cache verändert weder die Punktauswahl noch die
+Kurvenmathematik und speichert je Gruppe nur die aktuelle Auswahl.
+
 Annotationen und Raster liegen unter den Kurven; Achsen und Cursor liegen
 darüber. Tür, Lüftung, Gangbestätigung, Aufguss und tatsächliche Heizzeit behalten
 ihre bisherige Bedeutung und Reihenfolge. Autoritative Phasenprojektionen
@@ -78,6 +85,15 @@ bleibt unverändert; ohne Originalstring lautet die Kennzeichnung
 Sekundenbruchteile und lokale Zeitzonenangabe. Nach DOM-Schreibzugriffen liest der
 Eingabepfad keine neue Layoutgeometrie.
 
+Die Zeitformatierer werden in einem begrenzten Cache wiederverwendet. Tooltip
+und Zeitachse ermitteln die aktuelle lokale Zeitzone für ihre jeweilige Ausgabe;
+gleiche aktuelle UTC-Offsets ersetzen dabei nicht die tatsächliche Zeitzone.
+Bereits aufbereitete Tooltip-Texte gehören zum Originalpunkt und zur Zeitzone.
+Dadurch benötigt ein Zoom um denselben Messpunkt keine erneute Aufbereitung
+seiner unveränderten Quelltexte. Neue Originalwerte oder Zeitangaben invalidieren
+diesen Textcache. Die numerische Kurvenberechnung verwendet weniger
+Zwischenarrays; Reihenfolge, Rundung und Kontrollpunkte bleiben unverändert.
+
 Disconnect entfernt Listener, ResizeObserver, Resolution-Abfrage und geplante
 Framearbeit. Reconnect verwendet die vorhandene Panel-Hülle ohne doppelte
 Ereignisbehandlung und erstellt die Zeicheninstanz neu.
@@ -94,6 +110,7 @@ Browserpfade ausgeführt werden:
 ```sh
 node tests/browser/live_history/accept.cjs
 node tests/browser/live_history/profile.cjs
+node tests/browser/live_history/interaction.cjs
 ```
 
 `HISTORY_EVIDENCE` bestimmt das private Ausgabeverzeichnis. `ENGINE=chromium` und
@@ -108,3 +125,12 @@ die gebundenen Git-Referenzen und den lokalen Produktcode. Kaltstart,
 Transport-/Framewartezeit, synchrone Methodenarbeit und beobachtete
 Bildschirmframe-Abstände werden getrennt ausgewiesen. Eine solche Probe ersetzt
 keine Messung in einer produktiven Companion-App-Sitzung.
+
+Die Interaktionsprobe vergleicht `7de9317` mit dem Arbeitsstand: Mausbewegungen,
+Zoom und Verschieben der Übersicht während eingehender Nachträge. Sie erfasst
+getrennt die Zeit vom zugestellten DOM-Ereignis bis zum Ende des Rendercallbacks
+und dessen synchrone Rechenzeit. Gerätewarteschlange und tatsächliche
+Bildschirmausgabe sind damit nicht gemessen. Die Zoomereignisse werden als
+Browser-`WheelEvent` eingespeist, weil der WebKit-Testtreiber den gedrückten
+Ctrl-Modifikator beim automatisierten Mausrad nicht übergibt. Das ersetzt keine
+Bedienprüfung in der macOS-Companion-App.

@@ -33,10 +33,11 @@ const sandbox = {
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 vm.runInNewContext(
-  `${source}\nglobalThis.curveExports = { monotoneHistoryCommands, historySegments };`,
+  `${source}\nglobalThis.curveExports = { monotoneHistoryCommands, historySegments, reduceHistorySegment };`,
   sandbox,
 );
-const { monotoneHistoryCommands, historySegments } = sandbox.curveExports;
+const { monotoneHistoryCommands, historySegments, reduceHistorySegment } =
+  sandbox.curveExports;
 
 const stamp = (value) =>
   typeof value === "number" ? value : new Date(value).getTime();
@@ -118,3 +119,57 @@ for (const values of [
 }
 
 console.log("history curve numeric controls passed");
+
+const frozenReduction = (segment, x) => {
+  const output = [];
+  let bucket = [],
+    key = null;
+  const flush = () => {
+    if (!bucket.length) return;
+    const keep = new Set([
+      bucket[0],
+      bucket.at(-1),
+      bucket.reduce((a, b) => (a.value < b.value ? a : b)),
+      bucket.reduce((a, b) => (a.value > b.value ? a : b)),
+    ]);
+    output.push(...bucket.filter((point) => keep.has(point)));
+    bucket = [];
+  };
+  for (const point of segment) {
+    const next = Math.floor(x(point.time ?? stamp(point.received_at)));
+    if (key !== null && next !== key) flush();
+    key = next;
+    bucket.push(point);
+  }
+  flush();
+  return output;
+};
+
+// Exercise changing pixel buckets and equal-value tie order; compare the
+// actual selected identities before comparing the original cubic controls.
+let seed = 0x7a1d9e3;
+const random = () => {
+  seed = (seed * 1664525 + 1013904223) >>> 0;
+  return seed / 0x100000000;
+};
+for (let sample = 0; sample < 240; sample++) {
+  let time = 0;
+  const points = Array.from({ length: sample % 41 }, (_, index) => {
+    if (index && random() > 0.27) time += Math.floor(random() * 4);
+    return { time, value: index % 11 === 0 ? 1000000 : Math.floor(random() * 9) - 4 };
+  });
+  const mapX = (v) => (v * ((sample % 9) - 4)) / 7 + (sample % 5) / 10;
+  const mapY = (v) => v * ((sample % 7) - 3.5) + 0.005;
+  const expected = frozenReduction(points, mapX);
+  const actual = reduceHistorySegment(points, mapX);
+  assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+  assert.ok(actual.every((p, i) => p === expected[i]));
+  compare(actual, mapX, mapY);
+}
+const repeatedMax = { time: 0, value: 8 },
+  repeatedMin = { time: 0, value: -8 };
+const repeated = [repeatedMax, repeatedMin, repeatedMax, repeatedMin];
+assert.equal(
+  JSON.stringify(reduceHistorySegment(repeated, () => 0)),
+  JSON.stringify(frozenReduction(repeated, () => 0)),
+);
