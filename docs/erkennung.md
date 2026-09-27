@@ -64,6 +64,19 @@ Die konkreten Expertenwerte bleiben zentral validierte Einstellungen. Sie
 verändern den einen produktiven Detektor; die Erkennungskontrolle zeigt dessen
 archivierte Merkmale und berechnet im Browser keine zweite Regel.
 
+Die Haltezähler in dieser Ansicht zählen erfüllte Prüfpunkte, keine Sekunden.
+Ein Wechsel oder Ausfall der vollständigen Messpositionen sowie das Ende einer
+Türöffnungsepisode beendet deren zusammenhängenden Bestätigungsnachweis.
+Die gesonderte Lüftungsreferenz behält die oben beschriebene Pausenregel.
+
+Neue Erkennungsdatensätze enthalten neben dem fachlichen Ereignis und dessen
+Empfangszeit den Rasterzeitpunkt `trace_at`. Darüber verbindet das Panel ein
+Ereignis mit genau dem Diagnosepunkt, der es ausgelöst hat. Das gilt auch,
+wenn der fachliche Beginn vor dem Haltenachweis liegt oder Messungen verspätet
+nachgeholt werden. Ältere Archive ohne diese Referenz behalten die bisherige
+Zuordnung anhand des fachlichen Ereignisbeginns; eine exakte nachträgliche
+Rekonstruktion wird nicht behauptet.
+
 Der ältere [Offline-Kandidat](kandidat.md) bleibt als unveränderte
 Kalibrierreferenz erhalten. Er beschreibt einen historischen Erprobungsstand;
 die aktuellen Regeln sind auf dieser Seite zusammengefasst.

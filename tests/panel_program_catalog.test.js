@@ -86,7 +86,11 @@ assert.match(
 
 // Catalog saves send the stable IDs and all exact backend fields in one body.
 {
-  const calls = [];
+  const calls = [],
+    acknowledged = [
+      { ...programs[1], name: "Server bestätigt" },
+      programs[0],
+    ];
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
     state: {
@@ -96,7 +100,10 @@ assert.match(
     },
     programDraft: [...programs].reverse(),
     $: () => null,
-    api: async (...args) => calls.push(args),
+    api: async (...args) => {
+      calls.push(args);
+      return { programs: acknowledged };
+    },
     refresh: async () => {},
     settingsEntry: "entry-1",
   });
@@ -105,10 +112,18 @@ assert.match(
       assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
         ["/entry-1/programs", "POST", { programs: [...programs].reverse() }],
       ]);
+      assert.equal(p.programDraft, null, "confirmed catalog has no unsaved draft");
       assert.deepEqual(
-        JSON.parse(JSON.stringify(p.programDraft)),
-        [...programs].reverse(),
+        JSON.parse(JSON.stringify(p.state.configuration.temperature_programs)),
+        acknowledged,
+        "the acknowledged canonical catalog is shown immediately",
       );
+      p.state.configuration.temperature_programs = [
+        { ...acknowledged[0], name: "Extern geändert" },
+        acknowledged[1],
+      ];
+      assert.equal(p.currentProgramDraft()[0].name, "Extern geändert");
+      assert.equal(p.programCatalogDirty(), false);
       console.log("panel program catalog regressions passed");
     })
     .catch((error) => {

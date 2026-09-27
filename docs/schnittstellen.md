@@ -16,6 +16,19 @@ Verbindliche Datentypen liegen in `core/contracts.py`.
   Verfügbarkeit, Gangbeginn/-bestätigung/-rücknahme/-ende und Aufgüsse.
   `archive_correction` ist keine Liveauslösung. Keine Wiedergabe implementiert.
 
+## Temperaturänderungen und vollständige Einstellungen
+
+Das vollständige Parameterformular erhält das laufende Temperaturprogramm,
+wenn sein mitgesendeter Sollwert unverändert ist. Eine direkte Sollwertwahl
+über die partielle Temperaturschnittstelle bleibt eine ausdrückliche Wahl,
+auch wenn die gewählte Zahl der bisher gespeicherten entspricht. Änderungen
+technischer Grenzen werden vor jeder Übernahme gegen den vollständigen
+Konfigurationskandidaten geprüft, einschließlich der Innenstufen eines freien
+Programms. Ein ungültiger Kandidat verändert weder Livezustand noch Optionen.
+
+Diese Unterscheidung liegt im gemeinsamen Einstellungspfad. Das Panel lässt
+den Sollwert im Vollformular stehen und führt dafür keine zweite Regel ein.
+
 ## Historischer Arbeitsplan vom 26.09.2026
 
 Die folgende Aufteilung dokumentiert den damaligen Arbeitsplan, nicht die
