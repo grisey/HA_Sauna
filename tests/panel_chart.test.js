@@ -1,19 +1,78 @@
-// Runs without Home Assistant or a browser: the chart helpers are pure JS.
+// Runs without Home Assistant or a browser. The retained renderer receives a
+// prepared historyModel; FakeCanvas is functional coverage, not a timing claim.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+class FakePath2D {
+  constructor() {
+    this.commands = [];
+  }
+  moveTo(x, y) {
+    this.commands.push(["M", x, y]);
+  }
+  bezierCurveTo(...values) {
+    this.commands.push(["C", ...values]);
+  }
+}
+class FakeContext {
+  constructor() {
+    this.calls = [];
+  }
+  setTransform(...values) {
+    this.calls.push(["transform", ...values]);
+  }
+  clearRect(...values) {
+    this.calls.push(["clear", ...values]);
+  }
+  save() {}
+  restore() {}
+  beginPath() {}
+  rect() {}
+  clip() {}
+  roundRect() {}
+  fill() {}
+  setLineDash(values) {
+    this.calls.push(["dash", ...values]);
+  }
+  stroke(path) {
+    this.calls.push(["stroke", path]);
+  }
+}
+class FakeCanvas {
+  constructor() {
+    this.width = 0;
+    this.height = 0;
+    this.style = {};
+    this.context = new FakeContext();
+  }
+  getContext() {
+    return this.context;
+  }
+}
+
 let Panel;
 const sandbox = {
   HTMLElement: class {},
-  customElements: {get: () => undefined, define: (_name, value) => { Panel=value; }},
-  Date, Map, Set, Math, Number, String, Object, Array, Infinity,
+  customElements: { get: () => undefined, define: (_name, value) => (Panel = value) },
+  Path2D: FakePath2D,
+  Date,
+  Map,
+  Set,
+  Math,
+  Number,
+  String,
+  Object,
+  Array,
+  Infinity,
 };
-vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), sandbox);
 const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
+vm.runInNewContext(
+  `${panelSource}\nglobalThis.chartExports = { HistoryCurves, monotoneHistoryCommands };`,
+  sandbox,
+);
+const { HistoryCurves } = sandbox.chartExports;
 
-// Overview controls use the narrow live endpoints.  In particular a direct
-// target must never start a session or re-submit the complete configuration.
 assert.ok(panelSource.includes("`/${entry}/temperature`"));
 assert.ok(panelSource.includes("`/${entry}/program`"));
 assert.match(panelSource, /data-target-arc[\s\S]*role="slider"/);
@@ -21,110 +80,182 @@ assert.match(panelSource, /data-action="light:false"/);
 assert.match(panelSource, /permissions\.temperature/);
 assert.doesNotMatch(panelSource, /changeTarget\(Number\(action\.slice\(7\)\),true\)/);
 
-const iso = second => new Date(1_700_000_000_000+second*1000).toISOString();
-const record = (second, value, quantity="temperature") => ({kind:"measurement",payload:{position:"upper",quantity,value,received_at:iso(second)}});
-const session = {
-  ended_at: iso(30),
-  configuration:{parameters:{sensor_timeout_seconds:5}},
-  timeline:{session_started_at:iso(0),processed:[],completed:[]},
-  heating:{intervals:[]},
-};
-const panel = () => Object.assign(Object.create(Panel.prototype), {
-  positions:new Set(["upper"]), window:[1_700_000_000_000,1_700_000_030_000], state:{now:iso(30),configuration:{parameters:{sensor_timeout_seconds:5}}},
+const base = 1_700_000_000_000;
+const iso = (second) => new Date(base + second * 1000).toISOString();
+const record = (second, value, quantity = "temperature", position = "upper") => ({
+  kind: "measurement",
+  payload: { position, quantity, value, received_at: iso(second) },
 });
-
-// Three hours at one hertz collapse to pixels, but every raw neighbour is
-// still inside the five-second TTL and must remain one continuous path.
-{
-  const p=panel(), records=[];
-  for(let second=0;second<=10_800;second++)records.push(record(second,70+second/10_800));
-  p.window=[1_700_000_000_000,1_700_000_000_000+10_800_000];
-  const svg=p.chart(records,{...session,ended_at:iso(10_800),timeline:{...session.timeline,session_started_at:iso(0)}},[]);
-  const d=/data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
-  assert.equal((d.match(/M/g)||[]).length,1,"pixel decimation must not create TTL gaps");
-}
-
-// A real gap remains a new path even if both remaining samples share pixels.
-{
-  const p=panel(), svg=p.chart([record(0,70),record(1,71),record(20,72),record(21,73)],session,[]);
-  const d=/data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
-  assert.equal((d.match(/M/g)||[]).length,2,"raw TTL gap must not be bridged");
-}
-
-// The interaction index is numeric and sorted once, so the binary lookup
-// includes exact visible boundaries and picks the closest adjacent sample.
-{
-  const p=panel(), records=[record(20,72),record(0,70),record(10,71)];
+const session = (seconds = 30) => ({
+  ended_at: iso(seconds),
+  configuration: { parameters: { sensor_timeout_seconds: 5 } },
+  timeline: { session_started_at: iso(0), processed: [], completed: [] },
+  heating: { intervals: [] },
+});
+const panel = (seconds, records, positions = ["upper"]) =>
+  Object.assign(Object.create(Panel.prototype), {
+    positions: new Set(positions),
+    window: [base, base + seconds * 1000],
+    state: {
+      now: iso(seconds),
+      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+    },
+    shown: { records, session: session(seconds) },
+  });
+const modelFor = (p, records, seconds, domain = [base, base + seconds * 1000]) => {
   p.historyIndex(records);
-  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_000_000).value,70,"first visible sample is reachable");
-  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_020_000).value,72,"last visible sample is reachable");
-  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_016_000).value,72,"binary lookup chooses the closest sample");
-}
+  return p.historyModel(
+    { prepared: new Map(), preparedOverview: new Map(), domain },
+    session(seconds),
+  );
+};
+const draw = (model) => {
+  const main = new FakeCanvas(),
+    overview = new FakeCanvas();
+  const curves = new HistoryCurves(main, overview, { Path2DClass: FakePath2D });
+  curves.update(model, {
+    width: 1200,
+    height: 480,
+    dpr: 1,
+    overview: { width: 1200, height: 46, dpr: 1 },
+  });
+  return { curves, main, overview };
+};
 
-// New archive pages extend the existing numeric index.  Hover can therefore
-// continue to resolve values even while a visible tooltip suppresses no work.
+// Dense readings collapse by pixels but retain one continuous numeric path.
 {
-  const p=panel(), records=[record(0,70)];
-  p.historyIndex(records);const index=p.chartDataIndex;
-  records.push(record(2,71));p.invalidateHistoryIndex();p.historyIndex(records);
-  assert.equal(p.chartDataIndex,index,"append-only history keeps its lookup index");
-  assert.equal(p.series("upper","temperature").length,2,"new archive value joins the lookup index");
+  const records = [];
+  for (let second = 0; second <= 10_800; second++)
+    records.push(record(second, 70 + second / 10_800));
+  const p = panel(10_800, records);
+  const { curves } = draw(modelFor(p, records, 10_800));
+  assert.equal(
+    curves.mainPaths
+      .get("upper:temperature")
+      .path.commands.filter(([kind]) => kind === "M").length,
+    1,
+    "pixel decimation must not create TTL gaps",
+  );
 }
 
-// A long full-resolution session must not spread every sample into Math.min
-// or Math.max; JavaScript engines cap the number of function arguments.
+// A raw TTL interval and a raw null are independent Canvas subpaths.
 {
-  const p=panel(), records=[], values=[];
-  for(let index=0;index<200_000;index++)values.push({time:1_700_000_000_000+index/10,value:60+index%20,source:{received_at:iso(0)}});
-  p.shown={session,records};p.historyDatasetRevision=1;
-  p.chartDataIndex={records,indexedCount:0,series:new Map([["upper:temperature",values]]),byKind:new Map()};
-  assert.doesNotThrow(()=>p.minimapBackground(records,session),"large minimaps compute their bounds iteratively");
-  assert.doesNotThrow(()=>p.chart(records,session,[]),"large visible series avoid function argument limits");
+  const records = [record(0, 70), record(1, 71), record(20, 72), record(21, 73)];
+  const p = panel(30, records);
+  assert.equal(
+    draw(modelFor(p, records, 30))
+      .curves.mainPaths.get("upper:temperature")
+      .path.commands.filter(([kind]) => kind === "M").length,
+    2,
+  );
+  const missing = [record(0, 70), record(1, null), record(2, 71)];
+  const missingPanel = panel(30, missing);
+  assert.equal(
+    draw(modelFor(missingPanel, missing, 30))
+      .curves.mainPaths.get("upper:temperature")
+      .path.commands.filter(([kind]) => kind === "M").length,
+    2,
+  );
 }
 
-// The curve receives one neighbour across each viewport edge before it is
-// reduced, so a continuous raw series does not begin as an artificial dot.
+// Raw indexed lookup remains the source for hover and includes boundaries.
 {
-  const p=panel();p.window=[1_700_000_002_000,1_700_000_010_000];
-  const svg=p.chart([record(0,70),record(4,71)],session,[]);
-  const d=/data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
-  assert.match(d,/ C/,"the boundary neighbour keeps a continuous clipped line");
+  const records = [record(20, 72), record(0, 70), record(10, 71)];
+  const p = panel(30, records);
+  p.historyIndex(records);
+  assert.equal(p.nearestMeasurement("upper", "temperature", base).value, 70);
+  assert.equal(p.nearestMeasurement("upper", "temperature", base + 20_000).value, 72);
+  assert.equal(p.nearestMeasurement("upper", "temperature", base + 16_000).value, 72);
+  const stalePanel = panel(30, [record(0, 70)]);
+  stalePanel.historyIndex(stalePanel.shown.records);
+  const stale = stalePanel.nearestMeasurement("upper", "temperature", base + 15_000);
+  assert.ok(
+    Math.abs(stale.time - (base + 15_000)) > 5_000,
+    "tooltip callers can reject a raw value outside its TTL",
+  );
 }
 
-// An explicit missing measurement must remain a gap, never become zero.
+// Archive pages extend one numeric index and do not replace its raw series.
 {
-  const p=panel(), svg=p.chart([record(0,70),record(1,null),record(2,71)],session,[]);
-  const d=/data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
-  assert.equal((d.match(/M/g)||[]).length,2,"explicit missing measurements break the curve");
-  assert.equal(p.nearestMeasurement("upper","temperature",1_700_000_001_000).value,null);
+  const records = [record(0, 70)],
+    p = panel(30, records);
+  p.historyIndex(records);
+  const index = p.chartDataIndex;
+  records.push(record(2, 71));
+  p.invalidateHistoryIndex();
+  p.historyIndex(records);
+  assert.equal(p.chartDataIndex, index);
+  assert.equal(p.series("upper", "temperature").length, 2);
 }
 
-// Humidity uses a useful percentage scale above 40 rather than clipping it.
+// A long ordinary series prepares and draws both the main path and minimap
+// without an argument-spread reduction or a full SVG string.
 {
-  const p=panel(), svg=p.chart([record(1,80),record(1,55,"humidity")],session,[]);
-  assert.match(svg,/>60<\/text>/,"humidity axis should extend beyond 40%");
+  const records = [];
+  for (let index = 0; index < 200_000; index++)
+    records.push(record(index / 10, 60 + (index % 20)));
+  const p = panel(20_000, records);
+  assert.doesNotThrow(() => {
+    const rendered = draw(modelFor(p, records, 20_000));
+    assert.ok(rendered.curves.overviewPath);
+  });
 }
 
-// Hover reads the raw visible source but does not pretend a stale source is
-// valid in the middle of a rendered gap.
+// The model computes useful humidity bounds without using SVG axis strings.
 {
-  const p=panel(), tooltip={style:{}}, cursor={setAttribute:()=>{}};
-  p.historyDetail=false; p.shown={session}; p.historyIndex([record(0,70)]);
-  p.$=id=>id==="#tooltip"?tooltip:cursor;
-  const svg={getBoundingClientRect:()=>({left:0,top:0,width:1200}),closest:()=>svg};
-  p.hoverChart({target:svg,clientX:600,clientY:100});
-  assert.doesNotMatch(tooltip.innerHTML,/70/,"stale raw sample must stay out of hover");
+  const records = [record(1, 80), record(1, 55, "humidity")],
+    p = panel(30, records);
+  assert.ok(modelFor(p, records, 30).humidityHigh >= 60);
 }
 
-// Updating an existing chart preserves its SVG node and immediately recomputes
-// a visible hover against the appended archive index.
+// Edge neighbours survive preparation and become a cubic Canvas segment.
 {
-  const p=panel(), current={setAttribute:()=>{},innerHTML:""};let hover;
-  p.chart=()=>'<svg class="session-chart" aria-label="history"><path/></svg>';
-  p.$=selector=>selector==="svg.session-chart"?current:null;
-  p.lastHistoryPointer={clientX:90,clientY:40};p.scheduleHover=event=>{hover=event;};
-  assert.equal(p.updateHistoryChart([],session,[]),true);
-  assert.equal(hover.svg,current,"tooltip is recomputed on the retained SVG node");
+  const records = [record(0, 70), record(4, 71)],
+    p = panel(10, records);
+  p.window = [base + 2_000, base + 10_000];
+  assert.ok(
+    draw(modelFor(p, records, 10))
+      .curves.mainPaths.get("upper:temperature")
+      .path.commands.some(([kind]) => kind === "C"),
+  );
 }
 
-console.log("panel chart regressions passed");
+// A retained renderer and paths survive a non-data update; a changed visible
+// source key repaints the same canvas instance exactly once.
+{
+  const records = [record(0, 70), record(1, 71)],
+    p = panel(30, records);
+  const chart = {
+    prepared: new Map(),
+    preparedOverview: new Map(),
+    domain: [base, base + 30_000],
+  };
+  p.historyIndex(records);
+  const first = p.historyModel(chart, session(30));
+  const main = new FakeCanvas(),
+    overview = new FakeCanvas();
+  const curves = new HistoryCurves(main, overview, { Path2DClass: FakePath2D });
+  const geometry = {
+    width: 1200,
+    height: 480,
+    dpr: 1,
+    overview: { width: 1200, height: 46, dpr: 1 },
+  };
+  assert.equal(curves.update(first, geometry).mainDrawn, true);
+  const retainedPath = curves.mainPaths.get("upper:temperature").path;
+  assert.equal(
+    curves.update(p.historyModel(chart, session(30)), geometry).mainDrawn,
+    false,
+  );
+  assert.equal(curves.mainPaths.get("upper:temperature").path, retainedPath);
+  records.push(record(2, 72));
+  p.invalidateHistoryIndex();
+  p.historyIndex(records);
+  assert.equal(
+    curves.update(p.historyModel(chart, session(30)), geometry).mainDrawn,
+    true,
+  );
+  assert.equal(main.width, 1200);
+}
+
+console.log("panel chart numeric regressions passed");

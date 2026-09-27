@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const vm = require("node:vm");
 const test = require("node:test");
+const vm = require("node:vm");
+
+const panelPath = process.env.PANEL_PATH || "custom_components/ha_sauna/panel.js";
 let Panel;
-vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
+vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   HTMLElement: class {},
   customElements: { get: () => null, define: (_, value) => (Panel = value) },
   setTimeout,
@@ -17,17 +19,20 @@ const deferred = () => {
   });
   return { promise, resolve, reject };
 };
-const state = (id = "live") => ({
+const state = (id = "live", ended = false) => ({
   now: "2032-01-01T12:00:00Z",
   operation_enabled: true,
-  session: { timeline: { session_id: id } },
+  session: {
+    timeline: { session_id: id },
+    ...(ended ? { ended_at: "2032-01-01T12:10:00Z" } : {}),
+  },
   phase_projection: { intervals: [] },
 });
 const record = (id) => ({ id, kind: "measurement", payload: { value: id } });
-const page = (ids, more = null, id = "live") => ({
+const page = (ids, more = null, id = "live", ended = false) => ({
   records: ids.map(record),
   next_after: more,
-  session: state(id).session,
+  session: state(id, ended).session,
   phase_projection: { intervals: [] },
 });
 function panel(api) {
@@ -72,12 +77,12 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
   let states = 0,
     lists = 0,
     pages = 0;
-  const { p, nodes } = panel(async (path) => {
-    if (path.endsWith("/state")) {
+  const { p, nodes } = panel(async (request) => {
+    if (request.endsWith("/state")) {
       states++;
       return state();
     }
-    if (path.endsWith("/archive")) {
+    if (request.endsWith("/archive")) {
       lists++;
       return [];
     }
@@ -95,13 +100,13 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
   await turn();
   assert.equal(p.shown.records.length, 2);
   assert.match(nodes["#history-loading"].textContent, /2 Mess-/);
-  assert.equal(p.cache.get("live").loaded, false);
+  assert.equal(p.cache.get("live").pageRunLoaded, false);
   await p.refresh();
   assert.equal(p.statusDraws, 3, "state keeps updating while a later page waits");
   second.resolve(page([3]));
   await loading;
   assert.deepEqual(
-    Array.from(p.shown.records, (r) => r.id),
+    Array.from(p.shown.records, (item) => item.id),
     [1, 2, 3],
   );
   assert.equal(nodes["#history-loading"].hidden, true);
@@ -110,22 +115,22 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
 test("failed later page retries committed cursor without duplicating overlap", async () => {
   const paths = [];
   let fail = true;
-  const { p } = panel(async (path) => {
-    if (path.endsWith("/archive")) return [];
-    paths.push(path);
-    if (path.endsWith("after=0")) return page([1, 2], 2);
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive")) return [];
+    paths.push(request);
+    if (request.endsWith("after=0")) return page([1, 2], 2);
     if (fail) throw Error("temporary page failure");
     return page([2, 3]);
   });
   await p.startHistoryLoad();
   assert.equal(p.cache.get("live").after, 2);
-  assert.equal(p.cache.get("live").loaded, false);
+  assert.equal(p.cache.get("live").pageRunLoaded, false);
   assert.match(p.errors.history.message, /temporary/);
   fail = false;
   await p.startHistoryLoad();
-  assert.equal(paths.filter((s) => s.endsWith("after=0")).length, 1);
+  assert.equal(paths.filter((request) => request.endsWith("after=0")).length, 1);
   assert.deepEqual(
-    Array.from(p.shown.records, (r) => r.id),
+    Array.from(p.shown.records, (item) => item.id),
     [1, 2, 3],
   );
   assert.equal(p.errors.history, null);
@@ -133,21 +138,30 @@ test("failed later page retries committed cursor without duplicating overlap", a
 
 test("selection change discards a stale page without overwriting the new view", async () => {
   const old = deferred();
-  const { p } = panel(async (path) => {
-    if (path.endsWith("/archive"))
-      return [{ session_id: "other", started_at: "2032-01-01" }];
-    return path.includes("session_id=other") ? page([11], null, "other") : old.promise;
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive"))
+      return [
+        {
+          session_id: "other",
+          started_at: "2032-01-01",
+          ended_at: "2032-01-01T12:10:00Z",
+        },
+      ];
+    return request.includes("session_id=other")
+      ? page([11], null, "other", true)
+      : old.promise;
   });
   const previous = p.startHistoryLoad();
   await turn();
   p.selected = "other";
+  p.historySelectionGeneration = 1;
   const next = p.startHistoryLoad();
   await next;
   old.resolve(page([1, 2]));
   await previous;
   assert.equal(p.historySessionId, "other");
   assert.deepEqual(
-    Array.from(p.shown.records, (r) => r.id),
+    Array.from(p.shown.records, (item) => item.id),
     [11],
   );
   assert.equal(p.cache.get("live").after, 0);
@@ -156,7 +170,9 @@ test("selection change discards a stale page without overwriting the new view", 
 test("instance generation and new live session both invalidate an old response", async () => {
   for (const change of [(p) => p.generation++, (p) => (p.state = state("new"))]) {
     const old = deferred();
-    const { p } = panel(async (path) => (path.endsWith("/archive") ? [] : old.promise));
+    const { p } = panel(async (request) =>
+      request.endsWith("/archive") ? [] : old.promise,
+    );
     const loading = p.startHistoryLoad();
     await turn();
     change(p);
@@ -167,31 +183,38 @@ test("instance generation and new live session both invalidate an old response",
   }
 });
 
-test("completed archive cache does not fetch pages again and nonadvancing cursor is rejected", async () => {
+test("closed archive cache does not fetch pages again and nonadvancing cursor is rejected", async () => {
   let pages = 0;
-  const { p } = panel(async (path) => {
-    if (path.endsWith("/archive")) return [];
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive")) return [];
     pages++;
-    return page([1]);
+    return page([1], null, "archive", true);
   });
   p.selected = "archive";
   await p.startHistoryLoad();
   await p.startHistoryLoad();
   assert.equal(pages, 1);
   p.selected = "live";
-  p.api = async (path) => (path.endsWith("/archive") ? [] : page([], 9));
+  p.historySelectionGeneration = 1;
+  p.api = async (request) => (request.endsWith("/archive") ? [] : page([], 9));
   await p.startHistoryLoad();
   assert.match(p.errors.history.message, /ohne Fortschritt/);
   assert.equal(p.historyLoad, null);
 });
 
-test("last-session fallback reuses its completed cache without polling record pages", async () => {
+test("last-session fallback reuses its final cache without polling record pages", async () => {
   let pages = 0;
-  const { p } = panel(async (path) => {
-    if (path.endsWith("/archive"))
-      return [{ session_id: "old", started_at: "2032-01-01" }];
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive"))
+      return [
+        {
+          session_id: "old",
+          started_at: "2032-01-01",
+          ended_at: "2032-01-01T12:10:00Z",
+        },
+      ];
     pages++;
-    return page([1], null, "old");
+    return page([1], null, "old", true);
   });
   p.state.session = null;
   await p.startHistoryLoad();

@@ -1,11 +1,50 @@
+// Display aggregation remains pure data work. Canvas checks below use a
+// functional FakeCanvas only to verify paths and gap commands, never speed.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+class FakePath2D {
+  constructor() {
+    this.commands = [];
+  }
+  moveTo(x, y) {
+    this.commands.push(["M", x, y]);
+  }
+  bezierCurveTo(...values) {
+    this.commands.push(["C", ...values]);
+  }
+}
+class FakeContext {
+  setTransform() {}
+  clearRect() {}
+  save() {}
+  restore() {}
+  beginPath() {}
+  rect() {}
+  clip() {}
+  roundRect() {}
+  fill() {}
+  setLineDash() {}
+  stroke() {}
+}
+class FakeCanvas {
+  constructor() {
+    this.width = 0;
+    this.height = 0;
+    this.style = {};
+    this.context = new FakeContext();
+  }
+  getContext() {
+    return this.context;
+  }
+}
+
 let Panel;
-vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
+const sandbox = {
   HTMLElement: class {},
   customElements: { get: () => undefined, define: (_name, value) => (Panel = value) },
+  Path2D: FakePath2D,
   Date,
   Map,
   Set,
@@ -15,7 +54,13 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   Object,
   Array,
   Infinity,
-});
+};
+const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
+vm.runInNewContext(
+  `${source}\nglobalThis.displayExports = { HistoryCurves };`,
+  sandbox,
+);
+const { HistoryCurves } = sandbox.displayExports;
 
 const base = 1_700_000_000_000;
 const iso = (second) => new Date(base + second * 1000).toISOString();
@@ -39,9 +84,18 @@ const panel = (seconds, records) =>
     },
     shown: { records, session: session(seconds) },
   });
+const modelFor = (p, records, seconds, chart) => {
+  p.historyIndex(records);
+  return p.historyModel(chart, session(seconds));
+};
+const geometry = {
+  width: 1200,
+  height: 480,
+  dpr: 1,
+  overview: { width: 1200, height: 46, dpr: 1 },
+};
 
-// A coarse display level keeps each extrema while returning work proportional
-// to pixels. It must not silently cap a real discontinuity.
+// A coarse level preserves both extrema while returning near-pixel work.
 {
   const records = [];
   for (let second = 0; second < 14_400; second++)
@@ -56,19 +110,14 @@ const panel = (seconds, records) =>
     5_000,
     1_070,
   );
-  assert.ok(
-    display.some((point) => point.value === 120),
-    "a short maximum remains visible",
-  );
-  assert.ok(display.length < 4_500, "dense values are prepared near plot resolution");
+  assert.ok(display.some((point) => point.value === 120));
+  assert.ok(display.length < 4_500);
 }
 
-// A normal chronological addition keeps the prepared hierarchy. The advancing
-// projection is deliberately absent from the outer panel key, so it redraws
-// SVG geometry without reparsing the toolbar and legends.
+// Normal append keeps the prepared hierarchy and updates its raw tail.
 {
-  const records = [record(0, 70), record(10, 80)];
-  const p = panel(30, records);
+  const records = [record(0, 70), record(10, 80)],
+    p = panel(30, records);
   p.historyIndex(records);
   p.historyDisplayValues("upper", "temperature", base, base + 30_000, 5_000, 100);
   const display = p.historyDisplay(p.series("upper", "temperature"));
@@ -79,8 +128,7 @@ const panel = (seconds, records) =>
   assert.equal(display.values.at(-1).value, 90);
 }
 
-// Nulls and stale intervals descend to raw points, even when they are shorter
-// than a pixel. The chart still splits the rendered path at both boundaries.
+// Nulls and stale intervals descend to raw points and stay separate Canvas paths.
 {
   const records = [
     record(0, 70),
@@ -90,17 +138,27 @@ const panel = (seconds, records) =>
     record(20, 73),
   ];
   const p = panel(30, records);
-  const svg = p.chart(records, session(30), []);
-  const path = /data-series="upper_temperature" d="([^"]*)"/.exec(svg)[1];
-  assert.equal((path.match(/M/g) || []).length, 3, "nulls and TTL gaps stay split");
+  const chart = {
+    prepared: new Map(),
+    preparedOverview: new Map(),
+    domain: [base, base + 30_000],
+  };
+  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+    Path2DClass: FakePath2D,
+  });
+  curves.update(modelFor(p, records, 30, chart), geometry);
+  assert.equal(
+    curves.mainPaths
+      .get("upper:temperature")
+      .path.commands.filter(([kind]) => kind === "M").length,
+    3,
+  );
 }
 
-// A timeout inside a single coarse bucket is still a real curve break. This
-// catches an easy regression where raw fallback accidentally marks every
-// member as continuously displayable.
+// A timeout inside one coarse bucket is still represented by a raw display gap.
 {
-  const records = [record(0, 20), record(1, 21), record(12, 22)];
-  const p = panel(32, records);
+  const records = [record(0, 20), record(1, 21), record(12, 22)],
+    p = panel(32, records);
   p.historyIndex(records);
   const display = p.historyDisplayValues(
     "upper",
@@ -114,12 +172,10 @@ const panel = (seconds, records) =>
   assert.equal(display[2].displayGap, true);
 }
 
-// Crossing a coarser power-of-two threshold combines cached buckets instead
-// of re-reading the previous raw measurements.
+// Crossing a power-of-two level merges cached bins instead of rereading raw values.
 {
   const records = [];
-  for (let second = 0; second < 3_000; second++)
-    records.push(record(second, 70, "upper", "temperature"));
+  for (let second = 0; second < 3_000; second++) records.push(record(second, 70));
   const p = panel(3_000, records);
   p.historyIndex(records);
   p.historyDisplayValues("upper", "temperature", base, base + 2_000_000, 5_000, 1_070);
@@ -130,11 +186,10 @@ const panel = (seconds, records) =>
     return original.apply(p, args);
   };
   p.historyDisplayValues("upper", "temperature", base, base + 2_200_000, 5_000, 1_070);
-  assert.equal(rawVisits, 0, "the next coarser level is merged from cached bins");
+  assert.equal(rawVisits, 0);
 }
 
-// A coarse boundary bucket may contain an old extreme outside the selected
-// window. Only the exact neighbouring raw point is retained at that edge.
+// A coarse boundary never imports an older extrema beyond the exact neighbour.
 {
   const records = [record(0, 120), record(5, 70), record(10, 71), record(15, 72)];
   const p = panel(20, records);
@@ -148,78 +203,45 @@ const panel = (seconds, records) =>
     1,
   );
   assert.ok(!display.some((point) => point.value === 120));
-  assert.ok(
-    display.some((point) => point.value === 70),
-    "the exact left neighbour remains",
-  );
+  assert.ok(display.some((point) => point.value === 70));
 }
 
-// A changing open projection redraws the SVG but leaves outer history markup
-// untouched, while a corrected projection continues to render its replacement
-// phase without an artificial gap.
+// A projection change has an annotation output but leaves the model's curve
+// keys and retained Canvas paths alone. The outer markup itself has no phase
+// markup, so it need not be rebuilt for this change.
 {
-  const started = iso(0),
-    middle = iso(10),
-    ended = iso(20);
-  const timeline = { session_id: "live", processed: [], completed: [] };
-  const activeSession = { ...session(20), timeline };
-  let plots = 0,
-    svgUpdates = 0,
-    hasSvg = false;
-  const p = Object.assign(Object.create(Panel.prototype), {
-    shown: {
-      session: activeSession,
-      records: [],
-      phase_projection: {
-        intervals: [{ started_at: started, ended_at: middle, phase: "saunagang" }],
-      },
+  const active = session(20);
+  const p = panel(20, []);
+  p.shown = {
+    records: [],
+    session: active,
+    phase_projection: {
+      intervals: [{ started_at: iso(0), ended_at: iso(10), phase: "saunagang" }],
     },
-    state: {
-      now: middle,
-      operation_enabled: true,
-      configuration: activeSession.configuration,
-    },
-    selected: "live",
-    positions: new Set(["upper"]),
-    historyDetail: false,
-    ensureHistoryWindow() {},
-    renderHistoryOverview() {},
-    updateHistoryTimelineRevision() {
-      this.historyTimelineRevision = 1;
-    },
-    historyTitle: () => "Laufende Sitzung",
-    chart: () => '<svg class="session-chart"></svg>',
-    historyRecords: () => [],
-    updateHistoryChart: () => {
-      svgUpdates++;
-    },
-    updateMarkup(selector) {
-      if (selector === "#plots") {
-        plots++;
-        hasSvg = true;
-      }
-    },
-    $: (selector) => (selector === "svg.session-chart" && hasSvg ? {} : null),
-    shadowRoot: { querySelectorAll: () => [] },
-    historyEventKey: "1:0",
-    historyGangKey: "1:",
-  });
-  p.drawHistory();
-  p.shown.phase_projection = {
-    intervals: [{ started_at: started, ended_at: ended, phase: "bereit" }],
   };
-  p.state.now = ended;
-  p.drawHistory();
-  assert.equal(plots, 1);
-  assert.equal(svgUpdates, 1);
-  const rendered = Object.assign(Object.create(Panel.prototype), panel(20, []), {
-    shown: { phase_projection: p.shown.phase_projection },
-  }).chart([], activeSession, []);
-  assert.match(rendered, /class="ready"/);
+  p.historyIndex([]);
+  const chart = {
+    prepared: new Map(),
+    preparedOverview: new Map(),
+    domain: [base, base + 20_000],
+  };
+  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+    Path2DClass: FakePath2D,
+  });
+  const markup = p.historyMarkup(active);
+  const before = p.historyModel(chart, active);
+  assert.equal(curves.update(before, geometry).mainDrawn, true);
+  p.shown.phase_projection = {
+    intervals: [{ started_at: iso(0), ended_at: iso(20), phase: "bereit" }],
+  };
+  const after = p.historyModel(chart, active);
+  assert.equal(curves.update(after, geometry).mainDrawn, false);
+  assert.equal(p.historyMarkup(active), markup);
+  assert.match(p.historyAnnotations(after, active, []), /class="ready"/);
 }
 
-// An exceptional late point invalidates only its series display cache. Exact
-// raw lookup remains ordered, including duplicate timestamps.
+// A late record invalidates only its own prepared source; raw lookup retains
+// order and duplicate timestamps.
 {
   const records = [record(0, 70), record(10, 80), record(10, 81), record(20, 90)];
   const p = panel(30, records);
@@ -234,17 +256,24 @@ const panel = (seconds, records) =>
   );
 }
 
-console.log("panel history display regressions passed");
-
-// Real discontinuities are never capped. A large missing-value stream may
-// therefore exceed the engine argument limit even after display aggregation.
+// Real discontinuities are never capped. Command collection uses loops, so a
+// missing-value stream cannot become a spread-argument overflow.
 {
-  const records = Array.from({ length: 150_000 }, (_, i) =>
-    record(i / 10, i % 2 ? null : 70),
+  const records = Array.from({ length: 150_000 }, (_, index) =>
+    record(index / 10, index % 2 ? null : 70),
   );
   const p = panel(15_000, records);
-  assert.doesNotThrow(
-    () => p.chart(records, session(15_000), []),
-    "arbitrarily many real gaps do not become a spread-argument overflow",
+  const chart = {
+    prepared: new Map(),
+    preparedOverview: new Map(),
+    domain: [base, base + 15_000_000],
+  };
+  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+    Path2DClass: FakePath2D,
+  });
+  assert.doesNotThrow(() =>
+    curves.update(modelFor(p, records, 15_000, chart), geometry),
   );
 }
+
+console.log("panel history display numeric regressions passed");

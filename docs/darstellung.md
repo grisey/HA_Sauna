@@ -99,6 +99,9 @@ Mausrad verändern den Ausschnitt. Normales Scrollen zoomt nicht. Eine kleine
 Ränder lassen sich verschieben. **Gesamt** stellt den vollständigen
 Verlauf wieder her.
 
+Der dauerhafte Daten-, Canvas- und Eingabevertrag ist in
+[Livekurve](livekurve.md) dokumentiert.
+
 ## Details
 
 Die Betriebsdetails sind nach **Ofen**, **Licht**, **Messung** und

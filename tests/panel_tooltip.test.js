@@ -5,50 +5,80 @@ const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 
-let Panel;
-const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
-vm.runInNewContext(source, {
-  HTMLElement: class {},
-  customElements: { get: () => undefined, define: (_name, value) => (Panel = value) },
-  Date,
-  Intl,
-  Map,
-  Set,
-  Math,
-  Number,
-  String,
-  Object,
-  Array,
-  Infinity,
-});
+class EventTarget {
+  constructor() {
+    this.listeners = new Map();
+  }
+  addEventListener(type, callback) {
+    this.listeners.set(type, [...(this.listeners.get(type) || []), callback]);
+  }
+  removeEventListener(type, callback) {
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) || []).filter((entry) => entry !== callback),
+    );
+  }
+}
 
-const tooltipFor = (source, kind = "measurement") => {
-  const received =
-    typeof source.received_at === "number"
-      ? source.received_at
-      : Date.parse(source.received_at);
-  const tooltip = { style: {} };
-  const cursor = { setAttribute: () => {} };
-  const session = { configuration: { parameters: { sensor_timeout_seconds: 120 } } };
-  const svg = {
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 480 }),
-    closest: () => ({
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 480 }),
-    }),
+class Node extends EventTarget {
+  constructor(document, name, rect = {}) {
+    super();
+    this.ownerDocument = document;
+    this.name = name;
+    this.children = [];
+    this.style = {};
+    this.hidden = true;
+    this.rect = { left: 0, top: 0, width: 1200, height: 480, ...rect };
+    this.attributes = new Map();
+    this.text = "";
+  }
+  append(...nodes) {
+    this.children.push(...nodes);
+    for (const node of nodes) node.parentNode = this;
+  }
+  replaceChildren(...nodes) {
+    this.children = [];
+    this.append(...nodes);
+  }
+  get textContent() {
+    return this.text || this.children.map((child) => child.textContent).join("");
+  }
+  set textContent(value) {
+    this.text = String(value);
+  }
+  getBoundingClientRect() {
+    return { ...this.rect };
+  }
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+  getRootNode() {
+    let node = this;
+    while (node.parentNode) node = node.parentNode;
+    return node;
+  }
+}
+
+const panelSource = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
+let Panel;
+const loadHelper = (window) => {
+  const context = {
+    ...window,
+    Date,
+    Number,
+    Math,
+    String,
+    Map,
+    Set,
+    Intl,
+    HTMLElement: class {},
+    customElements: { get: () => null, define: (_, value) => (Panel = value) },
   };
-  const panel = Object.assign(Object.create(Panel.prototype), {
-    positions: new Set(["upper"]),
-    window: [received - 30000, received + 30000],
-    state: { configuration: session.configuration },
-    shown: {
-      session,
-      records: [{ kind, payload: source }],
-    },
-    historyDetail: true,
-    $: (selector) => (selector === "#tooltip" ? tooltip : cursor),
-  });
-  panel.hoverChart({ svg, target: svg, clientX: 600, clientY: 100 });
-  return tooltip.innerHTML;
+  vm.runInNewContext(
+    `${panelSource}\nglobalThis.HistoryInteraction = HistoryInteraction;`,
+    context,
+  );
+  return context.HistoryInteraction;
 };
 
 const measurement = (overrides = {}) => ({
@@ -72,25 +102,63 @@ const inTimeZone = (timeZone, run) => {
   }
 };
 
-test("hoverChart preserves the original value and both precise time sources", () => {
-  const tooltip = inTimeZone("Europe/Berlin", () => tooltipFor(measurement()));
+const tooltipFor = (source, kind = "measurement") => {
+  const received =
+    typeof source.received_at === "number"
+      ? source.received_at
+      : Date.parse(source.received_at);
+  const window = new EventTarget();
+  window.devicePixelRatio = 1;
+  window.visualViewport = new EventTarget();
+  const document = {
+    defaultView: window,
+    createElement: (name) => new Node(document, name),
+  };
+  const surface = new Node(document, "svg");
+  const wrap = new Node(document, "div");
+  const tooltip = new Node(document, "tooltip");
+  const cursor = new Node(document, "line");
+  const overview = new Node(document, "overview", { width: 1200, height: 46 });
+  const interactionFactory = loadHelper(window);
+  const panel = Object.assign(Object.create(Panel.prototype), {
+    positions: new Set(["upper"]),
+    window: [received - 30000, received + 30000],
+    state: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+    shown: {
+      session: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+      records: [{ kind, payload: source }],
+    },
+    historyDetail: true,
+  });
+  const interaction = interactionFactory(
+    panel,
+    surface,
+    wrap,
+    tooltip,
+    cursor,
+    overview,
+  );
+  interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
+  return { tooltip, interaction };
+};
 
-  assert.match(tooltip, /Originalwert 79\.123456 °C/);
-  assert.match(tooltip, /Empfangen .*09:00:20\.987654 GMT\+1/);
-  assert.match(tooltip, /Gemessen .*09:00:10\.876543 GMT\+1/);
+test("persistent hover text preserves original value and both precise source times", () => {
+  const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(measurement()));
+  assert.match(tooltip.textContent, /Originalwert 79\.123456 °C/);
+  assert.match(tooltip.textContent, /Empfangen .*09:00:20\.987654 GMT\+1/);
+  assert.match(tooltip.textContent, /Gemessen .*09:00:10\.876543 GMT\+1/);
 });
 
-test("hoverChart only labels a valid supplied measurement time", () => {
+test("persistent hover only labels valid supplied measurement times", () => {
   for (const measured_at of [undefined, null, false, [], {}, "not-a-time"]) {
-    const tooltip = tooltipFor(measurement({ measured_at }));
-
-    assert.match(tooltip, /Empfangen/);
-    assert.doesNotMatch(tooltip, /Gemessen/);
+    const { tooltip } = tooltipFor(measurement({ measured_at }));
+    assert.match(tooltip.textContent, /Empfangen/);
+    assert.doesNotMatch(tooltip.textContent, /Gemessen/);
   }
 });
 
-test("hoverChart labels a missing raw value and escapes supplied raw strings", () => {
-  const zero = tooltipFor(measurement({ value: 0, raw_value: 0 }));
+test("raw zero, fallback text, and supplied markup stay textual", () => {
+  const zero = tooltipFor(measurement({ value: 0, raw_value: 0 })).tooltip;
   const missing = tooltipFor(
     measurement({
       raw_value: undefined,
@@ -99,42 +167,65 @@ test("hoverChart labels a missing raw value and escapes supplied raw strings", (
       measured_at: undefined,
     }),
     "source_snapshot",
+  ).tooltip;
+  const escaped = tooltipFor(measurement({ raw_value: '<raw&"value>' })).tooltip;
+  assert.match(zero.textContent, /Originalwert 0 °C/);
+  assert.match(
+    missing.textContent,
+    /Wert 12,345679 °C · kein Originalwert gespeichert/,
   );
-  const escaped = tooltipFor(measurement({ raw_value: '<raw&"value>' }));
-
-  assert.match(zero, /Originalwert 0 °C/);
-  assert.match(missing, /Wert 12,345679 °C · kein Originalwert gespeichert/);
-  assert.doesNotMatch(missing, /Originalwert 12,345679 °C/);
-  assert.doesNotMatch(missing, /Gemessen/);
-  assert.match(escaped, /Originalwert &lt;raw&amp;&quot;value&gt; °C/);
-  assert.doesNotMatch(escaped, /<raw&"value>/);
+  assert.doesNotMatch(missing.textContent, /Originalwert 12,345679 °C/);
+  assert.match(escaped.textContent, /Originalwert <raw&"value> °C/);
+  const names = (node) => [node.name, ...node.children.flatMap(names)];
+  assert.deepEqual(names(escaped), [
+    "tooltip",
+    "strong",
+    "div",
+    "div",
+    "span",
+    "br",
+    "span",
+    "div",
+    "span",
+    "br",
+    "span",
+    "div",
+    "span",
+    "br",
+    "span",
+    "div",
+    "span",
+    "br",
+    "span",
+  ]);
+  assert.equal(
+    "innerHTML" in escaped,
+    false,
+    "raw text cannot create injected markup nodes",
+  );
 });
 
-test("hoverChart distinguishes repeated local DST times through their offset", () => {
+test("persistent hover retains source offsets across DST and browser-local zones", () => {
   const [beforeFallback, afterFallback] = inTimeZone("Europe/Berlin", () => [
-    tooltipFor(measurement({ received_at: "2026-10-25T00:30:00.123456Z" })),
-    tooltipFor(measurement({ received_at: "2026-10-25T01:30:00.123456Z" })),
+    tooltipFor(measurement({ received_at: "2026-10-25T00:30:00.123456Z" })).tooltip
+      .textContent,
+    tooltipFor(measurement({ received_at: "2026-10-25T01:30:00.123456Z" })).tooltip
+      .textContent,
   ]);
-
   assert.match(beforeFallback, /02:30:00\.123456 GMT\+2/);
   assert.match(afterFallback, /02:30:00\.123456 GMT\+1/);
-  assert.notEqual(beforeFallback, afterFallback);
-});
-
-test("hoverChart keeps the browser-local zone without a Berlin production rule", () => {
-  const utc = inTimeZone("UTC", () => tooltipFor(measurement()));
-  const newYork = inTimeZone("America/New_York", () => tooltipFor(measurement()));
-
+  const utc = inTimeZone("UTC", () => tooltipFor(measurement()).tooltip.textContent);
+  const newYork = inTimeZone(
+    "America/New_York",
+    () => tooltipFor(measurement()).tooltip.textContent,
+  );
   assert.match(utc, /08:00:20\.987654 GMT/);
   assert.match(newYork, /03:00:20\.987654 GMT-5/);
 });
 
-test("hoverChart keeps fractions from local ISO times and accepts milliseconds", () => {
-  const [localIso, numeric] = inTimeZone("Europe/Berlin", () => [
-    tooltipFor(measurement({ received_at: "2026-01-01T08:00:20.987654" })),
-    tooltipFor(measurement({ received_at: Date.parse("2026-01-01T08:00:20Z") })),
-  ]);
-
-  assert.match(localIso, /08:00:20\.987654 GMT\+1/);
-  assert.match(numeric, /09:00:20 GMT\+1/);
+test("persistent tooltip nodes are reused", () => {
+  const { tooltip, interaction } = tooltipFor(measurement());
+  const nodes = [...tooltip.children];
+  interaction.hover({ clientX: 600, clientY: 100 });
+  assert.deepEqual(tooltip.children, nodes);
 });
