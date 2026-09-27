@@ -147,6 +147,68 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(self.entry.options), original_options)
         self.assertIsNone(self.entry.runtime_data.session)
 
+    async def test_full_settings_preserve_free_program_but_direct_target_replaces_it(self):
+        from datetime import timedelta
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/program", json={"temperature_steps": [80, 86, 90]}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for technical_change in (False, True):
+                values = dict(self.entry.options["parameters"])
+                if technical_change:
+                    values["nominal_power_kw"] = 5
+                async with client.post(url + "/parameters", json=values) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                await self.hass.async_block_till_done()
+                self.assertEqual(tuple(self.entry.options["temperature_steps"]), (80, 86, 90))
+                self.assertEqual(self.entry.runtime_data.configuration.program_mode, "progressive")
+            runtime = self.entry.runtime_data
+            await runtime.set_operation(True)
+            start = runtime._clock()
+            current = [start]
+            runtime._clock = lambda: current[0]
+            for index, kind in enumerate((Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 1):
+                at = start + timedelta(seconds=index)
+                current[0] = at
+                runtime.controller.process(Event(str(index), runtime.session.session_id, kind, at, at))
+            self.assertEqual(runtime.session.timeline.gang_count, 1)
+            self.assertEqual(runtime.controller.target_temperature, 86)
+            async with client.post(url + "/temperature", json={"target_temperature_c": 80}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.configuration.program_mode, "constant")
+            self.assertIsNone(runtime.configuration.temperature_steps)
+
+    async def test_archive_cursor_rejects_sqlite_overflow(self):
+        runtime = self.entry.runtime_data
+        await runtime.set_operation(True)
+        url = self.base + "/" + self.entry.entry_id + "/archive"
+        async with ClientSession(headers=self.headers) as client:
+            for after, status in ((2**63 - 1, 200), (2**63, 400), (-(10**100), 200)):
+                async with client.get(url, params={"session_id": runtime.session.session_id, "after": str(after)}) as response:
+                    self.assertEqual(response.status, status, await response.text())
+
+    async def test_minimum_validates_free_interior_stage_before_persisting(self):
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/programs", json={"programs": []}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for middle, expected in ((65, 400), (70, 200)):
+                async with client.post(url + "/program", json={"temperature_steps": [80, middle, 90]}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                before = dict(self.entry.options)
+                values = {**before["parameters"], "sauna_min_temperature_c": 70, "preset_start_c": 70}
+                async with client.post(url + "/parameters", json=values) as response:
+                    self.assertEqual(response.status, expected, await response.text())
+                await self.hass.async_block_till_done()
+                if expected == 400:
+                    self.assertEqual(dict(self.entry.options), before)
+                    self.assertFalse(self.entry.runtime_data.reconfiguring)
+                else:
+                    self.assertEqual(self.entry.runtime_data.configuration.parameters.values["sauna_min_temperature_c"], 70)
+                    self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (80, 70, 90))
+
     async def test_finish_session_requires_the_current_gap_token_and_control_permission(self):
         from datetime import UTC, datetime
 

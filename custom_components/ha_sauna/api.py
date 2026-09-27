@@ -726,6 +726,8 @@ class ArchiveView(HomeAssistantView):
         session_id = request.query.get("session_id")
         try:
             after = max(0, int(request.query.get("after", "0")))
+            if after > 2**63 - 1:
+                raise ValueError("Archivcursor außerhalb des gültigen Bereichs")
         except ValueError as error:
             raise web.HTTPBadRequest() from error
         result = await asyncio.to_thread(runtime.archive.read, session_id, after=after)

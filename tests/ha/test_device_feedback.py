@@ -5,11 +5,14 @@ import importlib.util
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
 from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.core.button import END_HOLD
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -53,6 +56,166 @@ class DeviceFeedbackTests(unittest.TestCase):
         adapter = HADevice(hass, runtime)
         runtime.device = adapter
         return runtime, adapter, light
+
+    def test_fifo_native_relay_off_preserves_earlier_thermal_detection(self):
+        from custom_components.ha_sauna.device import HADevice
+
+        async def exercise(path):
+            roles = {key: value for key, value in BINDINGS.values.items()
+                     if key not in ("heater_feedback", "lower_temperature", "lower_humidity")}
+            runtime = SaunaRuntime(
+                Configuration(Bindings(roles), Parameters({"target_temperature_c": 100})),
+                lambda: clock[0],
+            )
+            hass = SimpleNamespace(states=SimpleNamespace(get=lambda _entity: None))
+            adapter = HADevice(hass, runtime)
+            runtime.device = adapter
+            adapter.command, adapter.command_at = True, T0
+            adapter.ingest("heater", state("on"), T0)
+            adapter.report_received_feedback(T0)
+            adapter.apply = AsyncMock()
+            runtime.controller.begin_session("fifo", T0)
+            await runtime.start_archive(path, "fifo-entry")
+            await runtime.tick()
+
+            def edge(role, value):
+                return SimpleNamespace(event_type="state_changed", data={
+                    "entity_id": roles[role],
+                    "old_state": state("unknown"),
+                    "new_state": state(str(value), unit=("°C" if role.endswith("temperature")
+                                                  else "%" if role.endswith("humidity")
+                                                  else None)),
+                })
+
+            pending = []
+            await runtime._lock.acquire()
+            for second in range(1, 61):
+                clock[0] = T0 + timedelta(seconds=second)
+                for role, value in (
+                    ("upper_temperature", 50 - .03 * second),
+                    ("upper_humidity", 30),
+                ):
+                    pending.append(asyncio.create_task(runtime.device_input(edge(role, value))))
+                    await asyncio.sleep(0)
+                if second == 40:
+                    pending.append(asyncio.create_task(runtime.device_input(edge("heater", "off"))))
+                    await asyncio.sleep(0)
+            runtime._lock.release()
+            await asyncio.gather(*pending)
+            await runtime.tick()
+            await runtime.archive.flush()
+            stored = await asyncio.to_thread(runtime.archive.read, "fifo")
+            await runtime.archive.close()
+            return runtime, stored
+
+        clock = [T0]
+        with TemporaryDirectory() as directory:
+            runtime, stored = asyncio.run(exercise(Path(directory) / "sessions.sqlite"))
+        self.assertEqual(runtime.session.heating.intervals[0].ended_at,
+                         T0 + timedelta(seconds=40))
+        self.assertIn(Kind.DOOR_OPEN,
+                      [event.kind for event in runtime.session.timeline.processed])
+        detections = [record["payload"] for record in stored["records"]
+                      if record["kind"] == "detection"]
+        opening = next(payload for payload in detections
+                       if payload["event"]["kind"] == Kind.DOOR_OPEN.value)
+        traces = [record["payload"] for record in stored["records"]
+                  if record["kind"] == "detector_trace"]
+        self.assertTrue(any(trace["at"] == opening["trace_at"]
+                            and Kind.DOOR_OPEN.value in trace["signals"]
+                            for trace in traces))
+
+    def test_long_hold_off_decision_and_command_keep_old_archive_session(self):
+        async def exercise(path):
+            runtime, adapter, _ = self.device(target_temperature_c=100)
+            runtime._clock = lambda: clock[0]
+            adapter.hass.services = SimpleNamespace(async_call=AsyncMock())
+            adapter.command, adapter.command_at = True, T0
+            adapter.ingest("heater", state("on"), T0)
+            adapter.report_received_feedback(T0)
+            runtime.controller.begin_session("old", T0)
+            await runtime.start_archive(path, "archive-entry")
+            clock[0] = T0 + timedelta(seconds=3)
+            await runtime._apply_button_action(END_HOLD, clock[0])
+            await runtime._cycle()
+            self.assertIsNone(runtime.session)
+            self.assertEqual(runtime.controller.last_decision.session_id, "old")
+            clock[0] += timedelta(seconds=1)
+            runtime.controller.begin_session("new", clock[0])
+            runtime.persist()
+            await runtime.archive.flush()
+            stored = await asyncio.to_thread(runtime.archive.read, "old")
+            await runtime.archive.close()
+            return stored
+
+        clock = [T0]
+        with TemporaryDirectory() as directory:
+            stored = asyncio.run(exercise(Path(directory) / "sessions.sqlite"))
+        decisions = [record for record in stored["records"]
+                     if record["kind"] == "decision"]
+        commands = [record for record in stored["records"]
+                    if record["kind"] == "command"]
+        self.assertTrue(any(record["payload"]["reason"] == "operation_off"
+                            and record["session_id"] == "old" for record in decisions))
+        self.assertTrue(any(record["payload"]["heat"] is False
+                            and record["session_id"] == "old" for record in commands))
+
+    def test_held_button_retries_unconfirmed_off_and_keeps_fault_visible(self):
+        async def exercise():
+            runtime, adapter, light = self.device(feedback_timeout_seconds=0.2)
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            adapter.light_call = AsyncMock()
+            await adapter.show_button_hold_light(T0, "held")
+            clock[0] += timedelta(seconds=0.3)
+            await adapter.show_button_hold_light(clock[0], "held")
+            self.assertEqual(adapter.light_call.await_count, 2)
+            self.assertEqual(adapter.faults["operation_light"], "feedback_missing")
+            light[0] = state("off")
+            adapter.external_light_selection(SimpleNamespace(
+                event_type="state_changed", data={
+                    "entity_id": BINDINGS.values["light"],
+                    "old_state": state("on", 180), "new_state": light[0],
+                },
+            ), clock[0])
+            await adapter.show_button_hold_light(clock[0], "held")
+            self.assertNotIn("operation_light", adapter.faults)
+            light[0] = state("on", 180)
+            await adapter.show_button_hold_light(clock[0], "held")
+            self.assertEqual(adapter.light_call.await_count, 3)
+
+        asyncio.run(exercise())
+
+    def test_light_echo_window_starts_when_command_is_sent(self):
+        async def exercise():
+            runtime, adapter, _ = self.device(feedback_timeout_seconds=0.2)
+            clock = [T0 + timedelta(seconds=0.15)]
+            runtime._clock = lambda: clock[0]
+            adapter.light_call = AsyncMock()
+            await adapter._send_light_command(
+                T0, key=("heat", "turn_off", None), phase="aufheizen",
+                service="turn_off", brightness=None, session_id=None,
+            )
+            event = SimpleNamespace(event_type="state_changed", data={
+                "entity_id": BINDINGS.values["light"],
+                "old_state": state("on", 180), "new_state": state("off"),
+            })
+            self.assertIsNone(adapter.external_light_selection(
+                event, T0 + timedelta(seconds=0.21)
+            ))
+
+        asyncio.run(exercise())
+
+    def test_large_brightness_integer_is_a_controlled_input_error(self):
+        _, adapter, _ = self.device()
+        adapter.set_light_override(37, at=T0)
+        deadline = adapter.light_output.manual_ends_at
+        for invalid in (10**309, -(10**309)):
+            with self.subTest(invalid=invalid > 0), self.assertRaises(ValueError):
+                adapter.set_light_override(invalid, at=T0)
+        self.assertEqual(adapter.light_output.manual_brightness, 37)
+        self.assertEqual(adapter.light_output.manual_ends_at, deadline)
+
 
     def test_independent_heat_while_off_latches_after_confirmation(self):
         runtime, adapter, _ = self.device(fault_confirmation_seconds=2)

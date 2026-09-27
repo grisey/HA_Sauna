@@ -60,6 +60,18 @@ def stop_then_manually_restart(value: Controller) -> None:
 
 
 class ControlRegressionTests(unittest.TestCase):
+    def test_power_expiry_splits_heating_at_ttl_even_on_exact_tick(self):
+        for first_tick in (5, 6):
+            with self.subTest(first_tick=first_tick):
+                value = controller()
+                value.report_fallback_heating(False, at(2))
+                value.report_power(1500, at(5), at(2))
+                value.advance(at(first_tick))
+                value.advance(at(8))
+                self.assertEqual(value.session.heating.intervals[0].ended_at, at(5))
+                self.assertEqual(value.session.heating.elapsed_seconds, 4)
+                self.assertEqual(value.session.energy.measured_seconds, 3)
+
     def test_confirmed_manual_heat_survives_gang_start_during_old_cooldown(self):
         value = controller()
         stop_then_manually_restart(value)

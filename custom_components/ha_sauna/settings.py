@@ -183,7 +183,9 @@ async def _async_set_parameters_locked(
             "Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar. Andere Einstellungen gelten nach Ende der Sitzung."
         )
     explicit_target = (
-        "target_temperature_c" in values if explicit_target is None else explicit_target
+        "target_temperature_c" in (values if partial else changed)
+        if explicit_target is None
+        else explicit_target
     )
     selected_mode = (
         program_mode
@@ -211,6 +213,25 @@ async def _async_set_parameters_locked(
     # Passing ``None`` explicitly also lets a live end edit retain its current
     # target as the new anchor instead of continuing an old explicit list.
     selected_steps = None if clear_selected_program else ...
+    # Validate the resulting configuration, including free interior stages,
+    # before either the controller or persisted options can change. A full
+    # form carrying an unchanged target is not a new constant selection.
+    try:
+        candidate = replace(
+            runtime.configuration,
+            parameters=parameters,
+            program_mode=selected_mode or runtime.configuration.program_mode,
+            selected_program_id=(
+                None if clear_selected_program else runtime.configuration.selected_program_id
+            ),
+            temperature_steps=(
+                runtime.configuration.temperature_steps
+                if selected_steps is ...
+                else selected_steps
+            ),
+        )
+    except ValueError as error:
+        raise ParameterError("base", "invalid_parameters") from error
     if not changed - LIVE_TEMPERATURE_KEYS:
         await apply_temperature_parameters(
             runtime,
@@ -240,7 +261,7 @@ async def _async_set_parameters_locked(
             **({"program_mode": selected_mode} if selected_mode is not None else {}),
             **({"selected_program_id": None} if clear_selected_program else {}),
             **(
-                {"temperature_steps": runtime.configuration.temperature_steps}
+                {"temperature_steps": candidate.temperature_steps}
                 if selected_steps is not ...
                 else {}
             ),

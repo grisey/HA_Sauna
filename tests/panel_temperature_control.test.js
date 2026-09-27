@@ -149,6 +149,36 @@ assert.equal(
     "the confirmed direct target clears its temporary constant draft",
   );
 
+  let releaseFirst;
+  const sent = [];
+  panel.api = async (...args) => {
+    sent.push(args);
+    if (sent.length === 1)
+      await new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+    return { parameters: { target_temperature_c: args[2].target_temperature_c } };
+  };
+  panel.beginTemperatureDrag(
+    { pointerId: 10, clientX: 150, clientY: 25, preventDefault() {} },
+    svg,
+  );
+  const first = panel.endTemperatureDrag({ pointerId: 10 });
+  await Promise.resolve();
+  panel.beginTemperatureDrag(
+    { pointerId: 11, clientX: 224.25, clientY: 204.25, preventDefault() {} },
+    svg,
+  );
+  const secondInteraction = panel.temperatureInteraction;
+  releaseFirst();
+  await first;
+  assert.equal(panel.temperatureInteraction, secondInteraction);
+  await panel.endTemperatureDrag({ pointerId: 11 });
+  assert.deepEqual(
+    sent.map(([, , body]) => body.target_temperature_c),
+    [75, 100],
+  );
+
   console.log("panel temperature arc regressions passed");
 })().catch((error) => {
   console.error(error);

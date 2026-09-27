@@ -623,6 +623,65 @@ class DetectorTests(unittest.TestCase):
             for second in expected
         ])
 
+    def test_catchup_keeps_earlier_heat_when_last_feedback_is_off(self):
+        controller = Controller(detection_parameters())
+        controller.begin_session("heating", T0)
+        controller.report_heating(True, T0)
+        controller.report_heating(False, T0 + timedelta(seconds=40))
+        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+        for second in range(61):
+            detector.accept(measurement(
+                Position.UPPER, Quantity.TEMPERATURE, 50 - .03 * second, second
+            ))
+            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
+        events = detector.advance(
+            T0 + timedelta(seconds=60), enabled=True,
+            heating_intervals=controller.session.heating.intervals,
+            heating_gates=((T0, True), (T0 + timedelta(seconds=40), False)),
+        )
+        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        self.assertIsNone(detector.heating_since)
+
+    def test_logical_off_on_restarts_thermal_proof_during_physical_on(self):
+        controller = Controller(detection_parameters())
+        controller.begin_session("heating", T0)
+        controller.report_heating(True, T0)
+        observed = []
+        detector = Detector(
+            detection_parameters(), T0, (Position.UPPER,),
+            observer=lambda trace: observed.append(detector.heating_since),
+        )
+        detector.advance(
+            T0 + timedelta(seconds=30), enabled=True,
+            heating_intervals=controller.session.heating.intervals,
+            heating_gates=(
+                (T0, True),
+                (T0 + timedelta(seconds=28), False),
+                (T0 + timedelta(seconds=29), True),
+            ),
+        )
+        self.assertIsNone(observed[28])
+        self.assertEqual(observed[29], T0 + timedelta(seconds=29))
+
+    def test_door_hold_starts_again_after_required_position_is_missing(self):
+        detector = Detector(detection_parameters(
+            median_seconds=1, door_window_seconds=2,
+            door_heating_hold_seconds=4, door_heating_slope=-.1,
+        ), T0, (Position.UPPER,))
+        for second in range(6):
+            detector.report_heating(True, T0 + timedelta(seconds=second))
+            sample(detector, second, 60 - .3 * second, 30, (Position.UPPER,))
+        self.assertGreater(detector.diagnostic["holds"].get("door_heating", 0), 0)
+        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, None, 6))
+        detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, 6))
+        detector.advance(T0 + timedelta(seconds=6), enabled=True)
+        self.assertEqual(detector.diagnostic["holds"].get("door_heating", 0), 0)
+        events = []
+        for second in range(7, 11):
+            events += sample(detector, second, 60 - .3 * second, 30,
+                             (Position.UPPER,))
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+
     def test_additional_door_rule_uses_all_available_positions(self):
         cases = (
             ("only upper configured", (Position.UPPER,), (Position.UPPER,), (Position.UPPER,), True),

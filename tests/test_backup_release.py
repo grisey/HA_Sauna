@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from custom_components.ha_sauna import backup
 from custom_components.ha_sauna.archive import Archive
+from custom_components.ha_sauna.const import DOMAIN
 
 
 class Hook:
@@ -43,7 +44,7 @@ def hass_for(*archives):
         for archive in archives
     ]
     return SimpleNamespace(
-        data={},
+        data={DOMAIN: {"archives": dict.fromkeys(archives)}},
         config_entries=SimpleNamespace(async_entries=lambda domain: entries)
     )
 
@@ -54,6 +55,32 @@ def count_records(path):
 
 
 class BackupReleaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_archive_already_closing_finishes_before_backup_returns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Archive(Path(directory) / "closing.sqlite", "entry")
+            await archive.start()
+            hass = hass_for(archive)
+            entered, release = asyncio.Event(), asyncio.Event()
+            original = archive._drain_failed_records
+
+            async def wait_for_write():
+                entered.set()
+                await release.wait()
+                return await original()
+
+            with patch.object(archive, "_drain_failed_records", wait_for_write):
+                archive.append("diagnostic", datetime.now(UTC), {"last": True})
+                closing_task = asyncio.create_task(archive.close())
+                await entered.wait()
+                preparation = asyncio.create_task(backup.async_pre_backup(hass))
+                await asyncio.sleep(0)
+                self.assertFalse(preparation.done())
+                release.set()
+                await asyncio.wait_for(preparation, 1)
+                await closing_task
+                self.assertEqual(await asyncio.to_thread(count_records, archive.path), 1)
+                await backup.async_post_backup(hass)
+
     async def test_unload_preserves_pending_and_active_backup_pause(self):
         for pending in (True, False):
             with self.subTest(pending=pending), tempfile.TemporaryDirectory() as directory:

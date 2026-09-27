@@ -100,6 +100,38 @@ class LightOutputTests(unittest.TestCase):
         self.assertEqual(self.update(17, target=30).brightness_percent, 35)
         self.assertEqual(self.update(32, target=30).brightness_percent, 30)
 
+    def test_return_to_automatic_keeps_live_session_light(self):
+        self.update(0, "session", "session_light", 0, 20, 120,
+                    phase_brightness_percent=50)
+        self.update(30, "session", "session_light", 0, 50, 120)
+        self.light.set_manual(80, phase_key="session")
+        self.assertEqual(
+            self.update(31, "session", "session_light", 0, 80, 120).brightness_percent,
+            80,
+        )
+        self.light.return_to_automatic()
+        for second, expected in ((32, 50), (119, 50), (120, 0)):
+            with self.subTest(second=second):
+                self.assertEqual(
+                    self.update(
+                        second, "session", "session_light", 0, 50, 120
+                    ).brightness_percent,
+                    expected,
+                )
+
+    def test_expired_override_keeps_live_cooling_curve(self):
+        self.update(0, "cooling", "nachlauf", 40, 40, 120)
+        self.assertEqual(
+            self.update(60, "cooling", "nachlauf", 40, 15, 120).brightness_percent,
+            20,
+        )
+        self.light.set_manual(80, phase_key="cooling", ends_at=61)
+        self.update(60, "cooling", "nachlauf", 40, 80, 120)
+        self.assertTrue(self.light.expire_manual(61))
+        resumed = self.update(61, "cooling", "nachlauf", 40, 80, 120)
+        self.assertGreater(resumed.brightness_percent, 20)
+        self.assertLess(resumed.brightness_percent, 40)
+
     def test_normal_phase_change_fades_from_the_observed_manual_value(self):
         self.update(0, "heat", target=40)
         self.light.set_manual(50)

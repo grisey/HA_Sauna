@@ -17,6 +17,7 @@ class Detection:
     effective_at: object
     detected_at: object
     channels: tuple[str, ...]
+    trace_at: object | None = None
 
 
 def robust_slope(values, step=1):
@@ -434,14 +435,15 @@ class Detector:
 
     def advance(
         self, at, *, enabled, allowed=None, on_detection=None,
-        heating_intervals=None, heating_after=None,
+        heating_intervals=None, heating_after=None, heating_gates=None,
     ):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
         Ohne Kontext bleibt der reine Messvergleich zum Referenzkandidaten möglich.
         Im Betrieb liefert ausschließlich der Controller die Erkennungsfreigaben.
         Übergebene Heizintervalle gelten an ihrer jeweiligen Rasterzeit;
-        heating_after begrenzt sie auf die bereits bestätigte Bedienfreigabe.
+        Die zur Eingangszeit gebuchten Laufzeit-Gates begrenzen sie zusätzlich.
+        heating_after bleibt für reine Detektoraufrufe ohne Gate-Historie.
         """
         at = utc(at)
         final = int((at - self.origin).total_seconds())
@@ -458,7 +460,22 @@ class Detector:
                     and (interval.ended_at is None or now < interval.ended_at)
                 ), None)
                 since = interval.started_at if interval is not None else None
-                if since is not None and heating_after is not None:
+                if since is not None and heating_gates is not None:
+                    permitted, permitted_since = False, None
+                    for gate_at, gate in heating_gates:
+                        if gate_at > now:
+                            break
+                        if gate and not permitted:
+                            permitted_since = gate_at
+                        elif not gate:
+                            permitted_since = None
+                        permitted = gate
+                    if not permitted:
+                        since = None
+                    else:
+                        # OFF/ON can interrupt continuous physical heating.
+                        since = max(since, permitted_since)
+                elif since is not None and heating_after is not None:
                     since = max(since, heating_after)
                 if since is not None and since > now:
                     since = None
@@ -516,17 +533,7 @@ class Detector:
             # Kein Haltebeweis über eine Änderung der benutzten Quellen hinweg.
             if self.active_positions:
                 self._update_moisture_state(None, now)
-            preserved = (
-                {
-                    name: self.counts[name]
-                    for name in ("door", "door_heating")
-                    if name in self.counts
-                }
-                if self.door_episode is not None
-                else {}
-            )
             self.counts.clear()
-            self.counts.update(preserved)
             self.levels.clear()
         self.active_positions, self.faults = channels, tuple(faults)
         trace = {
@@ -555,6 +562,7 @@ class Detector:
                 effective_at or now,
                 decision_at,
                 tuple(c.value for c in (event_channels or channels)),
+                now,
             )
             output.append(detection)
             if on_detection:
@@ -697,6 +705,8 @@ class Detector:
             expiry = max(p["door_window_seconds"], p["door_humidity_seconds"])
             if (now - episode["started_at"]).total_seconds() > expiry:
                 self.door_episode = None
+                self.counts["door"] = 0
+                self.counts["door_heating"] = 0
                 self.baseline = {}
                 self.ventilation_positions = ()
                 self.ventilation_invalid = set()

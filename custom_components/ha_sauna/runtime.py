@@ -294,6 +294,7 @@ class SaunaRuntime:
         self.device = None
         self.detector = None
         self._detector_session = None
+        self._detector_heating_gates = []
         self._archive_signature = None
         self._saved_decisions = 0
         self.presence = PresenceProjection()
@@ -316,6 +317,7 @@ class SaunaRuntime:
         if session_id == self._detector_session:
             return
         self._detector_session = session_id
+        self._detector_heating_gates = []
         if session_id:
             now = self._clock()
             self._record_presence(PresenceReport(
@@ -369,25 +371,31 @@ class SaunaRuntime:
                     )
 
     def _report_detector_heating(self, at):
-        """Apply the current permission gate, including queued operation edges."""
+        """Book logical command permission; physical evidence stays in intervals."""
         if self.detector is None:
             return False
         heating = bool(
             self.device
             and self.device.command is True
             and not self.device.command_error
-            and self.device.feedback() is True
             and self.session
             and self.session.operation_enabled
         )
-        self.detector.report_heating(heating, at)
+        marks = self._detector_heating_gates
+        if marks:
+            at = max(at, marks[-1][0])
+        if not marks or marks[-1][1] != heating:
+            marks.append((at, heating))
         return heating
 
     async def _cycle(self, *, sample=False):
         await self._drain_device_inputs()
         now = self._clock()
+        # Book due work and power expiry in chronological order. Equal-time
+        # confirmation remains open until this delivery's signals finish.
+        self.controller.advance(now, inclusive_confirmation=False)
         self._sync_detector()
-        heating = self._report_detector_heating(now)
+        self._report_detector_heating(now)
         if sample and self.detector:
 
             def initialize_door():
@@ -415,7 +423,7 @@ class SaunaRuntime:
                     detection.effective_at,
                     now,
                 )
-                self._process_event(event)
+                self._process_event(event, defer_confirmation=True)
                 self.log.info(
                     "detection",
                     "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.",
@@ -426,7 +434,11 @@ class SaunaRuntime:
                     self.archive.append(
                         "detection",
                         now,
-                        {"event": event, "channels": detection.channels},
+                        {
+                            "event": event,
+                            "channels": detection.channels,
+                            "trace_at": detection.trace_at,
+                        },
                         self.session.session_id,
                     )
 
@@ -435,15 +447,17 @@ class SaunaRuntime:
                 enabled=self.session.operation_enabled,
                 allowed=self.controller.recognition_allowed,
                 on_detection=detected,
-                heating_intervals=self.session.heating.intervals if heating else (),
-                heating_after=(
-                    max(
-                        self.detector.heating_since,
-                        self.device.command_at or self.detector.heating_since,
-                    )
-                    if heating else None
-                ),
+                heating_intervals=self.session.heating.intervals,
+                heating_gates=self._detector_heating_gates,
             )
+            sampled_at = self.detector.origin + timedelta(seconds=self.detector.index)
+            past = [i for i, (gate_at, _) in enumerate(self._detector_heating_gates)
+                    if gate_at <= sampled_at]
+            if past:
+                self._detector_heating_gates = self._detector_heating_gates[past[-1]:]
+            # All detections from this delivery share one decision time. A
+            # confirmation exactly due now closes only after the full packet.
+            self.controller.advance(now)
             initialize_door()
             available = bool(self.detector.active_positions)
             current = self.presence.current
@@ -488,7 +502,9 @@ class SaunaRuntime:
                     if role in {"heater", "heater_power", "heater_feedback"}:
                         self.device.report_received_feedback(received_at)
             action_at = max(
-                received_at, self.controller._last_at or received_at
+                received_at, self.controller._last_at or received_at,
+                self._detector_heating_gates[-1][0]
+                if self._detector_heating_gates else received_at,
             )
             light_selection = self.device.external_light_selection(event, received_at)
             if light_selection is not None:
@@ -592,12 +608,15 @@ class SaunaRuntime:
             self._record_presence(report)
             self.notify()
 
-    def _process_event(self, event):
+    def _process_event(self, event, *, defer_confirmation=False):
         report = (ProxyPresenceSource.present(event)
                   if event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) else None)
         # The source adapter retains the event identity and both original times.
-        result = (self.controller.process_presence(report, event)
-                  if report is not None else self.controller.process(event))
+        result = (self.controller.process_presence(
+            report, event, defer_confirmation=defer_confirmation
+        ) if report is not None else self.controller.process(
+            event, defer_confirmation=defer_confirmation
+        ))
         if result.changed:
             self._report_detector_heating(event.detected_at)
         if report is not None and result.changed:
@@ -713,7 +732,7 @@ class SaunaRuntime:
                 "decision",
                 decision.at,
                 decision,
-                self.session.session_id if self.session else None,
+                decision.session_id,
             )
         self._saved_decisions = len(self.controller.decisions)
 

@@ -228,7 +228,10 @@ class Archive:
     async def pre_backup(self):
         # Alle bisherigen Aufträge sind dauerhaft geschrieben. Nur der Schreiber
         # pausiert; Regelung und Eingangserfassung dürfen weiterarbeiten.
-        if self.closed:
+        if self._close_task is not None:
+            # Closing rejects new records, but its queued writes may still be
+            # running. Finish them before the backup may copy this database.
+            await asyncio.shield(self._close_task)
             return
         if not self.resume.is_set():
             raise RuntimeError("Archiv wird bereits gesichert")

@@ -38,6 +38,16 @@ class OvenCoolingPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(result.duration_seconds, (5 + expected / 2) * 60)
         self.assertEqual(result.quality, "complete")
 
+    def test_equal_subnormal_half_life_and_ratio_keep_their_quotient(self):
+        smallest = float.fromhex("0x0.0000000000001p-1022")
+        result = calculate(
+            marks=(ContactorMark(at(0), True), ContactorMark(at(1), False)),
+            now=1,
+            oven_cooling_half_life_minutes=smallest,
+            oven_cooling_heat_idle_ratio=smallest,
+        )
+        self.assertAlmostEqual(result.duration_seconds, (5 + 1 / log(2)) * 60)
+
     def test_recent_heat_has_more_effect_than_equal_old_heat(self):
         old = calculate(
             marks=(ContactorMark(at(0), True), ContactorMark(at(5), False)), now=20

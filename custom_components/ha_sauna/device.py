@@ -58,6 +58,7 @@ class HADevice:
         self._light_session_off_completed_key = None
         self._light_session_off_superseded_key = None
         self._light_override_dirty = False
+        self._light_owned = True
         self.notified = set()
         self.heating_observation = {
             "source": "unknown",
@@ -246,7 +247,7 @@ class HADevice:
             state is None
             or received is None
             or ttl is None
-            or (now - received).total_seconds() > ttl
+            or (now - received).total_seconds() >= ttl
         ):
             return None
         if state.attributes.get("device_class") != "power":
@@ -258,14 +259,8 @@ class HADevice:
         active = power.heating(measured, self.values.get("power_heating_threshold_w"))
         if active is not None:
             source = "power"
-        elif (
-            self.bindings.get("heater_feedback") != self.bindings["heater"]
-            and (active := self.binary_state("heater_feedback")) is not None
-        ):
-            source = "independent_feedback"
         else:
-            active = self.contactor_feedback()
-            source = "contactor" if active is not None else "unknown"
+            source, active = self.observe_fallback_heating()
         return {
             "source": source,
             "heating": active,
@@ -273,6 +268,16 @@ class HADevice:
             "contactor": self.contactor_feedback(),
             "estimated": source == "contactor",
         }
+
+    def observe_fallback_heating(self):
+        """The independent feedback or relay used after optional power expires."""
+        if (
+            self.bindings.get("heater_feedback") != self.bindings["heater"]
+            and (active := self.binary_state("heater_feedback")) is not None
+        ):
+            return "independent_feedback", active
+        active = self.contactor_feedback()
+        return ("contactor", active) if active is not None else ("unknown", None)
 
     def feedback(self):
         return self.observe_heating(self.runtime._clock())["heating"]
@@ -288,6 +293,7 @@ class HADevice:
         timeout = self.values.get("sensor_timeout_seconds")
         observation = self.heating_observation = self.observe_heating(at)
         controller.report_contactor(self.contactor_feedback(), at)
+        controller.report_fallback_heating(self.observe_fallback_heating()[1], at)
         controller.report_power(
             observation["power_w"],
             self.source_received_at["heater_power"] + timedelta(seconds=timeout)
@@ -696,6 +702,7 @@ class HADevice:
         if self.command is not heat or self.command_at is None:
             self.command, self.command_at = heat, now
         self.last_sent_at = now
+        self.runtime._report_detector_heating(now)
         self.runtime.log.info(
             "heater_command",
             "Schaltbefehl an Heizschütz: %s.",
@@ -722,6 +729,7 @@ class HADevice:
         except Exception as exc:
             self.command_error = True
             error = type(exc).__name__
+        self.runtime._report_detector_heating(self.runtime._clock())
         self.runtime.log.change(
             "heater_command_error",
             error,
@@ -741,7 +749,7 @@ class HADevice:
                     "service_error": error,
                     "feedback_proves_heating": False,
                 },
-                self.runtime.session.session_id if self.runtime.session else None,
+                self.runtime.controller.last_decision.session_id,
             )
 
     async def apply(self, now):
@@ -750,6 +758,8 @@ class HADevice:
         self.notify_mechanical_timer(now)
 
     async def apply_light(self, now):
+        if not self._light_owned:
+            return
         # Optionen können außerhalb einer Sitzung ersetzt werden, ohne dass der
         # Planer dabei seinen laufenden Übergang oder Override verliert.
         self.light_output.parameters = self.runtime.configuration.parameters
@@ -786,7 +796,8 @@ class HADevice:
         phase_paused = (
             name == "nachlauf"
             and after_run is not None
-            and after_run.paused_at is not None
+            and not after_run.pending_start
+            and after_run.ends_at is None
         )
         state = self.hass.states.get(self.bindings["light"])
         actual = self._light_brightness(state)
@@ -909,17 +920,26 @@ class HADevice:
         )
 
     async def finish_session_light(self, now, phase, *, purpose="light_reassignment"):
-        """Beendet den bisherigen Lichtnachlauf vor einem Lichtwechsel.
+        """Beendet die Ausgabe an der bisherigen Leuchte vor einem Lichtwechsel.
 
         Der Aufrufer ersetzt anschließend die Gerätezuordnung. Der Dienstaufruf
         bleibt deshalb beim alten Adapter und wird wie jeder andere Lichtbefehl
         protokolliert.
         """
-        key = ("session_light", phase.session_id, phase.started_at)
+        # Give up this binding before any await. The old runtime can still
+        # receive feedback or ticks while Home Assistant unloads its platforms.
+        self.relinquish_light()
+        entity_id = self.bindings["light"]
+        key = (
+            ("session_light", phase.session_id, phase.started_at)
+            if phase is not None else ("light_reassignment", entity_id)
+        )
+        phase_name = "session_light" if phase is not None else "light_reassignment"
+        fault = self._light_fault(phase_name)
         if self._light_state_signature(
-            self.hass.states.get(self.bindings["light"])
+            self.hass.states.get(entity_id)
         ) == ("off", None):
-            self.faults.pop("session_light", None)
+            self.faults.pop(fault, None)
             return True
         loop = asyncio.get_running_loop()
         confirmed = loop.create_future()
@@ -932,35 +952,49 @@ class HADevice:
                 confirmed.set_result(None)
 
         unsubscribe = async_track_state_change_event(
-            self.hass, [self.bindings["light"]], observed
+            self.hass, [entity_id], observed
         )
         try:
             sent = await self._send_light_command(
                 now,
                 key=(key, "turn_off", None),
-                phase="session_light",
+                phase=phase_name,
                 service="turn_off",
                 brightness=None,
-                session_id=phase.session_id,
-                ends_at=phase.ends_at,
+                session_id=phase.session_id if phase is not None else None,
+                ends_at=phase.ends_at if phase is not None else None,
                 purpose=purpose,
+                entity_id=entity_id,
             )
             if not sent:
                 return False
             if self._light_state_signature(
-                self.hass.states.get(self.bindings["light"])
+                self.hass.states.get(entity_id)
             ) == ("off", None):
-                self.faults.pop("session_light", None)
+                self.faults.pop(fault, None)
                 return True
             try:
                 await asyncio.wait_for(confirmed, self.values["feedback_timeout_seconds"])
             except TimeoutError:
-                self.faults["session_light"] = "feedback_missing"
+                self.faults[fault] = "feedback_missing"
                 return False
-            self.faults.pop("session_light", None)
+            self.faults.pop(fault, None)
             return True
         finally:
             unsubscribe()
+
+    def relinquish_light(self):
+        """End all output ownership of the current binding before a reload wait."""
+        self._light_owned = False
+        self._expected_light_changes.clear()
+
+    def restore_light_ownership(self):
+        """Resume the unchanged binding after a rejected reassignment."""
+        if self._light_owned:
+            return
+        self._light_owned = True
+        self._light_last_command_key = None
+        self._light_override_dirty = True
 
     async def _send_light_command(
         self,
@@ -973,6 +1007,7 @@ class HADevice:
         session_id,
         ends_at=None,
         purpose=None,
+        entity_id=None,
     ):
         """Führt einen geplanten Lichtdienst aus und hält Ergebnis und Archiv zusammen.
 
@@ -981,11 +1016,15 @@ class HADevice:
         ausführbar; der Lichtzustand ist keine Rückmeldung über den Dienst.
         """
         fault = self._light_fault(phase)
-        data = {"entity_id": self.bindings["light"]}
+        if not self._light_owned and purpose != "light_reassignment":
+            return False
+        entity_id = self.bindings["light"] if entity_id is None else entity_id
+        data = {"entity_id": entity_id}
         if service == "turn_on":
             data["brightness_pct"] = brightness
-        state_before = self.hass.states.get(self.bindings["light"])
+        state_before = self.hass.states.get(entity_id)
         error = None
+        sent_at = self.runtime._clock()
         try:
             await self.light_call(service, data)
         except Exception as exc:
@@ -1005,7 +1044,7 @@ class HADevice:
             if self._light_state_signature(
                 state_before
             ) != self._light_command_signature(service, brightness):
-                self._expect_light_change(now, service, brightness)
+                self._expect_light_change(sent_at, service, brightness)
             for known_fault in (
                 "session_light",
                 "operation_light",
@@ -1206,7 +1245,8 @@ class HADevice:
             if (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
-                or not isfinite(value)
+                or (isinstance(value, int) and not 0 <= value <= 100)
+                or (isinstance(value, float) and not isfinite(value))
                 or not 0 <= value <= 100
             ):
                 raise ValueError("Lichtwert muss zwischen 0 und 100 Prozent liegen.")
@@ -1267,10 +1307,19 @@ class HADevice:
     async def show_button_hold_light(self, now, session_id):
         """Keep the required long-press acknowledgement above all normal phases."""
         self._button_hold_session_id = session_id
+        if not self._light_owned:
+            return False
         key = ("button_hold", session_id, "turn_off", None)
-        if key == self._light_last_command_key:
+        state = self.hass.states.get(self.bindings["light"])
+        if self._light_state_signature(state) == ("off", None):
+            self.faults.pop("operation_light", None)
             return True
-        return await self._send_light_command(
+        if key == self._light_last_command_key and self._light_change_is_pending(
+            self.runtime._clock(), "turn_off", None
+        ):
+            return True
+        unconfirmed = key == self._light_last_command_key
+        sent = await self._send_light_command(
             now,
             key=key,
             phase="button_hold",
@@ -1279,6 +1328,11 @@ class HADevice:
             session_id=session_id,
             purpose="button_hold",
         )
+        if sent and self._light_state_signature(
+            self.hass.states.get(self.bindings["light"])
+        ) != ("off", None) and unconfirmed:
+            self.faults["operation_light"] = "feedback_missing"
+        return sent
 
     def finish_button_hold_light(self, session_id=None):
         """Only the matching release may hand light control back to the timer."""

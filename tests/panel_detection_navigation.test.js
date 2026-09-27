@@ -107,6 +107,53 @@ const parameters = {
 
 // Same signal kinds bind only to their own effective timestamp; an event with
 // no archived trace receives no marker at all.
+
+// Door onset can precede the grid point that completed its hold. The archive
+// detection record identifies that producing point by event ID.
+{
+  const plots = {};
+  const door = {
+    event_id: "door-produced",
+    kind: "door_open",
+    effective_at: iso(25),
+    detected_at: iso(35),
+  };
+  const traces = [
+    {
+      at: iso(25),
+      metrics: { upper: { door_temperature_slope: -12 } },
+      conditions: {},
+      holds: { door_open: 1 },
+      signals: [],
+      channels: ["upper"],
+    },
+    {
+      at: iso(30),
+      metrics: { upper: { door_temperature_slope: -15 } },
+      conditions: { door_open: true },
+      holds: { door_open: 2 },
+      signals: ["door_open"],
+      channels: ["upper"],
+    },
+  ];
+  const p = Object.assign(Object.create(Panel.prototype), {
+    shown: {
+      session: { ...session, timeline: { ...session.timeline, processed: [door] } },
+      records: [
+        ...traces.map((payload) => ({ kind: "detector_trace", payload })),
+        { kind: "detection", payload: { event: door, trace_at: iso(30), channels: ["upper"] } },
+      ],
+    },
+    state: { configuration: { parameters } },
+    window: [Date.parse(iso(0)), Date.parse(iso(60))],
+    $: (selector) => (selector === "#detection-plots" ? plots : null),
+  });
+  assert.equal(p.diagnosticTraceForEvent(traces, door), traces[1]);
+  p.drawDiagnostics();
+  assert.match(plots.innerHTML, /event-marker:door-produced/);
+  assert.match(plots.innerHTML, /2 Prüfpunkte/);
+}
+
 {
   const p = Object.assign(Object.create(Panel.prototype), {
     shown: {

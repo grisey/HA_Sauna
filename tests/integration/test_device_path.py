@@ -1,6 +1,8 @@
 """Echter HA-Pfad: Entity -> Listener -> Detektor/Kern -> Service -> Aktorfeedback."""
+import asyncio
 from datetime import UTC, datetime, timedelta
 import unittest
+from unittest.mock import patch
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.helpers import entity_registry as er
@@ -754,6 +756,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.reconfiguring)
         self.assertTrue(self.light.is_on)
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
+        self.light.fail_commands = False
+        await self.runtime.set_light_override(37)
+        await self.hass.async_block_till_done()
+        self.assertAlmostEqual(self.light.brightness, 255 * .37, delta=1)
 
     async def test_unconfirmed_old_light_off_blocks_reassignment_and_keeps_timer(self):
         await self.runtime.set_operation(True)
@@ -781,6 +787,49 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.reconfiguring)
         self.assertEqual(self.hass.states.get(old_light).state, "on")
         self.assertEqual(self.runtime.device.faults["session_light"], "feedback_missing")
+
+    async def test_old_light_stays_off_while_reassignment_waits_for_reload(self):
+        await self.runtime.set_operation(True)
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
+        await self.time(30)
+        self.assertTrue(self.light.is_on)
+        old_runtime = self.runtime
+        replacement = "light.replacement"
+        self.hass.states.async_set(
+            replacement, "off", {"supported_color_modes": ["brightness"]}
+        )
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_reload = self.hass.config_entries.async_reload
+
+        async def paused_reload(entry_id):
+            entered.set()
+            await release.wait()
+            return await original_reload(entry_id)
+
+        with patch.object(
+            self.hass.config_entries, "async_reload", side_effect=paused_reload
+        ):
+            self.hass.config_entries.async_update_entry(
+                self.entry,
+                options={
+                    **self.entry.options,
+                    "bindings": {
+                        **self.entry.options["bindings"], "light": replacement,
+                    },
+                },
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=3)
+                self.assertFalse(self.light.is_on)
+                calls = len(self.light.calls)
+                await old_runtime.tick()
+                self.assertFalse(self.light.is_on)
+                self.assertEqual(len(self.light.calls), calls)
+            finally:
+                release.set()
+            await self.hass.async_block_till_done()
 
     async def test_additional_door_signal_updates_timeline_without_obsolete_cooling_wait(self):
         await self.runtime.set_operation(True)
@@ -1089,6 +1138,25 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 kind, self.now, self.now))
             await self.hass.async_block_till_done()
         self.assertEqual(self.runtime.controller.phase, "nachlauf")
+
+    async def test_missing_off_feedback_keeps_cooling_light_in_its_phase(self):
+        await self.prepare_gang_after_run()
+        await self.time(72)
+        before = self.light.brightness
+        phase = self.runtime.session.after_run
+        self.assertIsNotNone(phase.ends_at)
+        self.heater.accept_commands = False
+        heater = self.entry.options["bindings"]["heater"]
+        self.hass.states.async_set(heater, "unknown")
+        await self.hass.async_block_till_done()
+        await self.time(73)
+        self.assertIsNone(self.runtime.session.after_run.ends_at)
+        self.assertIsNone(self.runtime.session.after_run.paused_at)
+        self.assertLessEqual(self.light.brightness, before + 2)
+        self.heater.accept_commands = True
+        self.hass.states.async_set(heater, "off")
+        await self.hass.async_block_till_done()
+        self.assertIsNotNone(self.runtime.session.after_run.ends_at)
 
     async def test_manual_phase_end_returns_to_regulation_without_a_cooling_cycle(self):
         await self.prepare_gang_after_run()

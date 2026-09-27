@@ -80,6 +80,25 @@ class DetectionContextTests(unittest.TestCase):
         c.process(event("close2", Kind.DOOR_CLOSE, 62))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
 
+    def test_confirmation_due_at_delivery_waits_for_all_detected_signals(self):
+        c = controller(confirmation_minutes=1)
+        c.process(event("close", Kind.DOOR_CLOSE, 14))
+        person = Event("person-batch", "s", Kind.PERSON_STRONG, at(16), at(74))
+        infusion = Event("infusion-batch", "s", Kind.INFUSION, at(51), at(74))
+        c.process(person, defer_confirmation=True)
+        gang_id = c.session.timeline.active.gang_id
+        c.process(infusion, defer_confirmation=True)
+        c.advance(at(74))
+        self.assertEqual(c.session.timeline.active.gang_id, gang_id)
+        self.assertEqual(len(c.session.timeline.active.infusion_events), 1)
+        self.assertFalse(c.session.timeline.retracted)
+
+        late = controller(confirmation_minutes=1)
+        late.process(event("close", Kind.DOOR_CLOSE, 14))
+        late.process(person, defer_confirmation=True)
+        late.advance(at(74))
+        self.assertIsNone(late.session.timeline.active)
+
     def test_oven_cooling_and_operation_off_suppress_gang_signals_without_losing_next_start(self):
         c = after_run()
         for second, phase in ((70,"nachlauf"),(99,"nachlauf")):

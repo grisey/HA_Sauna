@@ -14,7 +14,7 @@ test("active selection is orange, actions inherit neutral HA colors and danger i
   assert.equal(color("ui_accent").default, "#E58A55");
   assert.equal(color("ui_command").default, null);
   assert.equal(color("ui_danger").default, "#A34029");
-  assert.match(source, /button\[aria-selected="true"\]\s*\{[^}]*var\(--accent\)/);
+  assert.match(source, /button\[aria-current="page"\][\s\S]*?\{[^}]*var\(--accent\)/);
   assert.match(source, /button\.primary,\s*button\.confirm\s*\{[^}]*var\(--confirm\)/);
   assert.match(source, /button\.stop\s*\{[^}]*var\(--danger\)/);
 });

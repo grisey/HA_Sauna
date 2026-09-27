@@ -252,6 +252,39 @@ const draw = (model) => {
   assert.equal(p.historyModel({ prepared: new Map(), preparedOverview: new Map(), domain: [base, base + 30_000] }, live).overviewPosition, "lower");
 }
 
+// A later archive page can change the primary source without changing the window.
+{
+  const records = [
+    record(1, 65, "temperature", "lower"),
+    record(2, 66, "temperature", "lower"),
+  ];
+  const p = panel(30, records),
+    chart = {
+      prepared: new Map(),
+      preparedOverview: new Map(),
+      domain: [base, base + 30_000],
+    };
+  p.historyIndex(records);
+  const before = p.historyModel(chart, session(30));
+  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+    Path2DClass: FakePath2D,
+    styles: curveStyles,
+  });
+  const geometry = { width: 1200, height: 480, dpr: 1 };
+  assert.equal(before.overviewPosition, "lower");
+  curves.updateOverview(before, geometry);
+  const previousPath = curves.overviewPath;
+  records.push(
+    record(1, 85, "temperature", "upper"),
+    record(2, 86, "temperature", "upper"),
+  );
+  p.historyIndex(records);
+  const after = p.historyModel(chart, session(30));
+  assert.equal(after.overviewPosition, "upper");
+  curves.updateOverview(after, geometry);
+  assert.notEqual(curves.overviewPath, previousPath);
+}
+
 // Edge neighbours survive preparation and become a cubic Canvas segment.
 {
   const records = [record(0, 70), record(4, 71)],

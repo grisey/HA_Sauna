@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from math import exp, isfinite, log
+from math import exp, expm1, isfinite, log
 
 from .contracts import ContactorMark, ReadinessPause
 from .timeline import utc
@@ -78,10 +78,13 @@ def calculate_oven_cooling(
     heat, known = _weighted_contactor_time(
         marks, start, at, at, half_life, state=True
     )
+    heat_per_ratio, _ = _weighted_contactor_time(
+        marks, start, at, at, half_life, state=True, divisor=ratio
+    )
     idle, idle_known = _weighted_idle_time(
         marks, _merged_pauses(readiness_pauses, start, at), at, half_life
     )
-    duration = base + min(maximum - base, max(0.0, heat / ratio - idle))
+    duration = base + min(maximum - base, max(0.0, heat_per_ratio - idle))
     return OvenCoolingResult(
         duration_seconds=duration * 60,
         base_minutes=base,
@@ -126,6 +129,7 @@ def _weighted_contactor_time(
     half_life_minutes: float,
     *,
     state: bool,
+    divisor: float = 1.0,
 ) -> tuple[float, bool]:
     current: bool | None = None
     for mark_at, mark_state in marks:
@@ -140,14 +144,16 @@ def _weighted_contactor_time(
             complete = False
         elif current is state:
             total += _weighted_minutes(
-                cursor, mark_at, evaluation_at, half_life_minutes
+                cursor, mark_at, evaluation_at, half_life_minutes, divisor
             )
         cursor, current = mark_at, mark_state
     if cursor < end:
         if current is None:
             complete = False
         elif current is state:
-            total += _weighted_minutes(cursor, end, evaluation_at, half_life_minutes)
+            total += _weighted_minutes(
+                cursor, end, evaluation_at, half_life_minutes, divisor
+            )
     return total, complete
 
 
@@ -186,20 +192,28 @@ def _weighted_idle_time(
 
 
 def _weighted_minutes(
-    left: datetime, right: datetime, now: datetime, half_life_minutes: float
+    left: datetime, right: datetime, now: datetime, half_life_minutes: float,
+    divisor: float = 1.0,
 ) -> float:
     """Analytically integrate ``2 ** (-age / half_life)`` over an interval."""
     if right <= left:
         return 0.0
     half_life_seconds = half_life_minutes * 60
-    age_left = (now - left).total_seconds()
     age_right = (now - right).total_seconds()
-    return (
-        half_life_seconds
-        / log(2)
-        * (
-            exp(-log(2) * age_right / half_life_seconds)
-            - exp(-log(2) * age_left / half_life_seconds)
+    span_seconds = (right - left).total_seconds()
+    decay_exponent = -log(2) * age_right / half_life_seconds
+    interval_exponent = -log(2) * span_seconds / half_life_seconds
+    # Form the full quotient before rounding. Multiplying a subnormal heat
+    # integral and dividing it later can lose a representable final answer.
+    if interval_exponent == 0:
+        # A huge half-life is effectively constant over this finite span.
+        log_result = log(span_seconds) - log(60) - log(divisor) + decay_exponent
+    else:
+        log_result = (
+            log(half_life_minutes) - log(divisor) - log(log(2))
+            + decay_exponent + log(-expm1(interval_exponent))
         )
-        / 60
-    )
+    try:
+        return exp(log_result)
+    except OverflowError:
+        return float("inf")

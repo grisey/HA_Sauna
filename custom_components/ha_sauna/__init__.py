@@ -43,7 +43,10 @@ async def async_setup_entry(
     runtime = entry.runtime_data
     platforms_started = False
     try:
-        await runtime.start_archive(
+        from .backup import async_start_archive
+
+        await async_start_archive(
+            hass, runtime,
             hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id
         )
         from .api import register
@@ -151,6 +154,8 @@ async def async_options_updated(hass, entry):
                 )
                 if runtime.configuration.log_level != current.log_level:
                     runtime.set_log_level(current.log_level)
+                if runtime.device:
+                    runtime.device.restore_light_ownership()
                 runtime.reconfiguring = False
             return
         from .core.parameters import LIVE_TEMPERATURE_KEYS
@@ -247,12 +252,12 @@ async def async_options_updated(hass, entry):
         runtime.controller.light_after_run if runtime and not runtime.closed else None
     )
     if (
-        light_timer
+        runtime and not runtime.closed and runtime.device
         and runtime.configuration.bindings.values["light"]
         != updated.bindings.values["light"]
     ):
-        # Bei neuer Lichtzuordnung den bisherigen Lichtnachlauf am alten Gerät
-        # beenden; dessen Frist darf nicht auf eine andere Leuchte übergehen.
+        # Relinquish the old output before platform unload can yield to ticks
+        # or feedback. Its phase must not migrate to the replacement light.
         finished = await runtime.device.finish_session_light(runtime._clock(), light_timer)
         if (
             getattr(entry, "runtime_data", None) is not runtime
@@ -264,6 +269,7 @@ async def async_options_updated(hass, entry):
             hass.config_entries.async_update_entry(
                 entry, options=runtime.configuration.as_options()
             )
+            runtime.device.restore_light_ownership()
             return
         light_timer = None
     await hass.config_entries.async_reload(entry.entry_id)

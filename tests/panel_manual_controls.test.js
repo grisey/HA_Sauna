@@ -335,7 +335,7 @@ const renderCurrent = (
   assert.match(userAutomatic, /data-target-arc="true"/);
   assert.match(
     userAutomatic,
-    /data-action="control-mode:manual" aria-selected="false" >Manuell/,
+    /data-action="control-mode:manual" aria-pressed="false" >Manuell/,
   );
   assert.match(userAutomatic, /data-action="light:auto"/);
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Übersteuerung/);
@@ -343,7 +343,7 @@ const renderCurrent = (
   const userManual = renderCurrent("manual", {}, false, "#current", { admin: false });
   assert.match(
     userManual,
-    /data-action="control-mode:automatic" aria-selected="false" >Automatik/,
+    /data-action="control-mode:automatic" aria-pressed="false" >Automatik/,
   );
   assert.match(userManual, /data-action="heater:true" aria-pressed="false" >EIN/);
   assert.match(userManual, /data-action="heater:false" aria-pressed="false" >AUS/);
@@ -754,8 +754,23 @@ const renderCurrent = (
   await navigation.action("detail-history");
   assert.equal(navigation.view, "history");
   assert.equal(nodes["#history"].hidden, false);
-  assert.equal(detailTabs[1]["aria-selected"], "true");
-  assert.equal(detailTabs[0]["aria-selected"], "false");
+  assert.equal(detailTabs[1]["aria-current"], "page");
+  assert.equal(detailTabs[0]["aria-current"], "false");
+
+  let finishLight;
+  const owned = makePanel(enabled, "40").panel;
+  owned.manualLightDraft = "40";
+  owned.manualLightRevision = 1;
+  owned.api = () =>
+    new Promise((resolve) => {
+      finishLight = resolve;
+    });
+  const savingLight = owned.action("manual-light-overview");
+  owned.manualLightDraft = "80";
+  owned.manualLightRevision++;
+  finishLight();
+  await savingLight;
+  assert.equal(owned.manualLightDraft, "80", "older response retains the newer draft");
   console.log("panel manual control regressions passed");
 })().catch((error) => {
   console.error(error);

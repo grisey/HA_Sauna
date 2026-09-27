@@ -126,12 +126,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                                 ("details", "details"), ("settings", "settings")):
             await tabs.locator(f'[data-action="{action}"]').click()
             await expect(tabs.locator(f'[data-action="{action}"]')).to_have_attribute(
-                "aria-selected", "true"
+                "aria-current", "page"
             )
             await expect(self.panel.locator(f"#{section}")).to_be_visible()
         await tabs.locator('[data-action="details"]').click()
         await expect(self.panel.locator('.detail-tabs [data-action="detail"]')).to_have_attribute(
-            "aria-selected", "true"
+            "aria-current", "page"
         )
         self.assertEqual(await self.panel.locator('#details [data-action="heater:true"]').count(), 0)
         self.assertEqual(await self.panel.locator('#details [data-action="manual-light-overview"]').count(), 0)
@@ -140,7 +140,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await tabs.locator('[data-action="settings"]').click()
         await tabs.locator('[data-action="details"]').click()
         await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute(
-            "aria-selected", "true"
+            "aria-current", "page"
         )
         await tabs.locator('[data-action="overview"]').click()
         await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_visible()
@@ -201,6 +201,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(current.locator(".gauges")).to_contain_text("Ersatzmessung unten")
         await expect(current.locator('[role="alert"]')).to_contain_text("Temperatur oben")
         self.assertEqual(self.errors, [])
+
+    async def test_empty_history_uses_card_palette_and_clears_overview(self):
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        editor = self.panel.locator('#appearance-settings')
+        group = editor.locator('summary').filter(has_text='Grunddarstellung')
+        if await group.locator('..').get_attribute('open') is None:
+            await group.click()
+        await editor.locator('[data-appearance-color="card_background"]').fill('#000000')
+        await editor.locator('[data-appearance-color="muted_text"]').fill('#000000')
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        empty = self.panel.locator('#plots .card.empty')
+        await expect(empty).to_be_visible()
+        await expect(empty).to_have_css('background-color', 'rgb(0, 0, 0)')
+        await expect(empty).to_have_css('color', 'rgb(255, 255, 255)')
+        await expect(self.panel.locator('#history-overview')).to_be_empty()
+        await expect(self.panel.locator('#range')).to_be_empty()
 
     async def test_appearance_preview_validation_persistence_and_display_scales(self):
         artifact_dir = os.environ.get("HA_SAUNA_BROWSER_ARTIFACTS")
@@ -565,11 +581,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.emit(Kind.DOOR_CLOSE, 25)
         await self.emit(Kind.PERSON_STRONG, 35)
         # The emitted timeline events are deliberate historical assignments;
-        # attach one matching archived detector observation for navigation.
+        # attach their producing grid point after the backdated door onset.
         door_event = next(event for event in self.runtime.session.timeline.processed
                           if event.kind == Kind.DOOR_OPEN)
-        self.runtime.archive.append('detector_trace', door_event.effective_at, {
-            'at': door_event.effective_at,
+        trace_at = door_event.effective_at + timedelta(seconds=5)
+        self.runtime.archive.append('detector_trace', trace_at, {
+            'at': trace_at,
             'signals': ['door_open'],
             'channels': ['upper'],
             'metrics': {'upper': {'door_temperature_slope': -1.0},
@@ -579,6 +596,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             'holds': {},
             'door_open': True,
             'ventilation_context': False,
+        }, identity)
+        self.runtime.archive.append('detection', trace_at, {
+            'event': door_event, 'channels': ['upper'], 'trace_at': trace_at,
         }, identity)
         await self.runtime.archive.flush()
         await self.panel.locator('[data-action="history"]').click()
@@ -617,6 +637,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await editor.locator(f'[data-appearance-color="{role}"]').fill("#000000")
         await editor.locator('[data-appearance-color="chart_background"]').fill("#000000")
         await editor.locator('[data-appearance-color="chart_text"]').fill("#FFFFFF")
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        info_button = self.panel.locator('#current .program-info button').first
+        if not await info_button.is_visible():
+            await self.panel.locator('[data-action="program-toggle"]').click()
+        await expect(info_button).to_be_visible()
+        await info_button.click()
+        popup = self.panel.locator('#current .program-info-popup').first
+        await expect(popup).to_be_visible()
+        await expect(popup).to_have_css('background-color', 'rgb(0, 0, 0)')
+        await expect(popup).to_have_css('color', 'rgb(255, 255, 255)')
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
         for link in ("Sensoren und Geräte zuordnen", "Home-Assistant-Protokoll öffnen"):
             await expect(self.panel.get_by_role("link", name=link)).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
@@ -684,12 +715,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(event_link).to_be_visible()
         event_id = (await event_link.get_attribute('data-action')).split(':', 1)[1]
         await event_link.click()
-        await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-selected', 'true')
+        await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#detection-plots')).to_be_visible()
         marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
         await expect(marker).to_be_focused()
         await marker.press('Enter')
-        await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute('aria-selected', 'true')
+        await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#event-list')).to_be_visible()
         await expect(self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')).to_be_focused()
         await self.panel.locator('[data-action="settings"]').click()

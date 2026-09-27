@@ -6,14 +6,46 @@ from .const import DOMAIN
 
 
 def archives(hass):
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        runtime = getattr(entry, "runtime_data", None)
-        if (
-            runtime is not None
-            and not runtime.closed
-            and getattr(runtime, "archive", None)
-        ):
-            yield runtime.archive
+    """Writers remain owned until their worker has actually stopped."""
+    return tuple(hass.data.get(DOMAIN, {}).get("archives", ()))
+
+
+async def async_start_archive(hass, runtime, path, entry_id):
+    """Serialize database creation with backup preparation and copying."""
+    data = hass.data.setdefault(DOMAIN, {})
+    lock = data.setdefault("archive_start_lock", asyncio.Lock())
+    while True:
+        async with lock:
+            finished = data.get("backup_finished")
+            if finished is None:
+                starting = asyncio.create_task(runtime.start_archive(path, entry_id))
+                try:
+                    try:
+                        await asyncio.shield(starting)
+                    except asyncio.CancelledError:
+                        # A cancelled setup must not release the creation lock
+                        # while SQLite initialization is still running in a thread.
+                        await starting
+                        raise
+                finally:
+                    archive = runtime.archive
+                    if archive is not None and archive.worker is not None:
+                        writers = data.setdefault("archives", {})
+                        writers[archive] = None
+                        archive.worker.add_done_callback(
+                            lambda _, a=archive: writers.pop(a, None)
+                        )
+                return
+        # Even schema initialization writes SQLite. A new entry must wait
+        # before opening its archive, not merely pause its later records.
+        await finished.wait()
+
+
+def _finish_backup(data):
+    data.pop("backup_archives", None)
+    finished = data.pop("backup_finished", None)
+    if finished is not None:
+        finished.set()
 
 
 def _release(archives):
@@ -69,10 +101,16 @@ def _raise_release_errors(errors):
 
 async def async_pre_backup(hass):
     data = hass.data.setdefault(DOMAIN, {})
+    async with data.setdefault("archive_start_lock", asyncio.Lock()):
+        await _prepare_backup(hass, data)
+
+
+async def _prepare_backup(hass, data):
     if "backup_archives" in data:
         raise RuntimeError("Saunaarchive werden bereits gesichert")
     prepared = []
     data["backup_archives"] = prepared
+    data["backup_finished"] = asyncio.Event()
     try:
         for archive in tuple(archives(hass)):
             prepared.append(archive)
@@ -91,7 +129,7 @@ async def async_pre_backup(hass):
                     f"Zusätzliche Archivbereinigungsfehler: {_describe(errors)}"
                 )
         finally:
-            data.pop("backup_archives", None)
+            _finish_backup(data)
         raise
 
 
@@ -103,5 +141,5 @@ async def async_post_backup(hass):
             tuple(archives(hass)) if prepared is None else prepared
         )
     finally:
-        data.pop("backup_archives", None)
+        _finish_backup(data)
     _raise_release_errors(errors)

@@ -236,6 +236,20 @@ test("a rejected save from a previous sauna does not surface in the new one", as
   await assert.doesNotReject(request);
 });
 
+test("a confirmed catalog save releases its draft for a newer server catalog", async () => {
+  const { panel } = makePanel();
+  panel.moveProgram("c", -1);
+  const saved = panel.currentProgramDraft();
+  const newer = [{ ...saved[0], name: "Von anderem Client geändert" }, ...saved.slice(1)];
+  panel.api = async () => ({ programs: saved });
+  panel.refresh = async () => {
+    panel.state.configuration.temperature_programs = newer;
+  };
+  await panel.savePrograms();
+  assert.equal(panel.programDraft, null);
+  assert.equal(panel.currentProgramDraft()[0].name, "Von anderem Client geändert");
+});
+
 test("disconnect releases drag and transient save states while retaining a draft", () => {
   const { panel } = makePanel();
   panel.moveProgram("c", -1);

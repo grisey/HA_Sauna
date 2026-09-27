@@ -60,6 +60,7 @@ class Controller:
         self.contactor: bool | None = None
         self.power_w: float | None = None
         self.power_valid_until: datetime | None = None
+        self.fallback_heating: bool | None = None
         self.protection: set[str] = set()
         self.inhibits: set[str] = set()
         self.last_decision: thermostat.Decision | None = None
@@ -470,12 +471,38 @@ class Controller:
         self.advance(at, evaluate=False)
         self.power_w, self.power_valid_until = value, valid_until
 
+    def report_fallback_heating(self, value: bool | None, at: datetime):
+        """Remember the independent/native relay evidence for power expiry."""
+        self.advance(at, evaluate=False)
+        self.fallback_heating = value
+
     def _account_heat(self, at):
         if self._session is None:
             return
         state = self._session.heating
         if state.accounted_at is not None and state.accounted_at > at:
             return
+        expiry = self.power_valid_until
+        if (
+            self.power_w is not None
+            and expiry is not None
+            and state.accounted_at is not None
+            and state.accounted_at <= expiry <= at
+        ):
+            self._session = replace(
+                self._session,
+                heating=heating.report(
+                    state, self.fallback_heating, expiry,
+                    self.parameters.seconds("heat_reset_minutes"),
+                ),
+                energy=energy.advance(
+                    self._session.energy, expiry, power_w=self.power_w,
+                    valid_until=expiry, heating=state.reported_heating,
+                    nominal_kw=self.parameters.values["nominal_power_kw"],
+                ),
+            )
+            state = self._session.heating
+            self.feedback = self.fallback_heating
         self._session = replace(
             self._session,
             heating=heating.advance(
@@ -504,6 +531,7 @@ class Controller:
 
     def advance(self, at: datetime, *, evaluate=True, inclusive_confirmation=True):
         at = utc(at)
+        decision_session_id = self._session.session_id if self._session else None
         if self._last_at is not None and at < self._last_at:
             raise ValueError("Laufzeituhr darf nicht rückwärts laufen")
         while self._session is not None:
@@ -529,10 +557,10 @@ class Controller:
         self._account_after_run(at)
         self._last_at = at
         if evaluate:
-            self._evaluate(at)
+            self._evaluate(at, decision_session_id=decision_session_id)
         return self._session
 
-    def process_presence(self, report, event):
+    def process_presence(self, report, event, *, defer_confirmation=False):
         """Proxy occupancy is the source boundary for unchanged gang assignment.
 
         Direct reports are observed by the runtime only until their gang rules
@@ -546,9 +574,9 @@ class Controller:
             != (event.event_id, event.effective_at, event.detected_at)
         ):
             raise ValueError("Keine passende führende Proxy-Präsenzmeldung")
-        return self.process(event)
+        return self.process(event, defer_confirmation=defer_confirmation)
 
-    def process(self, event: Event) -> Result:
+    def process(self, event: Event, *, defer_confirmation=False) -> Result:
         if self._session is None:
             raise ValueError("Ereignis ohne Session")
         previous = self._session
@@ -672,7 +700,7 @@ class Controller:
                 self._create_session_light(
                     self._session.session_id, event.detected_at, ends_at
                 )
-        self.advance(event.detected_at)
+        self.advance(event.detected_at, inclusive_confirmation=not defer_confirmation)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
     def recognition_allowed(self, kind: Kind) -> bool:
@@ -1038,21 +1066,35 @@ class Controller:
         self._session = replace(session, thermostat=state)
         return decision
 
-    def _evaluate(self, at, *, preserve_override=False):
+    def _evaluate(self, at, *, preserve_override=False, decision_session_id=None):
         session = self._session
+        session_id = session.session_id if session else decision_session_id
         if session is None:
             decision = thermostat.Decision(at, False, "operation_off")
         elif self.control_mode == "manual":
             decision = self._evaluate_manual(at, session)
         else:
             decision = self._evaluate_thermostat(at)
+        if (
+            session is None
+            and decision_session_id is None
+            and self.last_decision is not None
+            and self.last_decision.heat is False
+            and self.last_decision.reason == decision.reason
+        ):
+            # A refresh after finalization is not a new OFF decision. Keep
+            # the still pending command's original session until a new
+            # session or a genuinely different decision replaces it.
+            decision = self.last_decision
+            session_id = decision.session_id
+        decision = replace(decision, session_id=session_id)
         self.automatic_decision = decision
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():
             self._clear_heater_override()
             # Eine zuvor manuell pausierte Kühlung darf nach dem Entzug der
             # Einschaltfreigabe nicht auf einen weiteren Eingang warten.
-            return self._evaluate(at)
+            return self._evaluate(at, decision_session_id=decision_session_id)
         if (
             self.control_mode == "automatic"
             and self.heater_override is not None
@@ -1064,7 +1106,7 @@ class Controller:
             self._clear_heater_override()
             # Das Löschen der Bedienung darf die pausierte Kühlung nicht
             # bis zum nächsten Eingang im Aufheizzustand lassen.
-            return self._evaluate(at)
+            return self._evaluate(at, decision_session_id=decision_session_id)
         issued = decision
         if (
             self.control_mode == "automatic"
@@ -1076,10 +1118,13 @@ class Controller:
             and self._session.after_run is None
             and self._manual_heating_allowed()
         ):
-            issued = thermostat.Decision(at, self.heater_override, "manual_override")
-        if self.last_decision is None or (issued.heat, issued.reason) != (
+            issued = thermostat.Decision(
+                at, self.heater_override, "manual_override", session_id
+            )
+        if self.last_decision is None or (issued.heat, issued.reason, issued.session_id) != (
             self.last_decision.heat,
             self.last_decision.reason,
+            self.last_decision.session_id,
         ):
             self.decisions.append(issued)
         self.last_decision = issued
@@ -1151,13 +1196,13 @@ class Controller:
                 self.start_session_light(session_id, at)
             elif not light_after_run:
                 self.light_after_run = None
-            self._evaluate(at)
+            self._evaluate(at, decision_session_id=session_id)
             return
         self._cancel("session_gap")
         if not light_after_run:
             self.light_after_run = None
         self._complete_session(at, light_after_run=light_after_run)
-        self._evaluate(at)
+        self._evaluate(at, decision_session_id=session_id)
 
     def finish_session_gap(self, token: str, at: datetime):
         """End the currently paused session through its displayed gap deadline.
@@ -1192,7 +1237,7 @@ class Controller:
         else:
             self.light_after_run = replace(self.light_after_run, ends_at=ends_at)
         self._complete_session(ends_at, light_after_run=False)
-        self._evaluate(at)
+        self._evaluate(at, decision_session_id=session.session_id)
         return deadline
 
     def _create_session_light(

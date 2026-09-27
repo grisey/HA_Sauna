@@ -22,11 +22,11 @@ def _remaining(now, ends_at) -> float | None:
 
 
 def _percent(value) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not isfinite(value)
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Helligkeit muss eine endliche Zahl von 0 bis 100 sein")
+    if isinstance(value, int):
+        return float(max(0, min(100, value)))
+    if not isfinite(value):
         raise ValueError("Helligkeit muss eine endliche Zahl von 0 bis 100 sein")
     return max(0.0, min(100.0, float(value)))
 
@@ -198,7 +198,9 @@ class LightOutput:
             self._paused_automatic = None
         self._phase_ends_at = phase_ends_at
         automatic = self._automatic(now, phase, target, phase_ends_at)
-        if self._resume_pending:
+        if self._resume_pending and phase not in (
+            self._DIM_PHASES | self._SESSION_PHASES
+        ):
             self._motion = _Motion(
                 "resume",
                 now,
@@ -209,6 +211,10 @@ class LightOutput:
             )
             self._resume_pending = False
             automatic = self._last_automatic
+        elif self._resume_pending:
+            # A live phase owns its curve and deadline. A manual choice does
+            # not replace either with the ordinary temperature return.
+            self._resume_pending = False
         self._last_automatic = automatic
         return LightPlan(automatic, True, False)
 

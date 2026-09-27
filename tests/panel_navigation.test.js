@@ -77,7 +77,7 @@ test("one main selection follows each view, including the shared detail history"
     assert.equal(panel.view, view);
     assert.deepEqual(
       main
-        .filter((button) => button["aria-selected"] === "true")
+        .filter((button) => button["aria-current"] === "page")
         .map((button) => button.dataset.action),
       [selected],
     );
@@ -86,14 +86,14 @@ test("one main selection follows each view, including the shared detail history"
     panel.syncNavigation();
     assert.deepEqual(
       main
-        .filter((button) => button["aria-selected"] === "true")
+        .filter((button) => button["aria-current"] === "page")
         .map((button) => button.dataset.action),
       [selected],
     );
   }
   assert.equal(
-    detail.find((button) => button.dataset.action === "diagnostics")["aria-selected"],
-    "true",
+    detail.find((button) => button.dataset.action === "diagnostics")["aria-current"],
+    "page",
   );
   await panel.action("details");
   assert.equal(panel.view, "diagnostics", "returning to details preserves its subpage");
@@ -106,7 +106,7 @@ test("lost admin permission returns detail views to control", async () => {
   panel.syncNavigation();
   assert.equal(panel.view, "overview");
   assert.equal(nodes['.main-tabs [data-action="details"]'].hidden, true);
-  assert.equal(main[0]["aria-selected"], "true");
+  assert.equal(main[0]["aria-current"], "page");
   assert.equal(nodes["#current"].hidden, false);
 });
 
@@ -122,4 +122,64 @@ test("zoom buttons use the history chart midpoint", async () => {
     assert.equal(target, svg);
   };
   await panel.action("zoom-in");
+});
+
+test("focused button program keeps its choice while accepting a new lock", () => {
+  const attrs = new Map();
+  const field = {
+    nodeType: 1,
+    nodeName: "SELECT",
+    value: "program-a",
+    get attributes() {
+      return [...attrs].map(([name, value]) => ({ name, value }));
+    },
+    hasAttribute: (name) => attrs.has(name),
+    getAttribute: (name) => attrs.get(name) ?? null,
+    setAttribute: (name, value) => attrs.set(name, value),
+    removeAttribute: (name) => attrs.delete(name),
+  };
+  const next = {
+    nodeType: 1,
+    nodeName: "SELECT",
+    value: "program-b",
+    attributes: [{ name: "disabled", value: "" }],
+    hasAttribute: (name) => name === "disabled",
+    getAttribute: (name) => (name === "disabled" ? "" : null),
+  };
+  const panel = Object.assign(Object.create(Panel.prototype), {
+    shadowRoot: { activeElement: field },
+  });
+  panel.patchNode(field, next);
+  assert.equal(attrs.has("disabled"), true);
+  assert.equal(field.value, "program-a");
+});
+
+test("empty history clears the retained overview and every visible sink", () => {
+  const nodes = new Map();
+  const node = (selector) => {
+    if (!nodes.has(selector))
+      nodes.set(selector, {
+        innerHTML: "old session",
+        textContent: "old time",
+        replaceChildren() {
+          this.innerHTML = "";
+        },
+      });
+    return nodes.get(selector);
+  };
+  let destroyed = 0;
+  const panel = Object.assign(Object.create(Panel.prototype), {
+    historyChart: { destroy: () => destroyed++ },
+    $: node,
+    updateMarkup: (selector, html) => {
+      node(selector).innerHTML = html;
+    },
+  });
+  panel.clearHistoryDisplay();
+  assert.equal(destroyed, 1);
+  assert.equal(node("#history-overview").innerHTML, "");
+  assert.equal(node("#range").textContent, "");
+  for (const selector of ["#gangs", "#event-list", "#detection-plots"])
+    assert.equal(node(selector).innerHTML, "");
+  assert.match(node("#plots").innerHTML, /Noch keine Sitzungsdaten/);
 });

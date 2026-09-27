@@ -193,3 +193,33 @@ test("tinted text uses the same painted surface as its background", () => {
     assert.ok(appearanceContrastRatio(variables.get(ink), variables.get(background)) >= 4.5);
   }
 });
+
+test("popup, plot controls, selected event and empty card use their painted surfaces", () => {
+  const { panel, variables } = makePanel({
+    colors: {
+      page_background: "#FFFFFF",
+      card_background: "#000000",
+      chart_background: "#000000",
+      text: "#000000",
+      muted_text: "#000000",
+      focus: "#000000",
+      status_warning: "#FFFFFF",
+    },
+    scales: {},
+  });
+  panel.applyAppearance();
+  const css = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
+  assert.match(css, /\.program-info-popup\s*\{[^}]*color: var\(--sauna-card-text/);
+  assert.ok(appearanceContrastRatio(variables.get("--sauna-card-text"), "#000000") >= 4.5);
+  assert.match(css, /\.empty\s*\{[^}]*color: var\(--sauna-card-muted-text/);
+  assert.ok(appearanceContrastRatio(variables.get("--sauna-card-muted-text"), "#000000") >= 4.5);
+  assert.match(css, /\.plot-panel\s*\{[^}]*--sauna-focus-current: var\(--sauna-chart-focus/);
+  assert.ok(appearanceContrastRatio(variables.get("--sauna-chart-focus"), "#000000") >= 3);
+  assert.match(css, /\.event-row\[data-selected="true"\]\s*\{[^}]*outline: 3px solid var\(--sauna-tint-warning-focus/);
+  assert.ok(
+    appearanceContrastRatio(
+      variables.get("--sauna-tint-warning-focus"),
+      variables.get("--sauna-tint-warning-background"),
+    ) >= 3,
+  );
+});
