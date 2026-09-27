@@ -2,8 +2,9 @@
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory
+from homeassistant.exceptions import Unauthorized
 
-from .core.parameters import EDITABLE_DEFINITIONS
+from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
 
@@ -39,6 +40,11 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         return self.runtime.configuration.parameters.values.get(self.definition.key)
 
     async def async_set_native_value(self, value):
+        context = self._context
+        if self.definition.key not in LIVE_TEMPERATURE_KEYS and context and context.user_id:
+            user = await self.hass.auth.async_get_user(context.user_id)
+            if user is None or not user.is_admin:
+                raise Unauthorized(context=context, entity_id=self.entity_id)
         await async_set_entity_parameter(
             self.hass, self.entry, self.definition.key, value
         )

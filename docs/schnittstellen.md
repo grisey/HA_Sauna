@@ -6,7 +6,7 @@ Verbindliche Datentypen liegen in `core/contracts.py`.
   fachlichem Zeitpunkt, Empfang und Verfügbarkeit. `proxy_retraction` bedeutet
   unbekannte Belegung, keine beobachtete Abwesenheit. Direkte Präsenz wird vorerst
   nur beobachtet; die führende Quelle bleibt Proxy, ohne ODER-Verknüpfung.
-- `ControlInputs`: einmalige Türanforderung, aktuelles Gang-Abschaltveto und
+- `ControlInputs`: einmalige Türanforderung, laufende Heizanforderung des Gangs und
   bestehende Ofenkühlung. Schutz und Betrieb-AUS bleiben übergeordnet.
 - `PhaseProjection`: genau eine Hauptphase je Intervall, Korrekturhinweise und
   einzelne Bereitschaftspausen. Grundlage sind `Session.base_phases` und
@@ -16,7 +16,12 @@ Verbindliche Datentypen liegen in `core/contracts.py`.
   Verfügbarkeit, Gangbeginn/-bestätigung/-rücknahme/-ende und Aufgüsse.
   `archive_correction` ist keine Liveauslösung. Keine Wiedergabe implementiert.
 
-## Schreibzuständigkeiten während der Teilaufgaben
+## Historischer Arbeitsplan vom 26.09.2026
+
+Die folgende Aufteilung dokumentiert den damaligen Arbeitsplan, nicht die
+aktuellen Dateinamen oder dauerhafte Schreibzuständigkeiten. Die Türhilfe liegt
+in `core/temporary_door_heat.py`; die damals vorgesehenen Dateien
+`core/heater_overrides.py` und `tests/test_heater_overrides.py` wurden nicht angelegt.
 
 1. Präsenz: neue `core/presence.py`, `presence_adapter.py`,
    `tests/test_presence.py`, `tests/integration/test_presence_adapter.py`.

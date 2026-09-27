@@ -15,6 +15,8 @@ Temperaturprogramme getrennt vom Laufzeitablauf. Einstellungen und API schreiben
 den Optionsstand; die drei in einer Sitzung erlaubten Temperaturwerte werden
 über den Live-Einstellpfad in den bestehenden Controller übernommen. Eine solche
 Änderung lädt nicht die gesamte Integration neu.
+Protokollstufe und Darstellung sind ebenfalls während einer Sitzung änderbar;
+sie wirken nicht auf den Controller oder seine Fristen.
 
 ## Messung, Erkennung und Ablauf
 

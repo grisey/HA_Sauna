@@ -140,16 +140,13 @@ class LightOutput:
         temperature_target_percent: float,
         actual_percent: float,
         phase_ends_at=None,
-        phase_started_at=None,
         *,
         phase_paused=False,
         phase_brightness_percent=None,
     ) -> LightPlan:
         """Gibt ausschließlich die nächste gewünschte Helligkeit zurück.
 
-        ``phase_started_at`` beschreibt den führenden Ablauf für Adapter und
-        Aufrufer, die Lichtbewegung beginnt jedoch bewusst beim beobachteten
-        Eingangswert dieses Updates.
+        Die Lichtbewegung beginnt beim beobachteten Eingangswert dieses Updates.
         """
         target, actual = _percent(temperature_target_percent), _percent(actual_percent)
         changed = phase_key != self._phase_key

@@ -553,17 +553,19 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_session_light_commands_are_archived_and_retried(self):
         await self.runtime.set_operation(True)
+        await self.time(30)
+        self.assertTrue(self.light.is_on)
         self.light.fail_commands = True
         await self.runtime.set_operation(False)
-        await self.time(1)  # The first distinct fade value requires a command.
+        await self.time(31)  # The first distinct fade value requires a command.
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
         calls = len(self.light.calls)
-        await self.time(2)
+        await self.time(32)
         self.assertEqual(len(self.light.calls), calls + 1)
-        await self.time(150)
+        await self.time(180)
         self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
         off_calls = len([call for call in self.light.calls if call[0] == "off"])
-        await self.time(751)
+        await self.time(781)
         self.assertEqual(len([call for call in self.light.calls if call[0] == "off"]), off_calls + 1)
         self.assertFalse(self.heater.is_on)
         await self.runtime.archive.flush()
@@ -721,6 +723,60 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime = self.entry.runtime_data
         self.runtime._clock = lambda: self.now
         self.assertIsNone(self.runtime.controller.light_after_run)
+
+    async def test_failed_old_light_off_blocks_reassignment_and_keeps_timer(self):
+        await self.runtime.set_operation(True)
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
+        await self.time(30)
+        self.assertTrue(self.light.is_on)
+        phase = self.runtime.controller.light_after_run
+        self.light.fail_commands = True
+        old_light = self.entry.options["bindings"]["light"]
+        replacement = "light.replacement"
+        self.hass.states.async_set(replacement, "off", {"supported_color_modes": ["brightness"]})
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            options={
+                **self.entry.options,
+                "bindings": {**self.entry.options["bindings"], "light": replacement},
+            },
+        )
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data, self.runtime)
+        self.assertEqual(self.entry.options["bindings"]["light"], old_light)
+        self.assertEqual(self.runtime.controller.light_after_run, phase)
+        self.assertFalse(self.runtime.reconfiguring)
+        self.assertTrue(self.light.is_on)
+        self.assertEqual(self.runtime.device.faults["session_light"], "service_unavailable")
+
+    async def test_unconfirmed_old_light_off_blocks_reassignment_and_keeps_timer(self):
+        await self.runtime.set_operation(True)
+        async with self.runtime._lock:
+            self.runtime.controller.finish_session(self.now)
+            await self.runtime._cycle()
+        await self.time(30)
+        self.assertTrue(self.light.is_on)
+        phase = self.runtime.controller.light_after_run
+        self.light.defer_state_writes = True
+        old_light = self.entry.options["bindings"]["light"]
+        replacement = "light.replacement"
+        self.hass.states.async_set(replacement, "off", {"supported_color_modes": ["brightness"]})
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            options={
+                **self.entry.options,
+                "bindings": {**self.entry.options["bindings"], "light": replacement},
+            },
+        )
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data, self.runtime)
+        self.assertEqual(self.entry.options["bindings"]["light"], old_light)
+        self.assertEqual(self.runtime.controller.light_after_run, phase)
+        self.assertFalse(self.runtime.reconfiguring)
+        self.assertEqual(self.hass.states.get(old_light).state, "on")
+        self.assertEqual(self.runtime.device.faults["session_light"], "feedback_missing")
 
     async def test_additional_door_signal_updates_timeline_without_obsolete_cooling_wait(self):
         await self.runtime.set_operation(True)

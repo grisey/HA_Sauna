@@ -377,6 +377,24 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertIsNone(runtime.configuration.temperature_steps)
         self.assertEqual(runtime.controller.target_temperature, 70)
 
+    def test_repeated_end_value_keeps_active_manual_steps_and_saved_shape(self):
+        async def repeat_end():
+            configuration = Configuration(Bindings(bindings()), Parameters({}))
+            runtime = SaunaRuntime(configuration)
+            entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+            hass = _FakeHass()
+            await async_set_temperature_steps(hass, entry, [80, 86, 90])
+            runtime._set_operation(True)
+            before = runtime.session.temperature_program_steps
+            await async_set_parameters(
+                hass, entry, {"final_temperature_c": 90}, partial=True
+            )
+            self.assertEqual(runtime.session.temperature_program_steps, before)
+            self.assertEqual(runtime.configuration.temperature_steps, (80, 86, 90))
+            self.assertEqual(entry.options["temperature_steps"], (80, 86, 90))
+
+        asyncio.run(repeat_end())
+
     def test_explicit_catalog_does_not_accept_removed_legacy_profiles(self):
         parameters = Parameters({})
         with self.assertRaises(ValueError):

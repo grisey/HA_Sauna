@@ -63,7 +63,7 @@ class OvenCoolingTests(unittest.TestCase):
         self.assertIsNone(c.session.cooling)
         self.assertEqual(c.session.cooling_history, ())
 
-    def test_operation_interruption_preserves_oven_cooling_deadline(self):
+    def test_operation_interruption_cancels_oven_cooling(self):
         c = controller(after_run_minutes=8)
         finish_gang(c, 60)
         deadline = c.session.after_run.ends_at

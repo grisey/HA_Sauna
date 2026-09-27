@@ -50,7 +50,7 @@ eingerichteter Betriebsschalter folgt seiner Ein-/Ausstellung.
 
 ## 4. Vor dem ersten Einsatz prüfen
 
-Kontrollieren Sie unter **Details → Einstellungen & Export** die voreingestellten
+Kontrollieren Sie unter **Einstellungen** die voreingestellten
 Temperatur-, Licht-, Heizzeit- und Kühlwerte. Diese Werte sind einstellbare
 Standards; bereits gespeicherte örtliche Einstellungen bleiben erhalten.
 Prüfen Sie insbesondere, ob Messabstände, Schützrückmeldung und optionale
@@ -60,8 +60,8 @@ steuern. Die entkoppelten Lichttaster können weiter unmittelbar bedient werden.
 
 Unter **Temperaturprogramme** können Sie Namen, Start, Ende und Verteilung
 ändern oder Programme hinzufügen. Wählen Sie außerdem die Vorgabe für den
-Saunataster: die aktuelle Auswahl, eine konstante Temperatur oder eines dieser
-Programme. Diese Wahl ist ebenfalls unter **Einstellungen & Export** verfügbar.
+Saunataster: eine eigene konstante Temperatur oder eines dieser
+Programme. Diese Wahl ist ebenfalls unter **Einstellungen** verfügbar.
 
 **Standardwerte wiederherstellen** ist für Administratoren nach Ende einer
 Saunasitzung verfügbar. Es setzt Einstellungswerte, Temperaturprogramme und

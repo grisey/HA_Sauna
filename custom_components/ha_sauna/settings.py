@@ -200,7 +200,12 @@ async def _async_set_parameters_locked(
         selected_mode is not None
         and selected_mode != runtime.configuration.program_mode
     )
-    clear_selected_program = bool(set(values) & LIVE_TEMPERATURE_KEYS)
+    if not changed and not mode_changed and not new_program and not explicit_target:
+        return parameters.as_dict()
+    clear_selected_program = bool(
+        changed & LIVE_TEMPERATURE_KEYS
+        or (explicit_target and "target_temperature_c" in values)
+    )
     # The legacy start/end/count form is always the evenly distributed form.
     # Passing ``None`` explicitly also lets a live end edit retain its current
     # target as the new anchor instead of continuing an old explicit list.

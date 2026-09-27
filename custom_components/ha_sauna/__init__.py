@@ -40,45 +40,67 @@ async def async_setup_entry(
     entry.runtime_data.log.info(
         "setup", "Sauna-Integration wird geladen; Saunabetrieb bleibt ausgeschaltet."
     )
-    await entry.runtime_data.start_archive(
-        hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id
-    )
-    from .api import register
-
-    register(hass)
-    from .frontend import register as register_panel
-
-    await register_panel(hass)
-    if entry.options != configuration.as_options():
-        hass.config_entries.async_update_entry(
-            entry, options=configuration.as_options()
+    runtime = entry.runtime_data
+    platforms_started = False
+    try:
+        await runtime.start_archive(
+            hass.config.path("ha_sauna", f"{entry.entry_id}.sqlite"), entry.entry_id
         )
-    await hass.config_entries.async_forward_entry_setups(
-        entry, ["number", "sensor", "switch", "climate", "button"]
-    )
-    from .device import HADevice
+        from .api import register
 
-    entry.runtime_data.device = HADevice(hass, entry.runtime_data)
-    await entry.runtime_data.device.start()
-    from .presence_adapter import HAPresenceAdapter
+        register(hass)
+        from .frontend import register as register_panel
 
-    presence = HAPresenceAdapter(
-        hass, entry.runtime_data.accept_presence,
-        configuration.bindings.values.get("presence"), clock=entry.runtime_data._clock,
-    )
-    entry.runtime_data.presence_adapter = presence
-    entry.runtime_data.on_close(presence.close)
-    await presence.start()
-    entry.runtime_data.on_close(
-        async_track_time_interval(hass, entry.runtime_data.tick, timedelta(seconds=1))
-    )
+        await register_panel(hass)
+        if entry.options != configuration.as_options():
+            hass.config_entries.async_update_entry(
+                entry, options=configuration.as_options()
+            )
+        platforms_started = True
+        await hass.config_entries.async_forward_entry_setups(
+            entry, ["number", "sensor", "switch", "climate", "button"]
+        )
+        from .device import HADevice
 
-    async def stopped(_event):
-        await entry.runtime_data.close()
+        runtime.device = HADevice(hass, runtime)
+        await runtime.device.start()
+        from .presence_adapter import HAPresenceAdapter
 
-    entry.runtime_data.on_close(hass.bus.async_listen("homeassistant_stop", stopped))
-    entry.async_on_unload(entry.add_update_listener(async_options_updated))
-    return True
+        presence = HAPresenceAdapter(
+            hass, runtime.accept_presence,
+            configuration.bindings.values.get("presence"), clock=runtime._clock,
+        )
+        runtime.presence_adapter = presence
+        runtime.on_close(presence.close)
+        await presence.start()
+        runtime.on_close(
+            async_track_time_interval(hass, runtime.tick, timedelta(seconds=1))
+        )
+
+        async def stopped(_event):
+            await runtime.close()
+
+        runtime.on_close(hass.bus.async_listen("homeassistant_stop", stopped))
+        entry.async_on_unload(entry.add_update_listener(async_options_updated))
+        return True
+    except BaseException as setup_error:
+        cleanup_errors = []
+        if platforms_started:
+            try:
+                unloaded = await hass.config_entries.async_unload_platforms(
+                    entry, ["number", "sensor", "switch", "climate", "button"]
+                )
+                if not unloaded:
+                    cleanup_errors.append(RuntimeError("Sauna-Plattformen konnten nach Setupfehler nicht entladen werden"))
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        try:
+            await runtime.close()
+        except BaseException as cleanup_error:
+            cleanup_errors.append(cleanup_error)
+        for cleanup_error in cleanup_errors:
+            setup_error.add_note(f"Zusätzlicher Bereinigungsfehler: {cleanup_error!r}")
+        raise
 
 
 async def async_options_updated(hass, entry):
@@ -231,7 +253,18 @@ async def async_options_updated(hass, entry):
     ):
         # Bei neuer Lichtzuordnung den bisherigen Lichtnachlauf am alten Gerät
         # beenden; dessen Frist darf nicht auf eine andere Leuchte übergehen.
-        await runtime.device.finish_session_light(runtime._clock(), light_timer)
+        finished = await runtime.device.finish_session_light(runtime._clock(), light_timer)
+        if (
+            getattr(entry, "runtime_data", None) is not runtime
+            or entry.options != updated.as_options()
+        ):
+            return
+        if not finished:
+            runtime.reconfiguring = False
+            hass.config_entries.async_update_entry(
+                entry, options=runtime.configuration.as_options()
+            )
+            return
         light_timer = None
     await hass.config_entries.async_reload(entry.entry_id)
     if (

@@ -1,6 +1,9 @@
 # Prüfstand
 
-Diese Seite beschreibt, was die automatisierten Prüfungen nachweisen. Das
+Diese Seite beschreibt die geprüften Fallgruppen, nicht die Fehlerfreiheit oder
+Widerspruchsfreiheit der gesamten Implementierung. Ein erfolgreicher Test belegt
+nur seine Eingaben und Assertions; fachliche Regeln und ihre Verbraucher sind
+zusätzlich am Code zu prüfen. Das
 Ergebnis des jeweiligen Commits steht in den
 [GitHub-Prüfläufen](https://github.com/grisey/HA_Sauna/actions/workflows/tests.yml).
 Die [Einrichtung](einrichtung.md) und die [Bedienung](bedienung.md) sind getrennte
@@ -20,18 +23,24 @@ Anleitungen für die Nutzung.
 
 Die gezielten Szenarien prüfen insbesondere:
 
-- Eine Türöffnung kurz vor fälliger Kühlung lässt Zeit für die Personenerkennung.
-- Ein laufender Gang bleibt bei erreichtem Heizbudget erhalten; Nachlauf wird
-  genau einmal auf die folgende Kühlung angerechnet.
-- Reicht das restliche Heizbudget nicht für die Mindestheizzeit, folgt Kühlung
-  auf den Nachlauf ohne Zwischenheizen.
-- Manuelles Heizen pausiert Nachlauf und Kühlung. Ein aufgehobener vorläufiger
-  Gang erhält den alten Nachlauf; erst ein bestätigter neuer Gang ersetzt ihn.
-- Zusatzkühlung bei Übertemperatur wartet auch im manuellen Betrieb einen
-  laufenden Gang ab. Technische Sperren behalten Vorrang.
+- Ein aktiver Gang fordert Heizen an; Schutz, Betrieb-AUS und Ofenkühlung
+  bleiben übergeordnet.
+- Die Türhilfe gilt einmalig nach geeignetem Türschluss; die Mindestheizzeit
+  beginnt mit tatsächlichem Heiznachweis.
+- Ofenkühlung sperrt sofort, ihre Zeit beginnt erst bei bestätigtem Schütz-AUS.
+  Heizzeiten und Bereitschaftspausen bestimmen ihre einmal eingefrorene Dauer.
+  Eine manuelle Heizwahl unterbricht die Kühlung nicht.
+- Phasenprojektionen korrigieren die Darstellung rückwirkend, ohne historische
+  Aktorbefehle zu verändern. Archivierte Altphasen bleiben lesbar.
 - Übersteuerungen enden an ihren Rückkehrpunkten oder spätestens nach ihrer
   Höchstdauer. Unveränderte Mess- und Zustandsmeldungen verlängern sie nicht.
 - Einstellungen und Darstellungsprognosen ändern keine Heizsperren oder Fristen.
+
+Es gelten [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md) und
+[Ofenkühlung](ofenkuehlung.md). Frühere Prüfziele zu Heizbudgets, Türwartefristen,
+pausierter Kühlung und eigenständiger Zwangskühlung sind keine aktuellen
+Abnahmeregeln. Negativtests können weiterhin belegen, dass alte Parameter keine
+solche Steuerwirkung mehr auslösen.
 
 ## Durchführung
 

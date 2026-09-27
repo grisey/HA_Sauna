@@ -183,6 +183,34 @@ const renderCurrent = (
     ["/entry-1/control", "POST", { enabled: true }],
     ["/entry-1/heater", "POST", { value: true }],
   ]);
+  let finishStart;
+  const delayed = makePanel(enabled);
+  delayed.panel.generation = 1;
+  delayed.panel.state.configuration = { control_mode: "manual" };
+  delayed.panel.state.operation_enabled = false;
+  delayed.panel.api = async (...args) => {
+    delayed.calls.push(args);
+    if (args[0] === "/entry-1/control")
+      await new Promise((resolve) => (finishStart = resolve));
+  };
+  const pendingStart = delayed.panel.action("heater:true");
+  delayed.panel.entry = "entry-2";
+  delayed.panel.generation++;
+  finishStart();
+  await pendingStart;
+  assert.deepEqual(JSON.parse(JSON.stringify(delayed.calls)), [
+    ["/entry-1/control", "POST", { enabled: true }],
+  ]);
+  let rejectStart;
+  delayed.panel.entry = "entry-1";
+  delayed.panel.generation++;
+  delayed.panel.api = async () =>
+    new Promise((_resolve, reject) => (rejectStart = reject));
+  const staleFailure = delayed.panel.action("heater:true");
+  delayed.panel.entry = "entry-2";
+  delayed.panel.generation++;
+  rejectStart(Error("alter Startfehler"));
+  await staleFailure;
   const preferenceCalls = [],
     startButton = { disabled: false, textContent: "Als Startseite festlegen" },
     startStatus = { textContent: "" };

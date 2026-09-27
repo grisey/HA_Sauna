@@ -22,11 +22,15 @@ class Detection:
 def robust_slope(values, step=1):
     if len(values) < 2 or any(v is None for v in values):
         return None
-    return median(
+    slopes = [
         (values[j] - values[i]) / ((j - i) * step / 60)
         for i in range(len(values))
         for j in range(i + 1, len(values))
-    )
+    ]
+    if not all(isfinite(slope) for slope in slopes):
+        return None
+    result = median(slopes)
+    return result if isfinite(result) else None
 
 
 class Detector:
@@ -176,7 +180,8 @@ class Detector:
         series = self._series(position, key, window)
         if not series or series[0] is None or series[-1] is None:
             return None
-        return series[-1] - series[0]
+        difference = series[-1] - series[0]
+        return difference if isfinite(difference) else None
 
     def _sustain(self, name, condition, seconds, step=1):
         self.counts[name] = self.counts.get(name, 0) + 1 if condition else 0

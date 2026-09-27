@@ -70,7 +70,7 @@
           "lower_status": "Optionale Zuordnung für die Diagnose im Archiv; hat keine eigene Steuerwirkung.",
           "heater_feedback": "Optionaler Binärsensor, der tatsächliches Heizen meldet. Keine zweite Zuordnung des Heizschützes erforderlich.",
           "heater_power": "Optionaler Leistungssensor in W oder kW. Seine gültigen Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
-          "control_input_mode": "Taster: Jeder Druck schaltet den Saunabetrieb um; Loslassen hat keine Wirkung. Schalter: Ein/Aus wird übernommen. Der Heizschütz ist getrennt zuzuordnen.",
+          "control_input_mode": "Taster: Ein kurzer Druck startet den Betrieb oder übersteuert den Ofen. Langes Halten beendet die Sitzung; Loslassen startet anschließend den Lichtnachlauf. Schalter: Ein/Aus wird übernommen. Der Heizschütz ist getrennt zuzuordnen.",
           "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen.",
           "presence": "Optionaler Binärsensor. Seine Meldungen werden beobachtet. Die externe Präsenz ersetzt den Proxy noch nicht; Aktivierungsregeln sind noch offen.",
           "audio_output": "Vorbereitetes Ausgabeziel für spätere Audioreaktionen. Es wird noch kein Audio abgespielt.",
@@ -97,13 +97,14 @@
           "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
           "strong_humidity_upper": "Mindestanstieg am oberen Sensor in Prozentpunkten pro Minute.",
           "door_close_hold_seconds": "So lange muss die Bedingung für eine geschlossene Tür bestehen.",
-          "vent_hold_seconds": "So lange muss die Tür offen sein, bevor Durchlüften bestätigt werden kann.",
+          "vent_hold_seconds": "Bei nur einem gültigen Messkanal muss die Tür mindestens so lange offen sein, bevor Durchlüften bestätigt werden kann. Bei zwei gültigen Kanälen gilt keine feste Mindestdauer.",
           "strong_temperature_lower": "Untergrenze des Temperaturtrends am unteren Sensor für diesen Erkennungspfad.",
           "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss.",
           "weak_temperature_lower": "Untergrenze des Temperaturtrends am unteren Sensor nach dem Durchlüften.",
           "door_open_humidity_upper": "Mindestabfall am oberen Sensor in Prozentpunkten; wird zusammen mit dem Temperaturtrend bewertet.",
           "strong_window_seconds": "Zeitraum für Temperatur- und Luftfeuchtetrends bei deutlichen Hinweisen auf Personen.",
           "light_transition_seconds": "Zeit für einen sanften Wechsel der automatisch vorgegebenen Lichthelligkeit. Null schaltet ohne Übergang.",
+          "light_brightness_scale": "Native Helligkeitsstufen des Geräts für die Erkennung eigener Rückmeldungen. Standard 255 entspricht Home Assistant. Bei gröberer Auflösung den tatsächlich konfigurierten Maximalwert verwenden, etwa 10 bei MQTT brightness_scale 10. Die Bedienung bleibt in Prozent.",
           "program_mode": "Konstante Temperatur oder Temperatursteigerung vom Startwert zum Endwert.",
           "mechanical_timer_minutes": "Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb und eingeschaltetem Schütz. Bei ausgeschaltetem oder nicht verfügbarem Schütz hält die Anzeige an, auch während Heizpause und Ofenkühlung. Nach einer beendeten Sitzung mit gezählten Saunagängen beginnt sie beim nächsten Start neu. Die Anzeige schaltet nichts.",
           "vent_drop_lower": "Mindestabfall am unteren Sensor gegenüber der Temperatur vor der Öffnung.",
@@ -127,7 +128,7 @@
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "vent_drop_upper": "Mindestabfall am oberen Sensor gegenüber der Temperatur vor der Öffnung.",
-          "weak_window_seconds": "Längerer Vergleichszeitraum für schwache Personensignale nach bestätigtem Durchlüften.",
+          "weak_window_seconds": "Längerer Vergleichszeitraum für schwache Personensignale nach einer Türöffnung und anschließender Schließung. Bestätigtes Durchlüften ist nicht erforderlich.",
           "program_1_end_c": "Temperatur am Ende der Steigerung und für alle weiteren Saunagänge.",
           "person_step_seconds": "Abstand zwischen zwei Auswertungen der Personenbedingungen.",
           "strong_humidity_lower": "Mindestanstieg am unteren Sensor in Prozentpunkten pro Minute.",
@@ -159,7 +160,7 @@
           "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
           "oven_cooling_max_minutes": "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
           "oven_cooling_half_life_minutes": "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
-          "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten aus."
+          "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht die hier eingestellte Anzahl gewichteter Heizminuten aus; Standard sind zwei."
         },
         "title": "Temperatur, Zeiten und Erkennung",
         "data": {
@@ -188,6 +189,7 @@
           "door_open_humidity_upper": "Luftfeuchteabfall bei Türöffnung oben",
           "strong_window_seconds": "Zeitfenster für deutliche Personensignale",
           "light_transition_seconds": "Dauer des Lichtübergangs",
+          "light_brightness_scale": "Helligkeitsskala des Lichtgeräts",
           "program_mode": "Temperaturprogramm",
           "mechanical_timer_minutes": "Laufzeit des mechanischen Ofentimers",
           "vent_drop_lower": "Temperaturabfall beim Durchlüften unten",
@@ -327,7 +329,7 @@
           "lower_status": "Optionale Zuordnung für die Diagnose im Archiv; hat keine eigene Steuerwirkung.",
           "heater_feedback": "Optionaler Binärsensor, der tatsächliches Heizen meldet. Keine zweite Zuordnung des Heizschützes erforderlich.",
           "heater_power": "Optionaler Leistungssensor in W oder kW. Seine gültigen Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
-          "control_input_mode": "Taster: Jeder Druck schaltet den Saunabetrieb um; Loslassen hat keine Wirkung. Schalter: Ein/Aus wird übernommen. Der Heizschütz ist getrennt zuzuordnen.",
+          "control_input_mode": "Taster: Ein kurzer Druck startet den Betrieb oder übersteuert den Ofen. Langes Halten beendet die Sitzung; Loslassen startet anschließend den Lichtnachlauf. Schalter: Ein/Aus wird übernommen. Der Heizschütz ist getrennt zuzuordnen.",
           "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen.",
           "presence": "Optionaler Binärsensor. Seine Meldungen werden beobachtet. Die externe Präsenz ersetzt den Proxy noch nicht; Aktivierungsregeln sind noch offen.",
           "audio_output": "Vorbereitetes Ausgabeziel für spätere Audioreaktionen. Es wird noch kein Audio abgespielt.",
@@ -353,13 +355,14 @@
           "sauna_min_temperature_c": "Untergrenze für Soll- und Endtemperatur sowie die Temperaturschnellauswahl. Bereits gespeicherte Werte werden nicht verändert; Werte darunter werden bei einer Änderung abgewiesen.",
           "strong_humidity_upper": "Mindestanstieg am oberen Sensor in Prozentpunkten pro Minute.",
           "door_close_hold_seconds": "So lange muss die Bedingung für eine geschlossene Tür bestehen.",
-          "vent_hold_seconds": "So lange muss die Tür offen sein, bevor Durchlüften bestätigt werden kann.",
+          "vent_hold_seconds": "Bei nur einem gültigen Messkanal muss die Tür mindestens so lange offen sein, bevor Durchlüften bestätigt werden kann. Bei zwei gültigen Kanälen gilt keine feste Mindestdauer.",
           "strong_temperature_lower": "Untergrenze des Temperaturtrends am unteren Sensor für diesen Erkennungspfad.",
           "feedback_timeout_seconds": "Zeit, in der der Schütz einen Ein- oder Ausschaltbefehl bestätigen muss.",
           "weak_temperature_lower": "Untergrenze des Temperaturtrends am unteren Sensor nach dem Durchlüften.",
           "door_open_humidity_upper": "Mindestabfall am oberen Sensor in Prozentpunkten; wird zusammen mit dem Temperaturtrend bewertet.",
           "strong_window_seconds": "Zeitraum für Temperatur- und Luftfeuchtetrends bei deutlichen Hinweisen auf Personen.",
           "light_transition_seconds": "Zeit für einen sanften Wechsel der automatisch vorgegebenen Lichthelligkeit. Null schaltet ohne Übergang.",
+          "light_brightness_scale": "Native Helligkeitsstufen des Geräts für die Erkennung eigener Rückmeldungen. Standard 255 entspricht Home Assistant. Bei gröberer Auflösung den tatsächlich konfigurierten Maximalwert verwenden, etwa 10 bei MQTT brightness_scale 10. Die Bedienung bleibt in Prozent.",
           "program_mode": "Konstante Temperatur oder Temperatursteigerung vom Startwert zum Endwert.",
           "mechanical_timer_minutes": "Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb und eingeschaltetem Schütz. Bei ausgeschaltetem oder nicht verfügbarem Schütz hält die Anzeige an, auch während Heizpause und Ofenkühlung. Nach einer beendeten Sitzung mit gezählten Saunagängen beginnt sie beim nächsten Start neu. Die Anzeige schaltet nichts.",
           "vent_drop_lower": "Mindestabfall am unteren Sensor gegenüber der Temperatur vor der Öffnung.",
@@ -383,7 +386,7 @@
           "infusion_hold_seconds": "So lange müssen die Aufgussbedingungen bestehen. Dies ist nicht die Wartefrist eines vorläufigen Saunagangs.",
           "infusion_humidity": "Mindestanstieg in Prozentpunkten innerhalb des Aufgussfensters.",
           "vent_drop_upper": "Mindestabfall am oberen Sensor gegenüber der Temperatur vor der Öffnung.",
-          "weak_window_seconds": "Längerer Vergleichszeitraum für schwache Personensignale nach bestätigtem Durchlüften.",
+          "weak_window_seconds": "Längerer Vergleichszeitraum für schwache Personensignale nach einer Türöffnung und anschließender Schließung. Bestätigtes Durchlüften ist nicht erforderlich.",
           "program_1_end_c": "Temperatur am Ende der Steigerung und für alle weiteren Saunagänge.",
           "person_step_seconds": "Abstand zwischen zwei Auswertungen der Personenbedingungen.",
           "strong_humidity_lower": "Mindestanstieg am unteren Sensor in Prozentpunkten pro Minute.",
@@ -414,7 +417,7 @@
           "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
           "oven_cooling_max_minutes": "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
           "oven_cooling_half_life_minutes": "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
-          "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten aus."
+          "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht die hier eingestellte Anzahl gewichteter Heizminuten aus; Standard sind zwei."
         },
         "title": "Temperatur, Zeiten und Erkennung",
         "data": {
@@ -442,6 +445,7 @@
           "door_open_humidity_upper": "Luftfeuchteabfall bei Türöffnung oben",
           "strong_window_seconds": "Zeitfenster für deutliche Personensignale",
           "light_transition_seconds": "Dauer des Lichtübergangs",
+          "light_brightness_scale": "Helligkeitsskala des Lichtgeräts",
           "program_mode": "Temperaturprogramm",
           "mechanical_timer_minutes": "Laufzeit des mechanischen Ofentimers",
           "vent_drop_lower": "Temperaturabfall beim Durchlüften unten",
@@ -515,7 +519,7 @@
   "selector": {
     "control_input_mode": {
       "options": {
-        "button": "Taster – jeder Druck schaltet um",
+        "button": "Taster – kurz bedienen, lang beenden",
         "switch": "Schalter – Ein/Aus übernehmen"
       }
     },

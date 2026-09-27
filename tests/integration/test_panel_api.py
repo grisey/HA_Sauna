@@ -68,6 +68,67 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
         self.assertIsNone(self.entry.runtime_data.session)
 
+    async def test_instance_read_permission_and_normal_control_history_projection(self):
+        url = self.base + "/" + self.entry.entry_id
+        denied = await self.hass.auth.async_create_user("No entity read", group_ids=[])
+        token = await self.hass.auth.async_create_refresh_token(denied, client_id="http://localhost/")
+        denied_headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=denied_headers) as client:
+            async with client.get(self.base) as response:
+                self.assertEqual(await response.json(), [])
+            for suffix in ("/state", "/archive"):
+                async with client.get(url + suffix) as response:
+                    self.assertEqual(response.status, 403)
+
+        normal = await self.hass.auth.async_create_user("Normal panel read", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(normal, client_id="http://localhost/")
+        normal_headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        runtime = self.entry.runtime_data
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+        await runtime.archive.flush()
+        async with ClientSession(headers=normal_headers) as client:
+            async with client.get(self.base) as response:
+                self.assertEqual((await response.json())[0]["entry_id"], self.entry.entry_id)
+            async with client.get(url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                state = await response.json()
+                self.assertEqual(state["session"]["timeline"]["session_id"], session_id)
+                self.assertIn("measurements", state)
+                self.assertIn("measurement_status", state)
+                self.assertIn("target_temperature_c", state["configuration"]["parameters"])
+                self.assertNotIn("bindings", state["configuration"])
+                self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])
+                self.assertNotIn("detector_trace", state)
+                self.assertIn("target_temperature_c", {item["key"] for item in state["parameters"]})
+                self.assertNotIn("sensor_timeout_seconds", {item["key"] for item in state["parameters"]})
+                self.assertTrue(all("source" not in item for item in state["measurements"]))
+                self.assertEqual(state["measurement_ttl_seconds"], 60)
+            async with client.get(url + "/archive", params={"session_id": session_id}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                history = await response.json()
+                self.assertNotIn("configuration", history["session"])
+                self.assertEqual(history["session"]["measurement_ttl_seconds"], 60)
+                self.assertTrue(all(record["kind"] in {"measurement", "source_snapshot", "phase"}
+                                    for record in history["records"]))
+                self.assertTrue(all("source" not in record["payload"] for record in history["records"]))
+
+    async def test_malformed_json_is_a_client_error_across_write_endpoints(self):
+        url = self.base + "/" + self.entry.entry_id
+        original_options = dict(self.entry.options)
+        async with ClientSession(headers=self.headers) as client:
+            for suffix in (
+                "/control", "/finish_phase", "/finish-session", "/parameters",
+                "/temperature", "/appearance", "/program", "/programs",
+                "/button-program", "/control-mode", "/light", "/heater", "/logging",
+            ):
+                with self.subTest(suffix=suffix):
+                    async with client.post(url + suffix, data="{", headers={"Content-Type": "application/json"}) as response:
+                        self.assertEqual(response.status, 400, await response.text())
+                        self.assertIn("error", await response.json())
+        self.assertEqual(dict(self.entry.options), original_options)
+        self.assertIsNone(self.entry.runtime_data.session)
+
     async def test_finish_session_requires_the_current_gap_token_and_control_permission(self):
         from datetime import UTC, datetime
 
@@ -678,6 +739,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 {"scales": {"temperature": {"minimum": True}}},
                 {"scales": {"temperature": {"minimum": 10 ** 400}}},
                 {"scales": {"temperature": {"minimum": -1e308, "maximum": 1e308}}},
+                {"scales": {"temperature": {"minimum": -(10 ** 308), "maximum": 10 ** 308}}},
                 {"scales": {"extra": {}}},
                 {"extra": True},
             )

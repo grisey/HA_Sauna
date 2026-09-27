@@ -86,7 +86,6 @@ vm.runInNewContext(
 const { HistoryCurves } = sandbox.chartExports;
 
 assert.ok(panelSource.includes("`/${entry}/temperature`"));
-assert.ok(panelSource.includes("`/${entry}/program`"));
 assert.match(panelSource, /data-target-arc[\s\S]*role="slider"/);
 assert.match(panelSource, /data-action="light:false"/);
 assert.match(panelSource, /permissions\.temperature/);

@@ -1,7 +1,7 @@
 """Grundgerüst mit synthetischen Daten: keine HA-Instanz und keine Geräte nötig."""
 import asyncio
 import ast
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
@@ -349,6 +349,34 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await self.runtime.close()
         self.assertEqual(called, ["still_removed"])
         self.assertTrue(self.runtime.closed)
+
+    async def test_cancelled_unload_is_joined_by_next_close(self):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
+
+        class Device:
+            async def close(self):
+                calls.append("device")
+                entered.set()
+                await release.wait()
+
+        class Archive:
+            failure = None
+
+            async def close(self):
+                calls.append("archive")
+
+        self.runtime.device = Device()
+        self.runtime.archive = Archive()
+        first = asyncio.create_task(self.runtime.close())
+        await entered.wait()
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await first
+        release.set()
+        await self.runtime.close()
+        self.assertEqual(calls, ["device", "archive"])
 
     async def test_deadline_uses_injected_clock(self):
         await self.runtime.begin_session("s")

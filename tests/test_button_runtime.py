@@ -3,6 +3,7 @@
 import asyncio
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.core.parameters import Parameters
@@ -57,6 +58,53 @@ class ButtonRuntimeTests(unittest.TestCase):
         ):
             self.now = started_at + timedelta(seconds=seconds)
             controller.process(Event(name, session_id, kind, self.now, self.now))
+
+    def test_physical_start_at_expired_manual_gap_finishes_once(self):
+        for seconds in (59, 60, 61):
+            with self.subTest(seconds=seconds):
+                self.now = datetime(2026, 9, 20, 12, tzinfo=UTC)
+                configuration = Configuration(
+                    Bindings(bindings()),
+                    Parameters({"session_gap_minutes": 1}),
+                    control_mode="manual",
+                    button_temperature_c=90,
+                )
+                self.runtime = SaunaRuntime(configuration, lambda: self.now)
+                asyncio.run(self.runtime.set_operation(True))
+                old_id = self.runtime.session.session_id
+                asyncio.run(self.runtime.set_operation(False))
+                self._event("short", seconds)
+                self.assertTrue(self.runtime.session.operation_enabled)
+                self.assertNotEqual(self.runtime.session.session_id, old_id)
+                self.assertEqual(self.runtime.controller.control_mode, "automatic")
+                self.assertEqual(
+                    [session.session_id for session in self.runtime.controller.completed_sessions],
+                    [old_id],
+                )
+
+    def test_physical_program_start_archives_old_manual_configuration(self):
+        configuration = Configuration(
+            Bindings(bindings()),
+            Parameters({"target_temperature_c": 75}),
+            control_mode="manual",
+            button_temperature_c=90,
+        )
+        self.runtime = SaunaRuntime(configuration, lambda: self.now)
+        self.runtime.archive = Mock()
+        asyncio.run(self.runtime.set_operation(True))
+        old_id = self.runtime.session.session_id
+        asyncio.run(self.runtime.set_operation(False))
+        self._event("short", 5)
+        saved_old = [
+            call.args[2]
+            for call in self.runtime.archive.save_session.call_args_list
+            if call.args[0].session_id == old_id
+        ]
+        self.assertTrue(saved_old)
+        self.assertEqual(saved_old[-1]["control_mode"], "manual")
+        self.assertEqual(saved_old[-1]["parameters"]["target_temperature_c"], 75)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertEqual(self.runtime.configuration.parameters.values["target_temperature_c"], 90)
 
     def test_press_release_single_starts_once_and_short_toggles_override(self):
         self._event("press")

@@ -153,6 +153,10 @@ DEFINITIONS = (
     definition("button_hold_seconds", "s", True, default=2),
     definition("light_reference_temperature_c", "°C", default=30, maximum=100),
     definition("light_transition_seconds", "s", True, default=30),
+    definition(
+        "light_brightness_scale", "Stufen", default=255,
+        minimum=1, maximum=65535, integer=True,
+    ),
     definition("night_brightness_percent", "%", default=25, maximum=100),
     definition("operation_brightness_percent", "%", default=40, maximum=100),
     definition("after_run_brightness_percent", "%", default=15, maximum=100),

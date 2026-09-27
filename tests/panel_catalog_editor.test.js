@@ -103,6 +103,39 @@ test("cancel, new program, validation, and deletion protection", () => {
   assert.deepEqual(ids(panel), ["a", "b"]);
 });
 
+test("edited number input strings become numeric steps without losing invalid drafts", async () => {
+  const { panel } = makePanel();
+  panel.message = () => {};
+  panel.openProgramEditor("c");
+  for (const [field, value] of [
+    ["start_c", "80"],
+    ["end_c", "90"],
+    ["distribution_gangs", "3"],
+  ])
+    panel.updateProgramEditorField({
+      matches: (selector) => selector === "[data-program-field]",
+      dataset: { programField: field },
+      value,
+    });
+  await panel.action("catalog-kind:steps:c");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(panel.programEditor.values.temperature_steps)),
+    [80, 85, 90],
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(panel.distributedSteps(80, 90, 1))),
+    [80, 90],
+  );
+  panel.programEditor.kind = "even";
+  panel.programEditor.values.start_c = "";
+  await assert.rejects(() => panel.action("catalog-kind:steps:c"), /Programmwerte/);
+  assert.equal(panel.programEditor.values.start_c, "");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(panel.distributedSteps("abc", "90", 3))),
+    [],
+  );
+});
+
 test("keyboard order and pointer insertion preserve IDs and can be discarded", () => {
   const { panel, library } = makePanel();
   panel.moveProgram("c", -1);

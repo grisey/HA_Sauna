@@ -50,18 +50,25 @@ def validate_appearance(value):
         minimum = bounds.get("minimum", defaults["minimum"])
         maximum = bounds.get("maximum", defaults["maximum"])
         valid_numbers = True
+        finite_bounds = []
         for number in (minimum, maximum):
             if isinstance(number, bool) or not isinstance(number, (int, float)):
                 valid_numbers = False
                 break
             try:
-                if not math.isfinite(float(number)):
+                finite_number = float(number)
+                if not math.isfinite(finite_number):
                     valid_numbers = False
                     break
+                finite_bounds.append(finite_number)
             except OverflowError:
                 valid_numbers = False
                 break
-        if not valid_numbers or minimum >= maximum or not math.isfinite(maximum - minimum):
+        if (
+            not valid_numbers
+            or minimum >= maximum
+            or not math.isfinite(finite_bounds[1] - finite_bounds[0])
+        ):
             raise ValueError("Diagrammminimum muss kleiner als Maximum sein")
         if name == "humidity" and (minimum < 0 or maximum > 100):
             raise ValueError("Feuchteskala muss zwischen 0 und 100 liegen")

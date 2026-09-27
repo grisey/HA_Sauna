@@ -1,5 +1,16 @@
 # Arbeitsregeln
 
+## Nachweis und schlanke Tests (27.09.2026)
+
+Ein erfolgreicher Test belegt nur den geprüften Fall, nicht die Widerspruchsfreiheit
+der Implementierung. Fachliche Anforderungen, Zustandsübergänge und sämtliche
+Verbraucher der kanonischen Daten sind zusätzlich am Code zu prüfen. Tests klein
+und gezielt halten: konkrete fachliche Gegenbeispiele mit bestehenden Fixtures
+absichern, keine zweite Fachlogik oder Spiegelimplementierung im Test aufbauen.
+Testanzahl und grüne Läufe nicht als Beweis vollständiger Fehlerfreiheit darstellen.
+Eine Regel hat eine maßgebliche Implementierung; Fehler dort korrigieren, statt
+parallele Sonderpfade, doppelte Zustände oder kompensierende Verbraucher einzuführen.
+
 ## Vorrang des Folgeauftrags vom 26.09.2026
 
 [Präsenz, Ofen und Phasen](docs/praesenz-ofen-phasen.md) und

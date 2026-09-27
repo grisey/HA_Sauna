@@ -30,7 +30,7 @@ Nach Neustart werden Archive geladen, aber kein Betrieb automatisch fortgesetzt.
 
 ## Authentifizierter Export
 
-Der Download in **Details → Einstellungen & Export** nutzt HAs kurzlebigen
+Der Download unter **Einstellungen** nutzt HAs kurzlebigen
 signierten Abrufpfad. Direkter Abruf ohne HA-Anmeldung oder gültige Signatur
 wird abgelehnt. Eine temporäre SQLite-Kopie stellt einen konsistenten Stand her,
 während neue Eingänge weiter gespeichert werden. Die ZIP-Datei wird gestreamt

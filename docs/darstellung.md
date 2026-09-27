@@ -206,8 +206,8 @@ Taster startet mit einem benannten Programm oder einer unabhängig gespeicherten
 konstanten Temperatur. Technische Konfiguration, Erkennungsparameter,
 Protokollierung und Export stehen nur Administratoren zur Verfügung.
 
-Während einer Sitzung sind nur die dafür vorgesehenen Temperaturwerte und die
-Protokollstufe änderbar. Grundwerte, Programmeinträge, Betriebsart und
+Während einer Sitzung sind die dafür vorgesehenen Temperaturwerte sowie für
+Administratoren die Protokollstufe und Darstellung änderbar. Grundwerte, Programmeinträge, Betriebsart und
 Gerätezuordnungen bleiben gesperrt. Diese Grenzen gelten auch bei direkten
 API-Aufrufen. Die Bedienrechte stammen aus Home Assistant.
 

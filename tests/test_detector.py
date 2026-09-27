@@ -1,9 +1,13 @@
 """Synthetische Zeitreihen prüfen Kausalität, Ausfall und Quellenwechsel."""
 from datetime import timedelta
+import asyncio
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
+from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.detection_parameters import candidate_values
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
@@ -44,6 +48,65 @@ def trace(second):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_finite_temperature_outlier_keeps_archived_cycle_and_output_alive(self):
+        async def exercise(path):
+            now = [T0]
+            runtime = SaunaRuntime(
+                Configuration(Bindings({
+                    "upper_temperature": "sensor.top_t",
+                    "upper_humidity": "sensor.top_h",
+                    "lower_temperature": "sensor.bottom_t",
+                    "lower_humidity": "sensor.bottom_h",
+                    "heater": "switch.heater",
+                    "light": "light.sauna",
+                    "control_input": "event.button",
+                }), parameters()),
+                lambda: now[0],
+            )
+
+            class Device:
+                measurements = {}
+                command = False
+                command_error = False
+                faults = {}
+
+                def feedback(self):
+                    return False
+
+                def refresh(self, at):
+                    runtime.controller.advance(at)
+
+                async def apply(self, at):
+                    outputs.append(at)
+
+            outputs = []
+            runtime.device = Device()
+            await runtime.start_archive(path, "outlier-entry")
+            runtime.controller.begin_session("outlier", T0)
+            runtime._sync_detector()
+            for second in range(18):
+                now[0] = T0 + timedelta(seconds=second)
+                for position in (Position.UPPER, Position.LOWER):
+                    temperature = 1e308 if position == Position.UPPER and 12 <= second <= 16 else 80.0
+                    for quantity, value in (
+                        (Quantity.TEMPERATURE, temperature),
+                        (Quantity.HUMIDITY, 40.0),
+                    ):
+                        m = measurement(position, quantity, value, second)
+                        runtime.detector.accept(m)
+                        runtime.archive.append("measurement", now[0], m, "outlier")
+                await runtime._cycle(sample=True)
+            await runtime.archive.flush()
+            records = runtime.archive.read("outlier")["records"]
+            await runtime.archive.close()
+            return outputs, records
+
+        with TemporaryDirectory() as directory:
+            outputs, records = asyncio.run(exercise(Path(directory) / "outlier.sqlite"))
+        self.assertEqual(len(outputs), 18)
+        self.assertEqual(sum(r["kind"] == "measurement" for r in records), 72)
+        self.assertTrue(any(r["kind"] == "detector_trace" for r in records))
+
     def test_temperature_veto_legacy_values_are_not_editable(self):
         editable = {definition.key for definition in EDITABLE_DEFINITIONS}
         self.assertTrue({

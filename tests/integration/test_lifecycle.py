@@ -2,7 +2,7 @@ import unittest
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
-from custom_components.ha_sauna.core.parameters import DEFINITIONS, EDITABLE_DEFINITIONS
+from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
 
 from harness import create_sauna, start_hass
 

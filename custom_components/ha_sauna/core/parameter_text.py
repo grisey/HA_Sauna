@@ -118,7 +118,7 @@ PARAMETER_TEXT = {
     ),
     "oven_cooling_heat_idle_ratio": (
         "Heizminuten je Bereitschaftsminute",
-        "Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten aus.",
+        "Eine gewichtete Minute Bereitschaftspause gleicht die hier eingestellte Anzahl gewichteter Heizminuten aus; Standard sind zwei.",
         "operation",
     ),
     "light_reference_temperature_c": (
@@ -129,6 +129,11 @@ PARAMETER_TEXT = {
     "light_transition_seconds": (
         "Dauer des Lichtübergangs",
         "Zeit für einen sanften Wechsel der automatisch vorgegebenen Lichthelligkeit. Null schaltet ohne Übergang.",
+        "light",
+    ),
+    "light_brightness_scale": (
+        "Helligkeitsskala des Lichtgeräts",
+        "Native Helligkeitsstufen des Geräts für die Erkennung eigener Rückmeldungen. Standard 255 entspricht Home Assistant. Bei gröberer Auflösung den tatsächlich konfigurierten Maximalwert verwenden, etwa 10 bei MQTT brightness_scale 10. Die Bedienung bleibt in Prozent.",
         "light",
     ),
     "night_brightness_percent": (
@@ -288,7 +293,7 @@ PARAMETER_TEXT = {
     ),
     "vent_hold_seconds": (
         "Mindestdauer des Durchlüftens",
-        "So lange muss die Tür offen sein, bevor Durchlüften bestätigt werden kann.",
+        "Bei nur einem gültigen Messkanal muss die Tür mindestens so lange offen sein, bevor Durchlüften bestätigt werden kann. Bei zwei gültigen Kanälen gilt keine feste Mindestdauer.",
         "detection",
     ),
     "vent_drop_upper": (
@@ -343,7 +348,7 @@ PARAMETER_TEXT = {
     ),
     "weak_window_seconds": (
         "Zeitfenster für schwache Personensignale",
-        "Längerer Vergleichszeitraum für schwache Personensignale nach bestätigtem Durchlüften.",
+        "Längerer Vergleichszeitraum für schwache Personensignale nach einer Türöffnung und anschließender Schließung. Bestätigtes Durchlüften ist nicht erforderlich.",
         "detection",
     ),
     "weak_humidity_upper": (

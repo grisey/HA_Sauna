@@ -3,14 +3,15 @@
 HA Sauna bündelt Ihre Saunasitzung in Home Assistant: Temperatur, Licht,
 Saunagänge, Bedienung und Verlauf bleiben an einer Stelle sichtbar.
 
-Oben neben der Sauna stehen **Übersicht**, **Details** und **Einstellungen** bereit. In der
-Übersicht schalten Sie den Betrieb ein, wählen die Temperatur direkt am
+Oben neben der Sauna stehen **Steuerung**, **Verlauf**, **Details** und
+**Einstellungen** bereit. In der Steuerung schalten Sie den Betrieb ein, wählen die Temperatur direkt am
 Anzeigebogen oder über Schnellwahltasten und sehen Temperatur, Luftfeuchte,
 Heizzustand und die nächste relevante Zeit. Die Temperatur kann konstant bleiben
 oder einem Programm mit gleichmäßig verteilten oder einzeln gewählten Stufen
 folgen. Im Automatikbetrieb bietet
-die Übersicht beim Licht **Aus**, **Automatik** und **Hell**. **Gedimmt** und
-freie Helligkeit stehen Administratoren in den Details zur Verfügung.
+die Steuerung beim Licht **Aus**, **Automatik** und **Hell**. Die freie
+Helligkeitswahl steht Administratoren dort in der Übersteuerung zur Verfügung.
+Details enthalten ausschließlich Status- und Diagnoseanzeigen.
 
 Der bestehende Saunataster bleibt Teil der Bedienung: Ein kurzer Druck startet
 mit dem hinterlegten Programm oder übersteuert den Ofen vorübergehend; langes

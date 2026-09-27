@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -276,6 +277,7 @@ class SaunaRuntime:
         )
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
+        self._pending_device_inputs = deque()
         self._button = ButtonGestures(
             timedelta(seconds=configuration.parameters.values["button_hold_seconds"])
         )
@@ -284,6 +286,7 @@ class SaunaRuntime:
         self._cleanup: list[Callable[[], None]] = []
         self._subscribers: set[Callable[[], None]] = set()
         self.closed = False
+        self._close_task = None
         self.reconfiguring = False
         self.archive = None
         self._archived_completed = 0
@@ -329,7 +332,16 @@ class SaunaRuntime:
         def observed(trace):
             self.log.debug("detection_check", "Erkennungsprüfung: %s", trace)
             if self.archive:
-                self.archive.append("detector_trace", self._clock(), trace, session_id)
+                try:
+                    self.archive.append("detector_trace", self._clock(), trace, session_id)
+                except (ValueError, OverflowError) as error:
+                    # A malformed diagnostic is not an actuator input. Keep
+                    # the raw measurements and finish this regulation cycle.
+                    self.log.error(
+                        "detector_trace_invalid",
+                        "Erkennungsdiagnose konnte nicht gespeichert werden: %s",
+                        error,
+                    )
 
         self.detector = (
             Detector(
@@ -429,28 +441,39 @@ class SaunaRuntime:
 
     async def device_input(self, event):
         received_at = self._clock()
+        self._pending_device_inputs.append((received_at, event))
         async with self._lock:
             if self.closed:
+                self._pending_device_inputs.clear()
                 return
-            entity_id = event.data["entity_id"]
-            for role, source in self.configuration.bindings.values.items():
-                if source == entity_id:
-                    self.device.ingest(role, event.data.get("new_state"), received_at)
-            light_selection = self.device.external_light_selection(event, received_at)
-            if light_selection is not None:
-                self._set_light_override(light_selection, received_at)
-            action = self.device.physical_action(event)
-            if self.configuration.control_input_mode == "button" and action is not None:
-                try:
-                    await self._handle_button_event(action, received_at)
-                except ValueError as error:
-                    self.device.faults["start_rejected"] = str(error)
-            elif action is not None:
-                try:
-                    self._prepare_operation(action, physical=True)
-                    self._set_operation(action)
-                except ValueError as error:
-                    self.device.faults["start_rejected"] = str(error)
+            if not self._pending_device_inputs:
+                return
+            while self._pending_device_inputs:
+                received_at, event = self._pending_device_inputs.popleft()
+                entity_id = event.data["entity_id"]
+                for role, source in self.configuration.bindings.values.items():
+                    if source == entity_id:
+                        self.device.ingest(role, event.data.get("new_state"), received_at)
+                        if role in {"heater", "heater_power", "heater_feedback"}:
+                            self.device.report_received_feedback(received_at)
+                light_selection = self.device.external_light_selection(event, received_at)
+                if light_selection is not None:
+                    self._set_light_override(light_selection, received_at)
+                action = self.device.physical_action(event)
+                action_at = max(
+                    received_at, self.controller._last_at or received_at
+                )
+                if self.configuration.control_input_mode == "button" and action is not None:
+                    try:
+                        await self._handle_button_event(action, action_at)
+                    except ValueError as error:
+                        self.device.faults["start_rejected"] = str(error)
+                elif action is not None:
+                    try:
+                        self._prepare_operation(action, physical=True, at=action_at)
+                        self._set_operation(action, at=action_at)
+                    except ValueError as error:
+                        self.device.faults["start_rejected"] = str(error)
             await self._cycle()
 
     async def reset_protection(self):
@@ -576,7 +599,6 @@ class SaunaRuntime:
             "external_activation": "pending_rules",
             "current": self.presence.current,
             "external": self.presence.external,
-            "observations": self.presence.observations,
         }
 
     def persist_completed_sessions(self):
@@ -699,13 +721,14 @@ class SaunaRuntime:
                 "Einstellungen können erst nach Ende der Saunasitzung geändert werden"
             )
 
-    def _set_operation(self, enabled, *, preserve_button=False):
+    def _set_operation(self, enabled, *, preserve_button=False, at=None):
+        at = self._clock() if at is None else at
         if enabled and self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
             )
         if self.device:
-            self.device.refresh(self._clock())
+            self.device.refresh(at)
             if enabled and not (self.session and self.session.operation_enabled):
                 errors = self.device.start_errors()
                 if errors:
@@ -723,7 +746,7 @@ class SaunaRuntime:
             "Saunabetrieb %s angefordert.",
             "einschalten" if enabled else "ausschalten",
         )
-        result = self.controller.set_operation(enabled, self._clock())
+        result = self.controller.set_operation(enabled, at)
         if enabled:
             self._button_hold_session_id = None
             if not preserve_button:
@@ -740,7 +763,8 @@ class SaunaRuntime:
                 self.save_configuration(self.configuration)
         return result
 
-    def _prepare_operation(self, enabled, *, physical=False):
+    def _prepare_operation(self, enabled, *, physical=False, at=None):
+        at = self._clock() if at is None else at
         if enabled and self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
@@ -752,7 +776,9 @@ class SaunaRuntime:
             and self.controller.control_mode == "manual"
         ):
             if self.session:
-                self.controller.finish_session(self._clock(), light_after_run=False)
+                self.controller.finish_session(at, light_after_run=False)
+            # The old session still belongs to the old control configuration.
+            self.persist_completed_sessions()
             self.controller.set_control_mode("automatic")
             self.configuration = replace(self.configuration, control_mode="automatic")
             self.log.info(
@@ -768,9 +794,9 @@ class SaunaRuntime:
             and not (self.session and self.session.operation_enabled)
             and self.configuration.button_program != "current"
         ):
-            self._select_button_program()
+            self._select_button_program(at)
 
-    def _select_button_program(self):
+    def _select_button_program(self, at):
         """Apply the configured physical-button profile; caller owns ``_lock``."""
         parameters, mode = program_parameters(
             self.configuration.parameters,
@@ -786,7 +812,7 @@ class SaunaRuntime:
             )
         self.controller.update_temperature_parameters(
             parameters,
-            self._clock(),
+            at,
             program_mode=mode,
             new_program=True,
             temperature_steps=next(
@@ -798,6 +824,9 @@ class SaunaRuntime:
                 None,
             ),
         )
+        # ``update_temperature_parameters`` advances deadlines. Archive any
+        # session it completed before replacing the button-program values.
+        self.persist_completed_sessions()
         self.configuration = replace(
             self.configuration,
             parameters=parameters,
@@ -852,8 +881,8 @@ class SaunaRuntime:
                 if self.device:
                     self.device.finish_button_hold_light(self._button_hold_session_id)
                 self._button_hold_session_id = None
-            self._prepare_operation(True, physical=True)
-            self._set_operation(True, preserve_button=True)
+            self._prepare_operation(True, physical=True, at=now)
+            self._set_operation(True, preserve_button=True, at=now)
         elif action == HEATER_TOGGLE_OVERRIDE:
             self._toggle_button_heater_override(now)
         elif action == END_HOLD and self.session is not None:
@@ -1018,10 +1047,14 @@ class SaunaRuntime:
         self._cleanup.append(unsubscribe)
 
     async def close(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_once())
+        await asyncio.shield(self._close_task)
+
+    async def _close_once(self) -> None:
         async with self._lock:
-            if self.closed:
-                return
             self.closed = True
+            self._pending_device_inputs.clear()
             self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")
             callbacks, self._cleanup = self._cleanup, []
             failures = []

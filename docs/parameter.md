@@ -22,8 +22,9 @@ gespeicherte Werte bleiben erhalten.
 Während einer offenen Sitzung lassen sich nur Solltemperatur, Endtemperatur und
 Verteilung der Temperaturautomatik ändern. Diese Änderung geht direkt an den
 führenden Controller; sie startet keine Timer neu und hebt weder Kühlung noch
-Schutz auf. Alle übrigen Werte und Entitätszuordnungen bleiben bis zum
-Sitzungsende gesperrt.
+Schutz auf. Administratoren können außerdem Protokollstufe und Darstellung
+ändern, ohne den Ablauf neu zu starten. Die übrigen Betriebswerte und
+Entitätszuordnungen bleiben bis zum Sitzungsende gesperrt.
 
 ## Temperatur und Programme
 
@@ -71,9 +72,19 @@ in der Anzeige unterscheidbar.
 
 ## Licht und Anzeige
 
+**Helligkeitsskala des Lichtgeräts** beschreibt dessen tatsächliche native
+Auflösung für die Zuordnung eigener Rückmeldungen. Standard ist 255 wie bei
+Home Assistant; ein MQTT-Licht mit `brightness_scale: 10` benötigt hier 10.
+Zulässig sind ganze Werte von 1 bis 65535. Die Bedienung bleibt in Prozent.
+Der Wert ist eine technische Geräteangabe, keine Toleranz für fremde Bedienung.
+Ohne bekannte Auflösung lässt sich ein gerundetes Echo nicht sicher von einer
+manuellen Wahl desselben Werts unterscheiden. Den Standard daher nur anhand
+der tatsächlichen Gerätekonfiguration ändern.
+
 Die automatische Lichtkurve beginnt bei **5 % bei 30 °C** und steigt bis zur
 Bereitschaft. Die Normalhelligkeit beträgt tagsüber 40 % und nachts 25 %.
-Nachlauf verwendet 15 %, Zwangskühlung 5 %. Übergänge dauern 30 s. Beim
+Die Ofenkühlung beginnt standardmäßig mit 15 %; das Licht steigt bis zu ihrem
+Ende wieder auf den temperaturabhängigen Wert. Übergänge dauern 30 s. Beim
 Ausschalten leuchtet das Licht mit 50 % bis zum Ende der Wiederaufnahmezeit
 (standardmäßig 15 min). Dafür gibt es keine separate Dauer. Eine
 manuelle Lichtwahl endet mit dem passenden Phasenwechsel, spätestens nach

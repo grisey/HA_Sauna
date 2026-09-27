@@ -160,8 +160,11 @@ const panel = (calls) => ({
   window: [0, 1000],
   positions: new Set(["upper", "lower"]),
   historyDetail: true,
-  shown: { session: { configuration: { parameters: { sensor_timeout_seconds: 2 } } } },
-  state: { configuration: { parameters: { sensor_timeout_seconds: 2 } } },
+  shown: { session: { measurement_ttl_seconds: 2 } },
+  state: {
+    measurement_ttl_seconds: 1,
+    configuration: { parameters: { sensor_timeout_seconds: 1 } },
+  },
   scheduleHistoryRender: (reason) => calls.push(reason),
   nearestMeasurement: (position, quantity) =>
     position === "upper" && quantity === "temperature"

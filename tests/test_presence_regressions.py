@@ -11,6 +11,7 @@ from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource
 from custom_components.ha_sauna.core.timeline import Door, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -43,6 +44,19 @@ def _event(runtime, kind, seconds, event_id):
 
 
 class PresenceRegressionTests(unittest.TestCase):
+    def test_current_status_stays_bounded_as_external_history_grows(self):
+        runtime = _runtime([START])
+        for second in range(1000):
+            at = START + timedelta(seconds=second)
+            runtime.presence.accept(binary_presence(
+                "binary_sensor.occupancy", "on" if second % 2 else "off",
+                at, at,
+            ))
+        status = runtime.presence_status
+        self.assertNotIn("observations", status)
+        self.assertEqual(status["external"]["binary_sensor.occupancy"].occupancy, "present")
+        self.assertEqual(len(runtime.presence.observations), 500)
+
     def test_explicit_session_end_retracts_evidence_from_completed_session(self):
         async def exercise():
             clock = [START]

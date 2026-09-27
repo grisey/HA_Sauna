@@ -1,14 +1,17 @@
 import asyncio
+from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 import zipfile
 
-from custom_components.ha_sauna.archive import Archive, plain
+from custom_components.ha_sauna.archive import Archive, encoded, plain
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.core.models import Position, Quantity
@@ -78,7 +81,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             self.record(n)
         frozen = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in frozen["records"]), 1)
-        await self.archive.post_backup()
+        self.archive.release_backup()
+        await self.archive.flush()
         final = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in final["records"]), 11)
 
@@ -102,6 +106,71 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         finally:
             path.unlink()
 
+    async def test_cancelled_export_removes_the_file_after_worker_finishes(self):
+        loop = asyncio.get_running_loop()
+        started, cleaned = asyncio.Event(), asyncio.Event()
+        release = threading.Event()
+        original_export = self.archive._export
+        original_discard = self.archive._discard_export
+        paths = []
+
+        def blocked_export():
+            loop.call_soon_threadsafe(started.set)
+            release.wait()
+            path = original_export()
+            paths.append(path)
+            return path
+
+        def discarded(task):
+            original_discard(task)
+            cleaned.set()
+
+        self.archive._export = blocked_export
+        self.archive._discard_export = discarded
+        task = asyncio.create_task(self.archive.export())
+        try:
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+        await asyncio.wait_for(cleaned.wait(), 2)
+        self.assertEqual(len(paths), 1)
+        self.assertFalse(paths[0].exists())
+
+    async def test_session_and_records_share_one_read_snapshot(self):
+        # WAL lets a real second connection commit between the two SELECTs;
+        # production's DELETE journal may instead delay that writer.
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+        at = T0 + timedelta(seconds=20)
+        finished = plain(replace(self.c.session, ended_at=at))
+        finished["configuration"] = self.config
+        archive = self.archive
+        connect = sqlite3.connect
+
+        class InterleavedConnection(sqlite3.Connection):
+            def execute(self, sql, *args):
+                if sql.startswith("SELECT * FROM records"):
+                    archive._write(("session", at.isoformat(), encoded(finished), "s"))
+                return super().execute(sql, *args)
+
+        with patch(
+            "custom_components.ha_sauna.archive.sqlite3.connect",
+            side_effect=lambda *args, **kwargs: connect(
+                *args, **kwargs, factory=InterleavedConnection
+            ),
+        ):
+            result = archive.read("s")
+        latest_record = next(
+            record["payload"] for record in reversed(result["records"])
+            if record["kind"] == "session"
+        )
+        self.assertEqual(result["session"]["ended_at"], latest_record["ended_at"])
+        self.assertIsNone(result["session"]["ended_at"])
+        self.assertEqual(archive.read("s")["session"]["ended_at"], at.isoformat())
+
     async def test_cancelled_reader_does_not_poison_archive_writer(self):
         await self.archive.pre_backup()
         waiter = asyncio.create_task(self.archive.flush())
@@ -110,7 +179,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await waiter
         self.record(2)
-        await self.archive.post_backup()
+        self.archive.release_backup()
+        await self.archive.flush()
         self.assertIsNone(self.archive.failure)
         saved = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)

@@ -109,7 +109,8 @@ class DetectionContextTests(unittest.TestCase):
             for position in (Position.UPPER,Position.LOWER):
                 for quantity,value in ((Quantity.TEMPERATURE,temperature),(Quantity.HUMIDITY,humidity)):
                     m=measurement(position,quantity,value,second)
-                    controlled.accept(m);raw.accept(m)
+                    controlled.accept(m)
+                    raw.accept(m)
         def received(d):
             c.process(Event(f"signal:{d.kind}:{d.effective_at}","s",d.kind,d.effective_at,d.detected_at))
         end=T0+timedelta(seconds=180)

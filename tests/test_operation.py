@@ -1,10 +1,8 @@
 """Session-/Gangketten mit kontrollierter Uhr und tatsächlichen Objektbezügen."""
-from dataclasses import replace
 from datetime import timedelta
 import unittest
 
 from custom_components.ha_sauna.core.controller import Controller
-from custom_components.ha_sauna.core.models import Deadline
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Confirmation, Kind
 from test_foundation import T0, event, parameters

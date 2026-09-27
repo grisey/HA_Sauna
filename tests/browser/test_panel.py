@@ -169,6 +169,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(panel.locator('#button-program')).to_be_visible()
             self.assertEqual(await panel.locator('#parameters').count(), 0)
             self.assertEqual(await panel.locator('[data-action="export"]').count(), 0)
+            await panel.locator('.main-tabs [data-action="overview"]').click()
+            await panel.locator('#current [data-action="program-mode:constant"]').click()
+            await expect(panel.locator('#current .temperature-presets button').first).to_be_enabled()
+            await panel.locator('#current [data-action="program-mode:program"]').click()
+            first_program = panel.locator('#current .program-named-choice').first
+            await expect(first_program).to_be_enabled()
+            await first_program.click()
+            await expect(first_program).to_have_attribute('aria-pressed', 'true')
+            await self.runtime.set_operation(True)
+            await self.hass.async_block_till_done()
+            await panel.locator('.main-tabs [data-action="history"]').click()
+            await expect(panel.locator('#history .history-curves')).to_be_visible(timeout=15000)
             self.assertEqual(errors, [])
         finally:
             await context.close()
@@ -533,6 +545,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.emit(Kind.DOOR_OPEN, 20)
         await self.emit(Kind.DOOR_CLOSE, 25)
         await self.emit(Kind.PERSON_STRONG, 35)
+        # The emitted timeline events are deliberate historical assignments;
+        # attach one matching archived detector observation for navigation.
+        door_event = next(event for event in self.runtime.session.timeline.processed
+                          if event.kind == Kind.DOOR_OPEN)
+        self.runtime.archive.append('detector_trace', door_event.effective_at, {
+            'at': door_event.effective_at,
+            'signals': ['door_open'],
+            'channels': ['upper'],
+            'metrics': {'upper': {'door_temperature_slope': -1.0}},
+            'conditions': {},
+            'checks': {},
+            'holds': {},
+            'door_open': True,
+            'ventilation_context': False,
+        }, identity)
+        await self.runtime.archive.flush()
         await self.panel.locator('[data-action="history"]').click()
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Vorläufig", timeout=15000)
         gang_id = await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id")
@@ -573,6 +601,20 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="diagnostics"]').click()
         await expect(self.panel.locator('[data-series="detector_door_temperature_slope_upper"]')).to_be_attached()
         self.assertFalse(await self.panel.locator("#plots").is_visible())
+        await self.panel.locator('.detail-tabs [data-action="detail-history"]').click()
+        await self.panel.locator('#event-list details').first.locator('summary').click()
+        event_link = self.panel.locator('#event-list [data-action^="event-row:"]').first
+        await expect(event_link).to_be_visible()
+        event_id = (await event_link.get_attribute('data-action')).split(':', 1)[1]
+        await event_link.click()
+        await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-selected', 'true')
+        await expect(self.panel.locator('#detection-plots')).to_be_visible()
+        marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
+        await expect(marker).to_be_focused()
+        await marker.press('Enter')
+        await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute('aria-selected', 'true')
+        await expect(self.panel.locator('#event-list')).to_be_visible()
+        await expect(self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')).to_be_focused()
         await self.panel.locator('[data-action="settings"]').click()
         await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
         await expect(self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True)).to_be_disabled()

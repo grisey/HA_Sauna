@@ -158,6 +158,10 @@ class Controller:
             for k in self.parameters.values.keys() | parameters.values.keys()
             if self.parameters.values.get(k) != parameters.values.get(k)
         }
+        form_changed = (
+            temperature_steps is not ...
+            and temperature_steps != self.temperature_steps
+        )
         if changed - LIVE_TEMPERATURE_KEYS:
             raise ValueError(
                 "Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar."
@@ -171,7 +175,7 @@ class Controller:
         if program_mode is not None:
             self.program_mode = program_mode
             new_program = True
-        if self._session and (changed or explicit_target or new_program):
+        if self._session and (changed or explicit_target or new_program or form_changed):
             completed = self._session.timeline.gang_count
             if explicit_target:
                 # A direct setpoint deliberately remains fixed for later gangs.
@@ -201,10 +205,9 @@ class Controller:
                 )
             elif (
                 self._session.temperature_program_mode or self.program_mode
-            ) == "progressive" and changed & {
-                "final_temperature_c",
-                "temperature_gangs",
-            }:
+            ) == "progressive" and (
+                form_changed or changed & {"final_temperature_c", "temperature_gangs"}
+            ):
                 # Keep today's target.  The new distribution count is measured
                 # from the last explicit program selection, not this edit.
                 self._session = replace(
@@ -751,14 +754,6 @@ class Controller:
         )
         return result
 
-    def oven_cooling_duration_seconds(self) -> float:
-        calculation = self.oven_cooling_calculation()
-        return (
-            calculation.duration_seconds
-            if calculation is not None
-            else self.parameters.seconds("after_run_minutes")
-        )
-
     def _start_pending_after_run(self, at):
         """Freeze and start an armed cooling phase on real contactor OFF."""
         session = self._session
@@ -1147,7 +1142,17 @@ class Controller:
         at = utc(at)
         if self._session is None:
             raise ValueError("Es läuft keine Session.")
+        session_id = self._session.session_id
         self.set_operation(False, at)
+        # Advancing to ``at`` can itself consume the session-gap deadline and
+        # finish the session. That completion must not be repeated below.
+        if self._session is None:
+            if light_after_run and self.light_after_run is None:
+                self.start_session_light(session_id, at)
+            elif not light_after_run:
+                self.light_after_run = None
+            self._evaluate(at)
+            return
         self._cancel("session_gap")
         if not light_after_run:
             self.light_after_run = None

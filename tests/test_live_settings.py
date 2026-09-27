@@ -1,5 +1,4 @@
 """Temperaturänderungen ändern Ziele, niemals die Prioritäten des Ablaufkerns."""
-from dataclasses import replace
 import unittest
 
 from custom_components.ha_sauna.core.display import phase_timer

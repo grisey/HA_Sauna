@@ -68,7 +68,11 @@ def _raise_release_errors(errors):
 
 
 async def async_pre_backup(hass):
+    data = hass.data.setdefault(DOMAIN, {})
+    if "backup_archives" in data:
+        raise RuntimeError("Saunaarchive werden bereits gesichert")
     prepared = []
+    data["backup_archives"] = prepared
     try:
         for archive in tuple(archives(hass)):
             prepared.append(archive)
@@ -86,9 +90,18 @@ async def async_pre_backup(hass):
                 original.add_note(
                     f"Zusätzliche Archivbereinigungsfehler: {_describe(errors)}"
                 )
+        finally:
+            data.pop("backup_archives", None)
         raise
 
 
 async def async_post_backup(hass):
-    errors = await _release_and_flush(tuple(archives(hass)))
+    data = hass.data.setdefault(DOMAIN, {})
+    prepared = data.get("backup_archives")
+    try:
+        errors = await _release_and_flush(
+            tuple(archives(hass)) if prepared is None else prepared
+        )
+    finally:
+        data.pop("backup_archives", None)
     _raise_release_errors(errors)

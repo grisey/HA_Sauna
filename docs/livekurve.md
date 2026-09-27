@@ -113,7 +113,9 @@ node tests/browser/live_history/profile.cjs
 node tests/browser/live_history/interaction.cjs
 ```
 
-`HISTORY_EVIDENCE` bestimmt das private Ausgabeverzeichnis. `ENGINE=chromium` und
+`HISTORY_EVIDENCE` bestimmt das private Ausgabeverzeichnis von `accept.cjs`
+und `profile.cjs`; `interaction.cjs` verwendet `INTERACTION_EVIDENCE` als
+vollständigen Pfad seiner Ergebnisdatei. `ENGINE=chromium` und
 `CHROMIUM_EXECUTABLE` wählen alternativ eine vorhandene Chromium-Laufzeit.
 Playwright muss als Entwicklungswerkzeug über die normale Modulauflösung
 verfügbar sein. Es ist keine Laufzeitabhängigkeit der Integration.

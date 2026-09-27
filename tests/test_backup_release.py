@@ -1,7 +1,9 @@
 import asyncio
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,16 +43,56 @@ def hass_for(*archives):
         for archive in archives
     ]
     return SimpleNamespace(
+        data={},
         config_entries=SimpleNamespace(async_entries=lambda domain: entries)
     )
 
 
 def count_records(path):
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         return db.execute("SELECT COUNT(*) FROM records").fetchone()[0]
 
 
 class BackupReleaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unload_preserves_pending_and_active_backup_pause(self):
+        for pending in (True, False):
+            with self.subTest(pending=pending), tempfile.TemporaryDirectory() as directory:
+                archive = Archive(Path(directory) / "archive.sqlite", "entry")
+                await archive.start()
+                hass = hass_for(archive)
+                gate = asyncio.Event()
+                entered = asyncio.Event()
+                original = archive._drain_failed_records
+
+                async def wait_before_pause():
+                    entered.set()
+                    await gate.wait()
+                    return await original()
+
+                try:
+                    with patch.object(archive, "_drain_failed_records", wait_before_pause):
+                        preparation = asyncio.create_task(backup.async_pre_backup(hass))
+                        await entered.wait()
+                        if not pending:
+                            gate.set()
+                            await preparation
+                        archive.append("diagnostic", datetime.now(UTC), {})
+                        closing = asyncio.create_task(archive.close())
+                        await asyncio.sleep(0)
+                        gate.set()
+                        await preparation
+                        self.assertFalse(closing.done())
+                        self.assertEqual(await asyncio.to_thread(count_records, archive.path), 0)
+                        # HA may have removed the entry before its post-hook.
+                        hass.config_entries.async_entries = lambda domain: []
+                        await asyncio.wait_for(backup.async_post_backup(hass), 1)
+                        await asyncio.wait_for(closing, 1)
+                        self.assertEqual(await asyncio.to_thread(count_records, archive.path), 1)
+                finally:
+                    gate.set()
+                    archive.release_backup()
+                    await archive.close()
+
     async def test_releases_healthy_real_archive_when_first_flush_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             first = Archive(Path(directory) / "first.sqlite", "first")

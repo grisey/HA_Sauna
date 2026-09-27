@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import Enum
 import io
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -19,6 +20,8 @@ from collections.abc import Mapping
 from math import isfinite
 
 from .core.phases import project_archive, project_session
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def plain(value):
@@ -54,6 +57,7 @@ class Archive:
         self.failure = None
         self.failed_records = deque()
         self.closed = False
+        self._close_task = None
 
     async def start(self):
         await asyncio.to_thread(self._initialize)
@@ -126,7 +130,6 @@ class Archive:
                 if kind == "fence":
                     payload.set_result(None)
                 elif kind == "pause":
-                    self.resume.clear()
                     payload.set_result(None)
                     await self.resume.wait()
             except Exception as error:
@@ -183,35 +186,52 @@ class Archive:
         await future
 
     async def flush(self):
-        await self._barrier("fence")
+        if self._close_task is not None:
+            await asyncio.shield(self._close_task)
+        else:
+            await self._barrier("fence")
 
     async def pre_backup(self):
         # Alle bisherigen Aufträge sind dauerhaft geschrieben. Nur der Schreiber
         # pausiert; Regelung und Eingangserfassung dürfen weiterarbeiten.
-        await self._barrier("pause")
+        if self.closed:
+            return
+        if not self.resume.is_set():
+            raise RuntimeError("Archiv wird bereits gesichert")
+        # Establish ownership before enqueueing: a release while the writer is
+        # catching up must not be lost when it eventually reaches the pause.
+        self.resume.clear()
+        try:
+            await self._barrier("pause")
+        except BaseException:
+            self.release_backup()
+            raise
 
     def release_backup(self):
         """Release a backup pause without waiting for pending writes."""
         self.resume.set()
 
-    async def post_backup(self):
-        self.release_backup()
-        await self.flush()
-
     async def close(self):
-        if self.closed:
-            return
-        self.resume.set()
-        try:
-            await self.flush()
-        finally:
+        if self._close_task is None:
             self.closed = True
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self):
+        if self.worker is None:
+            return
+        try:
+            # Only the backup owner may release its pause. Its post-hook keeps
+            # this archive reachable even after the runtime begins unloading.
+            await self._barrier("fence")
+        finally:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
     def read(self, session_id=None, *, after=0, limit=1000):
         with closing(sqlite3.connect(self.path)) as db:
             db.row_factory = sqlite3.Row
+            db.execute("BEGIN")
             if session_id is None:
                 rows = db.execute(
                     "SELECT session_id,started_at,updated_at,ended_at FROM sessions WHERE entry_id=? ORDER BY started_at DESC",
@@ -366,7 +386,25 @@ class Archive:
 
     async def export(self):
         await self.flush()
-        return await asyncio.to_thread(self._export)
+        task = asyncio.create_task(asyncio.to_thread(self._export))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Threads cannot be canceled. Retain ownership until the produced
+            # file can be removed, including when the caller is already gone.
+            task.add_done_callback(self._discard_export)
+            raise
+
+    @staticmethod
+    def _discard_export(task):
+        try:
+            path = task.result()
+        except (Exception, asyncio.CancelledError):
+            return  # _export removes partial files on its own failure.
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("Abgebrochenen Saunaexport konnte nicht entfernt werden")
 
     def _export(self):
         # SQLite-Backup liest einen konsistenten Stand, während neue Eingänge

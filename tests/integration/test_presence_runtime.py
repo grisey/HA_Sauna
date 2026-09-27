@@ -1,5 +1,4 @@
 """Echte HA-Einbindung der beobachtenden Quelle, Konfigurationssperre und Reload."""
-import asyncio
 import unittest
 
 from harness import create_sauna, start_hass
