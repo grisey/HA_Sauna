@@ -2,9 +2,8 @@
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
-
-from homeassistant.setup import async_setup_component
 
 from custom_components.ha_sauna.const import DOMAIN
 from custom_components.ha_sauna.frontend import register
@@ -15,8 +14,29 @@ class PanelRegistrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_registration_adds_one_static_route(self):
         hass, temp = await start_hass()
         try:
-            self.assertTrue(await async_setup_component(hass, "frontend", {}))
-            await asyncio.gather(register(hass), register(hass))
+            registrations = 0
+            original_register_static_paths = hass.http.async_register_static_paths
+
+            async def read_panel_bytes(read_bytes):
+                await asyncio.sleep(0)
+                return read_bytes()
+
+            async def register_static_paths(paths):
+                nonlocal registrations
+                registrations += 1
+                await asyncio.sleep(0)
+                await original_register_static_paths(paths)
+
+            with (
+                patch(
+                    "custom_components.ha_sauna.frontend.asyncio",
+                    SimpleNamespace(Lock=asyncio.Lock, to_thread=read_panel_bytes),
+                ),
+                patch.object(hass.http, "async_register_static_paths", register_static_paths),
+            ):
+                await asyncio.gather(register(hass), register(hass))
+
+            self.assertEqual(registrations, 1)
             self.assertTrue(hass.data[DOMAIN]["panel_registered"])
             routes = [
                 route

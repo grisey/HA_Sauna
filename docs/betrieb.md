@@ -125,8 +125,9 @@ danach steigt das Licht bis zum Ende der Phase wieder zum temperaturbezogenen
 Ziel. Betrieb-Aus beginnt unmittelbar den Lichtnachlauf bei 50 % bis zum
 Ende derselben Wiederaufnahmefrist, standardmäßig 15 min. Der spätere
 Sitzungsabschluss verlängert das Licht nicht. Beim langen Tasterdruck bleibt
-zunächst die Rückmeldung mit 1 % aktiv; Loslassen startet den Lichtnachlauf
-mit derselben konfigurierten Dauer. Das Licht hat keine Wirkung auf Ofen oder
+das Licht nach Erkennen des langen Drucks aus; Loslassen startet den
+Lichtnachlauf mit dessen eingestellter Helligkeit und derselben konfigurierten
+Dauer. Das Licht hat keine Wirkung auf Ofen oder
 Kühlung.
 
 Eine manuelle Lichtwahl gilt bis zum Phasenwechsel oder höchstens 10 min.

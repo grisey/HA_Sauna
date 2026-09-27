@@ -1,5 +1,12 @@
 # Arbeitsregeln
 
+## Tasterabschluss (27.09.2026)
+
+Nach Erkennen des langen Tasterdrucks bleibt das Licht während des Haltens
+aus. Erst Loslassen startet den Lichtnachlauf mit dessen eingestellter
+Helligkeit. Dies ersetzt die bisherige 1-%-Rückmeldung; alte gespeicherte
+Haltehelligkeiten dürfen sie nicht wieder einschalten.
+
 ## Nachweis und schlanke Tests (27.09.2026)
 
 Ein erfolgreicher Test belegt nur den geprüften Fall, nicht die Widerspruchsfreiheit
@@ -10,6 +17,16 @@ absichern, keine zweite Fachlogik oder Spiegelimplementierung im Test aufbauen.
 Testanzahl und grüne Läufe nicht als Beweis vollständiger Fehlerfreiheit darstellen.
 Eine Regel hat eine maßgebliche Implementierung; Fehler dort korrigieren, statt
 parallele Sonderpfade, doppelte Zustände oder kompensierende Verbraucher einzuführen.
+
+HA- und Browsertests mit einer isolierten Python-Laufzeit passend zur CI
+ausführen. Nach einem Interpreterabsturz keine weiteren Serienläufe derselben
+Umgebung starten, sondern zuerst die Laufzeit klären. Den Exitcode jedes
+Testprozesses einzeln erfassen; ein nachfolgendes Shellkommando darf ihn nicht
+verdecken. `OK` vor einem Absturz gilt nicht als erfolgreicher Lauf.
+Der vollständige lokale macOS-HA/Chromium-Lauf stürzte sowohl mit Python
+3.14.7 als auch mit isoliertem 3.14.2 beim Prozessende ab. Bis zur geklärten
+Ursache dafür Linux-CI verwenden; keine weiteren blinden lokalen
+Browserwiederholungen oder Umgehungen der Interpreter-Finalisierung.
 
 ## Vorrang des Folgeauftrags vom 26.09.2026
 

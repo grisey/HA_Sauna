@@ -1214,10 +1214,20 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await push("btn_down")
         await push("long_push")
         self.assertIsNone(self.runtime.session)
-        self.assertAlmostEqual(self.light.brightness, 255 * .01, delta=1)
+        self.assertFalse(self.light.is_on)
+        self.assertEqual(self.light.calls[-1][0], "off")
         self.assertIsNone(self.runtime.controller.light_after_run)
         await push("btn_up")
         self.assertEqual(self.runtime.controller.light_after_run.session_id, session_id)
+        self.now += timedelta(seconds=self.runtime.configuration.parameters.values["light_transition_seconds"])
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.light.is_on)
+        self.assertAlmostEqual(
+            self.light.brightness,
+            255 * self.runtime.configuration.parameters.values["session_light_brightness_percent"] / 100,
+            delta=1,
+        )
         stale = self.now - timedelta(seconds=1)
         await push("single_push", at=stale)
         self.assertIsNone(self.runtime.session)

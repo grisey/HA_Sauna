@@ -456,13 +456,13 @@ class SaunaRuntime:
                         self.device.ingest(role, event.data.get("new_state"), received_at)
                         if role in {"heater", "heater_power", "heater_feedback"}:
                             self.device.report_received_feedback(received_at)
-                light_selection = self.device.external_light_selection(event, received_at)
-                if light_selection is not None:
-                    self._set_light_override(light_selection, received_at)
-                action = self.device.physical_action(event)
                 action_at = max(
                     received_at, self.controller._last_at or received_at
                 )
+                light_selection = self.device.external_light_selection(event, received_at)
+                if light_selection is not None:
+                    self._set_light_override(light_selection, action_at)
+                action = self.device.physical_action(event)
                 if self.configuration.control_input_mode == "button" and action is not None:
                     try:
                         await self._handle_button_event(action, action_at)
@@ -921,7 +921,7 @@ class SaunaRuntime:
 
     def _set_light_override(self, value, now):
         """Record a UI or physical light selection within the current lock."""
-        self.device.set_light_override(value)
+        self.device.set_light_override(value, at=now)
         self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
         if self.archive:
             self.archive.append(

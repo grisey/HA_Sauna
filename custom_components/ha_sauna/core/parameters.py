@@ -80,8 +80,9 @@ LIVE_TEMPERATURE_KEYS = frozenset(
 )
 # Read compatibility only: obsolete values in saved options and archives have
 # no defaults, validation constraints, editable fields, or control effect.
-LEGACY_COOLING_KEYS = frozenset(
+LEGACY_PARAMETER_KEYS = frozenset(
     {
+        "button_hold_brightness_percent",
         "door_request_minutes",
         "forced_cooling_minutes",
         "heating_minutes",
@@ -161,7 +162,6 @@ DEFINITIONS = (
     definition("operation_brightness_percent", "%", default=40, maximum=100),
     definition("after_run_brightness_percent", "%", default=15, maximum=100),
     definition("cooling_brightness_percent", "%", default=5, maximum=100),
-    definition("button_hold_brightness_percent", "%", True, default=1, maximum=100),
     definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
 ) + tuple(
     definition(
@@ -208,7 +208,7 @@ class Parameters:
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
             raise ParameterError("base", "invalid_parameters")
-        unknown = set(self.values) - BY_KEY.keys() - LEGACY_COOLING_KEYS
+        unknown = set(self.values) - BY_KEY.keys() - LEGACY_PARAMETER_KEYS
         if unknown:
             raise ParameterError("base", "unknown_parameter")
         # Configurations from before the adaptive cooling limit only contain the

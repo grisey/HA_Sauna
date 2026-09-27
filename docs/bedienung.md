@@ -186,9 +186,9 @@ Er verwendet die für den Taster gewählte Vorgabe: ein festgelegtes
 Temperaturprogramm oder eine unabhängig gespeicherte konstante Temperatur. Ein kurzer Druck während
 der Saunasitzung schaltet den Ofen vorübergehend manuell; der nächste kurze
 Druck übergibt ihn wieder an die Automatik. Halten Sie den Taster gedrückt, um
-die Saunasitzung zu beenden. Das Licht zeigt den Abschluss mit einer stark
-gedimmten, einstellbaren Helligkeit an, bis Sie loslassen; danach beginnt der
-Lichtnachlauf. Auch dieser verwendet die eingestellte Wiederaufnahmezeit als
+die Saunasitzung zu beenden. Das Licht bleibt nach Erkennen des langen Drucks
+aus, solange Sie den Taster halten. Beim Loslassen beginnt der Lichtnachlauf
+mit der dafür eingestellten Helligkeit. Auch dieser verwendet die eingestellte Wiederaufnahmezeit als
 Dauer; die mit langem Drücken beendete Sitzung selbst bleibt abgeschlossen.
 
 Während der Ofenkühlung bleibt der Ofen ausgeschaltet. Ein kurzer Tastendruck,

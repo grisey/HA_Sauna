@@ -1176,7 +1176,7 @@ class HADevice:
             "nachlauf": "after_run_light",
         }.get(phase, "operation_light")
 
-    def set_light_override(self, value):
+    def set_light_override(self, value, *, at=None):
         """Manuelle Lichtwahl bis zum Rückkehrpunkt oder Fristablauf halten."""
         if value not in (None, True, False, "normal"):
             if (
@@ -1189,7 +1189,7 @@ class HADevice:
         # Die Runtime ruft diese Methode vor ihrem nächsten Regelzyklus auf.
         # Deshalb muss der aktuelle Controller-Schlüssel hier mitgegeben
         # werden, statt den möglicherweise alten Planner-Schlüssel zu erben.
-        now = self.runtime._clock()
+        now = self.runtime._clock() if at is None else at
         ends_at = (
             now + timedelta(minutes=self.values["manual_override_minutes"])
             if self.runtime.controller.control_mode == "automatic" and value is not None
@@ -1243,16 +1243,15 @@ class HADevice:
     async def show_button_hold_light(self, now, session_id):
         """Keep the required long-press acknowledgement above all normal phases."""
         self._button_hold_session_id = session_id
-        brightness = self.values["button_hold_brightness_percent"]
-        key = ("button_hold", session_id, "turn_on", brightness)
+        key = ("button_hold", session_id, "turn_off", None)
         if key == self._light_last_command_key:
             return True
-        await self._send_light_command(
+        return await self._send_light_command(
             now,
             key=key,
             phase="button_hold",
-            service="turn_on",
-            brightness=brightness,
+            service="turn_off",
+            brightness=None,
             session_id=session_id,
             purpose="button_hold",
         )

@@ -246,9 +246,9 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.assertFalse(controller.heater_override)
 
     def test_button_parameters_have_the_decided_defaults(self):
-        values = Parameters({}).values
+        values = Parameters({"button_hold_brightness_percent": 1}).values
         self.assertEqual(values["button_hold_seconds"], 2)
-        self.assertEqual(values["button_hold_brightness_percent"], 1)
+        self.assertNotIn("button_hold_brightness_percent", values)
 
     def test_button_start_uses_its_frozen_constant_temperature(self):
         self.runtime = SaunaRuntime(

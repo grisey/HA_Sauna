@@ -238,3 +238,41 @@ class DeviceFeedbackTests(unittest.TestCase):
             self.assertNotIn("session_light", adapter.faults)
 
         asyncio.run(exercise())
+
+    def test_queued_dimmer_before_session_light_deadline_keeps_due_off(self):
+        async def exercise():
+            runtime, adapter, _ = self.device(feedback_timeout_seconds=2)
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            phase = SimpleNamespace(
+                session_id="ended", started_at=T0,
+                ends_at=T0 + timedelta(seconds=2),
+            )
+            runtime.controller.light_after_run = phase
+            adapter.send = AsyncMock()
+            adapter.light_call = AsyncMock()
+            event = SimpleNamespace(
+                event_type="state_changed",
+                data={
+                    "entity_id": BINDINGS.values["light"],
+                    "old_state": state("on", 180),
+                    "new_state": state("on", 200),
+                },
+            )
+            await runtime._lock.acquire()
+            clock[0] = T0 + timedelta(seconds=1)
+            queued = asyncio.create_task(runtime.device_input(event))
+            await asyncio.sleep(0)  # The physical choice was received before OFF.
+            clock[0] = T0 + timedelta(seconds=3)
+            runtime._lock.release()
+            await queued
+            self.assertIsNone(adapter._light_session_off_superseded_key)
+            self.assertIn(
+                "turn_off", [call.args[0] for call in adapter.light_call.await_args_list]
+            )
+            self.assertEqual(
+                adapter.light_output.manual_ends_at,
+                T0 + timedelta(seconds=1, minutes=adapter.values["manual_override_minutes"]),
+            )
+
+        asyncio.run(exercise())

@@ -123,22 +123,55 @@ ist kein Nachweis eines tatsächlichen Schaltvorgangs.
 
 ## Prüfung und offene Grenze
 
+Eine erneute Gegenprüfung durch drei neue Sol-Agenten fand eine weitere
+inkonsistente Zeitübergabe bei manuellen Lichtereignissen. Der Geräteadapter
+verwendet nun ebenfalls den gebuchten Zeitpunkt aus dem gemeinsamen
+Runtime-Eingang für Phase und Übersteuerungsfrist. Ein vor Fristablauf
+empfangenes, erst danach verarbeitetes Dimmereignis verdrängt damit nicht
+irrtümlich den fälligen AUS-Befehl.
+
+Der Praxishinweis zum gehaltenen Saunataster war ebenfalls berechtigt: Code,
+Parameter und Test verlangten noch 1 % Helligkeit. Nach Erkennen des langen
+Drucks wird jetzt ausdrücklich AUS angefordert. Loslassen startet weiterhin
+den Lichtnachlauf. Der vorhandene Integrationstest prüft AUS-Zustand und
+AUS-Dienst sowie das anschließende Hochdimmen. Die alte Haltehelligkeit ist
+nicht mehr einstellbar; gespeicherte Werte werden kompatibel eingelesen und
+als überholt verworfen, ohne den Ablauf wieder zu verändern.
+
+Der Registrierungsgegenfall benötigt kein vollständiges HA-Frontendsetup.
+Er erzwingt die konkurrierenden Awaitpunkte, verwendet aber weiterhin den
+echten HA-Router. Mit der ursprünglichen Produktionsfunktion aus `1cc1eae`
+scheitert derselbe Test an der doppelten GET-Route; mit der Korrektur endet
+er erfolgreich. Es gibt dafür keine nachgebildete Registrierungslogik.
+
 Die Korrekturen wurden zusätzlich zu den Tests an ihren Eingangswegen,
 Berechtigungen, gemeinsamen Datenquellen und asynchronen Übergängen geprüft.
 Die Tests bilden gezielte Gegenbeispiele, keine zweite Implementierung.
 
-Lokaler Stand nach Korrektur:
+Lokaler Stand mit einer neu isolierten Python-3.14.2-Laufzeit passend zur CI;
+jeder Testprozess wurde einzeln gestartet und sein Exitcode erfasst:
 
-- JavaScript: 78 bestanden.
+- JavaScript: 78 bestanden (JavaScript seit diesem Lauf unverändert).
 - Synthetischer Kern: 491 ausgeführt, 2 übersprungen, Prozess Exit 0.
-- HA-Adapter: 24 bestanden, Prozess Exit 0.
-- HA-Integration: 94 bestanden, Prozess Exit 0; die anschließende Änderung
-  der gebuchten physischen Bedienzeit wird zusätzlich in CI geprüft.
-- HA/Chromium: alle 8 Fälle melden `OK`, danach endet der lokale
-  Python-3.14.7-Prozess mit Exit 139. Das ist **kein erfolgreicher Gesamtlauf**.
-  Einzelne gezielte Browserfälle liefen mit Exit 0. Der vollständige Linuxlauf
-  in GitHub Actions muss separat bewertet werden.
+- HA-Adapter: 25 bestanden, Prozess Exit 0.
+- HA-Integration: 94 bestanden, Prozess Exit 0.
+- HA/Chromium: ein gezielter echter Browserfall endet mit Exit 0. Der volle
+  Lauf meldet acht Fälle als `OK`, endet aber anschließend auch mit Python
+  3.14.2 unter macOS mit Exit 139. Das ist **kein erfolgreicher Gesamtlauf**.
 - Ruff und Formatprüfung der geänderten JavaScript-Dateien bestanden.
+
+Die früher verwendete Homebrew-Python-3.14.7-Umgebung erzeugte wiederholt
+Abstürze bei der Interpreter-Finalisierung. Der Wechsel auf eine isolierte
+3.14.2-Laufzeit allein beseitigte das Problem des gesamten Browserprozesses
+nicht. Die genaue Ursache bleibt ungeklärt; der Finalisierungsstack beweist
+keinen bestimmten Python- oder C-Erweiterungsfehler. Weitere lokale
+Browserwiederholungen sind ausgesetzt. Weder `os._exit` noch Fehlerunterdrückung
+werden zum Verbergen des fehlgeschlagenen Prozessendes verwendet.
+
+Der Linux-CI-Lauf `36318733249` zum ersten Korrekturcommit `ef5475d` bestand
+Core und Browser; die Integration scheiterte am inzwischen entfernten,
+unnötigen vollständigen Frontendsetup des Registrierungsgegenfalls.
+Der aktuelle Folgestand benötigt einen eigenen vollständigen CI-Lauf.
 
 **D-03 bleibt fachlich offen:** Darf die zusätzliche thermische Türerkennung
 mit nur einem verfügbaren Sensor auslösen oder verlangt diese Zusatzregel

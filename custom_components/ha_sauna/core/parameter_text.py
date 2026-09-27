@@ -201,11 +201,6 @@ PARAMETER_TEXT = {
         "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
         "operation",
     ),
-    "button_hold_brightness_percent": (
-        "Lichthelligkeit bei Langdruck",
-        "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
-        "light",
-    ),
     "preset_start_c": (
         "Niedrigste Temperatur der Schnellauswahl",
         "Solltemperatur der ersten Taste in der Übersicht.",
