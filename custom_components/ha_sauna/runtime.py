@@ -428,6 +428,14 @@ class SaunaRuntime:
                 enabled=self.session.operation_enabled,
                 allowed=self.controller.recognition_allowed,
                 on_detection=detected,
+                heating_intervals=self.session.heating.intervals if heating else (),
+                heating_after=(
+                    max(
+                        self.detector.heating_since,
+                        self.device.command_at or self.detector.heating_since,
+                    )
+                    if heating else None
+                ),
             )
             initialize_door()
             available = bool(self.detector.active_positions)
@@ -497,11 +505,31 @@ class SaunaRuntime:
     async def serialized(self):
         """Serialize commands after all already received device inputs."""
         async with self._lock:
-            # A service await may receive more edges. Consume those too before
-            # yielding to a command that can advance the controller clock.
-            while not self.closed and self._pending_device_inputs:
-                await self._cycle()
-            yield
+            drained = not self.closed and bool(self._pending_device_inputs)
+            if drained:
+                # Booking facts has no actuator I/O. A waiting command must
+                # enter before output awaits can admit an endless input stream.
+                await self._drain_device_inputs()
+            command_error = None
+            try:
+                yield
+            except BaseException as error:
+                command_error = error
+                raise
+            finally:
+                # Configuration-only and rejected commands must also deliver
+                # consumed inputs. One current cycle is sufficient; new inputs
+                # remain the responsibility of their waiting handlers.
+                if drained and not self.closed:
+                    try:
+                        await self._cycle()
+                    except BaseException as error:
+                        if command_error is not None:
+                            note = f"Anschließende Eingangsausgabe fehlgeschlagen: {error!r}"
+                            command_error.add_note(note)
+                            self.log.error("input_output_failed", "%s", note)
+                        else:
+                            raise
 
     async def reset_protection(self):
         async with self.serialized():

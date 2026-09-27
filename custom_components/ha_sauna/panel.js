@@ -2172,8 +2172,10 @@ class SaunaPanel extends HTMLElement {
         border: 0;
         padding: 6px;
       }
-      .position-select button[aria-pressed="false"] {
-        opacity: 0.35;
+      .position-select button[aria-pressed="true"] {
+        font-weight: 700;
+        text-decoration: underline;
+        text-underline-offset: 4px;
       }
       .plot-wrap {
         position: relative;
@@ -6175,7 +6177,7 @@ class SaunaPanel extends HTMLElement {
         })
         .join("");
       chart += "</svg>";
-      html += `<div class="plot-panel"><h3>${group} · ${label}</h3><p class="muted">Orange: oben · Blau: unten</p>${chart}</div>`;
+      html += `<div class="plot-panel"><h3>${group} · ${label}</h3><div class="legend diagnostic-legend"><span><i style="background:var(--sauna-color-series-temperature)"></i>Durchgezogen: oben</span><span><i style="background:var(--sauna-color-series-humidity);opacity:0.75"></i>Gestrichelt: unten</span></div>${chart}</div>`;
     }
     html +=
       '</div><div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Aktive Prüfungen</th><th>Bedingungen erfüllt</th><th>Bestätigungszeiten</th><th>Ausgelöste Signale</th></tr></thead><tbody>' +

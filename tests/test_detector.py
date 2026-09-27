@@ -8,6 +8,7 @@ import unittest
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.detection_parameters import candidate_values
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
@@ -598,6 +599,29 @@ class DetectorTests(unittest.TestCase):
                 d.report_heating(False if i%8==0 else True,T0+timedelta(seconds=i))
                 events+=sample(d,i,50-.03*i,30,positions)
             self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+
+    def test_catchup_uses_booked_heating_intervals_at_each_sample_time(self):
+        controller = Controller(detection_parameters())
+        controller.begin_session("heating", T0)
+        for second, heating in ((0, True), (2.25, False), (2.75, True), (5, None), (6.5, True)):
+            controller.report_heating(heating, T0 + timedelta(seconds=second))
+        observed = []
+        detector = Detector(
+            detection_parameters(), T0,
+            observer=lambda trace: observed.append(detector.heating_since),
+        )
+        detector.advance(
+            T0 + timedelta(seconds=8), enabled=True,
+            heating_intervals=controller.session.heating.intervals,
+            heating_after=T0 + timedelta(seconds=0.5),
+        )
+        # The short OFF stretch fits between samples 2 and 3. Unknown covers
+        # samples 5 and 6; neither those nor sample 0 may use a future ON.
+        expected = (None, 0.5, 0.5, 2.75, 2.75, None, None, 6.5, 6.5)
+        self.assertEqual(observed, [
+            T0 + timedelta(seconds=second) if second is not None else None
+            for second in expected
+        ])
 
     def test_additional_door_rule_uses_all_available_positions(self):
         cases = (

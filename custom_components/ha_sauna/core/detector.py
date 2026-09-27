@@ -432,11 +432,16 @@ class Detector:
         trace["checks"]["ventilation"] = True
         return proven
 
-    def advance(self, at, *, enabled, allowed=None, on_detection=None):
+    def advance(
+        self, at, *, enabled, allowed=None, on_detection=None,
+        heating_intervals=None, heating_after=None,
+    ):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
         Ohne Kontext bleibt der reine Messvergleich zum Referenzkandidaten möglich.
         Im Betrieb liefert ausschließlich der Controller die Erkennungsfreigaben.
+        Übergebene Heizintervalle gelten an ihrer jeweiligen Rasterzeit;
+        heating_after begrenzt sie auf die bereits bestätigte Bedienfreigabe.
         """
         at = utc(at)
         final = int((at - self.origin).total_seconds())
@@ -446,6 +451,23 @@ class Detector:
         while self.index < final:
             self.index += 1
             now = self.origin + timedelta(seconds=self.index)
+            if heating_intervals is not None:
+                interval = next((
+                    interval for interval in reversed(heating_intervals)
+                    if interval.started_at <= now
+                    and (interval.ended_at is None or now < interval.ended_at)
+                ), None)
+                since = interval.started_at if interval is not None else None
+                if since is not None and heating_after is not None:
+                    since = max(since, heating_after)
+                if since is not None and since > now:
+                    since = None
+                if since != self.heating_since:
+                    # An interruption may lie entirely between raster points.
+                    # The canonical interval start still invalidates old proof.
+                    self.report_heating(False, now)
+                    if since is not None:
+                        self.report_heating(True, since)
             self._consume(now)
             output.extend(self._sample(now, at, enabled, allowed, on_detection))
         return output

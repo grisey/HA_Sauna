@@ -33,8 +33,10 @@ BINDINGS = Bindings(
 )
 
 
-def state(value, brightness=None):
+def state(value, brightness=None, *, unit=None):
     attributes = {} if brightness is None else {"brightness": brightness}
+    if unit is not None:
+        attributes["unit_of_measurement"] = unit
     return SimpleNamespace(state=value, attributes=attributes, domain="binary_sensor")
 
 
@@ -85,7 +87,10 @@ class DeviceFeedbackTests(unittest.TestCase):
             adapter.ingest("heater", state("on"), T0)
             adapter.ingest("heater_feedback", state("on"), T0)
             adapter.report_received_feedback(T0)
+            adapter.command, adapter.command_at = True, T0
             adapter.apply = AsyncMock()
+            await runtime.tick()
+            adapter.apply.reset_mock()
             event = SimpleNamespace(
                 event_type="state_changed",
                 data={
@@ -112,13 +117,16 @@ class DeviceFeedbackTests(unittest.TestCase):
             clock[0] = T0 + timedelta(seconds=11)
             runtime._lock.release()
             await asyncio.gather(queued, queued_return)
-            return runtime.session.heating, adapter.apply.await_count
+            outputs = adapter.apply.await_count
+            await runtime.tick()
+            return runtime.session.heating, outputs, runtime.detector.heating_since
 
-        heating, outputs = asyncio.run(exercise())
+        heating, outputs, heating_since = asyncio.run(exercise())
         self.assertEqual(heating.elapsed_seconds, 10)
         self.assertEqual(heating.intervals[0].ended_at, T0 + timedelta(seconds=1))
         self.assertEqual(heating.intervals[1].started_at, T0 + timedelta(seconds=2))
         self.assertEqual(outputs, 1)
+        self.assertEqual(heating_since, T0 + timedelta(seconds=2))
 
     def test_waiting_tick_or_command_consumes_received_contactor_off_first(self):
         async def exercise(command):
@@ -190,6 +198,85 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertTrue(runtime.session.operation_enabled)
         self.assertEqual(runtime.controller.completed_sessions, ())
         self.assertIsNone(runtime.controller.light_after_run)
+
+    def test_waiting_off_enters_before_outputs_with_recurring_inputs(self):
+        async def exercise():
+            runtime, adapter, _ = self.device()
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            runtime.controller.begin_session("stop", T0)
+            entered, release = asyncio.Queue(), asyncio.Queue()
+            pending = []
+
+            async def slow_output(now):
+                entered.put_nowait(runtime.session.operation_enabled)
+                await release.get()
+
+            async def receive_temperature():
+                clock[0] += timedelta(seconds=10)
+                pending.append(asyncio.create_task(runtime.device_input(SimpleNamespace(
+                    event_type="state_changed", data={
+                        "entity_id": BINDINGS.values["upper_temperature"],
+                        "old_state": state("70", unit="°C"),
+                        "new_state": state("69", unit="°C"),
+                    },
+                ))))
+                await asyncio.sleep(0)
+
+            adapter.apply = slow_output
+            await runtime._lock.acquire()
+            stop = asyncio.create_task(runtime.set_operation(False))
+            await asyncio.sleep(0)
+            await receive_temperature()
+            runtime._lock.release()
+            enabled_during_outputs = []
+            for _ in range(3):
+                enabled_during_outputs.append(await asyncio.wait_for(entered.get(), 1))
+                await receive_temperature()
+                release.put_nowait(None)
+            adapter.apply = AsyncMock()
+            await asyncio.wait_for(asyncio.gather(stop, *pending), 1)
+            return enabled_during_outputs
+
+        self.assertEqual(asyncio.run(exercise()), [False, False, False])
+
+    def test_consumed_inputs_get_output_after_configuration_or_rejected_command(self):
+        async def exercise(reject, output_fails):
+            runtime, adapter, _ = self.device()
+            runtime.controller.begin_session("configuration", T0)
+            adapter.apply = AsyncMock(
+                side_effect=OSError("output") if output_fails else None
+            )
+
+            async def command():
+                async with runtime.serialized():
+                    if reject:
+                        raise ValueError("command")
+                    runtime.set_log_level("INFO")
+
+            await runtime._lock.acquire()
+            change = asyncio.create_task(command())
+            await asyncio.sleep(0)
+            received = asyncio.create_task(runtime.device_input(SimpleNamespace(
+                event_type="state_changed", data={
+                    "entity_id": BINDINGS.values["upper_temperature"],
+                    "old_state": state("70", unit="°C"),
+                    "new_state": state("69", unit="°C"),
+                },
+            )))
+            await asyncio.sleep(0)
+            runtime._lock.release()
+            results = await asyncio.gather(change, received, return_exceptions=True)
+            self.assertEqual(adapter.apply.await_count, 1)
+            self.assertEqual(adapter.measurements["upper_temperature"].value, 69)
+            return results[0]
+
+        self.assertIsNone(asyncio.run(exercise(False, False)))
+        self.assertIsInstance(asyncio.run(exercise(True, False)), ValueError)
+        both = asyncio.run(exercise(True, True))
+        self.assertIsInstance(both, ValueError)
+        self.assertEqual(str(both), "command")
+        self.assertIn("OSError('output')", both.__notes__[0])
 
     def test_waiting_switch_action_keeps_feedback_edges_in_order(self):
         async def exercise():

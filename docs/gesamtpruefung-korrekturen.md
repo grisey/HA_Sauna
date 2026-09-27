@@ -1,5 +1,30 @@
 # Korrekturen zur Gesamtprüfung vom 27.09.2026
 
+## Nachprüfung des Stands 7a3966c
+
+Der dritte Gesamtbericht bestätigt die sieben vorangegangenen Korrekturen
+im geprüften Umfang und benennt vier weitere Befunde. Die Korrekturen:
+
+- **Wartende Bedienung:** Empfangene Eingänge werden vor der Bedienung
+  einmal ohne Aktorausgabe gebucht. Neue Meldungen während langsamer Ausgaben
+  können die Bedienung nicht mehr durch eine Wiederholungsschleife verdrängen.
+  Ein abschließender Zyklus versorgt auch Konfigurations- und Fehlerpfade.
+- **Thermischer Türnachweis:** Der Detektor verwendet die vorhandenen
+  tatsächlichen Heizintervalle der Sitzung pro Abtastzeitpunkt. Eine gebuchte
+  Unterbrechung setzt den Nachweis auch dann zurück, wenn danach im selben
+  Eingangsblock wieder EIN gemeldet wurde. Keine zweite Heizhistorie.
+- **Lesbare Diagrammbedienung:** Abgewählte, weiterhin bedienbare Optionen
+  bleiben vollständig deckend. Schriftgewicht und Unterstreichung kennzeichnen
+  die Auswahl; Kurvenfarben bleiben unverändert.
+- **Diagnoselegenden:** Farbmuster verwenden dieselben zentralen Rollen wie
+  die Kurven. Die Beschriftung nennt Messhöhe und Linienart statt fester Farbnamen.
+
+Gezielte Gegenfälle ergänzen vorhandene Core-, HA- und Browsertests.
+Die Prüfung erfolgt ausschließlich in Linux-CI. Der Abschlussbericht nennt
+den geprüften Commit, Ergebnisse und Grenzen. Erfolgreiche Tests belegen
+keine allgemeine Widerspruchsfreiheit; die unabhängige Nachprüfung umfasst
+weiterhin das gesamte Repository. Kein Merge und keine Hardwareprüfung.
+
 ## Nachprüfung des Stands b81294f
 
 Die unabhängige Gesamtprüfung hat die frühere Aussage „alle 29 korrigiert“

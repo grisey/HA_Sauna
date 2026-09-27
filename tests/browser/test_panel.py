@@ -569,7 +569,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             'at': door_event.effective_at,
             'signals': ['door_open'],
             'channels': ['upper'],
-            'metrics': {'upper': {'door_temperature_slope': -1.0}},
+            'metrics': {'upper': {'door_temperature_slope': -1.0},
+                        'lower': {'door_temperature_slope': -0.8}},
             'conditions': {},
             'checks': {},
             'holds': {},
@@ -611,6 +612,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await summary.click()
         for role in ("card_background", "text", "ui_accent", "series_temperature", "series_humidity"):
             await editor.locator(f'[data-appearance-color="{role}"]').fill("#000000")
+        await editor.locator('[data-appearance-color="chart_background"]').fill("#000000")
+        await editor.locator('[data-appearance-color="chart_text"]').fill("#FFFFFF")
         for link in ("Sensoren und Geräte zuordnen", "Home-Assistant-Protokoll öffnen"):
             await expect(self.panel.get_by_role("link", name=link)).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
@@ -622,6 +625,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
         await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(0, 0, 0)")
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#000000")
+        compare = self.panel.locator('[data-action="history-detail"]')
+        await expect(compare).to_have_attribute("aria-pressed", "false")
+        await expect(compare).to_have_css("opacity", "1")
+        await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
+        await compare.click()
+        lower = self.panel.locator('[data-action="position-lower"]')
+        await lower.click()
+        await expect(lower).to_be_enabled()
+        await expect(lower).to_have_attribute("aria-pressed", "false")
+        await expect(lower).to_have_css("opacity", "1")
+        await expect(lower).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await editor.locator('[data-action="appearance-discard"]').click()
         await self.panel.locator('.main-tabs [data-action="history"]').click()
@@ -656,6 +670,26 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#event-list')).to_be_visible()
         await expect(self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')).to_be_focused()
         await self.panel.locator('[data-action="settings"]').click()
+        temperature_color = editor.locator('[data-appearance-color="series_temperature"]')
+        if not await temperature_color.is_visible():
+            await editor.locator("summary").filter(has_text="Messungen und Ereignisse").click()
+        await temperature_color.fill("#42A5FF")
+        await editor.locator('[data-appearance-color="series_humidity"]').fill("#FF6B4A")
+        await self.panel.locator('.main-tabs [data-action="details"]').click()
+        await self.panel.locator('.detail-tabs [data-action="detail-history"]').click()
+        event_row = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
+        if not await event_row.is_visible():
+            await event_row.locator('xpath=ancestor::details').locator('summary').click()
+        await event_row.click()
+        plot = self.panel.locator('#detection-plots .plot-panel').filter(
+            has=self.page.locator('[data-series="detector_door_temperature_slope_upper"]'))
+        await expect(plot).to_be_visible()
+        for position, color, label in (("upper", "rgb(66, 165, 255)", "Durchgezogen: oben"),
+                                       ("lower", "rgb(255, 107, 74)", "Gestrichelt: unten")):
+            await expect(plot.locator(f'path[data-series="detector_door_temperature_slope_{position}"]')).to_have_css("stroke", color)
+            await expect(plot.locator(".diagnostic-legend span").filter(has_text=label).locator("i")).to_have_css("background-color", color)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await editor.locator('[data-action="appearance-discard"]').click()
         await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
         await expect(self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True)).to_be_disabled()
         async with self.page.expect_download() as result:
