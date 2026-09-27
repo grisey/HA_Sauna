@@ -26,7 +26,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         from homeassistant.core import State
         from custom_components.ha_sauna.config_flow import SaunaConfigFlow
         self.module = __import__("custom_components.ha_sauna.config_flow", fromlist=["*"])
-        self.inputs = {r.key: f"{r.domains[0]}.test_{r.key}" for r in ROLES if not r.optional}
+        self.inputs = {
+            r.key: f"{r.domains[0]}.test_{r.key}"
+            for r in ROLES
+            if not r.optional or r.device_class in {"temperature", "humidity"}
+        }
         self.values = {d.key: d.default if d.default is not None else 2.5
                        for d in EDITABLE_DEFINITIONS}
         self.values.update(session_gap_minutes=2.5)
@@ -36,7 +40,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 "device_class": r.device_class, "unit_of_measurement": r.unit,
                 "supported_color_modes": ["brightness"],
             })
-            for r in ROLES if not r.optional
+            for r in ROLES
+            if not r.optional or r.device_class in {"temperature", "humidity"}
         }
         self.entries = []
         self.entry = SimpleNamespace(
@@ -101,6 +106,43 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             result["options"]["temperature_programs"],
             [program.as_dict() for program in DEFAULT_PROGRAMS],
         )
+
+    async def test_either_single_measurement_pair_can_be_configured(self):
+        for position in ("upper", "lower"):
+            with self.subTest(position=position):
+                inputs = {
+                    key: value
+                    for key, value in self.inputs.items()
+                    if not key.startswith(("upper_", "lower_"))
+                    or key.startswith(f"{position}_")
+                }
+                initial_form = await self.flow.async_step_user()
+                initial_form["data_schema"]({"name": "Testsauna", **inputs})
+                form = await self.flow.async_step_user({"name": "Testsauna", **inputs})
+                self.assertEqual(form["step_id"], "parameters")
+                result = await self.flow.async_step_parameters(self.values)
+                self.assertEqual(result["options"]["bindings"], inputs)
+
+    async def test_missing_or_incomplete_measurement_pair_stays_in_form(self):
+        for omitted, error in (
+            (
+                {
+                    "upper_temperature", "upper_humidity",
+                    "lower_temperature", "lower_humidity",
+                },
+                {"base": "sensor_pair_required"},
+            ),
+            ({"lower_humidity"}, {"lower_humidity": "entity_required"}),
+            ({"upper_temperature"}, {"upper_temperature": "entity_required"}),
+        ):
+            with self.subTest(omitted=omitted):
+                inputs = {
+                    key: value
+                    for key, value in self.inputs.items()
+                    if key not in omitted
+                }
+                form = await self.flow.async_step_user({"name": "Testsauna", **inputs})
+                self.assertEqual(form["errors"], error)
 
     async def test_initial_button_default_is_constant(self):
         form = await self.flow.async_step_user({"name": "Testsauna", **self.inputs})

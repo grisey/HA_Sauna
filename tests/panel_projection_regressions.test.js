@@ -166,4 +166,25 @@ test("details render includes the reachable presence and rule card", () => {
     nodes["#details"].innerHTML,
     /Proxy zurückgenommen; keine beobachtete Abwesenheit/,
   );
+
+  state.measurement_positions = ["lower"];
+  state.regulation_temperature_position = "lower";
+  state.measurements = [
+    { position: "lower", quantity: "temperature", value: 67 },
+    { position: "lower", quantity: "humidity", value: 38 },
+  ];
+  state.measurement_status = {
+    lower_temperature: { state: "current" },
+    lower_humidity: { state: "current" },
+  };
+  value.drawCurrent();
+  assert.match(nodes["#current"].innerHTML, /67 °C/);
+  assert.match(nodes["#current"].innerHTML, /38 %/);
+  assert.match(nodes["#current"].innerHTML, /Messung unten/);
+
+  state.measurement_positions = ["upper", "lower"];
+  state.issues = [{ message: "Temperatur oben ausgefallen" }];
+  value.drawCurrent();
+  assert.match(nodes["#current"].innerHTML, /Ersatzmessung unten/);
+  assert.match(nodes["#current"].innerHTML, /Temperatur oben ausgefallen/);
 });

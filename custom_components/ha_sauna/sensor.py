@@ -13,12 +13,16 @@ from .entity import SaunaEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    bindings = entry.runtime_data.configuration.bindings.values
     async_add_entities(
         [
             SaunaPhase(entry),
             SaunaEnergy(entry),
-            SaunaAbsoluteHumidity(entry, Position.UPPER),
-            SaunaAbsoluteHumidity(entry, Position.LOWER),
+            *(
+                SaunaAbsoluteHumidity(entry, position)
+                for position in Position
+                if f"{position.value}_temperature" in bindings
+            ),
         ]
     )
 

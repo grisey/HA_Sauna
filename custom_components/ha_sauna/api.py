@@ -181,6 +181,9 @@ class StateView(HomeAssistantView):
             now = runtime._clock()
             active = session.timeline.active if session else None
             experts = {s[0] for s in SPECS}
+            regulation_measurement = (
+                device.regulation_measurement(now) if device else None
+            )
             result = plain(
                     {
                         "now": now,
@@ -240,6 +243,16 @@ class StateView(HomeAssistantView):
                         "measurement_status": device.measurement_status(now)
                         if device
                         else {},
+                        "regulation_temperature_position": (
+                            regulation_measurement.position.value
+                            if regulation_measurement else None
+                        ),
+                        "measurement_positions": [
+                            position
+                            for position in ("upper", "lower")
+                            if f"{position}_temperature"
+                            in runtime.configuration.bindings.values
+                        ],
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
                         "gang_duration_seconds": active.elapsed_seconds(now)

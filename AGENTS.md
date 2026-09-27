@@ -1,5 +1,19 @@
 # Arbeitsregeln
 
+## Vollständiger Ein-Sensor-Betrieb (27.09.2026)
+
+Der gesamte Betrieb einschließlich Heizregelung und zusätzlicher thermischer
+Türerkennung muss mit einer Messposition möglich sein, oben oder unten.
+Eine Messposition umfasst Temperatur und Luftfeuchte. Sind zwei Messpositionen
+konfiguriert und eine fällt aus, bleibt der Betrieb mit der verfügbaren
+Messposition möglich; die Störung muss sichtbar sein. Der obere Sensor bleibt
+der Hauptsensor für die Regelung auf die Solltemperatur. Unten dient nur als
+Ersatz bei fehlendem gültigem oberen Wert; mit dessen Rückkehr übernimmt oben
+wieder. Keine gleichberechtigte Sensorauswahl, Mittelung oder erfundener
+Höhenoffset. Diese Festlegung ersetzt entgegenstehende ältere
+Vorgaben, die den oberen Sensor zwingend verlangen oder die zusätzliche
+Türerkennung auf zwei Sensoren beschränken.
+
 ## Tasterabschluss (27.09.2026)
 
 Nach Erkennen des langen Tasterdrucks bleibt das Licht während des Haltens
@@ -18,15 +32,16 @@ Testanzahl und grüne Läufe nicht als Beweis vollständiger Fehlerfreiheit dars
 Eine Regel hat eine maßgebliche Implementierung; Fehler dort korrigieren, statt
 parallele Sonderpfade, doppelte Zustände oder kompensierende Verbraucher einzuführen.
 
-HA- und Browsertests mit einer isolierten Python-Laufzeit passend zur CI
-ausführen. Nach einem Interpreterabsturz keine weiteren Serienläufe derselben
-Umgebung starten, sondern zuerst die Laufzeit klären. Den Exitcode jedes
-Testprozesses einzeln erfassen; ein nachfolgendes Shellkommando darf ihn nicht
-verdecken. `OK` vor einem Absturz gilt nicht als erfolgreicher Lauf.
-Der vollständige lokale macOS-HA/Chromium-Lauf stürzte sowohl mit Python
-3.14.7 als auch mit isoliertem 3.14.2 beim Prozessende ab. Bis zur geklärten
-Ursache dafür Linux-CI verwenden; keine weiteren blinden lokalen
-Browserwiederholungen oder Umgehungen der Interpreter-Finalisierung.
+Tests ausschließlich auf dem Linux-Zielsystem beziehungsweise in Linux-CI
+ausführen. Keine lokalen Tests auf dem Mac, auch keine Einzeltests oder
+Tests mit einer anderen lokalen Python-Version. Die Ursachen lokaler
+macOS-Testabstürze werden nicht weiter untersucht und sind kein offener
+Arbeitsauftrag. Den Exitcode jedes Testprozesses einzeln erfassen; ein
+nachfolgendes Shellkommando darf ihn nicht verdecken. `OK` vor einem Absturz
+gilt nicht als erfolgreicher Lauf.
+
+Offene Punkte dem Benutzer in verständlichen Worten beschreiben. Interne
+Befundkürzel allein sind keine ausreichende Erklärung.
 
 ## Vorrang des Folgeauftrags vom 26.09.2026
 

@@ -591,6 +591,8 @@ class Detector:
             mixed_opening = self._episode_route(
                 "temperature", now
             ) and self._episode_route("humidity", now)
+            # Eine verfügbare T/RH-Höhe genügt; bei zweien müssen beide die
+            # eingefrorene Episode gemeinsam belegen.
             thermal_opening = self._episode_route("thermal", now)
         if episode and self.open:
             closing_slopes = {

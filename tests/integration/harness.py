@@ -59,7 +59,11 @@ async def credentials(hass):
 
 
 def seed_sources(hass):
-    bindings = {r.key: f"{r.domains[0]}.test_{r.key}" for r in ROLES if not r.optional}
+    bindings = {
+        r.key: f"{r.domains[0]}.test_{r.key}"
+        for r in ROLES
+        if not r.optional or r.device_class in {"temperature", "humidity"}
+    }
     for role in ROLES:
         if role.key not in bindings:
             continue

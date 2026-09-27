@@ -13,8 +13,11 @@ Eine Türöffnung kann sich durch fallende Temperatur und Feuchte zeigen.
 Die Sensoren müssen diese Veränderungen innerhalb der eingestellten
 Beobachtungsfenster bestätigen; sie müssen nicht im selben Moment melden.
 Während eines durchgehend bestätigten Heizvorgangs kann auch ein deutlicher
-Temperaturabfall an beiden Messpositionen die Öffnung belegen. Diese zusätzliche
-Regel gilt ebenfalls in der heißen Sauna. Eine Schließung wird erst nach einer
+Temperaturabfall an den verfügbaren Messpositionen die Öffnung belegen. Eine
+verfügbare Messposition genügt auch für diese zusätzliche Regel. Sind beide
+verfügbar, müssen beide den Abfall bestätigen. Der Ausfall einer konfigurierten
+zweiten Messposition wird als Störung angezeigt und sperrt den Ein-Sensor-Betrieb
+nicht. Diese Regel gilt ebenfalls in der heißen Sauna. Eine Schließung wird erst nach einer
 erkannten Öffnung geprüft. Sie folgt der Temperaturerholung an den verfügbaren
 Messpositionen. Fällt dabei ein Feuchtesensor aus, kann die Tür weiterhin als
 geschlossen erkannt werden; der Sensorfehler bleibt sichtbar.

@@ -30,7 +30,7 @@ ROLES = {
     "heater_feedback": "Unabhängige Heizrückmeldung",
 }
 FAULTS = {
-    "regulation_temperature_unavailable": "Für die Heizregelung fehlt ein gültiger oberer Temperaturwert.",
+    "regulation_temperature_unavailable": "Für die Heizregelung fehlt ein gültiger Temperaturwert.",
     "heater_feedback_unavailable": "Die Stellung des Heizschützes ist nicht verfügbar.",
     "heater_feedback_mismatch": "Der Heizschütz hat den Schaltbefehl nicht bestätigt.",
     "heater_still_heating": "Trotz Ausschaltbefehl wird weiterhin Heizleistung gemessen.",
@@ -45,7 +45,7 @@ FAULTS = {
 REASONS = {
     "operation_off": "Der Saunabetrieb ist ausgeschaltet.",
     "temperature_configuration_required": "Die Temperatureinstellungen sind noch unvollständig.",
-    "upper_temperature_unavailable": "Ein gültiger oberer Temperaturwert fehlt.",
+    "upper_temperature_unavailable": "Ein gültiger Temperaturwert für die Heizregelung fehlt.",
     "gang_veto": "Historisches Gang-Abschaltveto für eine bereits laufende Heizung.",
     "gang_heat_demand": "Der Saunagang fordert durchgehend Heizen an.",
     "temporary_door_heat": "Die Türschließung fordert vorübergehend Heizen mit Mindestdauer an.",

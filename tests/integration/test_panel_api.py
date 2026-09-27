@@ -96,6 +96,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state["session"]["timeline"]["session_id"], session_id)
                 self.assertIn("measurements", state)
                 self.assertIn("measurement_status", state)
+                self.assertEqual(state["measurement_positions"], ["upper", "lower"])
+                self.assertIn("regulation_temperature_position", state)
                 self.assertIn("target_temperature_c", state["configuration"]["parameters"])
                 self.assertNotIn("bindings", state["configuration"])
                 self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])

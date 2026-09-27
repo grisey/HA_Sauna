@@ -15,7 +15,7 @@ def configuration():
     bindings = {
         role.key: f"{role.domains[0]}.invalid_options_{role.key}"
         for role in ROLES
-        if not role.optional
+        if not role.optional or role.device_class in {"temperature", "humidity"}
     }
     return Configuration(
         Bindings(bindings),

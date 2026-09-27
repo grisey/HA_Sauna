@@ -609,7 +609,9 @@ class HistoryCurves {
 
   overviewInput(snapshot) {
     if (snapshot.overview) return snapshot.overview;
-    const series = snapshot.series.get("upper:temperature");
+    const series = snapshot.series.get(
+      `${snapshot.overviewPosition || "upper"}:temperature`,
+    );
     return (
       series && {
         start: snapshot.start,
@@ -3731,6 +3733,13 @@ class SaunaPanel extends HTMLElement {
         unavailable: "Messwert fehlt",
         validity_unconfigured: "Gültigkeit noch nicht eingestellt",
       })[quality(position, quantity)] || "Messwert fehlt";
+    const measurementPosition =
+      s.regulation_temperature_position || s.measurement_positions?.[0] || "upper";
+    const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
+    const measurementLabel =
+      measurementPosition === "lower" && s.measurement_positions?.includes("upper")
+        ? "Ersatzmessung unten"
+        : `Messung ${measurementHeight}`;
     const formatValue = (position, quantity, unit) =>
       `${num(value(position, quantity), 1)} ${unit}`;
     const timer = s.mechanical_timer;
@@ -3948,7 +3957,7 @@ class SaunaPanel extends HTMLElement {
         ? `<div class="row"><button class="stop" data-action="end-phase:${manualPhase.purpose}:${esc(encodeURIComponent(manualPhase.token))}">${manualPhase.label}</button></div>`
         : "";
     const temperatureColor = this.appearanceColor("series_temperature");
-    const humidity = value("upper", "humidity"),
+    const humidity = value(measurementPosition, "humidity"),
       humidityColor = this.appearanceColor("series_humidity");
     const targetValue = this.temperatureInteraction?.value ?? s.target_temperature,
       targetPoint =
@@ -4059,9 +4068,7 @@ class SaunaPanel extends HTMLElement {
       ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && (session || this.programSelectionDraft != null) ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(programs.find((program) => program.id === programChoice)?.name || (programChoice === "individual" ? "Individuell" : "Konstant"))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session ? "</div>" : ""}</section>`
       : "";
     const overviewQuality = (position, quantity) =>
-      quality(position, quantity) === "current"
-        ? ""
-        : `<p class="muted">${qualityText(position, quantity)}</p>`;
+      `<p class="muted">${measurementLabel}${quality(position, quantity) === "current" ? "" : ` · ${qualityText(position, quantity)}`}</p>`;
     this.updateMarkup(
       "#current",
       this.renderControlView({
@@ -4086,27 +4093,27 @@ class SaunaPanel extends HTMLElement {
         finishPhase,
         alert,
         temperatureGauge: dial(
-          value("upper", "temperature"),
+          value(measurementPosition, "temperature"),
           "°C",
-          "",
+          `Temperatur ${measurementHeight}`,
           temperatureColor,
           temperatureScale?.maximum ?? temperatureDial.scale,
-          quality("upper", "temperature") === "current",
+          quality(measurementPosition, "temperature") === "current",
           targetControl,
           temperatureScale?.minimum ?? 0,
         ),
-        temperatureQuality: overviewQuality("upper", "temperature"),
+        temperatureQuality: overviewQuality(measurementPosition, "temperature"),
         humidityGauge: dial(
           humidity,
           "%",
-          "Relative Luftfeuchte",
+          `Relative Luftfeuchte ${measurementHeight}`,
           humidityColor,
           humidityScale.maximum,
-          quality("upper", "humidity") === "current",
+          quality(measurementPosition, "humidity") === "current",
           "",
           humidityScale.minimum,
         ),
-        humidityQuality: overviewQuality("upper", "humidity"),
+        humidityQuality: overviewQuality(measurementPosition, "humidity"),
       }),
     );
     const temperatureProgram =
@@ -4996,6 +5003,8 @@ class SaunaPanel extends HTMLElement {
       this.chartDataIndex.indexedCount !== records.length
     )
       this.historyIndex(records);
+    if (!this.historyDetail)
+      this.positions = new Set([this.historyPrimaryPosition(session)]);
     if (this.$("#plots")?.hidden) {
       this.ensureHistoryWindow();
       this.updateHistoryTimelineRevision(session);
@@ -5183,6 +5192,7 @@ class SaunaPanel extends HTMLElement {
       index.seriesState ??= new Map();
       const state = index.seriesState.get(key) || { revision: 0 };
       point.serial = ++state.revision;
+      if (value != null) state.hasValue = true;
       index.seriesState.set(key, state);
       const display = index.display.get(values);
       if (rebuild || !values.length || values.at(-1).time <= time) {
@@ -5366,6 +5376,19 @@ class SaunaPanel extends HTMLElement {
   }
   series(position, quantity) {
     return this.chartDataIndex?.series.get(`${position}:${quantity}`) || [];
+  }
+  historyPrimaryPosition(session = this.shown?.session) {
+    const hasValues = (position) =>
+      this.chartDataIndex?.seriesState?.get(`${position}:temperature`)?.hasValue;
+    const currentPosition =
+      this.state?.session &&
+      session?.timeline?.session_id === this.state.session.timeline?.session_id
+        ? this.state.regulation_temperature_position
+        : null;
+    if (currentPosition && hasValues(currentPosition)) return currentPosition;
+    if (hasValues("upper")) return "upper";
+    if (hasValues("lower")) return "lower";
+    return this.state?.measurement_positions?.[0] || "upper";
   }
   historyRecords(kind) {
     return this.chartDataIndex?.byKind.get(kind) || [];
@@ -5636,8 +5659,9 @@ class SaunaPanel extends HTMLElement {
       yT = (value) => bottom - ((value - low) / (high - low)) * (bottom - top),
       yH = (value) => bottom - (value / humidityHigh) * (bottom - top),
       [domainStart, domainEnd] = chart.domain,
+      overviewPosition = this.historyPrimaryPosition(session),
       overviewEntry = this.historyPreparedSeries(
-        "upper",
+        overviewPosition,
         "temperature",
         domainStart,
         domainEnd,
@@ -5674,6 +5698,7 @@ class SaunaPanel extends HTMLElement {
       humidityHigh,
       ttl,
       positions,
+      overviewPosition,
       series,
       x,
       yT,
@@ -6892,7 +6917,7 @@ class SaunaPanel extends HTMLElement {
     ) {
       if (action === "history") {
         this.historyDetail = false;
-        this.positions = new Set(["upper"]);
+        this.positions = new Set([this.historyPrimaryPosition()]);
       }
       if (action === "detail-history") {
         this.historyDetail = true;
@@ -7115,7 +7140,7 @@ class SaunaPanel extends HTMLElement {
     if (action === "history-detail") {
       this.historyDetail = !this.historyDetail;
       if (this.historyDetail) this.positions = new Set(["upper", "lower"]);
-      else this.positions = new Set(["upper"]);
+      else this.positions = new Set([this.historyPrimaryPosition()]);
       this.drawHistory();
     }
     if (action.startsWith("position-")) {

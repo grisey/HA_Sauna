@@ -98,8 +98,10 @@ rundet auf Fünf-Minuten-Stufen und verändert weder Ofen noch Fristen; siehe
 
 ## Erkennung und externe Entitäten
 
-Temperatur und relative Luftfeuchte oben und unten, Heizaktor, Bedienquelle und
-dimmbares Licht werden über HA-Selektoren zugeordnet. Leistungsmesser,
+Temperatur und relative Luftfeuchte werden für mindestens eine Messposition
+(oben oder unten) als vollständiges Paar zugeordnet. Eine zweite Messposition
+ist optional. Heizaktor, Bedienquelle und dimmbares Licht werden ebenfalls
+über HA-Selektoren zugeordnet. Leistungsmesser,
 unabhängige Heizrückmeldung und Statusquellen sind optional. Die Metadatenprüfung
 sichert Domain, Einheit, Geräteklasse und Dimmbarkeit; konkrete Entity-IDs
 gehören nicht in den Ablaufkern.

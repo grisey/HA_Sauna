@@ -158,7 +158,7 @@ PARAMETER_TEXT = {
     ),
     "sensor_timeout_seconds": (
         "Höchstalter eines Messwerts",
-        "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Fehlt ein gültiger oberer Temperaturwert, pausiert die Heizung sofort.",
+        "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Ist oben kein gültiger Temperaturwert verfügbar, verwendet die Regelung den gültigen unteren Wert. Fehlt an beiden Positionen ein gültiger Wert, pausiert die Heizung sofort.",
         "monitoring",
     ),
     "feedback_timeout_seconds": (
@@ -168,7 +168,7 @@ PARAMETER_TEXT = {
     ),
     "fault_confirmation_seconds": (
         "Dauer bis zur bestätigten Störung",
-        "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Ein fehlender gültiger oberer Temperaturwert pausiert die Heizung bereits vorher. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
+        "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Fehlt an allen konfigurierten Messpositionen ein gültiger Temperaturwert, pausiert die Heizung bereits vorher. Der Ausfall nur einer von zwei Messpositionen wird als Störung angezeigt und sperrt den Betrieb mit der anderen nicht. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
         "monitoring",
     ),
     "mechanical_timer_minutes": (
@@ -258,12 +258,12 @@ PARAMETER_TEXT = {
     ),
     "door_heating_slope": (
         "Türöffnung: Temperaturabfall trotz eingeschalteter Heizung",
-        "Zusätzliche Erkennung ohne Feuchteabfall: Beide Temperaturtrends müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Bei nur einer verfügbaren Messposition bleibt die bisherige Regel mit Luftfeuchte maßgeblich.",
+        "Zusätzliche Erkennung ohne Feuchteabfall: Die Temperaturtrends der verfügbaren Messpositionen müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Eine verfügbare Messposition genügt; sind beide verfügbar, müssen beide den Abfall bestätigen.",
         "detection",
     ),
     "door_heating_hold_seconds": (
         "Bestätigungsdauer des Temperaturabfalls beim Heizen",
-        "So lange muss der zusätzliche Temperaturabfall an beiden Messpositionen gleichzeitig bestehen. Eine Heizabschaltung verwirft diesen Nachweis.",
+        "So lange muss der zusätzliche Temperaturabfall an den verfügbaren Messpositionen bestehen. Eine verfügbare Messposition genügt; eine Heizabschaltung verwirft den Nachweis.",
         "detection",
     ),
     "door_heating_max_temperature_c": (

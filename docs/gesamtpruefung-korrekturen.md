@@ -70,6 +70,14 @@ ist kein Nachweis eines tatsächlichen Schaltvorgangs.
 - **D-02:** Der Live-Status überträgt nicht mehr die vollständige, dort ungenutzte
   externe Beobachtungshistorie. Das entfernt deren wiederholte Sortierung und
   Serialisierung; es begrenzt nicht den internen Speicher aller Beobachtungen.
+- **D-03:** Die zusätzliche thermische Türerkennung ist auch mit einer
+  verfügbaren Messposition freigegeben. Die widersprechenden Hilfetexte und
+  der irreführende Testname sind korrigiert. Der gesamte Betrieb unterstützt
+  eine konfigurierte Messposition. Der obere Sensor bleibt Hauptsensor der
+  Solltemperaturregelung; nur bei fehlendem gültigem oberen Wert dient unten
+  als Ersatz. Ein konfigurierter ausgefallener Sensor wird weiterhin als
+  Störung angezeigt. Konfiguration, Regelung und Anzeige verwenden diese
+  Hierarchie ohne Mittelung oder Höhenoffset.
 - **EXT-01:** Unabhängig bestätigtes Heizen wird auch bei ausgeschaltetem Betrieb
   und ausgeschaltetem Schütz durch die bestehende Fehlerbestätigung erfasst.
 - **EXT-02:** Die erwartete Lichtantwort berücksichtigt die zentral konfigurierte
@@ -171,13 +179,18 @@ werden zum Verbergen des fehlgeschlagenen Prozessendes verwendet.
 Der Linux-CI-Lauf `36318733249` zum ersten Korrekturcommit `ef5475d` bestand
 Core und Browser; die Integration scheiterte am inzwischen entfernten,
 unnötigen vollständigen Frontendsetup des Registrierungsgegenfalls.
-Der aktuelle Folgestand benötigt einen eigenen vollständigen CI-Lauf.
+Der vollständige Linux-CI-Lauf zum Folgestand `13a3935` ist erfolgreich:
+https://github.com/grisey/HA_Sauna/actions/runs/36319682144
 
-**D-03 bleibt fachlich offen:** Darf die zusätzliche thermische Türerkennung
-mit nur einem verfügbaren Sensor auslösen oder verlangt diese Zusatzregel
-beide Messhöhen? Die Frage ist dem Benutzer gestellt. Bis zur Antwort bleibt
-sie unverändert; die allgemeine Freigabe des Ein-Sensor-Betriebs wird dadurch
-nicht eingeschränkt. Der Prüfbericht ist deshalb nicht vollständig erledigt.
+Nach ausdrücklicher Nutzeranweisung finden keine lokalen Tests auf dem Mac
+und keine weitere Untersuchung ihrer Abstürze statt. Linux ist das
+Testzielsystem. Der macOS-Absturz ist kein offener Arbeitsauftrag.
+
+Die Sensorregel ist durch den Benutzer abschließend klargestellt: vollständiger
+Ein-Sensor-Betrieb, bei zwei konfigurierten Sensoren sichtbare Ausfallmeldung;
+oben bleibt Hauptsensor, unten nur Ersatz. Dazu besteht keine offene
+fachliche Rückfrage. Nachprüfung und Merge-Freigabe sind Verfahrensschritte
+und keine offenen Codebefunde.
 
 Keine reale Heizinstallation, private Recorderdaten, Shelly-Firmware oder
 Companion-WebView wurden hierfür geprüft. Die gezielten Kontrastfälle sind

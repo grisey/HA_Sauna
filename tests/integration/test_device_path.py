@@ -337,6 +337,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
         self.now += timedelta(seconds=31)
         self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
+        await self.set_source("lower_temperature", 49)
+        self.assertEqual(self.runtime.device.regulation_measurement(self.now).position, Position.LOWER)
+        self.assertEqual(self.runtime.device._warmup_key[2], Position.LOWER)
+        self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
 
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
         from custom_components.ha_sauna.core.timeline import Kind
@@ -878,6 +882,31 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(2)
         self.assertNotIn("upper_temperature", self.runtime.device.faults)
         self.assertEqual(len(self.runtime.detector.active_positions), 2)
+
+    async def test_upper_temperature_leads_and_lower_takes_over_only_after_upper_expires(self):
+        self.now = self.base + timedelta(seconds=1)
+        await self.set_source("lower_temperature", 70)
+        await self.set_source("upper_temperature", 90)
+        await self.runtime.set_operation(True)
+        self.assertEqual(self.runtime.controller.temperature, 90)
+        self.assertEqual(self.runtime.device.regulation_measurement(self.now).position.value, "upper")
+        self.assertFalse(self.heater.is_on)
+
+        await self.set_source("upper_temperature", "unavailable")
+        self.now = self.base + timedelta(seconds=32)
+        await self.set_source("lower_temperature", 70)
+        self.assertEqual(self.runtime.controller.temperature, 70)
+        self.assertEqual(self.runtime.device.regulation_measurement(self.now).position.value, "lower")
+        self.assertIn("upper_temperature", self.runtime.device.faults)
+        self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
+        self.assertFalse(self.runtime.controller.protection)
+        self.assertTrue(self.heater.is_on)
+
+        await self.set_source("upper_temperature", 90)
+        self.assertEqual(self.runtime.controller.temperature, 90)
+        self.assertEqual(self.runtime.device.regulation_measurement(self.now).position.value, "upper")
+        self.assertNotIn("upper_temperature", self.runtime.device.faults)
+        self.assertFalse(self.heater.is_on)
 
     async def prepare_temperature_reporting_gap(self, validity_seconds):
         from custom_components.ha_sauna.core.display import phase_timer

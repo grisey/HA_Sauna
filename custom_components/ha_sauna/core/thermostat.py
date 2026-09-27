@@ -34,9 +34,9 @@ def evaluate(
 ):
     """Return the present heat command using the fixed demand priority.
 
-    Positive live gang and temporary-door levels bypass the normal upper
+    Positive live gang and temporary-door levels bypass the normal temperature
     cut-off and thermostat cooldown. They never bypass operation, protection,
-    inhibitions, or a missing/invalid critical upper temperature.
+    inhibitions, or a missing/invalid selected regulation temperature.
     """
     values = parameters.values
     controls = inputs if inputs is not None else ControlInputs(

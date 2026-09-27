@@ -222,6 +222,36 @@ const draw = (model) => {
   assert.ok(modelFor(p, records, 30).humidityHigh >= 60);
 }
 
+// A session recorded only at the lower height still has a default chart and
+// minimap; it must not depend on a non-existent upper series.
+{
+  const records = [record(1, 66, "temperature", "lower"), record(2, 67, "temperature", "lower")],
+    p = panel(30, records);
+  p.state.measurement_positions = ["lower"];
+  p.historyIndex(records);
+  p.positions = new Set([p.historyPrimaryPosition()]);
+  const model = modelFor(p, records, 30);
+  assert.equal(p.historyPrimaryPosition(), "lower");
+  assert.equal(model.overviewPosition, "lower");
+  assert.equal(model.overview.values.length, 2);
+  assert.ok(draw(model).curves.mainPaths.get("lower:temperature"));
+}
+
+// When the backend reports the lower probe as the live regulation source,
+// the default history follows its existing lower series.
+{
+  const records = [record(1, 78), record(1, 66, "temperature", "lower")],
+    p = panel(30, records),
+    live = session(30);
+  live.timeline.session_id = "live-session";
+  p.shown.session = live;
+  p.state.session = live;
+  p.state.regulation_temperature_position = "lower";
+  p.historyIndex(records);
+  assert.equal(p.historyPrimaryPosition(live), "lower");
+  assert.equal(p.historyModel({ prepared: new Map(), preparedOverview: new Map(), domain: [base, base + 30_000] }, live).overviewPosition, "lower");
+}
+
 // Edge neighbours survive preparation and become a cubic Canvas segment.
 {
   const records = [record(0, 70), record(4, 71)],

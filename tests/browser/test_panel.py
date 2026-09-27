@@ -186,6 +186,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await context.close()
         self.assertEqual(self.errors, [])
 
+    async def test_upper_probe_failure_keeps_lower_readings_and_visible_warning(self):
+        await self.set_source("upper_temperature", "unavailable")
+        self.now = self.base + timedelta(seconds=31)
+        await self.set_source("lower_temperature", 68)
+        await self.set_source("lower_humidity", 38)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        await self.panel.evaluate("panel => panel.refresh()")
+
+        current = self.panel.locator("#current")
+        await expect(current.locator(".gauges")).to_contain_text("68 °C")
+        await expect(current.locator(".gauges")).to_contain_text("38 %")
+        await expect(current.locator(".gauges")).to_contain_text("Ersatzmessung unten")
+        await expect(current.locator('[role="alert"]')).to_contain_text("Temperatur oben")
+        self.assertEqual(self.errors, [])
+
     async def test_appearance_preview_validation_persistence_and_display_scales(self):
         artifact_dir = os.environ.get("HA_SAUNA_BROWSER_ARTIFACTS")
         screenshots = (

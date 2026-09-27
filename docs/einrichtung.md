@@ -31,13 +31,17 @@ gilt weiterhin der Standard von 60 °C.
 ## 2. Rollen zuordnen
 
 Wählen Sie die vorhandenen Entitäten nach ihrer Aufgabe aus, nicht nach ihrem
-Namen oder Gerät. Erforderlich sind die obere und untere Messposition mit jeweils
-Temperatur und Luftfeuchte, der Schalter des Heizschützes, ein Bedieneingang und
+Namen oder Gerät. Erforderlich ist mindestens eine vollständige Messposition
+mit Temperatur und Luftfeuchte, oben oder unten, der Schalter des Heizschützes, ein Bedieneingang und
 ein dimmbares Saunalicht. Optional lassen sich ein Leistungssensor sowie eine
 unabhängige Heizrückmeldung ergänzen.
 
-Die obere Messposition ist für die Temperaturregelung maßgeblich. Die untere
-Messposition ergänzt die Erkennung und bleibt eine eigene Messhöhe.
+Der obere Sensor bleibt Hauptsensor für die Regelung auf die Solltemperatur.
+Nur wenn oben kein gültiger Wert verfügbar ist, verwendet sie den gültigen
+unteren Wert als Ersatz. Sobald oben wieder gültige Werte liefert, übernimmt
+er erneut. Es gibt weder gleichberechtigte Auswahl noch Mittelung oder Höhenaufschlag.
+Ist eine zweite Messposition konfiguriert und fällt aus, wird die Störung
+angezeigt; der Betrieb bleibt mit der verfügbaren Messposition möglich.
 
 ## 3. Taster und Heizschütz getrennt einrichten
 

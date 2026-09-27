@@ -589,7 +589,7 @@ class DetectorTests(unittest.TestCase):
                     events += d.advance(T0+timedelta(seconds=i),enabled=True)
                 self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
 
-    def test_additional_rule_requires_both_positions_and_restarts_proof_after_heater_change(self):
+    def test_heater_change_restarts_additional_door_proof(self):
         for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
             d=Detector(detection_parameters(),T0,positions)
             events=[]
@@ -598,6 +598,29 @@ class DetectorTests(unittest.TestCase):
                 d.report_heating(False if i%8==0 else True,T0+timedelta(seconds=i))
                 events+=sample(d,i,50-.03*i,30,positions)
             self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+
+    def test_additional_door_rule_uses_all_available_positions(self):
+        cases = (
+            ("only upper configured", (Position.UPPER,), (Position.UPPER,), (Position.UPPER,), True),
+            ("only lower configured", (Position.LOWER,), (Position.LOWER,), (Position.LOWER,), True),
+            ("upper survives", (Position.UPPER, Position.LOWER), (Position.UPPER,), (Position.UPPER,), True),
+            ("lower survives", (Position.UPPER, Position.LOWER), (Position.LOWER,), (Position.LOWER,), True),
+            ("both fall", (Position.UPPER, Position.LOWER), (Position.UPPER, Position.LOWER), (Position.UPPER, Position.LOWER), True),
+            ("one falls", (Position.UPPER, Position.LOWER), (Position.UPPER, Position.LOWER), (Position.UPPER,), False),
+        )
+        for name, configured, reporting, falling, opens in cases:
+            with self.subTest(name=name):
+                detector = Detector(detection_parameters(), T0, configured)
+                events = []
+                for second in range(80):
+                    detector.report_heating(True, T0 + timedelta(seconds=second))
+                    for position in reporting:
+                        temperature = 50 - .03 * second if position in falling else 50
+                        detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
+                        detector.accept(measurement(position, Quantity.HUMIDITY, 30, second))
+                    events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+                self.assertEqual(detector.active_positions, reporting)
+                self.assertEqual(Kind.DOOR_OPEN in [event.kind for event in events], opens)
 
     def test_hot_operation_uses_the_continuous_heating_route(self):
         for base, minimum in ((90, 60), (65, 60), (59, 60)):

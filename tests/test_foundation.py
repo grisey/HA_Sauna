@@ -25,7 +25,11 @@ def parameters():
 
 
 def bindings():
-    return Bindings({role.key: f"{role.domains[0]}.test_{role.key}" for role in ROLES if not role.optional})
+    return Bindings({
+        role.key: f"{role.domains[0]}.test_{role.key}"
+        for role in ROLES
+        if not role.optional or role.device_class in {"temperature", "humidity"}
+    })
 
 
 def metadata(binding):

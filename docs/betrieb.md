@@ -170,7 +170,9 @@ Sitzung und folgt derselben Gang-, Nachlauf- und Anrechnungsreihenfolge.
 Unterbrechung der Bedingung setzt den Nachweis zurück.
 
 Messwertgültigkeit (180 s), Rückmeldungsfrist und Fehlerbestätigung (60 s) sind
-getrennte Werte. Fehlt die obere Regeltemperatur nach ihrer Gültigkeit, pausiert
-die Heizung. Bestätigte technische Schutzgründe verriegeln die Heizfreigabe und
+getrennte Werte. Der obere Sensor ist Hauptsensor der Temperaturregelung.
+Ist sein Wert nicht mehr gültig, übernimmt ein gültiger unterer Wert als
+Ersatz. Sobald oben wieder gültige Werte liefert, führt erneut oben.
+Erst ohne gültigen Temperaturwert pausiert die Heizung. Bestätigte technische Schutzgründe verriegeln die Heizfreigabe und
 werden erst nach Betrieb-Aus und bestätigtem Ofen-Aus quittiert. Ein Sensorfehler
 bleibt sichtbar; es gibt keine Mittelung oder erfundenen Höhenoffset.

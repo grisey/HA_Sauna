@@ -26,10 +26,22 @@ class Role:
 
 
 ROLES = (
-    Role("upper_temperature", "Temperatur oben", ("sensor",), "temperature", "°C"),
-    Role("upper_humidity", "Luftfeuchte oben", ("sensor",), "humidity", "%"),
-    Role("lower_temperature", "Temperatur unten", ("sensor",), "temperature", "°C"),
-    Role("lower_humidity", "Luftfeuchte unten", ("sensor",), "humidity", "%"),
+    Role(
+        "upper_temperature", "Temperatur oben", ("sensor",), "temperature", "°C",
+        optional=True,
+    ),
+    Role(
+        "upper_humidity", "Luftfeuchte oben", ("sensor",), "humidity", "%",
+        optional=True,
+    ),
+    Role(
+        "lower_temperature", "Temperatur unten", ("sensor",), "temperature", "°C",
+        optional=True,
+    ),
+    Role(
+        "lower_humidity", "Luftfeuchte unten", ("sensor",), "humidity", "%",
+        optional=True,
+    ),
     Role("heater", "Schalter des Heizschützes", ("switch",)),
     Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
     Role("light", "Dimmbares Saunalicht", ("light",)),
@@ -80,8 +92,17 @@ class Bindings:
                 raise BindingError(role.key, "entity_required")
             if value.split(".", 1)[0] not in role.domains:
                 raise BindingError(role.key, "wrong_domain")
+        for position in ("upper", "lower"):
+            temperature = f"{position}_temperature"
+            humidity = f"{position}_humidity"
+            if (temperature in values) != (humidity in values):
+                missing = humidity if temperature in values else temperature
+                raise BindingError(missing, "entity_required")
+        if not ("upper_temperature" in values or "lower_temperature" in values):
+            raise BindingError("base", "sensor_pair_required")
         for metric in ("temperature", "humidity"):
-            if values[f"upper_{metric}"] == values[f"lower_{metric}"]:
+            upper = values.get(f"upper_{metric}")
+            if upper is not None and upper == values.get(f"lower_{metric}"):
                 raise BindingError(f"lower_{metric}", "duplicate_sensor")
         object.__setattr__(self, "values", MappingProxyType(values))
 

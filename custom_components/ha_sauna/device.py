@@ -33,6 +33,7 @@ class HADevice:
         self.source_received_at = {}
         self.measurements = {}
         self.last_valid_temperature = None
+        self.last_valid_lower_temperature = None
         self.warmup = WarmupEstimate(self.values["warmup_estimation_minutes"] * 60)
         self._warmup_key = None
         self._warmup_target = None
@@ -139,6 +140,8 @@ class HADevice:
             )
             if role == "upper_temperature" and value is not None:
                 self.last_valid_temperature = m
+            elif role == "lower_temperature" and value is not None:
+                self.last_valid_lower_temperature = m
             session = self.runtime.session
             if self.runtime.archive and session and not initial:
                 self.runtime.archive.append(
@@ -328,21 +331,33 @@ class HADevice:
                 opening.effective_at
             )
 
-    def _current_upper_temperature(self, now):
-        upper = self.measurements.get("upper_temperature")
+    def _current_temperature(self, role, now):
+        measurement = (
+            self.last_valid_temperature
+            if role == "upper_temperature"
+            else self.last_valid_lower_temperature
+        )
         timeout = self.values.get("sensor_timeout_seconds")
         if (
-            upper is None
-            or upper.value is None
+            measurement is None
             or timeout is None
-            or (age := (now - upper.received_at).total_seconds()) < 0
+            or (age := (now - measurement.received_at).total_seconds()) < 0
             or age > timeout
         ):
             return None
-        return upper
+        return measurement
+
+    def _current_upper_temperature(self, now):
+        return self._current_temperature("upper_temperature", now)
+
+    def regulation_measurement(self, now):
+        """Prefer the current upper value, otherwise use the current lower value."""
+        return self._current_upper_temperature(now) or self._current_temperature(
+            "lower_temperature", now
+        )
 
     def _refresh_warmup(self, now):
-        """Advance the display estimate only from a new, current upper value."""
+        """Advance the display estimate from one selected, current temperature source."""
         controller = self.runtime.controller
         session = controller.session
         active_warmup = (
@@ -361,10 +376,20 @@ class HADevice:
             ):
                 self._reset_warmup()
             return
-        key = (session.session_id, self.heating_observation["source"])
+        measurement = self.regulation_measurement(now)
+        if measurement is None:
+            self._reset_warmup()
+            return
+        key = (
+            session.session_id,
+            self.heating_observation["source"],
+            measurement.position,
+            measurement.source,
+        )
         target = controller.target_temperature
         if key != self._warmup_key or target != self._warmup_target:
             self._reset_warmup()
+            self.invalidate_historical_warmup()
             self._warmup_key = key
             self._warmup_target = target
             self._warmup_started_at = now
@@ -372,15 +397,13 @@ class HADevice:
         self._remember_warmup_door_opening(session)
         if session.timeline.door == Door.OPEN:
             return
-        upper = self._current_upper_temperature(now)
         # A value received before the confirmed heating stretch is a useful
         # controller input, but not evidence about this warm-up estimate.
         if (
-            upper is None
-            or upper.received_at < self._warmup_started_at
+            measurement.received_at < self._warmup_started_at
             or (
                 self._warmup_last_received_at is not None
-                and upper.received_at <= self._warmup_last_received_at
+                and measurement.received_at <= self._warmup_last_received_at
             )
         ):
             return
@@ -393,21 +416,21 @@ class HADevice:
                 ),
                 None,
             )
-            if closing is None or upper.received_at <= closing.effective_at:
+            if closing is None or measurement.received_at <= closing.effective_at:
                 return
         door_loss_c = (
-            max(0, self._warmup_door_before_c - upper.value)
+            max(0, self._warmup_door_before_c - measurement.value)
             if self._warmup_door_before_c is not None
             else None
         )
         self.warmup.accept(
-            upper.received_at,
-            upper.value,
+            measurement.received_at,
+            measurement.value,
             target_c=target,
             historical_rate=self._historical_warmup_rate,
             door_loss_c=door_loss_c,
         )
-        self._warmup_last_received_at = upper.received_at
+        self._warmup_last_received_at = measurement.received_at
         self._warmup_door_before_c = None
 
     def _load_historical_warmup(self):
@@ -418,7 +441,11 @@ class HADevice:
         if archive is None:
             return
         generation = self._historical_warmup_generation
-        source = self.bindings["upper_temperature"]
+        if self._warmup_key is None or self._warmup_key[2] != Position.UPPER:
+            # No upper archive curve is applied to a lower-position live trend.
+            # The lower position can still establish its own live ETA.
+            return
+        source = self._warmup_key[3]
         timeout = self.values.get("sensor_timeout_seconds")
         minimum_observation = self.warmup.trend.window_seconds
 
@@ -473,9 +500,10 @@ class HADevice:
             self._load_historical_warmup()
 
     def estimated_ready_seconds(self, now):
-        """Return the cached ETA only while its upper source is current."""
+        """Return the cached ETA only while its selected source is current."""
         controller = self.runtime.controller
         session = controller.session
+        measurement = self.regulation_measurement(now)
         if (
             session is None
             or not session.operation_enabled
@@ -484,7 +512,9 @@ class HADevice:
             or controller.protection
             or controller.inhibits
             or session.timeline.door == Door.OPEN
-            or self._current_upper_temperature(now) is None
+            or measurement is None
+            or self._warmup_key is None
+            or self._warmup_key[2:] != (measurement.position, measurement.source)
         ):
             return None
         timeout = self.values.get("sensor_timeout_seconds")
@@ -542,17 +572,11 @@ class HADevice:
         controller.inhibits = (
             {"configuration_required:" + ",".join(missing)} if missing else set()
         )
-        timeout = self.values.get("sensor_timeout_seconds")
-        upper = self.last_valid_temperature
-        temperature = (
-            upper.value
-            if upper is not None
-            and timeout is not None
-            and (now - upper.received_at).total_seconds() <= timeout
-            else None
-        )
+        regulation = self.regulation_measurement(now)
+        temperature = regulation.value if regulation is not None else None
         # Ein kurz fehlendes Paket verwirft einen noch gültigen Messwert nicht.
-        # Nach Gültigkeitsende gibt es keinen erfundenen Ersatz der unteren Höhe.
+        # Wenn die obere Höhe ausfällt, führt die frische untere Messung dieselbe
+        # Regelung ohne Mittelung oder erfundenen Höhenoffset fort.
         controller.set_temperature(temperature, now)
         self.report_received_feedback(now)
         contactor = self.contactor_feedback()

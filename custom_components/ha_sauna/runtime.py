@@ -22,7 +22,7 @@ from .core.button import (
 )
 from .core.controller import Controller, Result
 from .core.detector import Detector
-from .core.models import Deadline, Session
+from .core.models import Deadline, Position, Session
 from .core.contracts import ConsumerEvent, PresenceReport
 from .core.presence import PresenceProjection, ProxyPresenceSource
 from .core.parameters import BY_KEY, Parameters
@@ -347,6 +347,11 @@ class SaunaRuntime:
             Detector(
                 self.configuration.parameters,
                 self.session.started_at,
+                positions=tuple(
+                    Position(position)
+                    for position in ("upper", "lower")
+                    if f"{position}_temperature" in self.configuration.bindings.values
+                ),
                 observer=observed,
             )
             if self.session
