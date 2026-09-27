@@ -174,7 +174,7 @@ async def async_options_updated(hass, entry):
             and before_button_program == after_button_program
             and not changed - LIVE_TEMPERATURE_KEYS
         ):
-            async with runtime._lock:
+            async with runtime.serialized():
                 # A later options update may have overtaken this listener
                 # while it waited for the live controller lock.
                 try:

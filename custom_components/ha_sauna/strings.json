@@ -158,7 +158,7 @@
           "light_reference_temperature_c": "Am Kaltpunkt dieser Temperatur beginnt die lineare Temperaturkurve für die Lichthelligkeit.",
           "program_2_start_c": "Solltemperatur vor dem ersten gezählten Saunagang.",
           "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
-          "oven_cooling_max_minutes": "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
+          "oven_cooling_max_minutes": "Begrenzt die gezählte Kühlzeit mit bestätigtem Schütz AUS. Zeiten ohne AUS-Bestätigung zählen nicht mit; dadurch kann die insgesamt verstrichene Zeit länger sein. Der Wert muss mindestens so groß wie die Mindestdauer sein.",
           "oven_cooling_half_life_minutes": "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
           "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht die hier eingestellte Anzahl gewichteter Heizminuten aus; Standard sind zwei."
         },
@@ -414,7 +414,7 @@
           "light_reference_temperature_c": "Am Kaltpunkt dieser Temperatur beginnt die lineare Temperaturkurve für die Lichthelligkeit.",
           "program_2_start_c": "Solltemperatur vor dem ersten gezählten Saunagang.",
           "warmup_estimation_minutes": "Bestimmt, wie lange ein veränderter Temperaturanstieg beobachtet und wie ruhig die Restzeit angepasst wird. Zu Beginn hilft der Verlauf der letzten Sitzung.",
-          "oven_cooling_max_minutes": "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
+          "oven_cooling_max_minutes": "Begrenzt die gezählte Kühlzeit mit bestätigtem Schütz AUS. Zeiten ohne AUS-Bestätigung zählen nicht mit; dadurch kann die insgesamt verstrichene Zeit länger sein. Der Wert muss mindestens so groß wie die Mindestdauer sein.",
           "oven_cooling_half_life_minutes": "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
           "oven_cooling_heat_idle_ratio": "Eine gewichtete Minute Bereitschaftspause gleicht die hier eingestellte Anzahl gewichteter Heizminuten aus; Standard sind zwei."
         },

@@ -65,7 +65,7 @@ async def async_set_parameters(
     new_program=False,
 ):
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         return await _async_set_parameters_locked(
             hass,
             entry,
@@ -80,7 +80,7 @@ async def async_set_parameters(
 async def async_reset_parameters(hass, entry):
     """Restore software settings while retaining physical entity associations."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         # Import here because Runtime imports ``program_parameters`` from this
         # module.  Configuration owns the defaults for the non-parameter UI
         # preferences while retaining the configured hardware bindings.
@@ -203,7 +203,8 @@ async def _async_set_parameters_locked(
     if not changed and not mode_changed and not new_program and not explicit_target:
         return parameters.as_dict()
     clear_selected_program = bool(
-        changed & LIVE_TEMPERATURE_KEYS
+        new_program
+        or changed & LIVE_TEMPERATURE_KEYS
         or (explicit_target and "target_temperature_c" in values)
     )
     # The legacy start/end/count form is always the evenly distributed form.
@@ -257,7 +258,7 @@ async def async_set_program(hass, entry, profile):
     exactly the selected choice.
     """
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -394,7 +395,7 @@ async def apply_temperature_parameters(
 async def async_set_button_program(hass, entry, profile, temperature_c=None):
     """Atomically persist the physical button's named or constant program."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring or runtime.session:
             raise ConfigurationLocked(
@@ -433,7 +434,7 @@ async def async_set_button_program(hass, entry, profile, temperature_c=None):
 async def async_set_program_catalog(hass, entry, stored):
     """Replace the complete catalog atomically while no sauna session exists."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -520,7 +521,7 @@ async def async_set_program_catalog(hass, entry, stored):
 async def async_set_temperature_steps(hass, entry, values):
     """Select explicitly entered stages through the same controller path."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -559,7 +560,7 @@ async def async_set_temperature_steps(hass, entry, values):
 async def async_set_control_mode(hass, entry, mode):
     """Switch controller mode and save the matching configuration atomically."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(

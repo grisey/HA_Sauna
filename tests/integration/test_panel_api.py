@@ -114,6 +114,22 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(record["kind"] in {"measurement", "source_snapshot", "phase"}
                                     for record in history["records"]))
                 self.assertTrue(all("source" not in record["payload"] for record in history["records"]))
+            # Pagination belongs to the raw archive, not to the permitted
+            # subset. A full hidden page must still expose its continuation.
+            original = runtime.archive.read(session_id)
+            after = max(record["id"] for record in original["records"])
+            for _ in range(1000):
+                runtime.archive.append("detector_trace", runtime._clock(), {}, session_id)
+            runtime.archive.append("measurement", runtime._clock(),
+                                   {"position": "upper", "quantity": "temperature", "value": 73}, session_id)
+            await runtime.archive.flush()
+            async with client.get(url + "/archive", params={"session_id": session_id, "after": after}) as response:
+                hidden_page = await response.json()
+                self.assertEqual(hidden_page["records"], [])
+                self.assertGreater(hidden_page["next_after"], after)
+            async with client.get(url + "/archive", params={"session_id": session_id, "after": hidden_page["next_after"]}) as response:
+                resumed = await response.json()
+                self.assertEqual(resumed["records"][0]["payload"]["value"], 73)
 
     async def test_malformed_json_is_a_client_error_across_write_endpoints(self):
         url = self.base + "/" + self.entry.entry_id

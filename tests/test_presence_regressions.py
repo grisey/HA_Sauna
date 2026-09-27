@@ -172,6 +172,45 @@ class PresenceRegressionTests(unittest.TestCase):
             for event in runtime.consumer_events
         )
 
+    def test_unload_saves_final_session_before_at_and_after_gap_deadline(self):
+        async def exercise(path, seconds):
+            clock = [START]
+            runtime = SaunaRuntime(
+                Configuration(BINDINGS, Parameters({"session_gap_minutes": 1})),
+                clock=lambda: clock[0],
+            )
+            await runtime.start_archive(path, "entry")
+            runtime.controller.begin_session("shutdown-gap", START)
+            clock[0] = START + timedelta(seconds=1)
+            runtime.controller.set_operation(False, clock[0])
+            runtime.notify()
+
+            class TeardownDevice:
+                async def close(self):
+                    pass
+
+                def invalidate_historical_warmup(self):
+                    pass
+
+            runtime.device = TeardownDevice()
+            clock[0] = START + timedelta(seconds=seconds)
+            await runtime.close()
+            return runtime.archive.read("shutdown-gap")
+
+        with TemporaryDirectory() as directory:
+            for seconds in (60, 61, 62):
+                with self.subTest(seconds=seconds):
+                    archived = asyncio.run(exercise(
+                        Path(directory) / f"{seconds}.sqlite", seconds
+                    ))
+                    ended_at = (START + timedelta(seconds=min(seconds, 61))).isoformat()
+                    self.assertEqual(archived["session"]["ended_at"], ended_at)
+                    finals = [record for record in archived["records"]
+                              if record["kind"] == "session"
+                              and record["payload"].get("ended_at")]
+                    self.assertEqual(len(finals), 1)
+                    self.assertEqual(finals[0]["payload"]["ended_at"], ended_at)
+
     def test_close_publishes_gang_end_before_archive_close(self):
         tmp_path = Path(self.enterContext(TemporaryDirectory()))
         async def exercise():

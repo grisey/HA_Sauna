@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 import unittest
@@ -118,6 +119,77 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertEqual(heating.intervals[0].ended_at, T0 + timedelta(seconds=1))
         self.assertEqual(heating.intervals[1].started_at, T0 + timedelta(seconds=2))
         self.assertEqual(outputs, 1)
+
+    def test_waiting_tick_or_command_consumes_received_contactor_off_first(self):
+        async def exercise(command):
+            runtime, adapter, _ = self.device()
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            runtime.controller.begin_session("contactor", T0)
+            adapter.ingest("heater", state("on"), T0)
+            adapter.report_received_feedback(T0)
+            adapter.apply = AsyncMock()
+            await runtime._lock.acquire()
+            clock[0] = T0 + timedelta(seconds=0.5)
+            waiting = asyncio.create_task(
+                runtime.set_light_override(40) if command else runtime.tick()
+            )
+            await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=1)
+            edge = asyncio.create_task(runtime.device_input(SimpleNamespace(
+                event_type="state_changed",
+                data={
+                    "entity_id": BINDINGS.values["heater"],
+                    "old_state": state("on"),
+                    "new_state": state("off"),
+                },
+            )))
+            await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=11)
+            runtime._lock.release()
+            await asyncio.gather(waiting, edge)
+            return runtime.session.heating
+
+        for command in (False, True):
+            with self.subTest(command=command):
+                heating = asyncio.run(exercise(command))
+                self.assertEqual(heating.elapsed_seconds, 1)
+                self.assertEqual(heating.intervals[0].ended_at, T0 + timedelta(seconds=1))
+
+    def test_binary_release_received_behind_tick_stays_a_short_press(self):
+        async def exercise():
+            runtime, adapter, _ = self.device(button_hold_seconds=2)
+            runtime.configuration = replace(runtime.configuration, control_input_mode="button")
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            runtime.controller.begin_session("short", T0)
+            adapter.ingest("upper_temperature", state("70"), T0)
+            adapter.apply = AsyncMock()
+
+            def edge(old, new):
+                return SimpleNamespace(event_type="state_changed", data={
+                    "entity_id": BINDINGS.values["control_input"],
+                    "old_state": state(old), "new_state": state(new),
+                })
+
+            await runtime.device_input(edge("off", "on"))
+            await runtime._lock.acquire()
+            clock[0] = T0 + timedelta(seconds=0.5)
+            tick = asyncio.create_task(runtime.tick())
+            await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=1)
+            release = asyncio.create_task(runtime.device_input(edge("on", "off")))
+            await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=3)
+            runtime._lock.release()
+            await asyncio.gather(tick, release)
+            return runtime
+
+        runtime = asyncio.run(exercise())
+        self.assertIsNotNone(runtime.session)
+        self.assertTrue(runtime.session.operation_enabled)
+        self.assertEqual(runtime.controller.completed_sessions, ())
+        self.assertIsNone(runtime.controller.light_after_run)
 
     def test_waiting_switch_action_keeps_feedback_edges_in_order(self):
         async def exercise():

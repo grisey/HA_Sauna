@@ -198,10 +198,34 @@ test("closed archive cache does not fetch pages again and nonadvancing cursor is
   assert.equal(pages, 1);
   p.selected = "live";
   p.historySelectionGeneration = 1;
-  p.api = async (request) => (request.endsWith("/archive") ? [] : page([], 9));
+  p.api = async (request) => (request.endsWith("/archive") ? [] : page([], 0));
   await p.startHistoryLoad();
   assert.match(p.errors.history.message, /ohne Fortschritt/);
   assert.equal(p.historyLoad, null);
+});
+
+test("redacted empty pages advance the server cursor and retry later failures", async () => {
+  for (const ended of [false, true]) {
+    const paths = [];
+    let fail = true;
+    const { p } = panel(async (request) => {
+      if (request.endsWith("/archive")) return [];
+      paths.push(request);
+      if (request.endsWith("after=0")) return page([1], 1000, "live", ended);
+      if (request.endsWith("after=1000")) return page([], 2000, "live", ended);
+      if (fail) throw Error("temporary page failure");
+      return page([2001], null, "live", ended);
+    });
+    await p.startHistoryLoad();
+    assert.equal(p.cache.get("live").after, 2000);
+    assert.match(p.errors.history.message, /temporary/);
+    fail = false;
+    await p.startHistoryLoad();
+    assert.deepEqual(Array.from(p.shown.records, (item) => item.id), [1, 2001]);
+    assert.equal(paths.filter((path) => path.endsWith("after=1000")).length, 1);
+    assert.equal(p.cache.get("live").finalSynced, ended);
+    assert.equal(p.errors.history, null);
+  }
 });
 
 test("last-session fallback reuses its final cache without polling record pages", async () => {

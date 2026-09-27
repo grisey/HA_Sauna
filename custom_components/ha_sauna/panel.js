@@ -909,7 +909,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         const row = document.createElement("div");
         const label = document.createElement("span");
         const value = document.createElement("span");
-        label.style.color = `var(--sauna-color-series-${quantity})`;
+        label.style.color = "var(--sauna-card-text, inherit)";
         row.append(label, document.createElement("br"), value);
         row.hidden = true;
         rows.append(row);
@@ -1884,7 +1884,7 @@ class SaunaPanel extends HTMLElement {
         font-weight: 700;
       }
       a {
-        color: color-mix(in srgb, var(--accent) 60%, var(--sauna-color-text, var(--primary-text-color)));
+        color: var(--sauna-card-text, inherit);
       }
       .tabs {
         display: flex;
@@ -3670,13 +3670,23 @@ class SaunaPanel extends HTMLElement {
             // Persist each complete page before the next request. A failed
             // later page retries at this cursor and cannot duplicate records.
             const records = Array.isArray(page.records) ? page.records : [],
-              { cursorRecords } = this.appendHistoryCacheRecords(cache, records, after),
-              next = Math.max(after, ...cursorRecords.map((record) => record.id));
-            if (page.next_after && next <= after)
+              continuation = page.next_after;
+            if (
+              continuation != null &&
+              (!Number.isSafeInteger(continuation) || continuation <= after)
+            )
               throw Error("Archivabruf ohne Fortschritt. Erneuter Versuch folgt.");
+            const { cursorRecords } = this.appendHistoryCacheRecords(
+                cache,
+                records,
+                after,
+              ),
+              next =
+                continuation ??
+                Math.max(after, ...cursorRecords.map((record) => record.id));
             this.updateHistoryCacheMetadata(cache, page);
             cache.after = next;
-            more = page.next_after;
+            more = continuation != null;
             cache.pageRunLoaded = !more;
             cache.loaded = cache.pageRunLoaded;
             // A page run can be complete for an open snapshot.  Only a

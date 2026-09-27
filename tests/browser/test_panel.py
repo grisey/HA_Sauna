@@ -601,6 +601,26 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await chart.hover(position={"x": sample_x, "y": 200})
         await expect(self.panel.locator("#tooltip")).to_be_visible()
         await expect(self.panel.locator("#tooltip")).to_contain_text("Temperatur oben")
+        # Valid but hostile palette: inspect rendered text consumers, not only
+        # the palette variables. Curves must keep the chosen measurement color.
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        editor = self.panel.locator("#appearance-settings")
+        for group in ("Grunddarstellung", "Bedienung", "Messungen und Ereignisse"):
+            await editor.locator("summary").filter(has_text=group).click()
+        for role in ("card_background", "text", "ui_accent", "series_temperature", "series_humidity"):
+            await editor.locator(f'[data-appearance-color="{role}"]').fill("#000000")
+        for link in ("Sensoren und Geräte zuordnen", "Home-Assistant-Protokoll öffnen"):
+            await expect(self.panel.get_by_role("link", name=link)).to_have_css("color", "rgb(255, 255, 255)")
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await chart.hover(position={"x": sample_x, "y": 200})
+        label = self.panel.locator("#tooltip span").filter(has_text="Temperatur oben")
+        await expect(label).to_be_visible()
+        await expect(label).to_have_css("color", "rgb(255, 255, 255)")
+        await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(0, 0, 0)")
+        self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#000000")
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await editor.locator('[data-action="appearance-discard"]').click()
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
         zoom = await self.panel.evaluate("p=>p.zoom")
         await chart.dispatch_event("wheel", {"deltaY": -600, "clientX": 250, "clientY": 200})
         self.assertEqual(await self.panel.evaluate("p=>p.zoom"), zoom)

@@ -30,6 +30,21 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.now += timedelta(seconds=seconds)
         asyncio.run(self._handle(name))
 
+    def test_received_binary_hold_duration_survives_monotone_action_time(self):
+        async def gesture(duration):
+            at = self.now + timedelta(seconds=10)
+            await self.runtime._handle_button_event("on", at, received_at=self.now)
+            await self.runtime._handle_button_event(
+                "off", at, received_at=self.now + timedelta(seconds=duration)
+            )
+
+        for duration in (1, 3):
+            with self.subTest(duration=duration):
+                self.setUp()
+                self._start_with_temperature()
+                asyncio.run(gesture(duration))
+                self.assertEqual(self.runtime.session is None, duration == 3)
+
     def test_manual_only_heater_command_rechecks_mode_when_executed(self):
         with self.assertRaisesRegex(ValueError, "Betriebsart"):
             asyncio.run(self.runtime.set_heater_override(True, manual_only=True))

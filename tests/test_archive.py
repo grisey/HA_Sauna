@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
@@ -105,39 +106,6 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len({r["id"] for r in rows}), len(rows))
         finally:
             path.unlink()
-
-    async def test_cancelled_export_removes_the_file_after_worker_finishes(self):
-        loop = asyncio.get_running_loop()
-        started, cleaned = asyncio.Event(), asyncio.Event()
-        release = threading.Event()
-        original_export = self.archive._export
-        original_discard = self.archive._discard_export
-        paths = []
-
-        def blocked_export():
-            loop.call_soon_threadsafe(started.set)
-            release.wait()
-            path = original_export()
-            paths.append(path)
-            return path
-
-        def discarded(task):
-            original_discard(task)
-            cleaned.set()
-
-        self.archive._export = blocked_export
-        self.archive._discard_export = discarded
-        task = asyncio.create_task(self.archive.export())
-        try:
-            await started.wait()
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-        finally:
-            release.set()
-        await asyncio.wait_for(cleaned.wait(), 2)
-        self.assertEqual(len(paths), 1)
-        self.assertFalse(paths[0].exists())
 
     async def test_session_and_records_share_one_read_snapshot(self):
         # WAL lets a real second connection commit between the two SELECTs;
@@ -399,3 +367,66 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.archive.consumer_event_ids(), {"present-1"})
         other = Archive(self.archive.path, "different-entry")
         self.assertEqual(other.consumer_event_ids(), set())
+
+
+class ExportShutdownTests(unittest.TestCase):
+    def test_cancelled_export_is_removed_even_after_all_loop_tasks_are_cancelled(self):
+        for finished in (False, True):
+            with self.subTest(writer_already_finished=finished):
+                self.cancel_export(finished)
+
+    def cancel_export(self, finished):
+        # A dedicated loop lets shutdown cancel every task before the real
+        # thread finishes, without cancelling this suite's own test runner.
+        with tempfile.TemporaryDirectory() as directory:
+            loop = asyncio.new_event_loop()
+            executor = ThreadPoolExecutor()
+            loop.set_default_executor(executor)
+            archive = Archive(Path(directory) / "sessions.sqlite", "entry")
+            started, release = threading.Event(), threading.Event()
+            paths = []
+            original_export = archive._export
+
+            def blocked_export():
+                started.set()
+                release.wait()
+                path = original_export()
+                paths.append(path)
+                return path
+
+            archive._export = blocked_export
+
+            async def start_request():
+                await archive.start()
+                request = asyncio.create_task(archive.export())
+                self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                await archive.close()
+                return request
+
+            try:
+                request = loop.run_until_complete(start_request())
+                if finished:
+                    # Finish the real writer while the loop cannot deliver
+                    # its result. Cancellation must still remove that result.
+                    release.set()
+                    executor.shutdown(wait=True)
+                request.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    loop.run_until_complete(request)
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            finally:
+                release.set()
+                loop.run_until_complete(loop.shutdown_default_executor())
+                loop.close()
+            try:
+                self.assertEqual(len(paths), 1)
+                self.assertFalse(paths[0].exists())
+            finally:
+                for path in paths:
+                    path.unlink(missing_ok=True)

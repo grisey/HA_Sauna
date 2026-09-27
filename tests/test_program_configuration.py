@@ -13,6 +13,7 @@ from custom_components.ha_sauna.core.parameters import (
     Parameters,
 )
 from custom_components.ha_sauna.core.program_catalog import NamedTemperatureProgram
+from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
     ConfigurationLocked,
@@ -23,6 +24,7 @@ from custom_components.ha_sauna.settings import (
     async_set_temperature_steps,
     program_parameters,
 )
+from test_foundation import T0, event
 
 
 def bindings():
@@ -358,28 +360,48 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertIsNone(runtime.configuration.temperature_steps)
 
     def test_even_program_request_explicitly_replaces_free_steps(self):
-        configuration = Configuration(Bindings(bindings()), Parameters({}))
-        runtime = SaunaRuntime(configuration)
-        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
-        hass = _FakeHass()
-        asyncio.run(async_set_temperature_steps(hass, entry, [80, 86, 90]))
-        asyncio.run(
-            async_set_parameters(
+        async def select_even(active):
+            configuration = Configuration(Bindings(bindings()), Parameters({}))
+            runtime = SaunaRuntime(configuration, clock=lambda: T0)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=configuration.as_options(), entry_id="even"
+            )
+            hass = _FakeHass()
+            await async_set_temperature_steps(hass, entry, [80, 86, 90])
+            if active:
+                runtime._set_operation(True)
+            await async_set_parameters(
                 hass,
                 entry,
                 {
-                    "target_temperature_c": 70,
-                    "final_temperature_c": 100,
-                    "temperature_gangs": 4,
+                    "target_temperature_c": 80,
+                    "final_temperature_c": 90,
+                    "temperature_gangs": 3,
                 },
                 partial=True,
                 explicit_target=False,
                 program_mode="progressive",
                 new_program=True,
             )
-        )
-        self.assertIsNone(runtime.configuration.temperature_steps)
-        self.assertEqual(runtime.controller.target_temperature, 70)
+            await async_options_updated(hass, entry)
+            self.assertIs(entry.runtime_data, runtime)
+            self.assertIsNone(runtime.configuration.temperature_steps)
+            self.assertIsNone(entry.options["temperature_steps"])
+            self.assertIsNone(runtime.controller.temperature_steps)
+            if not active:
+                runtime._set_operation(True)
+            for second, kind in enumerate(
+                (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 10
+            ):
+                runtime.controller.process(
+                    event(str(second), kind, second, runtime.session.session_id)
+                )
+            self.assertEqual(runtime.session.timeline.gang_count, 1)
+            self.assertEqual(runtime.controller.target_temperature, 85)
+
+        for active in (False, True):
+            with self.subTest(active=active):
+                asyncio.run(select_even(active))
 
     def test_repeated_end_value_keeps_active_manual_steps_and_saved_shape(self):
         async def repeat_end():

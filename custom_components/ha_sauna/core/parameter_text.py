@@ -108,7 +108,7 @@ PARAMETER_TEXT = {
     ),
     "oven_cooling_max_minutes": (
         "Höchstdauer der Ofenkühlung",
-        "Die Ofenkühlung endet spätestens nach dieser Zeit. Sie muss mindestens so lang wie die Mindestdauer sein.",
+        "Begrenzt die gezählte Kühlzeit mit bestätigtem Schütz AUS. Zeiten ohne AUS-Bestätigung zählen nicht mit; dadurch kann die insgesamt verstrichene Zeit länger sein. Der Wert muss mindestens so groß wie die Mindestdauer sein.",
         "operation",
     ),
     "oven_cooling_half_life_minutes": (

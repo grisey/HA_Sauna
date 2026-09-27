@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import deque
 from collections.abc import Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
@@ -368,6 +369,7 @@ class SaunaRuntime:
                     )
 
     async def _cycle(self, *, sample=False):
+        await self._drain_device_inputs()
         now = self._clock()
         self._sync_detector()
         if self.detector:
@@ -453,36 +455,56 @@ class SaunaRuntime:
                 return
             if not self._pending_device_inputs:
                 return
-            while self._pending_device_inputs:
-                received_at, event = self._pending_device_inputs.popleft()
-                entity_id = event.data["entity_id"]
-                for role, source in self.configuration.bindings.values.items():
-                    if source == entity_id:
-                        self.device.ingest(role, event.data.get("new_state"), received_at)
-                        if role in {"heater", "heater_power", "heater_feedback"}:
-                            self.device.report_received_feedback(received_at)
-                action_at = max(
-                    received_at, self.controller._last_at or received_at
-                )
-                light_selection = self.device.external_light_selection(event, received_at)
-                if light_selection is not None:
-                    self._set_light_override(light_selection, action_at)
-                action = self.device.physical_action(event)
-                if self.configuration.control_input_mode == "button" and action is not None:
-                    try:
-                        await self._handle_button_event(action, action_at)
-                    except ValueError as error:
-                        self.device.faults["start_rejected"] = str(error)
-                elif action is not None:
-                    try:
-                        self._prepare_operation(action, physical=True, at=action_at)
-                        self._set_operation(action, at=action_at)
-                    except ValueError as error:
-                        self.device.faults["start_rejected"] = str(error)
+            await self._drain_device_inputs()
             await self._cycle()
 
-    async def reset_protection(self):
+    async def _drain_device_inputs(self):
+        """Consume received edges in order, before any advance to wall time.
+
+        The caller owns the runtime lock. This path books inputs and gestures;
+        only the subsequent current-time cycle sends actuator commands.
+        """
+        while self._pending_device_inputs:
+            received_at, event = self._pending_device_inputs.popleft()
+            entity_id = event.data["entity_id"]
+            for role, source in self.configuration.bindings.values.items():
+                if source == entity_id:
+                    self.device.ingest(role, event.data.get("new_state"), received_at)
+                    if role in {"heater", "heater_power", "heater_feedback"}:
+                        self.device.report_received_feedback(received_at)
+            action_at = max(
+                received_at, self.controller._last_at or received_at
+            )
+            light_selection = self.device.external_light_selection(event, received_at)
+            if light_selection is not None:
+                self._set_light_override(light_selection, action_at)
+            action = self.device.physical_action(event)
+            if self.configuration.control_input_mode == "button" and action is not None:
+                try:
+                    await self._handle_button_event(
+                        action, action_at, received_at=received_at
+                    )
+                except ValueError as error:
+                    self.device.faults["start_rejected"] = str(error)
+            elif action is not None:
+                try:
+                    self._prepare_operation(action, physical=True, at=action_at)
+                    self._set_operation(action, at=action_at)
+                except ValueError as error:
+                    self.device.faults["start_rejected"] = str(error)
+
+    @asynccontextmanager
+    async def serialized(self):
+        """Serialize commands after all already received device inputs."""
         async with self._lock:
+            # A service await may receive more edges. Consume those too before
+            # yielding to a command that can advance the controller clock.
+            while not self.closed and self._pending_device_inputs:
+                await self._cycle()
+            yield
+
+    async def reset_protection(self):
+        async with self.serialized():
             self._require_open()
             if self.session and self.session.operation_enabled:
                 raise ValueError("Betrieb vor Quittierung ausschalten")
@@ -873,10 +895,11 @@ class SaunaRuntime:
             current = self.controller.contactor
         return self.controller.set_heater_override(not bool(current), now)
 
-    async def _handle_button_event(self, event, now):
+    async def _handle_button_event(self, event, now, *, received_at=None):
         """Apply one already-normalized gesture; caller owns ``_lock``."""
         enabled = bool(self.session and self.session.operation_enabled)
-        for action in self._button.handle_actions(event, enabled, now):
+        gesture_at = now if received_at is None else received_at
+        for action in self._button.handle_actions(event, enabled, gesture_at):
             await self._apply_button_action(action, now)
 
     async def _apply_button_action(self, action, now):
@@ -907,7 +930,7 @@ class SaunaRuntime:
                 self.controller.finish_session(now, light_after_run=True)
 
     async def set_operation(self, enabled: bool):
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             self._prepare_operation(enabled)
             result = self._set_operation(enabled)
@@ -916,7 +939,7 @@ class SaunaRuntime:
 
     async def set_light_override(self, value):
         """Apply a manual light selection through the serialized runtime path."""
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             if self.device is None:
                 raise ValueError("Lichtsteuerung ist nicht verfügbar")
@@ -938,7 +961,7 @@ class SaunaRuntime:
 
     async def set_heater_override(self, value: bool | None, *, manual_only=False):
         """Apply a manual heater selection through the serialized runtime path."""
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             if manual_only and self.configuration.control_mode != "manual":
                 raise ValueError("Die Betriebsart wurde inzwischen geändert.")
@@ -958,7 +981,7 @@ class SaunaRuntime:
             return decision
 
     async def finish_phase(self, purpose, token):
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             now = self._clock()
             deadline = self.controller.finish_phase(purpose, token, now)
@@ -984,7 +1007,7 @@ class SaunaRuntime:
 
     async def finish_session_gap(self, token):
         """Permanently finish the paused session selected by its gap token."""
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             now = self._clock()
             deadline = self.controller.finish_session_gap(token, now)
@@ -1013,7 +1036,7 @@ class SaunaRuntime:
             await self._cycle()
 
     async def tick(self, _at=None):
-        async with self._lock:
+        async with self.serialized():
             if self.closed:
                 return
             if self.configuration.control_input_mode == "button":
@@ -1027,14 +1050,14 @@ class SaunaRuntime:
             await self._cycle(sample=True)
 
     async def begin_session(self, session_id: str) -> Session:
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             result = self.controller.begin_session(session_id, self._clock())
             self.notify()
             return result
 
     async def receive(self, event: Event) -> Result:
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             if event.detected_at > self._clock():
                 raise ValueError("Erkennungszeit liegt nach der Laufzeituhr")
@@ -1043,7 +1066,7 @@ class SaunaRuntime:
             return result
 
     async def deadline_due(self, deadline: Deadline) -> bool:
-        async with self._lock:
+        async with self.serialized():
             self._require_open()
             return self.controller.consume_deadline(deadline, self._clock())
 
@@ -1058,11 +1081,15 @@ class SaunaRuntime:
 
     async def _close_once(self) -> None:
         async with self._lock:
+            failures = []
+            try:
+                await self._drain_device_inputs()
+            except Exception as error:
+                failures.append(error)
             self.closed = True
             self._pending_device_inputs.clear()
             self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")
             callbacks, self._cleanup = self._cleanup, []
-            failures = []
             for unsubscribe in reversed(callbacks):
                 try:
                     unsubscribe()
@@ -1084,6 +1111,10 @@ class SaunaRuntime:
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:
+                try:
+                    self.persist_completed_sessions()
+                except Exception as error:
+                    failures.append(error)
                 try:
                     if self.session is not None:
                         now = self._clock()

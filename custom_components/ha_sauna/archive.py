@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import zipfile
 from collections.abc import Mapping
 from math import isfinite
@@ -44,6 +45,39 @@ def encoded(value):
     return json.dumps(
         plain(value), ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
+
+
+class _ExportWork:
+    """Own the temporary file across both thread completion and caller cancellation."""
+
+    def __init__(self, create):
+        self.create = create
+        self.lock = threading.Lock()
+        self.abandoned = False
+        self.path = None
+
+    def run(self):
+        path = self.create()
+        with self.lock:
+            if not self.abandoned:
+                self.path = path
+                return path
+        self._remove(path)
+        return None
+
+    def discard(self):
+        with self.lock:
+            self.abandoned = True
+            path, self.path = self.path, None
+        if path is not None:
+            self._remove(path)
+
+    @staticmethod
+    def _remove(path):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("Abgebrochenen Saunaexport konnte nicht entfernt werden")
 
 
 class Archive:
@@ -386,25 +420,14 @@ class Archive:
 
     async def export(self):
         await self.flush()
-        task = asyncio.create_task(asyncio.to_thread(self._export))
+        work = _ExportWork(self._export)
         try:
-            return await asyncio.shield(task)
+            return await asyncio.to_thread(work.run)
         except asyncio.CancelledError:
-            # Threads cannot be canceled. Retain ownership until the produced
-            # file can be removed, including when the caller is already gone.
-            task.add_done_callback(self._discard_export)
+            # The actual writer owns cleanup, not a cancellable asyncio proxy.
+            # This still removes its result after final loop task cancellation.
+            work.discard()
             raise
-
-    @staticmethod
-    def _discard_export(task):
-        try:
-            path = task.result()
-        except (Exception, asyncio.CancelledError):
-            return  # _export removes partial files on its own failure.
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            _LOGGER.exception("Abgebrochenen Saunaexport konnte nicht entfernt werden")
 
     def _export(self):
         # SQLite-Backup liest einen konsistenten Stand, während neue Eingänge

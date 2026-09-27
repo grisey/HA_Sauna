@@ -1,5 +1,45 @@
 # Korrekturen zur Gesamtprüfung vom 27.09.2026
 
+## Nachprüfung des Stands b81294f
+
+Die unabhängige Gesamtprüfung hat die frühere Aussage „alle 29 korrigiert“
+nicht bestätigt: 27 Altbefunde waren im belegten Umfang korrigiert, HA-06
+(Eingangsreihenfolge) und F-FE-04 (Textkontrast) nur teilweise. Insgesamt
+wurden sieben aktive Befunde benannt. Die folgenden Korrekturen betreffen
+diese sieben Fälle; die älteren Abschnitte sind ein historisches Protokoll.
+
+- **NB-HA-01 – Timer überholt empfangene Eingänge:** Schreibende Runtime-Wege
+  übernehmen vor ihrem eigenen Zeitfortschritt die gemeinsame Eingangsqueue.
+  Die Gestenerkennung verwendet die ursprüngliche Empfangszeit; die
+  Controllerzeit bleibt monoton. Es entsteht keine zweite Gestenerkennung.
+- **NB-CORE-01 – Gleichmäßige Wahl behält Einzelstufen:** Ein ausdrücklich
+  gewähltes neues skalares Programm löscht die individuelle Stufenliste auch
+  bei unveränderten Eckwerten. Eine unveränderte Einzelwertübermittlung bleibt
+  dagegen wirkungslos.
+- **NB-ARCH-02 – Abschluss beim Entladen fehlt:** Beim Schließen werden die
+  neu abgeschlossenen Sitzungen über den bestehenden Persistenzpfad
+  gespeichert. Archivfehler verhindern weiterhin nicht die AUS-Anforderung.
+- **NB-FE-01 – Rechtegefilterte Seite blockiert Verlauf:** Der Loader verwendet
+  den validierten Servercursor auch für leere sichtbare Seiten. Deduplizierung
+  sichtbarer Records, Fehlerwiederholung und Abschlussstatus bleiben getrennt.
+- **NB-FE-02 – Unlesbare Tooltiptexte und Links:** Die tatsächlichen
+  Textverbraucher verwenden die gegen den Kartenhintergrund korrigierte
+  Textfarbe. Die gewählten Messkurvenfarben bleiben unverändert.
+- **NB-ARCH-01 – Exportrest beim Shutdown:** Die Verantwortung für einen
+  aufgegebenen Export reicht bis zum tatsächlichen Ende des Threadschreibers,
+  unabhängig vom Abbruch eines asyncio-Proxys.
+- **NB-DOC-01 – Falsche Kühlhöchstdauerhilfe:** Der zentrale Hilfetext und
+  beide HA-Formulare nennen bestätigte Schütz-AUS-Zeit als Zeitgrundlage.
+  Unbestätigte Abschnitte zählen nicht mit und verlängern die verstrichene Zeit.
+
+Die Regressionen bilden die konkreten Gegenbeispiele über bestehende
+Produktionswege ab. Tests werden ausschließlich in Linux-CI ausgeführt.
+Der commitbezogene Abschlussbericht weist deren Ergebnis und Grenzen aus;
+dieser Abschnitt behauptet keinen bereits erfolgten Testlauf und keine
+allgemeine Fehlerfreiheit. Keine Hardwareprüfung und kein Merge.
+
+## Erstes Korrekturprotokoll
+
 Ausgangspunkt ist der geprüfte Commit `1cc1eae`. Die Befunde werden gegen
 fachliche Anforderungen und tatsächliche Aufrufpfade geprüft. Bestandstests
 allein belegen weder Fehlerfreiheit noch Widerspruchsfreiheit. Neue Prüfungen
