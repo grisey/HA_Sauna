@@ -2,6 +2,18 @@
 // prepared historyModel; FakeCanvas is functional coverage, not a timing claim.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const appearanceCatalog = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
+);
+const color = (id) =>
+  appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
+const curveStyles = {
+  "upper:temperature": { stroke: color("series_temperature") },
+  "lower:temperature": { stroke: color("series_temperature") },
+  "upper:humidity": { stroke: color("series_humidity") },
+  "lower:humidity": { stroke: color("series_humidity") },
+  overview: { stroke: color("series_overview"), track: color("chart_minimap_track") },
+};
 const vm = require("node:vm");
 
 class FakePath2D {
@@ -112,7 +124,10 @@ const modelFor = (p, records, seconds, domain = [base, base + seconds * 1000]) =
 const draw = (model) => {
   const main = new FakeCanvas(),
     overview = new FakeCanvas();
-  const curves = new HistoryCurves(main, overview, { Path2DClass: FakePath2D });
+  const curves = new HistoryCurves(main, overview, {
+    Path2DClass: FakePath2D,
+    styles: curveStyles,
+  });
   curves.update(model, {
     width: 1200,
     height: 480,
@@ -234,7 +249,10 @@ const draw = (model) => {
   const first = p.historyModel(chart, session(30));
   const main = new FakeCanvas(),
     overview = new FakeCanvas();
-  const curves = new HistoryCurves(main, overview, { Path2DClass: FakePath2D });
+  const curves = new HistoryCurves(main, overview, {
+    Path2DClass: FakePath2D,
+    styles: curveStyles,
+  });
   const geometry = {
     width: 1200,
     height: 480,

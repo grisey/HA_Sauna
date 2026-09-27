@@ -122,6 +122,7 @@ console.log("presence and phase projection panel tests passed");
   };
   let apiState = {
     ...panel.state,
+    permissions: { admin: true },
     session: archivedSession,
     phase_projection: liveProjection,
   };
@@ -137,8 +138,9 @@ console.log("presence and phase projection panel tests passed");
     entry: "entry",
     generation: 0,
     selected: "live",
+    navigation: { main: "details", detail: "detail-history" },
     cache: new Map(),
-    shadowRoot: { activeElement: null },
+    shadowRoot: { activeElement: null, querySelectorAll: () => [] },
     $: (selector) => nodes[selector] || null,
     invalidateHistoryIndex: () => {},
     drawCurrent: () => {},

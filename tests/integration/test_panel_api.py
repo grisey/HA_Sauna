@@ -482,3 +482,278 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/heater", json={"value": None}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             self.assertIsNone(runtime.controller.heater_override)
+
+    async def test_program_post_reports_runtime_selection_for_every_program_form(self):
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id
+        catalog = list(self.entry.options["temperature_programs"])
+        catalog.append(
+            {"id": "custom_steps", "name": "Stufen", "temperature_steps": [76, 82, 91]}
+        )
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/programs", json={"programs": catalog}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+
+            cases = (
+                ({"profile": "genusszeit"}, "genusszeit", "progressive", None),
+                ({"profile": "custom_steps"}, "custom_steps", "progressive", [76, 82, 91]),
+                ({"profile": "progressive"}, None, "progressive", None),
+                ({"temperature_steps": [75, 80, 87]}, None, "progressive", [75, 80, 87]),
+                (
+                    {"target_temperature_c": 77, "final_temperature_c": 90,
+                     "temperature_gangs": 4},
+                    None, "progressive", None,
+                ),
+                ({"profile": "constant"}, None, "constant", None),
+            )
+            for body, selected_id, mode, steps in cases:
+                with self.subTest(body=body):
+                    async with client.post(url + "/program", json=body) as response:
+                        self.assertEqual(response.status, 200, await response.text())
+                        result = await response.json()
+                    self.assertTrue(result["success"])
+                    self.assertEqual(result["selected_program_id"], selected_id)
+                    self.assertEqual(result["program_mode"], mode)
+                    self.assertEqual(result["temperature_steps"], steps)
+                    self.assertEqual(result["parameters"], runtime.configuration.parameters.as_dict())
+                    self.assertEqual(result["selected_program_id"], runtime.configuration.selected_program_id)
+
+    async def test_catalog_reorder_preserves_selected_and_button_program_ids(self):
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/program", json={"profile": "genusszeit"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["selected_program_id"], "genusszeit")
+            async with client.post(url + "/button-program", json={"profile": "gipfelstuermer"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            reordered = list(reversed(self.entry.options["temperature_programs"]))
+            async with client.post(url + "/programs", json={"programs": reordered}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual(
+                    [program["id"] for program in (await response.json())["programs"]],
+                    [program["id"] for program in reordered],
+                )
+            await self.hass.async_block_till_done()
+            self.assertEqual(runtime.configuration.selected_program_id, "genusszeit")
+            self.assertEqual(runtime.configuration.button_program, "gipfelstuermer")
+            self.assertEqual(self.entry.options["selected_program_id"], "genusszeit")
+            self.assertEqual(self.entry.options["button_program"], "gipfelstuermer")
+            async with client.get(url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                configuration = (await response.json())["configuration"]
+                self.assertEqual(configuration["selected_program_id"], "genusszeit")
+                self.assertEqual(configuration["button_program"], "gipfelstuermer")
+
+    async def test_program_post_auth_and_errors_do_not_change_selection(self):
+        url = self.base + "/" + self.entry.entry_id + "/program"
+        async with ClientSession() as client:
+            async with client.post(url, json={"profile": "constant"}) as response:
+                self.assertEqual(response.status, 401)
+        denied = await self.hass.auth.async_create_user("No program control", group_ids=[])
+        token = await self.hass.auth.async_create_refresh_token(denied, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url, json={"profile": "constant"}) as response:
+                self.assertEqual(response.status, 403)
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url, json={"profile": "genusszeit"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for body in ({"profile": "missing"}, {"profile": []},
+                         {"temperature_steps": [75, 1000]}, {"profile": "constant", "extra": True}):
+                with self.subTest(body=body):
+                    async with client.post(url, json=body) as response:
+                        self.assertEqual(response.status, 400, await response.text())
+                    self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
+            runtime = self.entry.runtime_data
+            runtime.reconfiguring = True
+            try:
+                async with client.post(url, json={"profile": "constant"}) as response:
+                    self.assertEqual(response.status, 409, await response.text())
+                self.assertEqual(runtime.configuration.selected_program_id, "genusszeit")
+            finally:
+                runtime.reconfiguring = False
+
+    async def test_appearance_updates_live_without_reloading_or_changing_control(self):
+        from custom_components.ha_sauna.runtime import Configuration
+
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id
+        await runtime.set_operation(True)
+        session = runtime.session
+        controller = runtime.controller
+        detector = runtime.detector
+        device = runtime.device
+        deadlines = session.deadlines
+        appearance = {
+            "colors": {"phase_warmup": "#123ABC", "card_background": "#102030"},
+            "scales": {
+                "temperature": {"minimum": 35, "maximum": 120},
+                "humidity": {"minimum": 5, "maximum": 85},
+            },
+        }
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertEqual(state["appearance"]["scales"]["temperature"],
+                                 {"minimum": 40, "maximum": 110})
+                self.assertIn("phase_warmup", {item["id"] for item in
+                                               state["appearance_catalog"]["colors"]})
+            async with client.post(url + "/appearance", json=appearance) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["appearance"], appearance)
+            await self.hass.async_block_till_done()
+            self.assertIs(self.entry.runtime_data, runtime)
+            self.assertIs(runtime.session, session)
+            self.assertIs(runtime.controller, controller)
+            self.assertIs(runtime.detector, detector)
+            self.assertIs(runtime.device, device)
+            self.assertEqual(session.deadlines, deadlines)
+            self.assertEqual(runtime.configuration.appearance, appearance)
+            self.assertEqual(self.entry.options["appearance"], appearance)
+            self.assertEqual(Configuration.from_options(self.entry.options).appearance,
+                             appearance)
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertEqual(state["appearance"], appearance)
+                self.assertEqual(state["configuration"]["appearance"], appearance)
+
+            # Independent live temperature and external options writes preserve
+            # the display setting and active session.
+            async with client.post(url + "/temperature",
+                                   json={"target_temperature_c": 81}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            self.assertEqual(runtime.configuration.appearance, appearance)
+            self.assertEqual(runtime.session.session_id, session.session_id)
+            session = runtime.session
+            deadlines = session.deadlines
+            external = {"colors": {"status_warning": "#FEDCBA"}, "scales":
+                        appearance["scales"]}
+            self.hass.config_entries.async_update_entry(
+                self.entry, options={**self.entry.options, "appearance": external})
+            await self.hass.async_block_till_done()
+            self.assertIs(self.entry.runtime_data, runtime)
+            self.assertIs(runtime.session, session)
+            self.assertEqual(runtime.configuration.appearance, external)
+            self.assertEqual(session.deadlines, deadlines)
+
+    async def test_appearance_validation_permissions_and_full_replacement(self):
+        from custom_components.ha_sauna.runtime import Configuration
+
+        legacy = dict(self.entry.options)
+        legacy.pop("appearance")
+        self.assertEqual(Configuration.from_options(legacy).appearance["colors"], {})
+        legacy["appearance"] = {"scales": {"humidity": {"maximum": 90}}}
+        restored = Configuration.from_options(legacy).appearance
+        self.assertEqual(restored["scales"]["temperature"],
+                         {"minimum": 40, "maximum": 110})
+        self.assertEqual(restored["scales"]["humidity"],
+                         {"minimum": 0, "maximum": 90})
+        url = self.base + "/" + self.entry.entry_id + "/appearance"
+        async with ClientSession() as client:
+            async with client.post(url, json={}) as response:
+                self.assertEqual(response.status, 401)
+        user = await self.hass.auth.async_create_user("Appearance nonadmin", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url, json={}) as response:
+                self.assertEqual(response.status, 403)
+
+        valid = {"colors": {"phase_ready": "#ABC123"},
+                 "scales": {"temperature": {"minimum": 25, "maximum": 125},
+                            "humidity": {"minimum": 0, "maximum": 60}}}
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url, json=valid) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            options_before = dict(self.entry.options)
+            invalid = (
+                {"colors": {"unknown": "#112233"}},
+                {"colors": {"phase_ready": "red"}},
+                {"colors": {"phase_ready": None}},
+                {"scales": {"humidity": {"minimum": -1}}},
+                {"scales": {"humidity": {"maximum": 101}}},
+                {"scales": {"temperature": {"minimum": 80, "maximum": 80}}},
+                {"scales": {"temperature": {"minimum": True}}},
+                {"scales": {"temperature": {"minimum": 10 ** 400}}},
+                {"scales": {"temperature": {"minimum": -1e308, "maximum": 1e308}}},
+                {"scales": {"extra": {}}},
+                {"extra": True},
+            )
+            for value in invalid:
+                with self.subTest(value=value):
+                    async with client.post(url, json=value) as response:
+                        self.assertEqual(response.status, 400, await response.text())
+                    self.assertEqual(dict(self.entry.options), options_before)
+            async with client.post(url, json={"colors": {"phase_warmup": "#010203"}}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                replaced = (await response.json())["appearance"]
+            self.assertEqual(replaced["colors"], {"phase_warmup": "#010203"})
+            self.assertEqual(replaced["scales"], {
+                "temperature": {"minimum": 40, "maximum": 110},
+                "humidity": {"minimum": 0, "maximum": 60},
+            })
+            self.assertEqual(self.entry.runtime_data.configuration.appearance, replaced)
+
+    async def test_appearance_survives_parameter_reset_and_other_settings(self):
+        url = self.base + "/" + self.entry.entry_id
+        appearance = {"colors": {"event_door": "#010203"},
+                      "scales": {"temperature": {"minimum": 30, "maximum": 130}}}
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/appearance", json=appearance) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                stored = (await response.json())["appearance"]
+            runtime_before_reset = self.entry.runtime_data
+            async with client.post(url + "/logging", json={"level": "DEBUG"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/program", json={"profile": "genusszeit"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/parameters/reset", json={}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            self.assertIsNot(self.entry.runtime_data, runtime_before_reset)
+            self.assertEqual(self.entry.options["appearance"], stored)
+            async with client.get(url + "/state") as response:
+                self.assertEqual((await response.json())["appearance"], stored)
+
+    async def test_appearance_listener_uses_latest_options_after_lock_wait(self):
+        import asyncio
+
+        runtime = self.entry.runtime_data
+        await runtime.set_operation(True)
+        session = runtime.session
+        first = {"colors": {"phase_ready": "#111111"}}
+        latest = {"colors": {"phase_ready": "#222222"}}
+        async with runtime._lock:
+            self.hass.config_entries.async_update_entry(
+                self.entry, options={**self.entry.options, "appearance": first}
+            )
+            await asyncio.sleep(0)
+            self.hass.config_entries.async_update_entry(
+                self.entry, options={**self.entry.options, "appearance": latest}
+            )
+            await asyncio.sleep(0)
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data, runtime)
+        self.assertIs(runtime.session, session)
+        self.assertEqual(runtime.configuration.appearance["colors"], latest["colors"])
+        self.assertEqual(self.entry.options["appearance"]["colors"], latest["colors"])
+
+    async def test_appearance_is_independent_for_each_entry(self):
+        from harness import create_sauna
+
+        other = await create_sauna(
+            self.hass, binding_overrides={"heater": "switch.other_heater"}
+        )
+        url = self.base + "/" + self.entry.entry_id
+        other_url = self.base + "/" + other.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(
+                url + "/appearance", json={"colors": {"phase_ready": "#123456"}}
+            ) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.get(other_url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["appearance"]["colors"], {})
+        self.assertEqual(other.runtime_data.configuration.appearance["colors"], {})

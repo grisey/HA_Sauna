@@ -1,7 +1,7 @@
 """Chromium inside the real HA frontend; no mock hass object or fake API."""
+import asyncio
 from datetime import timedelta
 from hashlib import sha256
-import io
 import json
 from pathlib import Path
 import sys
@@ -11,7 +11,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integration"))
 import test_device_path as device_tests
-from homeassistant.auth.const import GROUP_ID_ADMIN
+from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.components.onboarding import OnboardingStorage
 from homeassistant.components.onboarding.const import STEPS
 from homeassistant.setup import async_setup_component
@@ -118,25 +118,395 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             kind, self.now, self.now))
         await self.hass.async_block_till_done()
 
-    async def test_manual_phase_buttons_only_in_details_and_follow_regular_sequence(self):
+    async def test_four_main_tabs_detail_status_and_normal_user_permissions(self):
+        tabs = self.panel.locator(".main-tabs")
+        for action, section in (("overview", "current"), ("history", "history"),
+                                ("details", "details"), ("settings", "settings")):
+            await tabs.locator(f'[data-action="{action}"]').click()
+            await expect(tabs.locator(f'[data-action="{action}"]')).to_have_attribute(
+                "aria-selected", "true"
+            )
+            await expect(self.panel.locator(f"#{section}")).to_be_visible()
+        await tabs.locator('[data-action="details"]').click()
+        await expect(self.panel.locator('.detail-tabs [data-action="detail"]')).to_have_attribute(
+            "aria-selected", "true"
+        )
+        self.assertEqual(await self.panel.locator('#details [data-action="heater:true"]').count(), 0)
+        self.assertEqual(await self.panel.locator('#details [data-action="manual-light-overview"]').count(), 0)
+        await self.panel.locator('.detail-tabs [data-action="detail-history"]').click()
+        await expect(self.panel.locator('#history')).to_be_visible()
+        await tabs.locator('[data-action="settings"]').click()
+        await tabs.locator('[data-action="details"]').click()
+        await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute(
+            "aria-selected", "true"
+        )
+        await tabs.locator('[data-action="overview"]').click()
+        await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_visible()
+        await expect(self.panel.locator('#current .manual-overrides [data-action="manual-light-overview"]')).to_be_visible()
+
+        user = await self.hass.auth.async_create_user("Normal panel user", group_ids=[GROUP_ID_USER])
+        refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
+        tokens = {"hassUrl": self.url, "clientId": self.url + "/",
+                  "access_token": self.hass.auth.async_create_access_token(refresh),
+                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "expires_in": 1800}
+        context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+        try:
+            await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+            page = await context.new_page()
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            await page.goto(self.url + "/ha-sauna")
+            panel = page.locator("ha-sauna-panel")
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
+            self.assertEqual(await panel.locator('#current .manual-overrides [data-action="heater:true"]').count(), 0)
+            self.assertEqual(await panel.locator('#current [data-action="manual-light-overview"]').count(), 0)
+            await panel.locator('.main-tabs [data-action="settings"]').click()
+            await expect(panel.locator('#program-library [data-program-id]').first).to_be_visible()
+            await expect(panel.locator('#button-program')).to_be_visible()
+            self.assertEqual(await panel.locator('#parameters').count(), 0)
+            self.assertEqual(await panel.locator('[data-action="export"]').count(), 0)
+            self.assertEqual(errors, [])
+        finally:
+            await context.close()
+        self.assertEqual(self.errors, [])
+
+    async def test_appearance_preview_validation_persistence_and_display_scales(self):
+        screenshots = Path("/private/tmp/sauna-ui-review/appearance")
+        screenshots.mkdir(parents=True, exist_ok=True)
+        await self.panel.locator('#current [data-action="operation"]').click()
+        await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+        session_id = self.entry.runtime_data.session.session_id
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
+        await self.page.screenshot(path=str(screenshots / "dark_control_collapsed.png"), full_page=True)
+        await self.panel.locator('[data-action="program-toggle"]').click()
+        await expect(self.panel.locator("#program-choice-body")).to_be_visible()
+        await self.page.screenshot(path=str(screenshots / "dark_control_open.png"), full_page=True)
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(self.panel.locator('canvas.history-curves')).to_be_visible()
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        editor = self.panel.locator("#appearance-settings")
+        await expect(editor).to_be_visible()
+        for group in ("Bedienung", "Grunddarstellung", "Zustände und Phasen", "Messungen und Ereignisse"):
+            await expect(editor.locator("summary").filter(has_text=group)).to_have_count(1)
+        await editor.locator("summary").filter(has_text="Zustände und Phasen").click()
+        await editor.locator("summary").filter(has_text="Messungen und Ereignisse").click()
+        temperature = editor.locator('[data-appearance-color="series_temperature"]')
+        humidity = editor.locator('[data-appearance-color="series_humidity"]')
+        warmup = editor.locator('[data-appearance-color="phase_warmup"]')
+        minimum = editor.locator('[data-appearance-scale="temperature.minimum"]')
+        await expect(minimum).to_have_value("40")
+        await expect(editor.locator('[data-appearance-scale="temperature.maximum"]')).to_have_value("110")
+        await expect(editor.locator('[data-appearance-scale="humidity.maximum"]')).to_have_value("60")
+        await temperature.fill("#19A6C8")
+        await humidity.fill("#9A35C0")
+        await warmup.fill("#123456")
+        await expect(editor.locator("#appearance-status")).to_contain_text("Vorschau")
+        self.assertEqual(await self.panel.evaluate("p=>p.appearanceColor('series_temperature')"), "#19A6C8")
+        self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#19A6C8")
+        self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:humidity'].stroke"), "#9A35C0")
+        self.assertEqual(await self.panel.evaluate("p=>p.style.getPropertyValue('--sauna-phase-tint')"), "rgba(18, 52, 86, 0.08)")
+        await expect(self.panel.locator('#current .dial-temperature path[stroke="#19A6C8"]')).to_have_count(1)
+        await expect(self.panel.locator('#current .dial:not(.dial-temperature) path[stroke="#9A35C0"]')).to_have_count(1)
+        await expect(self.panel.locator('#history .top-legend span').nth(0).locator('i')).to_have_css('background-color', 'rgb(25, 166, 200)')
+        await expect(self.panel.locator('#history .top-legend span').nth(1).locator('i')).to_have_css('background-color', 'rgb(154, 53, 192)')
+        self.assertEqual(await self.panel.evaluate("p=>p.style.getPropertyValue('--sauna-color-phase-warmup')"), "#123456")
+        await minimum.fill("120")
+        await editor.locator('[data-action="appearance-save"]').click()
+        await expect(minimum).to_have_value("120")
+        await expect(temperature).to_have_value("#19A6C8")
+        await expect(editor.locator("#appearance-status")).to_contain_text("Minimum")
+        await self.panel.evaluate("p=>p.refresh()")
+        await expect(minimum).to_have_value("120")
+        await minimum.fill("50")
+        appearance_url = f"/api/ha_sauna/{self.entry.entry_id}/appearance"
+        async with self.page.expect_response(lambda response: response.url.endswith(appearance_url) and response.request.method == "POST") as saved_wait:
+            await editor.locator('[data-action="appearance-save"]').click()
+        self.assertEqual((await saved_wait.value).status, 200)
+        await expect(editor.locator("#appearance-status")).to_have_text("Darstellung gespeichert")
+        self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
+        self.assertEqual(self.entry.runtime_data.configuration.appearance["colors"]["series_temperature"], "#19A6C8")
+        await self.page.screenshot(path=str(screenshots / "dark_editor_saved.png"), full_page=True)
+
+        await self.page.reload()
+        self.panel = self.page.locator("ha-sauna-panel")
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        editor = self.panel.locator("#appearance-settings")
+        await editor.locator("summary").filter(has_text="Messungen und Ereignisse").click()
+        await expect(editor.locator('[data-appearance-color="series_temperature"]')).to_have_value("#19A6C8")
+        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
+        await editor.locator('[data-action="appearance-default"]').click()
+        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("40")
+        await editor.locator('[data-action="appearance-discard"]').click()
+        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
+        self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        # The rightmost point of the visible arc is 100 °C at 50–110 °C.
+        # Send a real pointer event through the rendered SVG transform.
+        arc_point = await self.panel.locator('svg.dial-temperature').evaluate("""svg => {
+            const point = svg.createSVGPoint(); point.x = 255; point.y = 130;
+            const screen = point.matrixTransform(svg.getScreenCTM());
+            return {x: screen.x, y: screen.y};
+        }""")
+        target_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
+        async with self.page.expect_response(lambda response: response.url.endswith(target_url) and response.request.method == "POST") as target_wait:
+            await self.page.mouse.click(arc_point["x"], arc_point["y"])
+        self.assertEqual((await target_wait.value).status, 200)
+        await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", "100")
+        self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        if not await editor.locator('[data-appearance-scale="temperature.minimum"]').is_visible():
+            await editor.locator("summary").filter(has_text="Messungen und Ereignisse").click()
+        await editor.locator('[data-appearance-scale="temperature.minimum"]').fill("70")
+        await editor.locator('[data-appearance-scale="temperature.maximum"]').fill("80")
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        arc = self.panel.locator('[data-target-arc][role="slider"]')
+        await expect(arc).to_have_attribute("aria-valuemin", "70")
+        await expect(arc).to_have_attribute("aria-valuemax", "80")
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await editor.locator('[data-appearance-scale="temperature.minimum"]').fill("20")
+        await editor.locator('[data-appearance-scale="temperature.maximum"]').fill("30")
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_count(0)
+        await expect(self.panel.locator("#current .scale-hint").filter(has_text="Soll außerhalb der Anzeigeskala")).to_have_count(1)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await editor.locator('[data-action="appearance-discard"]').click()
+        self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
+        dark_background = await self.panel.evaluate("p=>getComputedStyle(p).backgroundColor")
+        await self.page.set_viewport_size({"width": 390, "height": 844})
+        await self.page.screenshot(path=str(screenshots / "dark_mobile_editor.png"), full_page=True)
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
+        await self.page.screenshot(path=str(screenshots / "dark_mobile_control_collapsed.png"), full_page=True)
+        await self.panel.locator('[data-action="program-toggle"]').click()
+        await self.page.screenshot(path=str(screenshots / "dark_mobile_control_open.png"), full_page=True)
+        self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
+
+        tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
+        light_context = await self.browser.new_context(viewport={"width": 1440, "height": 1080}, color_scheme="light")
+        try:
+            await light_context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");")
+            light_page = await light_context.new_page()
+            light_errors = []
+            light_page.on("pageerror", lambda error: light_errors.append(str(error)))
+            await light_page.goto(self.url + "/ha-sauna")
+            light_panel = light_page.locator("ha-sauna-panel")
+            await expect(light_panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(light_page.get_by_text("Loading...", exact=True)).to_be_hidden(timeout=30000)
+            light_background = await light_panel.evaluate("p=>getComputedStyle(p).backgroundColor")
+            self.assertNotEqual(light_background, dark_background, "light screenshot must use a genuinely different HA surface")
+            await light_page.screenshot(path=str(screenshots / "light_control_collapsed.png"), full_page=True)
+            await light_panel.locator('[data-action="program-toggle"]').click()
+            await light_page.screenshot(path=str(screenshots / "light_control_open.png"), full_page=True)
+            await light_panel.locator('.main-tabs [data-action="settings"]').click()
+            await expect(light_panel.locator("#appearance-settings")).to_be_visible()
+            await light_page.screenshot(path=str(screenshots / "light_editor.png"), full_page=True)
+            await light_page.set_viewport_size({"width": 390, "height": 844})
+            await light_page.screenshot(path=str(screenshots / "light_mobile_editor.png"), full_page=True)
+            self.assertLessEqual(await light_panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
+            self.assertEqual(light_errors, [])
+        finally:
+            await light_context.close()
+        self.assertEqual(self.errors, [])
+
+    async def test_running_program_requires_confirmation_and_reports_saved_choice(self):
+        await self.panel.locator('#current [data-action="operation"]').click()
+        await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
+        await expect(self.panel.locator("#current .control-main .oven-feedback")).to_be_visible()
+        await expect(self.panel.locator("#current .control-main .oven-feedback strong")).to_have_text("Ofen an")
+        active_program = self.panel.locator('#current [data-action="program-toggle"] .program-active-label')
+        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await expect(self.panel.locator("#current .manual-overrides")).to_be_visible()
+        self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
+        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await expect(self.panel.locator("#program-choice-body")).to_be_visible()
+        self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
+        await self.panel.locator('[data-action="program-mode:program"]').click()
+        choice = self.panel.locator('[data-action="program-select:genusszeit"]')
+        await expect(choice).to_be_visible()
+        await expect(choice).to_have_attribute("aria-pressed", "false")
+        await expect(choice).to_contain_text("Vorgemerkt")
+        await expect(choice).to_have_css("box-shadow", "none")
+        await expect(choice).to_have_css("outline-style", "none")
+        action = self.panel.locator('#current .tiles [data-action="program-apply"]')
+        await expect(action).to_have_text("Programm übernehmen")
+        await expect(action).to_be_enabled()
+        await expect(self.panel.locator('#current .program-pending')).to_contain_text("Genusszeit")
+        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await self.panel.evaluate("p=>p.refresh()")
+        await expect(self.panel.locator("#program-choice-body")).to_be_visible()
+        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await expect(self.panel.locator("#current .manual-overrides")).to_be_visible()
+        await self.panel.locator('[data-action="program-cancel-draft"]').click()
+        await expect(action).to_have_count(0)
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
+        await expect(active_program).to_have_text("Aktuell: Individuell")
+        self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
+
+        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await self.panel.locator('[data-action="program-mode:program"]').click()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
+
+        async def delay_program(route):
+            entered.set()
+            await release.wait()
+            await route.continue_()
+
+        await self.page.route("**" + program_url, delay_program)
+        try:
+            async with self.page.expect_response(
+                lambda response: response.url.endswith(program_url) and response.request.method == "POST"
+            ) as response_wait:
+                click = asyncio.create_task(action.click())
+                await asyncio.wait_for(entered.wait(), 10)
+                await expect(action).to_have_text("Wird übernommen …")
+                await expect(action).to_have_class("program-saving program-main")
+                await expect(action).to_have_css("border-style", "solid")
+                await expect(action).to_be_disabled()
+                await expect(self.panel.locator('[data-action="program-cancel-draft"]')).to_be_disabled()
+                release.set()
+                await click
+            saved = await response_wait.value
+            self.assertEqual(saved.status, 200)
+            self.assertEqual((await saved.json())["selected_program_id"], "genusszeit")
+            await expect(action).to_have_text("✓ Übernommen", timeout=15000)
+            await expect(action).to_have_class("program-saved program-main")
+        finally:
+            release.set()
+            await self.page.unroute("**" + program_url, delay_program)
+        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
+        await expect(active_program).to_have_text("Aktuell: Genusszeit")
+        await expect(choice).to_have_attribute("aria-pressed", "true")
+        await expect(choice).not_to_contain_text("Vorgemerkt")
+        await expect(choice).to_have_css("background-color", "rgb(229, 138, 85)")
+        await self.panel.evaluate("p=>p.refresh()")
+        await expect(active_program).to_have_text("Aktuell: Genusszeit")
+        await expect(choice).to_have_attribute("aria-pressed", "true")
+        await expect(action).to_have_count(0, timeout=5000)
+        self.assertEqual(self.errors, [])
+
+    async def test_catalog_editor_sorting_and_persisted_program_ids(self):
+        await self.panel.locator('[data-action="program-mode:program"]').click()
+        await expect(self.panel.locator('[data-action="program-select:genusszeit"]')).to_have_attribute(
+            "aria-pressed", "true", timeout=15000
+        )
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.panel.locator('#button-program').select_option('gipfelstuermer')
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.entry.options['button_program'], 'gipfelstuermer')
+        rows = self.panel.locator('#program-library [data-program-id]')
+
+        async def order():
+            return await rows.evaluate_all('elements => elements.map(row => row.dataset.programId)')
+
+        before = await order()
+        await rows.first.locator('[data-action^="program-edit:"]').click()
+        await expect(rows.first.locator('.program-form')).to_be_visible()
+        self.assertEqual(await self.panel.locator('#program-library .program-form').count(), 1)
+        await rows.first.locator('[data-program-field="name"]').fill('Nur im Entwurf')
+        await rows.first.locator('[data-action="program-cancel"]').click()
+        await expect(rows.first.locator('.program-form')).to_have_count(0)
+        self.assertEqual(await order(), before)
+
+        handle = rows.first.locator('[data-program-drag]')
+        await handle.focus()
+        await handle.press('ArrowDown')
+        self.assertEqual((await order())[0], before[1])
+        await self.panel.locator('[data-action="program-discard"]').click()
+        self.assertEqual(await order(), before)
+
+        handle = rows.first.locator('[data-program-drag]')
+        target = rows.nth(1)
+        source_box, target_box = await handle.bounding_box(), await target.bounding_box()
+        await self.page.mouse.move(source_box['x'] + source_box['width'] / 2,
+                                   source_box['y'] + source_box['height'] / 2)
+        await self.page.mouse.down()
+        await self.page.mouse.move(target_box['x'] + target_box['width'] / 2,
+                                   target_box['y'] + target_box['height'] * .85, steps=8)
+        await self.page.mouse.up()
+        mouse_order = await order()
+        self.assertEqual(mouse_order[0], before[1])
+        await self.panel.locator('[data-action="program-save"]').click()
+        await self.hass.async_block_till_done()
+        self.assertEqual([program['id'] for program in self.entry.options['temperature_programs']], mouse_order)
+        await self.page.reload()
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        self.assertEqual(await order(), mouse_order)
+        self.assertEqual(self.entry.options['selected_program_id'], 'genusszeit')
+        self.assertEqual(self.entry.options['button_program'], 'gipfelstuermer')
+
+        tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
+        context = await self.browser.new_context(
+            viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True
+        )
+        try:
+            await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");")
+            page = await context.new_page()
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            await page.goto(self.url + '/ha-sauna')
+            panel = page.locator('ha-sauna-panel')
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await panel.locator('.main-tabs [data-action="settings"]').click()
+            mobile_rows = panel.locator('#program-library [data-program-id]')
+            touch_before = await mobile_rows.evaluate_all('elements => elements.map(row => row.dataset.programId)')
+            touch_handle = mobile_rows.first.locator('[data-program-drag]')
+            await touch_handle.scroll_into_view_if_needed()
+            start, destination = await touch_handle.bounding_box(), await mobile_rows.nth(1).bounding_box()
+            x = start['x'] + start['width'] / 2
+            y_start = start['y'] + start['height'] / 2
+            y_end = destination['y'] + destination['height'] * .85
+            cdp = await context.new_cdp_session(page)
+            await cdp.send('Input.dispatchTouchEvent', {
+                'type': 'touchStart', 'touchPoints': [{'x': x, 'y': y_start, 'id': 1}]
+            })
+            for step in range(1, 10):
+                await cdp.send('Input.dispatchTouchEvent', {
+                    'type': 'touchMove',
+                    'touchPoints': [{'x': x, 'y': y_start + (y_end - y_start) * step / 9, 'id': 1}]
+                })
+                await page.wait_for_timeout(20)
+            await cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+            touch_order = await mobile_rows.evaluate_all('elements => elements.map(row => row.dataset.programId)')
+            self.assertEqual(touch_order[0], touch_before[1])
+            await panel.locator('[data-action="program-save"]').click()
+            await self.hass.async_block_till_done()
+            await page.reload()
+            await panel.locator('.main-tabs [data-action="settings"]').click()
+            self.assertEqual(await mobile_rows.evaluate_all('elements => elements.map(row => row.dataset.programId)'), touch_order)
+            self.assertEqual(self.entry.options['selected_program_id'], 'genusszeit')
+            self.assertEqual(self.entry.options['button_program'], 'gipfelstuermer')
+            self.assertLessEqual(await panel.evaluate("p => p.shadowRoot.querySelector('main').scrollWidth"), 390)
+            self.assertEqual(errors, [])
+        finally:
+            await context.close()
+        self.assertEqual(self.errors, [])
+
+    async def test_manual_oven_cooling_end_is_only_in_automatic_admin_control(self):
         await device_tests.DevicePathTests.prepare_gang_after_run(self)
         self.now += timedelta(seconds=10)
         await self.runtime.tick()
         await self.panel.evaluate("p=>p.refresh()")
-        self.assertEqual(await self.panel.locator('#current [data-action^="end-phase:"]').count(),0)
-        await self.panel.locator('[data-action="details"]').click()
-        end_after = self.panel.get_by_role("button", name="Nachlauf jetzt beenden", exact=True)
-        await expect(end_after).to_be_visible()
-        await end_after.click()
-        end_cooling = self.panel.get_by_role("button", name="Zwangskühlung jetzt beenden", exact=True)
+        end_cooling = self.panel.locator('#current').get_by_role(
+            "button", name="Ofenkühlung jetzt beenden", exact=True
+        )
         await expect(end_cooling).to_be_visible()
-        self.assertEqual(self.runtime.session.cooling.credited_seconds,10)
+        await self.panel.locator('[data-action="details"]').click()
+        self.assertEqual(await self.panel.locator('#details [data-action^="end-phase:"]').count(), 0)
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
         self.assertFalse(self.heater.is_on)
         await end_cooling.click()
-        await expect(self.panel.locator('#details [data-phase="aufheizen"]')).to_be_visible()
-        self.assertEqual(await self.panel.locator('#details [data-action^="end-phase:"]').count(),0)
+        await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+        self.assertEqual(await self.panel.locator('#current [data-action^="end-phase:"]').count(), 0)
         await self.hass.async_block_till_done()
         self.assertTrue(self.heater.is_on)
+        self.assertIsNone(self.runtime.session.after_run)
+        self.assertIsNone(self.runtime.session.cooling)
         self.assertEqual(self.runtime.session.timeline.gang_count,1)
         self.assertEqual(self.errors,[])
 
@@ -164,18 +534,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id"), gang_id)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
-        # The normal history deliberately keeps one measurement height readable.
-        # A comparison is an explicit user choice, not the default clutter.
-        for quantity in ("temperature", "humidity"):
-            path = self.panel.locator(f'[data-series="upper_{quantity}"]')
-            self.assertTrue((await path.get_attribute("d")).startswith("M"))
-            await expect(self.panel.locator(f'[data-series="lower_{quantity}"]')).to_have_count(0)
+        # The curves render in canvas; the SVG retains accessible axes and
+        # interactive markers. Height comparison is an explicit user choice.
+        await expect(self.panel.locator('canvas.history-curves[role="img"]')).to_be_visible()
+        self.assertFalse(await self.panel.evaluate("p=>p.historyDetail"))
         await self.panel.locator('[data-action="history-detail"]').click()
         await expect(self.panel.locator('[data-action="history-detail"]')).to_have_text("Messhöhen ausblenden")
-        for pos in ("upper", "lower"):
-            for quantity in ("temperature", "humidity"):
-                path = self.panel.locator(f'[data-series="{pos}_{quantity}"]')
-                self.assertTrue((await path.get_attribute("d")).startswith("M"))
+        self.assertTrue(await self.panel.evaluate("p=>p.historyDetail"))
+        self.assertEqual(await self.panel.evaluate("p=>[...p.positions].sort()"), ["lower", "upper"])
         chart = self.panel.locator("svg.session-chart")
         # Hover over a recorded sample, not the empty lead-in before the session.
         sample_time = (self.base + timedelta(seconds=7)).timestamp() * 1000
@@ -195,12 +561,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="reset-zoom"]').click()
         await self.panel.locator('[data-action="details"]').click()
         await self.set_source("upper_temperature", "unavailable")
-        await expect(self.panel.locator('#details [role="alert"]')).to_contain_text("Temperatur oben", timeout=15000)
+        await expect(self.panel.locator('#details')).to_contain_text("Messwert fehlt", timeout=15000)
         await self.panel.locator('[data-action="diagnostics"]').click()
         await expect(self.panel.locator('[data-series="detector_door_temperature_slope_upper"]')).to_be_attached()
         self.assertFalse(await self.panel.locator("#plots").is_visible())
         await self.panel.locator('[data-action="settings"]').click()
-        await expect(self.panel.locator('input[name="heating_minutes"]')).to_be_disabled()
+        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
         await expect(self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True)).to_be_disabled()
         async with self.page.expect_download() as result:
             await self.panel.locator('[data-action="export"]').click()
@@ -214,7 +580,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(False)
         self.now += timedelta(minutes=3)
         await self.runtime.tick()
-        await self.panel.locator('[data-action="normal"]').click()
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.locator('[data-action="history"]').click()
         await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_be_attached(timeout=15000)
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
@@ -222,6 +588,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         await self.page.set_viewport_size({"width": 390, "height": 844})
+        await self.panel.evaluate(
+            "p=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"
+        )
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
         recorder = await self.page.evaluate("()=>document.querySelector('home-assistant').hass.callWS({type:'recorder/info'})")
         self.assertTrue(recorder["thread_running"])
@@ -231,8 +600,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ws_errors, [])
 
     async def test_overview_timers_stable_controls_german_settings_and_logging(self):
-        await expect(self.panel.locator('[data-action="normal"]')).to_have_text("Übersicht")
-        await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Türerkennung ruht")
+        await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_have_text("Steuerung")
+        self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         self.assertNotIn("Bereitschaft", await self.panel.locator("#current").inner_text())
         await expect(self.panel.locator('[data-action="program-mode:program"]')).to_be_visible()
         await expect(self.panel.locator('[data-action="program-mode:individual"]')).to_be_visible()
@@ -268,6 +637,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('#current [data-action="operation"]').click()
         identity=self.runtime.session.session_id
         next_target=self.runtime.controller.target_temperature
+        await self.panel.get_by_role("button", name="Programm ändern").click()
         await self.panel.locator('#progression-end').fill("90")
         temperature_url=f"/api/ha_sauna/{self.entry.entry_id}/temperature"
         async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
@@ -285,6 +655,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.temperatureChange")
         await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
         self.assertEqual(self.entry.options["program_mode"],"constant")
+        await self.panel.get_by_role("button", name="Programm ändern").click()
         await self.panel.locator('[data-action="program-mode:individual"]').click()
         await self.panel.locator('#progression-gangs').fill("2")
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
@@ -302,14 +673,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.refresh()")
         await expect(self.panel.locator('#current [data-phase-timer]')).to_have_count(0)
         await expect(self.panel.locator('#current')).to_contain_text("Noch nicht abschätzbar")
-        await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Tür geschlossen")
+        self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         await self.set_source("upper_temperature", 90)
+        await expect(self.panel.locator('#current #manual-light-value-overview')).to_be_visible(timeout=10000)
+        await self.panel.locator('#current #manual-light-value-overview').fill("60")
+        await self.panel.locator('#current [data-action="manual-light-overview"]').click()
+        await expect(self.panel.locator('#current [data-light-status]')).to_have_text("Manuell · 60 %")
         await self.panel.locator('[data-action="details"]').click()
-        await expect(self.panel.locator('#details [data-phase-timer="heating"]')).to_be_visible()
-        await expect(self.panel.locator('#details #manual-light-value')).to_be_visible(timeout=10000)
-        await self.panel.locator('#details #manual-light-value').fill("60")
-        await self.panel.locator('[data-action="manual-light"]').click()
-        await expect(self.panel.locator('[data-light-status]')).to_have_text("Manuell · 60 %")
+        await expect(self.panel.locator('#details .compact-times')).to_contain_text("Mechanischer Ofentimer")
+        await expect(self.panel.locator('#details')).to_contain_text("60 %")
         paused=self.panel.locator('#details .compact-times')
         await expect(paused).to_contain_text("Angehalten · Schütz aus")
         self.now+=timedelta(seconds=5)
@@ -318,7 +690,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.set_source("upper_temperature", 70)
         await self.panel.evaluate("p=>p.refresh()")
         await expect(self.panel.locator('#details .compact-times')).to_contain_text("Geschätzte Restzeit bei eingeschaltetem Schütz")
-        await self.panel.locator('[data-action="normal"]').click()
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.locator('#current [data-action="operation"]').click()
         await self.panel.locator('[data-action="details"]').click()
         timer=self.panel.locator('#details [data-mechanical-timer]')
@@ -330,8 +702,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(timer).to_have_text(frozen)
         self.assertIsNotNone(self.runtime.session)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Tür geschlossen")
-        await self.panel.locator('[data-action="normal"]').click()
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        await self.panel.get_by_role("button", name="Programm ändern").click()
         await self.panel.locator('[data-action="program-mode:constant"]').click()
+        await expect(self.panel.locator('#current .program-pending')).to_contain_text("Konstant")
+        await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "false")
+        await self.panel.locator('#current [data-action="program-apply"]').click()
         await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
         await expect(self.panel.locator('#current [data-action^="preset:"]').first).to_be_enabled()
@@ -342,7 +718,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(settings.locator("#program-library [data-program-id]").first).to_be_visible(timeout=10000)
         await expect(settings.locator("#button-program")).to_be_visible()
         await settings.locator('details.settings-group').filter(has_text="Betrieb und Kühlung").locator("summary").click()
-        await expect(self.panel.locator('input[name="heating_minutes"]')).to_be_disabled()
+        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
         await expect(self.panel.locator('input[name="target_temperature_c"]')).to_be_enabled()
         await expect(self.panel.locator('input[name="temperature_increase_c"]')).to_have_count(0)
         await settings.locator('details.settings-group').filter(has_text="Temperatursteigerung").locator("summary").click()
@@ -362,11 +738,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         self.assertIsNone(self.runtime.session)
         self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14380)
-        await self.panel.locator('[data-action="normal"]').click()
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.evaluate("p=>p.refresh()")
         self.assertEqual(await self.panel.locator('#current [data-mechanical-timer]').count(),0)
         await expect(self.panel.locator('#current')).not_to_contain_text("Lichtnachlauf noch")
-        await expect(self.panel.locator("#current [data-door-status]")).to_have_text("Türerkennung ruht")
+        self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         text=await self.panel.locator('#current').inner_text()
         for code in ("measurement_unavailable", "configuration_required", "pending", "sensor_timeout_seconds"):
             self.assertNotIn(code,text)
@@ -394,11 +770,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True).click()
         await expect(self.panel.locator('#log-level')).to_have_value("INFO", timeout=15000)
         await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_have_value("180")
-        await expect(self.panel.locator('input[name="heating_minutes"]')).to_have_value("90")
+        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_have_value("60")
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
-        await self.panel.locator('[data-action="details"]').click()
-        await expect(self.panel.locator('#details').get_by_role("button", name="Hell 50 %", exact=True)).to_be_visible()
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        await expect(self.panel.locator('#current').get_by_role("button", name="Hell 50 %", exact=True)).to_be_visible()
         self.assertEqual(self.errors,[])
         self.assertEqual(self.ws_errors,[])
 

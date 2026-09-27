@@ -22,6 +22,7 @@ const deferred = () => {
 const state = (id = "live", ended = false) => ({
   now: "2032-01-01T12:00:00Z",
   operation_enabled: true,
+  permissions: { admin: true },
   session: {
     timeline: { session_id: id },
     ...(ended ? { ended_at: "2032-01-01T12:10:00Z" } : {}),
@@ -45,10 +46,11 @@ function panel(api) {
     entry: "e",
     generation: 0,
     selected: "live",
+    navigation: { main: "details", detail: "detail-history" },
     isConnected: true,
     state: state(),
     cache: new Map(),
-    shadowRoot: { activeElement: null },
+    shadowRoot: { activeElement: null, querySelectorAll: () => [] },
     api,
     $: (selector) => nodes[selector],
     updateMarkup: (selector, html) => {

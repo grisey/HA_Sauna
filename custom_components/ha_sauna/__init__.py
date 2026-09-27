@@ -100,13 +100,36 @@ async def async_options_updated(hass, entry):
                 entry, options=runtime.configuration.as_options()
             )
             return
+        from dataclasses import replace
+
         before = runtime.configuration.as_options()
         after = updated.as_options()
         before.pop("log_level")
         after.pop("log_level")
+        before.pop("appearance")
+        after_appearance = after.pop("appearance")
         if before == after:
-            runtime.set_log_level(updated.log_level)
-            runtime.reconfiguring = False
+            async with runtime._lock:
+                # This listener may have waited behind a newer API write. Use
+                # the latest persisted entry, not its pre-lock snapshot.
+                try:
+                    current = Configuration.from_options(entry.options)
+                except (ValueError, TypeError):
+                    return  # The newer listener will reject its invalid write.
+                current_options = current.as_options()
+                current_options.pop("log_level")
+                current_options.pop("appearance")
+                live_options = runtime.configuration.as_options()
+                live_options.pop("log_level")
+                live_options.pop("appearance")
+                if current_options != live_options:
+                    return
+                runtime.configuration = replace(
+                    runtime.configuration, appearance=current.appearance
+                )
+                if runtime.configuration.log_level != current.log_level:
+                    runtime.set_log_level(current.log_level)
+                runtime.reconfiguring = False
             return
         from .core.parameters import LIVE_TEMPERATURE_KEYS
         from .settings import apply_temperature_parameters, program_parameters
@@ -130,6 +153,14 @@ async def async_options_updated(hass, entry):
             and not changed - LIVE_TEMPERATURE_KEYS
         ):
             async with runtime._lock:
+                # A later options update may have overtaken this listener
+                # while it waited for the live controller lock.
+                try:
+                    latest = Configuration.from_options(entry.options)
+                except (ValueError, TypeError):
+                    return  # The newer listener will reject its invalid write.
+                if latest.as_options() != updated.as_options():
+                    return
                 selected_parameters = updated.parameters
                 selected_mode = (
                     after_program_mode
@@ -162,6 +193,9 @@ async def async_options_updated(hass, entry):
                     ),
                     selected_program_id=after_selected_program,
                     temperature_steps=selected_steps,
+                )
+                runtime.configuration = replace(
+                    runtime.configuration, appearance=after_appearance
                 )
                 runtime.set_log_level(updated.log_level)
                 if before_selected_program != after_selected_program:

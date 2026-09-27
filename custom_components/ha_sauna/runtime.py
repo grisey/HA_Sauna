@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
 from .archive import encoded, plain
+from .appearance import default_appearance, validate_appearance
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
 from .core.button import (
@@ -58,11 +59,13 @@ class Configuration:
     presence_source: str = "proxy"
     temperature_steps: tuple[float, ...] | None = None
     button_temperature_c: float | None = None
+    appearance: dict = field(default_factory=default_appearance)
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
+        object.__setattr__(self, "appearance", validate_appearance(self.appearance))
         if self.temperature_steps is not None:
             steps = validate_temperature_steps(self.temperature_steps)
             minimum = self.parameters.minimum_for("target_temperature_c")
@@ -127,6 +130,7 @@ class Configuration:
                 "presence_source",
                 "temperature_steps",
                 "button_temperature_c",
+                "appearance",
             }
         ):
             raise ValueError(
@@ -229,6 +233,7 @@ class Configuration:
             options.get("presence_source", "proxy"),
             steps,
             button_temperature_c,
+            options.get("appearance", default_appearance()),
         )
 
     def as_options(self) -> dict:
@@ -248,6 +253,7 @@ class Configuration:
             "presence_source": self.presence_source,
             "temperature_steps": self.temperature_steps,
             "button_temperature_c": self.button_temperature_c,
+            "appearance": validate_appearance(self.appearance),
         }
 
 

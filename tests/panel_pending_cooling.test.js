@@ -97,7 +97,7 @@ function state(admin) {
   };
 }
 
-function render(admin) {
+function render(admin, target = "#details") {
   const nodes = new Map();
   const panel = Object.assign(Object.create(Panel.prototype), {
     state: state(admin),
@@ -110,16 +110,18 @@ function render(admin) {
     },
   });
   panel.drawCurrent();
-  return nodes.get("#details").innerHTML;
+  return nodes.get(target).innerHTML;
 }
 
 const admin = render(true);
 assert.match(admin, /Ofenkühlung wartet auf Schütz-Aus/);
-assert.match(admin, /data-action="end-phase:after_run:pending-token"/);
+assert.doesNotMatch(admin, /data-action=|<button|<input/);
 assert.doesNotMatch(admin, /noch 0:00 Minuten/);
+assert.match(render(true, "#current"), /data-action="end-phase:after_run:pending-token"/);
 
 const readOnly = render(false);
-assert.match(readOnly, /data-action="end-phase:after_run:pending-token"[^>]*disabled/);
+assert.doesNotMatch(readOnly, /data-action=|<button|<input/);
+assert.doesNotMatch(render(false, "#current"), /data-action="end-phase:/);
 
 (async () => {
   const calls = [];

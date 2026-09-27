@@ -8,6 +8,7 @@ from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
 
+from .appearance import APPEARANCE_CATALOG
 from .archive import plain
 from .const import DOMAIN
 from .core.detection_parameters import SPECS
@@ -18,6 +19,7 @@ from .presentation import decision_message, fault_message, issues, parameter_err
 from .settings import (
     ConfigurationLocked,
     async_reset_parameters,
+    async_set_appearance,
     async_set_button_program,
     async_set_control_mode,
     async_set_parameters,
@@ -126,6 +128,8 @@ class StateView(HomeAssistantView):
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
                         "configuration": runtime.configuration.as_options(),
+                        "appearance": runtime.configuration.appearance,
+                        "appearance_catalog": APPEARANCE_CATALOG,
                         "last_session": controller.completed_sessions[-1]
                         if controller.completed_sessions
                         else None,
@@ -354,6 +358,28 @@ class ResetParametersView(HomeAssistantView):
         )
 
 
+class AppearanceView(HomeAssistantView):
+    """Replace one instance's appearance while leaving its operation intact."""
+
+    url = "/api/ha_sauna/{entry_id}/appearance"
+    name = "api:ha_sauna:appearance"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime_for(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        try:
+            appearance = await async_set_appearance(hass, entry, await request.json())
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({"success": True, "appearance": appearance})
+
+
 class ProgramView(HomeAssistantView):
     """Select a stored profile or an explicit start/end/distribution program."""
 
@@ -417,6 +443,7 @@ class ProgramView(HomeAssistantView):
                 "success": True,
                 "parameters": parameters,
                 "program_mode": entry.runtime_data.configuration.program_mode,
+                "selected_program_id": entry.runtime_data.configuration.selected_program_id,
                 "temperature_steps": entry.runtime_data.configuration.temperature_steps,
             }
         )
@@ -671,6 +698,7 @@ def register(hass):
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
     hass.http.register_view(ResetParametersView)
+    hass.http.register_view(AppearanceView)
     hass.http.register_view(ProgramView)
     hass.http.register_view(ProgramsView)
     hass.http.register_view(ButtonProgramView)

@@ -20,6 +20,8 @@ const sandbox = {
   Object,
   Array,
   Infinity,
+  setTimeout,
+  clearTimeout,
   crypto: { randomUUID: () => "new-program" },
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
@@ -66,10 +68,10 @@ const programs = [
 }
 
 assert.match(source, /configuration\.temperature_programs/);
-assert.match(source, /start_c:\s*Number\(/);
-assert.match(source, /distribution_gangs:\s*Number\(/);
+assert.match(source, /start_c: number\(/);
+assert.match(source, /distribution_gangs: distribution/);
 assert.doesNotMatch(source, /const profiles=\["program_1","program_2"\]/);
-assert.match(source, /`\/\$\{this\.entry\}\/programs`/);
+assert.match(source, /`\/\$\{entry\}\/programs`/);
 assert.match(source, /`\/\$\{this\.entry\}\/button-program`/);
 assert.match(source, /crypto\?\.randomUUID/);
 assert.match(source, /crypto\?\.getRandomValues/);
@@ -79,7 +81,7 @@ assert.match(source, /data-action="program-mode:program"/);
 assert.match(source, /data-action="program-select:\$\{esc\(program\.id\)\}"/);
 assert.match(
   source,
-  /<nav class="tabs main-tabs"[^>]*>[\s\S]*data-action="normal"[\s\S]*data-action="details"[\s\S]*data-action="settings"/,
+  /<nav class="tabs main-tabs"[^>]*>[\s\S]*data-action="overview"[\s\S]*data-action="history"[\s\S]*data-action="details"[\s\S]*data-action="settings"/,
 );
 
 // Catalog saves send the stable IDs and all exact backend fields in one body.
@@ -87,10 +89,13 @@ assert.match(
   const calls = [];
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
-    programDraft: programs.map((program) => ({ ...program })),
-    readProgramDraft() {
-      return this.programDraft;
+    state: {
+      permissions: { program: true },
+      configuration_locked: false,
+      configuration: { temperature_programs: programs },
     },
+    programDraft: [...programs].reverse(),
+    $: () => null,
     api: async (...args) => calls.push(args),
     refresh: async () => {},
     settingsEntry: "entry-1",
@@ -98,9 +103,12 @@ assert.match(
   p.savePrograms()
     .then(() => {
       assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
-        ["/entry-1/programs", "POST", { programs }],
+        ["/entry-1/programs", "POST", { programs: [...programs].reverse() }],
       ]);
-      assert.equal(p.programDraft, null);
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(p.programDraft)),
+        [...programs].reverse(),
+      );
       console.log("panel program catalog regressions passed");
     })
     .catch((error) => {
@@ -170,6 +178,7 @@ assert.match(
   });
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
+    progressionDraft: { "progression-end": "95" },
     message: () => {},
     drawCurrent: () => {},
     refresh: async () => {},
@@ -300,13 +309,12 @@ for (const selected of [null, "quiet"]) {
     });
 }
 
-// A refresh must not rebuild an already visible catalog from its older draft.
-// This covers the interval refresh after adding a row and after a rejected save.
+// A refresh retains the state-backed draft, including after a rejected save.
 {
-  const library = { dataset: { editable: "true" }, innerHTML: "Name geändert" };
+  const library = { dataset: {}, innerHTML: "" };
   const p = Object.assign(Object.create(Panel.prototype), {
     hass: { user: { is_admin: true } },
-    programDraft: programs.map((program) => ({ ...program })),
+    programDraft: [{ ...programs[0], name: "Nach Fehler" }, programs[1]],
     programLibraryNeedsRender: false,
     state: {
       permissions: { program: true },
@@ -320,12 +328,10 @@ for (const selected of [null, "quiet"]) {
     $: (selector) => (selector === "#program-library" ? library : null),
   });
   p.renderProgramLibrary();
-  assert.equal(
-    library.innerHTML,
-    "Name geändert",
-    "ordinary refresh retains edited catalog inputs",
-  );
-  p.readProgramDraft = () => [{ ...programs[0], name: "Nach Fehler" }];
+  assert.match(library.innerHTML, /Nach Fehler/);
+  const markup = library.innerHTML;
+  p.renderProgramLibrary();
+  assert.equal(library.innerHTML, markup, "ordinary refresh retains the catalog draft");
   p.api = async () => {
     throw Error("server rejected catalog");
   };
@@ -340,8 +346,8 @@ for (const selected of [null, "quiet"]) {
       p.renderProgramLibrary();
       assert.equal(
         library.innerHTML,
-        "Name geändert",
-        "rejected save does not replace visible inputs",
+        markup,
+        "rejected save does not replace the draft",
       );
       console.log("panel program draft regressions passed");
     })
@@ -391,11 +397,8 @@ for (const selected of [null, "quiet"]) {
   assert.doesNotMatch(button.innerHTML, /option value="current"/);
   assert.match(button.innerHTML, /id="button-temperature"[^>]*value="83"/);
   p.renderProgramLibrary();
-  assert.doesNotMatch(
-    library.innerHTML,
-    /disabled/,
-    "program permission enables catalog edits",
-  );
+  assert.match(library.innerHTML, /data-action="program-add"(?![^>]*disabled)/);
+  assert.match(library.innerHTML, /data-action="program-edit:quiet"(?![^>]*disabled)/);
   const calls = [];
   p.api = async (...args) => calls.push(args);
   p.action("button-program")

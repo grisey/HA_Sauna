@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import replace
 
+from .appearance import validate_appearance
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .core.program_catalog import load_programs, validate_programs
 from .core.temperature_program import temperature_steps as validate_temperature_steps
@@ -100,6 +101,7 @@ async def async_reset_parameters(hass, entry):
             defaults,
             control_input_mode=runtime.configuration.control_input_mode,
             button_event_type=runtime.configuration.button_event_type,
+            appearance=runtime.configuration.appearance,
         )
         # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
         # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.
@@ -107,6 +109,23 @@ async def async_reset_parameters(hass, entry):
             entry, options=reset.as_options()
         )
         return reset.parameters.as_dict()
+
+
+async def async_set_appearance(hass, entry, value):
+    """Persist only display preferences without cycling the active controller."""
+    appearance = validate_appearance(value)
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        runtime._require_open()
+        if runtime.reconfiguring:
+            raise ConfigurationLocked(
+                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        runtime.configuration = replace(runtime.configuration, appearance=appearance)
+        hass.config_entries.async_update_entry(
+            entry, options=runtime.configuration.as_options()
+        )
+        return appearance
 
 
 async def _async_set_parameters_locked(

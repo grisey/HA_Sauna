@@ -2,6 +2,18 @@
 // functional FakeCanvas only to verify paths and gap commands, never speed.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const appearanceCatalog = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
+);
+const color = (id) =>
+  appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
+const curveStyles = {
+  "upper:temperature": { stroke: color("series_temperature") },
+  "lower:temperature": { stroke: color("series_temperature") },
+  "upper:humidity": { stroke: color("series_humidity") },
+  "lower:humidity": { stroke: color("series_humidity") },
+  overview: { stroke: color("series_overview"), track: color("chart_minimap_track") },
+};
 const vm = require("node:vm");
 
 class FakePath2D {
@@ -145,6 +157,7 @@ const geometry = {
   };
   const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
     Path2DClass: FakePath2D,
+    styles: curveStyles,
   });
   curves.update(modelFor(p, records, 30, chart), geometry);
   assert.equal(
@@ -227,6 +240,7 @@ const geometry = {
   };
   const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
     Path2DClass: FakePath2D,
+    styles: curveStyles,
   });
   const markup = p.historyMarkup(active);
   const before = p.historyModel(chart, active);
@@ -270,6 +284,7 @@ const geometry = {
   };
   const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
     Path2DClass: FakePath2D,
+    styles: curveStyles,
   });
   assert.doesNotThrow(() =>
     curves.update(modelFor(p, records, 15_000, chart), geometry),
