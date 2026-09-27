@@ -110,6 +110,7 @@ test("finite display scales bound ticks and preserve backend target limits", () 
 test("shared phase and measurement colors flow to host and curve styles", () => {
   const { panel, variables } = makePanel({
     colors: {
+      card_background: "#000000",
       phase_warmup: "#123456",
       series_temperature: "#ABCDEF",
       series_humidity: "#654321",
@@ -117,16 +118,16 @@ test("shared phase and measurement colors flow to host and curve styles", () => 
     scales: {},
   });
   panel.applyAppearance();
-  assert.equal(variables.get("--sauna-phase-tint"), "rgba(18, 52, 86, 0.08)");
+  assert.equal(variables.get("--sauna-main-background"), "#010407");
   assert.equal(panel.historyCurveStyles()["upper:temperature"].stroke, "#ABCDEF");
   assert.equal(panel.historyCurveStyles()["lower:humidity"].stroke, "#654321");
   panel.state.configuration.control_mode = "manual";
   panel.applyAppearance();
-  assert.equal(variables.has("--sauna-phase-tint"), false);
+  assert.equal(variables.has("--sauna-main-background"), false);
   panel.state.configuration.control_mode = "automatic";
   panel.appearanceStale = true;
   panel.applyAppearance();
-  assert.equal(variables.has("--sauna-phase-tint"), false);
+  assert.equal(variables.has("--sauna-main-background"), false);
 });
 
 test("automatic ink keeps 4.5:1 text and 3:1 focus across opposite surfaces", () => {
@@ -157,5 +158,38 @@ test("automatic ink keeps 4.5:1 text and 3:1 focus across opposite surfaces", ()
     assert.ok(
       appearanceContrastRatio(variables.get(`--sauna-${name}-focus`), background) >= 3,
     );
+  }
+});
+
+test("tinted text uses the same painted surface as its background", () => {
+  const { panel, variables } = makePanel({
+    colors: {
+      card_background: "#000000",
+      text: "#757575",
+      phase_warmup: "#FFFFFF",
+      status_info: "#FFFFFF",
+      status_warning: "#FFFFFF",
+      status_error: "#FFFFFF",
+      status_unknown: "#FFFFFF",
+      ui_heater_on: "#FFFFFF",
+      ui_heater_off: "#FFFFFF",
+    },
+    scales: {},
+  });
+  panel.applyAppearance();
+  for (const name of ["info", "warning", "error", "unknown", "heater-on", "heater-off"]) {
+    assert.ok(
+      appearanceContrastRatio(
+        variables.get(`--sauna-tint-${name}-text`),
+        variables.get(`--sauna-tint-${name}-background`),
+      ) >= 4.5,
+      name,
+    );
+  }
+  for (const [ink, background] of [
+    ["--sauna-main-text", "--sauna-main-background"],
+    ["--sauna-pending-text", "--sauna-pending-background"],
+  ]) {
+    assert.ok(appearanceContrastRatio(variables.get(ink), variables.get(background)) >= 4.5);
   }
 });

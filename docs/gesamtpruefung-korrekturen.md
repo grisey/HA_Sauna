@@ -1,5 +1,33 @@
 # Korrekturen zur Gesamtprüfung vom 27.09.2026
 
+## Nachprüfung des Stands e580a47
+
+Der vierte Gesamtbericht bestätigt die vier vorherigen Gegenfälle und benennt
+zwei weitere Fehler. Die bisherige Prüfung der thermischen Freigabeverluste
+und der abgeleiteten Textflächen war damit unvollständig.
+
+- **Betriebsfreigabe und thermischer Nachweis:** Der gemeinsame bestehende
+  Freigabeausdruck wird auch unmittelbar nach gebuchten Betriebsübergängen
+  angewendet. AUS verwirft den thermischen Nachweis; bei weiter bestätigtem
+  Heizbetrieb beginnt die erneute Freigabe an ihrer gebuchten Zeit. Das gilt
+  auch für mehrere Übergänge im selben Eingangsblock, unabhängig von der
+  unveränderten physischen Heizspur.
+  Physische Heizintervalle und deren Rasterauswertung bleiben maßgeblich;
+  es entsteht keine zusätzliche Historie oder historische Aktorausgabe.
+- **Kontrast auf wirklichen Flächen:** Textfarben werden zentral gegen die
+  fertig gemischten Hinweis-, Fehler-, Status- und Entwurfsflächen abgeleitet.
+  Der Hoverzustand dunkelt die gesamte Schaltfläche nicht mehr nachträglich
+  ab. Die Korrektur umfasst auch gleichartige Verbraucher neben den beiden
+  belegten Fehlerstellen; Messkurvenfarben bleiben unverändert.
+
+Die gezielten Gegenfälle prüfen reguläre Betriebsübergänge einschließlich
+gemeinsam zugestelltem AUS/EIN und die tatsächlichen Textverbraucher nach
+Flächenmischung beziehungsweise Hover. Alle Tests laufen ausschließlich in
+Linux-CI. Der commitbezogene Abschlussbericht trennt Implementierung,
+ausgeführte Prüfungen und verbleibende Nachweisgrenzen. Eine allgemeine
+Fehlerfreiheit oder erneute Vollprüfung des gesamten Repositorys wird daraus
+nicht abgeleitet. Der Merge bleibt angehalten.
+
 ## Nachprüfung des Stands 7a3966c
 
 Der dritte Gesamtbericht bestätigt die sieben vorangegangenen Korrekturen

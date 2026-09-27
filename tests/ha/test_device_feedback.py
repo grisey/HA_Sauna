@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
@@ -127,6 +128,70 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertEqual(heating.intervals[1].started_at, T0 + timedelta(seconds=2))
         self.assertEqual(outputs, 1)
         self.assertEqual(heating_since, T0 + timedelta(seconds=2))
+
+    def test_queued_operation_pause_restarts_thermal_proof_without_physical_pause(self):
+        async def exercise(queued):
+            runtime, adapter, _ = self.device(target_temperature_c=100)
+            options = runtime.configuration.as_options()
+            options.update(button_program="constant", button_temperature_c=100)
+            runtime.configuration = Configuration.from_options(options)
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            runtime.controller.begin_session("operation-gate", T0)
+            adapter.ingest("heater", state("on"), T0)
+            adapter.ingest("heater_feedback", state("on"), T0)
+            adapter.command, adapter.command_at = True, T0
+            adapter.apply = AsyncMock()  # Replace only the actuator boundary.
+            tasks = []
+            for second in range(61):
+                clock[0] = T0 + timedelta(seconds=second)
+                if second == 30 and queued:
+                    runtime._lock.release()
+                    await asyncio.gather(*tasks)
+                if second not in (28, 29):
+                    for position in ("upper", "lower"):
+                        adapter.ingest(
+                            f"{position}_temperature",
+                            state(str(85 - max(0, second - 20) * .03), unit="°C"),
+                            clock[0],
+                        )
+                        adapter.ingest(
+                            f"{position}_humidity", state("30", unit="%"), clock[0],
+                        )
+                if second == 28 and queued:
+                    await runtime._lock.acquire()
+                if second in (28, 29):
+                    event = SimpleNamespace(event_type="state_changed", data={
+                        "entity_id": BINDINGS.values["control_input"],
+                        "old_state": state("on" if second == 28 else "off"),
+                        "new_state": state("off" if second == 28 else "on"),
+                    })
+                    if queued:
+                        tasks.append(asyncio.create_task(runtime.device_input(event)))
+                        await asyncio.sleep(0)
+                    else:
+                        await runtime.device_input(event)
+                if not queued or second not in (28, 29):
+                    await runtime.tick()
+            return runtime, adapter
+
+        for queued in (False, True):
+            with self.subTest(queued=queued):
+                runtime, adapter = asyncio.run(exercise(queued))
+                self.assertEqual(adapter.start_errors(), [])
+                self.assertNotIn("start_rejected", adapter.faults)
+                self.assertTrue(runtime.session.operation_enabled)
+                self.assertEqual(runtime.detector.heating_since, T0 + timedelta(seconds=29))
+                self.assertEqual(
+                    [(i.started_at, i.ended_at) for i in runtime.session.heating.intervals],
+                    [(T0, None)],
+                )
+                opened = next(
+                    event for event in runtime.session.timeline.processed
+                    if event.kind == Kind.DOOR_OPEN
+                )
+                self.assertEqual(opened.effective_at, T0 + timedelta(seconds=38))
+                self.assertEqual(opened.detected_at, T0 + timedelta(seconds=47))
 
     def test_waiting_tick_or_command_consumes_received_contactor_off_first(self):
         async def exercise(command):

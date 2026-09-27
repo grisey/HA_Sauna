@@ -368,19 +368,26 @@ class SaunaRuntime:
                         "source_snapshot", self._clock(), measurement, session_id
                     )
 
+    def _report_detector_heating(self, at):
+        """Apply the current permission gate, including queued operation edges."""
+        if self.detector is None:
+            return False
+        heating = bool(
+            self.device
+            and self.device.command is True
+            and not self.device.command_error
+            and self.device.feedback() is True
+            and self.session
+            and self.session.operation_enabled
+        )
+        self.detector.report_heating(heating, at)
+        return heating
+
     async def _cycle(self, *, sample=False):
         await self._drain_device_inputs()
         now = self._clock()
         self._sync_detector()
-        if self.detector:
-            heating = bool(
-                self.device
-                and self.device.command is True
-                and not self.device.command_error
-                and self.device.feedback() is True
-                and self.session.operation_enabled
-            )
-            self.detector.report_heating(heating, now)
+        heating = self._report_detector_heating(now)
         if sample and self.detector:
 
             def initialize_door():
@@ -591,6 +598,8 @@ class SaunaRuntime:
         # The source adapter retains the event identity and both original times.
         result = (self.controller.process_presence(report, event)
                   if report is not None else self.controller.process(event))
+        if result.changed:
+            self._report_detector_heating(event.detected_at)
         if report is not None and result.changed:
             self._record_presence(report)
         return result
@@ -802,6 +811,7 @@ class SaunaRuntime:
             "einschalten" if enabled else "ausschalten",
         )
         result = self.controller.set_operation(enabled, at)
+        self._report_detector_heating(at)
         if enabled:
             self._button_hold_session_id = None
             if not preserve_button:

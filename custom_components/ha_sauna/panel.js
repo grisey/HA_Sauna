@@ -1432,6 +1432,31 @@ class SaunaPanel extends HTMLElement {
         ? "#000000"
         : "#FFFFFF";
     };
+    const proposedText =
+      this.appearanceColor("text") ||
+      appearanceThemeHex(theme?.getPropertyValue("--primary-text-color"));
+    const proposedFocus =
+      this.appearanceColor("focus") || this.appearancePickerColor("focus");
+    const tintedSurface = (base, role, amount) =>
+      appearanceBlend(base, this.appearanceColor(role), amount);
+    for (const [name, role, amount] of [
+      ["info", "status_info", 0.12],
+      ["warning", "status_warning", 0.12],
+      ["error", "status_error", 0.12],
+      ["unknown", "status_unknown", 0.12],
+      ["heater-on", "ui_heater_on", 0.16],
+      ["heater-off", "ui_heater_off", 0.16],
+    ]) {
+      const surface = tintedSurface(surfaces.card, role, amount);
+      if (surface) style.setProperty(`--sauna-tint-${name}-background`, surface);
+      else style.removeProperty?.(`--sauna-tint-${name}-background`);
+      const ink = surface && readable(proposedText, surface, 4.5);
+      const focus = surface && readable(proposedFocus, surface, 3);
+      if (ink) style.setProperty(`--sauna-tint-${name}-text`, ink);
+      else style.removeProperty?.(`--sauna-tint-${name}-text`);
+      if (focus) style.setProperty(`--sauna-tint-${name}-focus`, focus);
+      else style.removeProperty?.(`--sauna-tint-${name}-focus`);
+    }
     for (const [role, themeKey] of [
       ["text", "--primary-text-color"],
       ["muted_text", "--secondary-text-color"],
@@ -1454,8 +1479,6 @@ class SaunaPanel extends HTMLElement {
       4.5,
     );
     if (chartText) style.setProperty("--sauna-chart-ink", chartText);
-    const proposedFocus =
-      this.appearanceColor("focus") || this.appearancePickerColor("focus");
     for (const [surfaceName, surface] of Object.entries(surfaces)) {
       const focus = readable(proposedFocus, surface, 3);
       if (focus) style.setProperty(`--sauna-${surfaceName}-focus`, focus);
@@ -1466,7 +1489,7 @@ class SaunaPanel extends HTMLElement {
       3,
     );
     if (chartFocus) style.setProperty("--sauna-chart-focus", chartFocus);
-    for (const role of [
+    const statusRoles = [
       "ui_heater_on",
       "ui_heater_off",
       "ui_heater_unknown",
@@ -1475,7 +1498,8 @@ class SaunaPanel extends HTMLElement {
       "status_warning",
       "status_error",
       "status_unknown",
-    ]) {
+    ];
+    for (const role of statusRoles) {
       const ink = readable(this.appearanceColor(role), surfaces.card, 4.5);
       if (ink) style.setProperty(`--sauna-ink-${role.replaceAll("_", "-")}`, ink);
     }
@@ -1497,17 +1521,6 @@ class SaunaPanel extends HTMLElement {
     const warning = this.appearanceColor("status_warning");
     if (warning)
       style.setProperty("--sauna-status-warning-ink", appearanceContrast(warning));
-    const selectedSurface = warning && appearanceBlend(surfaces.card, warning, 0.12);
-    const selectedText =
-      selectedSurface &&
-      readable(
-        this.appearanceColor("text") ||
-          appearanceThemeHex(theme?.getPropertyValue("--primary-text-color")),
-        selectedSurface,
-        4.5,
-      );
-    if (selectedText) style.setProperty("--sauna-event-selected-text", selectedText);
-    else style.removeProperty?.("--sauna-event-selected-text");
     const phase =
       this.state?.operation_enabled &&
       this.state?.configuration?.control_mode !== "manual" &&
@@ -1520,9 +1533,30 @@ class SaunaPanel extends HTMLElement {
           }[this.state.phase]
         : null;
     const tint = phase && this.appearanceColor(phase);
-    if (tint) style.setProperty("--sauna-phase-tint", appearanceAlpha(tint, 0.08));
-    else style.removeProperty?.("--sauna-phase-tint");
     const mainSurface = tint && appearanceBlend(surfaces.card, tint, 0.08);
+    if (mainSurface) style.setProperty("--sauna-main-background", mainSurface);
+    else style.removeProperty?.("--sauna-main-background");
+    const pendingSurface = tintedSurface(
+      mainSurface || surfaces.card,
+      "status_info",
+      0.06,
+    );
+    if (pendingSurface) style.setProperty("--sauna-pending-background", pendingSurface);
+    else style.removeProperty?.("--sauna-pending-background");
+    for (const [name, proposed, ratio] of [
+      ["pending-text", proposedText, 4.5],
+      ["pending-focus", proposedFocus, 3],
+    ]) {
+      const value = pendingSurface && readable(proposed, pendingSurface, ratio);
+      if (value) style.setProperty(`--sauna-${name}`, value);
+      else style.removeProperty?.(`--sauna-${name}`);
+    }
+    for (const role of statusRoles) {
+      const ink = mainSurface && readable(this.appearanceColor(role), mainSurface, 4.5);
+      const key = `--sauna-main-ink-${role.replaceAll("_", "-")}`;
+      if (ink) style.setProperty(key, ink);
+      else style.removeProperty?.(key);
+    }
     for (const [role, themeKey] of [
       ["text", "--primary-text-color"],
       ["muted_text", "--secondary-text-color"],
@@ -1854,7 +1888,7 @@ class SaunaPanel extends HTMLElement {
         cursor: pointer;
       }
       button:hover:not(:disabled) {
-        filter: brightness(0.94);
+        text-decoration: underline;
       }
       button:focus-visible,
       select:focus-visible,
@@ -1910,17 +1944,19 @@ class SaunaPanel extends HTMLElement {
         border-left: 4px solid var(--accent);
       }
       .control-main {
-        background: linear-gradient(var(--sauna-phase-tint, transparent), var(--sauna-phase-tint, transparent)), var(--sauna-color-card-background, var(--card-background-color));
+        background: var(--sauna-main-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-main-text, var(--sauna-card-text, inherit));
         --sauna-focus-current: var(--sauna-main-focus, var(--sauna-card-focus, var(--accent)));
       }
       .control-main small,
       .control-main .muted { color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); }
+      .control-main button small { color: inherit; }
       .oven-feedback { margin: 4px 0 10px; }
       [data-action="program-toggle"] { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; max-width: 100%; white-space: normal; text-align: left; }
       .program-active-label { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
       .program-disclosure { margin-top: 12px; }
-      .scale-hint { fill: var(--sauna-color-status-warning); color: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); font-size: 11px; margin: 2px 0 0; }
+      .scale-hint { fill: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); color: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); font-size: 11px; margin: 2px 0 0; }
+      .control-main .scale-hint { fill: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); color: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); }
       .appearance-colors { display: grid; gap: 9px; }
       .appearance-color-row { display: grid; grid-template-columns: minmax(130px, 1fr) 48px minmax(96px, 118px) auto; gap: 8px; align-items: center; }
       .appearance-color-row input[type="color"] { padding: 2px; width: 48px; height: 40px; }
@@ -1951,21 +1987,23 @@ class SaunaPanel extends HTMLElement {
         display: inline-block;
         border-radius: 20px;
         padding: 3px 11px;
-        background: color-mix(in srgb, var(--sauna-color-status-info) 12%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-card-text, inherit);
+        background: var(--sauna-tint-info-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-info-text, var(--sauna-card-text, inherit));
         font-size: 13px;
       }
       .notice {
-        background: color-mix(in srgb, var(--sauna-color-status-warning) 12%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-card-text, inherit);
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, inherit));
+        --sauna-focus-current: var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
         border-left: 4px solid var(--sauna-color-status-warning);
         padding: 12px 16px;
         border-radius: 8px;
         margin: 10px 0;
       }
       .error {
-        background: color-mix(in srgb, var(--sauna-color-status-error) 12%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-card-text, inherit);
+        background: var(--sauna-tint-error-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-error-text, var(--sauna-card-text, inherit));
+        --sauna-focus-current: var(--sauna-tint-error-focus, var(--sauna-card-focus, var(--accent)));
       }
       .legend {
         display: flex;
@@ -2550,6 +2588,9 @@ class SaunaPanel extends HTMLElement {
       .feedback.unknown {
         color: var(--sauna-ink-ui-heater-unknown, var(--sauna-color-ui-heater-unknown));
       }
+      .control-main .feedback.on { color: var(--sauna-main-ink-ui-heater-on, var(--sauna-ink-ui-heater-on)); }
+      .control-main .feedback.off { color: var(--sauna-main-ink-ui-heater-off, var(--sauna-ink-ui-heater-off)); }
+      .control-main .feedback.unknown { color: var(--sauna-main-ink-ui-heater-unknown, var(--sauna-ink-ui-heater-unknown)); }
       .light-controls {
         margin-top: 14px;
       }
@@ -2613,16 +2654,16 @@ class SaunaPanel extends HTMLElement {
         padding: 3px 10px;
         font-size: 13px;
         font-weight: 650;
-        background: color-mix(in srgb, var(--sauna-color-status-unknown) 12%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-card-text, inherit);
+        background: var(--sauna-tint-unknown-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-unknown-text, var(--sauna-card-text, inherit));
       }
       .manual-status.on {
-        background: color-mix(in srgb, var(--sauna-color-ui-heater-on) 16%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-card-text, inherit);
+        background: var(--sauna-tint-heater-on-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-heater-on-text, var(--sauna-card-text, inherit));
       }
       .manual-status.off {
-        background: color-mix(in srgb, var(--sauna-color-ui-heater-off) 16%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-card-text, inherit);
+        background: var(--sauna-tint-heater-off-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-heater-off-text, var(--sauna-card-text, inherit));
       }
       .manual-light-value {
         width: 92px;
@@ -2665,7 +2706,10 @@ class SaunaPanel extends HTMLElement {
       .event-row[data-selected="true"] {
         outline: 3px solid var(--accent);
         outline-offset: 2px;
-        background: color-mix(in srgb, var(--sauna-color-status-warning) 12%, var(--sauna-color-card-background, var(--card-background-color)));
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+      }
+      .event-marker[data-selected="true"] {
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, inherit));
       }
       .event-row button {
         padding: 3px 7px;
@@ -2821,14 +2865,14 @@ class SaunaPanel extends HTMLElement {
         stroke-width: 4;
       }
       .event-row[data-selected="true"] {
-        background: color-mix(in srgb, var(--sauna-color-status-warning) 12%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-event-selected-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
         outline: 3px solid var(--accent);
         outline-offset: -3px;
       }
       .event-row[data-selected="true"] button {
-        background: color-mix(in srgb, var(--sauna-color-status-warning) 12%, var(--sauna-color-card-background, var(--card-background-color)));
-        color: var(--sauna-event-selected-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
         border-color: currentColor;
       }
       .state-summary {
@@ -2857,7 +2901,7 @@ class SaunaPanel extends HTMLElement {
         overflow-wrap: anywhere;
       }
       .availability-line.wait {
-        color: var(--sauna-card-text, inherit);
+        color: inherit;
       }
       @media (max-width: 1000px) {
         .dashboard {
@@ -3031,9 +3075,10 @@ class SaunaPanel extends HTMLElement {
         gap: 10px;
         margin-top: 10px;
         padding: 8px 10px;
-        background: color-mix(in srgb, currentColor 6%, transparent);
+        background: var(--sauna-pending-background, transparent);
         border-radius: 8px;
-        color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
+        color: var(--sauna-pending-text, var(--sauna-main-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)))));
+        --sauna-focus-current: var(--sauna-pending-focus, var(--sauna-main-focus, var(--sauna-card-focus, var(--accent))));
       }
       .program-kind {
         display: flex;

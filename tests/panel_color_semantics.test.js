@@ -23,8 +23,8 @@ test("chart, gauges and phase card share semantic role colors", () => {
   assert.match(source, /appearanceColor\("series_temperature"\)/);
   assert.match(source, /appearanceColor\("series_humidity"\)/);
   assert.match(source, /--sauna-color-phase-warmup\) 28%/);
-  assert.match(source, /--sauna-phase-tint/);
-  assert.match(source, /\.control-main\s*\{[^}]*sauna-phase-tint/);
+  assert.match(source, /--sauna-main-background/);
+  assert.match(source, /\.control-main\s*\{[^}]*sauna-main-background/);
   assert.equal(color("series_temperature").default, "#FF6B4A");
   assert.equal(color("series_humidity").default, "#42A5FF");
 });
