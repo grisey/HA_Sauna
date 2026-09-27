@@ -120,16 +120,20 @@ class LightOutputTests(unittest.TestCase):
                 )
 
     def test_expired_override_keeps_live_cooling_curve(self):
+        control = LightOutput(self.light.parameters)
         self.update(0, "cooling", "nachlauf", 40, 40, 120)
-        self.assertEqual(
-            self.update(60, "cooling", "nachlauf", 40, 15, 120).brightness_percent,
-            20,
+        control.update(0, "cooling", "nachlauf", 40, 40, 120)
+        before = self.update(60, "cooling", "nachlauf", 40, 15, 120)
+        expected_before = control.update(60, "cooling", "nachlauf", 40, 15, 120)
+        self.assertAlmostEqual(
+            before.brightness_percent, expected_before.brightness_percent
         )
         self.light.set_manual(80, phase_key="cooling", ends_at=61)
         self.update(60, "cooling", "nachlauf", 40, 80, 120)
         self.assertTrue(self.light.expire_manual(61))
         resumed = self.update(61, "cooling", "nachlauf", 40, 80, 120)
-        self.assertGreater(resumed.brightness_percent, 20)
+        expected = control.update(61, "cooling", "nachlauf", 40, 15, 120)
+        self.assertAlmostEqual(resumed.brightness_percent, expected.brightness_percent)
         self.assertLess(resumed.brightness_percent, 40)
 
     def test_normal_phase_change_fades_from_the_observed_manual_value(self):

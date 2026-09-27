@@ -210,6 +210,7 @@ test("popup, plot controls, selected event and empty card use their painted surf
   panel.applyAppearance();
   const css = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
   assert.match(css, /\.program-info-popup\s*\{[^}]*color: var\(--sauna-card-text/);
+  assert.match(css, /header\s*\{[^}]*color: var\(--sauna-page-text/);
   assert.ok(appearanceContrastRatio(variables.get("--sauna-card-text"), "#000000") >= 4.5);
   assert.match(css, /\.empty\s*\{[^}]*color: var\(--sauna-card-muted-text/);
   assert.ok(appearanceContrastRatio(variables.get("--sauna-card-muted-text"), "#000000") >= 4.5);

@@ -1839,6 +1839,7 @@ class SaunaPanel extends HTMLElement {
         align-items: center;
         gap: 18px;
         margin-bottom: 24px;
+        color: var(--sauna-page-text, var(--sauna-color-text, var(--primary-text-color)));
       }
       .header-brand {
         display: flex;
@@ -5011,7 +5012,8 @@ class SaunaPanel extends HTMLElement {
     const entry = this.entry,
       generation = this.generation,
       editRevision = this.settingsEditRevision || 0,
-      progressionDraft = this.progressionDraft;
+      progressionDraft = this.progressionDraft,
+      request = (this.settingsRequestSerial = (this.settingsRequestSerial || 0) + 1);
     const saved = await this.api(
       `/${entry}/${partial ? "temperature" : "parameters"}`,
       "POST",
@@ -5019,7 +5021,12 @@ class SaunaPanel extends HTMLElement {
     );
     parameters = saved.parameters;
     await this.waitForConfiguration(entry, parameters);
-    if (this.entry !== entry || this.generation !== generation) return;
+    if (
+      this.entry !== entry ||
+      this.generation !== generation ||
+      this.settingsRequestSerial !== request
+    )
+      return;
     if ((this.settingsEditRevision || 0) === editRevision) {
       this.settingsEntry = null;
       this.shadowRoot
@@ -6821,6 +6828,7 @@ class SaunaPanel extends HTMLElement {
         return;
       this.state.configuration.temperature_programs = result?.programs || programs;
       this.programDraft = null;
+      this.programRevision = (this.programRevision || 0) + 1;
       this.programSavePending = null;
       this.programLibraryNeedsRender = true;
       this.renderProgramLibrary();
@@ -6838,7 +6846,7 @@ class SaunaPanel extends HTMLElement {
       }
       throw error;
     }
-    await this.refresh();
+    await this.refresh(true);
   }
   async saveSettings() {
     this.message(null);
@@ -6861,10 +6869,16 @@ class SaunaPanel extends HTMLElement {
     const entry = this.entry,
       generation = this.generation,
       editRevision = this.settingsEditRevision || 0,
-      progressionDraft = this.progressionDraft;
+      progressionDraft = this.progressionDraft,
+      request = (this.settingsRequestSerial = (this.settingsRequestSerial || 0) + 1);
     const saved = await this.api(`/${entry}/parameters/reset`, "POST");
     await this.waitForConfiguration(entry, saved.parameters, saved.configuration);
-    if (this.entry !== entry || this.generation !== generation) return;
+    if (
+      this.entry !== entry ||
+      this.generation !== generation ||
+      this.settingsRequestSerial !== request
+    )
+      return;
     if ((this.settingsEditRevision || 0) === editRevision) {
       this.settingsEntry = null;
       this.shadowRoot
@@ -6873,7 +6887,12 @@ class SaunaPanel extends HTMLElement {
     }
     if (this.progressionDraft === progressionDraft) this.progressionDraft = null;
     await this.refresh();
-    if (this.entry !== entry || this.generation !== generation) return;
+    if (
+      this.entry !== entry ||
+      this.generation !== generation ||
+      this.settingsRequestSerial !== request
+    )
+      return;
     const status = this.shadowRoot.querySelector("#settings-reset-status");
     if (status) status.textContent = "Standardwerte wurden wiederhergestellt.";
   }

@@ -635,9 +635,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await summary.click()
         for role in ("card_background", "text", "ui_accent", "series_temperature", "series_humidity"):
             await editor.locator(f'[data-appearance-color="{role}"]').fill("#000000")
+        await editor.locator('[data-appearance-color="page_background"]').fill("#FFFFFF")
         await editor.locator('[data-appearance-color="chart_background"]').fill("#000000")
         await editor.locator('[data-appearance-color="chart_text"]').fill("#FFFFFF")
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        await expect(self.panel.locator('header h1')).to_have_css('color', 'rgb(0, 0, 0)')
         info_button = self.panel.locator('#current .program-info button').first
         if not await info_button.is_visible():
             await self.panel.locator('[data-action="program-toggle"]').click()
@@ -715,6 +717,21 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(event_link).to_be_visible()
         event_id = (await event_link.get_attribute('data-action')).split(':', 1)[1]
         await event_link.click()
+        selected_row = self.panel.locator(f'.event-row[data-event-id="{event_id}"]')
+        contrast = await selected_row.evaluate("""row => {
+          const style = getComputedStyle(row);
+          const light = color => {
+            const channels = color.match(/[\\d.]+/g).slice(0, 3).map(Number);
+            return channels.reduce((sum, value, index) => {
+              const x = value / 255;
+              return sum + [0.2126, 0.7152, 0.0722][index] *
+                (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+            }, 0);
+          };
+          const a = light(style.outlineColor), b = light(style.backgroundColor);
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        }""")
+        self.assertGreaterEqual(contrast, 3)
         await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#detection-plots')).to_be_visible()
         marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
