@@ -124,7 +124,7 @@ class TemperatureOverflowIntegrationTests(unittest.IsolatedAsyncioTestCase):
         runtime._clock = lambda: now
         await runtime.set_operation(True)
         sid = runtime.session.session_id
-        await runtime.receive(Event("close", sid, Kind.DOOR_CLOSE, now, now))
+        self.assertEqual(runtime.session.timeline.door, "closed")
         await runtime.receive(Event("infusion", sid, Kind.INFUSION, now, now))
         runtime.controller.report_heating(True, now)
         original_options = dict(self.entry.options)

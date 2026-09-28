@@ -219,7 +219,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#range')).to_be_empty()
 
     async def test_instance_switch_waits_for_its_own_status_before_exposing_controls(self):
-        second = await device_tests.create_sauna(self.hass, parameter_overrides={
+        second_heater = device_tests.TestHeater()
+        second_heater.entity_id = "switch.test_heater_second"
+        second_heater._attr_unique_id = "isolated-heater-second"
+        second_heater._attr_name = "Second test heater"
+        second_heater.respond = False  # No feedback edge on the first sauna's source.
+        await self.hass.data["switch"].async_add_entities([second_heater])
+        second = await device_tests.create_sauna(self.hass, binding_overrides={
+            "heater": second_heater.entity_id,
+        }, parameter_overrides={
             "target_temperature_c": 90, "safety_temperature_c": 105,
         })
         await self.page.reload()

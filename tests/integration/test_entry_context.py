@@ -84,6 +84,7 @@ class EntryContextIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_replaced_close_rejects_old_signal_before_service_but_current_one_heats(
         self,
     ):
+        await self.event("open-old", Kind.DOOR_OPEN, 0)
         await self.event("close-old", Kind.DOOR_CLOSE, 0)
         await self.event("open-new", Kind.DOOR_OPEN, 100)
         self.now = self.base + timedelta(seconds=105)

@@ -7,6 +7,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
+from custom_components.ha_sauna.core.timeline import Door
 from harness import create_sauna, start_hass
 
 
@@ -405,7 +406,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.now=self.base+timedelta(seconds=seconds)
             await self.runtime.receive(Event(str(seconds),session_id,kind,self.now,self.now))
             await self.hass.async_block_till_done()
-        await signal(Kind.DOOR_CLOSE,31)
+        self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
         await signal(Kind.INFUSION,32)
         for second in range(60, 271, 30):
             await temperature(second)
@@ -853,7 +854,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         from custom_components.ha_sauna.core.timeline import Event, Kind
         identity = self.runtime.session.session_id
-        for kind, second in ((Kind.DOOR_CLOSE, 1), (Kind.INFUSION, 2),
+        self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
+        for kind, second in ((Kind.INFUSION, 2),
                              (Kind.DOOR_OPEN, 3), (Kind.VENTILATION, 4)):
             self.now = self.base + timedelta(seconds=second)
             await self.runtime.receive(Event(f"cool:{second}", identity, kind, self.now, self.now))
@@ -1131,7 +1133,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         from custom_components.ha_sauna.core.timeline import Event, Kind
-        for second, kind in ((1, Kind.DOOR_CLOSE), (2, Kind.INFUSION),
+        # Valid measurement sources establish the documented initial CLOSED
+        # assumption. A synthetic close here would be a duplicate door edge.
+        self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
+        for second, kind in ((2, Kind.INFUSION),
                              (61, Kind.DOOR_OPEN), (62, Kind.VENTILATION)):
             self.now = self.base + timedelta(seconds=second)
             await self.runtime.receive(Event(f"manual-test:{second}", self.runtime.session.session_id,
@@ -1338,9 +1343,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_light_override(35)
         await self.runtime.set_operation(True)
         session_id = self.runtime.session.session_id
-        await self.runtime.receive(
-            Event("manual-door-close", session_id, Kind.DOOR_CLOSE, self.now, self.now)
-        )
+        self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
         await self.runtime.receive(Event("manual-infusion", session_id, Kind.INFUSION, self.now, self.now))
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()

@@ -169,7 +169,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             start = runtime._clock()
             current = [start]
             runtime._clock = lambda: current[0]
-            for index, kind in enumerate((Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 1):
+            self.assertEqual(runtime.session.timeline.door, "closed")
+            for index, kind in enumerate((Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 2):
                 at = start + timedelta(seconds=index)
                 current[0] = at
                 runtime.controller.process(Event(str(index), runtime.session.session_id, kind, at, at))
@@ -414,7 +415,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         runtime._clock = lambda: now
         await runtime.set_operation(True)
         identity = runtime.session.session_id
-        for second, kind in ((1,Kind.DOOR_CLOSE),(2,Kind.INFUSION),(3,Kind.DOOR_OPEN),(4,Kind.VENTILATION)):
+        self.assertEqual(runtime.session.timeline.door, "closed")
+        for second, kind in ((2,Kind.INFUSION),(3,Kind.DOOR_OPEN),(4,Kind.VENTILATION)):
             now = base + timedelta(seconds=second)
             await runtime.receive(Event(f"api-phase:{second}",identity,kind,now,now))
         token = runtime.session.after_run.phase_id
@@ -448,7 +450,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await runtime.set_operation(True)
         identity = runtime.session.session_id
         runtime.controller.report_heating(True, now)
-        for second, kind in ((1, Kind.DOOR_CLOSE), (2, Kind.INFUSION),
+        self.assertEqual(runtime.session.timeline.door, "closed")
+        for second, kind in ((2, Kind.INFUSION),
                              (3, Kind.DOOR_OPEN), (4, Kind.VENTILATION)):
             now = base + timedelta(seconds=second)
             await runtime.receive(Event(f"api-paused-phase:{second}", identity, kind, now, now))

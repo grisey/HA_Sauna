@@ -278,14 +278,17 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     now = datetime(2030, 1, 1, tzinfo=UTC)
                     restored = SaunaRuntime(saved, clock=lambda: now)
                     await restored.set_operation(True)
+                    await restored.receive(Event(
+                        "closed", restored.session.session_id,
+                        Kind.DOOR_CLOSE, now, now,
+                    ))
                     targets = [restored.controller.target_temperature]
                     for index in range(2):
                         now += timedelta(seconds=1)
                         session_id = restored.session.session_id
-                        for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
-                            await restored.receive(Event(
-                                f"{index}-{kind}", session_id, kind, now, now,
-                            ))
+                        await restored.receive(Event(
+                            f"infusion-{index}", session_id, Kind.INFUSION, now, now,
+                        ))
                         now += timedelta(seconds=1)
                         await restored.set_operation(False)
                         now += timedelta(seconds=1)

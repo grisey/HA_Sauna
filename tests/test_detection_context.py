@@ -164,6 +164,7 @@ class DetectionContextTests(unittest.TestCase):
 
     def test_confirmation_batch_covers_temperature_and_received_feedback(self):
         c = controller(confirmation_minutes=1)
+        c.process(event("close", Kind.DOOR_CLOSE, 11))
         c.process(event("person", Kind.PERSON_STRONG, 11))
         old = c.session.timeline.active
         with c.confirmation_batch():

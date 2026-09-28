@@ -6,11 +6,13 @@ import tempfile
 import unittest
 
 from custom_components.ha_sauna.core.controller import Controller
+from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, bindings
+from test_detector import measurement
 
 
 def at(s):
@@ -161,6 +163,11 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
         now = at(0)
         runtime = SaunaRuntime(Configuration(bindings(), Parameters({"confirmation_minutes": 1})), clock=lambda: now)
         await runtime.begin_session("s")
+        runtime._sync_detector()
+        # A valid proxy person signal needs an available original T/RH pair.
+        # The stable upper pair remains fresh through the confirmation deadline.
+        for quantity, value in ((Quantity.TEMPERATURE, 90), (Quantity.HUMIDITY, 20)):
+            runtime.detector.accept(measurement(Position.UPPER, quantity, value, 0))
         now = at(1)
         await runtime.receive(ev(Kind.DOOR_CLOSE, 1))
         now = at(2)
@@ -173,4 +180,22 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.presence.current.occupancy, "unknown")
         self.assertEqual(runtime.presence.current.assertion, "proxy_retraction")
         self.assertTrue(any(e.kind == "gang_retracted" for e in runtime.consumer_events))
+        await runtime.close()
+
+    async def test_missing_proxy_measurements_report_unknown_without_erasing_person_record(self):
+        now = at(0)
+        runtime = SaunaRuntime(Configuration(bindings(), Parameters({})), clock=lambda: now)
+        await runtime.begin_session("s")
+        now = at(1)
+        await runtime.receive(ev(Kind.DOOR_CLOSE, 1))
+        now = at(2)
+        event = ev(Kind.PERSON_STRONG, 2)
+        await runtime.receive(event)
+        self.assertEqual(runtime.presence.current.occupancy, "unknown")
+        self.assertFalse(runtime.presence.current.available)
+        self.assertEqual(runtime.presence.current.reason, "source_unavailable")
+        self.assertEqual(runtime.session.timeline.active.recognition_event_id, event.event_id)
+        person_records = [item for item in runtime.consumer_events
+                          if item.presence is not None and item.presence.occupancy == "present"]
+        self.assertEqual([item.source_ref for item in person_records], [event.event_id])
         await runtime.close()
