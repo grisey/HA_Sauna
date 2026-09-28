@@ -252,11 +252,17 @@ class DeviceFeedbackTests(unittest.TestCase):
                 with self.subTest(resumes=resumes):
                     runtime, stored = asyncio.run(exercise(
                         Path(directory) / f"gap-{resumes}.sqlite", resumes))
-                    self.assertEqual(runtime.controller.completed_sessions[-1].ended_at,
+                    old = runtime.controller.completed_sessions[-1]
+                    self.assertEqual(old.ended_at,
                                      T0 + timedelta(seconds=62))
+                    self.assertEqual(old.timeline.gang_count, int(resumes))
+                    self.assertEqual(len(old.timeline.completed), 1)
+                    self.assertEqual(old.timeline.completed[0].end_reason, "ausgeschaltet")
+                    self.assertEqual(old.timeline.completed[0].ended_at,
+                                     T0 + timedelta(seconds=2))
+                    self.assertEqual(old.timeline.retracted, ())
                     self.assertEqual(runtime.presence.current.occupancy, "unknown")
-                    end_kind = "gang_ended" if resumes else "gang_retracted"
-                    ended = next(e for e in runtime.consumer_events if e.kind == end_kind)
+                    ended = next(e for e in runtime.consumer_events if e.kind == "gang_ended")
                     self.assertEqual(ended.received_at, T0 + timedelta(seconds=70))
                     withdrawal = next(e for e in runtime.consumer_events if e.kind == "occupancy"
                                       and e.presence.assertion == "proxy_retraction")
