@@ -61,6 +61,10 @@ Beim Panel umfasst der Rechtewechsel sowohl abgeschlossene Archive als auch
 bereits laufende Seitenabrufe und verborgene Diagnoseansichten. Die neue
 Browserprüfung verwendet einen regulären HA-Gruppenwechsel hinter dem
 bestehenden Token, ohne das Panel neu zu laden.
+Die Linux-Browserprüfung deckte zusätzlich eine intrinsisch zu breite
+Sitzungsauswahl im schmalen Verlauf auf: 387 Pixel Feldbreite bei 362 Pixel
+verfügbarer Inhaltsbreite. Die Begrenzung betrifft dieses Auswahlfeld;
+Sitzungsnamen, Auswahllogik und horizontal scrollbare Tabellen bleiben erhalten.
 
 ## Bereinigung und Grenzen
 

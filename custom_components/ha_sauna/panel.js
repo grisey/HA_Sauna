@@ -1894,6 +1894,10 @@ class SaunaPanel extends HTMLElement {
         background: var(--sauna-color-card-background, var(--card-background-color));
         color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
       }
+      #session {
+        min-width: 0;
+        max-width: 100%;
+      }
       button {
         cursor: pointer;
       }
