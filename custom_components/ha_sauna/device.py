@@ -1029,7 +1029,7 @@ class HADevice:
         self._light_last_command_key = None
         self._light_override_dirty = True
 
-    async def prepare_light_handoff(self):
+    async def prepare_light_handoff(self, *, restore_on_failure=True):
         """Stop output and await its actual completion before any owner change."""
         owned = self._light_owned
         self.relinquish_light()
@@ -1041,11 +1041,11 @@ class HADevice:
                     if not await self._wait_light_service():
                         raise TimeoutError
         except TimeoutError:
-            if owned:
+            if owned and restore_on_failure:
                 self.restore_light_ownership()
             return False
         except BaseException:
-            if owned:
+            if owned and restore_on_failure:
                 self.restore_light_ownership()
             raise
         return True

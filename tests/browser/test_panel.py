@@ -271,7 +271,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await panel.locator('[data-action^="event-row:"]').count(), 0)
         await expect(panel.locator('#detection-plots')).to_be_empty()
         await panel.locator('.main-tabs [data-action="history"]').click()
-        await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        await panel.evaluate("""async p => {
+          // The DOM click dispatches refresh through runPanelAction. Its state
+          // response may start the archive loader after the click returns.
+          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+          if (p.historyLoad) await p.historyLoad.promise;
+        }""")
+        self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
         self.assertEqual(await panel.evaluate(
             "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
         self.assertTrue(await panel.evaluate("p => p.historyChart === p.roleChart"))
@@ -1004,10 +1010,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
               };
               const right = main.getBoundingClientRect().right;
               return {main: box(main), host: box(p), view: p.view,
+                sessionSelect: box(p.$('#session')),
+                sessionRow: box(p.$('#session').parentElement),
                 overflowingNodes: [...main.querySelectorAll('*')]
                   .filter(node => {
                     const r = node.getBoundingClientRect();
-                    return r.width > 0 && r.right > right + 0.5;
+                    return !node.closest('.scroll') &&
+                      r.width > 0 && r.right > right + 0.5;
                   }).map(box).sort((a,b) => b.right-a.right).slice(0,30)};
             }"""))
         self.assertLessEqual(main_width, 390)

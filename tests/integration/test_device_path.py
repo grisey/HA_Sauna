@@ -1611,6 +1611,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.light.fail_commands = False
 
     async def _assert_same_light_reload_waits_for_actual_service(self, *, serial):
+        from homeassistant.config_entries import ConfigEntryState
+
         from custom_components.ha_sauna import _restore_failed_options
         from custom_components.ha_sauna.runtime import SaunaRuntime
 
@@ -1648,6 +1650,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     patch.object(self.light, "async_turn_on", side_effect=paused_on),
                     patch("custom_components.ha_sauna._restore_failed_options", side_effect=restore_options),
+                    patch.object(self.hass.config_entries, "async_reload", wraps=original_reload) as reload_entry,
                 ):
                     selecting = asyncio.create_task(old.set_light_override(80))
                     try:
@@ -1672,9 +1675,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(self.entry.runtime_data, old)
                         self.assertFalse(old.closed)
                         self.assertFalse(old.archive.closed)
+                        self.assertEqual(self.entry.state, ConfigEntryState.LOADED)
                         self.assertEqual(dict(self.entry.options), options)
                         self.assertTrue(old.device._light_owned)
                         self.assertFalse(service.done())
+                        reload_entry.assert_not_called()
                     finally:
                         release.set()
                     await service
@@ -1683,9 +1688,23 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                     "custom_components.ha_sauna.runtime.SaunaRuntime",
                     side_effect=lambda configuration: SaunaRuntime(configuration, clock=lambda: self.now),
                 ):
-                    self.assertTrue(await original_reload(self.entry.entry_id))
+                    self.hass.config_entries.async_update_entry(
+                        self.entry, options={
+                            **options,
+                            "parameters": {
+                                **options["parameters"],
+                                "nominal_power_kw": options["parameters"]["nominal_power_kw"] + 1,
+                            },
+                        },
+                    )
+                    await self.hass.async_block_till_done()
                 self.runtime = self.entry.runtime_data
                 self.assertIsNot(self.runtime, old)
+                self.assertEqual(self.entry.state, ConfigEntryState.LOADED)
+                self.assertEqual(
+                    self.runtime.configuration.parameters.values["nominal_power_kw"],
+                    options["parameters"]["nominal_power_kw"] + 1,
+                )
                 await self.runtime.set_light_override(20)
                 await self.hass.async_block_till_done()
                 self.assertEqual(self.light.brightness, 51)
@@ -1718,9 +1737,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             await original_on(**kwargs)
 
-        async def prepare():
+        async def prepare(**kwargs):
             handing_off.set()
-            return await original_prepare()
+            return await original_prepare(**kwargs)
 
         self.light.calls.clear()
         with (

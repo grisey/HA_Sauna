@@ -37,12 +37,16 @@ Scheitert ein technisches Neuladen, werden Optionen, Startfreigabe und
 Lichtzuständigkeit nur für die noch aktuelle, offene alte Runtime
 wiederhergestellt. Neuere Optionsänderungen und bereits geschlossene oder
 ersetzte Runtimes bleiben unberührt. HAs eigener Entladefehler bleibt sichtbar.
-Eine Leuchtenübergabe wartet begrenzt auf bereits laufende alte Ausgaben und
-bestätigt erst danach ihr abschließendes AUS.
+Der Wechsel auf eine andere Leuchte wartet begrenzt auf bereits laufende alte
+Ausgaben und bestätigt erst danach das abschließende AUS der bisherigen Leuchte.
 Auch ein Runtimewechsel mit unveränderter Leuchtenbindung wartet vor dem
 Plattformentladen auf den tatsächlichen Abschluss alter Lichtdienste. Ist das
 innerhalb des Dienstbudgets nicht möglich, bleibt die bisherige Runtime samt
-Archiv zuständig; der Reloadversuch wird zurückgenommen. Ein direkter
+Archiv zuständig; der Reloadversuch wird zurückgenommen. Bei technischen
+Optionsänderungen erfolgt diese Vorprüfung bereits vor dem HA-Reload, damit
+ein noch laufender Lichtdienst keinen nicht wiederholbaren HA-Entladefehler
+erzeugt. Während der Rücknahme bleibt die Lichtausgabe entzogen; erst nach
+Wiederherstellung der Optionen wird sie freigegeben. Ein direkter
 Runtimeabschluss versucht zuerst Ofen-AUS und lässt bei einer noch laufenden
 Lichtaufgabe das Archiv für deren Abschluss offen. Der Abschluss kann erneut
 versucht werden; eine neue Runtime darf den offenen Vorgänger nicht ersetzen.

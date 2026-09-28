@@ -50,6 +50,12 @@ Die unabhängige Gegenlektüre fand zusätzlich einen bereits am Ausgabelock
 wartenden Leuchtenwechsel: Er konnte erst nach dem Runtimeabschluss eintreten.
 Auch diese Übergabeausgabe wird deshalb an der zentralen Dienststartgrenze
 durch den abgeschlossenen Runtimezustand gesperrt.
+Der echte HA-Lauf zeigte außerdem, dass eine verweigerte Integrationentladung
+den Eintrag in HAs nicht wiederholbaren Zustand `FAILED_UNLOAD` versetzt.
+Technische Optionsänderungen prüfen deshalb schon vor diesem HA-Aufruf die
+Lichtübergabe. Bei Rücknahme bleibt die Ausgabe bis zum Abschluss der
+Optionswiederherstellung entzogen, damit wartende Regelzyklen nicht erneut
+den Runtime-Lock mit derselben ausstehenden Lichtaufgabe belegen.
 
 Beim Panel umfasst der Rechtewechsel sowohl abgeschlossene Archive als auch
 bereits laufende Seitenabrufe und verborgene Diagnoseansichten. Die neue

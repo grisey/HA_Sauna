@@ -264,16 +264,24 @@ async def async_options_updated(hass, entry):
         runtime.controller.light_after_run if runtime and not runtime.closed else None
     )
     try:
-        if (
-            runtime and not runtime.closed and runtime.device
-            and runtime.configuration.bindings.values["light"]
-            != updated.bindings.values["light"]
-        ):
-            # Finish every old output before a confirmed OFF hands this
-            # binding away. Its phase never migrates to another light.
-            finished = await runtime.device.finish_session_light(
-                runtime._clock(), light_timer
+        if runtime and not runtime.closed and runtime.device:
+            light_changed = (
+                runtime.configuration.bindings.values["light"]
+                != updated.bindings.values["light"]
             )
+            if light_changed:
+                # Finish every old output before a confirmed OFF hands this
+                # binding away. Its phase never migrates to another light.
+                finished = await runtime.device.finish_session_light(
+                    runtime._clock(), light_timer
+                )
+            else:
+                # Reject an unfinished handoff before HA unload begins: False
+                # from its unload would permanently mark FAILED_UNLOAD. Keep
+                # output withdrawn until the guarded options rollback finishes.
+                finished = await runtime.device.prepare_light_handoff(
+                    restore_on_failure=False
+                )
             if (
                 getattr(entry, "runtime_data", None) is not runtime
                 or runtime.closed
@@ -283,7 +291,8 @@ async def async_options_updated(hass, entry):
             if not finished:
                 await _restore_failed_options(hass, entry, runtime, requested_options)
                 return
-            light_timer = None
+            if light_changed:
+                light_timer = None
         if entry.options != requested_options:
             return
         reloaded = await hass.config_entries.async_reload(entry.entry_id)
