@@ -33,6 +33,22 @@ class LightOutputTests(unittest.TestCase):
         self.assertEqual(self.update(75, "run", "nachlauf", 40, 15, 120).brightness_percent, 27.5)
         self.assertEqual(self.update(120, "run", "nachlauf", 40, 15, 120).brightness_percent, 40)
 
+    def test_joint_session_light_and_manual_expiry_keeps_automatic_end_off(self):
+        self.update(0, "heat", target=21)
+        self.update(1, "session", "session_light", 0, 21, 61)
+        self.light.set_manual(80, phase_key="session", ends_at=61)
+        self.assertEqual(
+            self.update(60, "session", "session_light", 0, 80, 61).brightness_percent,
+            80,
+        )
+        self.assertTrue(self.light.expire_manual(61))
+        for second in (61, 62, 65, 75, 90, 121):
+            with self.subTest(second=second):
+                plan = self.update(second, "idle", "aus", 0, 0)
+                self.assertEqual(plan.brightness_percent, 0)
+                self.assertTrue(plan.automatic)
+                self.assertEqual(self.light.last_automatic_brightness, 0)
+
     def test_paused_after_run_holds_its_current_value_and_resumes_from_it(self):
         self.update(0, "run", "nachlauf", 40, 40, 120)
         before_pause = self.update(45, "run", "nachlauf", 40, 15, 120).brightness_percent

@@ -860,6 +860,24 @@ class HADevice:
         service = "turn_off" if brightness <= 0 else "turn_on"
         command_key = (key, service, brightness if service == "turn_on" else None)
         desired = self._light_command_signature(service, brightness)
+        if (
+            name == "aus"
+            and plan.automatic
+            and light_after_run is not None
+            and self._light_session_off_completed_key
+            == (
+                "session_light",
+                light_after_run.session_id,
+                light_after_run.started_at,
+            )
+            and not self._light_service_is_pending()
+            and self._light_state_signature(state) == desired
+        ):
+            # Das bestätigte Frist-AUS erfüllt auch den automatischen Endplan.
+            # Seine neue Phasenkennung braucht keinen zweiten AUS-Dienst; die
+            # gleichzeitig abgelaufene manuelle Wahl ist damit verarbeitet.
+            self._light_override_dirty = False
+            return
         already_sent = self._light_state_signature(state) == desired and (
             command_key == self._light_last_command_key or service == "turn_on"
         )
@@ -884,6 +902,7 @@ class HADevice:
             service=service,
             brightness=brightness if service == "turn_on" else None,
             session_id=self._light_session_id(),
+            ends_at=ends_at,
         ):
             self._light_override_dirty = False
 

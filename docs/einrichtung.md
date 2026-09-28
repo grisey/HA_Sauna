@@ -1,77 +1,82 @@
-# Einrichtungsrunbook
+# Einrichtung
 
-Dieses Runbook richtet sich an Home-Assistant-Administratoren. HA Sauna setzt
-Home Assistant ab **2026.9.0** voraus; geprüft wurde der aktuelle Stand mit
-**2026.9.2**.
+Diese Anleitung richtet sich an Home-Assistant-Administratoren. HA Sauna setzt
+Home Assistant ab **2026.9.0** voraus. Die Zuordnung erfolgt über die bereits in
+Home Assistant vorhandenen Entitäten Ihrer Anlage.
 
-## 1. Integration installieren
+## Integration installieren
 
 1. Fügen Sie in HACS `https://github.com/grisey/HA_Sauna` als
    benutzerdefiniertes Repository vom Typ **Integration** hinzu und laden Sie
-   die Integration herunter.
+   HA Sauna herunter.
 2. Starten Sie Home Assistant neu.
-3. Öffnen Sie **Einstellungen → Geräte & Dienste**, wählen Sie **Integration
-   hinzufügen** und richten Sie **HA Sauna** ein.
+3. Öffnen Sie **Einstellungen → Geräte & Dienste → Integration hinzufügen**
+   und wählen Sie **HA Sauna**.
 
-Für ein Update wählen Sie die gewünschte Version in HACS und starten Home
-Assistant anschließend neu. Bei einer Vorabversion wie `1.0.0-rc4` aktivieren
-Sie den HACS-[Schalter für Vorabversionen](https://hacs.dev/docs/use/entities/switch/)
-von HA Sauna. HACS legt diesen Schalter zunächst deaktiviert an; aktivieren Sie
-gegebenenfalls zuerst die Entität. Solange nur Vorabversionen vorliegen, kann
-HACS mit ausgeschaltetem Schalter einen Commit-Code als Update anbieten. Für die
-RC-Reihe sollte der Schalter daher eingeschaltet bleiben und die HACS-
-Versionsprüfung aktualisiert werden.
+Für eine Vorabversion aktivieren Sie den HACS-Schalter für Vorabversionen von
+HA Sauna. Gegebenenfalls aktivieren Sie zuvor dessen Entität. Wählen Sie bei
+einem Update die gewünschte Version in HACS und starten Sie Home Assistant
+anschließend neu. Gespeicherte Einstellungen und Gerätezuordnungen werden
+übernommen.
 
-Beim Update von RC1 bleiben gespeicherte Temperaturwerte und Gerätezuordnungen
-erhalten. Falls ältere Sollwerte oder Programme unter 60 °C liegen, wird die
-neu hinzugekommene Untergrenze entsprechend niedriger übernommen. Eine bereits
-ausdrücklich eingestellte Untergrenze bleibt unverändert. Für neue Einrichtungen
-gilt weiterhin der Standard von 60 °C.
+## Anlage zuordnen
 
-## 2. Rollen zuordnen
+Ordnen Sie die vorhandenen Entitäten ihren Aufgaben zu:
 
-Wählen Sie die vorhandenen Entitäten nach ihrer Aufgabe aus, nicht nach ihrem
-Namen oder Gerät. Erforderlich ist mindestens eine vollständige Messposition
-mit Temperatur und Luftfeuchte, oben oder unten, der Schalter des Heizschützes, ein Bedieneingang und
-ein dimmbares Saunalicht. Optional lassen sich ein Leistungssensor sowie eine
-unabhängige Heizrückmeldung ergänzen.
+| Aufgabe | Benötigte Zuordnung |
+| --- | --- |
+| Messposition | Ein zusammengehöriges Paar aus Temperatur und relativer Luftfeuchte, oben oder unten |
+| Heizaktor | Schalter des Heizschützes |
+| Bedienung | Saunataster oder Betriebsschalter |
+| Beleuchtung | Dimmbares Saunalicht |
 
-Der obere Sensor bleibt Hauptsensor für die Regelung auf die Solltemperatur.
-Nur wenn oben kein gültiger Wert verfügbar ist, verwendet sie den gültigen
-unteren Wert als Ersatz. Sobald oben wieder gültige Werte liefert, übernimmt
-er erneut. Es gibt weder gleichberechtigte Auswahl noch Mittelung oder Höhenaufschlag.
-Ist eine zweite Messposition konfiguriert und fällt aus, wird die Störung
-angezeigt; der Betrieb bleibt mit der verfügbaren Messposition möglich.
+Eine vollständige Messposition ermöglicht den gesamten Betrieb einschließlich
+der zusätzlichen thermischen Türerkennung. Eine zweite Messposition ergänzt
+die Beobachtung. Für die Temperaturregelung führt der obere Temperaturwert;
+bei dessen Ausfall übernimmt der gültige untere Wert. Sobald oben wieder ein
+gültiger Wert vorliegt, führt dieser erneut. Der Ausfall einer konfigurierten
+Messposition bleibt als Störung sichtbar, während der Betrieb mit der
+verfügbaren Position weiterläuft.
 
-## 3. Taster und Heizschütz getrennt einrichten
+Die bestätigte Schalterstellung des Heizschützes liefert die erforderliche
+Relaisrückmeldung. Dafür genügt auch die bestätigte Stellung des verwendeten
+Shelly-Schalters. Ein Leistungssensor oder ein unabhängiger binärer Heiznachweis
+kann die Anlage ergänzen. Die möglichen Zuordnungen und Einheiten beschreibt
+die [Parameterreferenz](parameter.md#entitätsrollen).
 
-Ordnen Sie den **Saunataster oder Betriebsschalter** als Bedieneingang zu und
-den **Heizschütz** separat als Heizaktor. Ein Taster steuert die Saunasitzung;
-er schaltet den Schütz nicht unmittelbar. Bei einem Ereignistaster wählen Sie
-den passenden Ereignistyp. Ein binärer Taster meldet Drücken und Loslassen;
-HA Sauna erkennt das lange Halten aus der eingestellten Dauer. Ein dauerhaft
-eingerichteter Betriebsschalter folgt seiner Ein-/Ausstellung.
+## Bedieneingang einrichten
 
-## 4. Vor dem ersten Einsatz prüfen
+Wählen Sie den **Taster oder Betriebsschalter** und den **Schalter des
+Heizschützes** als getrennte Rollen. Der Taster bedient die Saunasitzung;
+HA Sauna steuert den Heizschütz.
 
-Kontrollieren Sie unter **Einstellungen** die voreingestellten
-Temperatur-, Licht-, Heizzeit- und Kühlwerte. Diese Werte sind einstellbare
-Standards; bereits gespeicherte örtliche Einstellungen bleiben erhalten.
-Prüfen Sie insbesondere, ob Messabstände, Schützrückmeldung und optionale
-Leistungsmessung zur Anlage passen. Deaktivieren Sie vor dem ersten Betrieb
-die bisherigen Sauna-Automationen, die denselben Ofen oder dasselbe Licht
-steuern. Die entkoppelten Lichttaster können weiter unmittelbar bedient werden.
+Bei einem Ereignistaster wählen Sie den passenden Ereignistyp. Ein binärer
+Taster meldet Drücken und Loslassen; die eingestellte **Langdruckdauer des
+Saunatasters** bestimmt den langen Druck. Ein Betriebsschalter überträgt seine
+Ein-/Ausstellung auf den Saunabetrieb. Die entkoppelten Lichttaster bleiben
+unmittelbar bedienbar.
 
-Unter **Temperaturprogramme** können Sie Namen, Start, Ende und Verteilung
-ändern oder Programme hinzufügen. Wählen Sie außerdem die Vorgabe für den
-Saunataster: eine eigene konstante Temperatur oder eines dieser
-Programme. Diese Wahl ist ebenfalls unter **Einstellungen** verfügbar.
+## Einstellungen an die Anlage anpassen
 
-**Standardwerte wiederherstellen** ist für Administratoren nach Ende einer
-Saunasitzung verfügbar. Es setzt Einstellungswerte, Temperaturprogramme und
-Protokollstufe zurück. Sensoren, Geräte und die Taster-/Schalterkonfiguration
-bleiben zugeordnet.
+Öffnen Sie im Saunapanel **Einstellungen → Grundeinstellungen**. Prüfen Sie
+zuerst, ob das **Höchstalter eines Messwerts** die üblichen Meldeabstände Ihrer
+Sensoren abdeckt. Kontrollieren Sie anschließend die Schützrückmeldung und die
+**Helligkeitsskala des Lichtgeräts** anhand der Gerätekonfiguration. Die
+[Parameterreferenz](parameter.md) erläutert die Werte und ihre Standards.
 
-Die tägliche Nutzung beschreibt die [Bedienungsanleitung](bedienung.md).
-Technische Zusammenhänge und alle Parameter stehen in [Betrieb](betrieb.md) und
-[Parameter](parameter.md).
+Die Untergrenze für Solltemperaturen beträgt bei einer neuen Einrichtung
+60 °C und lässt sich einstellen. Die feste Obergrenze beträgt 100 °C.
+Gespeicherte Temperaturvorgaben bleiben bei einem Update erhalten; eine bereits
+ausdrücklich eingestellte Untergrenze wird übernommen.
+
+Unter **Einstellungen → Programme** passen Sie die Temperaturprogramme an.
+Unter **Einstellungen → Saunataster** wählen Sie das Programm oder die konstante
+Temperatur für den Start mit dem Taster.
+
+Deaktivieren Sie vor dem ersten Betrieb die bisherigen Sauna-Automationen,
+die denselben Ofen oder dasselbe Licht steuern. Damit führt HA Sauna den
+automatischen Ablauf; die vorhandenen Lichttaster bleiben Teil der Bedienung.
+
+Die tägliche Nutzung erklärt die [Bedienungsanleitung](bedienung.md).
+Gerätezuordnungen und technische Grundeinstellungen lassen sich nach Ende einer
+Sitzung über **Einstellungen** erneut bearbeiten.

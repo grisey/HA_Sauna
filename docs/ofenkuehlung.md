@@ -1,84 +1,96 @@
-# Ofenkühlung – geltender Stand
+# Ofenkühlung
 
-Diese Seite ersetzt frühere Beschreibungen von Zwangskühlung, Heizbudgets,
-Temperatur-Zusatzkühlung, pausierbarer Kühlung und einer Anrechnung von
-Nachläufen. Ein live aktiver Gang fordert vorläufig wie bestätigt Heizen an;
-nur nach jedem nachlaufberechtigten, bestätigten und beendeten Gang gibt es
-genau eine Ofenkühlung. Der technische Name `after_run` bleibt aus Kompatibilitätsgründen
-bestehen; in der Oberfläche heißt die Phase **Ofenkühlung**.
+Die Ofenkühlung hält den Ofen für eine aus dem bisherigen Betrieb berechnete
+AUS-Laufzeit ausgeschaltet. Die Oberfläche verwendet die Bezeichnung
+**Ofenkühlung**; der technische Zustandsname lautet `after_run`.
 
-## Beginn und Ende
+## Auslösung
 
-Das Ende eines bestätigten Gangs fordert die Ofenkühlung sofort an und sperrt
-jeden weiteren EIN-Befehl. Die Uhr beginnt jedoch erst, wenn die tatsächliche
-Schützrückmeldung AUS bestätigt. Genau zu diesem tatsächlichen Start berechnet
-und speichert die Steuerung Dauer und Berechnungsbeleg. Spätere Phasen-,
-Temperatur- oder Rückmeldungsänderungen ändern diese bereits laufende Dauer
-nicht.
+Im Automatikbetrieb löst das bestätigte Durchlüften am Ende eines bestätigten
+Gangs die Ofenkühlung aus. Die Buchung setzt einen neu abgeschlossenen Gang mit
+zugeordnetem Aufguss voraus. Betrieb-AUS führt den eigenen Ausschaltablauf aus:
+Der Gang endet, die Steuerung fordert Ofen-AUS an und das Licht folgt dem
+[Ausschaltablauf](betrieb.md#licht).
+In der Betriebsart Manuell folgt die Heizanforderung der Bedienwahl und der
+technischen Freigabe.
 
-Nur bestätigte AUS-Laufzeit zählt. Türereignisse, Personensignale und manuelles
-Heizen können die Ofenkühlung nicht unterbrechen. Die regulären Thermostatpausen
-bleiben davon unabhängig erhalten. Ein ausdrücklich manuelles Beenden ist möglich. Eine verkürzt beendete
-Kühlung gilt nicht als vollständig und setzt den Bemessungszeitraum nicht zurück.
-Betrieb-AUS oder ein Sitzungsabbruch setzen ihn ebenfalls nicht zurück.
+Die Kühlanforderung fordert sofort Ofen-AUS. Ihr Countdown beginnt mit
+der bestätigten Schützstellung AUS. Zu diesem tatsächlichen Beginn berechnet
+und speichert die Steuerung die Dauer. Für die gesamte laufende Kühlung gilt
+dieser gespeicherte Wert.
 
-Das Berechnungsfenster beginnt am Ende der letzten tatsächlich vollständig
-abgeschlossenen Ofenkühlung und endet am tatsächlichen Beginn der neuen
-Ofenkühlung. Ohne eine vorherige vollständige Kühlung beginnt es am Sitzungsbeginn.
+## Laufzeit und Abschluss
 
-## Bemessung
+Ausschließlich bestätigte AUS-Laufzeit zählt zur Kühlung. Bei Schütz-EIN oder
+unbekannter Rückmeldung hält die Uhr ihren Rest; die Kühlanforderung fordert
+weiterhin Ofen-AUS. Die Heizfreigabe bleibt für die angeforderte und laufende
+Ofenkühlung gesperrt, auch bei Tür- oder Personensignalen und manueller Ofenwahl.
 
-Die Basisdauer ist `after_run_minutes` (Standard **5 min**). Die berechnete
-Dauer liegt zwischen dieser Basis und `oven_cooling_max_minutes` (Standard
-**15 min**). Ein schon gespeicherter Basiswert bleibt erhalten; liegt er über
-einem später eingeführten Maximum, ist er zugleich das wirksame Minimum und
-Maximum.
+Administratoren können die Ofenkühlung über die dafür vorgesehene
+[Bedienhandlung](bedienung.md) ausdrücklich vorzeitig beenden.
+Eine solche Verkürzung und Betrieb-AUS bewahren den
+bisherigen Bemessungszeitraum. Ausschließlich eine vollständig durchlaufene
+Ofenkühlung setzt dessen Beginn auf ihren Abschluss.
 
-Für jedes Intervall im Fenster wird die Zeit in Minuten exponentiell gewichtet:
+Der Bemessungszeitraum endet am tatsächlichen Beginn der neuen Ofenkühlung.
+Er beginnt am Ende der letzten vollständig abgeschlossenen Ofenkühlung;
+für die erste Kühlung der Sitzung gilt der Sitzungsbeginn.
+
+## Berechnung der Dauer
+
+Die Basisdauer `after_run_minutes` beträgt standardmäßig **5 Minuten**. Das
+Maximum `oven_cooling_max_minutes` beträgt **15 Minuten**. Bei einem gespeicherten
+Basiswert oberhalb des eingestellten Maximums gilt dieser Basiswert zugleich
+als wirksames Minimum und Maximum.
+
+Die Berechnung gewichtet jüngere Zeiten stärker als ältere. Das Gewicht eines
+Zeitpunkts hängt von seinem Alter in Minuten zum Kühlbeginn ab:
 
 \[
-w(Alter)=2^{-Alter / h}, \qquad h=\texttt{oven\_cooling\_half\_life\_minutes}
+w(Alter)=2^{-Alter/h}
 \]
 
-Der Standard für die Halbwertszeit ist **15 min**. Die Integration erfolgt
-analytisch über die tatsächlichen Intervallgrenzen, nicht in einem künstlichen
-Sekundenraster. Ein 15 Minuten alter Abschnitt zählt mit halbem Gewicht,
-ein 30 Minuten alter mit einem Viertel. Das gilt gleichermaßen für Heizzeiten
-und Bereitschaftspausen; sämtliche Gewichte beziehen sich auf den Kühlbeginn.
+Die Halbwertszeit \(h\) ist über `oven_cooling_half_life_minutes` einstellbar und
+beträgt standardmäßig **15 Minuten**. Ein 15 Minuten alter Zeitpunkt erhält
+halbes Gewicht, ein 30 Minuten alter ein Viertel. Die Berechnung integriert
+analytisch über die tatsächlichen Intervallgrenzen und verwendet für alle
+Zeitanteile denselben Kühlbeginn als Bezug.
 
-- **H** ist die gewichtete Zeit mit tatsächlich bestätigtem Schütz **EIN**,
-  unabhängig von der gerade angezeigten Betriebsphase.
-- **I** ist die gewichtete Schnittmenge aus korrigierter, exklusiver
-  Bereitschaftspause, Betrieb EIN und tatsächlich bestätigtem Schütz **AUS**.
-- Unbekannte Schützstellung ist weder Heizen noch Idle und erzeugt insbesondere
-  keine Idle-Gutschrift.
+**H** bezeichnet die gewichtete Zeit mit bestätigtem Schütz-EIN.
+**I** bezeichnet die gewichtete Bereitschaftszeit bei Betrieb-EIN und bestätigtem
+Schütz-AUS. Diese Bereitschaftszeit stammt aus der korrigierten Phasenansicht.
+Jeder Zeitpunkt geht einmal in die Berechnung ein. Zeiten mit unbekannter
+Schützstellung erscheinen als unvollständiger Beleg; die Anrechnung als
+Bereitschaftszeit setzt bestätigtes Schütz-AUS voraus.
 
-Mit `oven_cooling_heat_idle_ratio` (Standard **2**) lautet die Dauer in Minuten:
+Das Verhältnis \(r\) ist über `oven_cooling_heat_idle_ratio` einstellbar und
+beträgt standardmäßig **2**. Die Dauer in Minuten lautet:
 
 \[
-\text{Basis} + \operatorname{clip}(H / \text{Ratio} - I,\,0,\,
+\text{Basis}+\operatorname{clip}(H/r-I,\,0,\,
 \text{wirksames Maximum}-\text{Basis})
 \]
 
-Der Idle-Saldo wird nicht vorzeitig auf null gesetzt; nur das Endergebnis wird
-auf den erlaubten Bereich begrenzt. Überlappende Pausen und doppelte
-Rückmeldungen dürfen keine Zeit doppelt zählen.
+`clip` begrenzt die Zusatzdauer auf die angegebenen Grenzen. Die Steuerung
+verrechnet zuerst die vollständigen gewichteten Heiz- und Bereitschaftszeiten
+und begrenzt anschließend das Ergebnis. Mit den Standardwerten ergibt sich
+`5 + clip(H / 2 - I, 0, 10)` Minuten. Eine gewichtete Minute Bereitschaft gleicht
+zwei gewichtete Heizminuten aus. Ein verbleibender positiver Heizanteil
+verlängert die Basisdauer.
 
-Mit den Standardwerten lautet die Formel `5 + clip(H / 2 - I, 0, 10)` Minuten.
-Eine gewichtete Minute Bereitschaftspause gleicht zwei gewichtete Heizminuten
-aus. Erst ein positiver verbleibender Heizanteil verlängert die Grundkühlung.
-Die Formel ist die vereinbarte Betriebsregel; Halbwertszeit und Verhältnis sind
-keine aus Ofentemperaturmessungen kalibrierten Material- oder Schutzgrenzen.
+Halbwertszeit und Verhältnis bilden die einstellbare Betriebsregel für diese
+Berechnung. Technische Schutzgründe wirken gemäß der
+[Heizpriorität](praesenz-ofen-phasen.md).
 
 ## Nachvollziehbarkeit
 
-Die eingefrorene Berechnung speichert Dauer, Basis, wirksames Maximum,
-Halbwertszeit, Verhältnis, gewichtete Heiz- und Idle-Minuten, Fenstergrenzen
-und die Qualität. `complete` bedeutet vollständige Schütz- und
-Phasenprojektion für die benötigte Aussage; `incomplete` macht fehlende oder
-unbekannte Belege sichtbar, ohne daraus Idle zu erfinden.
+Der gespeicherte Berechnungsbeleg enthält die verwendeten Einstellungen, die
+gewichteten Zeitanteile und den betrachteten Zeitraum. Die Qualitätsangabe
+`complete` bezeichnet eine vollständige Grundlage aus Schalterrückmeldungen
+und Phasen. `incomplete` kennzeichnet Lücken oder unbekannte Zustände.
 
-Die Datenquellen bleiben voneinander getrennt: `contactor_history` enthält
-reale Rückmeldungen, die Phasenprojektion ist eine rückblickende, exklusive
-Darstellung. Ihre Korrektur erzeugt niemals nachträgliche Aktorbefehle.
-Historische Kühlzyklen bleiben lesbar, steuern aber nichts mehr.
+`contactor_history` bewahrt die tatsächlichen Schalterrückmeldungen. Die
+historische Phasenansicht ordnet die Betriebsabschnitte rückblickend und
+überlappungsfrei zu. Gerätebefehle entstehen ausschließlich aus dem aktuellen
+Steuerungszustand zur tatsächlichen Verarbeitungszeit. Abgeschlossene Kühlzyklen
+stehen als gespeicherter Verlauf zur Verfügung.

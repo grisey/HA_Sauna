@@ -1,62 +1,139 @@
-# Prüfstand
+# Prüfanleitung
 
-Diese Seite beschreibt die geprüften Fallgruppen, nicht die Fehlerfreiheit oder
-Widerspruchsfreiheit der gesamten Implementierung. Ein erfolgreicher Test belegt
-nur seine Eingaben und Assertions; fachliche Regeln und ihre Verbraucher sind
-zusätzlich am Code zu prüfen. Das
-Ergebnis des jeweiligen Commits steht in den
-[GitHub-Prüfläufen](https://github.com/grisey/HA_Sauna/actions/workflows/tests.yml).
-Die [Einrichtung](einrichtung.md) und die [Bedienung](bedienung.md) sind getrennte
-Anleitungen für die Nutzung.
+Ein Prüflauf belegt seine ausgeführten Fälle und Prüfbedingungen. Die fachliche
+Prüfung verfolgt zusätzlich den Weg vom Eingang über den führenden Zustand bis
+zum tatsächlichen Verbraucher. Ausgangspunkt sind die Regeln in
+[Betrieb](betrieb.md), [Gangmodell](gangmodell.md) und [Zeitmodell](zeitmodell.md).
 
-## Geprüfte Ebenen
+Tests laufen ausschließlich unter Linux. Die maßgeblichen Versionen,
+Abhängigkeiten und Zeitgrenzen stehen in der
+[CI-Konfiguration](../.github/workflows/tests.yml). Alle folgenden Befehle werden
+vom Repository-Hauptverzeichnis aus und jeweils als eigener Prozess ausgeführt.
+Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
-| Ebene | Geprüftes Verhalten |
-| --- | --- |
-| Fachkern | Gangzuordnung, Temperaturprogramme, Heizzeit, Nachlauf, Kühlung, manuelle Übersteuerung, Licht und Anzeigeprognosen mit kontrollierter Zeit. |
-| Messverarbeitung | Allgemeine Erkennungsregeln, Sensorausfall, Quellenwechsel, abgeleiteter Wassergehalt und Abgrenzung unvollständiger Messungen. |
-| Home Assistant | Einrichtung, Entitäten, Optionen, reale HA-Listener und Dienste, Rückmeldungen, Berechtigungen und HTTP-Schnittstellen. Externe Geräte sind Testquellen. |
-| Archiv | Originalauflösung, Zuordnungsrevisionen, Export sowie tatsächliches HA-Backup mit Wiederherstellung in eine getrennte Testinstanz. |
-| Browser | Bedienung im echten HA-Frontend: Temperaturwahl, Programme, manuelle Bedienung, Verlauf, Archiv und Einstellungen. |
+## Passende Prüfebene wählen
 
-## Wichtige Ablaufgrenzen
+| Ebene | Zweck | Dateien |
+| --- | --- | --- |
+| Fachkern und Runtime | Regeln und Zustandsübergänge mit kontrollierter Zeit; Originalarchiv und Fehlergrenzen. | `tests/test_*.py` |
+| Panelmethoden | Datenaufbereitung, Bedienzustände und Diagrammverträge mit synthetischen Daten. | `tests/panel_*.test.js` |
+| HA-Adapter | Einrichtung und Adapterverhalten mit HA-Datentypen und gezielt ersetzten Außenaufrufen. | `tests/ha/` |
+| HA-Integration | Laufende Testinstanz mit HA-Listenern, Diensten, Rechten und HTTP-Schnittstellen; externe Geräte sind Testquellen. | `tests/integration/` |
+| Browser | Bedienung im HA-Frontend über Chromium. | `tests/browser/` |
 
-Die gezielten Szenarien prüfen insbesondere:
+Die Prüfung verwendet den zur Änderung passenden Originalpfad und vorhandene
+Fixtures. Ein Gegenfall verändert gezielt die entscheidende Bedingung. Beispielsweise
+wird eine verzögerte Rückmeldung mit einer rechtzeitig eintreffenden verglichen.
+Erwartete Werte stammen aus der fachlichen Regel; der Test beobachtet deren
+Umsetzung und den betroffenen Verbraucher.
 
-- Ein aktiver Gang fordert Heizen an; Schutz, Betrieb-AUS und Ofenkühlung
-  bleiben übergeordnet.
-- Die Türhilfe gilt einmalig nach geeignetem Türschluss; die Mindestheizzeit
-  beginnt mit tatsächlichem Heiznachweis.
-- Ofenkühlung sperrt sofort, ihre Zeit beginnt erst bei bestätigtem Schütz-AUS.
-  Heizzeiten und Bereitschaftspausen bestimmen ihre einmal eingefrorene Dauer.
-  Eine manuelle Heizwahl unterbricht die Kühlung nicht.
-- Phasenprojektionen korrigieren die Darstellung rückwirkend, ohne historische
-  Aktorbefehle zu verändern. Archivierte Altphasen bleiben lesbar.
-- Übersteuerungen enden an ihren Rückkehrpunkten oder spätestens nach ihrer
-  Höchstdauer. Unveränderte Mess- und Zustandsmeldungen verlängern sie nicht.
-- Einstellungen und Darstellungsprognosen ändern keine Heizsperren oder Fristen.
+## Fachkern und JavaScript
 
-Es gelten [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md) und
-[Ofenkühlung](ofenkuehlung.md). Frühere Prüfziele zu Heizbudgets, Türwartefristen,
-pausierter Kühlung und eigenständiger Zwangskühlung sind keine aktuellen
-Abnahmeregeln. Negativtests können weiterhin belegen, dass alte Parameter keine
-solche Steuerwirkung mehr auslösen.
+Der Fachkern verwendet Python und seine Standardbibliothek. Die CI wählt dafür
+Python 3.13. Die Oberfläche wird mit dem Testläufer von Node geprüft:
 
-## Durchführung
+```sh
+python -m unittest discover -s tests -v
+```
 
-Der Fachkern benötigt nur Python mit Standardbibliothek. Öffentliche Läufe
-enthalten keine privaten Recorderdaten. Die optionalen privaten Replays dienen
-der Kalibrierung und dem Vergleich von Änderungen; dieselben Aufzeichnungen
-sind keine unabhängige Bestätigung der Erkennungsqualität.
+```sh
+node --test tests/panel_*.test.js
+```
 
-HA- und Browserprüfungen laufen unter Linux mit dem in der
-[Prüfkonfiguration](../.github/workflows/tests.yml) festgelegten HA-Stand.
-Jeder Testschritt ist auf zwei Minuten begrenzt; der gesamte HA- beziehungsweise
-Browserjob einschließlich Einrichtung auf fünf Minuten. Veraltete parallele
-Läufe werden abgebrochen.
+Die Variable `SAUNA_RECORDER_ARCHIVE` aktiviert die privaten Vergleichsfälle
+mit einem freigegebenen Recorderexport. Der Standardlauf kennzeichnet diese
+Fälle als übersprungen. Die [Replaybeschreibung](kandidat.md) erklärt
+Datengrundlage, Aufbereitung und Reproduktion. Die Auswertung einer zur
+Kalibrierung verwendeten Sitzung belegt den Vergleich an genau dieser Sitzung.
 
-Installation und Prüfung an der echten Anlage erfolgen durch den Benutzer über
-HACS. Softwaretests weisen keine physische Schütz- oder Lichtwirkung an dieser
-Anlage nach. Ein optionaler realer Leistungsmesser und die zurückgestellte
-Erkennung eines internen Ofen-Aus allein aus Temperaturkrümmung gehören nicht
-zum bisherigen Hardware-Nachweis.
+## Home Assistant
+
+Für die HA-Prüfungen wird eine eigene Python-Umgebung mit der im Workflow
+festgelegten Version verwendet, derzeit Python 3.14.2. Die Installation entspricht
+dem HA-Job:
+
+```sh
+python -m pip install 'homeassistant==2026.9.2' 'securetar==2026.4.1' 'cronsim==2.7'
+```
+
+Danach werden Adapter und Integration getrennt ausgeführt. `HA_TEST_REQUIRED=1`
+macht die erforderliche HA-Umgebung zur Ausführungsbedingung:
+
+```sh
+HA_TEST_REQUIRED=1 python -m unittest discover -s tests/ha -v
+```
+
+```sh
+HA_TEST_REQUIRED=1 python -m unittest discover -s tests/integration -v
+```
+
+`tests/integration/test_archive_backup.py` erzeugt über die offizielle
+Home-Assistant-Routine ein Core-Backup und stellt es in einem getrennten
+Konfigurationsverzeichnis wieder her. Der Test startet dort eine neue Instanz
+und vergleicht Optionen, Originaldaten und Sitzungszuordnungen. So wird der
+vollständige HA-Wiederherstellungsweg geprüft; die SQLite-Snapshotprüfung gehört
+daneben zum Archivexport.
+
+## Browser
+
+Die Browserumgebung verwendet dieselbe Python-Version wie der HA-Job.
+Ihre vollständigen Abhängigkeiten stehen in
+[`tests/browser/requirements.txt`](../tests/browser/requirements.txt):
+
+```sh
+python -m pip install -r tests/browser/requirements.txt
+```
+
+```sh
+python -m playwright install --with-deps chromium
+```
+
+```sh
+HA_TEST_REQUIRED=1 python -m unittest discover -s tests/browser -v
+```
+
+Die ergänzenden Mess- und Interaktionsprogramme für den Sitzungsverlauf stehen
+im [Verlaufsvertrag](livekurve.md). Ihre Messgrenzen beschreiben, welcher Teil
+der Verarbeitung jeweils erfasst wird.
+
+## Nachweis festhalten
+
+Ein Prüfprotokoll verbindet den Quellstand mit Umgebung, exaktem Kommando,
+Exitcode und den beobachteten Ergebnissen. Ausgeführte Fälle, übersprungene Fälle
+und fehlgeschlagene Prozesse werden getrennt ausgewiesen. Erfolgreich ist ein
+Prozess mit erfolgreichem Abschluss; ein nachfolgender Absturz gehört zum
+Ergebnis desselben Laufs.
+
+Bei einer PR-Prüfung werden der gemeldete PR-Head und der tatsächlich
+ausgecheckte Commit getrennt festgehalten. Ein Checkout kann der von GitHub
+erzeugte Merge-Commit mit der Zielbasis sein. Der Laufdatensatz mit `headSha`
+bezeichnet den PR-Head; die Checkout-Ausgabe und `git rev-parse HEAD` belegen
+den getesteten Commit. Zu beiden Commits wird der Tree erfasst:
+
+```sh
+git rev-parse '<PR-Head>^{tree}'
+```
+
+```sh
+git rev-parse '<getesteter-Checkout>^{tree}'
+```
+
+Gleiche Tree-IDs belegen denselben versionierten Dateibaum trotz verschiedener
+Commit-IDs. Bei unterschiedlichen Trees wird die tatsächliche Abweichung mit
+`git diff <PR-Head> <getesteter-Checkout>` festgehalten und ihre Relevanz für die
+Prüfung bewertet. Der Nachweis benennt den getesteten Baum; eine neue Ausführung
+richtet sich nach relevanten Abweichungen und anschließend vorgenommenen
+Änderungen. Historische Originalprotokolle behalten ihren ursprünglichen Wortlaut;
+ihre Zuordnung zum geprüften Stand steht im aktuellen Arbeitsnachweis.
+
+Prüfrunden, Befunde und konkrete Ergebnisse liegen im getrennten Arbeitsbereich
+`arbeit/`. Diese Anleitung beschreibt die dauerhaft ausführbaren Prüfwege.
+Die CI führt die Befehle mit ihren im Workflow festgelegten Zeitgrenzen aus und
+beendet überholte parallele Läufe.
+
+Die Wirkung an einer realen Anlage wird in einer eigenen, ausdrücklich
+beauftragten Prüfung durch den Benutzer beobachtet. Ihr Nachweis benennt die
+verwendeten Geräte und Rückmeldungen. Die Softwareprüfungen beschreiben
+ihre jeweiligen Testquellen und simulierten Außenwirkungen. Einrichtung und
+Bedienung sind in [Einrichtung](einrichtung.md) und [Bedienung](bedienung.md)
+beschrieben.

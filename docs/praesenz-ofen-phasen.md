@@ -1,104 +1,84 @@
-# Präsenz, Ofen und Phasen – geltender Stand
+# Präsenz, Ofen und Phasen
 
-Diese Seite ersetzt frühere Aussagen über Türfristen, Gang-Heizveto,
-pausierbare Kühlung und die Aktivierung externer Präsenz. Ausgangsbasis bleibt
-der [rc4-Stand becfdb5](https://github.com/grisey/HA_Sauna/commit/becfdb5464e1219e42f75f03f9c5feea723c0d61),
-zusammengeführt in [f23a7c9](https://github.com/grisey/HA_Sauna/commit/f23a7c93e5d9bf9cacaed0c609cef706bd25d04d).
-Der Arbeitsbranch heißt `codex/rc4-praesenz-ofen-phasen`. Die produktiven
-Erkennungsmuster und Schwellen bleiben gegenüber rc4 unverändert.
+Der Controller führt den Gangzustand und bestimmt daraus die Heizanforderung.
+Die Erkennung liefert Beobachtungen; Geräterückmeldungen belegen die
+bestätigte Schalterstellung des Ofens. Diese Seite erklärt ihr Zusammenwirken im
+[Saunabetrieb](betrieb.md).
 
-## Physischer Ablauf und Vorrang
+## Heizpriorität
 
-Der aktuelle Aktorzustand wird aus dem laufenden physischen Ablauf abgeleitet.
-Im Automatikbetrieb gilt bei konkurrierenden Ursachen diese Reihenfolge:
+Im Automatikbetrieb gilt folgende Reihenfolge:
 
-1. Schutz und ausdrückliches Betrieb-AUS
-2. angeforderte oder laufende Ofenkühlung
-3. live aktiver Saunagang (vorläufig oder bestätigt)
-4. einmalige vorübergehende Tür-Heizanforderung
-5. normale Thermostatregelung
+1. Technischer Schutz, fehlende Heizfreigabe oder Betrieb-AUS fordern Ofen-AUS an.
+2. Angeforderte oder laufende Ofenkühlung fordert Ofen-AUS an.
+3. Ein aktuell aktiver Gang fordert durchgehend Heizen an.
+4. Eine geeignete Türschließung kann die Mindestheizhilfe auslösen.
+5. Der Thermostat regelt anhand von Temperatur, Mindestheizzeit und Heizpause.
 
-Im Automatikbetrieb fordert jeder live aktive Gang, ob vorläufig oder bestätigt,
-kontinuierlich EIN, solange Betrieb und Schutz es erlauben. Er ist kein
-rückwirkend erzeugter Befehl und keine Heizzeitbuchung. Schutz, Betrieb-AUS und
-Ofenkühlung bleiben vorrangig. Nur das Ende eines bestätigten Gangs fordert
-eine Ofenkühlung an und zählt im Timeline-Modell.
-Die ausdrücklich gewählte Betriebsart Manuell behält ihre eigene Bedienvorgabe;
-Gangsignale wechseln diese Betriebsart nicht und erzeugen dort keine automatische
-Gang-Heizanforderung. Schutz und Betrieb-AUS bleiben übergeordnet.
+Die Ganganforderung gilt ab der vorläufigen Erkennung und bleibt nach dem ersten
+Aufguss bestehen. Der Controller leitet daraus die jetzt gültige Anforderung ab.
+Den Kühlablauf nach einem Gang beschreibt [Ofenkühlung](ofenkuehlung.md).
 
-## Tür und vorübergehendes Heizen
+Eine ausdrückliche vorübergehende Ofenwahl ist eine Bedienhandlung innerhalb
+der Automatik. Gewähltes Ofen-AUS hält den Ofen auch während eines aktiven Gangs
+aus. Die Wahl endet bei Rückgabe, Phasenwechsel oder einem Wechsel der
+automatischen EIN-/AUS-Anforderung, spätestens nach 10 Minuten. Ofen-EIN setzt
+die gültige Heizfreigabe voraus; Schutz, Betrieb-AUS und Ofenkühlung behalten
+Vorrang. Die [Bedienung](bedienung.md) legt die verfügbaren Zugänge fest.
 
-Nur eine Tür**schließung** kann eine vorübergehende Heizanforderung auslösen.
-Sie nutzt die bestehende tatsächliche Mindestheizzeit, standardmäßig 10 Minuten.
-Diese beginnt mit der tatsächlichen Heizrückmeldung. Bereits laufendes Heizen
-bekommt keine neue Mindestdauer. Es gibt keine Öffnungsfrist und keinen
-Parameter `door_request_minutes` mehr.
+In der Betriebsart Manuell folgt die Heizanforderung der ausdrücklichen
+Ofenwahl. Gang- und Präsenzereignisse begleiten dort den Verlauf. Die
+Betriebsart bleibt bis zur nächsten ausdrücklichen Wahl bestehen; technischer
+Schutz und Betrieb-AUS behalten Vorrang.
 
-Eine Türöffnung während eines aktiven Gangs oder einer angeforderten/laufenden
-Ofenkühlung ist dauerhaft nicht berechtigt. Die Anforderung ist ein getrenntes,
-verwerfbares Objekt: Sie bleibt nur bis zur tatsächlichen Heizbestätigung offen,
-wird bei unzulässigem Ablauf verworfen und erfindet weder einen Gang noch eine
-Heizrückmeldung.
+## Türschluss als Mindestheizhilfe
 
-## Phasen und historische Projektion
+Die Türhilfe bewertet jede Türöffnung als eigenen Vorgang. Eine geeignete
+Öffnung erfolgt bei eingeschaltetem Automatikbetrieb in der Phase Aufheizen oder
+Bereit. Der zugehörige Türschluss kann einmalig Heizen anfordern. Ein Wechsel
+in einen Saunagang oder eine angeforderte beziehungsweise laufende Ofenkühlung
+verwirft die Eignung dieses Vorgangs. Eine spätere geeignete Türöffnung beginnt
+einen neuen Vorgang.
 
-Der live physische Zustand, der aktuelle Aktorbefehl und die rückblickende
-Phasenprojektion sind getrennte Darstellungen. `base_phases` und
-`contactor_history` enthalten Beobachtungen. Die Projektion legt daraus
-exklusive Abschnitte wie Aufheizen, Bereit, Saunagang, Ofenkühlung und AUS ab;
-sie darf rückwirkend korrigiert werden, erzeugt aber niemals historische
-Aktorbefehle.
+Mit der tatsächlichen Heizbestätigung geht die Anforderung in die laufende
+Mindestheizzeit über, standardmäßig 10 Minuten. Bereits laufendes Heizen behält
+seinen ursprünglichen Beginn. Bis zur Bestätigung bleibt die Türanforderung
+eine widerrufbare Anforderung; die Heizzeiterfassung folgt den tatsächlichen
+Rückmeldungen. Betrieb-AUS und eine ausdrückliche Ofen-AUS-Wahl verwerfen die
+Türanforderung.
 
-`readiness_pauses` beschreibt nur korrigierte Bereitschaft bei Betrieb EIN und
-bestätigtem Schütz AUS. Unbekannte Rückmeldung bleibt unbekannt. Diese Pausen
-sind ausschließlich ein Eingabebeleg für die dynamische Ofenkühlung unter
-[Ofenkühlung](ofenkuehlung.md).
+## Tatsächlicher Zustand und Phasenansicht
 
-## Präsenz und Audio
+Die aktuelle Heizanforderung beschreibt den jetzt gewünschten Ofenzustand.
+Bestätigte Schalterrückmeldungen dokumentieren den tatsächlichen Verlauf der
+Schalterstellung in `contactor_history`. Eine zusätzlich eingerichtete Leistungs-
+oder Heizrückmeldung liefert die entsprechende Messgrundlage für Heizzeit und
+Verbrauch; die [Rückmeldequellen](betrieb.md#heizzeit-timer-und-energie) sind
+nach ihrer Verfügbarkeit geordnet. Die historische Phasenansicht fasst den Verlauf in
+zusammenhängende, überlappungsfreie Abschnitte zusammen. Später erkannte Ereignisse
+können diese Zuordnung ergänzen. Das [Zeitmodell](zeitmodell.md) erklärt die
+Zeitpunkte von Beobachtung, Buchung und tatsächlicher Erkennung.
 
-Die Proxyquelle bleibt aktiv und führend. Eine externe Präsenzquelle beobachtet
-nur; sie startet, beendet oder übersteuert keinen Gang und keinen Ofen. Liefert
-eine künftig fachlich zugelassene Präsenzquelle einen live aktiven Gang, gilt
-dessen kontinuierliche Heizanforderung auch ohne Aufguss. Die aktuelle
-Proxy-Bestätigungsregel wird damit noch nicht geändert. Eine spätere FP300-Anbindung darf Phasen
-liefern, aber keine Aktorbefehle. Audio ist lediglich als Ausgabeziel vorbereitet;
-es gibt keine Wiedergabeplanung.
+Die Grundphasen `base_phases` bilden den zeitlichen Betriebsablauf. Für die
+Ofenkühlung verwendet die Steuerung daraus die Bereitschaftszeiten
+`readiness_pauses`: die Schnittmenge aus zugeordneter Bereitschaft, Betrieb-EIN
+und bestätigtem Schütz-AUS. Jede Zeitspanne zählt einmal. Die daraus berechnete
+Kühldauer wird beim tatsächlichen Kühlbeginn gespeichert.
 
-Die austauschbare Türhilfe liegt ausschließlich in `core/temporary_door_heat.py`
-und ihrer Zustandsführung im Controller. Sobald eine direkte Präsenzquelle die
-Gangführung übernimmt, entfällt diese Türhilfe; ein paralleles ODER oder ein
-automatischer Rückfall auf sie ist nicht vorgesehen. Ausfall-, Unterbrechungs-
-und Enderegeln der direkten Präsenz werden vor deren Aktivierung festgelegt.
+## Präsenzquellen im aktuellen Programm
 
-## Prüfung dieser Umsetzung
+Die aus Temperatur und Feuchte abgeleiteten Personensignale führen die
+Gangzuordnung. Eine zusätzlich eingerichtete direkte Präsenzquelle dient
+ausschließlich der Beobachtung. Der Controller bleibt für Gangführung und
+Aktorbefehle zuständig. Die technischen Beobachtungsverträge erläutern
+[Schnittstellen](schnittstellen.md). Die Gerätezuordnung bietet außerdem ein
+Audioziel als vorbereitete Bindung für eine spätere Ausgabe.
 
-Der abschließende Lauf von `python -m unittest discover -s tests` umfasst
-444 Prüfungen: 442 erfolgreich, zwei optionale private Prüfungen übersprungen.
-`node --test tests/panel_*.test.js` besteht mit zwölf erfolgreichen Prüfungen.
-Python-Kompilierung, JavaScript-Syntax und `git diff --check` sind geprüft.
-Der Detector ist bytegleich mit der oben genannten rc4-Basis.
+### Erweiterungsvertrag für direkte Präsenzführung
 
-Separat wurden vollständige private Originalaufzeichnungen erneut durch die
-produktiven Runtime-, Geräte-, Detector-, Controller- und Thermostatpfade
-geführt. Alle Läufe beendeten sich regulär. Erkennungsereignisse und gezählte
-Gänge stimmen mit dem Vergleich auf f23a7c9 überein. Während live aktiver Gänge
-trat keine unbeabsichtigte Ausschaltanforderung auf; ausdrückliches manuelles
-AUS bleibt wirksam. Die Projektionen decken die vollständigen Sitzungen ohne
-Lücken ab und zeigen zurückgenommene Gänge wieder als belegte Grundphasen.
-Kühldauern beginnen nach bestätigtem AUS und bleiben anschließend fest;
-abgebrochene Kühlung wird nicht als vollständige Kühlung verbucht.
-
-Die Aufzeichnungen enthalten keinen geeigneten Türschluss, der allein eine
-vorübergehende Heizanforderung auslöst. Dieser Pfad wurde deshalb gesondert
-mit allgemeinen Ablaufbeispielen geprüft: Start über der normalen oberen
-Regelgrenze, ausbleibende und verzögerte Rückmeldung, tatsächliche Mindestdauer,
-gesperrte Austrittszyklen sowie neue geeignete Zyklen nach einer Unterbrechung.
-
-Die Replays verwenden unveränderte Messkurven und eine erfolgreiche simulierte
-Schützrückmeldung nach 100 ms. Sie belegen den Befehls- und Phasenablauf bei
-diesen Eingängen, keine dadurch neu entstehende Temperaturkurve. Private Daten
-und Nutzungszeitpunkte bleiben außerhalb des Repositorys. Ein vollständiger
-Lauf in einer installierten Home-Assistant-Umgebung und reale Hardwareprüfungen
-wurden hier nicht ausgeführt. Manifestversion bleibt `1.0.0-rc4`; kein Release
-und kein HA-Deployment.
+Die Erweiterung zur direkten Präsenzführung setzt gemeinsam festgelegte Regeln
+für Beginn, Unterbrechung, Ende und Quellausfall voraus. Bei einer solchen
+Aktivierung führt die direkte Quelle die Gangzuordnung allein und ersetzt die
+Türhilfe vollständig. Ein Quellausfall folgt den dafür festgelegten Regeln.
+Dieser Schnittstellenvertrag erhält die alleinige Zuständigkeit des Controllers
+für Aktorbefehle.

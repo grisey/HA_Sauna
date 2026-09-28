@@ -1,78 +1,145 @@
 # Archiv, Backup und Export
 
-Das produktive Archiv liegt pro Instanz unter
-`<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`, außerhalb von `www`.
-`archive.py` serialisiert alle Schreibvorgänge. Originalmessungen bleiben in
-voller empfangener Auflösung erhalten, einschließlich Rohwert, Messrolle,
-Quelle, Empfangszeit und einem nur tatsächlich bekannten Gerätezeitstempel.
-Es gibt keine automatische Verdichtung oder altersabhängige Löschung.
+Jede Instanz besitzt ein SQLite-Archiv unter
+`<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`. Das Verzeichnis liegt
+im privaten Home-Assistant-Konfigurationsbereich. Zugriff und Download erfolgen
+über die berechtigten Schnittstellen der Integration.
 
-Die append-only Tabelle `records` hält Messungen, Quellenzustände, Erkennungen,
-Detektormerkmale, Betriebsphasen, Diagnosen, Gerätebefehle, Heizentscheidungen,
-Benachrichtigungen und sämtliche Sessionrevisionen. `sessions` hält zusätzlich
-den neuesten Stand pro Session, mit Konfiguration und Ereignisreferenzen.
-Gangbestätigung ersetzt nicht die ursprünglich archivierte vorläufige Zuordnung.
-Quellen-Schnappschüsse und Rasterwerte sind getrennt von empfangenen Originalen.
-Heizentscheidungen tragen die Sitzung, in der sie entstanden sind. Daraus
-gesendete Gerätebefehle übernehmen diese Zuordnung auch dann, wenn die Sitzung
-inzwischen beendet ist oder bereits eine neue begonnen hat.
-Auch die beim Entladen erzeugte letzte AUS-Entscheidung wird als eigener
-Entscheidungsrecord über denselben Cursor wie im Normalbetrieb geschrieben.
-Ein Archivfehler darf den physischen AUS-Versuch beim Entladen nicht verhindern.
+Originalmessungen bleiben altersunabhängig in voller empfangener Auflösung
+erhalten. Ein Messdatensatz enthält Rohwert, Messrolle, Quelle und Empfangszeit.
+Ein Messzeitstempel wird übernommen, wenn die Quelle ihn tatsächlich liefert.
+ISO-8601-Zeitangaben erhalten Zeitzone und vorhandene Sekundenbruchteile.
+Quellen-Schnappschüsse und abgeleitete Rasterwerte besitzen eigene Datensatzarten.
 
-Ein Lichtbefehl wird genau einmal beim Abschluss der tatsächlichen Dienstaufgabe
-archiviert, auch nach Timeout oder Abbruch ihres wartenden Aufrufers. Seine
-ursprüngliche Sitzung, Phase, Herleitung und Frist bleiben erhalten. `planned_at`
-bezeichnet die Planung, `sent_at` den tatsächlichen Dienstbeginn und
-`completed_at` den Abschluss. Der Record verwendet den Abschluss als
-`received_at` und meldet einen tatsächlichen Dienstfehler in `service_error`.
-Ein Warte-Timeout ist kein abgeschlossener Dienstfehler. Ein gesonderter
-Archivfehler verändert das Ergebnis des Aktoraufrufs nicht.
+## Schema und Schreibweg
 
-## HA-Backup
+`archive.py` verwendet Schema `1`, das in `metadata` gespeichert ist. Das Öffnen
+prüft diese Versionskennung; eine andere Kennung führt zu einem Versionsfehler.
 
-Die offiziellen HA-Pre-/Post-Backup-Hooks pausieren den Archivschreiber nach
-Abarbeitung aller bisherigen Aufträge. Neue Eingänge werden weiter gepuffert.
-HA sichert so eine abgeschlossene SQLite-Datei ohne offene Schreibtransaktion.
-Nach dem Backup wird die Warteschlange fortgesetzt; Fehler werden sichtbar.
-Die Registrierung umfasst jeden Archivschreiber bis zum tatsächlichen Ende
-seines Workers, auch während des Entladens einer Instanz. Ein bereits
-schließender Schreiber wird vor der Kopie vollständig beendet. Das Öffnen
-eines neuen Archivs einschließlich der Schemaanlage wartet während der
-Sicherung; die Vorbereitung und die Archivinitialisierung sind gegenseitig
-gesperrt. So kann keine neu hinzukommende Instanz an der Schreibpause
-vorbeischreiben.
+| Tabelle | Aufgabe |
+| --- | --- |
+| `metadata` | Schlüssel und Werte für die Archivversion. |
+| `records` | Fortlaufende Datensätze mit `id`, `entry_id`, optionaler `session_id`, `kind`, `received_at` und JSON-`payload`. Neue Revisionen werden angehängt. |
+| `sessions` | Neuester Stand jeder Sitzung mit Instanz, Beginn, Aktualisierungszeit, optionalem Ende und vollständigem JSON-Snapshot. |
 
-`tests/integration/test_archive_backup.py` erzeugt ein tatsächliches HA-Core-
-Backup, ohne Recorderdaten einzuschließen. Die offizielle Restore-Routine liest
-es in ein getrenntes Konfigurationsverzeichnis zurück. Eine neue HA-Instanz
-prüft gespeicherte Optionen, Originaldaten und alle Sessionzuordnungen auf
-Gleichheit. Das ist von einem bloßen SQLite-Backup getrennt nachgewiesen.
-Nach Neustart werden Archive geladen, aber kein Betrieb automatisch fortgesetzt.
+Die Aufzeichnung verbindet Mess- und Quellenmeldungen mit Erkennungen,
+Entscheidungen und Geräteaufträgen. Jede gespeicherte Sitzungsrevision enthält
+ihren damaligen Konfigurationsstand und ihre Ereignisreferenzen. Eine spätere
+Gangbestätigung ergänzt dadurch die Historie; die zuvor aufgezeichnete
+vorläufige Zuordnung bleibt erhalten.
 
-## Authentifizierter Export
+Ein Append friert seine Daten beim Einreihen als JSON ein. Ein einzelner
+Archivschreiber arbeitet die Aufträge in Reihenfolge ab. Die Sitzungsrevision
+in `records` und ihr neuester Stand in `sessions` werden gemeinsam in einer
+SQLite-Transaktion geschrieben. Ein wartender Abschlussaufruf `flush()` erfasst
+alle vor ihm eingereihten Aufträge. Bei einem Schreibfehler behält der Schreiber
+die ausstehenden Datensätze zur erneuten Verarbeitung in Reihenfolge; ein
+anhaltender Fehler wird an den wartenden Aufrufer weitergegeben.
 
-Der Download unter **Einstellungen** nutzt HAs kurzlebigen
-signierten Abrufpfad. Direkter Abruf ohne HA-Anmeldung oder gültige Signatur
-wird abgelehnt. Eine temporäre SQLite-Kopie stellt einen konsistenten Stand her,
-während neue Eingänge weiter gespeichert werden. Die ZIP-Datei wird gestreamt
-und anschließend gelöscht, auch bei abgebrochenem Abruf.
+Heizentscheidungen tragen die Sitzung, in der sie entstanden sind. Zugehörige
+Geräteaufträge übernehmen diese Herkunft auch nach deren Ende oder dem Beginn
+einer neuen Sitzung. Der normale Zyklus und das Entladen speichern Entscheidungen
+über denselben Fortschrittszeiger. Zum Entladen gehört eine eigene abschließende
+AUS-Entscheidung. Ein eigenständiger Ofen-AUS-Versuch erfolgt auch dann, wenn die
+Archivierung beim Abschluss fehlschlägt.
 
-- `manifest.json`: Formatversion und Bedeutung der Zeit-/Auflösungsangaben.
-- `sessions.jsonl`: neuester Stand jeder Session samt damaliger Konfiguration.
-- `records.jsonl`: vollständige Aufzeichnung mit allen Zuordnungsrevisionen.
-- `measurements.csv`: Originalmessungen mit Referenz auf ihren Archivdatensatz.
+Ein Lichtbefehl wird genau einmal beim Abschluss seiner tatsächlichen
+Dienstaufgabe archiviert. Der Abschluss gehört weiterhin zur ursprünglichen
+Sitzung, Phase, Herleitung und Frist, auch wenn das Warten zuvor abgebrochen
+wurde oder seine Zeitgrenze erreicht hatte. `planned_at` bezeichnet die Planung,
+`sent_at` den tatsächlichen Dienstbeginn und `completed_at` den Abschluss.
+Der Archivrecord verwendet den Abschluss als `received_at`. `service_error`
+beschreibt den tatsächlichen Dienstausgang. Wartezeitgrenze, Dienstausgang und
+gesonderte Archivfehler werden jeweils mit ihrer eigenen Bedeutung behandelt.
 
-Das Archiv-API liefert Sessionlisten und Datensatzseiten. UI-Caches und
-Darstellungsreduktion sind keine weitere Datenhaltung oder Regelungsquelle.
-Archivcache und Seitenzeiger gehören auch zur Rechteprojektion. Beim Wechsel
-zwischen öffentlicher und administrativer Ansicht beginnt das Panel bei null;
-Antworten aus der alten Projektion werden verworfen. Bereits geladene
-Diagnoseansichten werden beim Rechteentzug sofort geleert. Der Zeitbereich einer
-weiter ausgewählten Sitzung bleibt erhalten.
-Der Seitenzeiger `after` akzeptiert höchstens `2**63 - 1`, passend zur
-SQLite-Datensatz-ID. Größere Werte werden mit HTTP 400 abgewiesen; negative
-Werte werden weiterhin auf null begrenzt.
-Tests prüfen Subsekundenauflösung, Referenzerhalt, Schreibpuffer beim Backup,
-HTTP-Authentifizierung, Export während Erfassung und Browserdownload.
-Tatsächliche Testabschlüsse: [Abnahme](abnahme.md).
+Die bei der Planung bekannte Phasenfrist wird als `ends_at` an den
+Dienstauftrag übergeben. Sein Abschlussrecord erhält diese ursprüngliche Frist,
+auch nach einer späteren Zustandsänderung oder einem Runtimeabschluss.
+SQLite-Leser und ZIP-Export übernehmen denselben gespeicherten Wert. Phasen
+ohne Frist führen `ends_at` mit dem Wert `null`.
+
+## Home-Assistant-Backup und Wiederherstellung
+
+Die offiziellen Pre-/Post-Backup-Hooks koordinieren die Schreibpause. Vor der
+Kopie arbeitet jeder erfasste Archivschreiber seine bisherigen Aufträge ab.
+Weitere Eingänge bleiben während der Pause in der Warteschlange. Die
+Home-Assistant-Sicherung übernimmt so einen abgeschlossenen SQLite-Stand;
+anschließend werden die wartenden Aufträge weiterverarbeitet.
+
+Die Registrierung hält jeden Schreiber bis zum Ende seines Workers erreichbar,
+auch während die zugehörige Runtime entladen wird. Hat das Archiv selbst seinen
+Abschluss bereits begonnen, wartet die Backupvorbereitung dessen Ende ab.
+Ein neu beginnendes Archiv wartet mit dem Öffnen und der Schemaanlage bis zur
+Freigabe der Sicherung. Nach der Kopie werden alle Schreibpausen freigegeben,
+bevor auf die weiteren Schreibabschlüsse gewartet wird. Beobachtete Fehler werden
+an Home Assistant zurückgegeben.
+
+Das Archiv gehört zur Sicherung des Home-Assistant-Konfigurationsverzeichnisses.
+Der Integrationstest `tests/integration/test_archive_backup.py` verwendet dazu
+die offizielle HA-Core-Backup- und Restore-Routine und startet eine getrennte
+Instanz mit den wiederhergestellten Optionen und Originaldaten. Der Vergleich
+umfasst die Sitzungszuordnungen. Die Ausführung ist in der
+[Prüfanleitung](abnahme.md) beschrieben.
+
+Nach einem Neustart steht die archivierte Historie zur Verfügung. Der
+Saunabetrieb beginnt mit einem erneuten Einschaltauftrag.
+
+## Archivzugriff
+
+`GET /api/ha_sauna/{entry_id}/archive` setzt eine HA-Anmeldung und die
+Leseberechtigung für die Betriebsentität dieser Instanz voraus. Die Grundabfrage
+liefert eine Sitzungsliste. Mit `session_id` enthält
+sie den Sitzungssnapshot, die Phasenprojektion und eine Seite von Archivrecords.
+Diese Teile stammen aus derselben SQLite-Lesetransaktion. Für ältere Snapshots
+wird die Projektion aus den vollständigen zugehörigen Belegen berechnet,
+unabhängig von der aktuellen Datensatzseite.
+
+Administratoren erhalten die vollständigen Datensätze. Für andere
+leseberechtigte Benutzer stellt die API Messungen, Quellen-Schnappschüsse und
+Phasen mit Werten und Zeiten bereit. Ihre Sitzungsantwort beschreibt den
+Verlauf. Konkrete Quellen-IDs und der Konfigurationsblock sind ausschließlich
+für Administratoren freigegeben.
+
+`after` bezeichnet die zuletzt gelesene Datensatz-ID. Gültige positive Werte
+reichen bis `2**63 - 1`; negative Werte werden auf null begrenzt. Eine ungültige
+Ganzzahl oder ein größerer Wert erhält HTTP 400. `next_after` ist der vom Server
+ermittelte Fortsetzungszeiger. Die Rechtefilterung kann eine sichtbare Seite
+leeren, obwohl dieser Zeiger eine weitere Seite bezeichnet. Der Verbraucher
+übernimmt deshalb den Serverzeiger.
+
+Archivcache, Seitenzeiger und abgeleitete Ansichten gehören zur jeweiligen
+Rechteprojektion. Ein Wechsel zwischen öffentlicher und administrativer Ansicht
+startet den Abruf bei null. Jede Antwort bleibt an die Projektion und Generation
+ihres Auftrags gebunden. Bei Rechteentzug werden bereits geladene
+Diagnoseansichten sofort geleert. Die weiter ausgewählte Sitzung behält ihre
+Zeitgrenzen und ihren sichtbaren Ausschnitt auch während des neuen Abrufs.
+Der [Verlaufsvertrag](livekurve.md#ausschnitt-zoom-und-tooltip) beschreibt den
+Sitzungsbezug der dabei erreichbaren Zoom-, Verschiebe- und Übersichtsaktionen.
+
+## Export herunterladen
+
+`GET /api/ha_sauna/{entry_id}/export` erfordert einen HA-Administrator. Der
+Download unter **Einstellungen** verwendet einen von Home Assistant signierten,
+kurzlebigen Abrufpfad. Auch für diesen Abruf gelten die Rechte des zugehörigen
+Benutzers. Ein authentifizierter direkter API-Abruf verwendet dieselbe
+Administratorprüfung.
+
+Vor dem Export wird eine laufende Sitzung als aktuelle Revision eingereiht.
+Eine temporäre SQLite-Kopie liefert den konsistenten Exportstand, während die
+weitere Erfassung fortläuft. Die ZIP-Datei enthält:
+
+| Datei | Inhalt |
+| --- | --- |
+| `manifest.json` | Schema, Instanz-ID sowie Beschreibung von Auflösung und Zeitformat. |
+| `sessions.jsonl` | Neuester Stand jeder Sitzung samt damaliger Konfiguration. |
+| `records.jsonl` | Vollständige Aufzeichnung in Datensatzreihenfolge einschließlich aller gespeicherten Revisionen. |
+| `measurements.csv` | Originalmessungen mit `record_id`, `session_id`, Empfangs- und Messzeit, Position, Messgröße, Quelle, Wert und Rohwert. |
+
+Die Exporterzeugung besitzt ihre temporäre Datei bis zum tatsächlichen Ende des
+Schreibvorgangs. Ein abgebrochener Auftrag gibt diese Datei zur Bereinigung frei.
+Der HTTP-Download streamt die fertige ZIP-Datei und entfernt sie beim Abschluss
+oder Abbruch. Der Server kennzeichnet die Antwort mit `Cache-Control: no-store`.
+
+Die Oberfläche lädt Archivdaten für ihre Anzeige. Ihre Caches und die
+Bildschirmaggregation sind abgeleitete Ansichten des Archivs. Der
+[Verlaufsvertrag](livekurve.md) beschreibt deren Lebensdauer und Originalwertzugriff.

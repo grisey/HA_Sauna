@@ -1,55 +1,93 @@
 # Architektur
 
-Pro konfigurierte Sauna gibt es genau einen führenden Controller. Er besitzt die
-laufende Sitzung mit Gängen, Heizzeit, Thermostat, Nachlauf, Kühlung, Licht und
-Fristen. Konfiguration, Eingangsmessungen, Schutzgründe und Archiv sind davon
-getrennt. Der Controller bleibt frei von Home-Assistant-Abhängigkeiten; nur der
-Geräteadapter liest Quellen und führt Aktorbefehle aus.
+Jede konfigurierte Sauna besitzt einen führenden Controller. Er verwaltet die
+laufende Sitzung und trifft ihre Regelentscheidungen. Die Runtime ordnet die
+eingehenden Meldungen und Bedienungen zeitlich ein. Der Geräteadapter verbindet
+diesen Ablauf mit Home Assistant: Er liest die konfigurierten Quellen, sendet
+Gerätebefehle und verarbeitet deren Rückmeldungen.
+
+Die [Designentscheidungen](entscheidungen.md) erläutern diese Aufteilung. Die
+fachlichen Abläufe stehen in [Betrieb](betrieb.md), [Gangmodell](gangmodell.md)
+und [Ofenkühlung](ofenkuehlung.md).
 
 ## Konfiguration und Bedienung
 
-`config_flow.py` und `bindings.py` ordnen die externen Rollen zu und prüfen
-deren Metadaten. `core/parameters.py` bildet den unveränderlichen zentralen
-Parameterstand. `core/program_catalog.py` verwaltet benannte
-Temperaturprogramme getrennt vom Laufzeitablauf. Einstellungen und API schreiben
-den Optionsstand; die drei in einer Sitzung erlaubten Temperaturwerte werden
-über den Live-Einstellpfad in den bestehenden Controller übernommen. Eine solche
-Änderung lädt nicht die gesamte Integration neu.
-Protokollstufe und Darstellung sind ebenfalls während einer Sitzung änderbar;
-sie wirken nicht auf den Controller oder seine Fristen.
+`bindings.py` beschreibt die Rollen externer Entitäten. `config_flow.py` ordnet
+ihnen konkrete Quellen und Geräte zu und prüft ihre Metadaten. `Configuration`
+in `runtime.py` fasst diese Zuordnung mit den Einstellungen zusammen;
+`core/parameters.py` bildet den unveränderlichen Parameterstand.
+`core/program_catalog.py` beschreibt benannte Temperaturprogramme.
 
-## Messung, Erkennung und Ablauf
+`settings.py` ist der gemeinsame Schreibweg für Einstellungen. Er prüft den
+vollständigen Änderungskandidaten und übernimmt gültige Live-Temperaturänderungen
+in den bestehenden Controller. Dessen Sitzung und Fristen bleiben dabei erhalten.
+Technische Einstellungen und Gerätezuordnungen werden nach Sitzungsende
+geändert. Die während einer Sitzung verfügbaren Änderungen und ihre Rechte
+stehen in [Parameter](parameter.md) und [Bedienung](bedienung.md).
 
-`device.py` sammelt unveränderte Quellmeldungen, hält ihre Empfangszeit fest und
-liefert nur diese Werte an den Ablauf. `core/moisture.py` berechnet aus einem
-frischen Temperatur-/Feuchte-Paar den absoluten Wassergehalt; `sensor.py`
-stellt ihn für beide Messpositionen als Diagnoseentität bereit.
+Darstellung und Protokollstufe besitzen eigene Änderungswege. Ihre Wirkung bleibt
+auf Anzeige beziehungsweise Protokollierung beschränkt. Die Konfiguration wird
+in den Optionen des Home-Assistant-Eintrags gespeichert.
 
-`core/detector.py` arbeitet kausal mit begrenzten Arbeitsfenstern und meldet
-Tür-, Personen-, Aufguss- und Lüftungssignale. `core/timeline.py` ordnet diese
-Signale Gängen zu, während `core/controller.py` die daraus folgenden Heiz-,
-Nachlauf- und Kühlentscheidungen trifft. Die detaillierte fachliche Regel steht
-in [Erkennung](erkennung.md), [Gangmodell](gangmodell.md) und
+## Quellen und Erkennung
+
+`device.py` übernimmt Quellwert, Messrolle, Quellenidentität und Empfangszeit.
+Ein Gerätezeitstempel wird übernommen, wenn ihn die Quelle tatsächlich liefert.
+`runtime.py` verarbeitet empfangene Meldungen in ihrer Warteschlange und stellt
+gleichzeitige Messkanäle gemeinsam für das Erkennungsraster bereit.
+
+`core/moisture.py` berechnet den absoluten Wassergehalt aus einem gültigen
+Temperatur-/Feuchtepaar derselben Messposition. `sensor.py` stellt diese
+abgeleiteten Werte als Diagnoseentitäten bereit. `core/detector.py` wertet
+bereits empfangene Messungen in begrenzten Zeitfenstern aus und meldet
+Erkennungsereignisse an den Ablaufkern. Ihre Bedingungen stehen in
+[Erkennung](erkennung.md); Messzeit, Empfang, Erkennung und Buchung erklärt das
+[Zeitmodell](zeitmodell.md).
+
+`core/timeline.py` ordnet die Ereignisse Gängen zu. Die Proxy-Präsenz folgt diesen
+Zuordnungen. Direkte Präsenzmeldungen werden mit ihrer eigenen Quelle als
+zusätzliche Beobachtungen geführt. Der gemeinsame Datenvertrag steht in
+[Schnittstellen](schnittstellen.md).
+
+## Regelung und Geräteausgabe
+
+`core/controller.py` verbindet die Gangzuordnung mit dem Betriebszustand und der
+Ofenkühlung. `core/thermostat.py` wertet die Heizanforderung unter den geltenden
+Schutzbedingungen aus. Die vorübergehende Türhilfe liegt in
+`core/temporary_door_heat.py`. Der Geräteadapter setzt die Entscheidung um und
+führt die beobachteten Zustände an den Controller zurück. Die Bedeutung einer
+ausdrücklichen manuellen Ofenwahl und ihre Rückkehrpunkte stehen in
 [Betrieb](betrieb.md).
 
-`core/thermostat.py` und `core/heating.py` entscheiden die Temperaturregelung
-und zählen bestätigte Heizintervalle. `core/power.py` und `core/energy.py`
-trennen gemessene von geschätzter Energie. `core/light.py` berechnet die
-temperatur- und tageslichtabhängigen Zielhelligkeiten; `core/light_output.py`
-führt Übergänge und vorübergehende manuelle Wahl aus.
+`core/heating.py` zählt Heizintervalle anhand der verfügbaren Rückmeldung.
+`core/power.py` und `core/energy.py` kennzeichnen die Mess- oder Schätzgrundlage
+der Energieangabe. Die mechanische Timeranzeige verwendet ihre eigene
+Schützrückmeldung; ihre Bedeutung ist ebenfalls in Betrieb beschrieben.
 
-## Laufzeit, Archiv und Darstellung
+`core/light.py` berechnet Zielhelligkeiten aus Betriebsphase, Temperatur und
+Tageslicht. `core/light_output.py` plant Übergänge und manuelle Lichtwahlen.
+Der Geräteadapter führt die zugehörigen Dienste aus und unterscheidet eigene
+Rückmeldungen von externer Lichtbedienung. Der Lichtnachlauf besitzt seine
+eigene Frist und ist von der Ofenkühlung getrennt.
 
-`runtime.py` serialisiert Eingänge, hält den Lebenszyklus zusammen und stößt
-Archivierung sowie Entitätsaktualisierung an. `core/warmup.py` berechnet die
-voraussichtliche Aufheizzeit. Der Anstieg der letzten abgeschlossenen
-Aufheizphase geht schrittweise in den stabilen aktuellen Trend über.
-Nur neue Messungen verändern die Schätzung; Statusabfragen lesen das Ergebnis.
-Diese Anzeige beeinflusst keine Heizentscheidung.
+## Lebenszyklus, Archiv und Anzeige
 
-`archive.py` und `backup.py` speichern Messungen, Merkmale, Ereignisse und
-Parameterstände in SQLite, sichern sie konsistent über HA und exportieren sie
-authentifiziert. `api.py`, `frontend.py` und `panel.js` zeigen diesen
-führenden Zustand und berechnen weder Erkennung noch Heizentscheidung ein
-zweites Mal. Nach einem HA-Neustart bleibt das Archiv erhalten; ein Betrieb wird
-nicht automatisch fortgesetzt.
+`runtime.py` koordiniert Start, laufende Verarbeitung und Abschluss. Beim
+Entladen werden Sitzung und Archiv abgeschlossen; ein eigenständiger
+Ofen-AUS-Versuch gehört auch bei einem Archivfehler zum Abschluss. Ein erneuter
+Start von Home Assistant stellt die archivierte Historie bereit. Der Saunabetrieb
+beginnt mit einem erneuten Einschaltauftrag.
+
+`archive.py` schreibt Originaldaten und Zustandsrevisionen nach SQLite.
+`backup.py` koordiniert die Schreibpause für das Home-Assistant-Backup.
+`api.py` stellt den berechtigten Zugriff auf Status, Archiv und Export bereit.
+Das Schema, die Haltbarkeit und die Zugriffsgrenzen beschreibt
+[Speicherung](speicherung.md).
+
+`core/phases.py` leitet die Phasenansicht aus den fachlichen Objekten und der
+Schützspur ab. `presentation.py`, `frontend.py` und `panel.js` bereiten den
+führenden Zustand für die Oberfläche auf. `core/warmup.py` berechnet eine
+Anzeigeprognose aus der letzten abgeschlossenen Aufheizphase und dem aktuellen
+Messverlauf. Neue Messungen verändern die Schätzung; Statusabfragen lesen das
+vorbereitete Ergebnis. Die Regelung verwendet ihre eigenen Messwerte und
+Freigaben. Der [Verlaufsvertrag](livekurve.md) beschreibt Datenladen und Zeichnung.

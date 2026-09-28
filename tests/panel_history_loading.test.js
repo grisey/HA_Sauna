@@ -355,3 +355,68 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
   assert.equal(currentCache.finalSynced, true);
   assert.equal(p.shown.records, currentCache.records);
 });
+
+test("pending role projections retain the selected archive domain during navigation", async () => {
+  const session = {
+    timeline: { session_id: "old", session_started_at: "2020-01-01T10:00:00Z" },
+    ended_at: "2020-01-01T12:00:00Z",
+  };
+  for (const [beforeAdmin, afterAdmin] of [[false, true], [true, false]]) {
+    const response = deferred(), entered = deferred();
+    const { p } = panel(async (request) => {
+      if (request.endsWith("/archive"))
+        return [{ session_id: "old", started_at: session.timeline.session_started_at,
+          ended_at: session.ended_at }];
+      entered.resolve();
+      return response.promise;
+    });
+    p.selected = "old";
+    p.scheduleHistoryRender = () => {};
+    p.state = { ...state(), session: null, permissions: { admin: beforeAdmin } };
+    p.syncHistoryProjection();
+    p.sessions = [{ session_id: "old", started_at: session.timeline.session_started_at,
+      ended_at: session.ended_at }];
+    const cache = p.historyCache("old");
+    p.updateHistoryCacheMetadata(cache, { session });
+    cache.records.push({ id: 1, kind: "detector_trace", payload: {} });
+    p.showHistoryCache();
+    p.zoom = 1;
+    p.ensureHistoryWindow();
+    const domain = Array.from(p.historyDomain());
+    p.setHistoryWindow(domain[0] + 30 * 60000, domain[0] + 60 * 60000);
+    const before = Array.from(p.window);
+    p.state.permissions.admin = afterAdmin;
+    const pending = p.startHistoryLoad();
+    await entered.promise;
+    assert.equal(p.shown, null);
+    assert.equal(p.historyCache("old").records.length, 0);
+    assert.deepEqual(Array.from(p.historyDomain()), domain);
+    assert.deepEqual(Array.from(p.window), before, "no interaction keeps the viewport");
+
+    await p.action("zoom-in");
+    assert.equal(p.zoom, 10);
+    const zoomed = Array.from(p.window);
+    p.setHistoryWindow(zoomed[0] + 60000, zoomed[1] + 60000);
+    const shifted = Array.from(p.window);
+    p.overviewFraction = () => 0.5;
+    p.historyGesture = { kind: "move", fraction: 0.4, window: shifted, svg: {} };
+    p.updateHistoryGesture({ clientX: 0, preventDefault() {} });
+    assert.ok(p.window[0] > shifted[0]);
+    assert.ok(p.window[0] >= domain[0] && p.window[1] <= domain[1]);
+    await p.action("reset-zoom");
+    assert.deepEqual(Array.from(p.window), domain);
+    await p.action("zoom-in");
+    const navigated = Array.from(p.window);
+    response.resolve({ records: [], next_after: null, session });
+    await pending;
+    p.ensureHistoryWindow();
+    assert.deepEqual(Array.from(p.window), navigated);
+    assert.equal(p.zoom, 2);
+    p.selected = "missing";
+    p.shown = null;
+    assert.ok(p.historyDomain()[0] > Date.parse("2031-01-01"));
+    p.selected = "old";
+    p.sessions = null;
+    assert.ok(p.historyDomain()[0] > Date.parse("2031-01-01"));
+  }
+});

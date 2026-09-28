@@ -1,138 +1,178 @@
 # Daten- und Zeichenvertrag des Sitzungsverlaufs
 
-Die Darstellung bleibt Bestandteil der bestehenden `panel.js`. Home Assistant
-liefert damit weiterhin eine einzelne, durch ihren Inhalt fingerprintete Datei
-aus. Archiv, Export, Erkennung und Steuerung verwenden unveränderte Verträge.
+Der Sitzungsverlauf wird in `panel.js` aus Status- und Archivantworten aufgebaut.
+Er verbindet fortlaufende Messkurven mit der zeitlichen Einordnung einer
+Saunasitzung. Die [Darstellungsreferenz](darstellung.md) legt die Gestaltung fest,
+die [Bedienungsanleitung](bedienung.md) erklärt die Nutzung. Für die dauerhafte
+Datenhaltung gilt der [Archivvertrag](speicherung.md).
 
-## Archiv und Abschluss
+## Datenübernahme und Sitzungsabschluss
 
-Der Anzeigecache besitzt zwei getrennte Zustände: `pageRunLoaded` kennzeichnet das
-Ende eines Seitenlaufs; `finalSynced` setzt zusätzlich einen endgültigen
-Sitzungssnapshot mit `ended_at` voraus. Ein vollständig gelesener offener Cache
-wird weiter nachgeladen. Das gilt nach Wegfall der Livesitzung und beim späteren
-Auswählen einer alten Sitzung, auch wenn inzwischen eine neue läuft.
+Der Verlauf lädt Archivdaten seitenweise. Jede vollständig empfangene Seite
+übernimmt den Sitzungssnapshot, die Phasenprojektion und den Seitenzeiger.
+Auch eine Seite mit leerer Recordliste kann dadurch einen aktualisierten
+Abschlussstand liefern. Bei einem Abruffehler setzt der nächste Versuch am
+zuletzt übernommenen Seitenzeiger an.
 
-Jede vollständig empfangene Seite übernimmt Snapshot, Phasenprojektion und
-Cursor. Eine leere Schlussseite kann deshalb Endzeit und Projektion ändern.
-Messdatenrevisionen entstehen ausschließlich durch Messnachträge. Ein Fehler
-behält den zuletzt übernommenen Cursor; Instanz, Auswahlgeneration und
-Sitzungsidentität verhindern die Übernahme ersetzter Antworten.
+| Cachefeld | Bedeutung |
+|---|---|
+| `after` | Übernommener Seitenzeiger für den nächsten Abruf |
+| `pageRunLoaded` | Der aktuelle Seitenlauf ist vollständig gelesen. |
+| `finalSynced` | Der vollständige Seitenlauf enthält einen endgültigen Sitzungssnapshot mit `ended_at`. |
 
-Alle Archivrecords bleiben erhalten. Deduplizierung erfolgt anhand der
-Archivrecord-ID. Gleiche Quellzeitpunkte verschiedener Records bleiben getrennt.
-Der chronologische Index enthält vier unabhängige Sensorreihen sowie die
-Ereignisgruppen. Ein geordneter Nachtrag erweitert den Index; eine verspätete
-Einfügung invalidiert die Aggregation ihrer Reihe.
+Ein Cache mit offenem Sitzungssnapshot wird weiter nachgeladen, auch beim
+späteren Auswählen dieser Sitzung. Laufende Abrufe gehören zur Instanz,
+Auswahlgeneration und Sitzungsidentität ihres Auftrags. Antworten werden
+übernommen, solange dieser Bezug zur aktuellen Auswahl passt.
 
-## Dauerhafte Zeichenflächen
+Die Record-ID bestimmt die Deduplizierung. Verschiedene Records mit gleichem
+Quellzeitpunkt behalten ihre eigene Identität. Der chronologische Index führt
+Temperatur und Feuchte für jede Messposition als eigene Reihe und gruppiert
+Ereignisse nach Art. Ein geordneter Nachtrag erweitert den Index. Bei einer
+Einfügung in einen früheren Reihenabschnitt wird dessen Darstellungshierarchie
+neu aufgebaut.
 
-Ein `HistoryChart` gehört zu einer Kombination aus Integrationsinstanz und
-Sitzungs-ID. Canvas, SVG-Interaktionsfläche, Tooltip und Minimap-Griffe bleiben bei
-Status-, Titel-, Phasen-, Abschluss- und Höhenänderungen erhalten. Entfernen der
-Ansicht/Integration oder Wechsel der Sitzung beendet diese Lebensdauer.
+## Originalpunkt und sichtbare Kurve
 
-Die Messkurven und die Minimap verwenden Canvas2D und numerisch aufgebaute
-`Path2D`-Objekte. Die vorhandene Auswahl erster/kleinster/größter/letzter Punkte,
-Randnachbarn und monotone kubische Kontrollpunkte bleibt maßgeblich. Explizite
-Fehlwerte, TTL-Unterbrechungen und `displayGap` trennen die Segmente. Die
-Bildschirmaggregation ersetzt keine Archivdaten und dient niemals der
-Tooltip-Suche.
+Die Kurvenaufbereitung arbeitet mit den indexierten Messpunkten. Fehlende Werte,
+abgelaufene Messwertgültigkeit und ein gesetztes `displayGap` bilden
+Segmentgrenzen. Innerhalb eines Bildschirmintervalls bleiben erster, kleinster,
+größter und letzter Punkt sowie die erforderlichen Randnachbarn für die
+Zeichnung verfügbar. Monotone kubische Kontrollpunkte bilden den Kurvenverlauf.
 
-Der sichtbare Datenbereich einschließlich seiner Randnachbarn besitzt einen
-Schlüssel aus Zeitfenster, TTL, Aggregationsbreite, Punktanzahl und Identitäten
-der Randpunkte. Dadurch bleiben Pfade bei Nachträgen außerhalb dieses Bereichs
-gültig. Neue Punkte innerhalb des Bereichs verändern seine Anzahl; neue
-Randnachbarn verändern ihre Identität. Ein neues Extremum aktualisiert die
-zugehörige Temperatur- oder Feuchteskala und alle davon abhängigen Pfade.
+Die Aufbereitung wird je Reihe zwischengespeichert. Ihr Schlüssel beschreibt
+den sichtbaren Zeitraum samt Messwertgültigkeit und Aggregationsbreite. Anzahl
+und Identität der Randpunkte binden die Auswahl an ihren Datenstand. Nachträge
+innerhalb dieses Bereichs erneuern die betroffene Auswahl; zusätzliche
+Extremwerte führen zur Anpassung der Skala und der davon abhängigen Pfade.
 
-Unveränderte innere Aggregationsgruppen behalten ihre bereits ausgewählten
-Displaypunkte auch während Zoom, Pan und mitlaufender Zeitachse. Ein Nachtrag
-erneuert die betroffenen Gruppen; ein verspäteter Punkt verwirft die Hierarchie
-seiner Reihe. Fensterränder und Lücken werden weiterhin anhand der tatsächlichen
-Punkte ausgewertet. Dieser Cache verändert weder die Punktauswahl noch die
-Kurvenmathematik und speichert je Gruppe nur die aktuelle Auswahl.
+Zoom und Verschieben verwenden die vorhandenen inneren Aggregationsgruppen
+weiter. Fensterränder werden anhand ihrer tatsächlichen Nachbarpunkte bestimmt.
+Die gespeicherten Originalrecords bleiben die Quelle für Tooltip und
+Erkennungskontrolle.
 
-Annotationen und Raster liegen unter den Kurven; Achsen und Cursor liegen
-darüber. Tür, Lüftung, Gangbestätigung, Aufguss und tatsächliche Heizzeit behalten
-ihre bisherige Bedeutung und Reihenfolge. Autoritative Phasenprojektionen
-ersetzen vorläufige Phasen einschließlich ihrer Rücknahmen. Tabellen und
-Beschriftungen bleiben als zugängliches DOM bestehen.
+## Zeichenflächen und Geometrie
 
-## Änderungen und Eingabe
+Ein `HistoryChart` gehört zu einer Instanz und einer Sitzungs-ID. Seine
+Zeichenflächen und Eingabeelemente bleiben während der Aktualisierung derselben
+Sitzung erhalten. Beim Wechsel der Sitzung oder Instanz entsteht die passende
+neue Zeicheninstanz.
 
-Es gibt eine geplante Historienarbeit pro Bildschirmframe und keine laufende
-Animationsschleife. Statusantworten aktualisieren sofort die Bedienanzeige und
-Annotationen. Der Archivnachtrag übernimmt gemeinsam Messdaten und den eventuell
-nachzuführenden Zeitausschnitt. Dadurch wird derselbe Nachtrag nicht zunächst mit
-altem und anschließend mit neuem Messcache vollständig gezeichnet.
+| Ebene | Technische Aufgabe |
+|---|---|
+| Canvas der Hauptansicht | Messkurven als numerisch aufgebaute `Path2D`-Objekte |
+| Canvas der Übersicht | Übersichtskurve über die gesamte Sitzungsdomäne |
+| SVG-Hintergrund | Phasen, Ereignisflächen und Raster unter den Kurven |
+| SVG-Vordergrund | Achsen, Zeiger und Interaktionsfläche |
+| DOM | Tooltiptexte, Tabellen, Beschriftungen und Ausschnittgriffe |
 
-Bei festem Ausschnitt und unveränderten Skalen erzeugen Uhr-/Phasenänderungen
-keine Messkurven. Hover aktualisiert nur Cursor und Tooltip. Eine tatsächlich
-fortschreitende Zeitabbildung im Gesamtverlauf benötigt weiterhin eine neue
-Transformation/Zeichnung. Zoom, Pan, Größenänderung und Höhenwahl werden durch
-denselben Scheduler verarbeitet. Verborgene Ansichten zeichnen nicht.
+Die Phasenprojektion liefert die zeitlichen Abschnitte einschließlich
+nachträglicher Zuordnungskorrekturen. Darstellung und Archivansicht übernehmen
+diesen Stand. Die laufenden Aktorvorgaben entstehen im Controller; der
+Geräteadapter führt sie aus.
 
-Clientrechtecke werden in einer Lesephase gecacht. Scrollende Vorfahren über
-Shadow-Roots und Slots, Fenster, VisualViewport, Größenänderungen, Gestenbeginn
-und Layoutverschiebungen invalidieren sie. Eine neu gesetzte Resolution-Abfrage
-erkennt Pixelratioänderungen. Bitmapgröße und CSS-Größe bleiben getrennt;
-Löschen der Pixel setzt nicht jedes Mal `canvas.width` zurück.
+Gespeicherte Pfade und fertige Zeichnungen berücksichtigen Datenquelle,
+Messposition, Abbildung und Stil. Canvasgröße und Pixeldichte bestimmen die
+Bitmapauflösung. Die CSS-Geometrie bildet Browserkoordinaten auf den sichtbaren
+Verlauf ab. Eine Lesephase erfasst die dafür benötigten Clientrechtecke.
+Scrollen entlang der übergeordneten Elemente, einschließlich Shadow-Roots und
+Slots, sowie Größen- und Layoutänderungen erneuern diese Geometrie. Die
+Resolution-Abfrage erkennt Änderungen der Pixeldichte.
 
-Tooltip-Inhalte verwenden dauerhafte Textknoten und eine Position per Transform.
-Die binäre Suche läuft auf den Originalreihen. `raw_value`, einschließlich `0`,
-bleibt unverändert; ohne Originalstring lautet die Kennzeichnung
-„Wert … · kein Originalwert gespeichert“. Empfangs- und Messzeit bewahren
-Sekundenbruchteile und lokale Zeitzonenangabe. Nach DOM-Schreibzugriffen liest der
-Eingabepfad keine neue Layoutgeometrie.
+## Ausschnitt, Zoom und Tooltip
 
-Die Zeitformatierer werden in einem begrenzten Cache wiederverwendet. Tooltip
-und Zeitachse ermitteln die aktuelle lokale Zeitzone für ihre jeweilige Ausgabe;
-gleiche aktuelle UTC-Offsets ersetzen dabei nicht die tatsächliche Zeitzone.
-Bereits aufbereitete Tooltip-Texte gehören zum Originalpunkt und zur Zeitzone.
-Dadurch benötigt ein Zoom um denselben Messpunkt keine erneute Aufbereitung
-seiner unveränderten Quelltexte. Neue Originalwerte oder Zeitangaben invalidieren
-diesen Textcache. Die numerische Kurvenberechnung verwendet weniger
-Zwischenarrays; Reihenfolge, Rundung und Kontrollpunkte bleiben unverändert.
+Das sichtbare Zeitfenster liegt innerhalb der gesamten Sitzungsdomäne. Die
+Übersicht ordnet es darin ein; ihre Griffe verändern die Fenstergrenzen.
+Maus, Berührung und Tastatur verwenden denselben begrenzten Fensterzustand.
+Zoomtasten und Vergrößerungsgesten ändern die Zeitabbildung. Strg/Cmd mit dem
+Mausrad vergrößert am Zeiger, das gewöhnliche Mausrad bewegt die Seite.
 
-Disconnect entfernt Listener, ResizeObserver, Resolution-Abfrage und geplante
-Framearbeit. Reconnect verwendet die vorhandene Panel-Hülle ohne doppelte
-Ereignisbehandlung und erstellt die Zeicheninstanz neu.
+Beim Wechsel der Rechteprojektion bleibt die Zeitdomäne an der weiterhin
+ausgewählten Sitzung ausgerichtet. Während die neue Archivantwort lädt,
+verwenden sichtbare Zoom-, Verschiebe- und Übersichtsaktionen dieselben
+Sitzungsgrenzen. Ein dabei geänderter Ausschnitt gilt auch nach der Antwort.
+Die Rechtefilterung und die Zuordnung jeder Antwort zu ihrer Abrufgeneration
+folgen dem [Archivvertrag](speicherung.md#archivzugriff).
 
-## Reproduzierbare Prüfung
+Der Tooltip sucht mit einer binären Suche in den Originalreihen nach dem
+passenden Messpunkt. `raw_value` liefert den empfangenen Originalwert,
+einschließlich des Werts `0`. Liegt ausschließlich der numerische Messwert vor,
+kennzeichnet der Tooltip dessen Quellenqualität. Empfangszeit und vorhandener
+Gerätezeitpunkt behalten ihre Sekundenbruchteile und erscheinen mit lokaler
+Zeitzonenangabe.
 
-`node --test tests/panel_*.test.js` prüft Daten-/Kurven-/Tooltip-Verträge mit
-synthetischen Daten. Die Canvas-Doubles dieser Tests belegen Funktionsverhalten;
-sie dienen keiner Leistungsbehauptung.
+Der Textcache gehört zum Originalpunkt und zur tatsächlich aufgelösten
+Zeitzone. Geänderte Originalwerte oder Zeitangaben erneuern ihn. Die gemeinsame
+Zeitformatierung versorgt Achsen, Tabellen und Annotationen. Dauerhafte
+Textknoten und eine Positionierung per CSS-Transformation tragen den Tooltip;
+die Eingabeverarbeitung verwendet dabei die zuvor gelesene Geometrie.
 
-Mit Node und einer installierten Playwright-WebKit-Laufzeit können die echten
-Browserpfade ausgeführt werden:
+## Aktualisierung und Lebensdauer
+
+Ein gemeinsamer Frameplaner bündelt anstehende Darstellungsarbeit für sichtbare
+Ansichten. Statusänderungen aktualisieren die Bedienanzeige und die zugehörigen
+Annotationen. Ein Archivnachtrag übernimmt Messdaten und den nachzuführenden
+Zeitausschnitt gemeinsam.
+
+Bei festem Ausschnitt und unveränderten Skalen bleiben Messkurven über reine
+Uhr- und Phasenänderungen hinweg verwendbar. Die Zeigerbewegung aktualisiert
+Cursor und Tooltip. Ein fortschreitender Gesamtverlauf benötigt eine neue
+Zeittransformation und Zeichnung. Größenänderung, Zoom und Auswahl der
+Messposition werden ebenfalls über den gemeinsamen Frameplaner verarbeitet.
+
+Beim Trennen des Panels werden Ereignislistener, Beobachter und geplante
+Framearbeit aufgeräumt. Die erneute Verbindung verwendet die vorhandene
+Panelhülle und richtet die Zeicheninstanz für die aktuelle Auswahl ein.
+
+## Reproduzierbare Prüfmethode
+
+Die Prüfungen laufen ausschließlich auf Linux. Die Methodenprüfung verwendet die Original-
+Panelmethoden mit synthetischen Daten und kontrollierten Canvasantworten:
+
+```sh
+node --test tests/panel_*.test.js
+```
+
+Für Browserprüfungen werden Node, Playwright als Entwicklungswerkzeug und eine
+installierte Browserlaufzeit benötigt. Die folgenden Aufrufe erfolgen aus dem
+Repositoryverzeichnis. Jeder Prozess wird einzeln mit seinem Exitcode und dem
+geprüften Quellstand erfasst.
 
 ```sh
 node tests/browser/live_history/accept.cjs
-node tests/browser/live_history/profile.cjs
-node tests/browser/live_history/interaction.cjs
+VARIANTS=fix node tests/browser/live_history/profile.cjs
+VARIANTS=candidate node tests/browser/live_history/interaction.cjs
 ```
 
-`HISTORY_EVIDENCE` bestimmt das private Ausgabeverzeichnis von `accept.cjs`
-und `profile.cjs`; `interaction.cjs` verwendet `INTERACTION_EVIDENCE` als
-vollständigen Pfad seiner Ergebnisdatei. `ENGINE=chromium` und
-`CHROMIUM_EXECUTABLE` wählen alternativ eine vorhandene Chromium-Laufzeit.
-Playwright muss als Entwicklungswerkzeug über die normale Modulauflösung
-verfügbar sein. Es ist keine Laufzeitabhängigkeit der Integration.
+| Skript | Gegenstand und Ausgabe |
+|---|---|
+| `accept.cjs` | Prüft Datenübernahme, dauerhafte Knoten und Browserinteraktionen anhand fester Erwartungen. |
+| `profile.cjs` | Erfasst Kaltstart, Aktualisierung, Geometriezugriffe und beobachtete Bildschirmframe-Abstände. |
+| `interaction.cjs` | Erfasst Zeigerbewegung, Zoom und Verschieben während eingehender Nachträge; trennt die Zeit bis zum Rendercallback-Ende von dessen synchroner Rechenzeit. |
 
-Die Browserfixture ersetzt ausschließlich den Datentransport durch synthetische
-Antworten. Sie verwendet echte Status-, Cache-, Zeichen- und Eingabemethoden,
-57.600 Anfangsrecords und getrennte Quellzeitpunkte. Die Vergleichsmessung lädt
-die gebundenen Git-Referenzen und den lokalen Produktcode. Kaltstart,
-Transport-/Framewartezeit, synchrone Methodenarbeit und beobachtete
-Bildschirmframe-Abstände werden getrennt ausgewiesen. Eine solche Probe ersetzt
-keine Messung in einer produktiven Companion-App-Sitzung.
+Die Fixture liefert synthetische Status- und Archivantworten an das
+Originalpanel. Die Browserläufe verwenden dessen tatsächliche Zeichen- und
+Eingabemethoden. Im WebKit-Interaktionsvergleich werden Zoomimpulse als
+Browser-`WheelEvent` mit gesetztem Strg-Modifikator eingespeist. Die Ergebnisse
+beschreiben die im Skript zugestellten Eingaben bis zur gemessenen
+Browserverarbeitung. Eine Messung auf einem verwendeten Endgerät erfasst
+zusätzlich dessen Eingabeweg und sichtbare Bildschirmausgabe.
 
-Die Interaktionsprobe vergleicht `7de9317` mit dem Arbeitsstand: Mausbewegungen,
-Zoom und Verschieben der Übersicht während eingehender Nachträge. Sie erfasst
-getrennt die Zeit vom zugestellten DOM-Ereignis bis zum Ende des Rendercallbacks
-und dessen synchrone Rechenzeit. Gerätewarteschlange und tatsächliche
-Bildschirmausgabe sind damit nicht gemessen. Die Zoomereignisse werden als
-Browser-`WheelEvent` eingespeist, weil der WebKit-Testtreiber den gedrückten
-Ctrl-Modifikator beim automatisierten Mausrad nicht übergibt. Das ersetzt keine
-Bedienprüfung in der macOS-Companion-App.
+`HISTORY_EVIDENCE` legt das Ausgabeverzeichnis von `accept.cjs` und
+`profile.cjs` fest. `INTERACTION_EVIDENCE` benennt die Ergebnisdatei der
+Interaktionsprobe. Standardbrowser ist WebKit; `ENGINE=chromium` und
+`CHROMIUM_EXECUTABLE` wählen eine vorhandene Chromium-Laufzeit.
+
+Die oben gesetzten Varianten untersuchen den aktuellen Arbeitsstand.
+Vergleichsläufe können zusätzlich die in den Skripten angegebenen Gitstände
+laden; dafür müssen diese Revisionen im lokalen Repository vorhanden sein.
+`BASELINE_REVISION` bestimmt die Vergleichsrevision der Interaktionsprobe.
+Messberichte halten die tatsächlich verwendeten Revisionen und
+Umgebungsbedingungen fest.
+
+Die Leistungsziele ergeben sich aus der beschriebenen Arbeitsweise:
+Aktualisierungen verwenden passende Daten- und Geometriecaches weiter,
+Zeigerbewegungen bearbeiten Cursor und Tooltip, und ein Messnachtrag wird als
+zusammengehörige Änderung gezeichnet. Die Skripte liefern Messwerte für die
+jeweilige Umgebung; die [Prüfanleitung](abnahme.md) ordnet den Umfang dieser
+Methoden ein.

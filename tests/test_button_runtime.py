@@ -167,6 +167,23 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("release")
         self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
 
+    def test_sparse_long_start_then_end_releases_the_actual_heating_request(self):
+        button = self.runtime._button
+        self.runtime.controller.set_temperature(70, self.now)
+        self._event("long")
+        session_id = self.runtime.session.session_id
+        self.assertTrue(self.runtime.controller.last_decision.heat)
+
+        self._event("long", 10)
+
+        self.assertIs(self.runtime._button, button)
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+        self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        self._event("release", 1)
+        self.assertEqual(self.runtime.controller.light_after_run.session_id, session_id)
+
     def test_delayed_binary_release_finishes_and_starts_light_after_run(self):
         self._event("short")
         session_id = self.runtime.session.session_id

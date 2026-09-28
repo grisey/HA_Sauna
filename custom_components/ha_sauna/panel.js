@@ -4090,26 +4090,15 @@ class SaunaPanel extends HTMLElement {
     const programChoice = this.programChoice(programs),
       programMode = this.programMode(programs),
       activeChoice = this.storedProgramChoice(programs),
-      activeMode =
-        activeChoice === "constant"
-          ? "constant"
-          : activeChoice === "individual"
-            ? "individual"
-            : "program",
-      activeProgramLabel =
-        activeMode === "program"
-          ? programs.find((program) => program.id === activeChoice)?.name ||
-            "Individuell"
-          : activeMode === "constant"
-            ? "Konstant"
-            : "Individuell",
+      activeMode = activeChoice.mode,
+      activeProgramLabel = this.programChoiceLabel(activeChoice, programs),
       programBusy = !!this.programRequest;
     const draftLabel = (draft) =>
       draft ? '<small class="program-draft-label">Vorgemerkt</small>' : "";
     const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen"><button type="button" data-action="program-mode:program" aria-pressed="${activeMode === "program"}" class="${programMode === "program" && activeMode !== "program" ? "program-draft" : ""}" ${permissions.program && programs.length && !programBusy ? "" : "disabled"}>Programm${draftLabel(programMode === "program" && activeMode !== "program")}</button><button type="button" data-action="program-mode:individual" aria-pressed="${activeMode === "individual"}" class="${programMode === "individual" && activeMode !== "individual" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Individuell${draftLabel(programMode === "individual" && activeMode !== "individual")}</button><button type="button" data-action="program-mode:constant" aria-pressed="${activeMode === "constant"}" class="${programMode === "constant" && activeMode !== "constant" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Konstant${draftLabel(programMode === "constant" && activeMode !== "constant")}</button></div>`;
     const namedPrograms =
       programMode === "program"
-        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice ${program.id === programChoice && program.id !== activeChoice ? "program-draft" : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice}" ${permissions.program && !programBusy ? "" : "disabled"}><span>${esc(program.name)}${draftLabel(program.id === programChoice && program.id !== activeChoice)}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
+        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice ${program.id === programChoice.id && program.id !== activeChoice.id ? "program-draft" : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice.id}" ${permissions.program && !programBusy ? "" : "disabled"}><span>${esc(program.name)}${draftLabel(program.id === programChoice.id && program.id !== activeChoice.id)}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
         : "";
     const light = s.manual_controls?.light || {};
     const roundedLight = (value) =>
@@ -4183,7 +4172,7 @@ class SaunaPanel extends HTMLElement {
     const programBounds = this.programBounds();
     // Temperaturautomatik stays the internal CSS/API term; the control uses the shorter label.
     const temperatureAutomation = !manualMode
-      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && (session || this.programSelectionDraft != null) ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(programs.find((program) => program.id === programChoice)?.name || (programChoice === "individual" ? "Individuell" : "Konstant"))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session ? "</div>" : ""}</section>`
+      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && (session || this.programSelectionDraft != null) ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session ? "</div>" : ""}</section>`
       : "";
     const overviewQuality = (position, quantity) =>
       `<p class="muted">${measurementLabel}${quality(position, quantity) === "current" ? "" : ` · ${qualityText(position, quantity)}`}</p>`;
@@ -4371,7 +4360,7 @@ class SaunaPanel extends HTMLElement {
     if (!this.state?.permissions?.temperature) return;
     if (!Number.isFinite(value)) throw Error("Gültige Solltemperatur eingeben");
     if (this.programRequest) return;
-    this.programSelectionDraft = "constant";
+    this.programSelectionDraft = { mode: "constant" };
     this.freeProgramKind = null;
     this.freeProgramStepsDraft = null;
     this.programSaveState = null;
@@ -4403,7 +4392,8 @@ class SaunaPanel extends HTMLElement {
       };
       this.state.target_temperature = value;
       this.programRevision = (this.programRevision || 0) + 1;
-      if (this.programSelectionDraft === "constant") this.programSelectionDraft = null;
+      if (this.programSelectionDraft?.mode === "constant")
+        this.programSelectionDraft = null;
       if (this.progressionDraft === draft) this.progressionDraft = null;
       await this.refresh(true);
       return saved?.parameters;
@@ -4486,41 +4476,49 @@ class SaunaPanel extends HTMLElement {
   }
   programChoice(programs = []) {
     const choice = this.programSelectionDraft ?? this.storedProgramChoice(programs);
-    return ["constant", "individual"].includes(choice) ||
-      programs.some((program) => program.id === choice)
+    return ["constant", "individual"].includes(choice.mode) ||
+      (choice.mode === "program" && programs.some((program) => program.id === choice.id))
       ? choice
       : this.storedProgramChoice(programs);
   }
   programMode(programs = []) {
-    const choice = this.programChoice(programs);
-    return choice === "individual"
-      ? "individual"
-      : choice === "constant"
-        ? "constant"
-        : "program";
+    return this.programChoice(programs).mode;
+  }
+  programChoiceLabel(choice, programs = []) {
+    return choice.mode === "program"
+      ? programs.find((program) => program.id === choice.id)?.name || "Individuell"
+      : choice.mode === "constant"
+        ? "Konstant"
+        : "Individuell";
   }
   selectProgramMode(mode, programs = []) {
     if (mode === "program") {
       if (!programs.length) return;
       const current = this.programChoice(programs);
-      this.programSelectionDraft = programs.some((program) => program.id === current)
-        ? current
-        : programs.find((program) => program.id === this.lastNamedProgramId)?.id ||
-          programs.find(
-            (program) => program.id === this.state?.configuration?.selected_program_id,
-          )?.id ||
-          programs[0].id;
+      this.programSelectionDraft =
+        current.mode === "program"
+          ? current
+          : {
+              mode: "program",
+              id:
+                programs.find((program) => program.id === this.lastNamedProgramId)?.id ||
+                programs.find(
+                  (program) =>
+                    program.id === this.state?.configuration?.selected_program_id,
+                )?.id ||
+                programs[0].id,
+            };
     } else if (mode === "individual" || mode === "constant")
-      this.programSelectionDraft = mode;
+      this.programSelectionDraft = { mode };
     else throw Error("Ungültige Temperaturwahl");
-    if (programs.some((program) => program.id === this.programSelectionDraft))
-      this.lastNamedProgramId = this.programSelectionDraft;
+    if (this.programSelectionDraft.mode === "program")
+      this.lastNamedProgramId = this.programSelectionDraft.id;
     this.markProgramEdited();
   }
   selectNamedProgram(id, programs = []) {
     if (!programs.some((program) => program.id === id))
       throw Error("Unbekanntes Temperaturprogramm");
-    this.programSelectionDraft = id;
+    this.programSelectionDraft = { mode: "program", id };
     this.lastNamedProgramId = id;
     this.markProgramEdited();
   }
@@ -4548,7 +4546,8 @@ class SaunaPanel extends HTMLElement {
       draft = this.progressionDraft;
     let path = "program",
       body;
-    if (choice !== "individual") body = { profile: choice };
+    if (choice.mode !== "individual")
+      body = { profile: choice.mode === "program" ? choice.id : "constant" };
     else if (
       this.freeProgramKind === "steps" ||
       (Array.isArray(configuration.temperature_steps) && !this.freeProgramKind)
@@ -4613,7 +4612,7 @@ class SaunaPanel extends HTMLElement {
           saved?.program_mode ||
           (path === "temperature"
             ? "progressive"
-            : choice === "constant"
+            : choice.mode === "constant"
               ? "constant"
               : "progressive"),
         temperature_steps: Object.hasOwn(saved || {}, "temperature_steps")
@@ -4621,8 +4620,8 @@ class SaunaPanel extends HTMLElement {
           : body.temperature_steps || null,
         selected_program_id: Object.hasOwn(saved || {}, "selected_program_id")
           ? saved.selected_program_id
-          : choice !== "constant" && choice !== "individual"
-            ? choice
+          : choice.mode === "program"
+            ? choice.id
             : null,
       };
       this.programRevision = (this.programRevision || 0) + 1;
@@ -4668,8 +4667,10 @@ class SaunaPanel extends HTMLElement {
   storedProgramChoice(programs = []) {
     const configuration = this.state?.configuration || {};
     if (programs.some((program) => program.id === configuration.selected_program_id))
-      return configuration.selected_program_id;
-    return configuration.program_mode === "progressive" ? "individual" : "constant";
+      return { mode: "program", id: configuration.selected_program_id };
+    return {
+      mode: configuration.program_mode === "progressive" ? "individual" : "constant",
+    };
   }
   valuesEqual(left, right) {
     return (
@@ -4690,9 +4691,10 @@ class SaunaPanel extends HTMLElement {
     )
       return false;
     const programs = this.state?.configuration?.temperature_programs || [],
-      choice = this.programChoice(programs);
-    if (choice !== this.storedProgramChoice(programs)) return true;
-    if (choice !== "individual") return false;
+      choice = this.programChoice(programs),
+      stored = this.storedProgramChoice(programs);
+    if (choice.mode !== stored.mode || choice.id !== stored.id) return true;
+    if (choice.mode !== "individual") return false;
     const configuration = this.state.configuration,
       manual =
         this.freeProgramKind === "steps" ||
@@ -5635,13 +5637,21 @@ class SaunaPanel extends HTMLElement {
   }
   historyDomain() {
     const session = this.shown?.session,
-      started = stamp(session?.timeline.session_started_at);
+      // The archive list retains the selected session's public time bounds
+      // while its permission-specific records and snapshot are replaced.
+      archive =
+        !session &&
+        this.sessions?.find((item) => item.session_id === this.historySelectionId()),
+      started = stamp(session?.timeline.session_started_at || archive?.started_at);
     const start =
       (Number.isFinite(started) ? started : stamp(this.state?.now) || Date.now()) -
       15 * 60000;
     return [
       start,
-      Math.max(start + 1000, stamp(session?.ended_at || this.state?.now) || start) +
+      Math.max(
+        start + 1000,
+        stamp(session?.ended_at || archive?.ended_at || this.state?.now) || start,
+      ) +
         15 * 60000,
     ];
   }
@@ -7172,7 +7182,7 @@ class SaunaPanel extends HTMLElement {
       );
       if (
         !this.state.session &&
-        this.programChoice(this.state.configuration.temperature_programs || []) !==
+        this.programMode(this.state.configuration.temperature_programs || []) !==
           "individual"
       )
         await this.applyProgram();

@@ -429,7 +429,7 @@ const renderCurrent = (
     false,
     pausedSession,
     [],
-    { configuration: programConfig, selectionDraft: "p2" },
+    { configuration: programConfig, selectionDraft: { mode: "program", id: "p2" } },
   );
   assert.match(draftedOverview, /class="program-active-label">Aktuell: Mild<\/small>/);
   assert.match(draftedOverview, /Noch nicht übernommen: Sehr langes Abendprogramm/);

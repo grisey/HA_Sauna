@@ -1,79 +1,136 @@
-# Verträge des Folgeauftrags vom 26.09.2026
+# Daten- und Einstellungsverträge
 
-Verbindliche Datentypen liegen in `core/contracts.py`.
+Die gemeinsamen Datenklassen stehen in `core/contracts.py`. Sie verbinden
+Quellen, Ablaufkern und Anzeige. Die Runtime übernimmt die zeitliche Verarbeitung;
+der Controller führt den fachlichen Zustand, der Geräteadapter die Ausgabe.
 
-- `PresenceReport`: quellenunabhängige Belegung mit Aussageart, Belegreferenz,
-  fachlichem Zeitpunkt, Empfang und Verfügbarkeit. `proxy_retraction` bedeutet
-  unbekannte Belegung, keine beobachtete Abwesenheit. Direkte Präsenz wird vorerst
-  nur beobachtet; die führende Quelle bleibt Proxy, ohne ODER-Verknüpfung.
-- `ControlInputs`: einmalige Türanforderung, laufende Heizanforderung des Gangs und
-  bestehende Ofenkühlung. Schutz und Betrieb-AUS bleiben übergeordnet.
-- `PhaseProjection`: genau eine Hauptphase je Intervall, Korrekturhinweise und
-  einzelne Bereitschaftspausen. Grundlage sind `Session.base_phases` und
-  `Session.contactor_history` plus Gang-/Ofenkühlungsintervalle. Die tatsächliche
-  Schützspur wird niemals durch die Projektion verändert.
-- `ConsumerEvent`: stabile Identität und beide Zeitbezüge für Belegung,
-  Verfügbarkeit, Gangbeginn/-bestätigung/-rücknahme/-ende und Aufgüsse.
-  `archive_correction` ist keine Liveauslösung. Keine Wiedergabe implementiert.
+## Präsenz und Verbraucherereignisse
 
-## Temperaturänderungen und vollständige Einstellungen
+| Vertrag | Inhalt und Bedeutung |
+| --- | --- |
+| `PresenceReport` | `report_id` identifiziert die Meldung. `occupancy` unterscheidet `present`, `absent` und `unknown`. `assertion` beschreibt die Aussageart; `source` und `source_ref` erhalten Quelle und Beleg. `available` beschreibt die Verfügbarkeit der Quelle. |
+| `ConsumerEvent` | `event_id` ist die stabile Ereignisidentität. `kind`, `session_id`, `gang_id` und `source_ref` ordnen die fachliche Änderung ihrer Sitzung, ihrem Gang und ihrem Beleg zu. Ein enthaltenes `presence` trägt den zugehörigen Präsenzbericht. |
 
-Das vollständige Parameterformular erhält das laufende Temperaturprogramm,
-wenn sein mitgesendeter Sollwert unverändert ist. Eine direkte Sollwertwahl
-über die partielle Temperaturschnittstelle bleibt eine ausdrückliche Wahl,
-auch wenn die gewählte Zahl der bisher gespeicherten entspricht. Änderungen
-technischer Grenzen werden vor jeder Übernahme gegen den vollständigen
-Konfigurationskandidaten geprüft, einschließlich der Innenstufen eines freien
-Programms. Ein ungültiger Kandidat verändert weder Livezustand noch Optionen.
+Beide Verträge verwenden `effective_at` für den fachlichen Zeitpunkt und
+`received_at` für den Zeitpunkt, zu dem die Aussage im jeweiligen Vertrag
+verfügbar wurde. Bei abgeleiteten Gangereignissen stammt dieser zweite Zeitpunkt
+aus der Erkennung beziehungsweise Zustellung der zugrunde liegenden Änderung.
+Der Ablaufkern unterscheidet daneben die Buchungszeit eines `Event`. Die
+Zuordnung dieser Zeiten und ihre Reihenfolge stehen im [Zeitmodell](zeitmodell.md).
 
-Diese Unterscheidung liegt im gemeinsamen Einstellungspfad. Das Panel lässt
-den Sollwert im Vollformular stehen und führt dafür keine zweite Regel ein.
-Auch bei nicht geladener Integration verwendet der Optionsflow denselben
-vollständigen Kandidaten. Eine wirksame Änderung des freien Programms darf
-keine ältere Stufenliste zurücklassen, die nach dem nächsten Laden die neuen
-Start-/End-/Verteilungswerte überstimmt.
+Eine `proxy_retraction` nimmt den Beleg für eine bisher angenommene Belegung
+zurück und meldet `unknown`. Beobachtete Abwesenheit wird durch `absent`
+ausgedrückt. Eine Rücknahme gehört zu ihrem ursprünglichen Beleg; eine jüngere
+Präsenzmeldung mit anderer Referenz bleibt eigenständig.
 
-Scheitert ein technisches Neuladen, werden Optionen, Startfreigabe und
-Lichtzuständigkeit nur für die noch aktuelle, offene alte Runtime
-wiederhergestellt. Neuere Optionsänderungen und bereits geschlossene oder
-ersetzte Runtimes bleiben unberührt. HAs eigener Entladefehler bleibt sichtbar.
-Der Wechsel auf eine andere Leuchte wartet begrenzt auf bereits laufende alte
-Ausgaben und bestätigt erst danach das abschließende AUS der bisherigen Leuchte.
-Auch ein Runtimewechsel mit unveränderter Leuchtenbindung wartet vor dem
-Plattformentladen auf den tatsächlichen Abschluss alter Lichtdienste. Ist das
-innerhalb des Dienstbudgets nicht möglich, bleibt die bisherige Runtime samt
-Archiv zuständig; der Reloadversuch wird zurückgenommen. Bei technischen
-Optionsänderungen erfolgt diese Vorprüfung bereits vor dem HA-Reload, damit
-ein noch laufender Lichtdienst keinen nicht wiederholbaren HA-Entladefehler
-erzeugt. Während der Rücknahme bleibt die Lichtausgabe entzogen; erst nach
-Wiederherstellung der Optionen wird sie freigegeben. Ein direkter
-Runtimeabschluss versucht zuerst Ofen-AUS und lässt bei einer noch laufenden
-Lichtaufgabe das Archiv für deren Abschluss offen. Der Abschluss kann erneut
-versucht werden; eine neue Runtime darf den offenen Vorgänger nicht ersetzen.
+Die Proxyquelle führt die Gangzuordnung. Direkte Präsenzmeldungen werden mit
+ihrem eigenen Herkunfts- und Verfügbarkeitsnachweis beobachtet. Das fachliche
+Verhältnis der Quellen beschreibt [Präsenz und Phasen](praesenz-ofen-phasen.md).
 
-Die Antworten für Betriebsart und Tasterprogramm stammen aus dem unveränderlichen
-Ergebnis des gemeinsamen Einstellungsschreibers. Ein Runtimewechsel während des
-Einlesens des HTTP-Bodys kann dadurch keinen früheren Konfigurationsstand als
-erfolgreich übernommen bestätigen.
+`ConsumerEvent.delivery` unterscheidet `live` und `archive_correction`.
+Archivkorrekturen aktualisieren Zuordnung und Darstellung. Gerätebefehle
+entstehen im aktuellen Regelzyklus aus der aktuellen Entscheidung des
+Controllers. Die stabile Ereignisidentität ermöglicht eine einmalige Zustellung
+auch über erneute Archivabfragen hinweg.
 
-## Historischer Arbeitsplan vom 26.09.2026
+## Regelanforderungen und Phasenansicht
 
-Die folgende Aufteilung dokumentiert den damaligen Arbeitsplan, nicht die
-aktuellen Dateinamen oder dauerhafte Schreibzuständigkeiten. Die Türhilfe liegt
-in `core/temporary_door_heat.py`; die damals vorgesehenen Dateien
-`core/heater_overrides.py` und `tests/test_heater_overrides.py` wurden nicht angelegt.
+`ControlInputs` fasst die laufenden Anforderungen zusammen:
+`gang_heat_demand` beschreibt den Heizbedarf des Gangs,
+`temporary_door_heat` die bestehende Türhilfe und `cooling` die Ofenkühlung.
+Der zuständige Ablauf hält eine Anforderung bis zu ihrer Erledigung aufrecht.
+Der Controller wertet diese Anforderungen zusammen mit Betriebsart, Betrieb-AUS
+und technischen Schutzbedingungen aus. `gang_veto` und `door_request` sind
+kompatible Namen für die beiden ersten Werte und lesen denselben Zustand.
 
-1. Präsenz: neue `core/presence.py`, `presence_adapter.py`,
-   `tests/test_presence.py`, `tests/integration/test_presence_adapter.py`.
-2. Ofen: `core/thermostat.py`, neue `core/heater_overrides.py`,
-   `tests/test_thermostat.py`, `tests/test_heater_overrides.py`.
-3. Phasen: `core/timeline.py`, neue `core/phases.py`, `archive.py`,
-   `tests/test_timeline.py`, `tests/test_phases.py`, `tests/test_archive.py`.
-4. Oberfläche: `config_flow.py`, `panel.js`, `presentation.py`, `strings.json`,
-   `translations/de.json`, `core/parameter_text.py`,
-   neue `tests/panel_presence.test.js`, `tests/ha/test_presence_config.py`.
+`PhaseProjection` enthält Hauptphasenintervalle und einzelne Bereitschaftspausen.
+Grundlage sind `Session.base_phases`, `Session.contactor_history` sowie die
+Gang- und Ofenkühlungsintervalle. Jedes ausgegebene Intervall hat genau eine
+Hauptphase. `complete` und `corrections` kennzeichnen Vollständigkeit und
+Korrekturhinweise. Die gespeicherte Schützspur bleibt die maßgebliche Beobachtung;
+die Projektion ordnet ihr eine fachliche Ansicht zu.
 
-Alle übrigen Dateien, insbesondere Controller, gemeinsame Modelle/Verträge,
-Parameterdefinitionen, Bindings, Runtime, Geräteadapter, API, Einstellungen und
-Dokumentation gehören ausschließlich dem Koordinator. Teilagenten liefern
-Integrationsanforderungen statt in diese Dateien zu schreiben.
+## Einstellungen übernehmen
+
+Die Programmauswahl führt Bedienmodus und benannte Programmkennung getrennt.
+Im Panel enthält eine benannte Auswahl den Bedienmodus `program` und ihre
+vollständige ID; `individual` bezeichnet als Bedienmodus ein freies Programm.
+Eine gültige benannte ID `individual` bleibt eine benannte Auswahl. Entwurf, Beschriftung,
+gespeicherte Auswahl und Übernahme verwenden diese Zuordnung gemeinsam.
+Der bestätigte Konfigurationsstand führt die benannte ID in `selected_program_id`.
+Der Programmauftrag übermittelt benannte IDs als `profile`, beispielsweise
+`{"profile":"individual"}`. Auch IDs mit Doppelpunkten bleiben vollständig.
+
+Der gemeinsame Einstellungspfad prüft einen vollständigen Konfigurationskandidaten,
+einschließlich der Innenstufen eines freien Temperaturprogramms. Ein gültiger
+Kandidat wird übernommen; bei Abweisung bleibt der bisherige Options- und
+Laufzeitstand wirksam. Auch der Optionsflow einer ungeladenen Integration verwendet
+diesen vollständigen Kandidaten.
+
+Ein vollständiges Parameterformular erhält das laufende Temperaturprogramm,
+wenn sein mitgesendeter Sollwert unverändert ist. Eine direkte Sollwertwahl über
+die partielle Temperaturschnittstelle ist eine ausdrückliche Auswahl,
+auch bei derselben Zahl. Das Panel übermittelt den Sollwert im Vollformular;
+`settings.py` entscheidet zentral über die Bedeutung der Änderung.
+
+Wird ein freies Programm durch eine neue Start-/End-/Verteilungsvorgabe ersetzt,
+bilden gespeicherte Werte und aktive Stufen denselben gewählten Stand ab. Gültige
+Live-Änderungen werden in den bestehenden Controller übernommen und erhalten die
+laufende Sitzung. Änderbarkeit und Benutzerrechte stehen in
+[Parameter](parameter.md) und [Bedienung](bedienung.md).
+
+Die Antworten auf Änderungen von Betriebsart und Tasterprogramm stammen aus
+dem unveränderlichen Ergebnis des gemeinsamen Einstellungsschreibers. Der
+Antwortstand gehört damit zu der tatsächlich gespeicherten Konfiguration,
+auch bei einem Runtimewechsel während des Einlesens des HTTP-Bodys.
+
+## Tasterereignisse
+
+Der Geräteadapter normalisiert Tasterereignisse für `core/button.py`.
+Ein gültiger neuer Ereigniszeitstempel kennzeichnet eine neue Meldung.
+Der Adapter verarbeitet denselben Zeitstempel einmal und filtert ältere
+Zustellungen.
+Native Druck- und Loslassmeldungen sowie die Langklassifikation gehören zu
+derselben Geste. Binärtaster melden ihre Druck- und Loslassflanken; die Runtime
+prüft die Haltezeit mit dem Empfangszeitbezug.
+
+Eine reine `short`- oder `long`-Klassifikation wird auch ohne vorherige Druckflanke
+verarbeitet. Jede neue eigenständige Langklassifikation erhält den aktuellen
+Betriebskontext. Ein Start bei AUS verbraucht seine eigene Geste. Erst eine neue
+lange Geste bei laufendem Betrieb erzeugt den Sitzungsabschluss `END_HOLD` und
+fordert Licht-AUS an. Eine reine Langklassifikation liefert für sich den
+Langdrucknachweis. Der bestätigte Loslassnachweis erzeugt `END_RELEASE` und
+startet den Lichtnachlauf. Den fachlichen Ablauf beschreibt
+[Betrieb](betrieb.md#bedienhandlungen-und-betriebsart).
+
+## Technisches Neuladen und Geräteübergabe
+
+Scheitert das technische Neuladen, stellt die Rücknahme Optionen, Startfreigabe
+und Lichtzuständigkeit für den noch aktuellen, offenen bisherigen Runtimebesitzer
+wieder her. Sie prüft dazu die Identität der Runtime und den weiterhin gültigen
+Optionsauftrag. Neuere Optionen sowie ein bereits ersetzter oder geschlossener
+Besitzer behalten ihren eigenen Stand. Home Assistants Entladefehler bleibt
+sichtbar.
+
+Beim Wechsel der Leuchtenzuordnung wartet die Übergabe begrenzt auf laufende
+Ausgaben an die bisherige Leuchte. Deren tatsächlicher Dienstabschluss geht dem
+abschließenden AUS voraus; die beobachtete AUS-Rückmeldung bestätigt die Übergabe.
+Die Zeitgrenze des Wartenden und die Lebensdauer des tatsächlichen Dienstes sind
+getrennt. Ein noch laufender Dienst behält seinen Herkunftsbeleg bis zum Abschluss.
+
+Jede Runtimeübergabe wartet auch bei gleicher Leuchtenzuordnung vor dem
+Plattformentladen auf den tatsächlichen Abschluss alter Lichtdienste. Bei
+technischen Optionsänderungen erfolgt diese Prüfung vor dem Home-Assistant-Reload.
+Die Freigabe setzt den Abschluss innerhalb des vorhandenen Dienstbudgets voraus.
+Andernfalls bleiben die bisherige Runtime und ihr Archiv zuständig und die
+Optionsänderung wird zurückgenommen. Die Lichtausgabe bleibt während dieser
+Rücknahme entzogen und wird mit den wiederhergestellten Optionen freigegeben.
+
+Ein direkter Runtimeabschluss versucht zuerst Ofen-AUS. Eine weiterhin laufende
+Lichtaufgabe behält das offene Archiv für ihren Abschluss. Der Runtimeabschluss
+kann erneut versucht werden; die Übernahme durch eine neue Runtime setzt den
+erfolgreichen Abschluss des bisherigen Besitzers voraus.
+
+Archivzugriff, Seitenzeiger und Downloadberechtigung beschreibt
+[Speicherung](speicherung.md). Die dortigen Originaldaten bleiben auch bei einer
+späteren Neuzuordnung von Geräten ihrer ursprünglichen Quelle zugeordnet.

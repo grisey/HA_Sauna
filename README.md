@@ -1,54 +1,24 @@
 # HA Sauna
 
-HA Sauna bündelt Ihre Saunasitzung in Home Assistant: Temperatur, Licht,
-Saunagänge, Bedienung und Verlauf bleiben an einer Stelle sichtbar.
+HA Sauna steuert Ofen und Licht Ihrer Sauna in Home Assistant und zeichnet den
+Sitzungsverlauf auf. Sie wählen eine feste Temperatur oder ein Programm für
+aufeinanderfolgende Saunagänge. Die Steuerung zeigt den aktuellen Betrieb;
+im Verlauf verfolgen Sie Messwerte und erkannte Gänge.
 
-Oben neben der Sauna stehen **Steuerung**, **Verlauf**, **Details** und
-**Einstellungen** bereit. In der Steuerung schalten Sie den Betrieb ein, wählen die Temperatur direkt am
-Anzeigebogen oder über Schnellwahltasten und sehen Temperatur, Luftfeuchte,
-Heizzustand und die nächste relevante Zeit. Die Temperatur kann konstant bleiben
-oder einem Programm mit gleichmäßig verteilten oder einzeln gewählten Stufen
-folgen. Im Automatikbetrieb bietet
-die Steuerung beim Licht **Aus**, **Automatik** und **Hell**. Die freie
-Helligkeitswahl steht Administratoren dort in der Übersteuerung zur Verfügung.
-Details enthalten ausschließlich Status- und Diagnoseanzeigen.
+## Einstieg
 
-Der bestehende Saunataster bleibt Teil der Bedienung: Ein kurzer Druck startet
-mit dem hinterlegten Programm oder übersteuert den Ofen vorübergehend; langes
-Drücken beendet die Saunasitzung. Lichttaster schalten und dimmen das Licht
-weiter unmittelbar.
+Die [Einrichtung](docs/einrichtung.md) führt durch Installation und
+Gerätezuordnung. Die [Bedienungsanleitung](docs/bedienung.md) erklärt die tägliche
+Nutzung über die Oberfläche und die vorhandenen Taster.
 
-Normale Home-Assistant-Bedienrechte reichen für die reguläre Bedienung:
-Betriebsartwechsel zwischen abgeschlossenen Sitzungen, manuelles Ofen-
-Ein-/Ausschalten, Lichtstufen sowie Programme und Tasterwahl in den
-**Einstellungen**. Der Taster nutzt ein benanntes Programm oder eine eigene
-konstante Temperatur. Technische Konfiguration, Details, Ofenübersteuerungen im
-Automatikbetrieb, freie Helligkeitswahl und Archivexport bleiben Administratoren
-vorbehalten.
+## Technische Dokumentation
 
-Nach einem bestätigten Saunagang folgt die [Ofenkühlung](docs/ofenkuehlung.md)
-mit einer dynamischen Dauer: standardmäßig 5 bis 15 Minuten, berechnet aus
-den seit der letzten vollständigen Ofenkühlung beobachteten Heizzeiten und
-Bereitschaftspausen. Gespeicherte Grunddauern bleiben erhalten. Die eigenständige
-Zwangskühlung entfällt.
+[Betrieb](docs/betrieb.md) erklärt den Ablauf,
+[Parameter](docs/parameter.md) die Einstellungen.
+[Architektur](docs/architektur.md) beschreibt den Aufbau der Integration und
+verweist auf die Fach- und Schnittstellenbeschreibungen.
 
-Der [Folgeauftrag zu Präsenz, Ofen und Phasen](docs/praesenz-ofen-phasen.md)
-beschreibt die vorbereitete externe Präsenzquelle, die vorübergehende
-Türschlussanforderung, durchgehendes Heizen im aktiven Gang und die
-korrigierte Historie einschließlich der noch offenen Aktivierungsregeln.
-
-## Start
-
-Für die Installation und Gerätezuordnung lesen Sie das kurze
-[Einrichtungsrunbook](docs/einrichtung.md). Es beschreibt HACS, die Rollen der
-Sensoren und Aktoren sowie den getrennten Anschluss von Taster und Heizschütz.
-
-Die ausführliche [Bedienungsanleitung](docs/bedienung.md) erklärt die tägliche
-Nutzung, Temperaturprogramme, Licht, Taster, Übersteuerungen und den Verlauf.
-
-## Weiterführendes
-
-Die technischen Regeln und sämtliche einstellbaren Werte stehen in
-[Betrieb](docs/betrieb.md) und [Parameter](docs/parameter.md). Hinweise zu
-Archiv, Datenhaltung und Prüfung finden Sie in [Speicherung](docs/speicherung.md)
-und [Abnahme](docs/abnahme.md).
+Die Datenhaltung und ihre Sicherung stehen unter
+[Speicherung](docs/speicherung.md). Die [Prüfanleitung](docs/abnahme.md)
+erläutert die Prüfverfahren. Für Arbeiten am Projekt gelten die
+[Arbeitsregeln](AGENTS.md).

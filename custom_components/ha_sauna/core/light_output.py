@@ -118,6 +118,10 @@ class LightOutput:
         veralteten Helligkeitswert wieder aufbaut.
         """
         self._last_automatic = 0.0
+        self._motion = None
+        self._resume_pending = False
+        self._phase_paused = False
+        self._paused_automatic = None
 
     @property
     def manual_brightness(self) -> float | None:
@@ -171,8 +175,16 @@ class LightOutput:
             self._phase_paused = False
             self._paused_automatic = None
             self._phase_ends_at = phase_ends_at
+        if phase == "aus":
+            # Das automatische Ende besitzt keinen Rückkehrübergang. Auch
+            # bei gleichzeitigem Override-Ende darf der vorige Phasenwert
+            # deshalb nicht noch einmal als Starthelligkeit erscheinen.
+            self.finish_automatic()
+            if self._manual is not None:
+                return LightPlan(self._manual, False, True)
+            return LightPlan(0.0, True, False)
         if phase in self._SESSION_PHASES and _remaining(now, phase_ends_at) == 0:
-            self._last_automatic = 0.0
+            self.finish_automatic()
             return LightPlan(0.0, True, False)
         if phase_paused:
             if not self._phase_paused:

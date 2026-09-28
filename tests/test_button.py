@@ -152,11 +152,8 @@ class ButtonGestureTests(unittest.TestCase):
     def test_sparse_long_starts_when_off_and_ends_when_enabled(self):
         button = ButtonGestures(THRESHOLD)
         self.assertEqual(button.handle("long", False, at(0)), START_STANDARD_PROGRAM)
-        self.assertIsNone(button.handle("release", True, at(1)))
-
-        button = ButtonGestures(THRESHOLD)
-        self.assertEqual(button.handle("long", True, at(0)), END_HOLD)
-        self.assertEqual(button.handle("release", False, at(1)), END_RELEASE)
+        self.assertEqual(button.handle("long", True, at(10)), END_HOLD)
+        self.assertEqual(button.handle("release", False, at(11)), END_RELEASE)
 
     def test_short_after_completed_long_is_suppressed_until_next_press(self):
         button = ButtonGestures(THRESHOLD)
@@ -168,5 +165,7 @@ class ButtonGestureTests(unittest.TestCase):
 
     def test_release_less_sparse_long_allows_the_next_event_only_click(self):
         button = ButtonGestures(THRESHOLD)
-        self.assertEqual(button.handle("long", True, at(0)), END_HOLD)
-        self.assertEqual(button.handle("short", False, at(2)), START_STANDARD_PROGRAM)
+        self.assertEqual(button.handle("long", False, at(0)), START_STANDARD_PROGRAM)
+        self.assertEqual(button.handle("short", True, at(1)), HEATER_TOGGLE_OVERRIDE)
+        self.assertEqual(button.handle("long", True, at(2)), END_HOLD)
+        self.assertEqual(button.handle("short", False, at(4)), START_STANDARD_PROGRAM)

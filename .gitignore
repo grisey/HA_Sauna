@@ -13,3 +13,6 @@ events.jsonl
 ergebnis.json
 secrets.yaml
 .DS_Store
+
+# Lokale Befunde, Umsetzungsunterlagen und Prüfprotokolle
+/arbeit/

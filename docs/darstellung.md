@@ -1,224 +1,165 @@
-# Oberfläche
+# Darstellungsreferenz
 
-> Ergänzender Vorrang: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
-> beschreibt den Produktivstand des Folgeauftrags vom 26.09.2026.
+Diese Seite beschreibt den Aufbau und die Gestaltung des Panels. Die
+[Bedienungsanleitung](bedienung.md) erklärt die täglichen Bedienfolgen. Der
+[Betriebsablauf](betrieb.md) liefert die fachliche Bedeutung der angezeigten
+Zustände; der [Daten- und Zeichenvertrag](livekurve.md) beschreibt ihre technische
+Darstellung im Verlauf.
 
-> Vorrang seit 26.09.2026: [Ofenkühlung](ofenkuehlung.md) ersetzt die unten
-> beschriebenen eigenständigen Kühlzyklen, Heizbudgets und Kühlanrechnungen.
-> Aktuelle Beschriftung des bisherigen Nachlaufs ist „Ofenkühlung“.
+## Ansichten und Aktualisierung
 
-Die Topnavigation neben der Sauna enthält **Steuerung**, **Verlauf**,
-**Details** und **Einstellungen**. **Steuerung** enthält die alltägliche
-Bedienung mit den normalen Home-Assistant-Bedienrechten. **Verlauf** zeigt die
-Sitzungen als eigenes Blatt. Details und
-technische Einstellbereiche stehen Home-Assistant-Administratoren zur Verfügung.
-Es gibt keine zusätzlichen Benutzerrollen der Integration.
+Das Panel übernimmt den aktuellen Zustand über die API. Die Bedienrechte folgen
+dem angemeldeten Home-Assistant-Benutzer. Die obere Navigation gliedert die
+Oberfläche nach Aufgabe:
 
-## Steuerung
+| Ansicht | Aufgabe |
+|---|---|
+| Steuerung | Betrieb, Temperaturwahl und Licht mit aktuellem Phasenstatus |
+| Verlauf | Aktuelle und archivierte Saunasitzungen |
+| Details | Technische Zustände und Erkennungskontrolle für Administratoren |
+| Einstellungen | Programmbibliothek und Tasterwahl; technische Konfiguration und Darstellung für Administratoren |
 
-Die Steuerung zeigt Zustand und passende Zeit direkt nebeneinander; die
-Saunagangzahl steht rechts. Die aktive Sitzungsangabe erscheint unter
-**Ausschalten**. Der Betriebsmodus hat eine eigene Kachel. Eine Saunaauswahl
-erscheint erst bei mehreren eingerichteten Saunen.
+Bei mehreren eingerichteten Saunen steht eine Instanzauswahl bereit. Ein Wechsel
+führt zunächst durch eine Ladeansicht. Die passende Statusantwort gibt die
+Bedienung der ausgewählten Sauna frei. Auch spätere Antworten werden ihrer
+Instanz und dem zugehörigen Vorgang zugeordnet.
 
-Temperaturwahl und Temperaturautomatik stehen zusammen in der Bedienkachel.
-Zwischen Sitzungen ist die Auswahl offen sichtbar. Während einer bestehenden
-Sitzung, einschließlich der Wiederaufnahmefrist, öffnet **Programm ändern**
-die Auswahl. Daneben steht immer das bestätigte, aktuell wirksame Programm als
-Name, **Konstant** oder **Individuell**; ein vorgemerkter Entwurf ändert diese
-Angabe erst nach dem Übernehmen. Ein begonnener Entwurf bleibt bis **Programm übernehmen** oder
-**Abbrechen** auch während Statusaktualisierungen geöffnet. Die
-Administrator-Übersteuerungen im Automatikbetrieb bleiben davon unabhängig
-sichtbar. Die tatsächliche Ofenrückmeldung steht unmittelbar beim Phasenstatus
-kompakt als **Ofen an** oder **Ofen aus**; fehlt sie, erscheint **Ofen unbekannt**.
-Die Steuerung zeigt keinen Türstatus; er bleibt in den Details ablesbar.
-Bei der Temperaturwahl liegt der Schieber direkt auf der Skala. Klick, Ziehen
-und Pfeiltasten ändern das Soll; der einstellbare Regelbereich beginnt
-standardmäßig bei 60 °C und endet bei 100 °C. Eine direkte Wahl bedeutet
-konstantes Heizen. Messwerte werden durch diesen Einstellbereich nicht begrenzt.
-Messposition und internes Bereitschaftsziel erscheinen erst in den Details.
+Die regelmäßige Aktualisierung erhält den Wert einer gerade bearbeiteten
+Eingabe und übernimmt zugleich aktuelle Sperrattribute. Ein geöffneter Entwurf
+bleibt bis zum Übernehmen oder Verwerfen bestehen. Auswahlmarkierungen beziehen
+sich auf die vom Backend bestätigte Einstellung.
 
-Die Auswahlleiste enthält **Programm**, **Individuell** und **Konstant**.
-Benannte Programme stehen untereinander als kompakte Auswahlbuttons mit Namen
-und Temperaturfolge. **Konstant** zeigt die festen Temperaturtasten.
-Die Wahl **Individuell** blendet die **Temperaturautomatik** ein. Dort stehen
-gleichmäßige Verteilung mit Start, Ende und Stufenzahl sowie die Einzelwahl jeder
-Temperatur zur Verfügung. Das Infosymbol bei **Verteilung** öffnet eine kurze
-Hilfe am Feld. Nach Erreichen der letzten Stufe bleibt deren Temperatur erhalten.
-Während einer Sitzung zeigt eine geänderte Auswahl einen vorgemerkten Entwurf,
-während die aktive Wahl markiert bleibt. **Abbrechen** verwirft den Entwurf.
-**Übernehmen** ist bei Änderungen aktiv; während der Anfrage zeigt es
-**Wird übernommen …**, nach Erfolg kurz **✓ Übernommen**. In einer laufenden
-Sitzung steht **Programm übernehmen** als Hauptaktion beim Betrieb. Zwischen
-Sitzungen werden benannte und konstante Wahlen unmittelbar übernommen;
-individuelle Eingaben benötigen weiterhin **Übernehmen**.
+## Temperaturwahl und Eingabezustände
 
-Die Helligkeitsauswahl zeigt **Gedimmt** und **Hell** mit kleineren Prozentangaben.
-Im Automatikbetrieb stehen auf **Steuerung** für Administratoren die
-vorübergehenden Ofen- und Lichtübersteuerungen einschließlich freier Helligkeit.
-Normale Benutzer sehen für das Licht **Aus**, **Automatik** und **Hell**.
-Die Betriebsart **Manuell** blendet die Temperaturautomatik aus
-und zeigt **Ofen EIN/AUS** und die Lichtstufen **Aus**, **Gedimmt**, **Hell** auch für
-normale Benutzer. Der Betriebsartwechsel ist nur
-zwischen abgeschlossenen Sitzungen möglich. Vorübergehende Übersteuerungen
-während des Automatikbetriebs sind davon unabhängig.
+Die Temperaturanzeige verbindet Messwert und Sollschieber auf derselben Skala.
+Der zulässige Sollbereich beginnt bei einer einstellbaren Untergrenze,
+standardmäßig 60 °C, und endet bei der festen Obergrenze von 100 °C. Eine direkte
+Wahl setzt eine konstante Solltemperatur. Das tatsächliche Heizen folgt den
+Regel- und Schutzbedingungen des Betriebsablaufs.
 
-Direkt neben dem Zustand steht eine schlichte Zeitzeile. Beim Aufheizen lautet
-sie beispielsweise **Heizen – noch 10 Minuten bis bereit**, bei Bereitschaft
-**Bereit – noch 20 Minuten**. Geschätzte Aufheizzeiten zeigen keine Sekunden und
-verwenden unter fünf Minuten den Text **noch unter 5 Minuten bis bereit**. Bei
-Bereit zeigt die Zeit, wie lange noch mindestens ein Gang begonnen werden kann;
-Heizpausen können diesen Zeitraum verlängern. Gang, Ofenkühlung und
-Sperren zeigen ihre eigene kompakte Zeit statt einer Bereitschaft.
-Nach Sitzungsende wird der verbleibende
-Lichtnachlauf angezeigt. Technische Fristen und die Schätzung des mechanischen
-Ofentimers stehen kompakt in den Details.
+Der Sollschieber verwendet den gemeinsamen Bereich aus Anzeigeskala und
+zulässiger Solltemperatur. Für Zeiger- und Tastatureingaben müssen ein solcher
+Bereich und passende Bedienrechte vorliegen. Die Schnellwahl hebt den aktuell
+bestätigten Wert hervor.
+Benannte Programme zeigen ihren Namen und ihre Temperaturfolge. Die Hilfe zur
+gleichmäßigen Verteilung verwendet denselben gültigen Entwurf wie die
+Eingabefelder.
 
-Die Aufheizprognose beginnt mit dem geeigneten Verlauf der letzten Sitzung
-und übernimmt den aktuellen Temperaturtrend schrittweise. Kurze Schwankungen
-führen nicht zu einem erneuten Anstieg der Restzeit. Eine Verlängerung kommt
-bei dauerhaft langsamerem Aufheizen oder Wärmeverlust durch eine erkannte
-Türöffnung infrage.
+| Eingabezustand | Darstellung |
+|---|---|
+| Bestätigte Auswahl | Hervorgehobene Auswahl und wirksamer Programmname bzw. **Konstant** oder **Individuell** |
+| Bearbeiteter Entwurf | Neutrale Fläche mit **Vorgemerkt** bzw. **Noch nicht übernommen** |
+| Laufende Übertragung | Gesperrte Bestätigungsschaltfläche mit **Wird übernommen …** |
+| Erfolgreiche Übernahme | **✓ Übernommen** für zwei Sekunden auf derselben Fläche |
+| Eingabefehler oder fehlgeschlagene Anfrage | Erklärender Text bei weiterhin bearbeitbarem Entwurf |
 
-Orange (`#e58a55`) kennzeichnet die wirksame Auswahl in der Navigation und bei
-Einstellungen. Auslösende Befehle wie **Starten**, **Übernehmen** und
-**Speichern** verwenden die neutrale Aktionsfarbe des Home-Assistant-Themas;
-gedecktes Rot kennzeichnet Ausschalten und Beenden.
-Auch die wirksame Ofen- und Lichtauswahl erscheint orange. Nicht ausgewählte
-Optionen und Nebenaktionen haben neutrale Flächen mit einer einheitlichen,
-dezenten Kontur; Löschen erhält rote Schrift. Zusätzliche farbige Rahmen und
-Innenstriche entfallen. Nur der Tastaturfokus wird deutlich umrandet;
-Einfügemarkierungen beim Sortieren bleiben erhalten.
+## Zustand und Zeit
 
-Ein Entwurf bleibt neutral und trägt den Zusatz **Vorgemerkt**. Die Zusammenfassung
-**Noch nicht übernommen** steht auf einer dezenten Fläche ohne Sonderrahmen.
-Während der Anfrage bleibt die Schaltfläche mit **Wird übernommen …**
-gesperrt. **✓ Übernommen** bestätigt den Erfolg zwei Sekunden auf derselben
-Fläche; danach kehrt das Bedienelement in seine normale Darstellung zurück.
-Fehler erscheinen als Text und erhalten den Entwurf. Farbe allein vermittelt
-keinen Bedienzustand. Statusplaketten bleiben zurückhaltend. Temperaturanzeige
-und Temperaturkurve verwenden dieselbe Messfarbe (Standard `#ff6b4a`);
-Luftfeuchteanzeige und Feuchtekurve verwenden eine zweite gemeinsame Messfarbe
-(Standard `#42a5ff`). Die bisherigen Phasenfarben des Verlaufs bleiben die
-Vorgaben für jede Phase. Nur die große Bedienkachel erhält bei einer bekannten,
-automatischen Phase eine Tönung von 8 % der Phasenfarbe auf dem Kartenhintergrund.
-Aus, Manuell, unbekannte und veraltete Zustände bleiben neutral. Es gibt dafür
-keine Animation und keinen zusätzlichen Rahmen. Ofen-Ein und Ofen-Aus sind
-zusätzlich farblich erkennbar.
+Die Steuerung stellt Phase und passende Zeit nebeneinander dar. Rechts steht
+die Saunagangzahl. Die Ofenrückmeldung erscheint als **Ofen an**, **Ofen aus**
+oder **Ofen unbekannt**. Die markierte Betriebs- oder Übersteuerungsauswahl
+beschreibt den gewählten Modus; die Ofenrückmeldung beschreibt den beobachteten
+Heizzustand.
 
-Administratoren können unter **Einstellungen → Darstellung** die Farben der
-Bedienoberfläche, Phasen, Messungen und Ereignisse je Sauna anpassen. Die
-Einstellungen sind in **Bedienung**, **Grunddarstellung**,
-**Zustände und Phasen** und **Messungen und Ereignisse** gegliedert. Farbfeld und
-Hexwert zeigen denselben Entwurf. Die Vorschau wirkt sofort in Anzeigen,
-Verlauf, SVG, Canvas, Legenden und Hinweisen. **Darstellung speichern** übernimmt
-sie für die ausgewählte Sauna. **Änderungen verwerfen** stellt die gespeicherten
-Werte wieder her; **Standarddarstellung wiederherstellen** setzt nur den Entwurf
-auf die Vorgaben. Lesbarer Text und
-sichtbarer Tastaturfokus bleiben auch bei angepassten Farben erhalten.
+| Situation | Zeitdarstellung |
+|---|---|
+| Aufheizen mit belastbarer Prognose | Geschätzte Zeit bis bereit, auf Fünf-Minuten-Stufen gerundet; unter fünf Minuten **noch unter 5 Minuten bis bereit** |
+| Aktiver Saunagang | Seit Gangbeginn verstrichene Zeit |
+| Angeforderte Ofenkühlung | Hinweis auf die Vorbereitung bis zur bestätigten AUS-Rückmeldung des Ofenschalters |
+| Laufende Ofenkühlung | Verbleibende, aus bestätigter AUS-Zeit berechnete Dauer |
+| Zeitlich bestimmte Startsperre | Verbleibende Wartezeit und zugehöriger Grund |
+| Lichtnachlauf | Verbleibende Zeit der aktuellen Lichtfrist |
 
-Die Anzeigeskalen beginnen standardmäßig bei **40–110 °C** für Temperatur und
-**0–60 %** für Luftfeuchte. Administratoren können beide Grenzen ebenfalls je
-Sauna anpassen. Luftfeuchtegrenzen liegen zwischen 0 und 100 %, jede Skala
-braucht eine kleinere Unter- als Obergrenze. Die Skalen betreffen allein die
-Anzeigen, nicht die Verlaufsachsen, empfangene Messwerte, zulässige
-Solltemperaturen oder laufende Regelung. Außerhalb der Skala bleibt der
-tatsächliche Zahlenwert lesbar; der Marker steht am Skalenende und weist auf
-die Überschreitung hin. Der Sollschieber nutzt nur den Schnittbereich aus
-sichtbarer Skala und zulässiger Solltemperatur. Ohne Schnittbereich ist er
-deaktiviert. Vorschau und Speichern laden die Integration nicht neu und
-verändern keine laufende Sitzung.
+Die Aufheizprognose verbindet einen geeigneten Verlauf der letzten Sitzung mit
+dem zunehmend belastbaren aktuellen Temperaturtrend. Sie dient der zeitlichen
+Orientierung. Technische Fristen und der geschätzte mechanische Ofentimer stehen
+in den Details; dessen Status erklärt, wann seine Zählung läuft oder pausiert.
 
-## Verlauf und Archiv
+## Farbrollen und Lesbarkeit
 
-Das eigene Verlaufsblatt heißt bei eingeschaltetem Betrieb **Laufende Sitzung**,
-sonst **Letzte Sitzung**. Ältere Sitzungen sind über die Archivauswahl erreichbar.
-Die Standardansicht enthält
-eine Temperatur- und eine Feuchtekurve. Der Detailverlauf ergänzt beide
-Messpositionen. Die Gestaltung folgt der ursprünglichen Saunaansicht:
+Der zentrale
+[Darstellungskatalog](../custom_components/ha_sauna/appearance_catalog.json)
+definiert die Farbrollen und Standardwerte. Gespeicherte Anpassungen gelten je
+Sauna. Rollen mit einem Home-Assistant-Standard übernehmen die entsprechende
+Themenfarbe.
+
+Die Auswahlfarbe kennzeichnet wirksame Optionen und die aktuelle Navigation.
+Befehle verwenden die Aktionsfarbe, Ausschalten und Beenden die Stoppfarbe.
+Nebenaktionen liegen auf neutralen Flächen mit dezenter Kontur. Beschriftung,
+Markierung und Farbe vermitteln den jeweiligen Zustand gemeinsam. Der
+Tastaturfokus erhält eine deutlich sichtbare Umrandung.
+
+Die große Bedienkachel erhält bei einem aktuellen automatischen Phasenstatus
+eine Tönung mit 8 % der Phasenfarbe auf dem Kartenhintergrund. Aus, Manuell und
+unbekannte oder veraltete Zustände verwenden die neutrale Fläche. Text- und
+Fokusfarben werden aus der tatsächlich dargestellten Hintergrundfläche
+abgeleitet; dabei fließen auch Tönungen und ausgewählte Ereigniszeilen ein.
+
+Temperaturbogen und Temperaturkurve teilen eine Messfarbe, ebenso
+Feuchtebogen und Feuchtekurve. Die Linienart kennzeichnet zusätzlich die
+Messposition. Damit bleiben Messgröße, Position und Bedienzustand jeweils
+erkennbar zugeordnet.
+
+## Darstellungsentwurf und Skalen
+
+Farbfeld und Hexeingabe bearbeiten denselben Darstellungsentwurf. Eine gültige
+Änderung erscheint unmittelbar als Vorschau in der aktuellen Ansicht. Speichern
+übernimmt den Entwurf für die ausgewählte Sauna; Verwerfen stellt den
+gespeicherten Stand wieder her. **Standarddarstellung wiederherstellen** belegt
+den Entwurf mit den Katalogvorgaben. Die Übernahme erfolgt über das gesonderte
+Speichern der Darstellung.
+
+Die Temperaturanzeige umfasst standardmäßig 40–110 °C, die Feuchteanzeige
+0–60 %. Jede Skala hat eine kleinere Unter- als Obergrenze; Feuchtegrenzen liegen
+zwischen 0 und 100 %. Ein Messwert außerhalb der Skala bleibt als Zahl sichtbar.
+Der Bogen endet am Skalenrand und erhält einen Überschreitungshinweis.
+
+Diese Skalen legen den sichtbaren Bereich der Messbögen fest. Die
+Verlaufsachsen werden aus den Verlaufsdaten berechnet, die zulässigen
+Solltemperaturen aus der Parameterdefinition. Eine Darstellungsänderung wird in
+die bestehende laufende Ansicht übernommen. Beim allgemeinen
+**Standardwerte wiederherstellen** bleiben die gespeicherte Darstellung und
+die Gerätezuordnungen erhalten.
+
+## Verlauf und Diagnose
+
+Die aktuelle Auswahl heißt bei laufendem Betrieb **Laufende Sitzung**, sonst
+**Letzte Sitzung**. Archivierte Sitzungen tragen ihren Beginn im Titel. Der
+Standardverlauf verwendet die führende Messposition; der Detailverlauf erlaubt
+den Vergleich beider Positionen.
 
 | Element | Darstellung |
 |---|---|
-| Temperatur | Gemeinsame Messfarbe von Anzeige und Kurve, standardmäßig `#ff6b4a`, linke °C-Achse |
-| Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, standardmäßig `#42a5ff`, rechte Prozentachse |
-| Messposition im Detailverlauf | Oben durchgezogen, unten gestrichelt |
-| Tür offen | Gelbe Fläche |
-| Saunagang | Magentafarbene Fläche; vorläufig gestrichelt umrandet |
-| Aufguss | Weiße Zeitmarke |
-| Phasen | Je Phase einstellbare Farbe; die bisherigen Verlaufsfarben bleiben die Vorgaben |
-| Gezählt als Heizaktivität | Schmaler Streifen unter dem Verlauf |
+| Temperatur | Gemeinsame Messfarbe von Anzeige und Kurve, linke °C-Achse |
+| Relative Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, rechte Prozentachse |
+| Messposition | Oben durchgezogen, unten gestrichelt |
+| Tür offen | Fläche in der Türfarbe |
+| Saunagang | Fläche in der Gangfarbe; vorläufiger Gang mit gestrichelter Umrandung |
+| Aufguss | Zeitmarke in der Aufgussfarbe |
+| Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
+| Bestätigte Heizaktivität | Schmaler Streifen unter dem Verlauf |
 
-Leichte Glättung dient nur der Darstellung. Ein Tooltip nennt den empfangenen
-Originalwert und seinen Zeitpunkt. Messlücken bleiben sichtbar; gespeicherte
-Rohwerte werden weder geglättet noch verdichtet.
+Die Übersichtskurve zeigt das Verhältnis des sichtbaren Ausschnitts zur
+gesamten Sitzung. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne. Der
+Tooltip greift auf den empfangenen Originalpunkt zurück. Die technischen
+Einzelheiten von Kurvenaufbereitung und Ausschnittbedienung stehen im
+[Daten- und Zeichenvertrag](livekurve.md).
 
-Plus/Minus, eine echte Vergrößerungsgeste oder Strg beziehungsweise Cmd mit dem
-Mausrad verändern den Ausschnitt. Normales Scrollen zoomt nicht. Eine kleine
-Übersicht über die gesamte Sitzung zeigt das ausgewählte Fenster; dessen
-Ränder lassen sich verschieben. **Gesamt** stellt den vollständigen
-Verlauf wieder her.
+Die Erkennungskontrolle stellt gespeicherte Detektormerkmale mit den
+Schwellen der ausgewählten Sitzung dar. Ein vorhandener Signal- und
+Metriknachweis verbindet das Ereignis mit seinem Diagnosemarker. Marker und
+Ereigniszeile bilden ein wechselseitiges Navigationsziel. Haltezähler werden
+als erfüllte Prüfpunkte beschriftet. Sichtbare Merkmalskurven und aktive
+Bestätigungswerte geben den jeweiligen Nachweis wieder.
 
-Der dauerhafte Daten-, Canvas- und Eingabevertrag ist in
-[Livekurve](livekurve.md) dokumentiert.
+## Tastatur und zugängliche Beschriftung
 
-## Details
+Die Navigation kennzeichnet die aktuelle Seite mit `aria-current`. Der
+Temperaturschieber und die Ausschnittgriffe erhalten numerische Werte und
+Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Übersicht. Fokus und
+Auswahl bleiben visuell unterscheidbar. Ereignissprünge führen zum zugehörigen
+Marker bzw. Listeneintrag.
 
-Die Betriebsdetails beginnen mit Zustand und Fristen. Danach folgen **Ofen**,
-**Licht**, **Messung** und weitere Statusangaben. Soll- und obere
-Regeltemperatur, Heizentscheidung, Rückmeldungsquelle, Energieverbrauch sowie
-automatisch geplanter Lichtwert, manuelle Vorgabe und Übersteuerungsfrist sind
-dort ablesbar. Die
-Bedienelemente bleiben auf **Steuerung**. Alle laufenden Fristen stehen
-gemeinsam und kompakt an einem Ort.
-
-Die markierten Bedienungen auf **Steuerung** zeigen die aktive Auswahl.
-**Automatik** bleibt markiert, wenn der Ofen automatisch heizt; **Ofen an/aus**
-beschreibt getrennt die tatsächliche Rückmeldung. Offene Auswahlfelder und
-Eingaben bleiben bei laufender Aktualisierung erhalten.
-
-Eine laufende Ofenkühlung kann von Administratoren auf **Steuerung**
-ausdrücklich vorzeitig beendet werden.
-Laufende Schutzsperren bleiben wirksam. Die mechanische
-Timeranzeige nennt ihren Pausengrund und bleibt eine Schätzung; sie steuert
-keinen Aktor.
-
-Die **Erkennungskontrolle** zeigt die gespeicherten Merkmale für Tür, Personen,
-Aufgüsse und Lüftung mit den zur Sitzung gehörenden Schwellen. Ereignismarker
-liegen in den zugehörigen Graphen. Marker und Ereigniszeile führen beim
-Anklicken zueinander. Inaktive Bestätigungszeiten mit Wert null und leere
-Merkmalskurven werden nicht als vermeintliche Information aufgelistet.
-Im Browser wird keine zweite Erkennung berechnet.
-
-## Einstellungen
-
-Ganz unten setzt **Als Startseite festlegen** die Saunaübersicht als persönliche
-Home-Assistant-Startseite. Die Auswahl gehört zum angemeldeten Benutzerprofil.
-
-Die Einstellungen sind nach Temperatur, Betrieb, Licht, Überwachung, Timer,
-Energie und Darstellung geordnet. Nutzer mit normalen Home-Assistant-
-Bedienrechten verwalten dort die Programmbibliothek und die Tasterwahl.
-Programme erscheinen als kompakte Zeilen; ein Editor öffnet nur den gewählten
-Eintrag. Per Ziehen am Griff oder mit Pfeiltasten wird die Reihenfolge im
-Entwurf geändert. **Programme speichern** übernimmt sie dauerhaft,
-**Änderungen verwerfen** setzt sie zurück. Programm-IDs bleiben beim Sortieren
-erhalten. Der
-Taster startet mit einem benannten Programm oder einer unabhängig gespeicherten
-konstanten Temperatur. Technische Konfiguration, Erkennungsparameter,
-Protokollierung und Export stehen nur Administratoren zur Verfügung.
-
-Während einer Sitzung sind die dafür vorgesehenen Temperaturwerte sowie für
-Administratoren die Protokollstufe und Darstellung änderbar. Grundwerte, Programmeinträge, Betriebsart und
-Gerätezuordnungen bleiben gesperrt. Diese Grenzen gelten auch bei direkten
-API-Aufrufen. Die Bedienrechte stammen aus Home Assistant.
-
-**INFO** protokolliert Betriebsereignisse und Fehler, **ERROR** nur Fehler,
-**DEBUG** zusätzlich Messwerte und Erkennungsprüfungen. Die Auswahl wirkt ohne
-Neustart und verändert das vollständige Sitzungsarchiv nicht. Das Archiv kann
-als authentifizierter ZIP-Download exportiert werden.
-
-**Standardwerte wiederherstellen** setzt nach Sitzungsende die
-Softwareeinstellungen einschließlich Programmbibliothek zurück. Sensoren,
-Geräte und die Zuordnung des Bedieneingangs bleiben erhalten.
-
-Die ausgeführten Oberflächenprüfungen und ihre Grenzen stehen im
-[Abnahmebericht](abnahme.md).
+Verlaufstabellen und Beschriftungen bleiben als DOM-Inhalt zugänglich. Die
+[Prüfanleitung](abnahme.md) beschreibt, wie die erzeugte Darstellung und ihre
+Bedienpfade untersucht werden.

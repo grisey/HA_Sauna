@@ -4,7 +4,7 @@
   "source_sha256": "0a99e8421674561620ce9c278664822a85c896f125a4c82edc5b6564d5cc791d",
   "raw_archive_committed": false,
   "candidate_files_sha256": {
-    "docs/kandidat.md": "487297a24e2c152d9b15ce330c0bbe35933d4be2ff4e2d98f298cae5055e28dd",
+    "docs/kandidat.md": "39089c1b1db147239ed13a10225b0a4dd7c6bad0dce5c0dc1c60ba6d37f3d4f3",
     "candidate/replay.py": "7d42219f24e8eccb4ad87e04386d886d927a883b45466b637c2f2d6b287b1a60",
     "candidate/parameter.json": "6d7898fe95340d639e84b4c7ee19ec5ad24b89ee27de6da0543328e56a018e73"
   },

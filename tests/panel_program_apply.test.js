@@ -83,7 +83,7 @@ test("the individual distribution explains the current validated field draft", (
 test("a named program remains applicable after a queued target failed", async () => {
   const { p, calls } = panel(configuration(), { timeline: {} });
   p.temperatureChange = Promise.reject(Error("target failed"));
-  p.programSelectionDraft = "quiet";
+  p.programSelectionDraft = { mode: "program", id: "quiet" };
   await p.applyProgram();
   assert.deepEqual(plain(calls), [["/entry/program", "POST", { profile: "quiet" }]]);
 });
@@ -108,6 +108,50 @@ test("off-session named choice applies directly and reflects authoritative respo
   assert.equal(p.programSaveState, null);
 });
 
+test("opaque named IDs retain their mode through request, saved selection and drafts", async () => {
+  const catalog = ["individual", "other", "custom:one", "custom:one:two"].map((id) => ({
+    id,
+    name: `Benannt ${id}`,
+    temperature_steps: [76, 83, 90],
+  }));
+  const { p, calls } = panel({ ...configuration(), temperature_programs: catalog });
+  for (const program of catalog) {
+    await p.action(`program-select:${program.id}`);
+    assert.deepEqual(plain(calls.at(-1)), [
+      "/entry/program", "POST", { profile: program.id },
+    ]);
+    assert.equal(p.state.configuration.selected_program_id, program.id);
+    assert.equal(p.programMode(catalog), "program");
+    assert.equal(p.programChoiceLabel(p.programChoice(catalog), catalog), program.name);
+    assert.equal(p.programDirty(), false);
+  }
+  p.state.configuration.selected_program_id = "individual";
+  p.state.configuration.temperature_steps = [76, 83, 90];
+  p.state.session = { timeline: {} };
+  await p.action("program-mode:individual");
+  assert.equal(p.programMode(catalog), "individual");
+  assert.equal(p.programDirty(), true);
+  assert.equal(p.programChoiceLabel(p.programChoice(catalog), catalog), "Individuell");
+  await p.action("program-cancel-draft");
+  assert.equal(p.programMode(catalog), "program");
+  assert.equal(p.state.configuration.selected_program_id, "individual");
+  p.freeProgramKind = "steps";
+  p.freeProgramValues = () => [80, 86, 90];
+  await p.action("program-mode:individual");
+  await p.action("program-apply");
+  assert.deepEqual(plain(calls.at(-1)), [
+    "/entry/program", "POST", { temperature_steps: [80, 86, 90] },
+  ]);
+  assert.equal(p.state.configuration.selected_program_id, null);
+  assert.equal(p.programMode(catalog), "individual");
+  await p.action("program-mode:constant");
+  await p.action("program-apply");
+  assert.deepEqual(plain(calls.at(-1)), [
+    "/entry/program", "POST", { profile: "constant" },
+  ]);
+  assert.equal(p.programMode(catalog), "constant");
+});
+
 test("session and gap selections stay staged until the main apply action", async () => {
   for (const session of [
     { timeline: {} },
@@ -115,7 +159,7 @@ test("session and gap selections stay staged until the main apply action", async
   ]) {
     const { p, calls } = panel(configuration(), session);
     await p.action("program-select:quiet");
-    assert.equal(p.programSelectionDraft, "quiet");
+    assert.deepEqual(plain(p.programSelectionDraft), { mode: "program", id: "quiet" });
     assert.equal(calls.length, 0);
     await p.action("program-cancel-draft");
     assert.equal(p.programSelectionDraft, null);
@@ -184,7 +228,7 @@ test("individual program is clean until an explicit draft edit exists", () => {
 
 test("invalid individual draft is rejected before entering pending state", async () => {
   const { p, calls } = panel(configuration(), { timeline: {} });
-  p.programSelectionDraft = "individual";
+  p.programSelectionDraft = { mode: "individual" };
   p.progressionValues = () => {
     throw Error("invalid progression");
   };
@@ -213,7 +257,7 @@ test("a pending direct target completes before program submit; failure keeps the
       temperature_steps: null,
     };
   });
-  p.programSelectionDraft = "individual";
+  p.programSelectionDraft = { mode: "individual" };
   p.progressionDraft = { "progression-end": "95" };
   p.progressionValues = () => ({ start: 80, end: 95, gangs: 4 });
   p.temperatureChange = pending;
@@ -231,7 +275,7 @@ test("a pending direct target completes before program submit; failure keeps the
       temperature_gangs: 4,
     },
   ]);
-  assert.equal(p.programSelectionDraft, "individual");
+  assert.deepEqual(plain(p.programSelectionDraft), { mode: "individual" });
   assert.deepEqual(plain(p.progressionDraft), { "progression-end": "95" });
   fail = false;
   p.temperatureChange = null;
@@ -282,7 +326,7 @@ test("gap control shows one main apply before the operation and distinguishes dr
     program: true,
     temperature: true,
   };
-  p.programSelectionDraft = "quiet";
+  p.programSelectionDraft = { mode: "program", id: "quiet" };
   p.drawCurrent();
   const control = nodes.get("#current").innerHTML;
   assert.equal((control.match(/data-action="program-apply"/g) || []).length, 1);
@@ -339,7 +383,7 @@ test("a rejected apply from an old entry does not surface after switching", asyn
     rejectRequest = reject;
   });
   const { p } = panel(configuration(), { timeline: {} }, async () => response);
-  p.programSelectionDraft = "quiet";
+  p.programSelectionDraft = { mode: "program", id: "quiet" };
   const saving = p.action("program-apply");
   await Promise.resolve();
   p.entry = "another-entry";
@@ -386,7 +430,7 @@ test("a pre-save poll is discarded; the next poll may report an external change"
   };
   const first = p.refresh();
   await Promise.resolve();
-  p.programSelectionDraft = "quiet";
+  p.programSelectionDraft = { mode: "program", id: "quiet" };
   await p.action("program-apply");
   assert.equal(p.state.configuration.selected_program_id, "quiet");
   releaseOld(oldState);

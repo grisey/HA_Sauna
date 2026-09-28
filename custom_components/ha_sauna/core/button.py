@@ -24,8 +24,9 @@ class ButtonGestures:
     operation off again.  A release without a known press deliberately has no
     effect: it is commonly the trailing event of an already-ended session.
 
-    ``short`` is also accepted without a preceding press.  Some event-only
-    devices publish only their completed click, which is still a real gesture.
+    ``short`` and ``long`` are also accepted without a preceding press. Some
+    event-only devices publish only their completed classification; each such
+    event starts an independent gesture with the current operation context.
     """
 
     def __init__(self, hold_threshold: timedelta):
@@ -159,6 +160,10 @@ class ButtonGestures:
         return HEATER_TOGGLE_OVERRIDE
 
     def _long(self, operation_enabled: bool) -> str | None:
+        if self._event_only_gesture:
+            # Without a press edge, the next long classification is a new
+            # gesture. Native and binary holds keep their original context.
+            self._clear()
         sparse_event = not self._gesture_active
         if not self._gesture_active:
             self._gesture_active = True

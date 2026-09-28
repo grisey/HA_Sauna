@@ -156,18 +156,20 @@ assert.match(
     "a saved named ID selects the Program type",
   );
   p.selectProgramMode("individual", programs);
-  assert.equal(p.programSelectionDraft, "individual");
+  assert.deepEqual(JSON.parse(JSON.stringify(p.programSelectionDraft)), {
+    mode: "individual",
+  });
   assert.equal(p.programMode(programs), "individual");
   p.selectProgramMode("program", programs);
-  assert.equal(
-    p.programSelectionDraft,
-    "quiet",
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(p.programSelectionDraft)),
+    { mode: "program", id: "quiet" },
     "Program restores the saved named selection",
   );
   p.action("program-select:program_1");
-  assert.equal(
-    p.programSelectionDraft,
-    "program_1",
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(p.programSelectionDraft)),
+    { mode: "program", id: "program_1" },
     "named row selection remains a draft",
   );
   assert.deepEqual(calls, []);
@@ -256,7 +258,9 @@ assert.match(
     },
     api: async (...args) => calls.push(args),
   });
-  assert.equal(p.programChoice([]), "individual");
+  assert.deepEqual(JSON.parse(JSON.stringify(p.programChoice([]))), {
+    mode: "individual",
+  });
   p.action("program-apply")
     .then(() => {
       assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
@@ -284,7 +288,7 @@ for (const selected of [null, "quiet"]) {
     drawCurrent: () => {},
     refresh: async () => {},
     $: (selector) => inputs[selector],
-    programSelectionDraft: "individual",
+    programSelectionDraft: { mode: "individual" },
     state: {
       permissions: { program: true, temperature: true },
       parameters: [

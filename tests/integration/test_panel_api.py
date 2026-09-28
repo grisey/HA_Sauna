@@ -697,6 +697,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         catalog.append(
             {"id": "custom_steps", "name": "Stufen", "temperature_steps": [76, 82, 91]}
         )
+        catalog.extend(
+            {"id": identity, "name": identity, "temperature_steps": [76, 83, 90]}
+            for identity in ("individual", "custom:one", "custom:one:two")
+        )
         async with ClientSession(headers=self.headers) as client:
             async with client.post(url + "/programs", json={"programs": catalog}) as response:
                 self.assertEqual(response.status, 200, await response.text())
@@ -704,6 +708,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             cases = (
                 ({"profile": "genusszeit"}, "genusszeit", "progressive", None),
                 ({"profile": "custom_steps"}, "custom_steps", "progressive", [76, 82, 91]),
+                ({"profile": "individual"}, "individual", "progressive", [76, 83, 90]),
+                ({"profile": "custom:one"}, "custom:one", "progressive", [76, 83, 90]),
+                ({"profile": "custom:one:two"}, "custom:one:two", "progressive", [76, 83, 90]),
                 ({"profile": "progressive"}, None, "progressive", None),
                 ({"temperature_steps": [75, 80, 87]}, None, "progressive", [75, 80, 87]),
                 (
@@ -724,6 +731,20 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result["temperature_steps"], steps)
                     self.assertEqual(result["parameters"], runtime.configuration.parameters.as_dict())
                     self.assertEqual(result["selected_program_id"], runtime.configuration.selected_program_id)
+                    self.assertEqual(self.entry.options["selected_program_id"], selected_id)
+                    self.assertEqual(list(runtime.configuration.temperature_steps or []), steps or [])
+
+            async with client.post(url + "/program", json={"profile": "individual"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "individual")
+            self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (76, 83, 90))
+            async with client.get(url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                configuration = (await response.json())["configuration"]
+            self.assertEqual(configuration["selected_program_id"], "individual")
+            self.assertEqual(configuration["temperature_steps"], [76, 83, 90])
 
     async def test_catalog_reorder_preserves_selected_and_button_program_ids(self):
         runtime = self.entry.runtime_data

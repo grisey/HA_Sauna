@@ -205,6 +205,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         await self.runtime.archive.flush()
         self.assertIsNone(self.runtime.session)
+        # Keep the completed archive far from the live status time.
+        self.now += timedelta(days=3650)
         # The first HA user is its owner and remains admin regardless of groups.
         # Use another real user for changes behind the same token and panel.
         user = await self.hass.auth.async_create_user(
@@ -234,7 +236,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await panel.evaluate("p => p.state.permissions.admin"))
         await panel.locator('.main-tabs [data-action="history"]').click()
         await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
-        await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        await panel.locator("#session").select_option(identity)
+        await panel.evaluate("""async p => {
+          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+          if (p.historyLoad) await p.historyLoad.promise;
+        }""")
+        await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
         self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
         self.assertEqual(await panel.evaluate(
             "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
@@ -243,15 +250,53 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           const [a,b] = p.window;
           p.setHistoryWindow(a, a + (b-a)/2);
           p.roleWindow = [...p.window];
+          p.drawHistory();
         }""")
 
         await self.hass.auth.async_update_user(user, group_ids=[GROUP_ID_ADMIN])
         self.assertTrue(user.is_admin)
         await self.hass.async_block_till_done()
-        await panel.evaluate("""async p => {
-          await p.refresh();
-          if (p.historyLoad) await p.historyLoad.promise;
-        }""")
+        entered, release = asyncio.Event(), asyncio.Event()
+        archive_url = f"**/api/ha_sauna/{self.entry.entry_id}/archive?*"
+
+        async def delay_archive(route):
+            response = await route.fetch()
+            entered.set()
+            await release.wait()
+            await route.fulfill(response=response)
+
+        await page.route(archive_url, delay_archive)
+        try:
+            await panel.evaluate("p => p.refresh()")
+            await asyncio.wait_for(entered.wait(), 10)
+            self.assertIsNone(await panel.evaluate("p => p.shown"))
+            await panel.locator('[data-action="zoom-in"]').click()
+            self.assertEqual(await panel.evaluate("p => p.zoom"), 4)
+            await panel.locator("svg.session-chart").press("ArrowRight")
+            overview = panel.locator("#history-overview [data-history-window]")
+            box = await overview.bounding_box()
+            self.assertIsNotNone(box)
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            before_drag = await panel.evaluate("p => [...p.window]")
+            await page.mouse.move(x, y)
+            await page.mouse.down()
+            await page.mouse.move(x + 20, y)
+            await page.mouse.up()
+            self.assertGreater(await panel.evaluate("p => p.window[0]"), before_drag[0])
+            await panel.locator('[data-action="reset-zoom"]').click()
+            self.assertEqual(await panel.evaluate("p => p.zoom"), 1)
+            await panel.locator('[data-action="zoom-in"]').click()
+            await panel.evaluate("p => { p.roleWindow = [...p.window]; }")
+            self.assertTrue(await panel.evaluate("""p => {
+              const [start, end] = p.historyDomain();
+              return p.window[0] >= start && p.window[1] <= end &&
+                end < Date.parse(p.state.now) - 365 * 24 * 3600 * 1000;
+            }"""))
+            release.set()
+            await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        finally:
+            release.set()
+            await page.unroute(archive_url, delay_archive)
         traces = await panel.evaluate(
             "p => p.shown.records.filter(r => r.kind === 'detector_trace').length")
         self.assertGreater(traces, 0)
@@ -535,6 +580,86 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(light_errors, [])
         finally:
             await light_context.close()
+        self.assertEqual(self.errors, [])
+
+    async def test_named_individual_id_uses_catalog_requests_and_retains_running_drafts(self):
+        identities = ("other", "custom:one", "custom:one:two", "individual")
+        programs = [{"id": identity, "name": "Benannt " + identity,
+                     "temperature_steps": [76, 83, 90]} for identity in identities]
+        await self.panel.evaluate("""(p, programs) => p.api(
+          `/${p.entry}/programs`, "POST", {
+            programs: [...p.state.configuration.temperature_programs, ...programs],
+          })""", programs)
+        await self.hass.async_block_till_done()
+        await self.panel.evaluate("p => p.refresh()")
+        await self.panel.locator('[data-action="program-mode:program"]').click()
+        program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
+        for identity in identities:
+            choice = self.panel.locator(f'[data-action="program-select:{identity}"]')
+            await expect(choice).to_be_enabled()
+            async with self.page.expect_response(
+                lambda response: response.url.endswith(program_url) and response.request.method == "POST"
+            ) as response_wait:
+                await choice.click()
+            response = await response_wait.value
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.request.post_data_json, {"profile": identity})
+            self.assertEqual((await response.json())["selected_program_id"], identity)
+            await expect(choice).to_have_attribute("aria-pressed", "true")
+            self.assertEqual(self.entry.options["selected_program_id"], identity)
+            self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, identity)
+            self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (76, 83, 90))
+        await self.page.reload()
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('[data-action="program-mode:program"]')).to_have_attribute("aria-pressed", "true")
+        named = self.panel.locator('[data-action="program-select:individual"]')
+        await expect(named).to_have_attribute("aria-pressed", "true")
+        self.assertEqual(await self.panel.locator("#progression-start").count(), 0)
+
+        await self.panel.locator('#current [data-action="operation"]').click()
+        await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible()
+        session_id = self.entry.runtime_data.session.session_id
+        active = self.panel.locator(".program-active-label")
+        await expect(active).to_have_text("Aktuell: Benannt individual")
+        await self.panel.locator('[data-action="program-toggle"]').click()
+        await self.panel.locator('[data-action="program-select:other"]').click()
+        await expect(self.panel.locator(".program-pending")).to_contain_text("Benannt other")
+        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "individual")
+        await self.panel.evaluate("p => p.refresh()")
+        await expect(self.panel.locator(".program-pending")).to_contain_text("Benannt other")
+        await self.panel.locator('[data-action="program-cancel-draft"]').click()
+        await expect(active).to_have_text("Aktuell: Benannt individual")
+
+        await self.panel.locator('[data-action="program-toggle"]').click()
+        await self.panel.locator('[data-action="program-mode:individual"]').click()
+        await expect(self.panel.locator(".program-pending")).to_contain_text("Noch nicht übernommen: Individuell")
+        await self.panel.locator('[data-action="program-kind:steps"]').click()
+        steps = self.panel.locator("[data-free-step]")
+        for index, value in enumerate((80, 86, 92)):
+            await steps.nth(index).fill(str(value))
+        async with self.page.expect_response(
+            lambda response: response.url.endswith(program_url) and response.request.method == "POST"
+        ) as response_wait:
+            await self.panel.locator('[data-action="program-apply"]').click()
+        response = await response_wait.value
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.request.post_data_json, {"temperature_steps": [80, 86, 92]})
+        self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
+        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (80, 86, 92))
+        await expect(active).to_have_text("Aktuell: Individuell")
+        await self.panel.locator('[data-action="program-toggle"]').click()
+        await self.panel.locator('[data-action="program-mode:constant"]').click()
+        async with self.page.expect_response(
+            lambda response: response.url.endswith(program_url) and response.request.method == "POST"
+        ) as response_wait:
+            await self.panel.locator('[data-action="program-apply"]').click()
+        response = await response_wait.value
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.request.post_data_json, {"profile": "constant"})
+        self.assertEqual(self.entry.runtime_data.configuration.program_mode, "constant")
+        self.assertIsNone(self.entry.runtime_data.configuration.temperature_steps)
+        self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
+        await expect(active).to_have_text("Aktuell: Konstant")
         self.assertEqual(self.errors, [])
 
     async def test_running_program_requires_confirmation_and_reports_saved_choice(self):
