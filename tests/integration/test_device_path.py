@@ -1300,9 +1300,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         })
         await self.hass.async_block_till_done()
         await self.prepare_gang_after_run()
+        # A warm, valid input puts the return target above the phase's dim
+        # level, so the later part of this actual cooling curve rises.
+        await self.set_source("upper_temperature", 85)
         session_id = self.runtime.session.session_id
         phase = self.runtime.session.after_run
         ends_at = phase.ends_at
+        dim_percent = self.runtime.configuration.parameters.values["after_run_brightness_percent"]
         await self.time(72)
         before = self.light.brightness
         await self.runtime.set_light_override(80)
@@ -1310,17 +1314,26 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.light.brightness, 255 * .8, delta=1)
         await self.time(78)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
-        self.assertIs(self.runtime.session.after_run, phase)
-        self.assertEqual(phase.ends_at, ends_at)
+        self.assertEqual(self.runtime.session.after_run.phase_id, phase.phase_id)
+        self.assertEqual(self.runtime.session.after_run.started_at, phase.started_at)
+        self.assertEqual(self.runtime.session.after_run.ends_at, ends_at)
         self.assertEqual(self.runtime.controller.phase, "nachlauf")
         self.assertTrue(self.light.is_on)
         self.assertEqual(self.hass.states.get(self.light.entity_id).state, "on")
-        self.assertGreaterEqual(self.light.brightness, round(255 * .15))
+        self.assertGreaterEqual(self.light.brightness, round(255 * dim_percent / 100))
         self.assertLess(self.light.brightness, before)
+        self.assertLess(self.light.brightness, 255 * self.runtime.device.normal_light_brightness() / 100)
         resumed = self.light.brightness
-        await self.time(85)
+        # Cooling duration comes from the Controller's factual calculation;
+        # sample its rise before that canonical end rather than assume t85.
+        self.now = ends_at - timedelta(seconds=1)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
         self.assertGreater(self.light.brightness, resumed)
-        self.assertEqual(phase.ends_at, ends_at)
+        self.assertEqual(self.runtime.controller.phase, "nachlauf")
+        self.assertEqual(self.runtime.session.after_run.phase_id, phase.phase_id)
+        self.assertEqual(self.runtime.session.after_run.started_at, phase.started_at)
+        self.assertEqual(self.runtime.session.after_run.ends_at, ends_at)
         await self.runtime.archive.flush()
         commands = [
             record["payload"] for record in self.runtime.archive.read(session_id)["records"]
@@ -1757,17 +1770,22 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         import zipfile
 
         await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
         session_id = self.runtime.session.session_id
         self.now = self.base + timedelta(seconds=1)
         await self.runtime.set_operation(False)
+        await self.hass.async_block_till_done()
         phase = self.runtime.controller.light_after_run
         ends_at = phase.ends_at.isoformat()
         entered, release = asyncio.Event(), asyncio.Event()
         original_on = self.light.async_turn_on
 
         async def paused_on(**kwargs):
-            entered.set()
-            await release.wait()
+            # Only the explicit 80-%-command owns this barrier. Automatic
+            # phase-ramp commands keep their regular service/feedback path.
+            if kwargs.get("brightness") == 204:
+                entered.set()
+                await release.wait()
             await original_on(**kwargs)
 
         self.now = planned_at = self.base + timedelta(seconds=2)
@@ -1776,6 +1794,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             try:
                 await asyncio.wait_for(entered.wait(), 3)
                 service = self.runtime.device._light_service_task
+                self.assertEqual(self.runtime.device.light_output.manual_brightness, 80)
                 if caller == "cancel":
                     selecting.cancel()
                     with self.assertRaises(asyncio.CancelledError):
