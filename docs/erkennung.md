@@ -72,12 +72,17 @@ Ein vollständig und fortlaufend belegter Öffnungsweg kann auch eine länger al
 sein Merkmalsfenster eingestellte Bestätigung erreichen. Das Fenster begrenzt
 das Alter der Hinweise, nicht eine weiterhin gültige Haltezeit.
 
-Bei nachgeholten Messungen liefert der Controller die zu jedem Raster bereits
-gebuchte Betriebs-/Kühlfreigabe. Signale aus gesperrten oder inzwischen beendeten
-Freigabeabschnitten dürfen keinen heutigen Gang oder Türheizbedarf auslösen.
+Bei nachgeholten Messungen werden bereits empfangene Detektorraster vor
+späteren Bedienkanten im führenden Controller gebucht. Der Controller liefert
+die zu jedem Raster geltende Betriebs-/Kühlfreigabe. Ein damals gültiger Aufguss
+vor einem späteren AUS bleibt deshalb gezählt und beeinflusst die nächste
+Temperaturstufe. Signale aus gesperrten Abschnitten bleiben ausgeschlossen;
+abgeschlossene Abschnitte eröffnen keinen heutigen Gang oder Türheizbedarf.
 Nach einer neuen Freigabe muss das beitragende Merkmals-/Medianfenster zu diesem
 Abschnitt gehören. Türbeobachtung und Archivierung bleiben davon getrennt.
 Neue Aktorbefehle entstehen ausschließlich zur tatsächlichen Verarbeitungszeit.
+Die Buchungszeit ersetzt weder die tatsächliche Erkennungszeit noch den
+Rasterbezug der Diagnose (siehe [Zeitmodell](zeitmodell.md)).
 
 Neue Erkennungsdatensätze enthalten neben dem fachlichen Ereignis und dessen
 Empfangszeit den Rasterzeitpunkt `trace_at`. Darüber verbindet das Panel ein

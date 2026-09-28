@@ -437,6 +437,7 @@ class Detector:
         self, at, *, enabled, allowed=None, on_detection=None,
         heating_intervals=None, heating_after=None, heating_gates=None,
         recognition_context=None, allowed_at=None,
+        before_sample=None, after_sample=None, include_current=True, detected_at=None,
     ):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
@@ -447,15 +448,25 @@ class Detector:
         heating_after bleibt für reine Detektoraufrufe ohne Gate-Historie.
         recognition_context liest bereits gebuchte Controllerfreigaben je Raster;
         die aktuelle allowed-Freigabe gilt zusätzlich zwischen den Signalen.
+        Runtime-Hooks buchen den führenden Controller vor/nach jedem Raster;
+        False vor einer Probe beendet die Zustellung einer abgeschlossenen Session.
+        include_current=False lässt das Raster für gleichzeitige Eingänge offen.
+        detected_at kann die reale Erkennungsuhr liefern, getrennt vom Rasterende.
         """
         at = utc(at)
         final = int((at - self.origin).total_seconds())
+        if not include_current and self.origin + timedelta(seconds=final) == at:
+            final -= 1
         if final < self.index:
-            raise ValueError("Detektoruhr darf nicht rückwärts laufen")
+            if at < self.origin + timedelta(seconds=self.index):
+                raise ValueError("Detektoruhr darf nicht rückwärts laufen")
+            return []
         output = []
         while self.index < final:
+            now = self.origin + timedelta(seconds=self.index + 1)
+            if before_sample is not None and before_sample(now) is False:
+                break
             self.index += 1
-            now = self.origin + timedelta(seconds=self.index)
             sample_enabled, sample_allowed = enabled, allowed
             gang_permitted, recognition_since = True, None
             if recognition_context is not None:
@@ -469,8 +480,10 @@ class Detector:
                     )
 
             if heating_intervals is not None:
+                intervals = (heating_intervals() if callable(heating_intervals)
+                             else heating_intervals)
                 interval = next((
-                    interval for interval in reversed(heating_intervals)
+                    interval for interval in reversed(intervals)
                     if interval.started_at <= now
                     and (interval.ended_at is None or now < interval.ended_at)
                 ), None)
@@ -509,9 +522,12 @@ class Detector:
                         self.report_heating(True, since)
             self._consume(now)
             output.extend(self._sample(
-                now, at, sample_enabled, sample_allowed, on_detection,
+                now, utc(detected_at() if callable(detected_at) else detected_at or at),
+                sample_enabled, sample_allowed, on_detection,
                 gang_permitted=gang_permitted, recognition_since=recognition_since,
             ))
+            if after_sample is not None:
+                after_sample(now)
         return output
 
     def _sample(

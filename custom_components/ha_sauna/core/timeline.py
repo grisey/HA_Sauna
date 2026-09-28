@@ -54,14 +54,21 @@ class Event:
     kind: Kind
     effective_at: datetime
     detected_at: datetime
+    booking_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.session_id or not isinstance(self.kind, Kind):
             raise ValueError("Ereignis-ID, Session-ID und gültiger Typ erforderlich")
         object.__setattr__(self, "effective_at", utc(self.effective_at))
         object.__setattr__(self, "detected_at", utc(self.detected_at))
+        object.__setattr__(
+            self, "booking_at",
+            utc(self.booking_at) if self.booking_at is not None else self.detected_at,
+        )
         if self.effective_at > self.detected_at:
             raise ValueError("Der Ereigniszeitpunkt darf nicht in der Zukunft liegen")
+        if not self.effective_at <= self.booking_at <= self.detected_at:
+            raise ValueError("Buchungszeit muss zwischen Ereignis- und Erkennungszeit liegen")
 
 
 @dataclass(frozen=True)
@@ -149,8 +156,8 @@ def apply(state: Timeline, event: Event) -> Timeline:
             return state
     if event.effective_at < state.session_started_at:
         raise ValueError("Ereignis liegt vor dem Sessionbeginn")
-    if state.processed and event.detected_at < state.processed[-1].detected_at:
-        raise ValueError("Ereignisse müssen in Erkennungsreihenfolge eintreffen")
+    if state.processed and event.booking_at < state.processed[-1].booking_at:
+        raise ValueError("Ereignisse müssen in Buchungsreihenfolge eintreffen")
 
     result = state
     if event.kind == Kind.DOOR_OPEN:
@@ -190,7 +197,7 @@ def apply(state: Timeline, event: Event) -> Timeline:
             gang = Gang(
                 gang_id=f"{state.session_id}:{event.event_id}",
                 session_id=state.session_id,
-                started_at=anchor.effective_at if anchor else event.detected_at,
+                started_at=anchor.effective_at if anchor else event.booking_at,
                 detected_at=event.detected_at,
                 start_source_event_id=anchor.event_id if anchor else event.event_id,
                 recognition_event_id=event.event_id,
@@ -226,7 +233,7 @@ def apply(state: Timeline, event: Event) -> Timeline:
             else:
                 finished = replace(
                     state.active,
-                    ended_at=event.detected_at,
+                    ended_at=event.booking_at,
                     end_event_id=event.event_id,
                     end_reason="ventilation",
                 )
@@ -252,7 +259,7 @@ def apply(state: Timeline, event: Event) -> Timeline:
             completed += (
                 replace(
                     state.active,
-                    ended_at=event.detected_at,
+                    ended_at=event.booking_at,
                     end_event_id=event.event_id,
                     end_reason="ausgeschaltet",
                 ),

@@ -83,15 +83,43 @@ class Controller:
         self._phase_key = (None, "aus")
         self._recognition_gates = []
         self._confirmation_batches = 0
+        self._delivery_received_at = None
 
     @contextmanager
-    def confirmation_batch(self):
-        """Keep equal-time confirmation open throughout one input delivery."""
-        self._confirmation_batches += 1
+    def _delivery(self, received_at):
+        previous_received_at = self._delivery_received_at
+        if received_at is not None:
+            received_at = received_at if callable(received_at) else utc(received_at)
+            if previous_received_at is None:
+                self._delivery_received_at = received_at
+            else:
+                def latest_received_at():
+                    previous = (previous_received_at() if callable(previous_received_at)
+                                else previous_received_at)
+                    current = received_at() if callable(received_at) else received_at
+                    return max(previous, current)
+                self._delivery_received_at = latest_received_at
         try:
             yield
         finally:
-            self._confirmation_batches -= 1
+            self._delivery_received_at = previous_received_at
+
+    @contextmanager
+    def confirmation_batch(self, received_at=None):
+        """Keep equal-time confirmation open throughout one input delivery."""
+        with self._delivery(received_at):
+            self._confirmation_batches += 1
+            try:
+                yield
+            finally:
+                self._confirmation_batches -= 1
+
+    def _received_at(self, at):
+        """Real delivery provenance stays separate from canonical booking time."""
+        received_at = self._delivery_received_at
+        if callable(received_at):
+            received_at = utc(received_at())
+        return max(at, received_at or at)
 
     def _record_recognition_gate(self, at):
         """Remember only admission results booked by this leading controller."""
@@ -432,7 +460,10 @@ class Controller:
                 self._latch_readiness(at)
         elif self._session is not None and self._session.operation_enabled:
             self.process(
-                Event(uuid4().hex, self._session.session_id, Kind.OPERATION_OFF, at, at)
+                Event(
+                    uuid4().hex, self._session.session_id, Kind.OPERATION_OFF,
+                    at, self._received_at(at), booking_at=at,
+                )
             )
         self._evaluate(at)
         return self._session
@@ -640,6 +671,12 @@ class Controller:
     def process(
         self, event: Event, *, defer_confirmation=False, recognition_at=None,
     ) -> Result:
+        with self._delivery(event.detected_at):
+            return self._process(
+                event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
+            )
+
+    def _process(self, event, *, defer_confirmation, recognition_at):
         if self._session is None:
             raise ValueError("Ereignis ohne Session")
         previous = self._session
@@ -653,7 +690,7 @@ class Controller:
             return Result(previous, False, "duplicate", event.event_id)
         if event.session_id != previous.session_id:
             raise ValueError("Ereignis gehört zu einer anderen Session")
-        if self._last_at is not None and event.detected_at < self._last_at:
+        if self._last_at is not None and event.booking_at < self._last_at:
             raise ValueError(
                 "Verspätetes Ereignis darf keine aktuelle Betriebsentscheidung ändern"
             )
@@ -662,7 +699,7 @@ class Controller:
             raise ValueError("Ereignis liegt vor dem Sessionbeginn")
         if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
             apply(previous.timeline, event)  # Validieren vor Fortschreiben der Uhr.
-        self.advance(event.detected_at, evaluate=False, inclusive_confirmation=False)
+        self.advance(event.booking_at, evaluate=False, inclusive_confirmation=False)
         previous = self._session
         if previous is None:
             raise ValueError("Ereignis gehört zu einer beendeten Session")
@@ -709,7 +746,7 @@ class Controller:
                     blocked = "entry_context_missing"
             elif event.effective_at < anchor.effective_at:
                 blocked = "entry_context_changed"
-            elif event.detected_at > anchor.effective_at + timedelta(
+            elif event.booking_at > anchor.effective_at + timedelta(
                 seconds=self.parameters.seconds("confirmation_minutes")
             ):
                 # A catch-up sample may be old enough to match, but cannot
@@ -722,7 +759,7 @@ class Controller:
                     previous.timeline, processed=previous.timeline.processed + (event,)
                 ),
             )
-            self._evaluate(event.detected_at)
+            self._evaluate(event.booking_at)
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
         if (observed_blocked is not None or not context_current) and event.kind in (
@@ -761,16 +798,16 @@ class Controller:
             and self.control_mode == "automatic"
             and event.kind != Kind.OPERATION_OFF
         ):
-            self._begin_after_run(timeline.completed[-1].gang_id, event.detected_at)
+            self._begin_after_run(timeline.completed[-1].gang_id, event.booking_at)
         if event.kind == Kind.OPERATION_OFF:
-            self._abort_after_run(event.detected_at)
+            self._abort_after_run(event.booking_at)
             self._session = replace(
                 self._session,
                 operation_enabled=False,
-                operation_off_at=event.detected_at,
+                operation_off_at=event.booking_at,
             )
-            self.mechanical_timer = self.mechanical_timer.pause(event.detected_at)
-            ends_at = event.detected_at + timedelta(
+            self.mechanical_timer = self.mechanical_timer.pause(event.booking_at)
+            ends_at = event.booking_at + timedelta(
                 seconds=self.parameters.seconds("session_gap_minutes")
             )
             self._schedule(
@@ -779,9 +816,9 @@ class Controller:
             )
             if self.control_mode == "automatic":
                 self._create_session_light(
-                    self._session.session_id, event.detected_at, ends_at
+                    self._session.session_id, event.booking_at, ends_at
                 )
-        self.advance(event.detected_at, inclusive_confirmation=not defer_confirmation)
+        self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
     def recognition_allowed(self, kind: Kind) -> bool:
@@ -1222,7 +1259,9 @@ class Controller:
                 self.door_request = replace(
                     self.door_request, eligible_open=False, invalidated=True
                 )
-        self.consumer_events.extend(gang_changes(self._consumer_snapshot, self._session, at))
+        self.consumer_events.extend(gang_changes(
+            self._consumer_snapshot, self._session, self._received_at(at),
+        ))
         self._consumer_snapshot = self._session
         self._record_base_phase(at)
         self._record_recognition_gate(at)
@@ -1391,7 +1430,8 @@ class Controller:
                     session.session_id,
                     Kind.CONFIRMATION_EXPIRED,
                     deadline.due_at,
-                    now,
+                    self._received_at(now),
+                    booking_at=now,
                 )
                 self._session = replace(
                     self._session, timeline=apply(session.timeline, event)

@@ -53,6 +53,7 @@ class HADevice:
         self.command_at = None
         self.last_sent_at = None
         self.command_error = False
+        self.command_error_at = None
         self.light_output = LightOutput(self.runtime.configuration.parameters)
         self._light_last_command_key = None
         self._expected_light_changes = []
@@ -98,7 +99,7 @@ class HADevice:
         self.refresh(now)
         await self.send(False, now, force=True)
 
-    def ingest(self, role, state, received_at, *, initial=False):
+    def ingest(self, role, state, received_at, *, initial=False, defer_archive=False):
         self.states[role] = state
         self.source_received_at[role] = received_at
         if initial and role == "control_input" and state is not None:
@@ -147,12 +148,13 @@ class HADevice:
             elif role == "lower_temperature" and value is not None:
                 self.last_valid_lower_temperature = m
             session = self.runtime.session
-            if self.runtime.archive and session and not initial:
+            if self.runtime.archive and session and not initial and not defer_archive:
                 self.runtime.archive.append(
                     "measurement", received_at, m, session.session_id
                 )
             if self.runtime.detector and not initial:
                 self.runtime.detector.accept(m)
+            return m
         elif self.runtime.archive and self.runtime.session and not initial:
             self.runtime.archive.append(
                 "source_state",
@@ -651,7 +653,12 @@ class HADevice:
             if key not in problems:
                 del self.fault_since[key]
         for key in problems:
-            self.fault_since.setdefault(key, now)
+            since = (
+                max(now, self.command_error_at)
+                if key == "heater_service_unavailable" and self.command_error_at is not None
+                else now
+            )
+            self.fault_since.setdefault(key, since)
         confirmation = self.values.get("fault_confirmation_seconds")
         monitoring = (
             bool(controller.session and controller.session.operation_enabled)
@@ -735,9 +742,13 @@ class HADevice:
                         blocking=True,
                     )
             self.command_error = False
+            self.command_error_at = None
+            self.fault_since.pop("heater_service_unavailable", None)
             error = None
         except Exception as exc:
             self.command_error = True
+            if self.command_error_at is None:
+                self.command_error_at = self.runtime._clock()
             error = type(exc).__name__
         self.runtime._report_detector_heating(self.runtime._clock())
         self.runtime.log.change(
@@ -1006,7 +1017,9 @@ class HADevice:
     def relinquish_light(self):
         """End all output ownership of the current binding before a reload wait."""
         self._light_owned = False
-        self._expected_light_changes.clear()
+        # A rejected handoff can restore this owner before an earlier actual
+        # service finishes. Keep its bounded context proof for the late echo.
+        self._discard_expired_light_expectations(self.runtime._clock())
 
     def restore_light_ownership(self):
         """Resume the unchanged binding after a rejected reassignment."""

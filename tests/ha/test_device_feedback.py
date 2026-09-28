@@ -147,7 +147,13 @@ class DeviceFeedbackTests(unittest.TestCase):
                         self.assertNotIn("turn_on", calls)
                     else:
                         self.assertIn("turn_on", calls)
-                        self.assertEqual(runtime.session.timeline.gang_count, 1)
+                    self.assertEqual(runtime.session.timeline.gang_count, int(off_at == 28))
+                    if off_at == 28:
+                        gang = runtime.session.timeline.completed[0]
+                        self.assertEqual(gang.started_at, T0 + timedelta(seconds=17))
+                        self.assertEqual(gang.ended_at, T0 + timedelta(seconds=28))
+                        self.assertEqual(gang.detected_at,
+                                         T0 + timedelta(seconds=50 if queued else 17))
                     self.assertFalse(runtime.controller.last_decision.heat)
         runtime, calls = asyncio.run(exercise(False, None))
         self.assertTrue(runtime.session.timeline.active.infusion_events)
@@ -155,6 +161,118 @@ class DeviceFeedbackTests(unittest.TestCase):
         runtime, calls = asyncio.run(exercise(True, 30, 28, fresh_after_resume=True))
         self.assertTrue(runtime.session.timeline.active.infusion_events)
         self.assertIn("turn_on", calls)
+
+    def test_waiting_api_off_counts_received_infusion_before_current_output(self):
+        async def exercise(path):
+            runtime, adapter, clock = self.detection_device(
+                final_temperature_c=90, temperature_gangs=3)
+            runtime.configuration = replace(runtime.configuration, program_mode="progressive")
+            runtime.controller.program_mode = "progressive"
+            runtime.controller.begin_session("api-admission", T0)
+            await runtime.start_archive(path, "api-admission-entry")
+            calls, entered, release = [], asyncio.Event(), asyncio.Event()
+
+            async def service(domain, service, data, **_kwargs):
+                calls.append(service)
+                if len(calls) == 1:
+                    entered.set()
+                    await release.wait()
+
+            adapter.hass.services.async_call = service
+            adapter.command = True
+            initial = asyncio.create_task(runtime.tick())
+            await entered.wait()
+            clock[0] = T0 + timedelta(seconds=5)
+            off = asyncio.create_task(runtime.set_operation(False))
+            await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=10)
+            humidity = asyncio.create_task(runtime.device_input(
+                self.detection_edge(runtime, "upper_humidity", 23, "20")))
+            await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=50)
+            release.set()
+            await asyncio.gather(initial, humidity, off)
+            await runtime.archive.flush()
+            stored = await asyncio.to_thread(runtime.archive.read, "api-admission")
+            await runtime.archive.close()
+            return runtime, calls, stored
+
+        with TemporaryDirectory() as directory:
+            runtime, calls, stored = asyncio.run(exercise(Path(directory) / "api.sqlite"))
+        self.assertFalse(runtime.session.operation_enabled)
+        self.assertIsNone(runtime.session.timeline.active)
+        self.assertEqual(runtime.session.timeline.gang_count, 1)
+        self.assertEqual(runtime.controller.target_temperature, 85)
+        self.assertNotIn("turn_on", calls)
+        gang = runtime.session.timeline.completed[0]
+        self.assertEqual((gang.started_at, gang.ended_at),
+                         (T0 + timedelta(seconds=17), T0 + timedelta(seconds=50)))
+        self.assertEqual(gang.detected_at, T0 + timedelta(seconds=50))
+        detection = next(record["payload"] for record in stored["records"]
+                         if record["kind"] == "detection"
+                         and record["payload"]["event"]["kind"] == Kind.INFUSION.value)
+        self.assertEqual(detection["event"]["booking_at"], detection["trace_at"])
+        self.assertNotEqual(detection["event"]["booking_at"], detection["event"]["detected_at"])
+        ended = next(e for e in runtime.consumer_events if e.kind == "gang_ended")
+        self.assertEqual(ended.received_at, gang.detected_at)
+
+    def test_sampling_stops_at_session_gap_before_old_detector_callback(self):
+        async def exercise(path, resumes):
+            runtime, adapter, clock = self.detection_device(session_gap_minutes=1)
+            runtime.controller.begin_session("gap", T0)
+            await runtime.start_archive(path, "gap-entry")
+            await runtime.tick()
+            clock[0] = T0 + timedelta(seconds=1)
+            await runtime.receive(Event("person-gap", "gap", Kind.PERSON_STRONG,
+                                        clock[0], clock[0]))
+            if resumes:
+                await runtime.receive(Event("water-gap", "gap", Kind.INFUSION,
+                                            clock[0], clock[0]))
+            await runtime._lock.acquire()
+            clock[0] = T0 + timedelta(seconds=2)
+            off = asyncio.create_task(runtime.device_input(
+                self.detection_edge(runtime, "control_input", "off", "on")))
+            await asyncio.sleep(0)
+            pending = [off]
+            if resumes:
+                clock[0] = T0 + timedelta(seconds=65)
+                pending.append(asyncio.create_task(runtime.device_input(
+                    self.detection_edge(runtime, "control_input", "on", "off"))))
+                await asyncio.sleep(0)
+            clock[0] = T0 + timedelta(seconds=70)
+            runtime._lock.release()
+            await asyncio.gather(*pending)
+            await runtime.archive.flush()
+            stored = await asyncio.to_thread(runtime.archive.read, "gap")
+            await runtime.archive.close()
+            return runtime, stored
+
+        with TemporaryDirectory() as directory:
+            for resumes in (False, True):
+                with self.subTest(resumes=resumes):
+                    runtime, stored = asyncio.run(exercise(
+                        Path(directory) / f"gap-{resumes}.sqlite", resumes))
+                    self.assertEqual(runtime.controller.completed_sessions[-1].ended_at,
+                                     T0 + timedelta(seconds=62))
+                    self.assertEqual(runtime.presence.current.occupancy, "unknown")
+                    end_kind = "gang_ended" if resumes else "gang_retracted"
+                    ended = next(e for e in runtime.consumer_events if e.kind == end_kind)
+                    self.assertEqual(ended.received_at, T0 + timedelta(seconds=70))
+                    withdrawal = next(e for e in runtime.consumer_events if e.kind == "occupancy"
+                                      and e.presence.assertion == "proxy_retraction")
+                    self.assertEqual(withdrawal.session_id, "gap")
+                    self.assertTrue(any(r["kind"] == "presence"
+                                        and r["payload"]["assertion"] == "proxy_retraction"
+                                        for r in stored["records"]))
+                    if resumes:
+                        self.assertNotEqual(runtime.session.session_id, "gap")
+                        self.assertEqual(runtime._detector_session, runtime.session.session_id)
+                        self.assertEqual(runtime.detector.origin, runtime.session.started_at)
+                        self.assertEqual(runtime.presence.current.source_ref, runtime.session.session_id)
+                    else:
+                        self.assertIsNone(runtime.session)
+                        self.assertIsNone(runtime.detector)
+                        self.assertEqual(runtime.presence.current.source_ref, "person-gap")
 
     def test_physical_session_start_delivers_all_following_measurements_in_one_batch(self):
         async def exercise(queued, path):
@@ -170,6 +288,15 @@ class DeviceFeedbackTests(unittest.TestCase):
                 await asyncio.sleep(0)
             else:
                 await start
+            for role, value in (("upper_temperature", 90), ("upper_humidity", 20),
+                                ("upper_temperature", 89.99), ("upper_humidity", 20.01)):
+                task = asyncio.create_task(runtime.device_input(
+                    self.detection_edge(runtime, role, value)))
+                if queued:
+                    pending.append(task)
+                    await asyncio.sleep(0)
+                else:
+                    await task
             for second in range(1, 39):
                 clock[0] = T0 + timedelta(seconds=second)
                 fall = max(0, second - 15)
@@ -201,7 +328,11 @@ class DeviceFeedbackTests(unittest.TestCase):
                     self.assertIn(Kind.DOOR_OPEN,
                                   [event.kind for event in runtime.session.timeline.processed])
                     self.assertEqual(sum(record["kind"] == "measurement"
-                                         for record in stored["records"]), 76)
+                                         for record in stored["records"]), 80)
+                    initial_originals = [record["payload"]["value"] for record in stored["records"]
+                                         if record["kind"] == "measurement"
+                                         and record["payload"]["received_at"] == T0.isoformat()]
+                    self.assertEqual(initial_originals, [90, 20, 89.99, 20.01])
                     traces = [record["payload"] for record in stored["records"]
                               if record["kind"] == "detector_trace"]
                     self.assertTrue(any(trace["at"] == (T0 + timedelta(seconds=17)).isoformat()
@@ -211,7 +342,7 @@ class DeviceFeedbackTests(unittest.TestCase):
     def test_measurement_and_tick_consume_equal_confirmation_only_after_sampling(self):
         async def exercise(tick_first, confirmation_at):
             runtime, adapter, clock = self.detection_device(
-                both_positions=tick_first == "split",
+                both_positions=tick_first in ("split", "control_split", "control_last"),
                 confirmation_minutes=1, median_seconds=1,
                 infusion_window_seconds=1, infusion_hold_seconds=1,
             )
@@ -222,10 +353,21 @@ class DeviceFeedbackTests(unittest.TestCase):
                                         clock[0], clock[0]))
             old = runtime.session.timeline.active
             clock[0] = T0 + timedelta(seconds=confirmation_at - 1)
-            roles = ("upper_humidity", "lower_humidity") if tick_first == "split" else ("upper_humidity",)
+            roles = (("upper_humidity", "lower_humidity")
+                     if tick_first in ("split", "control_split", "control_last")
+                     else ("upper_humidity",))
             await asyncio.gather(*(runtime.device_input(self.detection_edge(runtime, role, 22))
                                    for role in roles))
             clock[0] = T0 + timedelta(seconds=confirmation_at)
+            if tick_first in ("control_split", "control_last"):
+                upper = runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
+                lower = runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24))
+                off = runtime.device_input(self.detection_edge(runtime, "control_input", "off", "on"))
+                if tick_first == "control_split":
+                    await asyncio.gather(upper, off, lower)
+                else:
+                    await asyncio.gather(upper, lower, off)
+                return runtime, old
             if tick_first == "split":
                 # HA dispatch order: upper callback, due tick, lower callback.
                 await asyncio.gather(
@@ -253,15 +395,22 @@ class DeviceFeedbackTests(unittest.TestCase):
             return runtime, old
 
         for confirmation_at in (70, 71, 72):
-            for tick_first in (False, True, None, "split"):
+            for tick_first in (False, True, None, "split", "control_split", "control_last"):
                 with self.subTest(tick_first=tick_first, confirmation_at=confirmation_at):
                     runtime, old = asyncio.run(exercise(tick_first, confirmation_at))
-                    gang = runtime.session.timeline.active
+                    ended = tick_first in ("control_split", "control_last")
+                    gang = (runtime.session.timeline.completed[-1] if ended
+                            else runtime.session.timeline.active)
                     self.assertTrue(gang.infusion_events)
+                    if ended:
+                        self.assertFalse(runtime.session.operation_enabled)
+                        self.assertEqual(runtime.session.timeline.gang_count, 1)
+                        self.assertEqual(runtime.presence.current.occupancy, "unknown")
                     if confirmation_at <= 71:
                         self.assertEqual((gang.gang_id, gang.started_at),
                                          (old.gang_id, old.started_at))
-                        self.assertEqual(runtime.presence.current.occupancy, "present")
+                        if not ended:
+                            self.assertEqual(runtime.presence.current.occupancy, "present")
                     else:
                         self.assertNotEqual(gang.gang_id, old.gang_id)
                         self.assertEqual(runtime.presence.current.occupancy, "unknown")

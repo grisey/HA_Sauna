@@ -316,6 +316,9 @@ class SaunaRuntime:
         session_id = self.session.session_id if self.session else None
         if session_id == self._detector_session:
             return
+        # Deliver the preceding session's canonical end before a new session
+        # replaces its proxy evidence with an initial availability report.
+        self._publish_controller_events()
         self._detector_session = session_id
         self._detector_heating_gates = []
         if session_id:
@@ -389,18 +392,28 @@ class SaunaRuntime:
         return heating
 
     async def _cycle(self):
-        with self.controller.confirmation_batch():
+        with self.controller.confirmation_batch(self._clock):
             await self._run_cycle()
 
     async def _run_cycle(self):
         await self._drain_device_inputs()
         now = self._clock()
-        # Book due work and power expiry in chronological order. Equal-time
-        # confirmation remains open until this delivery's signals finish.
-        self.controller.advance(now, inclusive_confirmation=False)
+        self._deliver_detection(now)
+        self._report_detector_availability()
+        self.controller.advance(now, finish_confirmation_batch=True)
+        if self.device:
+            self.device.refresh(now)
+        if self.device:
+            await self.device.apply(now)
+        self.notify()
+
+    def _deliver_detection(self, through, *, include_current=True):
+        """Book received recognition chronologically, without actuator I/O."""
         self._sync_detector()
-        self._report_detector_heating(now)
+        self._report_detector_heating(self._clock())
         if self.detector:
+            detector = self.detector
+            session_id = self.session.session_id
 
             def initialize_door():
                 if (
@@ -420,12 +433,15 @@ class SaunaRuntime:
                 nonlocal index
                 initialize_door()
                 i, index = index, index + 1
+                received_at = self._clock()
+                booking_at = max(detection.trace_at, self.controller._last_at or detection.trace_at)
                 event = Event(
                     f"detector:{self.session.session_id}:{detection.effective_at.isoformat()}:{i}:{detection.kind}",
                     self.session.session_id,
                     detection.kind,
                     detection.effective_at,
-                    now,
+                    detection.detected_at,
+                    booking_at=booking_at,
                 )
                 self._process_event(
                     event, defer_confirmation=True, recognition_at=detection.trace_at,
@@ -439,7 +455,7 @@ class SaunaRuntime:
                 if self.archive:
                     self.archive.append(
                         "detection",
-                        now,
+                        received_at,
                         {
                             "event": event,
                             "channels": detection.channels,
@@ -448,41 +464,57 @@ class SaunaRuntime:
                         self.session.session_id,
                     )
 
-            self.detector.advance(
-                now,
+            def before_sample(at):
+                # Direct semantic callers may already have advanced the core;
+                # canonical booking never moves that leading clock backwards.
+                if self.controller._last_at is None or at >= self.controller._last_at:
+                    self.controller.advance(at, inclusive_confirmation=False)
+                if self.session is None or self.session.session_id != session_id:
+                    return False
+                return True
+
+            def after_sample(at):
+                initialize_door()
+                if self.controller._last_at is None or at >= self.controller._last_at:
+                    self.controller.advance(at, finish_confirmation_batch=True)
+
+            detector.advance(
+                through,
                 enabled=self.session.operation_enabled,
                 allowed=self.controller.recognition_allowed,
                 on_detection=detected,
-                heating_intervals=self.session.heating.intervals,
+                heating_intervals=lambda: self.session.heating.intervals,
                 heating_gates=self._detector_heating_gates,
                 recognition_context=self.controller.recognition_context_at,
                 allowed_at=self.controller.recognition_allowed_at,
+                before_sample=before_sample,
+                after_sample=after_sample,
+                include_current=include_current,
+                detected_at=self._clock,
             )
-            sampled_at = self.detector.origin + timedelta(seconds=self.detector.index)
+            sampled_at = detector.origin + timedelta(seconds=detector.index)
             past = [i for i, (gate_at, _) in enumerate(self._detector_heating_gates)
                     if gate_at <= sampled_at]
             if past:
                 self._detector_heating_gates = self._detector_heating_gates[past[-1]:]
             self.controller.discard_recognition_context_before(sampled_at)
+            self._sync_detector()
+            if self.session is None or self.session.session_id != session_id:
+                return
             initialize_door()
-            available = bool(self.detector.active_positions)
-            current = self.presence.current
-            if current is None or current.available != available:
-                self._record_presence(PresenceReport(
-                    f"presence:proxy:availability:{self.session.session_id}:{now.isoformat()}",
-                    "unknown", "provisional_proxy", "proxy", "detector_availability",
-                    now, now, available, "no_proxy_evidence" if available else "source_unavailable",
-                ))
-        # Measurements and ticks close the same packet after all detections.
-        # Adapter refresh/feedback calls inside this scope cannot close it early.
-        self.controller.advance(now, finish_confirmation_batch=True)
-        if self.device:
-            self.device.refresh(now)
-        else:
-            self.controller.advance(now)
-        if self.device:
-            await self.device.apply(now)
-        self.notify()
+
+    def _report_detector_availability(self):
+        if self.detector is None or self.session is None:
+            return
+        available = bool(self.detector.active_positions)
+        current = self.presence.current
+        now = self._clock()
+        if current is None or current.available != available:
+            self._record_presence(PresenceReport(
+                f"presence:proxy:availability:{self.session.session_id}:{now.isoformat()}",
+                "unknown", "provisional_proxy", "proxy", "detector_availability",
+                now, now, available, "no_proxy_evidence" if available else "source_unavailable",
+            ))
 
     async def device_input(self, event):
         received_at = self._clock()
@@ -496,7 +528,7 @@ class SaunaRuntime:
                 return
             if not self._pending_device_inputs:
                 return
-            with self.controller.confirmation_batch():
+            with self.controller.confirmation_batch(self._clock):
                 await self._drain_device_inputs()
                 await self._cycle()
 
@@ -508,48 +540,76 @@ class SaunaRuntime:
         """
         while self._pending_device_inputs:
             self._sync_detector()
-            received_at, event = self._pending_device_inputs.popleft()
-            entity_id = event.data["entity_id"]
-            for role, source in self.configuration.bindings.values.items():
-                if source == entity_id:
-                    self.device.ingest(role, event.data.get("new_state"), received_at)
-                    if role in {"heater", "heater_power", "heater_feedback"}:
-                        self.device.report_received_feedback(received_at)
-            action_at = max(
-                received_at, self.controller._last_at or received_at,
-            )
-            light_selection = self.device.external_light_selection(event, received_at)
-            if light_selection is not None:
-                self._set_light_override(light_selection, action_at)
-            action = self.device.physical_action(event)
-            if self.configuration.control_input_mode == "button" and action is not None:
-                try:
-                    await self._handle_button_event(
-                        action, action_at, received_at=received_at
-                    )
-                except ValueError as error:
-                    self.device.faults["start_rejected"] = str(error)
-            elif action is not None:
-                try:
-                    self._prepare_operation(action, physical=True, at=action_at)
-                    self._set_operation(action, at=action_at)
-                except ValueError as error:
-                    self.device.faults["start_rejected"] = str(error)
-            self._sync_detector()
+            received_at = self._pending_device_inputs[0][0]
+            self._deliver_detection(received_at, include_current=False)
+            packet = []
+            while (self._pending_device_inputs
+                   and self._pending_device_inputs[0][0] == received_at):
+                packet.append((self._pending_device_inputs.popleft()[1], []))
+            measurement_roles = {"upper_temperature", "upper_humidity",
+                                 "lower_temperature", "lower_humidity"}
+            # All already received channels at this same timestamp belong to
+            # its one raster, even when a control edge was dispatched between.
+            for event, originals in packet:
+                entity_id = event.data["entity_id"]
+                for role, source in self.configuration.bindings.values.items():
+                    if source == entity_id and role in measurement_roles:
+                        originals.append(self.device.ingest(
+                            role, event.data.get("new_state"), received_at, defer_archive=True,
+                        ))
+            for event, originals in packet:
+                self._sync_detector()
+                # Original provenance follows the received FIFO, including a
+                # session start/end between same-time measurements. Each value
+                # is archived once, even when a role occurs repeatedly here.
+                if self.archive and self.session:
+                    for measurement in originals:
+                        self.archive.append(
+                            "measurement", received_at, measurement, self.session.session_id,
+                        )
+                entity_id = event.data["entity_id"]
+                for role, source in self.configuration.bindings.values.items():
+                    if source == entity_id and role not in measurement_roles:
+                        self.device.ingest(role, event.data.get("new_state"), received_at)
+                        if role in {"heater", "heater_power", "heater_feedback"}:
+                            self.device.report_received_feedback(received_at)
+                action_at = max(received_at, self.controller._last_at or received_at)
+                light_selection = self.device.external_light_selection(event, received_at)
+                if light_selection is not None:
+                    self._set_light_override(light_selection, action_at)
+                action = self.device.physical_action(event)
+                if action is not None:
+                    self._deliver_detection(action_at)
+                if self.configuration.control_input_mode == "button" and action is not None:
+                    try:
+                        await self._handle_button_event(
+                            action, action_at, received_at=received_at
+                        )
+                    except ValueError as error:
+                        self.device.faults["start_rejected"] = str(error)
+                elif action is not None:
+                    try:
+                        self._prepare_operation(action, physical=True, at=action_at)
+                        self._set_operation(action, at=action_at)
+                    except ValueError as error:
+                        self.device.faults["start_rejected"] = str(error)
+                self._sync_detector()
 
     @asynccontextmanager
-    async def serialized(self):
+    async def serialized(self, *, semantic_event=False):
         """Serialize commands after all already received device inputs."""
         # Timer/command dispatch shares the same bounded packet boundary as
         # device callbacks, including callbacks queued after this handler.
         await asyncio.sleep(0)
         async with self._lock:
-            with self.controller.confirmation_batch():
+            with self.controller.confirmation_batch(self._clock):
                 drained = not self.closed and bool(self._pending_device_inputs)
                 if drained:
                     # Booking facts has no actuator I/O. A waiting command must
                     # enter before output awaits can admit an endless input stream.
                     await self._drain_device_inputs()
+                if not self.closed and not semantic_event:
+                    self._deliver_detection(self._clock())
                 command_error = None
                 try:
                     yield
@@ -607,11 +667,13 @@ class SaunaRuntime:
             self.archive.append("consumer_event", event.received_at, event, event.session_id)
         return True
 
-    def _record_presence(self, report):
+    def _record_presence(self, report, *, session_id=None):
         if not self.presence.accept(report):
             return
+        if session_id is None and self.session is not None:
+            session_id = self.session.session_id
         event = ConsumerEvent(
-            report.report_id, "occupancy", self.session.session_id if self.session else None,
+            report.report_id, "occupancy", session_id,
             report.effective_at, report.received_at, report.source_ref, presence=report,
         )
         if self._publish_consumer(event) and self.archive:
@@ -635,7 +697,7 @@ class SaunaRuntime:
             event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
         ))
         if result.changed:
-            self._report_detector_heating(event.detected_at)
+            self._report_detector_heating(event.booking_at)
         if report is not None and result.changed:
             self._record_presence(report)
         return result
@@ -688,7 +750,7 @@ class SaunaRuntime:
                     event.effective_at, event.received_at, current.available,
                     event.kind,
                 )
-                self._record_presence(report)
+                self._record_presence(report, session_id=event.session_id)
         self._saved_consumer_events = len(self.controller.consumer_events)
 
     @property
@@ -1137,10 +1199,12 @@ class SaunaRuntime:
             return result
 
     async def receive(self, event: Event) -> Result:
-        async with self.serialized():
+        async with self.serialized(semantic_event=True):
             self._require_open()
             if event.detected_at > self._clock():
                 raise ValueError("Erkennungszeit liegt nach der Laufzeituhr")
+            if event.kind == Kind.OPERATION_OFF:
+                self._deliver_detection(event.booking_at)
             result = self._process_event(event)
             await self._cycle()
             return result

@@ -25,11 +25,11 @@ Historische Darstellung erzeugt keine historischen Aktorbefehle.
 
 | Befund | Maßgeblicher Korrekturweg | Zu erhaltender Gegenfall |
 | --- | --- | --- |
-| F01: Nachgeholte gesperrte Messungen eröffnen einen Gang | Der Controller liefert seine gebuchten zeitlichen Betriebs-/Kühlfreigaben für jedes Detektorraster. Heutige Freigabe ersetzt nicht die damalige; auch ein damals erlaubter, inzwischen durch AUS/Kühlung abgeschlossener Abschnitt darf keinen heutigen Gang eröffnen. | Türbeobachtung bleibt möglich; tatsächliche Heizintervalle bleiben die Grundlage des thermischen Nachweises. Aktorausgaben erfolgen nur zur aktuellen Zeit. |
-| F02: Messungen nach Sitzungsstart gehen am Detektor vorbei | Die Runtime synchronisiert die Detektorzugehörigkeit beim Sitzungswechsel vor den folgenden Eingängen. | Originalmessungen bleiben vollständig und unverändert im Archiv. |
+| F01: Nachgeholte gesperrte Messungen eröffnen einen Gang | Bereits empfangene Raster werden vor späteren Bedienkanten im führenden Controller gebucht; er liefert die zeitlich passende Betriebs-/Kühlfreigabe. Ein damals gültiger Aufguss vor AUS bleibt für Gangzählung und Temperaturstufe erhalten. Gesperrte Abschnitte bleiben ausgeschlossen, abgeschlossene eröffnen keinen heutigen Gang. | Erkennungs- und Empfangszeit bleiben tatsächlich; Türbeobachtung und echte Heizintervalle bleiben erhalten. Aktorausgaben erfolgen nur zur aktuellen Zeit. |
+| F02: Messungen nach Sitzungsstart gehen am Detektor vorbei | Die Runtime synchronisiert die Detektorzugehörigkeit beim Sitzungswechsel. Bereits empfangene Kanäle gleicher Zeit stehen gemeinsam für das Raster bereit; Originalmessungen werden einmal in ihrer Eingangsreihenfolge archiviert. | Auch mehrere Werte derselben Rolle zur Startzeit bleiben vollständig; ein neuer Sitzungssnapshot ersetzt keine Originalmessung. |
 | F03: Fristgleicher Aufguss erhält je Callbackreihenfolge eine andere Gang-ID | Ein Eingangszyklus hält den inklusiven Bestätigungsabschluss auch durch indirekte Refresh-/Feedbackaufrufe offen und schließt ihn nach der Erkennung. | Tatsächlich früher abgelaufene Fristen bleiben abgelaufen; ohne Aufguss wird der vorläufige Gang zurückgenommen. |
 | F04: Lange zulässige Türbestätigung wird vorzeitig verworfen | Ein weiterhin vollständig belegter Öffnungsweg darf seine konfigurierte Haltezeit erreichen. | Fehlende, veraltete oder gewechselte Quellen setzen den Nachweis weiterhin zurück. |
-| F05: Alter Licht-EIN-Aufruf überholt Übergabe-AUS | Lichtdienstaufrufe und Übergabe teilen eine geordnete Transportzuständigkeit; finales bestätigtes AUS folgt dem tatsächlichen Ende vorheriger Aufrufe. | Wartefristen bleiben begrenzt; ein Timeout oder abgebrochener Aufrufer darf keinen noch laufenden Dienst unsichtbar machen. |
+| F05: Alter Licht-EIN-Aufruf überholt Übergabe-AUS | Lichtdienstaufrufe und Übergabe teilen eine geordnete Transportzuständigkeit; finales bestätigtes AUS folgt dem tatsächlichen Ende vorheriger Aufrufe. Der Herkunftsbeleg eines laufenden Dienstes bleibt auch bei abgewiesener Übergabe erhalten. | Wartefristen bleiben begrenzt; ein Timeout oder abgebrochener Aufrufer darf keinen noch laufenden Dienst unsichtbar machen. Echte spätere Außenbedienung bleibt wirksam. |
 | F06: Reloadfehler sperrt fortbestehende Runtime | False und Ausnahme stellen nur die noch aktuelle, offene alte Runtime samt gespeicherter Konfiguration und Lichtzuständigkeit wieder her. | Neuere Optionen und neue/geschlossene Runtimes werden nicht überschrieben; Timer werden ausschließlich an eine tatsächlich neue passende Runtime übergeben. |
 | F07: Tasterunterbrechung wird als Langdruck ausgelegt | Nichtverfügbarkeit erreicht den Gestenautomaten, ungültiger unbestätigter Druck endet; bestätigtes Loslassen bleibt verarbeitbar. | Ein bereits ausgeführter Langdruck bleibt während HOLD aus und beginnt erst beim bestätigten Loslassen den Nachlauf. |
 | F08: Manuelle Lichtwahl während HOLD ersetzt Nachlaufhelligkeit | Der Lichtplaner bindet die manuelle Wahl an die eingehende Controllerphase. | Die aktuelle Controllerfrist und konfigurierte Nachlaufhelligkeit bleiben maßgeblich, unabhängig vom zuletzt ausgegebenen Planerstand. |
@@ -54,6 +54,13 @@ Formulartexte beschreiben nun Verteilung statt fester Erhöhung je Gang und die
 Ersatzfunktion des unteren Sensors. Betriebsdokumente grenzen den automatischen
 Gang-Heizbedarf von Manuell ab und erklären vorläufige Bestätigung gegenüber
 einem späteren eigenständigen Aufgussgang.
+
+Die zusätzliche Gegenprüfung verfolgt auch verspätete Präsenzabschlüsse über
+einen Sitzungswechsel: alte Rücknahmen werden vor der neuen Initialmeldung
+publiziert und behalten ihre ursprüngliche Sitzung. Ein erst später gemeldeter
+Heizdienstfehler besitzt seinen tatsächlichen Empfangszeitpunkt; historische
+Bedienkanten dürfen dessen Schutzfrist nicht rückdatieren. Diese Korrekturen
+ändern weder die Schutzdauer noch die Bedingungen für eine zulässige Heizanforderung.
 
 ## Nachweisgrenzen
 

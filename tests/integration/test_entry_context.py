@@ -99,6 +99,10 @@ class EntryContextIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.runtime.device.observe_heating(self.now)["source"],
             "independent_feedback",
         )
+        await self.hass.async_block_till_done()
+        # The valid setup door cycle can request heat. From here, only the
+        # rejected old signal and the subsequent valid signal are under test.
+        self.heater.calls.clear()
 
         result = await self.event("old-strong", Kind.PERSON_STRONG, 200, effective=1)
         await self.hass.async_block_till_done()

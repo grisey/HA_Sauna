@@ -1035,6 +1035,91 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(True, self.heater.calls)
         self.assertEqual(len(self.runtime.session.heating.intervals), 1)
 
+    async def test_queued_control_edges_cannot_backdate_a_late_service_failure(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        options = {
+            **self.entry.options,
+            "parameters": {
+                **self.entry.options["parameters"],
+                "sensor_timeout_seconds": 120,
+                "feedback_timeout_seconds": 60,
+            },
+        }
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = datetime.now(UTC)
+        self.runtime._clock = lambda: self.now
+        await self.set_source("control_input", "on")
+        self.assertTrue(self.heater.is_on)
+        adapter = self.runtime.device
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def failing_off(**_kwargs):
+            self.heater.calls.append(False)
+            entered.set()
+            await release.wait()
+            raise HomeAssistantError("Synthetic delayed switch failure")
+
+        async def queued_control(second, value):
+            self.now = self.base + timedelta(seconds=second)
+            self.hass.states.async_set("binary_sensor.operator", value)
+
+            async def received():
+                while not any(
+                    event.data["entity_id"] == "binary_sensor.operator"
+                    and event.data["new_state"].state == value
+                    for _received_at, event in self.runtime._pending_device_inputs
+                ):
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(received(), 3)
+
+        with patch.object(self.heater, "async_turn_off", side_effect=failing_off):
+            try:
+                self.now = self.base + timedelta(seconds=1)
+                self.hass.states.async_set(
+                    self.entry.options["bindings"]["upper_temperature"], "90",
+                    self.hass.states.get(
+                        self.entry.options["bindings"]["upper_temperature"]
+                    ).attributes,
+                )
+                await asyncio.wait_for(entered.wait(), 3)
+                await queued_control(2, "off")
+                await queued_control(30, "on")
+                self.now = self.base + timedelta(seconds=50)
+            finally:
+                release.set()
+            await self.hass.async_block_till_done()
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertEqual(adapter.command_error_at, self.now)
+        self.assertEqual(adapter.fault_since["heater_service_unavailable"], self.now)
+        self.assertNotIn("heater_service_unavailable", self.runtime.controller.protection)
+        await self.time(54.9)
+        self.assertNotIn("heater_service_unavailable", self.runtime.controller.protection)
+        await self.time(55)
+        self.assertIn("heater_service_unavailable", self.runtime.controller.protection)
+        self.assertEqual(adapter.command_error_at, self.base + timedelta(seconds=50))
+        async with self.runtime._lock:
+            with patch.object(self.heater, "async_turn_off", side_effect=failing_off):
+                await adapter.send(False, self.now, force=True)
+            self.assertEqual(adapter.command_error_at, self.base + timedelta(seconds=50))
+            self.assertEqual(adapter.fault_since["heater_service_unavailable"],
+                             self.base + timedelta(seconds=50))
+            await adapter.send(False, self.now, force=True)
+            self.assertFalse(adapter.command_error)
+            self.assertIsNone(adapter.command_error_at)
+            self.assertNotIn("heater_service_unavailable", adapter.fault_since)
+            self.assertIn("heater_service_unavailable", self.runtime.controller.protection)
+            self.now = self.base + timedelta(seconds=56)
+            with patch.object(self.heater, "async_turn_off", side_effect=failing_off):
+                await adapter.send(False, self.now, force=True)
+            self.assertEqual(adapter.command_error_at, self.now)
+            self.assertNotIn("heater_service_unavailable", adapter.fault_since)
+        await self.hass.async_block_till_done()
+        self.assertEqual(adapter.fault_since["heater_service_unavailable"], self.now)
+
     async def test_expired_temperature_cannot_restart_idle_heater_after_target_change(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
@@ -1467,6 +1552,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
                 active_service = adapter._light_service_task
+                self.assertFalse(await adapter.finish_session_light(self.now, None))
+                adapter.restore_light_ownership()
                 # Record AUTO while the previous actual service remains pending.
                 async with self.runtime._lock:
                     self.runtime._set_light_override(None, self.now)

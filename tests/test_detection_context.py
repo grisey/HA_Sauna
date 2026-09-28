@@ -179,6 +179,36 @@ class DetectionContextTests(unittest.TestCase):
         self.assertEqual(c.session.timeline.active.gang_id, old.gang_id)
         self.assertTrue(c.session.timeline.active.infusion_events)
 
+    def test_booking_keeps_generated_end_and_retraction_receipts_current(self):
+        for confirmed in (False, True):
+            with self.subTest(confirmed=confirmed):
+                c = controller(confirmation_minutes=1)
+                received = [at(100)]
+                with c.confirmation_batch(lambda: received[0]):
+                    c.process(Event("close-late", "s", Kind.DOOR_CLOSE,
+                                    at(10), received[0], at(11)))
+                    c.process(Event("person-late", "s", Kind.PERSON_STRONG,
+                                    at(12), received[0], at(13)))
+                    if confirmed:
+                        c.process(Event("water-late", "s", Kind.INFUSION,
+                                        at(15), received[0], at(17)))
+                    received[0] = at(101)
+                    if confirmed:
+                        c.set_operation(False, at(28))
+                        off = c.session.timeline.processed[-1]
+                        self.assertEqual((off.booking_at, off.detected_at), (at(28), at(101)))
+                        end_kind = "gang_ended"
+                    else:
+                        c.advance(at(70), finish_confirmation_batch=True)
+                        expired = c.session.timeline.processed[-1]
+                        self.assertEqual((expired.booking_at, expired.detected_at),
+                                         (at(70), at(101)))
+                        end_kind = "gang_retracted"
+                start = next(e for e in c.consumer_events if e.kind == "gang_started")
+                end = next(e for e in c.consumer_events if e.kind == end_kind)
+                self.assertEqual(start.received_at, at(100))
+                self.assertEqual(end.received_at, at(101))
+
     def test_direct_infusion_suppresses_later_person_signals_even_in_one_catchup_batch(self):
         p = detection_parameters()
         c = Controller(p)

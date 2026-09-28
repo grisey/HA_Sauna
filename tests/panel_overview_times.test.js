@@ -26,7 +26,10 @@ const baseState = () => ({
   mechanical_timer: {state: "idle"},
   heating_feedback: false, permissions: {control: true, temperature: true, program: true, light: true},
   start_errors: [], issues: [], detection_channels: [], target_temperature: 80,
-  manual_controls: {light: {}}, start_availability: {}, phase_timer: null,
+  manual_controls: {light: {}}, start_availability: {
+    until_ready_seconds: 0, ready_estimated: false, minimum_wait_seconds: null,
+    message: "Bereit für einen Saunagang.", blocker: null, gang_elapsed_seconds: null,
+  }, phase_timer: null,
 });
 const render = state => {
   const nodes = {};
@@ -60,14 +63,13 @@ assert.match(render(state), /Heizen<\/strong><span class="availability-line ">no
 assert.doesNotMatch(render(state), /8:00 Minuten/, "estimated readiness never exposes a changing seconds timer");
 
 state = baseState();
-state.start_availability = {until_ready_seconds: 0, ready_estimated: false};
 assert.match(render(state), /Bereit<\/strong>/, "ready state uses the backend's readiness without a fabricated start deadline");
-assert.doesNotMatch(render(state), /availability-line/, "readiness without a phase timer has no countdown");
+assert.doesNotMatch(render(state), /availability-line/, "readiness without a phase timer has no empty information area");
 assert.doesNotMatch(render(state), /Jetzt bereit|Bereitschaft/, "ready state is not repeated in a second announcement");
 
 state = baseState();
 state.start_availability = {minimum_wait_seconds: 300, until_ready_seconds: null};
-state.start_availability.blocker = {kind: "cooling"};
+state.start_availability.blocker = {kind: "after_run"};
 assert.match(render(state), /Start gesperrt – noch 5:00 Minuten/, "a blocker remains distinct from readiness");
 
 state = baseState();
@@ -152,5 +154,6 @@ state.session = null;
 state.phase_timer = {kind: "session_light", seconds: 90};
 overview = render(state);
 assert.match(overview, /Lichtnachlauf noch 1:30 Minuten/, "only the compact end-of-session light timer remains off-session");
+assert.doesNotMatch(overview, /availability-line/, "operation off has no empty availability information area");
 
 console.log("panel overview time regressions passed");

@@ -3935,7 +3935,8 @@ class SaunaPanel extends HTMLElement {
       : `<div class="operation-control"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${sessionIndicator}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
-    const stateLine = `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong><span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityLine || availabilityText || "")}</span></div><span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span></div>`;
+    const availabilityHint = availabilityLine || availabilityText;
+    const stateLine = `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong>${availabilityHint ? `<span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityHint)}</span>` : ""}</div><span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span></div>`;
     const ovenState =
       s.heating_feedback === true
         ? "Ofen an"

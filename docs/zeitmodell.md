@@ -41,7 +41,14 @@ setzen den alten Rest fort, ohne eine zweite Gutschrift.
 
 Zeitstempel tragen eine Zeitzone und werden intern in UTC geführt.
 `effective_at` bezeichnet die zugeordnete Ereigniszeit, `detected_at` den
-tatsächlichen Entscheidungszeitpunkt. Messungen bewahren ihren Empfangszeitpunkt;
+tatsächlichen Erkennungszeitpunkt. `booking_at` ordnet die Verarbeitung im
+führenden Controller ein. Ohne nachgeholte Erkennung entspricht es
+`detected_at`; stets gilt `effective_at <= booking_at <= detected_at`.
+Bereits empfangene Detektorraster werden vor späteren Bedienkanten gebucht.
+Ein damals gültiger Gang kann dadurch korrekt gezählt und beendet sein, bevor
+seine verspätete Erkennung tatsächlich vorliegt. Seine Erkennungs- und
+Empfangszeit bleiben dabei unverändert nachvollziehbar; historische Buchungen
+erzeugen keine historischen Aktorbefehle. Messungen bewahren ihren Empfangszeitpunkt;
 ein unbekannter Gerätezeitpunkt wird nicht erfunden. Fristen gehören zu einer
 Sitzung und einem Vorgangstoken. Ersetzte Fristen wirken nicht weiter,
 wiederholte Ereignisse sind idempotent, und die Laufzeituhr läuft nicht zurück.

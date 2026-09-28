@@ -226,6 +226,33 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.active.active.elapsed_seconds(t("21:18:00"))
 
+    def test_booking_orders_catchup_without_rewriting_real_detection(self):
+        state = Timeline("s", t("18:55:42"), door=Door.CLOSED)
+        infusion = Event("water-late", "s", Kind.INFUSION,
+                         t("21:15:10"), t("21:15:50"), t("21:15:17"))
+        state = apply(state, infusion)
+        self.assertEqual(state.active.started_at, t("21:15:17"))
+        self.assertEqual(state.active.detected_at, t("21:15:50"))
+        self.assertEqual(state.active.confirmed_at, t("21:15:50"))
+        with self.assertRaises(ValueError):
+            state.active.elapsed_seconds(t("21:15:28"))
+        state = apply(state, Event("off-late", "s", Kind.OPERATION_OFF,
+                                  t("21:15:28"), t("21:15:51"), t("21:15:28")))
+        self.assertEqual(state.gang_count, 1)
+        self.assertEqual(state.completed[0].ended_at, t("21:15:28"))
+        self.assertEqual(state.completed[0].elapsed_seconds(t("21:15:51")), 11)
+        with self.assertRaises(ValueError):
+            apply(state, Event("backwards", "s", Kind.INFUSION,
+                               t("21:15:20"), t("21:15:52"), t("21:15:27")))
+
+    def test_booking_defaults_to_detection_and_requires_valid_bounds(self):
+        legacy = e("water", Kind.INFUSION, "21:15:50", "21:15:10")
+        self.assertEqual(legacy.booking_at, legacy.detected_at)
+        for booking in ("21:15:09", "21:15:51"):
+            with self.subTest(booking=booking), self.assertRaises(ValueError):
+                Event("invalid", "s", Kind.INFUSION,
+                      t("21:15:10"), t("21:15:50"), t(booking))
+
     def test_ventilation_retracts_unconfirmed_gang_without_completion(self):
         state = apply(self.active, e("o", Kind.DOOR_OPEN, "21:27:15"))
         result = apply(state, e("v", Kind.VENTILATION, "21:28:25"))
