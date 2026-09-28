@@ -1029,6 +1029,27 @@ class HADevice:
         self._light_last_command_key = None
         self._light_override_dirty = True
 
+    async def prepare_light_handoff(self):
+        """Stop output and await its actual completion before any owner change."""
+        owned = self._light_owned
+        self.relinquish_light()
+        try:
+            # Include the output lock in the deadline. A caller may still be
+            # waiting for feedback while its real service continues separately.
+            async with asyncio.timeout(self.values["feedback_timeout_seconds"]):
+                async with self._light_output_lock:
+                    if not await self._wait_light_service():
+                        raise TimeoutError
+        except TimeoutError:
+            if owned:
+                self.restore_light_ownership()
+            return False
+        except BaseException:
+            if owned:
+                self.restore_light_ownership()
+            raise
+        return True
+
     async def _send_light_command(
         self,
         now,
@@ -1078,6 +1099,70 @@ class HADevice:
         if expectation is not None:
             expectation["completed_at"] = self.runtime._clock()
 
+    async def _run_light_service(
+        self, service, data, context, expectation, archive, key, payload, session_id
+    ):
+        """Archive the actual service once, even when its waiting caller leaves."""
+        error = None
+        sent_at = self.runtime._clock()
+        if expectation is not None:
+            expectation["sent_at"] = sent_at
+        try:
+            await self.light_call(service, data, context=context)
+        except BaseException as exc:
+            error = type(exc).__name__
+            self._report_light_service_error(payload["phase"], service, error)
+            raise
+        else:
+            self._light_last_command_key = key
+            for known_fault in (
+                "session_light",
+                "operation_light",
+                "after_run_light",
+            ):
+                self.faults.pop(known_fault, None)
+            self.runtime.log.change(
+                "light_command",
+                (payload["phase"], service),
+                logging.INFO,
+                "Lichtdienst für %s abgeschlossen: %s.",
+                payload["phase"], service,
+            )
+            if service == "turn_on":
+                self.runtime.log.debug(
+                    "light_dimming", "Lichtwert für %s: %s %%.",
+                    payload["phase"], payload["brightness_pct"],
+                )
+        finally:
+            if archive is not None:
+                completed_at = self.runtime._clock()
+                try:
+                    archive.append(
+                        "light_command", completed_at,
+                        {
+                            **payload,
+                            "sent_at": sent_at,
+                            "completed_at": completed_at,
+                            "service_error": error,
+                        },
+                        session_id,
+                    )
+                except Exception as archive_error:
+                    # An archive error is separate from the actual actuator
+                    # result; it must not replace either success or failure.
+                    self.faults["archive"] = str(archive_error)
+                    self.runtime.log.error(
+                        "archive", "Lichtdienstabschluss konnte nicht archiviert werden: %s.",
+                        archive_error,
+                    )
+
+    def _report_light_service_error(self, phase, service, error):
+        self.faults[self._light_fault(phase)] = "service_unavailable"
+        self.runtime.log.change(
+            "light_command_error", (phase, service, error), logging.ERROR,
+            "Lichtdienst für %s (%s) fehlgeschlagen: %s.", phase, service, error,
+        )
+
     async def _execute_light_command(
         self, now, *, key, phase, service, brightness, session_id,
         ends_at=None, purpose=None, entity_id=None,
@@ -1088,7 +1173,6 @@ class HADevice:
         gespeichert. Ein Fehler bleibt somit im nächsten Regelzyklus erneut
         ausführbar; der Lichtzustand ist keine Rückmeldung über den Dienst.
         """
-        fault = self._light_fault(phase)
         if not self._light_owned and purpose != "light_reassignment":
             return False
         entity_id = self.bindings["light"] if entity_id is None else entity_id
@@ -1097,22 +1181,35 @@ class HADevice:
             data["brightness_pct"] = brightness
         state_before = self.hass.states.get(entity_id)
         error = None
-        sent_at = self.runtime._clock()
         task, expectation = None, None
         context = Context()
         try:
-            task = self._light_service_task = asyncio.create_task(
-                self.light_call(service, data, context=context)
-            )
-            task.add_done_callback(
-                lambda completed: self._light_service_finished(completed, expectation)
-            )
             if self._light_state_signature(
                 state_before
             ) != self._light_command_signature(service, brightness):
                 expectation = self._expect_light_change(
-                    sent_at, service, brightness, context=context, service_task=task
+                    self.runtime._clock(), service, brightness, context=context
                 )
+            task = self._light_service_task = asyncio.create_task(
+                self._run_light_service(
+                    service, data, context, expectation, self.runtime.archive, key,
+                    {
+                        "planned_at": now,
+                        "purpose": purpose
+                        or ("session_end" if phase == "session_light" else phase),
+                        "phase": phase,
+                        "service": service,
+                        "brightness_pct": brightness,
+                        "ends_at": ends_at,
+                    },
+                    session_id,
+                )
+            )
+            task.add_done_callback(
+                lambda completed: self._light_service_finished(completed, expectation)
+            )
+            if expectation is not None:
+                expectation["service_task"] = task
             if not await self._wait_light_service():
                 raise TimeoutError
             task.result()
@@ -1124,51 +1221,8 @@ class HADevice:
             ):
                 self._expected_light_changes.remove(expectation)
             error = type(exc).__name__
-            self.faults[fault] = "service_unavailable"
-            self.runtime.log.change(
-                "light_command_error",
-                (phase, service, error),
-                logging.ERROR,
-                "Lichtdienst für %s (%s) fehlgeschlagen: %s.",
-                phase,
-                service,
-                error,
-            )
-        else:
-            self._light_last_command_key = key
-            for known_fault in (
-                "session_light",
-                "operation_light",
-                "after_run_light",
-            ):
-                self.faults.pop(known_fault, None)
-            self.runtime.log.change(
-                "light_command",
-                (phase, service),
-                logging.INFO,
-                "Lichtdienst für %s abgeschlossen: %s.",
-                phase,
-                service,
-            )
-            if service == "turn_on":
-                self.runtime.log.debug(
-                    "light_dimming", "Lichtwert für %s: %s %%.", phase, brightness
-                )
-        if self.runtime.archive:
-            self.runtime.archive.append(
-                "light_command",
-                now,
-                {
-                    "purpose": purpose
-                    or ("session_end" if phase == "session_light" else phase),
-                    "phase": phase,
-                    "service": service,
-                    "brightness_pct": brightness,
-                    "ends_at": ends_at,
-                    "service_error": error,
-                },
-                session_id,
-            )
+            if task is None or not task.done():
+                self._report_light_service_error(phase, service, error)
         return error is None
 
     @staticmethod

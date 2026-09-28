@@ -77,7 +77,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.runtime.device, "close", delayed_close):
             closing = asyncio.create_task(self.runtime.close())
             await asyncio.wait_for(entered.wait(), 5)
-            self.assertTrue(self.runtime.closed)
+            self.assertFalse(self.runtime.closed)
             await backup.async_pre_backup(self.hass)
             archive = self.runtime.archive
             try:
@@ -90,6 +90,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
                 await backup.async_post_backup(self.hass)
             await closing
+        self.assertTrue(self.runtime.closed)
         self.assertTrue(archive.worker.done())
         self.assertNotIn(archive, backup.archives(self.hass))
 

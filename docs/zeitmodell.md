@@ -57,3 +57,14 @@ deren inklusivem Abschluss ausgewertet. Gemeinsam bereitstehende
 Gerätecallbacks werden vor der Lockübernahme zugestellt; auf erst zukünftig
 eintreffende Messungen wird nicht gewartet. Die dokumentierten älteren
 Türwartefristen gehören nicht mehr zur aktuellen Türhilfe.
+
+Jede empfangene, zeitlich wirksame Regeltemperatur erreicht in Eingangsreihenfolge
+den vorhandenen Controller, auch wenn mehrere Meldungen hinter einem wartenden
+Dienst liegen. Die Auswahl bleibt oben führend mit unten als Ersatz. Ein kurzes
+Erreichen des Sollwerts setzt dadurch dieselbe Bereitschaft wie bei fortlaufender
+Verarbeitung. Historische Eingänge lösen keine rückdatierten Aktoraufrufe aus.
+
+Heizentscheidungen unterscheiden ihre logische Buchung `at` von `created_at`,
+dem tatsächlichen Erzeugungszeitpunkt im Controller. Der Archivrecord übernimmt
+`created_at` als `received_at`; späteres Puffern oder Schreiben verändert ihn
+nicht. Alte Entscheidungen ohne dieses additive Feld bleiben lesbar.

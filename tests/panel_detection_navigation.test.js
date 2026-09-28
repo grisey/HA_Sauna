@@ -86,7 +86,7 @@ const parameters = {
       session,
       records: traces.map((payload) => ({ kind: "detector_trace", payload })),
     },
-    state: { configuration: { parameters } },
+    state: { permissions: { admin: true }, configuration: { parameters } },
     window: [Date.parse(iso(0)), Date.parse(iso(60))],
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
@@ -144,7 +144,7 @@ const parameters = {
         { kind: "detection", payload: { event: door, trace_at: iso(30), channels: ["upper"] } },
       ],
     },
-    state: { configuration: { parameters } },
+    state: { permissions: { admin: true }, configuration: { parameters } },
     window: [Date.parse(iso(0)), Date.parse(iso(60))],
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
@@ -265,6 +265,7 @@ const parameters = {
       records: traces.map((payload) => ({ kind: "detector_trace", payload })),
     },
     state: {
+      permissions: { admin: true },
       configuration: {
         parameters: { ...parameters, vent_absolute_humidity_loss_percent: 99 },
       },
@@ -400,7 +401,7 @@ const parameters = {
         },
       ],
     },
-    state: { configuration: { parameters } },
+    state: { permissions: { admin: true }, configuration: { parameters } },
     window: [Date.parse(iso(0)), Date.parse(iso(60))],
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
@@ -425,7 +426,7 @@ const parameters = {
       session: { ...session, timeline: { ...session.timeline, processed: allEvents } },
       records: [],
     },
-    state: { configuration: { parameters } },
+    state: { permissions: { admin: true }, configuration: { parameters } },
     window: [Date.parse(iso(0)), Date.parse(iso(60))],
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });

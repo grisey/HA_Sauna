@@ -624,11 +624,13 @@ async def async_set_control_mode(hass, entry, mode):
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
         runtime.controller.set_control_mode(mode)
-        runtime.configuration = replace(runtime.configuration, control_mode=mode)
+        configuration = replace(runtime.configuration, control_mode=mode)
+        runtime.configuration = configuration
         hass.config_entries.async_update_entry(
-            entry, options=runtime.configuration.as_options()
+            entry, options=configuration.as_options()
         )
         await runtime._cycle()
+        return configuration
 
 
 async def async_set_entity_parameter(hass, entry, key, value):

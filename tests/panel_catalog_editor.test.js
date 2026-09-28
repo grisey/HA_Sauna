@@ -136,6 +136,26 @@ test("edited number input strings become numeric steps without losing invalid dr
   );
 });
 
+test("server catalog IDs retain colons through the rendered editor actions", async () => {
+  for (const id of ["custom:one", "custom:one:two"]) {
+    const { panel, library } = makePanel();
+    panel.message = () => {};
+    panel.state.configuration.temperature_programs = [{ ...programs[2], id }];
+    panel.renderProgramLibrary();
+    const edit = library.innerHTML.match(/data-action="(program-edit:[^"]+)"/)[1];
+    await panel.action(edit);
+    assert.equal(panel.programEditor.id, id);
+    const steps = library.innerHTML.match(/data-action="(catalog-kind:steps:[^"]+)"/)[1];
+    await panel.action(steps);
+    assert.equal(panel.programEditor.kind, "steps");
+    assert.deepEqual(Array.from(panel.programEditor.values.temperature_steps), [75, 85]);
+    const even = library.innerHTML.match(/data-action="(catalog-kind:even:[^"]+)"/)[1];
+    await panel.action(even);
+    panel.finishProgramEditor();
+    assert.equal(panel.currentProgramDraft()[0].id, id);
+  }
+});
+
 test("keyboard order and pointer insertion preserve IDs and can be discarded", () => {
   const { panel, library } = makePanel();
   panel.moveProgram("c", -1);

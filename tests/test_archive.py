@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 import zipfile
 
@@ -52,7 +52,9 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         async def close_device():
             return None
 
-        runtime.device = SimpleNamespace(close=close_device)
+        runtime.device = SimpleNamespace(
+            close=close_device, prepare_light_handoff=AsyncMock(return_value=True),
+        )
         await runtime.close()
         await runtime.close()
         stored = await asyncio.to_thread(self.archive.read, "closing")
@@ -74,7 +76,9 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         async def close_device():
             calls.append("off")
 
-        runtime.device = SimpleNamespace(close=close_device)
+        runtime.device = SimpleNamespace(
+            close=close_device, prepare_light_handoff=AsyncMock(return_value=True),
+        )
         original_append = self.archive.append
 
         def append(kind, *args, **kwargs):
@@ -89,6 +93,28 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(str(error) == "decision append" for error in caught.exception.exceptions))
         self.assertFalse(runtime.controller.last_decision.heat)
         self.assertLess(runtime._saved_decisions, len(runtime.controller.decisions))
+
+    async def test_decision_receipt_uses_creation_clock_before_a_later_persist(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()),
+                               lambda: T0 + timedelta(seconds=30))
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, T0)
+        runtime.controller.begin_session("decision-clock", T0)
+        runtime._clock = lambda: T0 + timedelta(seconds=31)
+        runtime.controller.set_operation(False, T0 + timedelta(seconds=28))
+        runtime._clock = lambda: T0 + timedelta(seconds=50)
+        runtime.persist()
+        await self.archive.flush()
+        stored = await asyncio.to_thread(self.archive.read, "decision-clock")
+        decisions = [r for r in stored["records"] if r["kind"] == "decision"]
+        self.assertEqual([(r["payload"]["at"], r["payload"]["created_at"], r["received_at"])
+                          for r in decisions], [
+            (T0.isoformat(), (T0 + timedelta(seconds=30)).isoformat(),
+             (T0 + timedelta(seconds=30)).isoformat()),
+            ((T0 + timedelta(seconds=28)).isoformat(),
+             (T0 + timedelta(seconds=31)).isoformat(),
+             (T0 + timedelta(seconds=31)).isoformat()),
+        ])
 
     async def test_full_resolution_references_and_earlier_assignments_survive(self):
         for n in range(30):

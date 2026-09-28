@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import isfinite
+from typing import Callable
 from uuid import uuid4
 
 from . import energy, heating, thermostat
@@ -42,6 +43,7 @@ class Controller:
         program_mode: str = "constant",
         control_mode: str = "automatic",
         temperature_steps: tuple[float, ...] | None = None,
+        decision_clock: Callable[[], datetime] | None = None,
     ) -> None:
         if program_mode not in PROGRAM_MODES:
             raise ValueError("Ungültiger Temperaturprogrammmodus")
@@ -51,6 +53,7 @@ class Controller:
         self.program_mode = program_mode
         self.control_mode = control_mode
         self.temperature_steps = temperature_steps
+        self._decision_clock = decision_clock
         self._session: Session | None = None
         self.completed_sessions: tuple[Session, ...] = ()
         self.light_after_run: LightAfterRun | None = None
@@ -1186,6 +1189,10 @@ class Controller:
         return decision
 
     def _evaluate(self, at, *, preserve_override=False, decision_session_id=None):
+        created_at = (
+            utc(self._decision_clock()) if self._decision_clock is not None
+            else self._received_at(at)
+        )
         session = self._session
         session_id = session.session_id if session else decision_session_id
         if session is None:
@@ -1206,7 +1213,10 @@ class Controller:
             # session or a genuinely different decision replaces it.
             decision = self.last_decision
             session_id = decision.session_id
-        decision = replace(decision, session_id=session_id)
+        decision = replace(
+            decision, session_id=session_id,
+            created_at=decision.created_at or created_at,
+        )
         self.automatic_decision = decision
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():
@@ -1238,7 +1248,7 @@ class Controller:
             and self._manual_heating_allowed()
         ):
             issued = thermostat.Decision(
-                at, self.heater_override, "manual_override", session_id
+                at, self.heater_override, "manual_override", session_id, created_at
             )
         if self.last_decision is None or (issued.heat, issued.reason, issued.session_id) != (
             self.last_decision.heat,

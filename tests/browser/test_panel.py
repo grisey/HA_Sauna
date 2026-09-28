@@ -186,6 +186,77 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await context.close()
         self.assertEqual(self.errors, [])
 
+    async def test_running_role_change_reloads_the_final_archive_projection(self):
+        await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
+        await self.emit(Kind.DOOR_OPEN, 20)
+        event = next(item for item in self.runtime.session.timeline.processed
+                     if item.kind == Kind.DOOR_OPEN)
+        self.runtime.archive.append("detector_trace", self.now, {
+            "at": self.now, "signals": ["door_open"], "channels": ["upper"],
+            "metrics": {"upper": {"door_temperature_slope": -1.0}},
+            "conditions": {}, "checks": {}, "holds": {},
+        }, identity)
+        self.runtime.archive.append("detection", self.now, {
+            "event": event, "channels": ["upper"], "trace_at": self.now,
+        }, identity)
+        await self.runtime.set_operation(False)
+        self.now += timedelta(minutes=20)
+        await self.runtime.tick()
+        await self.runtime.archive.flush()
+        self.assertIsNone(self.runtime.session)
+        # Change the actual HA user behind the existing token and panel.
+        # The HTTP views and frontend remain the original production paths.
+        await self.hass.auth.async_update_user(self.user, group_ids=[GROUP_ID_USER])
+        await self.hass.async_block_till_done()
+        await self.panel.evaluate("""async p => {
+          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+          clearInterval(p.timer);
+          await p.refresh();
+        }""")
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(self.panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+        await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        self.assertTrue(await self.panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
+        self.assertEqual(await self.panel.evaluate(
+            "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
+        await self.panel.evaluate("""p => {
+          p.roleChart = p.historyChart;
+          const [a,b] = p.window;
+          p.setHistoryWindow(a, a + (b-a)/2);
+          p.roleWindow = [...p.window];
+        }""")
+
+        await self.hass.auth.async_update_user(self.user, group_ids=[GROUP_ID_ADMIN])
+        await self.hass.async_block_till_done()
+        await self.panel.evaluate("""async p => {
+          await p.refresh();
+          if (p.historyLoad) await p.historyLoad.promise;
+        }""")
+        traces = await self.panel.evaluate(
+            "p => p.shown.records.filter(r => r.kind === 'detector_trace').length")
+        self.assertGreater(traces, 0)
+        self.assertTrue(await self.panel.evaluate("p => p.historyChart === p.roleChart"))
+        self.assertTrue(await self.panel.evaluate(
+            "p => p.window.every((value, i) => value === p.roleWindow[i])"))
+        await self.panel.locator('.main-tabs [data-action="details"]').click()
+        await self.panel.locator('.detail-tabs [data-action="diagnostics"]').click()
+        await expect(self.panel.locator('.diagnostic-marker').first).to_be_visible(timeout=15000)
+
+        await self.hass.auth.async_update_user(self.user, group_ids=[GROUP_ID_USER])
+        await self.hass.async_block_till_done()
+        await self.panel.evaluate("p => p.refresh()")
+        await expect(self.panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
+        self.assertEqual(await self.panel.locator('.diagnostic-marker').count(), 0)
+        self.assertEqual(await self.panel.locator('[data-action^="event-row:"]').count(), 0)
+        await expect(self.panel.locator('#detection-plots')).to_be_empty()
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        self.assertEqual(await self.panel.evaluate(
+            "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
+        self.assertTrue(await self.panel.evaluate("p => p.historyChart === p.roleChart"))
+        self.assertEqual(self.errors, [])
+
     async def test_upper_probe_failure_keeps_lower_readings_and_visible_warning(self):
         await self.set_source("upper_temperature", "unavailable")
         self.now = self.base + timedelta(seconds=31)

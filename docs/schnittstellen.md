@@ -39,6 +39,18 @@ wiederhergestellt. Neuere Optionsänderungen und bereits geschlossene oder
 ersetzte Runtimes bleiben unberührt. HAs eigener Entladefehler bleibt sichtbar.
 Eine Leuchtenübergabe wartet begrenzt auf bereits laufende alte Ausgaben und
 bestätigt erst danach ihr abschließendes AUS.
+Auch ein Runtimewechsel mit unveränderter Leuchtenbindung wartet vor dem
+Plattformentladen auf den tatsächlichen Abschluss alter Lichtdienste. Ist das
+innerhalb des Dienstbudgets nicht möglich, bleibt die bisherige Runtime samt
+Archiv zuständig; der Reloadversuch wird zurückgenommen. Ein direkter
+Runtimeabschluss versucht zuerst Ofen-AUS und lässt bei einer noch laufenden
+Lichtaufgabe das Archiv für deren Abschluss offen. Der Abschluss kann erneut
+versucht werden; eine neue Runtime darf den offenen Vorgänger nicht ersetzen.
+
+Die Antworten für Betriebsart und Tasterprogramm stammen aus dem unveränderlichen
+Ergebnis des gemeinsamen Einstellungsschreibers. Ein Runtimewechsel während des
+Einlesens des HTTP-Bodys kann dadurch keinen früheren Konfigurationsstand als
+erfolgreich übernommen bestätigen.
 
 ## Historischer Arbeitsplan vom 26.09.2026
 

@@ -192,11 +192,15 @@ class DetectionContextTests(unittest.TestCase):
                     if confirmed:
                         c.process(Event("water-late", "s", Kind.INFUSION,
                                         at(15), received[0], at(17)))
+                        heating = next(d for d in c.decisions if d.reason == "gang_heat_demand")
+                        self.assertEqual((heating.at, heating.created_at), (at(13), at(100)))
                     received[0] = at(101)
                     if confirmed:
                         c.set_operation(False, at(28))
                         off = c.session.timeline.processed[-1]
                         self.assertEqual((off.booking_at, off.detected_at), (at(28), at(101)))
+                        self.assertEqual((c.last_decision.at, c.last_decision.created_at),
+                                         (at(28), at(101)))
                         end_kind = "gang_ended"
                     else:
                         c.advance(at(70), finish_confirmation_batch=True)

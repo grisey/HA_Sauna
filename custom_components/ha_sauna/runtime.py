@@ -270,13 +270,14 @@ class SaunaRuntime:
         self, configuration: Configuration, clock: Callable[[], datetime] | None = None
     ) -> None:
         self.configuration = configuration
+        self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self.controller = Controller(
             configuration.parameters,
             program_mode=configuration.program_mode,
             control_mode=configuration.control_mode,
             temperature_steps=configuration.temperature_steps,
+            decision_clock=lambda: self._clock(),
         )
-        self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._lock = asyncio.Lock()
         self._pending_device_inputs = deque()
         self._button = ButtonGestures(
@@ -545,19 +546,25 @@ class SaunaRuntime:
             packet = []
             while (self._pending_device_inputs
                    and self._pending_device_inputs[0][0] == received_at):
-                packet.append((self._pending_device_inputs.popleft()[1], []))
+                packet.append([self._pending_device_inputs.popleft()[1], [], None])
             measurement_roles = {"upper_temperature", "upper_humidity",
                                  "lower_temperature", "lower_humidity"}
             # All already received channels at this same timestamp belong to
             # its one raster, even when a control edge was dispatched between.
-            for event, originals in packet:
+            for item in packet:
+                event, originals, _temperature = item
                 entity_id = event.data["entity_id"]
                 for role, source in self.configuration.bindings.values.items():
                     if source == entity_id and role in measurement_roles:
                         originals.append(self.device.ingest(
                             role, event.data.get("new_state"), received_at, defer_archive=True,
                         ))
-            for event, originals in packet:
+                regulation = self.device.regulation_measurement(received_at)
+                # A transport snapshot preserves each input's selected value,
+                # including repeated roles at one time. The detector still gets
+                # all same-time channels before any control edge is booked.
+                item[2] = regulation.value if regulation is not None else None
+            for event, originals, temperature in packet:
                 self._sync_detector()
                 # Original provenance follows the received FIFO, including a
                 # session start/end between same-time measurements. Each value
@@ -567,6 +574,10 @@ class SaunaRuntime:
                         self.archive.append(
                             "measurement", received_at, measurement, self.session.session_id,
                         )
+                action_at = max(received_at, self.controller._last_at or received_at)
+                # Book only the received regulation input here. Protection
+                # monitoring and actuator output remain in the wall-time cycle.
+                self.controller.set_temperature(temperature, action_at)
                 entity_id = event.data["entity_id"]
                 for role, source in self.configuration.bindings.values.items():
                     if source == entity_id and role not in measurement_roles:
@@ -583,14 +594,14 @@ class SaunaRuntime:
                 if self.configuration.control_input_mode == "button" and action is not None:
                     try:
                         await self._handle_button_event(
-                            action, action_at, received_at=received_at
+                            action, action_at, received_at=received_at, refresh_device=False,
                         )
                     except ValueError as error:
                         self.device.faults["start_rejected"] = str(error)
                 elif action is not None:
                     try:
                         self._prepare_operation(action, physical=True, at=action_at)
-                        self._set_operation(action, at=action_at)
+                        self._set_operation(action, at=action_at, refresh_device=False)
                     except ValueError as error:
                         self.device.faults["start_rejected"] = str(error)
                 self._sync_detector()
@@ -815,7 +826,7 @@ class SaunaRuntime:
         for decision in self.controller.decisions[self._saved_decisions :]:
             self.archive.append(
                 "decision",
-                decision.at,
+                decision.created_at or decision.at,
                 decision,
                 decision.session_id,
             )
@@ -889,14 +900,15 @@ class SaunaRuntime:
                 "Einstellungen können erst nach Ende der Saunasitzung geändert werden"
             )
 
-    def _set_operation(self, enabled, *, preserve_button=False, at=None):
+    def _set_operation(self, enabled, *, preserve_button=False, at=None, refresh_device=True):
         at = self._clock() if at is None else at
         if enabled and self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
             )
         if self.device:
-            self.device.refresh(at)
+            if refresh_device:
+                self.device.refresh(at)
             if enabled and not (self.session and self.session.operation_enabled):
                 errors = self.device.start_errors()
                 if errors:
@@ -1011,7 +1023,7 @@ class SaunaRuntime:
         if self.device:
             self.device.values = parameters.values
 
-    def _toggle_button_heater_override(self, now):
+    def _toggle_button_heater_override(self, now, *, refresh_device=True):
         """Toggle the physical-button override while the runtime lock is held."""
         session = self.session
         # The current model has only the active Ofenkühlung (`after_run`).
@@ -1030,21 +1042,22 @@ class SaunaRuntime:
         if self.controller.control_mode != "manual" and cooling_or_after_run:
             return self.controller.set_heater_override(True, now)
         if self.device:
-            self.device.refresh(now)
+            if refresh_device:
+                self.device.refresh(now)
             known = self.device.contactor_feedback()
             current = self.device.command if known is None else known
         else:
             current = self.controller.contactor
         return self.controller.set_heater_override(not bool(current), now)
 
-    async def _handle_button_event(self, event, now, *, received_at=None):
+    async def _handle_button_event(self, event, now, *, received_at=None, refresh_device=True):
         """Apply one already-normalized gesture; caller owns ``_lock``."""
         enabled = bool(self.session and self.session.operation_enabled)
         gesture_at = now if received_at is None else received_at
         for action in self._button.handle_actions(event, enabled, gesture_at):
-            await self._apply_button_action(action, now)
+            await self._apply_button_action(action, now, refresh_device=refresh_device)
 
-    async def _apply_button_action(self, action, now):
+    async def _apply_button_action(self, action, now, *, refresh_device=True):
         """Apply a semantic button action; caller owns ``_lock``."""
         if action == START_STANDARD_PROGRAM:
             if self._button_hold_session_id is not None:
@@ -1052,9 +1065,11 @@ class SaunaRuntime:
                     self.device.finish_button_hold_light(self._button_hold_session_id)
                 self._button_hold_session_id = None
             self._prepare_operation(True, physical=True, at=now)
-            self._set_operation(True, preserve_button=True, at=now)
+            self._set_operation(
+                True, preserve_button=True, at=now, refresh_device=refresh_device,
+            )
         elif action == HEATER_TOGGLE_OVERRIDE:
-            self._toggle_button_heater_override(now)
+            self._toggle_button_heater_override(now, refresh_device=refresh_device)
         elif action == END_HOLD and self.session is not None:
             session_id = self.session.session_id
             self.controller.finish_session(now, light_after_run=False)
@@ -1214,17 +1229,62 @@ class SaunaRuntime:
         self._cleanup.append(unsubscribe)
 
     async def close(self) -> None:
+        if self._close_task is not None and self._close_task.done() and not self.closed:
+            # A shielded caller may have left before the failed preflight ended.
+            # Retrieve its failure and let this next caller retry the shutdown.
+            if not self._close_task.cancelled():
+                self._close_task.exception()
+            self._close_task = None
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close_once())
-        await asyncio.shield(self._close_task)
+        closing = self._close_task
+        try:
+            await asyncio.shield(closing)
+        finally:
+            if closing.done() and not self.closed and self._close_task is closing:
+                self._close_task = None
 
     async def _close_once(self) -> None:
         async with self._lock:
             failures = []
             try:
-                await self._drain_device_inputs()
+                with self.controller.confirmation_batch(self._clock):
+                    await self._drain_device_inputs()
+                    if self.detector is not None:
+                        self._deliver_detection(self._clock())
             except Exception as error:
                 failures.append(error)
+            if self.device:
+                try:
+                    self.controller.set_operation(False, self._clock())
+                    # The shutdown decision and any gang end belong to the
+                    # still-open originating archive, including a retry.
+                    self._publish_controller_events()
+                except Exception as error:
+                    failures.append(error)
+                try:
+                    # A pending light service must never defer the heater OFF.
+                    await self.device.close()
+                except Exception as error:
+                    failures.append(error)
+                try:
+                    light_handoff = await self.device.prepare_light_handoff()
+                except Exception as error:
+                    failures.append(error)
+                    light_handoff = False
+                if not light_handoff:
+                    try:
+                        self.persist()
+                    except Exception as error:
+                        failures.append(error)
+                    error = RuntimeError(
+                        "Lichtausgabe läuft noch; Sauna-Laufzeit bleibt für einen erneuten Abschluss offen"
+                    )
+                    if failures:
+                        raise error from ExceptionGroup(
+                            "Sicherer Abschluss der Sauna-Laufzeit fehlgeschlagen", failures
+                        )
+                    raise error
             self.closed = True
             self._pending_device_inputs.clear()
             self.log.info("unload", "Sauna-Integration wird beendet; Ofen ausschalten.")
@@ -1232,21 +1292,6 @@ class SaunaRuntime:
             for unsubscribe in reversed(callbacks):
                 try:
                     unsubscribe()
-                except Exception as error:
-                    failures.append(error)
-            if self.device:
-                try:
-                    self.controller.set_operation(False, self._clock())
-                    # ``set_operation`` may end a confirmed gang.  Archive and
-                    # later consumers must receive its durable end before the
-                    # archive is closed, just as they do in a normal cycle.
-                    self._publish_controller_events()
-                except Exception as error:
-                    failures.append(error)
-                try:
-                    # Event persistence must never prevent the physical OFF
-                    # attempt during teardown.
-                    await self.device.close()
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:

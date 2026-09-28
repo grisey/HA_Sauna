@@ -91,6 +91,109 @@ class DeviceFeedbackTests(unittest.TestCase):
                                                 else "%" if role.endswith("humidity") else None)),
         })
 
+    def test_received_readiness_releases_override_before_current_output(self):
+        async def exercise(queued, same_time, path):
+            runtime, adapter, clock = self.detection_device(feedback_timeout_seconds=10)
+            adapter.ingest("upper_temperature", state("79.99", unit="°C"), T0, initial=True)
+            adapter.refresh(T0)
+            runtime.controller.begin_session("readiness", T0)
+            await runtime.start_archive(path, "readiness-entry")
+            clock[0] = T0 + timedelta(seconds=100)
+            await runtime.set_heater_override(False)
+            self.assertIsNone(runtime.session.ready_at)
+            self.assertFalse(runtime.controller.last_decision.heat)
+            del adapter.apply_light  # Use the original adapter's light service boundary.
+            calls, entered, release = [], asyncio.Event(), asyncio.Event()
+
+            async def service(domain, service, data, **_kwargs):
+                calls.append((domain, service, clock[0]))
+                if queued and domain == "light" and not entered.is_set():
+                    entered.set()
+                    await release.wait()
+
+            adapter.hass.services.async_call = service
+            clock[0] = T0 + timedelta(seconds=101)
+            light = asyncio.create_task(runtime.set_light_override(80))
+            if queued:
+                await entered.wait()
+            else:
+                await light
+            pending = []
+            for second, value in ((102, 80.01), (102 if same_time else 103, 79.99)):
+                clock[0] = T0 + timedelta(seconds=second)
+                edge = asyncio.create_task(runtime.device_input(
+                    self.detection_edge(runtime, "upper_temperature", value)))
+                if queued:
+                    pending.append(edge)
+                    await asyncio.sleep(0)
+                else:
+                    await edge
+            clock[0] = T0 + timedelta(seconds=104)
+            if queued:
+                release.set()
+                await asyncio.gather(light, *pending)
+            await runtime.archive.flush()
+            stored = await asyncio.to_thread(runtime.archive.read, "readiness")
+            await runtime.archive.close()
+            return runtime, calls, stored
+
+        with TemporaryDirectory() as directory:
+            for queued in (False, True):
+                for same_time in (False, True):
+                    with self.subTest(queued=queued, same_time=same_time):
+                        runtime, calls, stored = asyncio.run(exercise(
+                            queued, same_time, Path(directory) / f"{queued}-{same_time}.sqlite"))
+                        self.assertEqual(runtime.session.ready_at, T0 + timedelta(seconds=102))
+                        self.assertEqual(runtime.controller.phase, "bereit")
+                        self.assertIsNone(runtime.controller.heater_override)
+                        self.assertTrue(runtime.controller.last_decision.heat)
+                        temperatures = [r["payload"]["value"] for r in stored["records"]
+                                        if r["kind"] == "measurement"
+                                        and r["payload"]["quantity"] == "temperature"]
+                        self.assertEqual(temperatures, [80.01, 79.99])
+                        heat = next(r for r in stored["records"]
+                                    if r["kind"] == "decision"
+                                    and r["payload"]["at"] == (T0 + timedelta(seconds=102)).isoformat()
+                                    and r["payload"]["heat"])
+                        created_at = T0 + timedelta(seconds=104 if queued else 102)
+                        self.assertEqual(heat["received_at"], created_at.isoformat())
+                        self.assertEqual(heat["payload"]["created_at"], created_at.isoformat())
+                        if queued:
+                            self.assertEqual([at for domain, service, at in calls
+                                              if domain == "switch" and service == "turn_on"],
+                                             [created_at])
+
+    def test_same_time_start_does_not_take_a_later_temperature_before_its_input(self):
+        async def exercise():
+            runtime, adapter, clock = self.detection_device()
+            adapter.ingest("upper_temperature", state("79.99", unit="°C"), T0, initial=True)
+            adapter.refresh(T0)
+            await runtime._lock.acquire()
+            clock[0] = T0 + timedelta(seconds=1)
+            pending = []
+            for role, value in (("upper_temperature", 79.99), ("control_input", "on"),
+                                ("upper_temperature", 80.01), ("upper_temperature", 79.99)):
+                pending.append(asyncio.create_task(runtime.device_input(
+                    self.detection_edge(runtime, role, value))))
+                await asyncio.sleep(0)
+            at_start = []
+            start = runtime.controller.set_operation
+
+            def operation(enabled, at, **kwargs):
+                result = start(enabled, at, **kwargs)
+                at_start.append((runtime.controller.temperature, runtime.session.ready_at))
+                return result
+
+            runtime.controller.set_operation = operation
+            runtime._lock.release()
+            await asyncio.gather(*pending)
+            return runtime, at_start
+
+        runtime, at_start = asyncio.run(exercise())
+        self.assertEqual(at_start, [(79.99, None)])
+        self.assertEqual(runtime.session.ready_at, T0 + timedelta(seconds=1))
+        self.assertEqual(runtime.controller.temperature, 79.99)
+
     def test_blocked_humidity_rise_cannot_be_revived_after_waiting_off_service(self):
         async def exercise(queued, resumes_at, off_at=2, fresh_after_resume=False):
             runtime, adapter, clock = self.detection_device()
@@ -213,6 +316,12 @@ class DeviceFeedbackTests(unittest.TestCase):
                          and record["payload"]["event"]["kind"] == Kind.INFUSION.value)
         self.assertEqual(detection["event"]["booking_at"], detection["trace_at"])
         self.assertNotEqual(detection["event"]["booking_at"], detection["event"]["detected_at"])
+        decision = next(record for record in stored["records"]
+                        if record["kind"] == "decision"
+                        and record["payload"]["reason"] == "gang_heat_demand")
+        self.assertEqual(decision["payload"]["at"], (T0 + timedelta(seconds=17)).isoformat())
+        self.assertEqual(decision["payload"]["created_at"], gang.detected_at.isoformat())
+        self.assertEqual(decision["received_at"], gang.detected_at.isoformat())
         ended = next(e for e in runtime.consumer_events if e.kind == "gang_ended")
         self.assertEqual(ended.received_at, gang.detected_at)
 

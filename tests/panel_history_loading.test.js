@@ -41,6 +41,9 @@ function panel(api) {
     "#history": { hidden: false },
     "#session": { innerHTML: "" },
     "#history-loading": {},
+    "#gangs": { innerHTML: "" },
+    "#event-list": { innerHTML: "" },
+    "#detection-plots": { innerHTML: "" },
   };
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "e",
@@ -247,4 +250,108 @@ test("last-session fallback reuses its final cache without polling record pages"
   await p.startHistoryLoad();
   assert.equal(pages, 1);
   assert.equal(p.historySessionId, "old");
+});
+
+test("a finalized public archive restarts at zero after an admin status response", async () => {
+  let admin = false;
+  const requests = [];
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/state"))
+      return { ...state(), permissions: { admin } };
+    if (request.endsWith("/archive")) return [{ session_id: "archive" }];
+    requests.push(request);
+    const result = page([1, 3], null, "archive", true);
+    if (admin)
+      result.records.splice(1, 0, { id: 2, kind: "detector_trace", payload: {} });
+    return result;
+  });
+  p.selected = "archive";
+  p.state.permissions.admin = false;
+  await p.startHistoryLoad();
+  const publicCache = p.cache.get("archive");
+  assert.equal(publicCache.finalSynced, true);
+  assert.equal(publicCache.after, 3);
+  p.window = [100, 200];
+  const chart = {
+    interaction: { hide() {} },
+    prepared: new Map(),
+    preparedOverview: new Map(),
+  };
+  p.historyChart = chart;
+
+  admin = true;
+  await p.refresh();
+  await p.historyLoad?.promise;
+  const adminCache = p.cache.get("archive");
+  assert.notEqual(adminCache, publicCache);
+  assert.equal(adminCache.accessProjection, "admin");
+  assert.deepEqual(Array.from(adminCache.records, (item) => item.id), [1, 2, 3]);
+  assert.equal(adminCache.finalSynced, true);
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every((request) => request.endsWith("after=0")));
+  assert.equal(p.historyChart, chart);
+  assert.deepEqual(p.window, [100, 200]);
+});
+
+test("role loss clears diagnostic consumers even while history is hidden", async () => {
+  const { p, nodes } = panel(async (request) => {
+    assert.ok(request.endsWith("/state"));
+    return { ...state(), permissions: { admin: false } };
+  });
+  p.syncHistoryProjection();
+  const oldCache = p.historyCache("live");
+  oldCache.records.push({ id: 1, kind: "detector_trace", payload: {} });
+  p.shown = { session: p.state.session, records: oldCache.records };
+  p.chartDataIndex = p.historyIndex(oldCache.records);
+  p.historyEventKey = p.historyDiagnosticsKey = "old-admin";
+  p.pendingEventFocus = { kind: "marker", eventId: "old" };
+  nodes["#event-list"].innerHTML = '<button data-action="event-row:old">Marker</button>';
+  nodes["#detection-plots"].innerHTML = '<svg class="diagnostic-marker"></svg>';
+  nodes["#history"].hidden = true;
+
+  await p.refresh();
+  assert.equal(p.cache.size, 0);
+  assert.equal(p.shown, null);
+  assert.equal(p.chartDataIndex, null);
+  assert.equal(p.pendingEventFocus, null);
+  assert.equal(p.historyEventKey, null);
+  assert.equal(p.historyDiagnosticsKey, null);
+  assert.equal(nodes["#event-list"].innerHTML, "");
+  assert.equal(nodes["#detection-plots"].innerHTML, "");
+  p.drawDiagnostics();
+  assert.equal(nodes["#detection-plots"].innerHTML, "");
+});
+
+test("a stale admin page cannot write after role loss and return to admin", async () => {
+  const old = deferred();
+  let adminRequests = 0;
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive")) return [{ session_id: "archive" }];
+    assert.ok(request.endsWith("after=0"));
+    if (p.state.permissions.admin && ++adminRequests === 1) return old.promise;
+    const result = page([1], null, "archive", true);
+    if (p.state.permissions.admin)
+      result.records.push({ id: 2, kind: "detector_trace", payload: { current: true } });
+    return result;
+  });
+  p.selected = "archive";
+  const previous = p.startHistoryLoad();
+  await turn();
+  p.state.permissions.admin = false;
+  await p.startHistoryLoad();
+  const publicCache = p.cache.get("archive");
+  assert.deepEqual(Array.from(publicCache.records, (item) => item.id), [1]);
+  p.state.permissions.admin = true;
+  await p.startHistoryLoad();
+  const currentCache = p.cache.get("archive");
+  old.resolve({
+    ...page([98], null, "archive", true),
+    phase_projection: { intervals: ["stale admin"] },
+  });
+  await previous;
+  assert.equal(p.cache.get("archive"), currentCache);
+  assert.deepEqual(Array.from(currentCache.records, (item) => item.id), [1, 2]);
+  assert.deepEqual(currentCache.phase_projection, { intervals: [] });
+  assert.equal(currentCache.finalSynced, true);
+  assert.equal(p.shown.records, currentCache.records);
 });

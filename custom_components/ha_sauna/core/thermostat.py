@@ -15,6 +15,7 @@ class Decision:
     heat: bool
     reason: str
     session_id: str | None = None
+    created_at: datetime | None = None
 
 
 def evaluate(

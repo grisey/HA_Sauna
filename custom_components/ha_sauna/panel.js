@@ -3519,6 +3519,7 @@ class SaunaPanel extends HTMLElement {
         return;
       const wasLoading = !this.state;
       this.state = state;
+      this.syncHistoryProjection();
       const sessionSelect = this.$("#session");
       if (sessionSelect) sessionSelect.disabled = false;
       if (wasLoading) this.renderHistoryLoading(null);
@@ -3567,12 +3568,51 @@ class SaunaPanel extends HTMLElement {
       ? this.state?.session?.timeline.session_id || this.sessions?.[0]?.session_id
       : this.selected;
   }
+  historyProjection() {
+    return this.state?.permissions?.admin ? "admin" : "public";
+  }
+  syncHistoryProjection() {
+    const projection = this.historyProjection();
+    if (this.historyAccessProjection === projection) return;
+    const previous = this.historyAccessProjection;
+    this.historyAccessProjection = projection;
+    if (previous === undefined) return;
+    // Cursors describe the server's permission-specific stream. A new
+    // projection must start at zero, including after a return to an old role.
+    this.historyProjectionGeneration = (this.historyProjectionGeneration || 0) + 1;
+    this.cache.clear();
+    this.historyLoad = null;
+    this.shown = null;
+    this.historyProjectionPending = true;
+    this.chartDataIndex = null;
+    this.invalidateHistoryIndex();
+    this.historyTimelineSignature = null;
+    this.historyGangKey = this.historyEventKey = this.historyDiagnosticsKey = null;
+    this.highlightedEventId = this.pendingEventFocus = this.pendingHover = null;
+    this.lastHistoryPointer = null;
+    this.historyChart?.interaction.hide();
+    if (this.historyChart) {
+      this.historyChart.model = null;
+      this.historyChart.prepared.clear();
+      this.historyChart.preparedOverview.clear();
+      this.historyChart.phaseKey = null;
+    }
+    const focused = this.shadowRoot.activeElement;
+    if (focused?.closest?.("#event-list, #detection-plots")) focused.blur?.();
+    for (const selector of ["#gangs", "#event-list", "#detection-plots"])
+      this.updateMarkup(selector, "");
+    this.renderHistoryLoading(null);
+  }
   historyCache(id) {
+    const accessProjection = this.historyProjection();
     let cache = this.cache.get(id);
+    if (cache?.accessProjection && cache.accessProjection !== accessProjection)
+      cache = null;
     if (!cache) {
       cache = { records: [], after: 0, pageRunLoaded: false, finalSynced: false };
       this.cache.set(id, cache);
     }
+    cache.accessProjection = accessProjection;
     cache.records ??= [];
     cache.after ??= 0;
     // `loaded` used to mean both "this page run ended" and "this session is
@@ -3651,6 +3691,7 @@ class SaunaPanel extends HTMLElement {
             : cache?.phase_projection,
         }
       : null;
+    if (session || !id) this.historyProjectionPending = false;
   }
   renderHistoryLoading(load) {
     const node = this.$("#history-loading");
@@ -3685,18 +3726,23 @@ class SaunaPanel extends HTMLElement {
   }
   startHistoryLoad() {
     if (!this.state) return;
+    this.syncHistoryProjection();
     const entry = this.entry,
       generation = this.generation,
+      projection = this.historyProjection(),
+      projectionGeneration = this.historyProjectionGeneration || 0,
       selected = this.selected,
       liveId = this.state?.session?.timeline.session_id,
       selectionGeneration = this.historySelectionGeneration || 0,
-      key = `${generation}:${selectionGeneration}:${entry}:${selected}:${liveId || ""}`;
+      key = `${generation}:${projectionGeneration}:${projection}:${selectionGeneration}:${entry}:${selected}:${liveId || ""}`;
     if (this.historyLoad?.key === key) return this.historyLoad.promise;
     const load = { key, count: 0 };
     this.historyLoad = load;
     const current = () =>
       this.historyLoad === load &&
       generation === this.generation &&
+      projection === this.historyProjection() &&
+      projectionGeneration === (this.historyProjectionGeneration || 0) &&
       selectionGeneration === (this.historySelectionGeneration || 0) &&
       entry === this.entry &&
       selected === this.selected &&
@@ -5093,6 +5139,7 @@ class SaunaPanel extends HTMLElement {
     this.scheduleHistoryRender(reason);
   }
   clearHistoryDisplay() {
+    this.historyProjectionPending = false;
     this.historyChart?.destroy();
     this.historyChart = null;
     this.$("#history-overview").replaceChildren();
@@ -5108,6 +5155,9 @@ class SaunaPanel extends HTMLElement {
   renderHistory(reasons = new Set(["viewport"])) {
     if (!this.isConnected || this.$("#history")?.hidden) return;
     if (!this.shown) {
+      // Keep the selected session's chart and viewport while its replacement
+      // projection loads; its diagnostic sources were removed synchronously.
+      if (this.historyProjectionPending) return;
       this.clearHistoryDisplay();
       return;
     }
@@ -5129,7 +5179,7 @@ class SaunaPanel extends HTMLElement {
     if (this.$("#plots")?.hidden) {
       this.ensureHistoryWindow();
       this.updateHistoryTimelineRevision(session);
-      const key = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
+      const key = `${this.historyProjection()}:${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
       if (key !== this.historyDiagnosticsKey) {
         this.historyDiagnosticsKey = key;
         this.drawDiagnostics();
@@ -5168,7 +5218,7 @@ class SaunaPanel extends HTMLElement {
         `<div class="card"><h2>Saunagänge</h2>${energySummary}${gangs.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Beginn</th><th>Erkannt</th><th>Bestätigung</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g, i) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i + 1} · ${g.infusion_events.length ? "Bestätigt" : "Vorläufig"}</td><td>${when(g.started_at)}</td><td>${when(g.detected_at)}</td><td>${g.infusion_events.length ? when(g.infusion_events[0].detected_at) : "Aufguss ausstehend"}</td><td>${duration((stamp(g.ended_at || session.ended_at || this.state.now) - stamp(g.started_at)) / 1000)}</td><td>${when(g.ended_at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
       );
     }
-    const eventKey = `${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}`;
+    const eventKey = `${this.historyProjection()}:${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}`;
     if (this.historyEventKey !== eventKey) {
       this.historyEventKey = eventKey;
       const openEvents = [
@@ -5195,7 +5245,7 @@ class SaunaPanel extends HTMLElement {
         .forEach((d, i) => (d.open = !!openEvents[i]));
       if (this.highlightedEventId) this.highlightEvent(this.highlightedEventId, false);
     }
-    const diagnosticsKey = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
+    const diagnosticsKey = `${this.historyProjection()}:${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
     if (this.view === "diagnostics" && this.historyDiagnosticsKey !== diagnosticsKey) {
       this.historyDiagnosticsKey = diagnosticsKey;
       this.drawDiagnostics();
@@ -5726,7 +5776,7 @@ class SaunaPanel extends HTMLElement {
       // Only inserts in this span change its length. Late inserts before it
       // shift both indices equally; stable neighbour identities still detect
       // an insertion that changes an edge tangent without changing the count.
-      key = `${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
+      key = `${this.historyProjection()}:${this.historyProjectionGeneration || 0}:${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
     const name = `${position}:${quantity}`,
       old = cache.get(name);
     if (old?.source === values && old.key === key) return old;
@@ -6142,6 +6192,10 @@ class SaunaPanel extends HTMLElement {
     );
   }
   drawDiagnostics() {
+    if (!this.state?.permissions?.admin) {
+      this.updateMarkup("#detection-plots", "");
+      return;
+    }
     if (!this.shown) {
       this.$("#detection-plots").innerHTML = "<p>Keine Saunasitzung ausgewählt.</p>";
       return;
@@ -7148,7 +7202,11 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action.startsWith("catalog-kind:")) {
-      const [, kind, id] = action.split(":");
+      const choice = action.slice("catalog-kind:".length),
+        separator = choice.indexOf(":"),
+        kind = choice.slice(0, separator),
+        id = choice.slice(separator + 1);
+      if (separator < 0 || !["even", "steps"].includes(kind)) return;
       const editor = this.programEditor;
       if (!editor || editor.id !== id) return;
       const program = editor.values;

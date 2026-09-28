@@ -200,6 +200,47 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_reload_exception_restores_old_configuration_and_light(self):
         await self._assert_failed_reload_preserves_runtime(raises=True)
 
+    async def test_direct_unload_keeps_pending_light_owner_before_platform_unload(self):
+        import asyncio
+
+        from custom_components.ha_sauna import async_unload_entry
+
+        entry = await create_sauna(self.hass)
+        runtime = entry.runtime_data
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def light_service(call):
+            entered.set()
+            await release.wait()
+            self.hass.states.async_set(
+                call.data["entity_id"], "on",
+                {"supported_color_modes": ["brightness"], "brightness": 204},
+                context=call.context,
+            )
+
+        self.hass.services.async_register("light", "turn_on", light_service)
+        selecting = asyncio.create_task(runtime.set_light_override(80))
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            selecting.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await selecting
+            service = runtime.device._light_service_task
+            with patch.object(self.hass.config_entries, "async_unload_platforms") as unload:
+                self.assertFalse(await async_unload_entry(self.hass, entry))
+                unload.assert_not_called()
+            self.assertIs(entry.runtime_data, runtime)
+            self.assertFalse(runtime.closed)
+            self.assertFalse(runtime.archive.closed)
+            self.assertTrue(runtime.device._light_owned)
+            self.assertFalse(service.done())
+        finally:
+            release.set()
+        await service
+        await self.hass.async_block_till_done()
+        self.assertTrue(await self.hass.config_entries.async_unload(entry.entry_id))
+        self.assertTrue(runtime.closed)
+
     async def test_invalid_selection_and_values_create_no_entry(self):
         from harness import seed_sources
         bindings = seed_sources(self.hass)

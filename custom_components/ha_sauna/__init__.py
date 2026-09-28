@@ -26,6 +26,11 @@ async def async_setup_entry(
         configuration = Configuration.from_options(entry.options)
     except (ValueError, TypeError) as error:
         raise ConfigEntryError("Ungültige HA-Sauna-Konfiguration") from error
+    previous = getattr(entry, "runtime_data", None)
+    if previous is not None and not previous.closed:
+        # Failed setup/close must not hide an adapter whose service is still
+        # executing. The same bounded close applies to a later setup attempt.
+        await previous.close()
     entry.runtime_data = SaunaRuntime(configuration)
     # Der Laufzeitkern kann nach einem expliziten physischen Neustart seine
     # bereits aktualisierte Konfiguration speichern. Weil sie vor diesem
@@ -336,9 +341,26 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]
 ) -> bool:
     """Beim Entladen Ofen ausschalten, Listener lösen und Archiv abschließen."""
-    if not await hass.config_entries.async_unload_platforms(
-        entry, ["number", "sensor", "switch", "climate", "button"]
-    ):
+    runtime = entry.runtime_data
+    if runtime.device and not await runtime.device.prepare_light_handoff():
         return False
-    await entry.runtime_data.close()
+    try:
+        unloaded = await hass.config_entries.async_unload_platforms(
+            entry, ["number", "sensor", "switch", "climate", "button"]
+        )
+    except BaseException:
+        if (
+            getattr(entry, "runtime_data", None) is runtime
+            and not runtime.closed and runtime.device
+        ):
+            runtime.device.restore_light_ownership()
+        raise
+    if not unloaded:
+        if (
+            getattr(entry, "runtime_data", None) is runtime
+            and not runtime.closed and runtime.device
+        ):
+            runtime.device.restore_light_ownership()
+        return False
+    await runtime.close()
     return True

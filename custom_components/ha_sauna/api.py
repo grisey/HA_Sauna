@@ -576,7 +576,7 @@ class ButtonProgramView(HomeAssistantView):
         require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
-        runtime = runtime_for(hass, entry_id)
+        runtime_for(hass, entry_id)
         body = await json_body(request)
         if not isinstance(body, dict) or set(body) not in (
             {"profile"},
@@ -589,7 +589,7 @@ class ButtonProgramView(HomeAssistantView):
         ):
             raise web.HTTPBadRequest(text="Tastertemperatur fehlt oder ist ungültig")
         try:
-            await async_set_button_program(
+            configuration = await async_set_button_program(
                 hass, entry, body["profile"], body.get("temperature_c")
             )
         except ConfigurationLocked as error:
@@ -606,8 +606,8 @@ class ButtonProgramView(HomeAssistantView):
         return self.json(
             {
                 "success": True,
-                "button_program": runtime.configuration.button_program,
-                "button_temperature_c": runtime.configuration.button_temperature_c,
+                "button_program": configuration.button_program,
+                "button_temperature_c": configuration.button_temperature_c,
             }
         )
 
@@ -621,16 +621,16 @@ class ControlModeView(HomeAssistantView):
         require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
-        runtime = runtime_for(hass, entry_id)
+        runtime_for(hass, entry_id)
         body = await json_body(request)
         if not isinstance(body, dict) or set(body) != {"mode"}:
             raise web.HTTPBadRequest(text="Betriebsmodus fehlt oder ist ungültig")
         try:
-            await async_set_control_mode(hass, entry, body["mode"])
+            configuration = await async_set_control_mode(hass, entry, body["mode"])
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json(
-            {"success": True, "control_mode": runtime.configuration.control_mode}
+            {"success": True, "control_mode": configuration.control_mode}
         )
 
 

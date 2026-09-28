@@ -20,6 +20,15 @@ Auch die beim Entladen erzeugte letzte AUS-Entscheidung wird als eigener
 Entscheidungsrecord über denselben Cursor wie im Normalbetrieb geschrieben.
 Ein Archivfehler darf den physischen AUS-Versuch beim Entladen nicht verhindern.
 
+Ein Lichtbefehl wird genau einmal beim Abschluss der tatsächlichen Dienstaufgabe
+archiviert, auch nach Timeout oder Abbruch ihres wartenden Aufrufers. Seine
+ursprüngliche Sitzung, Phase, Herleitung und Frist bleiben erhalten. `planned_at`
+bezeichnet die Planung, `sent_at` den tatsächlichen Dienstbeginn und
+`completed_at` den Abschluss. Der Record verwendet den Abschluss als
+`received_at` und meldet einen tatsächlichen Dienstfehler in `service_error`.
+Ein Warte-Timeout ist kein abgeschlossener Dienstfehler. Ein gesonderter
+Archivfehler verändert das Ergebnis des Aktoraufrufs nicht.
+
 ## HA-Backup
 
 Die offiziellen HA-Pre-/Post-Backup-Hooks pausieren den Archivschreiber nach
@@ -56,6 +65,11 @@ und anschließend gelöscht, auch bei abgebrochenem Abruf.
 
 Das Archiv-API liefert Sessionlisten und Datensatzseiten. UI-Caches und
 Darstellungsreduktion sind keine weitere Datenhaltung oder Regelungsquelle.
+Archivcache und Seitenzeiger gehören auch zur Rechteprojektion. Beim Wechsel
+zwischen öffentlicher und administrativer Ansicht beginnt das Panel bei null;
+Antworten aus der alten Projektion werden verworfen. Bereits geladene
+Diagnoseansichten werden beim Rechteentzug sofort geleert. Der Zeitbereich einer
+weiter ausgewählten Sitzung bleibt erhalten.
 Der Seitenzeiger `after` akzeptiert höchstens `2**63 - 1`, passend zur
 SQLite-Datensatz-ID. Größere Werte werden mit HTTP 400 abgewiesen; negative
 Werte werden weiterhin auf null begrenzt.

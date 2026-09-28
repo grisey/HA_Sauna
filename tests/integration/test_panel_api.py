@@ -1,5 +1,7 @@
 """Real authenticated panel endpoints, session guard and HA options reload."""
+import asyncio
 import unittest
+from unittest.mock import patch
 from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from harness import create_sauna, start_hass
@@ -256,6 +258,65 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(state["session"])
                 self.assertFalse(state["configuration_locked"])
 
+    async def test_write_acknowledges_replacement_runtime_after_waiting_for_body(self):
+        from custom_components.ha_sauna import api
+
+        url = self.base + "/" + self.entry.entry_id
+        cases = (
+            ("/control-mode", {"mode": "manual"}, "control_mode", "manual"),
+            (
+                "/button-program",
+                {"profile": "constant", "temperature_c": 74},
+                "button_temperature_c",
+                74,
+            ),
+        )
+        read_body = api.json_body
+        async with ClientSession(headers=self.headers) as client:
+            for suffix, body, key, expected in cases:
+                with self.subTest(endpoint=suffix):
+                    previous = self.entry.runtime_data
+                    entered, release = asyncio.Event(), asyncio.Event()
+
+                    async def waiting_body(request):
+                        entered.set()
+                        await release.wait()
+                        return await read_body(request)
+
+                    async def send():
+                        async with client.post(url + suffix, json=body) as response:
+                            return response.status, await response.json()
+
+                    with patch.object(api, "json_body", side_effect=waiting_body):
+                        pending = asyncio.create_task(send())
+                        try:
+                            await asyncio.wait_for(entered.wait(), 3)
+                            reloaded = await asyncio.wait_for(
+                                self.hass.config_entries.async_reload(self.entry.entry_id),
+                                10,
+                            )
+                            self.assertTrue(reloaded)
+                            self.assertTrue(previous.closed)
+                            self.assertIsNot(self.entry.runtime_data, previous)
+                        except BaseException as error:
+                            release.set()
+                            try:
+                                await asyncio.wait_for(pending, 10)
+                            except BaseException as cleanup_error:
+                                error.add_note(f"HTTP-Abschluss fehlgeschlagen: {cleanup_error!r}")
+                            raise
+                        else:
+                            release.set()
+                            status, result = await asyncio.wait_for(pending, 10)
+                        self.assertEqual(status, 200, result)
+                        self.assertEqual(result[key], expected)
+                    self.assertEqual(
+                        getattr(self.entry.runtime_data.configuration, key), expected
+                    )
+                    self.assertEqual(self.entry.options[key], expected)
+                    self.assertNotEqual(getattr(previous.configuration, key), expected)
+                    await self.hass.async_block_till_done()
+
     async def test_admin_program_and_mode_endpoints_persist_and_lock_with_the_session(self):
         url = self.base + "/" + self.entry.entry_id
         catalog = list(self.entry.options["temperature_programs"])
@@ -265,11 +326,13 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         async with ClientSession(headers=self.headers) as client:
             async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
                 self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["control_mode"], "manual")
             self.assertEqual(self.entry.runtime_data.configuration.control_mode, "manual")
             async with client.post(url + "/programs", json={"programs": catalog}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             async with client.post(url + "/button-program", json={"profile": profile}) as response:
                 self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["button_program"], profile)
             await self.hass.async_block_till_done()
             self.assertEqual(self.entry.options["button_program"], profile)
             self.assertEqual(self.entry.options["temperature_programs"], catalog)

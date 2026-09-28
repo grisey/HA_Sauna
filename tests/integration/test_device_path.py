@@ -1515,6 +1515,283 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([call[0] for call in self.light.calls], ["on", "off"])
         self.assertFalse(self.light.is_on)
 
+    async def _assert_cancelled_light_completion_is_archived(self, *, fails):
+        import json
+        import zipfile
+
+        await self.runtime.set_operation(True)
+        session_id = self.runtime.session.session_id
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        with patch.object(self.light, "async_turn_on", side_effect=paused_on):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                service = self.runtime.device._light_service_task
+                # End the originating session while the actual service remains
+                # pending. Its completion must retain the original derivation.
+                async with self.runtime._lock:
+                    self.runtime.controller.finish_session(self.now)
+                    self.runtime.device.set_light_override(None, at=self.now)
+                    self.runtime.persist_completed_sessions()
+                self.assertIsNone(self.runtime.session)
+                self.light.fail_commands = fails
+                self.now += timedelta(seconds=3)
+            finally:
+                release.set()
+            if fails:
+                from homeassistant.exceptions import HomeAssistantError
+                with self.assertRaises(HomeAssistantError):
+                    await service
+            else:
+                await service
+            self.light.fail_commands = False
+            await self.hass.async_block_till_done()
+        await self.runtime.archive.flush()
+        commands = [
+            record for record in self.runtime.archive.read(session_id)["records"]
+            if record["kind"] == "light_command"
+            and record["payload"]["brightness_pct"] == 80
+        ]
+        self.assertEqual(len(commands), 1)
+        command = commands[0]
+        self.assertEqual(command["session_id"], session_id)
+        self.assertEqual(command["payload"]["phase"], "aufheizen")
+        self.assertEqual(command["payload"]["purpose"], "aufheizen")
+        self.assertEqual(command["payload"]["planned_at"], self.base.isoformat())
+        self.assertEqual(command["payload"]["sent_at"], self.base.isoformat())
+        self.assertEqual(command["payload"]["completed_at"], self.now.isoformat())
+        self.assertEqual(command["received_at"], self.now.isoformat())
+        self.assertEqual(
+            command["payload"]["service_error"], "HomeAssistantError" if fails else None
+        )
+        path = await self.runtime.archive.export()
+        try:
+            with zipfile.ZipFile(path) as archive:
+                exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+            self.assertEqual(
+                [record for record in exported if record["id"] == command["id"]], [command]
+            )
+        finally:
+            path.unlink()
+
+    async def test_cancelled_light_success_keeps_one_original_session_record(self):
+        await self._assert_cancelled_light_completion_is_archived(fails=False)
+
+    async def test_cancelled_light_failure_keeps_one_original_session_record(self):
+        await self._assert_cancelled_light_completion_is_archived(fails=True)
+
+    async def test_light_archive_failure_does_not_change_actual_service_result(self):
+        original_append = self.runtime.archive.append
+
+        def append(kind, at, payload, session_id=None):
+            if kind == "light_command":
+                raise RuntimeError("Synthetic archive append failure")
+            return original_append(kind, at, payload, session_id)
+
+        with patch.object(self.runtime.archive, "append", side_effect=append):
+            await self.runtime.set_light_override(80)
+            self.assertEqual(self.light.brightness, 204)
+            self.assertNotIn("operation_light", self.runtime.device.faults)
+            self.assertEqual(self.runtime.device.faults["archive"], "Synthetic archive append failure")
+            self.light.fail_commands = True
+            await self.runtime.set_light_override(20)
+            self.assertEqual(self.light.brightness, 204)
+            self.assertEqual(self.runtime.device.faults["operation_light"], "service_unavailable")
+            self.assertEqual(self.runtime.device.faults["archive"], "Synthetic archive append failure")
+        self.light.fail_commands = False
+
+    async def _assert_same_light_reload_waits_for_actual_service(self, *, serial):
+        for cancel_caller in (False, True):
+            with self.subTest(cancel_caller=cancel_caller):
+                old = self.runtime
+                options = dict(self.entry.options)
+                entered, release, reload_finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+                platform_slot = asyncio.Semaphore(1)
+                original_on = self.light.async_turn_on
+                original_reload = self.hass.config_entries.async_reload
+
+                async def send_on(kwargs):
+                    if not entered.is_set():
+                        entered.set()
+                        await release.wait()
+                    await original_on(**kwargs)
+
+                async def paused_on(**kwargs):
+                    if serial:
+                        async with platform_slot:
+                            await send_on(kwargs)
+                    else:
+                        await send_on(kwargs)
+
+                async def reload_entry(*args, **kwargs):
+                    try:
+                        return await original_reload(*args, **kwargs)
+                    finally:
+                        reload_finished.set()
+
+                self.light.calls.clear()
+                with (
+                    patch.object(self.light, "async_turn_on", side_effect=paused_on),
+                    patch.object(self.hass.config_entries, "async_reload", side_effect=reload_entry),
+                ):
+                    selecting = asyncio.create_task(old.set_light_override(80))
+                    try:
+                        await asyncio.wait_for(entered.wait(), 3)
+                        if cancel_caller:
+                            selecting.cancel()
+                            with self.assertRaises(asyncio.CancelledError):
+                                await selecting
+                        else:
+                            await selecting  # The bounded caller wait times out.
+                        service = old.device._light_service_task
+                        self.hass.config_entries.async_update_entry(
+                            self.entry, options={
+                                **options,
+                                "parameters": {
+                                    **options["parameters"],
+                                    "nominal_power_kw": options["parameters"]["nominal_power_kw"] + 1,
+                                },
+                            },
+                        )
+                        await asyncio.wait_for(reload_finished.wait(), 8)
+                        self.assertIs(self.entry.runtime_data, old)
+                        self.assertFalse(old.closed)
+                        self.assertFalse(old.archive.closed)
+                        self.assertEqual(dict(self.entry.options), options)
+                        self.assertTrue(old.device._light_owned)
+                        self.assertFalse(service.done())
+                    finally:
+                        release.set()
+                    await service
+                    await self.hass.async_block_till_done()
+                self.assertTrue(await original_reload(self.entry.entry_id))
+                self.runtime = self.entry.runtime_data
+                self.runtime._clock = lambda: self.now
+                self.assertIsNot(self.runtime, old)
+                await self.runtime.set_light_override(20)
+                await self.hass.async_block_till_done()
+                self.assertEqual(self.light.brightness, 51)
+                self.assertEqual(self.runtime.device.light_output.manual_brightness, 20)
+                self.assertEqual(
+                    [kwargs["brightness"] for kind, kwargs in self.light.calls if kind == "on"],
+                    [204, 51],
+                )
+                await self.set_light_externally(True, 128)
+                self.assertAlmostEqual(
+                    self.runtime.device.light_output.manual_brightness, 128 * 100 / 255
+                )
+
+    async def test_same_light_parallel_reload_rejects_pending_old_service(self):
+        await self._assert_same_light_reload_waits_for_actual_service(serial=False)
+
+    async def test_same_light_serial_reload_rejects_pending_old_service(self):
+        await self._assert_same_light_reload_waits_for_actual_service(serial=True)
+
+    async def test_same_light_reload_can_finish_old_service_before_new_selection(self):
+        old = self.runtime
+        entered, release, handing_off = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+        original_prepare = old.device.prepare_light_handoff
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        async def prepare():
+            handing_off.set()
+            return await original_prepare()
+
+        self.light.calls.clear()
+        with (
+            patch.object(self.light, "async_turn_on", side_effect=paused_on),
+            patch.object(old.device, "prepare_light_handoff", side_effect=prepare),
+        ):
+            selecting = asyncio.create_task(old.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                options = self.entry.options
+                self.hass.config_entries.async_update_entry(
+                    self.entry, options={
+                        **options,
+                        "parameters": {
+                            **options["parameters"],
+                            "nominal_power_kw": options["parameters"]["nominal_power_kw"] + 1,
+                        },
+                    },
+                )
+                await asyncio.wait_for(handing_off.wait(), 3)
+                self.assertIs(self.entry.runtime_data, old)
+            finally:
+                release.set()
+            await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.runtime._clock = lambda: self.now
+        self.assertIsNot(self.runtime, old)
+        self.assertTrue(old.closed)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        await self.runtime.set_light_override(20)
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.light.brightness, 51)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 20)
+        self.assertEqual(
+            [kwargs["brightness"] for kind, kwargs in self.light.calls if kind == "on"],
+            [204, 51],
+        )
+
+    async def test_close_wait_failure_keeps_archive_open_and_heater_off_then_retries(self):
+        await self.runtime.set_operation(True)
+        self.assertTrue(self.heater.is_on)
+        session_id = self.runtime.session.session_id
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        with patch.object(self.light, "async_turn_on", side_effect=paused_on):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                service = self.runtime.device._light_service_task
+                with self.assertRaises(RuntimeError):
+                    await self.runtime.close()
+                self.assertFalse(self.heater.is_on)
+                self.assertFalse(self.runtime.closed)
+                self.assertFalse(self.runtime.archive.closed)
+            finally:
+                release.set()
+            await service
+            await self.hass.async_block_till_done()
+        await self.runtime.close()
+        self.assertTrue(self.runtime.closed)
+        self.assertTrue(self.runtime.archive.closed)
+        commands = [
+            record for record in self.runtime.archive.read(session_id)["records"]
+            if record["kind"] == "light_command"
+            and record["payload"]["brightness_pct"] == 80
+        ]
+        self.assertEqual(len(commands), 1)
+        self.assertIsNone(commands[0]["payload"]["service_error"])
+
     async def test_binary_button_gap_then_off_cannot_create_a_long_hold(self):
         from dataclasses import replace
 
