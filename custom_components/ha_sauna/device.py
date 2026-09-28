@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from math import isfinite
 
 from homeassistant.components import persistent_notification
+from homeassistant.core import Context
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_state_report_event,
@@ -59,6 +60,8 @@ class HADevice:
         self._light_session_off_superseded_key = None
         self._light_override_dirty = False
         self._light_owned = True
+        self._light_output_lock = asyncio.Lock()
+        self._light_service_task = None
         self.notified = set()
         self.heating_observation = {
             "source": "unknown",
@@ -167,6 +170,21 @@ class HADevice:
         if event.data["entity_id"] != self.bindings["control_input"]:
             return None
         old, new = event.data.get("old_state"), event.data.get("new_state")
+        source = new if new is not None else old
+        if (
+            self.runtime.configuration.control_input_mode == "button"
+            and source is not None
+            and source.domain == "binary_sensor"
+        ):
+            if new is None or new.state in ("unknown", "unavailable"):
+                return "unavailable"
+            # A confirmed OFF closes a known hold even after a source gap.
+            # Returning ON cannot establish an uninterrupted or fresh press.
+            if new.state == "off" and (old is None or old.state != "off"):
+                return "off"
+            if old is not None and old.state == "off" and new.state == "on":
+                return "on"
+            return None
         if old is None or new is None or new.state in ("unknown", "unavailable"):
             return None
         if old.state == new.state:
@@ -175,15 +193,7 @@ class HADevice:
             if old.state in ("unknown", "unavailable"):
                 # A switch returning as OFF is a safe, idempotent stop. A
                 # returning ON is not evidence of a fresh start request.
-                if self.runtime.configuration.control_input_mode != "button":
-                    return False if new.state == "off" else None
-                return None
-            if self.runtime.configuration.control_input_mode == "button":
-                if old.state == "off" and new.state == "on":
-                    return "on"
-                if old.state == "on" and new.state == "off":
-                    return "off"
-                return None
+                return False if new.state == "off" else None
             return new.state == "on" if new.state in ("on", "off") else None
         try:
             occurred = datetime.fromisoformat(new.state)
@@ -877,7 +887,7 @@ class HADevice:
             self._light_session_off_superseded_key,
         ):
             return True
-        if self._light_state_signature(
+        if not self._light_service_is_pending() and self._light_state_signature(
             self.hass.states.get(self.bindings["light"])
         ) == ("off", None):
             self._light_session_off_completed_key = key
@@ -929,6 +939,10 @@ class HADevice:
         # Give up this binding before any await. The old runtime can still
         # receive feedback or ticks while Home Assistant unloads its platforms.
         self.relinquish_light()
+        async with self._light_output_lock:
+            return await self._finish_session_light_locked(now, phase, purpose=purpose)
+
+    async def _finish_session_light_locked(self, now, phase, *, purpose):
         entity_id = self.bindings["light"]
         key = (
             ("session_light", phase.session_id, phase.started_at)
@@ -936,6 +950,12 @@ class HADevice:
         )
         phase_name = "session_light" if phase is not None else "light_reassignment"
         fault = self._light_fault(phase_name)
+        # Even a currently OFF light can have an earlier ON still executing.
+        # Reject the handoff when that call cannot finish within the usual
+        # service deadline; it remains referenced for a subsequent attempt.
+        if not await self._wait_light_service():
+            self.faults[fault] = "service_unavailable"
+            return False
         if self._light_state_signature(
             self.hass.states.get(entity_id)
         ) == ("off", None):
@@ -955,7 +975,7 @@ class HADevice:
             self.hass, [entity_id], observed
         )
         try:
-            sent = await self._send_light_command(
+            sent = await self._execute_light_command(
                 now,
                 key=(key, "turn_off", None),
                 phase=phase_name,
@@ -1009,6 +1029,46 @@ class HADevice:
         purpose=None,
         entity_id=None,
     ):
+        async with self._light_output_lock:
+            if not self._light_owned and purpose != "light_reassignment":
+                return False
+            if not await self._wait_light_service():
+                self.faults[self._light_fault(phase)] = "service_unavailable"
+                return False
+            return await self._execute_light_command(
+                now, key=key, phase=phase, service=service,
+                brightness=brightness, session_id=session_id, ends_at=ends_at,
+                purpose=purpose, entity_id=entity_id,
+            )
+
+    async def _wait_light_service(self):
+        """Bounded wait for the actual service task without cancelling it."""
+        task = self._light_service_task
+        if task is None or task.done():
+            return True
+        done, _ = await asyncio.wait(
+            (task,), timeout=self.values["feedback_timeout_seconds"]
+        )
+        return task in done
+
+    def _light_service_is_pending(self):
+        task = self._light_service_task
+        return task is not None and not task.done()
+
+    def _light_service_finished(self, task, expectation):
+        # Timed-out or cancelled callers still leave an owned transport task.
+        # Retrieve its eventual exception even if no later output is requested.
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None and expectation in self._expected_light_changes:
+                self._expected_light_changes.remove(expectation)
+        if expectation is not None:
+            expectation["completed_at"] = self.runtime._clock()
+
+    async def _execute_light_command(
+        self, now, *, key, phase, service, brightness, session_id,
+        ends_at=None, purpose=None, entity_id=None,
+    ):
         """Führt einen geplanten Lichtdienst aus und hält Ergebnis und Archiv zusammen.
 
         Nur ein erfolgreich abgeschlossener Dienstaufruf wird als deduplizierbar
@@ -1025,9 +1085,31 @@ class HADevice:
         state_before = self.hass.states.get(entity_id)
         error = None
         sent_at = self.runtime._clock()
+        task, expectation = None, None
+        context = Context()
         try:
-            await self.light_call(service, data)
+            task = self._light_service_task = asyncio.create_task(
+                self.light_call(service, data, context=context)
+            )
+            task.add_done_callback(
+                lambda completed: self._light_service_finished(completed, expectation)
+            )
+            if self._light_state_signature(
+                state_before
+            ) != self._light_command_signature(service, brightness):
+                expectation = self._expect_light_change(
+                    sent_at, service, brightness, context=context, service_task=task
+                )
+            if not await self._wait_light_service():
+                raise TimeoutError
+            task.result()
         except Exception as exc:
+            if (
+                expectation is not None
+                and (task is None or task.done())
+                and expectation in self._expected_light_changes
+            ):
+                self._expected_light_changes.remove(expectation)
             error = type(exc).__name__
             self.faults[fault] = "service_unavailable"
             self.runtime.log.change(
@@ -1041,10 +1123,6 @@ class HADevice:
             )
         else:
             self._light_last_command_key = key
-            if self._light_state_signature(
-                state_before
-            ) != self._light_command_signature(service, brightness):
-                self._expect_light_change(sent_at, service, brightness)
             for known_fault in (
                 "session_light",
                 "operation_light",
@@ -1110,7 +1188,7 @@ class HADevice:
         return ("on", value) if value else ("off", None)
 
     def _discard_expired_light_expectations(self, now):
-        """Keep echo expectations only for the existing feedback interval."""
+        """Keep the send-time window and bounded context of unfinished calls."""
         timeout = self.values.get("feedback_timeout_seconds")
         if timeout is None:
             self._expected_light_changes.clear()
@@ -1120,23 +1198,47 @@ class HADevice:
             expected
             for expected in self._expected_light_changes
             if now - expected["sent_at"] < limit
+            or (
+                expected.get("context_id") is not None
+                and expected.get("service_task") is not None
+                and (
+                    not expected["service_task"].done()
+                    or (
+                        expected.get("completed_at") is not None
+                        and now - expected["completed_at"] < limit
+                    )
+                )
+            )
         ]
 
-    def _expect_light_change(self, now, service, brightness):
+    def _expect_light_change(
+        self, now, service, brightness, *, context=None, service_task=None
+    ):
         self._discard_expired_light_expectations(now)
-        self._expected_light_changes.append(
-            {
-                "signature": self._light_command_signature(service, brightness),
-                "sent_at": now,
-            }
-        )
+        expected = {
+            "signature": self._light_command_signature(service, brightness),
+            "sent_at": now,
+            "context_id": context.id if context is not None else None,
+            "service_task": service_task,
+            "completed_at": None,
+        }
+        self._expected_light_changes.append(expected)
+        return expected
 
     def _light_change_is_pending(self, now, service, brightness):
         """Whether this exact visible change still awaits its feedback."""
         self._discard_expired_light_expectations(now)
         signature = self._light_command_signature(service, brightness)
+        limit = timedelta(seconds=self.values["feedback_timeout_seconds"])
         return any(
             expected["signature"] == signature
+            and (
+                now - expected["sent_at"] < limit
+                or (
+                    expected.get("service_task") is self._light_service_task
+                    and self._light_service_is_pending()
+                )
+            )
             for expected in self._expected_light_changes
         )
 
@@ -1144,10 +1246,9 @@ class HADevice:
         """Return one actual external light selection, excluding own echoes.
 
         ``state_report`` events deliberately do not represent a new choice.
-        Expected automatic values are consumed only when their complete visible
-        state arrives before the normal feedback timeout. Such an echo leaves
-        a different physical dimmer choice intact. After that interval, state
-        alone cannot distinguish a late echo from a new physical selection.
+        Matching values within the feedback window are own echoes. After that
+        interval only the retained service's HA context establishes ownership;
+        state alone cannot distinguish a late echo from a physical selection.
         """
         if (
             event.event_type != "state_changed"
@@ -1167,8 +1268,13 @@ class HADevice:
         if new_signature is None or new_signature == old_signature:
             return None
         self._discard_expired_light_expectations(received_at)
+        context_id = getattr(getattr(new, "context", None), "id", None)
+        limit = timedelta(seconds=self.values["feedback_timeout_seconds"])
         for index, expected in enumerate(self._expected_light_changes):
-            if expected["signature"] == new_signature:
+            if expected["signature"] == new_signature and (
+                received_at - expected["sent_at"] < limit
+                or (context_id is not None and context_id == expected.get("context_id"))
+            ):
                 del self._expected_light_changes[index]
                 return None
         if new_signature[0] == "off":
@@ -1311,7 +1417,10 @@ class HADevice:
             return False
         key = ("button_hold", session_id, "turn_off", None)
         state = self.hass.states.get(self.bindings["light"])
-        if self._light_state_signature(state) == ("off", None):
+        if (
+            not self._light_service_is_pending()
+            and self._light_state_signature(state) == ("off", None)
+        ):
             self.faults.pop("operation_light", None)
             return True
         if key == self._light_last_command_key and self._light_change_is_pending(
@@ -1382,11 +1491,13 @@ class HADevice:
                         self.runtime.session.session_id,
                     )
 
-    async def light_call(self, service, data):
-        # Ein nicht antwortendes Licht darf den serialisierten Regelkreis nicht
-        # unbegrenzt blockieren. Dieselbe Dienstfrist gilt für alle Aktoren.
-        async with asyncio.timeout(self.values["feedback_timeout_seconds"]):
-            await self.hass.services.async_call("light", service, data, blocking=True)
+    async def light_call(self, service, data, *, context=None):
+        # The output owner bounds its wait and retains this task until the real
+        # blocking service ends. Cancellation must not let a later OFF overtake
+        # an actor call that continues in a platform or executor.
+        await self.hass.services.async_call(
+            "light", service, data, blocking=True, context=context
+        )
 
     async def close(self):
         if self._historical_warmup_task is not None:

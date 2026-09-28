@@ -1,8 +1,9 @@
 """HA-freie Auswertung normierter Tastergesten.
 
 Der Adapter normalisiert seine Geräteereignisse zu ``press``, ``short``,
-``double``, ``triple``, ``long`` und ``release``.  Binärtaster verwenden ``on`` und ``off``; bei ihnen
-wird der kurze Druck beim ``off`` abgeschlossen.  Die Klasse speichert bewusst
+``double``, ``triple``, ``long`` und ``release``. Binärtaster verwenden ``on``,
+``off`` und ``unavailable``; bei ihnen wird der kurze Druck beim ``off``
+abgeschlossen. Die Klasse speichert bewusst
 nur die gerade laufende Geste und führt keine Uhr selbst: Die Zeit wird bei
 jedem Aufruf als ``datetime`` übergeben.
 """
@@ -44,6 +45,15 @@ class ButtonGestures:
 
     def handle(self, event: str, operation_enabled: bool, now: datetime) -> str | None:
         """Accept one normalized event and return its single semantic action."""
+        if event == "unavailable":
+            if self._binary_press:
+                # A gap cannot prove continuous pressure. An already emitted
+                # HOLD still needs the eventual confirmed release to start its
+                # light timer; an unconfirmed gesture has no remaining action.
+                self._pressed_at = None
+                if not self._end_hold_sent:
+                    self._clear(suppress_short=True)
+            return None
         if event == "on":
             return self._press(operation_enabled, now, binary=True)
         if event == "off":

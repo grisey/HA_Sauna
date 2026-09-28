@@ -149,13 +149,16 @@ class LightOutput:
         Die Lichtbewegung beginnt beim beobachteten Eingangswert dieses Updates.
         """
         target, actual = _percent(temperature_target_percent), _percent(actual_percent)
+        if self._manual is not None and self._manual_phase_key != phase_key:
+            # The incoming Controller phase owns the choice's lifetime, even
+            # when HOLD prevented the planner from observing an intermediate
+            # phase. Its previous output phase is not that lifetime's owner.
+            self._manual = None
+            self._manual_phase_key = None
+            self._manual_ends_at = None
         changed = phase_key != self._phase_key
         if changed:
             had_phase = self._phase_key is not None
-            if self._manual_phase_key == self._phase_key:
-                self._manual = None
-                self._manual_phase_key = None
-                self._manual_ends_at = None
             self._phase_key = phase_key
             self._motion = self._start_motion(
                 now,

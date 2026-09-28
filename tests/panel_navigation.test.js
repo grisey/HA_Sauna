@@ -18,6 +18,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   Object,
   Array,
   Infinity,
+  clearTimeout,
 });
 
 const navigationPanel = () => {
@@ -182,4 +183,79 @@ test("empty history clears the retained overview and every visible sink", () => 
   for (const selector of ["#gangs", "#event-list", "#detection-plots"])
     assert.equal(node(selector).innerHTML, "");
   assert.match(node("#plots").innerHTML, /Noch keine Sitzungsdaten/);
+});
+
+test("an entry change withdraws all old controls until its matching state arrives", async () => {
+  const { panel, nodes } = navigationPanel();
+  const listeners = new Map();
+  Object.assign(nodes, {
+    "#session": { innerHTML: "old session", value: "old", disabled: false },
+    "#message": {},
+    "#history-overview": {
+      innerHTML: "old overview",
+      replaceChildren() {
+        this.innerHTML = "";
+      },
+    },
+    "#range": { textContent: "old time" },
+  });
+  panel.shadowRoot.addEventListener = (kind, callback) => {
+    listeners.set(kind, [...(listeners.get(kind) || []), callback]);
+  };
+  panel.shell();
+  panel.entry = "a";
+  panel.generation = 0;
+  panel.selected = "live";
+  panel.cache = new Map();
+  panel.isConnected = true;
+  panel.state = {
+    operation_enabled: false,
+    permissions: { admin: true, control: true, temperature: true },
+  };
+  panel.progressionDraft = { "progression-end": "100" };
+  panel.manualLightDraft = "80";
+  panel.refresh = Panel.prototype.refresh;
+  panel.message = Panel.prototype.message;
+  panel.drawCurrent = () => {
+    nodes["#current"].innerHTML = panel.state.label;
+  };
+  panel.syncAppearanceEditor = () => {};
+  const requests = [];
+  const pending = [];
+  panel.api = (path, method = "GET") => {
+    requests.push([path, method]);
+    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  };
+  const oldPoll = panel.refresh();
+  listeners.get("change")[0]({ target: { id: "instance", value: "b" } });
+  assert.equal(panel.state, null);
+  assert.equal(panel.progressionDraft, null);
+  assert.equal(panel.manualLightDraft, null);
+  for (const selector of ["#current", "#details", "#settings"])
+    assert.match(nodes[selector].innerHTML, /Lade Saunadaten/);
+  assert.equal(nodes["#session"].disabled, true);
+  await panel.action("operation");
+  await panel.changeTarget(90);
+  await panel.saveSettings();
+  await panel.savePrograms();
+  panel.beginTemperatureDrag({}, {});
+  panel.beginProgramDrag({ target: { closest: () => ({ disabled: false }) } });
+  assert.deepEqual(requests, [["/a/state", "GET"]]);
+  pending[0].resolve({ label: "old a" });
+  await oldPoll;
+  assert.equal(panel.state, null, "an old state cannot release the new entry");
+  assert.deepEqual(requests[1], ["/b/state", "GET"]);
+  pending[1].reject(Error("b unavailable"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(panel.state, null);
+  assert.match(nodes["#message"].textContent, /b unavailable/);
+  assert.match(nodes["#current"].innerHTML, /Lade Saunadaten/);
+  const retry = panel.refresh();
+  pending[2].resolve({ label: "current b", permissions: { control: false } });
+  await retry;
+  assert.equal(panel.state.label, "current b");
+  assert.equal(nodes["#current"].innerHTML, "current b");
+  assert.equal(nodes["#session"].disabled, false);
+  await panel.action("operation");
+  assert.equal(requests.length, 3, "the matching state's rights govern control");
 });

@@ -524,6 +524,7 @@ class _FakeConfigEntries:
         self.entry.runtime_data = SaunaRuntime(
             Configuration.from_options(self.entry.options)
         )
+        return True
 
 
 class _FakeHass:

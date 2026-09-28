@@ -28,6 +28,17 @@ Programms. Ein ungültiger Kandidat verändert weder Livezustand noch Optionen.
 
 Diese Unterscheidung liegt im gemeinsamen Einstellungspfad. Das Panel lässt
 den Sollwert im Vollformular stehen und führt dafür keine zweite Regel ein.
+Auch bei nicht geladener Integration verwendet der Optionsflow denselben
+vollständigen Kandidaten. Eine wirksame Änderung des freien Programms darf
+keine ältere Stufenliste zurücklassen, die nach dem nächsten Laden die neuen
+Start-/End-/Verteilungswerte überstimmt.
+
+Scheitert ein technisches Neuladen, werden Optionen, Startfreigabe und
+Lichtzuständigkeit nur für die noch aktuelle, offene alte Runtime
+wiederhergestellt. Neuere Optionsänderungen und bereits geschlossene oder
+ersetzte Runtimes bleiben unberührt. HAs eigener Entladefehler bleibt sichtbar.
+Eine Leuchtenübergabe wartet begrenzt auf bereits laufende alte Ausgaben und
+bestätigt erst danach ihr abschließendes AUS.
 
 ## Historischer Arbeitsplan vom 26.09.2026
 

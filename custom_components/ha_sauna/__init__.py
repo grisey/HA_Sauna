@@ -107,6 +107,7 @@ async def async_setup_entry(
 
 
 async def async_options_updated(hass, entry):
+    requested_options = entry.options
     runtime = getattr(entry, "runtime_data", None)
     if runtime and not runtime.closed:
         from .runtime import Configuration
@@ -135,6 +136,8 @@ async def async_options_updated(hass, entry):
         after_appearance = after.pop("appearance")
         if before == after:
             async with runtime._lock:
+                if getattr(entry, "runtime_data", None) is not runtime or runtime.closed:
+                    return
                 # This listener may have waited behind a newer API write. Use
                 # the latest persisted entry, not its pre-lock snapshot.
                 try:
@@ -180,6 +183,8 @@ async def async_options_updated(hass, entry):
             and not changed - LIVE_TEMPERATURE_KEYS
         ):
             async with runtime.serialized():
+                if getattr(entry, "runtime_data", None) is not runtime or runtime.closed:
+                    return
                 # A later options update may have overtaken this listener
                 # while it waited for the live controller lock.
                 try:
@@ -229,6 +234,8 @@ async def async_options_updated(hass, entry):
                     hass.config_entries.async_update_entry(
                         entry, options=runtime.configuration.as_options()
                     )
+                if runtime.device:
+                    runtime.device.restore_light_ownership()
                 runtime.reconfiguring = False
             return
         if runtime.session:
@@ -251,36 +258,78 @@ async def async_options_updated(hass, entry):
     light_timer = (
         runtime.controller.light_after_run if runtime and not runtime.closed else None
     )
-    if (
-        runtime and not runtime.closed and runtime.device
-        and runtime.configuration.bindings.values["light"]
-        != updated.bindings.values["light"]
-    ):
-        # Relinquish the old output before platform unload can yield to ticks
-        # or feedback. Its phase must not migrate to the replacement light.
-        finished = await runtime.device.finish_session_light(runtime._clock(), light_timer)
+    try:
         if (
-            getattr(entry, "runtime_data", None) is not runtime
-            or entry.options != updated.as_options()
+            runtime and not runtime.closed and runtime.device
+            and runtime.configuration.bindings.values["light"]
+            != updated.bindings.values["light"]
         ):
-            return
-        if not finished:
-            runtime.reconfiguring = False
-            hass.config_entries.async_update_entry(
-                entry, options=runtime.configuration.as_options()
+            # Finish every old output before a confirmed OFF hands this
+            # binding away. Its phase never migrates to another light.
+            finished = await runtime.device.finish_session_light(
+                runtime._clock(), light_timer
             )
-            runtime.device.restore_light_ownership()
+            if (
+                getattr(entry, "runtime_data", None) is not runtime
+                or runtime.closed
+                or entry.options != requested_options
+            ):
+                return
+            if not finished:
+                await _restore_failed_options(hass, entry, runtime, requested_options)
+                return
+            light_timer = None
+        if entry.options != requested_options:
             return
-        light_timer = None
-    await hass.config_entries.async_reload(entry.entry_id)
+        reloaded = await hass.config_entries.async_reload(entry.entry_id)
+    except BaseException as error:
+        try:
+            await _restore_failed_options(hass, entry, runtime, requested_options)
+        except BaseException as cleanup_error:
+            error.add_note(f"Rücknahme der Optionsänderung fehlgeschlagen: {cleanup_error!r}")
+        raise
+    if not reloaded:
+        await _restore_failed_options(hass, entry, runtime, requested_options)
+        return
+    replacement = getattr(entry, "runtime_data", None)
     if (
         timer is not None
-        and getattr(entry, "runtime_data", None)
-        and not entry.runtime_data.closed
+        and replacement is not None
+        and replacement is not runtime
+        and not replacement.closed
+        and entry.options == requested_options
+        and replacement.configuration.as_options() == updated.as_options()
     ):
-        entry.runtime_data.controller.mechanical_timer = timer
-        entry.runtime_data.controller.light_after_run = light_timer
-        await entry.runtime_data.tick()
+        replacement.controller.mechanical_timer = timer
+        replacement.controller.light_after_run = light_timer
+        await replacement.tick()
+
+
+async def _restore_failed_options(hass, entry, runtime, requested_options):
+    """Restore only the still-live owner of this failed options attempt."""
+    if runtime is None:
+        return
+    async with runtime._lock:
+        if (
+            getattr(entry, "runtime_data", None) is not runtime
+            or runtime.closed
+            or entry.options != requested_options
+        ):
+            return
+        # A failed platform unload did not close the integration runtime.
+        # Do not transfer its timers or resurrect a runtime already closed by
+        # another unload. HA's own entry/platform error state remains visible.
+        hass.config_entries.async_update_entry(
+            entry, options=runtime.configuration.as_options()
+        )
+        runtime.reconfiguring = False
+        if runtime.device:
+            runtime.device.restore_light_ownership()
+        runtime.log.error(
+            "configuration_reload_failed",
+            "Einstellungen konnten nicht neu geladen werden; "
+            "die bisherige Laufzeitkonfiguration bleibt wirksam.",
+        )
 
 
 async def async_unload_entry(

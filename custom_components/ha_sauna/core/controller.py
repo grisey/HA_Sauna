@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import isfinite
@@ -80,6 +81,56 @@ class Controller:
         self.mechanical_timer = MechanicalTimer()
         self.phase_since = None
         self._phase_key = (None, "aus")
+        self._recognition_gates = []
+        self._confirmation_batches = 0
+
+    @contextmanager
+    def confirmation_batch(self):
+        """Keep equal-time confirmation open throughout one input delivery."""
+        self._confirmation_batches += 1
+        try:
+            yield
+        finally:
+            self._confirmation_batches -= 1
+
+    def _record_recognition_gate(self, at):
+        """Remember only admission results booked by this leading controller."""
+        session = self._session
+        gate = (
+            bool(session and session.operation_enabled),
+            self._gang_phase_blocked(session) if session else "no_session",
+        )
+        if not self._recognition_gates or self._recognition_gates[-1][1:] != gate:
+            self._recognition_gates.append((utc(at), *gate))
+
+    def recognition_context_at(self, at):
+        """Read the already booked operation/cooling boundary at a sample."""
+        for gate_at, enabled, blocked in reversed(self._recognition_gates):
+            if gate_at <= at:
+                return enabled, blocked, gate_at
+        return False, "no_session", None
+
+    def discard_recognition_context_before(self, at):
+        """Retain one valid anchor for subsequent detector samples."""
+        past = [index for index, gate in enumerate(self._recognition_gates)
+                if gate[0] <= at]
+        if past:
+            self._recognition_gates = self._recognition_gates[past[-1]:]
+
+    def _recognition_context_current(self, at):
+        """A later OFF/cooling boundary retires an earlier recognition stretch."""
+        return bool(
+            self._recognition_gates
+            and self.recognition_context_at(at)[2] == self._recognition_gates[-1][0]
+        )
+
+    def recognition_allowed_at(self, kind, at):
+        """An old permitted sample must also belong to today's active stretch."""
+        return (
+            self._recognition_context_current(at)
+            and self.recognition_context_at(at)[1] is None
+            and self.recognition_allowed(kind)
+        )
 
     def set_control_mode(self, control_mode: str) -> None:
         """Choose the regulation mode before starting the next session."""
@@ -331,6 +382,7 @@ class Controller:
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
+        self._recognition_gates = []
         self.light_after_run = None
         self.door_request = TemporaryDoorHeatState()
         self._door_request_pending = False
@@ -529,8 +581,13 @@ class Controller:
             Deadline(self._session.session_id, purpose, token or uuid4().hex, due_at)
         )
 
-    def advance(self, at: datetime, *, evaluate=True, inclusive_confirmation=True):
+    def advance(
+        self, at: datetime, *, evaluate=True, inclusive_confirmation=True,
+        finish_confirmation_batch=False,
+    ):
         at = utc(at)
+        if self._confirmation_batches and not finish_confirmation_batch:
+            inclusive_confirmation = False
         decision_session_id = self._session.session_id if self._session else None
         if self._last_at is not None and at < self._last_at:
             raise ValueError("Laufzeituhr darf nicht rückwärts laufen")
@@ -560,7 +617,9 @@ class Controller:
             self._evaluate(at, decision_session_id=decision_session_id)
         return self._session
 
-    def process_presence(self, report, event, *, defer_confirmation=False):
+    def process_presence(
+        self, report, event, *, defer_confirmation=False, recognition_at=None,
+    ):
         """Proxy occupancy is the source boundary for unchanged gang assignment.
 
         Direct reports are observed by the runtime only until their gang rules
@@ -574,9 +633,13 @@ class Controller:
             != (event.event_id, event.effective_at, event.detected_at)
         ):
             raise ValueError("Keine passende führende Proxy-Präsenzmeldung")
-        return self.process(event, defer_confirmation=defer_confirmation)
+        return self.process(
+            event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
+        )
 
-    def process(self, event: Event, *, defer_confirmation=False) -> Result:
+    def process(
+        self, event: Event, *, defer_confirmation=False, recognition_at=None,
+    ) -> Result:
         if self._session is None:
             raise ValueError("Ereignis ohne Session")
         previous = self._session
@@ -603,6 +666,13 @@ class Controller:
         previous = self._session
         if previous is None:
             raise ValueError("Ereignis gehört zu einer beendeten Session")
+        observed_enabled, observed_blocked = previous.operation_enabled, None
+        context_current = True
+        if recognition_at is not None:
+            observed_enabled, observed_blocked, _ = self.recognition_context_at(
+                recognition_at
+            )
+            context_current = self._recognition_context_current(recognition_at)
         if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
             # Capture eligibility before the timeline applies an edge that may
             # finish/retract a gang.  A cycle observed under gang/cooling/OFF
@@ -611,9 +681,10 @@ class Controller:
                 self.door_request,
                 event_id=event.event_id,
                 door_open=event.kind == Kind.DOOR_OPEN,
-                enabled=previous.operation_enabled and self.control_mode == "automatic",
+                enabled=(previous.operation_enabled and observed_enabled and context_current
+                         and self.control_mode == "automatic"),
                 gang_active=previous.timeline.active is not None,
-                cooling=previous.after_run is not None,
+                cooling=previous.after_run is not None or observed_blocked == "after_run",
             )
             self.door_request = transition.state
             if transition.request and self.feedback is not True:
@@ -623,6 +694,10 @@ class Controller:
             if event.kind in GANG_SIGNALS and previous.timeline.active is None
             else None
         )
+        if event.kind in GANG_SIGNALS and observed_blocked is not None:
+            blocked = observed_blocked
+        elif event.kind in GANG_SIGNALS and not context_current:
+            blocked = "recognition_context_changed"
         if (
             blocked is None
             and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
@@ -650,6 +725,12 @@ class Controller:
             self._evaluate(event.detected_at)
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
+        if (observed_blocked is not None or not context_current) and event.kind in (
+            Kind.DOOR_CLOSE, Kind.VENTILATION
+        ):
+            # Preserve observed door history, without lending a blocked old
+            # episode to a current person search after operation/cooling resumes.
+            timeline = replace(timeline, anchor=None, preparation=None)
         self._session = replace(previous, timeline=timeline)
         active = timeline.active
         # A person signal is only provisional.  The latch is consumed when an
@@ -907,6 +988,7 @@ class Controller:
                 else session.last_completed_oven_cooling_at
             ),
         )
+        self._record_recognition_gate(phase.ends_at)
 
     def finish_phase(self, purpose, token, at):
         """Eine konkret angezeigte Phase wie bei Fristablauf abschließen."""
@@ -1092,8 +1174,8 @@ class Controller:
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():
             self._clear_heater_override()
-            # Eine zuvor manuell pausierte Kühlung darf nach dem Entzug der
-            # Einschaltfreigabe nicht auf einen weiteren Eingang warten.
+            # Nach Entzug der Einschaltfreigabe die führende automatische
+            # Entscheidung einschließlich übergeordneter Kühlung neu bestimmen.
             return self._evaluate(at, decision_session_id=decision_session_id)
         if (
             self.control_mode == "automatic"
@@ -1104,8 +1186,8 @@ class Controller:
         ):
             self._handoff_manual_heating(self.heater_override, at)
             self._clear_heater_override()
-            # Das Löschen der Bedienung darf die pausierte Kühlung nicht
-            # bis zum nächsten Eingang im Aufheizzustand lassen.
+            # Nach Rückgabe der Bedienung den aktuellen automatischen Ablauf
+            # sofort bestimmen; eine Kühlung bleibt dabei übergeordnet.
             return self._evaluate(at, decision_session_id=decision_session_id)
         issued = decision
         if (
@@ -1143,6 +1225,7 @@ class Controller:
         self.consumer_events.extend(gang_changes(self._consumer_snapshot, self._session, at))
         self._consumer_snapshot = self._session
         self._record_base_phase(at)
+        self._record_recognition_gate(at)
         if phase_key != self._phase_key:
             self._phase_key, self.phase_since = phase_key, at
         return decision
@@ -1177,6 +1260,7 @@ class Controller:
         if session.timeline.gang_count:
             self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
         self._session = None
+        self._record_recognition_gate(at)
         self._clear_heater_override()
         if light_after_run and self.light_after_run is None:
             self.start_session_light(session.session_id, at)

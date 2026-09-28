@@ -68,6 +68,16 @@ Die Haltezähler in dieser Ansicht zählen erfüllte Prüfpunkte, keine Sekunden
 Ein Wechsel oder Ausfall der vollständigen Messpositionen sowie das Ende einer
 Türöffnungsepisode beendet deren zusammenhängenden Bestätigungsnachweis.
 Die gesonderte Lüftungsreferenz behält die oben beschriebene Pausenregel.
+Ein vollständig und fortlaufend belegter Öffnungsweg kann auch eine länger als
+sein Merkmalsfenster eingestellte Bestätigung erreichen. Das Fenster begrenzt
+das Alter der Hinweise, nicht eine weiterhin gültige Haltezeit.
+
+Bei nachgeholten Messungen liefert der Controller die zu jedem Raster bereits
+gebuchte Betriebs-/Kühlfreigabe. Signale aus gesperrten oder inzwischen beendeten
+Freigabeabschnitten dürfen keinen heutigen Gang oder Türheizbedarf auslösen.
+Nach einer neuen Freigabe muss das beitragende Merkmals-/Medianfenster zu diesem
+Abschnitt gehören. Türbeobachtung und Archivierung bleiben davon getrennt.
+Neue Aktorbefehle entstehen ausschließlich zur tatsächlichen Verarbeitungszeit.
 
 Neue Erkennungsdatensätze enthalten neben dem fachlichen Ereignis und dessen
 Empfangszeit den Rasterzeitpunkt `trace_at`. Darüber verbindet das Panel ein

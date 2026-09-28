@@ -116,6 +116,68 @@ class DetectionContextTests(unittest.TestCase):
         self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertFalse(c.recognition_allowed(Kind.INFUSION))
 
+    def test_cooling_catchup_cannot_reuse_a_rise_before_its_booked_end(self):
+        for rise_at in (80, 99, 111):
+            with self.subTest(rise_at=rise_at):
+                c = after_run()
+                origin = at(70)
+                d = Detector(c.parameters, origin, (Position.UPPER,))
+                for second in range(70, 126):
+                    d.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 90, second))
+                    d.accept(measurement(Position.UPPER, Quantity.HUMIDITY,
+                                         20 if second < rise_at else 23, second))
+                c.advance(at(125))
+                found = d.advance(at(125), enabled=True, allowed=c.recognition_allowed,
+                                  recognition_context=c.recognition_context_at)
+                self.assertEqual(Kind.INFUSION in [event.kind for event in found], rise_at == 111)
+                self.assertEqual(c.recognition_context_at(at(99))[1], "after_run")
+                self.assertIsNone(c.recognition_context_at(at(100))[1])
+
+    def test_late_heating_gate_cannot_hide_received_off_on_from_thermal_proof(self):
+        c = controller()
+        c.report_heating(True, at(0))
+        c.set_operation(False, at(28))
+        c.set_operation(True, at(29))
+        observed = []
+        d = Detector(c.parameters, T0, (Position.UPPER,),
+                     observer=lambda _trace: observed.append(d.heating_since))
+        d.advance(at(36), enabled=True, heating_intervals=c.session.heating.intervals,
+                  heating_gates=((at(0), True), (at(34), False), (at(34), True)),
+                  recognition_context=c.recognition_context_at)
+        self.assertIsNone(observed[28])
+        self.assertEqual(observed[29], at(29))
+        self.assertEqual(observed[34], at(34))
+
+    def test_blocked_historical_door_close_preserves_door_without_new_entry_or_heat(self):
+        for opened_at, closed_at in ((12, 17), (0, 1)):
+            with self.subTest(opened_at=opened_at, closed_at=closed_at):
+                c = controller()
+                c.set_operation(False, at(2))
+                c.set_operation(True, at(30))
+                c.process(Event("open-old", "s", Kind.DOOR_OPEN, at(opened_at), at(30)),
+                          recognition_at=at(opened_at))
+                c.process(Event("close-old", "s", Kind.DOOR_CLOSE, at(closed_at), at(30)),
+                          recognition_at=at(closed_at))
+                self.assertIsNone(c.session.timeline.anchor)
+                self.assertFalse(c._door_request_pending)
+                self.assertFalse(c.recognition_allowed(Kind.PERSON_WEAK))
+
+    def test_confirmation_batch_covers_temperature_and_received_feedback(self):
+        c = controller(confirmation_minutes=1)
+        c.process(event("person", Kind.PERSON_STRONG, 11))
+        old = c.session.timeline.active
+        with c.confirmation_batch():
+            c.set_temperature(90, at(71))
+            c.report_contactor(False, at(71))
+            c.report_heating(False, at(71))
+            c.report_power(None, None, at(71))
+            c.report_fallback_heating(False, at(71))
+            self.assertEqual(c.session.timeline.active.gang_id, old.gang_id)
+            c.process(event("infusion", Kind.INFUSION, 71))
+            c.advance(at(71), finish_confirmation_batch=True)
+        self.assertEqual(c.session.timeline.active.gang_id, old.gang_id)
+        self.assertTrue(c.session.timeline.active.infusion_events)
+
     def test_direct_infusion_suppresses_later_person_signals_even_in_one_catchup_batch(self):
         p = detection_parameters()
         c = Controller(p)

@@ -10,12 +10,14 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 import zipfile
 
 from custom_components.ha_sauna.archive import Archive, encoded, plain
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.core.models import Position, Quantity
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, event, parameters, bindings
 from test_detector import measurement
 
@@ -38,6 +40,55 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
     def record(self, n):
         m = measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 1000, n / 1000)
         self.archive.append("measurement", m.received_at, m, "s")
+
+    async def test_runtime_close_persists_the_final_off_decision_once(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, T0)
+        runtime.controller.begin_session("closing", T0)
+        runtime.persist()
+        self.assertTrue(runtime.controller.last_decision.heat)
+
+        async def close_device():
+            return None
+
+        runtime.device = SimpleNamespace(close=close_device)
+        await runtime.close()
+        await runtime.close()
+        stored = await asyncio.to_thread(self.archive.read, "closing")
+        off = [record for record in stored["records"]
+               if record["kind"] == "decision" and not record["payload"]["heat"]]
+        self.assertEqual(len(off), 1)
+        self.assertEqual(off[0]["payload"]["reason"], "operation_off")
+        self.assertEqual(off[0]["session_id"], "closing")
+        self.assertFalse(stored["session"]["operation_enabled"])
+
+    async def test_decision_append_failure_during_close_still_attempts_device_off(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, T0)
+        runtime.controller.begin_session("closing-error", T0)
+        runtime.persist()
+        calls = []
+
+        async def close_device():
+            calls.append("off")
+
+        runtime.device = SimpleNamespace(close=close_device)
+        original_append = self.archive.append
+
+        def append(kind, *args, **kwargs):
+            if kind == "decision":
+                raise OSError("decision append")
+            return original_append(kind, *args, **kwargs)
+
+        self.archive.append = append
+        with self.assertRaises(ExceptionGroup) as caught:
+            await runtime.close()
+        self.assertEqual(calls, ["off"])
+        self.assertTrue(any(str(error) == "decision append" for error in caught.exception.exceptions))
+        self.assertFalse(runtime.controller.last_decision.heat)
+        self.assertLess(runtime._saved_decisions, len(runtime.controller.decisions))
 
     async def test_full_resolution_references_and_earlier_assignments_survive(self):
         for n in range(30):

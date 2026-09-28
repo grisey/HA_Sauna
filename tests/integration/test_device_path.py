@@ -1345,3 +1345,201 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(self.light.brightness, 255 * .35, delta=1)
+
+    async def test_reassignment_waits_for_running_on_before_final_off(self):
+        old_runtime = self.runtime
+        adapter = old_runtime.device
+        entered, release, handing_off = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+        original_finish = adapter.finish_session_light
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        async def finish(*args, **kwargs):
+            handing_off.set()
+            return await original_finish(*args, **kwargs)
+
+        replacement = "light.replacement"
+        self.hass.states.async_set(
+            replacement, "off", {"supported_color_modes": ["brightness"]}
+        )
+        self.light.calls.clear()
+        with (
+            patch.object(self.light, "async_turn_on", side_effect=paused_on),
+            patch.object(adapter, "finish_session_light", side_effect=finish),
+        ):
+            selecting = asyncio.create_task(old_runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                self.hass.config_entries.async_update_entry(
+                    self.entry,
+                    options={
+                        **self.entry.options,
+                        "bindings": {
+                            **self.entry.options["bindings"], "light": replacement,
+                        },
+                    },
+                )
+                await asyncio.wait_for(handing_off.wait(), 3)
+            finally:
+                release.set()
+            await selecting
+            await self.hass.async_block_till_done()
+        self.assertTrue(old_runtime.closed)
+        self.assertIsNot(self.entry.runtime_data, old_runtime)
+        self.assertEqual([call[0] for call in self.light.calls], ["on", "off"])
+        self.assertEqual(self.hass.states.get(self.light.entity_id).state, "off")
+        self.runtime = self.entry.runtime_data
+        self.runtime._clock = lambda: self.now
+
+    async def test_cancelled_light_caller_keeps_service_until_handoff_can_finish(self):
+        adapter = self.runtime.device
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        self.light.calls.clear()
+        with patch.object(self.light, "async_turn_on", side_effect=paused_on):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                active_service = adapter._light_service_task
+                self.assertFalse(active_service.done())
+                self.assertFalse(await adapter.finish_session_light(self.now, None))
+                self.assertIs(adapter._light_service_task, active_service)
+                self.assertFalse(active_service.done())
+                self.assertEqual(self.light.calls, [])
+                adapter.restore_light_ownership()
+            finally:
+                release.set()
+            self.assertTrue(await adapter.finish_session_light(self.now, None))
+            await self.hass.async_block_till_done()
+        self.assertEqual([call[0] for call in self.light.calls], ["on", "off"])
+        self.assertFalse(self.light.is_on)
+
+    async def test_binary_button_gap_then_off_cannot_create_a_long_hold(self):
+        from dataclasses import replace
+
+        self.runtime.configuration = replace(
+            self.runtime.configuration, control_input_mode="button"
+        )
+        await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
+        for second, value in ((1, "on"), (1.2, "unavailable"), (1.4, "off")):
+            self.now = self.base + timedelta(seconds=second)
+            await self.set_source("control_input", value)
+        await self.time(3)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        self.assertIsNone(self.runtime.device._button_hold_session_id)
+
+    async def test_late_service_echo_after_cancel_keeps_automatic_light_and_external_choice(self):
+        await self.runtime.set_operation(True)
+        adapter = self.runtime.device
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        with patch.object(self.light, "async_turn_on", side_effect=paused_on):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                active_service = adapter._light_service_task
+                # Record AUTO while the previous actual service remains pending.
+                async with self.runtime._lock:
+                    self.runtime._set_light_override(None, self.now)
+                self.now += timedelta(seconds=3)
+            finally:
+                release.set()
+            await active_service
+            await self.hass.async_block_till_done()
+        self.assertIsNone(adapter.light_output.manual_brightness)
+        await self.set_light_externally(True, 204)
+        self.assertAlmostEqual(adapter.light_output.manual_brightness, 80)
+
+    async def test_pending_on_cannot_complete_due_off_from_current_off_feedback(self):
+        from types import SimpleNamespace
+
+        adapter = self.runtime.device
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_on = self.light.async_turn_on
+
+        async def paused_on(**kwargs):
+            entered.set()
+            await release.wait()
+            await original_on(**kwargs)
+
+        with patch.object(self.light, "async_turn_on", side_effect=paused_on):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                self.assertFalse(self.light.is_on)
+                async with self.runtime._lock:
+                    self.runtime._set_light_override(None, self.now)
+                    self.runtime.controller.light_after_run = SimpleNamespace(
+                        session_id="ended", started_at=self.now, ends_at=self.now
+                    )
+                finishing = asyncio.create_task(adapter._finish_expired_session_light(self.now))
+                await asyncio.sleep(0)
+                self.assertIsNone(adapter._light_session_off_completed_key)
+                self.assertFalse(finishing.done())
+            finally:
+                release.set()
+            self.assertTrue(await finishing)
+            await self.hass.async_block_till_done()
+        self.assertFalse(self.light.is_on)
+
+    async def test_binary_hold_gap_and_manual_choice_release_to_configured_afterrun(self):
+        from dataclasses import replace
+
+        self.runtime.configuration = replace(
+            self.runtime.configuration, control_input_mode="button"
+        )
+        await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
+        self.now = self.base + timedelta(seconds=1)
+        await self.set_source("control_input", "on")
+        threshold = self.runtime.configuration.parameters.values["button_hold_seconds"]
+        await self.time(1 + threshold)
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.light.is_on)
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        await self.runtime.set_light_override(80)
+        self.assertFalse(self.light.is_on)
+        self.now += timedelta(seconds=.2)
+        await self.set_source("control_input", "unknown")
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        self.now += timedelta(seconds=.2)
+        await self.set_source("control_input", "off")
+        phase = self.runtime.controller.light_after_run
+        self.assertEqual(phase.session_id, identity)
+        self.assertEqual(phase.started_at, self.now)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        self.now += timedelta(
+            seconds=self.runtime.configuration.parameters.values["light_transition_seconds"]
+        )
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertAlmostEqual(self.light.brightness, 255 * .5, delta=1)

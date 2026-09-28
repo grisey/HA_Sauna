@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from math import isfinite, sqrt
+from math import isclose, isfinite, sqrt
 
 
 def historical_warmup_rate(
@@ -268,6 +268,7 @@ class WarmupEstimate:
             return
 
         previous_at = self._accepted_at
+        previous_temperature_c = self._temperature_c
         self._accepted_at = received_at
         if self._estimate_started_at is None:
             self._estimate_started_at = received_at
@@ -343,10 +344,21 @@ class WarmupEstimate:
         if self._reference_live_rate is None:
             self._remaining_seconds = min(self._remaining_seconds, reconciled)
             return
-        if live_rate >= self._reference_live_rate:
+        if live_rate >= self._reference_live_rate or isclose(
+            live_rate, self._reference_live_rate, rel_tol=1e-9
+        ):
             self._reference_live_rate = live_rate
             self._slower_since = None
-            self._remaining_seconds = min(self._remaining_seconds, reconciled)
+            # Reconciliation of an accepted rate can continue without a new
+            # slowdown. A current fall is still a fluctuation even when an
+            # accelerating window leaves its fitted rate above the reference.
+            # Recognised door losses have already taken their separate path.
+            self._remaining_seconds = (
+                min(self._remaining_seconds, reconciled)
+                if previous_temperature_c is not None
+                and temperature_c < previous_temperature_c
+                else reconciled
+            )
             return
         if self._slower_since is None:
             self._slower_since = received_at
@@ -363,6 +375,10 @@ class WarmupEstimate:
         # The lower measured rate has survived a complete live window.  Move
         # towards its ETA only as fresh reports arrive, over that same window.
         self._remaining_seconds = reconciled
+        # Future slowdowns must establish their own evidence against this
+        # accepted rate; the historical faster reference is now superseded.
+        self._reference_live_rate = live_rate
+        self._slower_since = None
 
     def remaining_seconds(
         self, now: datetime, *, maximum_age_seconds: float | None = None

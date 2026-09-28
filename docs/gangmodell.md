@@ -1,7 +1,7 @@
 # Gangmodell
 
 > Maßgeblicher Stand vom 26.09.2026: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
-> und [Ofenkühlung](ofenkuehlung.md). Jeder aktive Gang fordert vorläufig wie
+> und [Ofenkühlung](ofenkuehlung.md). Im Automatikbetrieb fordert jeder Gang vorläufig wie
 > bestätigt durchgehend Heizen an; Ofenkühlung und technische Sperren haben Vorrang.
 > Die vorübergehende Türhilfe wirkt nur nach geeignetem Türschluss. Ofenkühlung
 > ist dynamisch und wird durch Tür, Präsenz oder manuelles Heizen nicht unterbrochen.
@@ -42,7 +42,11 @@ starten keinen Gang.
 | Durchlüften nach Bestätigung | Beendet den Gang zum tatsächlichen Bestätigungszeitpunkt. |
 | Betrieb-Aus | Beendet den offenen Gang sofort; späteres Ein schließt ihn nicht wieder an. |
 
-Die Aufgussbestätigung muss innerhalb von 12 min erfolgen. Eine ungefähre
+Ein vorläufiger Gang benötigt die Aufgussbestätigung innerhalb seiner
+einstellbaren Bestätigungsfrist, standardmäßig 12 min. Nach Rücknahme kann ein
+neuer gültiger Aufguss einen eigenen bestätigten Gang beginnen; er bestätigt
+nicht rückwirkend den aufgehobenen Gang. Fristgleiche, bereits empfangene
+Messungen werden vor dem inklusiven Fristabschluss ausgewertet. Eine ungefähre
 Gangdauer ist keine automatische Endbedingung. Vorläufige oder aufgehobene Gänge
 zählen nicht und erzeugen keinen Nachlauf. Jeder bestätigte, beendete Gang zählt
 genau einmal, unabhängig vom Endgrund; die Zählbarkeit folgt aus dem Gang und

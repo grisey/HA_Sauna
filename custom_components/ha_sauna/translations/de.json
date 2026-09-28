@@ -62,8 +62,8 @@
           "name": "Name zur Unterscheidung mehrerer Saunen.",
           "upper_temperature": "Oberer Temperaturwert in °C. Er bestimmt die Heizregelung und dient der Erkennung.",
           "upper_humidity": "Obere relative Luftfeuchte in %. Sie dient der Tür-, Personen- und Aufgusserkennung.",
-          "lower_temperature": "Unterer Temperaturwert in °C zur ergänzenden Erkennung.",
-          "lower_humidity": "Untere relative Luftfeuchte in % zur ergänzenden Erkennung.",
+          "lower_temperature": "Unterer Temperaturwert in °C für die Erkennung und als Ersatz für die Regelung, wenn oben kein gültiger Wert verfügbar ist. Oben bleibt der Hauptsensor.",
+          "lower_humidity": "Untere relative Luftfeuchte in % für die Erkennung. Eine vollständige Temperatur-/Feuchteposition genügt für den Betrieb.",
           "heater": "Schaltet den Ofen. Die Schalterstellung dient zugleich als Rückmeldung des Schaltbefehls.",
           "control_input": "Entkoppelter Taster oder Betriebsschalter. Steuert den Saunabetrieb der Integration; ist nicht der Schaltausgang des Ofens.",
           "light": "Wird zu Beginn der Ofenkühlung auf die eingestellte Helligkeit gedimmt.",
@@ -246,7 +246,7 @@
           "oven_cooling_half_life_minutes": "Halbwertszeit der Ofenkühlung",
           "oven_cooling_heat_idle_ratio": "Heizminuten je Bereitschaftsminute"
         },
-        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
+        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Verteilung der Steigerung und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
       }
     }
   },
@@ -320,8 +320,8 @@
         "data_description": {
           "upper_temperature": "Oberer Temperaturwert in °C. Er bestimmt die Heizregelung und dient der Erkennung.",
           "upper_humidity": "Obere relative Luftfeuchte in %. Sie dient der Tür-, Personen- und Aufgusserkennung.",
-          "lower_temperature": "Unterer Temperaturwert in °C zur ergänzenden Erkennung.",
-          "lower_humidity": "Untere relative Luftfeuchte in % zur ergänzenden Erkennung.",
+          "lower_temperature": "Unterer Temperaturwert in °C für die Erkennung und als Ersatz für die Regelung, wenn oben kein gültiger Wert verfügbar ist. Oben bleibt der Hauptsensor.",
+          "lower_humidity": "Untere relative Luftfeuchte in % für die Erkennung. Eine vollständige Temperatur-/Feuchteposition genügt für den Betrieb.",
           "heater": "Schaltet den Ofen. Die Schalterstellung dient zugleich als Rückmeldung des Schaltbefehls.",
           "control_input": "Entkoppelter Taster oder Betriebsschalter. Steuert den Saunabetrieb der Integration; ist nicht der Schaltausgang des Ofens.",
           "light": "Wird zu Beginn der Ofenkühlung auf die eingestellte Helligkeit gedimmt.",
@@ -500,7 +500,7 @@
           "oven_cooling_half_life_minutes": "Halbwertszeit der Ofenkühlung",
           "oven_cooling_heat_idle_ratio": "Heizminuten je Bereitschaftsminute"
         },
-        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Erhöhung je Gang und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
+        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Verteilung der Steigerung und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
       },
       "logging": {
         "title": "Protokollierung",

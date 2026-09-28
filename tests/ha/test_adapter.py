@@ -239,6 +239,62 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("upper_status", result["data"]["bindings"])
             self.assertEqual(result["data"]["parameters"], self.values)
 
+    async def test_loaded_and_closed_options_share_effective_program_edit(self):
+        from datetime import UTC, datetime, timedelta
+        from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        for loaded in (True, False):
+            for end in (90, 95):
+                with self.subTest(loaded=loaded, end=end):
+                    initial = Configuration.from_options({
+                        "bindings": self.inputs,
+                        "parameters": {
+                            **self.expected_values, "target_temperature_c": 80,
+                            "final_temperature_c": 90, "temperature_gangs": 3,
+                        },
+                        "program_mode": "progressive",
+                        "temperature_steps": [80, 85, 90],
+                    })
+                    self.entry.options = initial.as_options()
+                    self.entry.runtime_data = SaunaRuntime(initial)
+                    if not loaded:
+                        await self.entry.runtime_data.close()
+                    flow = self.module.SaunaOptionsFlow()
+                    flow.hass = self.hass
+                    with patch.object(
+                        type(flow), "config_entry", new_callable=PropertyMock,
+                        return_value=self.entry,
+                    ):
+                        result = await flow.async_step_parameters({
+                            **initial.parameters.as_dict(), "final_temperature_c": end,
+                            "program_mode": "progressive",
+                        })
+                    self.assertEqual(result["type"], "create_entry")
+                    saved = Configuration.from_options(result["data"])
+                    self.assertEqual(
+                        saved.temperature_steps, (80, 85, 90) if end == 90 else None,
+                    )
+                    now = datetime(2030, 1, 1, tzinfo=UTC)
+                    restored = SaunaRuntime(saved, clock=lambda: now)
+                    await restored.set_operation(True)
+                    targets = [restored.controller.target_temperature]
+                    for index in range(2):
+                        now += timedelta(seconds=1)
+                        session_id = restored.session.session_id
+                        for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+                            await restored.receive(Event(
+                                f"{index}-{kind}", session_id, kind, now, now,
+                            ))
+                        now += timedelta(seconds=1)
+                        await restored.set_operation(False)
+                        now += timedelta(seconds=1)
+                        await restored.set_operation(True)
+                        targets.append(restored.controller.target_temperature)
+                    self.assertEqual(targets, [80, (80 + end) / 2, end])
+                    await restored.close()
+                    await self.entry.runtime_data.close()
+
     async def test_setup_unload_without_device_transport_never_starts_session(self):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry
         self.hass.services = MagicMock()

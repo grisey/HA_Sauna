@@ -60,8 +60,9 @@ assert.match(render(state), /Heizen<\/strong><span class="availability-line ">no
 assert.doesNotMatch(render(state), /8:00 Minuten/, "estimated readiness never exposes a changing seconds timer");
 
 state = baseState();
-state.start_availability = {until_ready_seconds: 0, ready_estimated: false, start_window_seconds: 1200, start_window_label: "mindestens"};
-assert.match(render(state), /Bereit<\/strong><span class="availability-line ">noch 20 Minuten/, "ready state shows the supplied conservative start window without repeating its state");
+state.start_availability = {until_ready_seconds: 0, ready_estimated: false};
+assert.match(render(state), /Bereit<\/strong>/, "ready state uses the backend's readiness without a fabricated start deadline");
+assert.doesNotMatch(render(state), /availability-line/, "readiness without a phase timer has no countdown");
 assert.doesNotMatch(render(state), /Jetzt bereit|Bereitschaft/, "ready state is not repeated in a second announcement");
 
 state = baseState();
@@ -78,11 +79,6 @@ state = baseState();
 state.phase = "aufheizen";
 state.start_availability = {until_ready_seconds: 360, ready_estimated: true};
 assert.match(render(state), /noch 5 Minuten bis bereit/, "an estimate above five minutes uses the nearest five-minute step");
-
-state = baseState();
-state = baseState();
-state.start_availability = {until_ready_seconds: 0, start_window_seconds: 299};
-assert.match(render(state), /Bereit<\/strong><span class="availability-line ">noch unter 5 Minuten/, "a positive start window never pretends it is already exhausted");
 
 state = baseState();
 state.start_availability = {until_ready_seconds: null, message: "Startzeit noch nicht abschätzbar."};
@@ -144,10 +140,10 @@ assert.doesNotMatch(overview, /Mindestheizzeit/, "minimum heating stays in detai
 
 state = baseState();
 state.phase = "bereit";
-state.start_availability = {until_ready_seconds: 0, start_window_seconds: 1200};
+state.start_availability = {until_ready_seconds: 0};
 state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
 overview = render(state);
-assert.match(overview, /Bereit<\/strong><span class="availability-line ">noch 20 Minuten/, "a heating pause does not displace the start window");
+assert.match(overview, /Bereit<\/strong>/, "a heating pause preserves the ready state without a countdown");
 assert.doesNotMatch(overview, /Heizpause/, "heating pauses remain in details when ready");
 
 state = baseState();

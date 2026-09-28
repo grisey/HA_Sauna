@@ -46,6 +46,7 @@ class _ConfigEntries:
         self.entry.runtime_data = SaunaRuntime(
             Configuration.from_options(self.entry.options)
         )
+        return True
 
 
 class TemperatureOverflowTests(unittest.TestCase):

@@ -1137,12 +1137,13 @@ class HistoryChart {
       "aria-label",
       `Sitzungsverlauf: Temperatur und Luftfeuchte${panel.historyDetail ? " beider Messhöhen" : ""}`,
     );
-    const axisKey = `${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
+    const timeZone = localTimeZone();
+    const axisKey = `${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${timeZone}`;
     if (axisKey !== this.axisKey) {
       panel.$("[data-history-axes]").innerHTML = panel.historyAxes(model);
       this.axisKey = axisKey;
     }
-    const phaseKey = `${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}`;
+    const phaseKey = `${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}`;
     if (phaseKey !== this.phaseKey) {
       panel.$("[data-history-annotations]").innerHTML = panel.historyAnnotations(
         model,
@@ -2416,33 +2417,6 @@ class SaunaPanel extends HTMLElement {
       .environment .card {
         margin: 0;
       }
-      .environment-status {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        padding: 18px 22px;
-        gap: 18px;
-      }
-      .environment-status > div {
-        display: flex;
-        flex-direction: column;
-        gap: 7px;
-      }
-      .environment-status > div + div {
-        padding-left: 18px;
-        border-left: 1px solid var(--sauna-color-border, var(--divider-color));
-      }
-      .environment-status strong {
-        font-size: 16px;
-      }
-      .environment-status .feedback::before {
-        content: "";
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: currentColor;
-        margin-right: 8px;
-      }
       .gauge-card h2 {
         text-align: center;
       }
@@ -2690,14 +2664,6 @@ class SaunaPanel extends HTMLElement {
         margin: 0;
         padding: 14px 10px;
       }
-      .event-strip {
-        --event-marker-size: 17px;
-        --event-marker-gap: 3px;
-        position: relative;
-        height: var(--event-strip-height, 64px);
-        margin: 10px 50px 0;
-        border-bottom: 1px solid var(--sauna-color-border, var(--divider-color));
-      }
       .event-marker {
         position: absolute;
         bottom: var(--event-marker-bottom, -6px);
@@ -2790,15 +2756,6 @@ class SaunaPanel extends HTMLElement {
         touch-action: none;
         cursor: grab;
       }
-      .history-overview .overview-track {
-        fill: color-mix(in srgb, var(--sauna-color-chart-minimap-track) 5%, transparent);
-        stroke: color-mix(in srgb, var(--sauna-color-chart-minimap-track) 14%, transparent);
-      }
-      .history-overview .overview-temperature {
-        fill: none;
-        stroke: var(--sauna-color-series-overview);
-        stroke-width: 1.5;
-      }
       .history-overview .overview-window {
         fill: color-mix(in srgb, var(--sauna-color-chart-minimap-track) 20%, transparent);
         stroke: var(--sauna-color-chart-minimap-track);
@@ -2882,6 +2839,7 @@ class SaunaPanel extends HTMLElement {
         outline-offset: -3px;
       }
       .event-row[data-selected="true"] button {
+        --sauna-focus-current: var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
         background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-tint-warning-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
         border-color: currentColor;
@@ -3240,14 +3198,17 @@ class SaunaPanel extends HTMLElement {
       if (b) this.runPanelAction(() => this.action(b.dataset.action));
     });
     this.shadowRoot.addEventListener("change", (e) => {
+      if (e.target.id !== "instance" && !this.state) return;
       if (e.target.id === "instance") {
         this.entry = e.target.value;
+        this.state = null;
         this.messages = {};
         this.message(null);
         this.highlightedEventId = null;
         this.pendingEventFocus = null;
         this.generation++;
         this.selected = "live";
+        this.sessions = null;
         this.cache.clear();
         this.historyLoad = null;
         this.shown = null;
@@ -3280,6 +3241,8 @@ class SaunaPanel extends HTMLElement {
         this.manualLightRevision = (this.manualLightRevision || 0) + 1;
         this.zoom = 1;
         this.window = null;
+        this.renderStateLoading();
+        this.syncNavigation();
         this.refresh(true);
       }
       if (e.target.id === "session") {
@@ -3299,6 +3262,7 @@ class SaunaPanel extends HTMLElement {
         this.runPanelAction(() => this.action("button-program"));
     });
     this.shadowRoot.addEventListener("input", (e) => {
+      if (!this.state) return;
       if (
         e.target.matches(
           "[data-appearance-color],[data-appearance-picker],[data-appearance-scale]",
@@ -3329,6 +3293,7 @@ class SaunaPanel extends HTMLElement {
       }
     });
     this.shadowRoot.addEventListener("change", (e) => {
+      if (!this.state) return;
       if (e.target.matches("[data-free-step-count]")) {
         this.freeProgramStepsDraft = this.resizeSteps(
           this.freeSteps(),
@@ -3347,6 +3312,7 @@ class SaunaPanel extends HTMLElement {
       }
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
+      if (!this.state) return;
       if (
         e.target.matches(".diagnostic-marker[data-action]") &&
         ["Enter", " "].includes(e.key)
@@ -3502,6 +3468,21 @@ class SaunaPanel extends HTMLElement {
     node.className = shown ? "notice error" : "";
     node.textContent = shown ? errorText(shown) : "";
   }
+  renderStateLoading() {
+    const loading = '<p role="status">Lade Saunadaten …</p>';
+    for (const selector of ["#current", "#details", "#settings"])
+      this.updateMarkup(selector, loading);
+    const session = this.$("#session");
+    if (session) {
+      session.innerHTML = '<option value="live">Letzte Sitzung</option>';
+      session.disabled = true;
+    }
+    const history = this.$("#history-loading");
+    if (history) {
+      history.hidden = false;
+      history.textContent = "Lade Saunadaten …";
+    }
+  }
   async refresh(requested = false) {
     if (this.busy) {
       if (requested) this.refreshPending = true;
@@ -3515,6 +3496,7 @@ class SaunaPanel extends HTMLElement {
     try {
       if (!this.entry) {
         const instances = await this.api("");
+        if (generation !== this.generation || !this.isConnected) return;
         this.$("#instance").innerHTML = instances
           .map((i) => `<option value="${esc(i.entry_id)}">${esc(i.title)}</option>`)
           .join("");
@@ -3529,12 +3511,17 @@ class SaunaPanel extends HTMLElement {
       const state = await this.api(`/${entry}/state`);
       if (
         generation !== this.generation ||
+        entry !== this.entry ||
         !this.isConnected ||
         programRevision !== (this.programRevision || 0) ||
         appearanceRevision !== (this.appearanceRevision || 0)
       )
         return;
+      const wasLoading = !this.state;
       this.state = state;
+      const sessionSelect = this.$("#session");
+      if (sessionSelect) sessionSelect.disabled = false;
+      if (wasLoading) this.renderHistoryLoading(null);
       const sessionKey = state.session?.timeline?.session_started_at || null;
       if (sessionKey !== this.controlSessionKey) {
         this.programChoiceOpen = false;
@@ -3554,6 +3541,7 @@ class SaunaPanel extends HTMLElement {
         if (restoreTargetFocus) this.$('[data-target-arc][role="slider"]')?.focus?.();
       }
       if (historyVisible) {
+        this.syncHistorySessions();
         this.showHistoryCache();
         this.drawHistory("status");
         this.startHistoryLoad();
@@ -3672,7 +3660,31 @@ class SaunaPanel extends HTMLElement {
       ? `Verlauf wird geladen · ${load.count || 0} Mess- und Ereignispunkte verfügbar`
       : "";
   }
+  syncHistorySessions() {
+    const select = this.$("#session");
+    if (!select || !this.sessions || !this.state) return;
+    const liveId = this.state.session?.timeline.session_id,
+      timeZone = localTimeZone(),
+      liveLabel =
+        this.state.operation_enabled && this.state.session
+          ? "Laufende Sitzung"
+          : "Letzte Sitzung",
+      options =
+        `<option value="live">${liveLabel}</option>` +
+        this.sessions
+          .filter((session) => session.session_id !== liveId)
+          .map(
+            (session) =>
+              `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at, timeZone))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
+          )
+          .join("");
+    if (select.innerHTML !== options) {
+      this.updateMarkup("#session", options);
+      select.value = this.selected;
+    }
+  }
   startHistoryLoad() {
+    if (!this.state) return;
     const entry = this.entry,
       generation = this.generation,
       selected = this.selected,
@@ -3704,24 +3716,7 @@ class SaunaPanel extends HTMLElement {
         const list = await this.api(`/${entry}/archive`);
         if (!current()) return;
         this.sessions = list;
-        const liveLabel =
-          this.state.operation_enabled && this.state.session
-            ? "Laufende Sitzung"
-            : "Letzte Sitzung";
-        const options =
-          `<option value="live">${liveLabel}</option>` +
-          list
-            .filter((session) => session.session_id !== liveId)
-            .map(
-              (session) =>
-                `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
-            )
-            .join("");
-        const select = this.$("#session");
-        if (select.innerHTML !== options) {
-          this.updateMarkup("#session", options);
-          select.value = selected;
-        }
+        this.syncHistorySessions();
         const id = this.historySelectionId();
         if (!id) {
           this.showHistoryCache();
@@ -3786,6 +3781,10 @@ class SaunaPanel extends HTMLElement {
     return load.promise;
   }
   drawCurrent() {
+    if (!this.state) {
+      this.renderStateLoading();
+      return;
+    }
     const progressionOpen = this.$("#current details")?.open;
     const s = this.state,
       session = s.session,
@@ -3885,11 +3884,6 @@ class SaunaPanel extends HTMLElement {
       if (minutes < 5) return "unter 5 Minuten";
       return `${Math.max(5, Math.round(minutes / 5) * 5)} Minuten`;
     };
-    const startWindow = (seconds) => {
-      const minutes = Math.max(0, Number(seconds) || 0) / 60;
-      if (minutes < 5) return "unter 5 Minuten";
-      return `${Math.floor(minutes / 5) * 5} Minuten`;
-    };
     const timerLine = s.phase_timer;
     const phaseTimerText =
       s.operation_enabled && timerLine
@@ -3916,14 +3910,7 @@ class SaunaPanel extends HTMLElement {
       availability.until_ready_seconds > 0 &&
       availability.ready_estimated
         ? `noch ${fiveMinuteEstimate(availability.until_ready_seconds)} bis bereit`
-        : s.operation_enabled &&
-            s.phase === "bereit" &&
-            availability &&
-            !availability?.blocker &&
-            availability.until_ready_seconds === 0 &&
-            availability.start_window_seconds > 0
-          ? `noch ${startWindow(availability.start_window_seconds)}`
-          : "";
+        : "";
     const availabilityLine = phaseTimerText || blockerText || readinessText;
     const availabilityText =
       s.operation_enabled &&
@@ -4249,8 +4236,6 @@ class SaunaPanel extends HTMLElement {
       }),
     );
     if (progressionOpen) this.$("#current details").open = true;
-    for (const [id, value] of Object.entries(this.progressionDraft || {}))
-      if (this.$(`#${id}`)) this.$(`#${id}`).value = value;
   }
   renderControlView(view) {
     const {
@@ -4332,6 +4317,7 @@ class SaunaPanel extends HTMLElement {
       )}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl><p class="muted">Externe Präsenz wird beobachtet und ersetzt den Proxy noch nicht. Die Aktivierungsregeln sind offen. Das optionale Audioziel ist vorbereitet; es findet keine Wiedergabe statt.</p></div>`;
   }
   async changeTarget(value) {
+    if (!this.state?.permissions?.temperature) return;
     if (!Number.isFinite(value)) throw Error("Gültige Solltemperatur eingeben");
     if (this.programRequest) return;
     this.programSelectionDraft = "constant";
@@ -4344,7 +4330,9 @@ class SaunaPanel extends HTMLElement {
       previous = this.temperatureChange,
       draft = this.progressionDraft;
     const change = (async () => {
-      await previous;
+      // Queue ordering survives a rejected predecessor; this choice still
+      // reports its own failure to the action that submitted it.
+      await previous?.catch(() => null);
       if (this.entry !== entry || this.generation !== generation) return;
       const saved = await this.api(`/${entry}/temperature`, "POST", {
         target_temperature_c: value,
@@ -4546,7 +4534,7 @@ class SaunaPanel extends HTMLElement {
     clearTimeout(this.programSavedTimer);
     this.drawCurrent();
     try {
-      const targetParameters = await previousTarget;
+      const targetParameters = await previousTarget?.catch(() => null);
       if (
         this.programRequest !== request ||
         this.entry !== entry ||
@@ -4554,7 +4542,10 @@ class SaunaPanel extends HTMLElement {
       )
         return;
       if (body.target_temperature_c === null) {
-        body.target_temperature_c = Number(targetParameters?.target_temperature_c);
+        body.target_temperature_c = Number(
+          targetParameters?.target_temperature_c ??
+            this.state.configuration.parameters.target_temperature_c,
+        );
         if (!Number.isFinite(body.target_temperature_c))
           throw Error("Starttemperatur konnte nicht übernommen werden");
       }
@@ -4735,6 +4726,20 @@ class SaunaPanel extends HTMLElement {
       disabled = permissions.program && !this.programRequest ? "" : "disabled";
     const manual = kind === "steps",
       count = Math.max(1, Math.min(bounds.gangMaximum, steps.length));
+    const values = {
+      start: this.progressionDraft?.["progression-start"] ?? steps[0],
+      end: this.progressionDraft?.["progression-end"] ?? steps.at(-1),
+      gangs: this.progressionDraft?.["progression-gangs"] ?? count,
+    };
+    let distribution = null;
+    if (!manual) {
+      try {
+        const { start, end, gangs } = this.progressionValues(values);
+        distribution = this.distributedSteps(start, end, gangs);
+      } catch (_error) {
+        // Keep incomplete fields visible without explaining an older draft.
+      }
+    }
     const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
     const fields = manual
       ? `<div class="row"><label class="field" for="free-step-count"><span>Stufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
@@ -4746,11 +4751,14 @@ class SaunaPanel extends HTMLElement {
               `<label class="field" for="free-step-${index}">Stufe ${index + 1}<input id="free-step-${index}" data-free-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
           )
           .join("")}</div>`
-      : `<div class="row"><label class="field" for="progression-start">Start<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(steps[0])}" ${disabled}></label><label class="field" for="progression-end">Ende<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(steps.at(-1))}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung ${this.distributionInfo("free", this.distributedSteps(steps[0], steps.at(-1), count))}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${count}" ${disabled}></label></div>`;
+      : `<div class="row"><label class="field" for="progression-start">Start<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}></label><label class="field" for="progression-end">Ende<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
     return `<div class="program-form">${kindButtons}${fields}${this.state?.session ? "" : `<div class="program-actions">${this.programApplyButton(permissions)}</div>`}</div>`;
   }
   distributionInfo(id, steps) {
-    return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="Verteilung erklären" aria-expanded="${this.programInfoOpen === id}">i</button>${this.programInfoOpen === id ? `<span class="program-info-popup">${esc(`${steps.length} Stufen von ${num(steps[0], 1)} bis ${num(steps.at(-1), 1)} °C: ${steps.map((value) => num(value, 1)).join(" → ")} °C`)}</span>` : ""}</span>`;
+    const text = steps?.length
+      ? `${steps.length} Stufen von ${num(steps[0], 1)} bis ${num(steps.at(-1), 1)} °C: ${steps.map((value) => num(value, 1)).join(" → ")} °C`
+      : "Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben";
+    return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="Verteilung erklären" aria-expanded="${this.programInfoOpen === id}">i</button>${this.programInfoOpen === id ? `<span class="program-info-popup">${esc(text)}</span>` : ""}</span>`;
   }
   setFreeProgramKind(kind) {
     const inputs = [...this.shadowRoot.querySelectorAll("[data-free-step]")];
@@ -4791,12 +4799,17 @@ class SaunaPanel extends HTMLElement {
       throw Error("Temperaturstufen innerhalb der zulässigen Grenzen eingeben");
     return values;
   }
-  progressionValues() {
-    const start = Number(this.$("#progression-start").value),
-      end = Number(this.$("#progression-end").value),
-      gangs = Number(this.$("#progression-gangs").value);
+  progressionValues(values = {
+    start: this.$("#progression-start").value,
+    end: this.$("#progression-end").value,
+    gangs: this.$("#progression-gangs").value,
+  }) {
+    const start = Number(values.start),
+      end = Number(values.end),
+      gangs = Number(values.gangs);
     const { minimum, maximum, gangMinimum, gangMaximum } = this.programBounds();
     if (
+      Object.values(values).some((value) => !String(value ?? "").trim()) ||
       !Number.isFinite(start) ||
       !Number.isFinite(end) ||
       !Number.isInteger(gangs) ||
@@ -5009,6 +5022,7 @@ class SaunaPanel extends HTMLElement {
     }
   }
   async updateParameters(parameters, start = false, partial = false) {
+    if (!this.state) return;
     const entry = this.entry,
       generation = this.generation,
       editRevision = this.settingsEditRevision || 0,
@@ -5101,6 +5115,7 @@ class SaunaPanel extends HTMLElement {
       if (this.pendingHover) this.hoverChart(this.pendingHover);
       return;
     }
+    const timeZone = localTimeZone();
     const { session, records } = this.shown,
       t = session.timeline;
     if (
@@ -5113,7 +5128,7 @@ class SaunaPanel extends HTMLElement {
     if (this.$("#plots")?.hidden) {
       this.ensureHistoryWindow();
       this.updateHistoryTimelineRevision(session);
-      const key = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}`;
+      const key = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
       if (key !== this.historyDiagnosticsKey) {
         this.historyDiagnosticsKey = key;
         this.drawDiagnostics();
@@ -5140,7 +5155,7 @@ class SaunaPanel extends HTMLElement {
     this.updateHistoryTimelineRevision(session);
     this.historyChart.render(reasons, session, gangs);
     const gangNow = t.active ? this.state.now : "";
-    const gangKey = `${this.historyTimelineRevision}:${gangNow}`;
+    const gangKey = `${this.historyTimelineRevision}:${gangNow}:${timeZone}`;
     if (this.historyGangKey !== gangKey) {
       this.historyGangKey = gangKey;
       const e = session.energy,
@@ -5152,7 +5167,7 @@ class SaunaPanel extends HTMLElement {
         `<div class="card"><h2>Saunagänge</h2>${energySummary}${gangs.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Beginn</th><th>Erkannt</th><th>Bestätigung</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g, i) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i + 1} · ${g.infusion_events.length ? "Bestätigt" : "Vorläufig"}</td><td>${when(g.started_at)}</td><td>${when(g.detected_at)}</td><td>${g.infusion_events.length ? when(g.infusion_events[0].detected_at) : "Aufguss ausstehend"}</td><td>${duration((stamp(g.ended_at || session.ended_at || this.state.now) - stamp(g.started_at)) / 1000)}</td><td>${when(g.ended_at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
       );
     }
-    const eventKey = `${this.historyTimelineRevision}:${this.historyEventRevision || 0}`;
+    const eventKey = `${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}`;
     if (this.historyEventKey !== eventKey) {
       this.historyEventKey = eventKey;
       const openEvents = [
@@ -5179,7 +5194,7 @@ class SaunaPanel extends HTMLElement {
         .forEach((d, i) => (d.open = !!openEvents[i]));
       if (this.highlightedEventId) this.highlightEvent(this.highlightedEventId, false);
     }
-    const diagnosticsKey = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}`;
+    const diagnosticsKey = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
     if (this.view === "diagnostics" && this.historyDiagnosticsKey !== diagnosticsKey) {
       this.historyDiagnosticsKey = diagnosticsKey;
       this.drawDiagnostics();
@@ -6320,6 +6335,10 @@ class SaunaPanel extends HTMLElement {
     this.revealEventTarget("marker");
   }
   drawSettings() {
+    if (!this.state) {
+      this.renderStateLoading();
+      return;
+    }
     const state = this.state,
       admin = !!state.permissions?.admin;
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
@@ -6684,6 +6703,7 @@ class SaunaPanel extends HTMLElement {
   }
   moveProgram(id, offset, targetIndex = null) {
     if (
+      !this.state ||
       this.programEditor ||
       this.programSavePending ||
       this.state.configuration_locked ||
@@ -6712,6 +6732,7 @@ class SaunaPanel extends HTMLElement {
   beginProgramDrag(event) {
     const handle = event.target.closest?.("[data-program-drag]");
     if (
+      !this.state ||
       !handle ||
       handle.disabled ||
       this.programEditor ||
@@ -6803,6 +6824,7 @@ class SaunaPanel extends HTMLElement {
     this.renderProgramLibrary();
   }
   async savePrograms() {
+    if (!this.state) return;
     if (
       this.programEditor ||
       this.programSavePending ||
@@ -6849,6 +6871,7 @@ class SaunaPanel extends HTMLElement {
     await this.refresh(true);
   }
   async saveSettings() {
+    if (!this.state) return;
     this.message(null);
     const partial = this.state.configuration_locked;
     const values = partial ? {} : { ...this.state.configuration.parameters };
@@ -6866,6 +6889,7 @@ class SaunaPanel extends HTMLElement {
     await this.updateParameters(values, false, partial);
   }
   async resetSettings() {
+    if (!this.state) return;
     const entry = this.entry,
       generation = this.generation,
       editRevision = this.settingsEditRevision || 0,
@@ -6898,7 +6922,11 @@ class SaunaPanel extends HTMLElement {
   }
   syncNavigation() {
     this.navigation ??= { main: "overview", detail: "detail" };
-    if (this.navigation.main === "details" && !this.state?.permissions?.admin)
+    if (
+      this.state &&
+      this.navigation.main === "details" &&
+      !this.state.permissions?.admin
+    )
       this.navigation.main = "overview";
     const { main, detail } = this.navigation;
     const view =
@@ -6953,6 +6981,7 @@ class SaunaPanel extends HTMLElement {
     } else this.historyChart?.interaction.invalidateGeometry("size");
   }
   async action(action) {
+    if (!this.state && action !== "menu") return;
     this.message(null);
     const permissions = this.state?.permissions || {};
     if (

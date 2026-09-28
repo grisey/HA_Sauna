@@ -179,6 +179,31 @@ assert.equal(
     [75, 100],
   );
 
+  let rejectOlder;
+  const followup = [];
+  panel.api = async (...args) => {
+    followup.push(args);
+    if (followup.length === 1)
+      await new Promise((_resolve, reject) => {
+        rejectOlder = reject;
+      });
+    return { parameters: { target_temperature_c: args[2].target_temperature_c } };
+  };
+  const older = panel.changeTarget(80);
+  const olderFailure = assert.rejects(older, /older choice failed/);
+  await Promise.resolve();
+  const newer = panel.changeTarget(90);
+  rejectOlder(Error("older choice failed"));
+  await olderFailure;
+  await newer;
+  assert.deepEqual(
+    followup.map(([, , body]) => body.target_temperature_c),
+    [80, 90],
+    "a rejected predecessor cannot suppress the newer valid target",
+  );
+  assert.equal(panel.state.target_temperature, 90);
+  assert.equal(panel.temperatureChange, null);
+
   console.log("panel temperature arc regressions passed");
 })().catch((error) => {
   console.error(error);

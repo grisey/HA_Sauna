@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
@@ -129,6 +130,75 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(restored.runtime_data.configuration.bindings.as_dict(), bindings)
         self.assertIsNone(restored.runtime_data.session)
+
+    async def _assert_failed_reload_preserves_runtime(self, *, raises):
+        from datetime import UTC, datetime
+
+        entry = await create_sauna(self.hass)
+        runtime = entry.runtime_data
+        now = datetime.now(UTC)
+        runtime._clock = lambda: now
+        old_options = dict(entry.options)
+        old_light = old_options["bindings"]["light"]
+        self.hass.states.async_set(
+            "light.replacement", "off", {"supported_color_modes": ["brightness"]}
+        )
+        calls = []
+
+        async def light_service(call):
+            calls.append((call.service, call.data["entity_id"]))
+            self.hass.states.async_set(
+                call.data["entity_id"], "on" if call.service == "turn_on" else "off",
+                {"supported_color_modes": ["brightness"], "brightness": 94},
+            )
+
+        async def switch_service(call):
+            self.hass.states.async_set(
+                call.data["entity_id"], "on" if call.service == "turn_on" else "off"
+            )
+
+        for service in ("turn_on", "turn_off"):
+            self.hass.services.async_register("light", service, light_service)
+            self.hass.services.async_register("switch", service, switch_service)
+        await runtime.set_operation(True)
+        async with runtime._lock:
+            runtime.controller.finish_session(now)
+            await runtime._cycle()
+        await self.hass.async_block_till_done()
+        phase = runtime.controller.light_after_run
+        self.assertIsNotNone(phase)
+        # False goes through HA's real reload and the original integration
+        # unload. The exceptional case exercises the caller's cleanup boundary.
+        boundary = "async_reload" if raises else "async_unload_platforms"
+        with patch.object(
+            self.hass.config_entries, boundary,
+            **({"side_effect": RuntimeError("reload failed")} if raises
+               else {"return_value": False}),
+        ):
+            self.hass.config_entries.async_update_entry(
+                entry, options={
+                    **old_options,
+                    "bindings": {**old_options["bindings"], "light": "light.replacement"},
+                },
+            )
+            await self.hass.async_block_till_done()
+        self.assertIs(entry.runtime_data, runtime)
+        self.assertFalse(runtime.closed)
+        self.assertFalse(runtime.reconfiguring)
+        self.assertEqual(dict(entry.options), old_options)
+        self.assertEqual(runtime.configuration.as_options(), old_options)
+        self.assertEqual(runtime.controller.light_after_run, phase)
+        await runtime.set_light_override(37)
+        self.assertIn(("turn_on", old_light), calls)
+        self.assertFalse(any(entity == "light.replacement" for _, entity in calls))
+        await runtime.set_operation(True)
+        self.assertTrue(runtime.session.operation_enabled)
+
+    async def test_rejected_platform_unload_restores_old_configuration_and_light(self):
+        await self._assert_failed_reload_preserves_runtime(raises=False)
+
+    async def test_reload_exception_restores_old_configuration_and_light(self):
+        await self._assert_failed_reload_preserves_runtime(raises=True)
 
     async def test_invalid_selection_and_values_create_no_entry(self):
         from harness import seed_sources

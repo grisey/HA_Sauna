@@ -218,6 +218,72 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#history-overview')).to_be_empty()
         await expect(self.panel.locator('#range')).to_be_empty()
 
+    async def test_instance_switch_waits_for_its_own_status_before_exposing_controls(self):
+        second = await device_tests.create_sauna(self.hass, parameter_overrides={
+            "target_temperature_c": 90, "safety_temperature_c": 105,
+        })
+        await self.page.reload()
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(self.panel.locator('#instance')).to_be_visible()
+        await self.panel.locator('#instance').select_option(self.entry.entry_id)
+        await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", "80")
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await expect(self.panel.locator('#parameters')).to_be_visible()
+        await self.panel.evaluate("""async p => {
+          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+          clearInterval(p.timer);
+        }""")
+        old_started, new_started = asyncio.Event(), asyncio.Event()
+        old_release, new_release = asyncio.Event(), asyncio.Event()
+        async def old_status(route):
+            response = await route.fetch()
+            old_started.set()
+            await old_release.wait()
+            await route.fulfill(response=response)
+        async def new_status(route):
+            new_started.set()
+            await new_release.wait()
+            await route.continue_()
+        old_url = f"**/api/ha_sauna/{self.entry.entry_id}/state"
+        new_url = f"**/api/ha_sauna/{second.entry_id}/state"
+        writes = []
+        def record_write(request):
+            if f"/api/ha_sauna/{second.entry_id}/" in request.url and request.method == "POST":
+                writes.append(request.url)
+        self.page.on("request", record_write)
+        await self.page.route(old_url, old_status)
+        await self.page.route(new_url, new_status)
+        try:
+            await self.panel.evaluate("p => { p.switchTestPoll = p.refresh(); }")
+            await asyncio.wait_for(old_started.wait(), 10)
+            await self.panel.locator('#instance').select_option(second.entry_id)
+            await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
+            self.assertEqual(await self.panel.locator('#parameters').count(), 0)
+            self.assertEqual(await self.panel.locator('#current [data-action="operation"]').count(), 0)
+            await self.panel.evaluate("""async p => {
+              await p.action('operation');
+              await p.changeTarget(95);
+              await p.saveSettings();
+              await p.keyTemperatureTarget({key:'ArrowUp', preventDefault(){}});
+            }""")
+            self.assertEqual(writes, [])
+            old_release.set()
+            await asyncio.wait_for(new_started.wait(), 10)
+            self.assertIsNone(await self.panel.evaluate("p => p.state"))
+            await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
+            new_release.set()
+            await expect(self.panel.locator('#parameters')).to_be_visible(timeout=15000)
+            await self.panel.locator('.main-tabs [data-action="overview"]').click()
+            await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", "90")
+            self.assertEqual(writes, [])
+        finally:
+            old_release.set()
+            new_release.set()
+            await self.page.unroute(old_url, old_status)
+            await self.page.unroute(new_url, new_status)
+            self.page.remove_listener("request", record_write)
+        self.assertEqual(self.errors, [])
+
     async def test_appearance_preview_validation_persistence_and_display_scales(self):
         artifact_dir = os.environ.get("HA_SAUNA_BROWSER_ARTIFACTS")
         screenshots = (
@@ -679,6 +745,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await status_group.click()
         await editor.locator('[data-appearance-color="text"]').fill("#757575")
         await editor.locator('[data-appearance-color="status_error"]').fill("#FFFFFF")
+        await editor.locator('[data-appearance-color="status_warning"]').fill("#FFFFFF")
+        await editor.locator('[data-appearance-color="focus"]').fill("#5A5A5A")
         await editor.locator('[data-appearance-color="chart_text"]').fill("#757575")
         await self.panel.evaluate("p=>p.message(new Error('Synthetischer Verbindungsfehler'), 'action')")
         error_notice = self.panel.locator("#message.notice.error")
@@ -739,7 +807,21 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await marker.press('Enter')
         await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#event-list')).to_be_visible()
-        await expect(self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')).to_be_focused()
+        selected_link = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
+        await expect(selected_link).to_be_focused()
+        await expect(selected_link).to_have_css("outline-width", "2px")
+        button_contrast = await selected_link.evaluate("""button => {
+          const style = getComputedStyle(button);
+          const light = color => color.match(/[\\d.]+/g).slice(0, 3).map(Number)
+            .reduce((sum, value, index) => {
+              const x = value / 255;
+              return sum + [0.2126, 0.7152, 0.0722][index] *
+                (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+            }, 0);
+          const a = light(style.outlineColor), b = light(style.backgroundColor);
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        }""")
+        self.assertGreaterEqual(button_contrast, 3)
         await self.panel.locator('[data-action="settings"]').click()
         temperature_color = editor.locator('[data-appearance-color="series_temperature"]')
         if not await temperature_color.is_visible():
@@ -782,6 +864,28 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator("#session").select_option(identity)
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+        # A native Chromium zone change must refresh retained archive text even
+        # when neither the archived data nor the viewport changed.
+        cdp = await self.context.new_cdp_session(self.page)
+        async def zone_snapshot(zone):
+            await cdp.send("Emulation.setTimezoneOverride", {"timezoneId": zone})
+            return await self.panel.evaluate("""p => {
+              p.renderHistory(new Set(['status']));
+              p.syncHistorySessions();
+              return {
+                gang: p.$('#gangs tbody tr td:nth-child(2)').textContent,
+                events: [...p.shadowRoot.querySelectorAll('#event-list tbody tr td:nth-child(2)')].map(e=>e.textContent),
+                annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
+                session: p.$('#session').selectedOptions[0].textContent,
+              };
+            }""")
+        utc = await zone_snapshot("UTC")
+        berlin = await zone_snapshot("Europe/Berlin")
+        self.assertTrue(utc["annotations"])
+        for consumer in ("gang", "events", "annotations", "session"):
+            self.assertNotEqual(utc[consumer], berlin[consumer], consumer)
+        await cdp.send("Emulation.setTimezoneOverride", {"timezoneId": "UTC"})
+        await cdp.detach()
         await self.page.set_viewport_size({"width": 390, "height": 844})
         await self.panel.evaluate(
             "p=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"
@@ -813,6 +917,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator("#progression-end")).to_be_visible()
         await self.panel.locator('#progression-end').fill("86")
         await self.panel.locator('#progression-gangs').fill("3")
+        await self.panel.locator('[data-action="program-info:free"]').click()
+        await expect(self.panel.locator('#current .program-info-popup')).to_contain_text("75 → 80,5 → 86 °C")
         program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
             await self.panel.locator('[data-action="program-apply"]').click()

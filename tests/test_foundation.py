@@ -368,6 +368,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         class Archive:
             failure = None
 
+            def append(self, *args):
+                pass
+
             async def close(self):
                 calls.append("archive")
 
@@ -381,14 +384,6 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         await self.runtime.close()
         self.assertEqual(calls, ["device", "archive"])
-
-    async def test_deadline_uses_injected_clock(self):
-        await self.runtime.begin_session("s")
-        d = Deadline("s", "test", "one", T0 + timedelta(seconds=5))
-        self.runtime.controller.register_deadline(d)
-        self.now += timedelta(seconds=5)
-        self.assertTrue(await self.runtime.deadline_due(d))
-
 
 class PackagingTests(unittest.TestCase):
     def test_manifest_and_translation_fields(self):

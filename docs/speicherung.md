@@ -16,6 +16,9 @@ Quellen-Schnappschüsse und Rasterwerte sind getrennt von empfangenen Originalen
 Heizentscheidungen tragen die Sitzung, in der sie entstanden sind. Daraus
 gesendete Gerätebefehle übernehmen diese Zuordnung auch dann, wenn die Sitzung
 inzwischen beendet ist oder bereits eine neue begonnen hat.
+Auch die beim Entladen erzeugte letzte AUS-Entscheidung wird als eigener
+Entscheidungsrecord über denselben Cursor wie im Normalbetrieb geschrieben.
+Ein Archivfehler darf den physischen AUS-Versuch beim Entladen nicht verhindern.
 
 ## HA-Backup
 

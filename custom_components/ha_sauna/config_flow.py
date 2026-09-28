@@ -20,7 +20,7 @@ from .core.parameters import (
 )
 from .core.program_catalog import DEFAULT_PROGRAMS, validate_programs
 from .log import LEVELS
-from .settings import ConfigurationLocked, async_set_parameters
+from .settings import ConfigurationLocked, async_set_parameters, parameter_change
 
 
 def binding_schema(*, include_name: bool = False) -> vol.Schema:
@@ -418,6 +418,11 @@ class SaunaOptionsFlow(OptionsFlow):
                         or program_mode
                         != self.config_entry.options.get("program_mode", "progressive"),
                     )
+                    # The shared writer has persisted its complete candidate,
+                    # including program identity and any cleared free stages.
+                    from .runtime import Configuration
+
+                    configuration = Configuration.from_options(self.config_entry.options)
                 else:
                     program_mode = values.pop(
                         "program_mode",
@@ -432,21 +437,12 @@ class SaunaOptionsFlow(OptionsFlow):
                             BY_KEY["temperature_increase_c"].default,
                         ),
                     )
-                    parameters = Parameters(values).as_dict()
-                    try:
-                        from .runtime import Configuration
-
-                        configuration = Configuration.from_options(
-                            {
-                                **configuration.as_options(),
-                                CONF_PARAMETERS: parameters,
-                                "program_mode": program_mode,
-                            }
-                        )
-                    except ValueError as error:
-                        raise ParameterError(
-                            "sauna_min_temperature_c", "program_catalog_invalid"
-                        ) from error
+                    configuration = parameter_change(
+                        configuration, values, explicit_target=False,
+                        program_mode=program_mode,
+                        new_program=program_mode != configuration.program_mode,
+                    ).configuration
+                    parameters = configuration.parameters.as_dict()
             except ParameterError as error:
                 errors[error.key] = error.code
             except ConfigurationLocked:
@@ -457,12 +453,8 @@ class SaunaOptionsFlow(OptionsFlow):
                 # temperature.  Keep those normalized values through every
                 # technical-options save.
                 options = {
+                    **self.config_entry.options,
                     **configuration.as_options(),
-                    **{
-                        key: value
-                        for key, value in self.config_entry.options.items()
-                        if key not in {"button_program", "button_temperature_c"}
-                    },
                     CONF_PARAMETERS: parameters,
                     "program_mode": program_mode,
                 }

@@ -131,6 +131,24 @@ class ButtonGestureTests(unittest.TestCase):
         self.assertIsNone(button.handle("off", True, at(1)))
         self.assertIsNone(button.advance(at(2), True))
 
+    def test_binary_source_gap_discards_unconfirmed_hold_and_short(self):
+        button = ButtonGestures(THRESHOLD)
+        button.handle("on", True, at(0))
+        self.assertIsNone(button.handle("unavailable", True, at(.2)))
+        self.assertIsNone(button.advance(at(2), True))
+        self.assertIsNone(button.handle("off", True, at(3)))
+        self.assertIsNone(button.handle("on", True, at(4)))
+        self.assertEqual(button.handle("off", True, at(4.2)), HEATER_TOGGLE_OVERRIDE)
+
+    def test_binary_source_gap_keeps_confirmed_hold_until_release(self):
+        button = ButtonGestures(THRESHOLD)
+        button.handle("on", True, at(0))
+        self.assertEqual(button.advance(at(1), True), END_HOLD)
+        self.assertIsNone(button.handle("unavailable", False, at(2)))
+        self.assertIsNone(button.advance(at(3), False))
+        self.assertEqual(button.handle("off", False, at(4)), END_RELEASE)
+        self.assertIsNone(button.handle("off", False, at(5)))
+
     def test_sparse_long_starts_when_off_and_ends_when_enabled(self):
         button = ButtonGestures(THRESHOLD)
         self.assertEqual(button.handle("long", False, at(0)), START_STANDARD_PROGRAM)

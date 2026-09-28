@@ -1,8 +1,8 @@
 # Zeitmodell
 
 > Maßgeblicher Stand vom 26.09.2026: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
-> und [Ofenkühlung](ofenkuehlung.md). Jeder aktive Gang fordert vorläufig wie
-> bestätigt durchgehend Heizen an; Ofenkühlung und technische Sperren haben Vorrang.
+> und [Ofenkühlung](ofenkuehlung.md). Im Automatikbetrieb fordert jeder aktive Gang
+> vorläufig wie bestätigt durchgehend Heizen an; Ofenkühlung und technische Sperren haben Vorrang.
 > Die vorübergehende Türhilfe wirkt nur nach geeignetem Türschluss. Ofenkühlung
 > ist dynamisch und wird durch Tür, Präsenz oder manuelles Heizen nicht unterbrochen.
 > Entgegenstehende ältere Angaben unten zu Öffnungsfristen, Gangveto, Kühlpausen,
@@ -45,5 +45,8 @@ tatsächlichen Entscheidungszeitpunkt. Messungen bewahren ihren Empfangszeitpunk
 ein unbekannter Gerätezeitpunkt wird nicht erfunden. Fristen gehören zu einer
 Sitzung und einem Vorgangstoken. Ersetzte Fristen wirken nicht weiter,
 wiederholte Ereignisse sind idempotent, und die Laufzeituhr läuft nicht zurück.
-Eingänge genau am Ende einer Bestätigungs- oder Türwartefrist werden zuerst
-verarbeitet.
+Bereits empfangene Messungen genau am Ende einer Bestätigungsfrist werden vor
+deren inklusivem Abschluss ausgewertet. Gemeinsam bereitstehende
+Gerätecallbacks werden vor der Lockübernahme zugestellt; auf erst zukünftig
+eintreffende Messungen wird nicht gewartet. Die dokumentierten älteren
+Türwartefristen gehören nicht mehr zur aktuellen Türhilfe.

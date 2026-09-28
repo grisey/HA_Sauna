@@ -1,7 +1,7 @@
 # Betrieb
 
 > Maßgeblicher Stand vom 26.09.2026: [Präsenz, Ofen und Phasen](praesenz-ofen-phasen.md)
-> und [Ofenkühlung](ofenkuehlung.md). Jeder aktive Gang fordert vorläufig wie
+> und [Ofenkühlung](ofenkuehlung.md). Im Automatikbetrieb fordert jeder Gang vorläufig wie
 > bestätigt durchgehend Heizen an; Ofenkühlung und technische Sperren haben Vorrang.
 > Die vorübergehende Türhilfe wirkt nur nach geeignetem Türschluss. Ofenkühlung
 > ist dynamisch und wird durch Tür, Präsenz oder manuelles Heizen nicht unterbrochen.

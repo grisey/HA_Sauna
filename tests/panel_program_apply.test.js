@@ -65,6 +65,29 @@ function panel(config = configuration(), session = null, api = async () => ({}))
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+test("the individual distribution explains the current validated field draft", () => {
+  const { p } = panel(configuration("progressive"));
+  p.programInfoOpen = "free";
+  p.progressionDraft = { "progression-end": "100" };
+  let form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+  assert.match(form, /id="progression-end"[^>]*value="100"/);
+  assert.match(form, /80 → 90 → 100 °C/);
+  assert.doesNotMatch(form, /80 → 85 → 90 °C/);
+  p.progressionDraft = { "progression-end": "" };
+  form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+  assert.match(form, /id="progression-end"[^>]*value=""/);
+  assert.match(form, /Start, Ende und Verteilung innerhalb der zulässigen Grenzen/);
+  assert.doesNotMatch(form, /80 → 85 → 90 °C/);
+});
+
+test("a named program remains applicable after a queued target failed", async () => {
+  const { p, calls } = panel(configuration(), { timeline: {} });
+  p.temperatureChange = Promise.reject(Error("target failed"));
+  p.programSelectionDraft = "quiet";
+  await p.applyProgram();
+  assert.deepEqual(plain(calls), [["/entry/program", "POST", { profile: "quiet" }]]);
+});
+
 test("off-session named choice applies directly and reflects authoritative response", async () => {
   const { p, calls } = panel(configuration(), null, async () => ({
     parameters: {

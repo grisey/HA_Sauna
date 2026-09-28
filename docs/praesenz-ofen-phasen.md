@@ -10,7 +10,7 @@ Erkennungsmuster und Schwellen bleiben gegenüber rc4 unverändert.
 ## Physischer Ablauf und Vorrang
 
 Der aktuelle Aktorzustand wird aus dem laufenden physischen Ablauf abgeleitet.
-Bei konkurrierenden Ursachen gilt diese Reihenfolge:
+Im Automatikbetrieb gilt bei konkurrierenden Ursachen diese Reihenfolge:
 
 1. Schutz und ausdrückliches Betrieb-AUS
 2. angeforderte oder laufende Ofenkühlung
@@ -18,11 +18,14 @@ Bei konkurrierenden Ursachen gilt diese Reihenfolge:
 4. einmalige vorübergehende Tür-Heizanforderung
 5. normale Thermostatregelung
 
-Jeder live aktive Gang, ob vorläufig oder durch Aufguss bestätigt, fordert
+Im Automatikbetrieb fordert jeder live aktive Gang, ob vorläufig oder bestätigt,
 kontinuierlich EIN, solange Betrieb und Schutz es erlauben. Er ist kein
 rückwirkend erzeugter Befehl und keine Heizzeitbuchung. Schutz, Betrieb-AUS und
 Ofenkühlung bleiben vorrangig. Nur das Ende eines bestätigten Gangs fordert
 eine Ofenkühlung an und zählt im Timeline-Modell.
+Die ausdrücklich gewählte Betriebsart Manuell behält ihre eigene Bedienvorgabe;
+Gangsignale wechseln diese Betriebsart nicht und erzeugen dort keine automatische
+Gang-Heizanforderung. Schutz und Betrieb-AUS bleiben übergeordnet.
 
 ## Tür und vorübergehendes Heizen
 

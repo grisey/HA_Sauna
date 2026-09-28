@@ -23,7 +23,7 @@ from .core.button import (
 )
 from .core.controller import Controller, Result
 from .core.detector import Detector
-from .core.models import Deadline, Position, Session
+from .core.models import Position, Session
 from .core.contracts import ConsumerEvent, PresenceReport
 from .core.presence import PresenceProjection, ProxyPresenceSource
 from .core.parameters import BY_KEY, Parameters
@@ -388,7 +388,11 @@ class SaunaRuntime:
             marks.append((at, heating))
         return heating
 
-    async def _cycle(self, *, sample=False):
+    async def _cycle(self):
+        with self.controller.confirmation_batch():
+            await self._run_cycle()
+
+    async def _run_cycle(self):
         await self._drain_device_inputs()
         now = self._clock()
         # Book due work and power expiry in chronological order. Equal-time
@@ -396,7 +400,7 @@ class SaunaRuntime:
         self.controller.advance(now, inclusive_confirmation=False)
         self._sync_detector()
         self._report_detector_heating(now)
-        if sample and self.detector:
+        if self.detector:
 
             def initialize_door():
                 if (
@@ -423,7 +427,9 @@ class SaunaRuntime:
                     detection.effective_at,
                     now,
                 )
-                self._process_event(event, defer_confirmation=True)
+                self._process_event(
+                    event, defer_confirmation=True, recognition_at=detection.trace_at,
+                )
                 self.log.info(
                     "detection",
                     "Erkanntes Ereignis: %s; zugeordnete Zeit: %s.",
@@ -449,15 +455,15 @@ class SaunaRuntime:
                 on_detection=detected,
                 heating_intervals=self.session.heating.intervals,
                 heating_gates=self._detector_heating_gates,
+                recognition_context=self.controller.recognition_context_at,
+                allowed_at=self.controller.recognition_allowed_at,
             )
             sampled_at = self.detector.origin + timedelta(seconds=self.detector.index)
             past = [i for i, (gate_at, _) in enumerate(self._detector_heating_gates)
                     if gate_at <= sampled_at]
             if past:
                 self._detector_heating_gates = self._detector_heating_gates[past[-1]:]
-            # All detections from this delivery share one decision time. A
-            # confirmation exactly due now closes only after the full packet.
-            self.controller.advance(now)
+            self.controller.discard_recognition_context_before(sampled_at)
             initialize_door()
             available = bool(self.detector.active_positions)
             current = self.presence.current
@@ -467,6 +473,9 @@ class SaunaRuntime:
                     "unknown", "provisional_proxy", "proxy", "detector_availability",
                     now, now, available, "no_proxy_evidence" if available else "source_unavailable",
                 ))
+        # Measurements and ticks close the same packet after all detections.
+        # Adapter refresh/feedback calls inside this scope cannot close it early.
+        self.controller.advance(now, finish_confirmation_batch=True)
         if self.device:
             self.device.refresh(now)
         else:
@@ -478,14 +487,18 @@ class SaunaRuntime:
     async def device_input(self, event):
         received_at = self._clock()
         self._pending_device_inputs.append((received_at, event))
+        # Callbacks dispatched together form one received packet, including
+        # temperature and humidity roles sharing a detector/confirmation time.
+        await asyncio.sleep(0)
         async with self._lock:
             if self.closed:
                 self._pending_device_inputs.clear()
                 return
             if not self._pending_device_inputs:
                 return
-            await self._drain_device_inputs()
-            await self._cycle()
+            with self.controller.confirmation_batch():
+                await self._drain_device_inputs()
+                await self._cycle()
 
     async def _drain_device_inputs(self):
         """Consume received edges in order, before any advance to wall time.
@@ -494,6 +507,7 @@ class SaunaRuntime:
         only the subsequent current-time cycle sends actuator commands.
         """
         while self._pending_device_inputs:
+            self._sync_detector()
             received_at, event = self._pending_device_inputs.popleft()
             entity_id = event.data["entity_id"]
             for role, source in self.configuration.bindings.values.items():
@@ -503,8 +517,6 @@ class SaunaRuntime:
                         self.device.report_received_feedback(received_at)
             action_at = max(
                 received_at, self.controller._last_at or received_at,
-                self._detector_heating_gates[-1][0]
-                if self._detector_heating_gates else received_at,
             )
             light_selection = self.device.external_light_selection(event, received_at)
             if light_selection is not None:
@@ -523,36 +535,41 @@ class SaunaRuntime:
                     self._set_operation(action, at=action_at)
                 except ValueError as error:
                     self.device.faults["start_rejected"] = str(error)
+            self._sync_detector()
 
     @asynccontextmanager
     async def serialized(self):
         """Serialize commands after all already received device inputs."""
+        # Timer/command dispatch shares the same bounded packet boundary as
+        # device callbacks, including callbacks queued after this handler.
+        await asyncio.sleep(0)
         async with self._lock:
-            drained = not self.closed and bool(self._pending_device_inputs)
-            if drained:
-                # Booking facts has no actuator I/O. A waiting command must
-                # enter before output awaits can admit an endless input stream.
-                await self._drain_device_inputs()
-            command_error = None
-            try:
-                yield
-            except BaseException as error:
-                command_error = error
-                raise
-            finally:
-                # Configuration-only and rejected commands must also deliver
-                # consumed inputs. One current cycle is sufficient; new inputs
-                # remain the responsibility of their waiting handlers.
-                if drained and not self.closed:
-                    try:
-                        await self._cycle()
-                    except BaseException as error:
-                        if command_error is not None:
-                            note = f"Anschließende Eingangsausgabe fehlgeschlagen: {error!r}"
-                            command_error.add_note(note)
-                            self.log.error("input_output_failed", "%s", note)
-                        else:
-                            raise
+            with self.controller.confirmation_batch():
+                drained = not self.closed and bool(self._pending_device_inputs)
+                if drained:
+                    # Booking facts has no actuator I/O. A waiting command must
+                    # enter before output awaits can admit an endless input stream.
+                    await self._drain_device_inputs()
+                command_error = None
+                try:
+                    yield
+                except BaseException as error:
+                    command_error = error
+                    raise
+                finally:
+                    # Configuration-only and rejected commands must also deliver
+                    # consumed inputs. One current cycle is sufficient; new inputs
+                    # remain the responsibility of their waiting handlers.
+                    if drained and not self.closed:
+                        try:
+                            await self._cycle()
+                        except BaseException as error:
+                            if command_error is not None:
+                                note = f"Anschließende Eingangsausgabe fehlgeschlagen: {error!r}"
+                                command_error.add_note(note)
+                                self.log.error("input_output_failed", "%s", note)
+                            else:
+                                raise
 
     async def reset_protection(self):
         async with self.serialized():
@@ -608,14 +625,14 @@ class SaunaRuntime:
             self._record_presence(report)
             self.notify()
 
-    def _process_event(self, event, *, defer_confirmation=False):
+    def _process_event(self, event, *, defer_confirmation=False, recognition_at=None):
         report = (ProxyPresenceSource.present(event)
                   if event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) else None)
         # The source adapter retains the event identity and both original times.
         result = (self.controller.process_presence(
-            report, event, defer_confirmation=defer_confirmation
+            report, event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
         ) if report is not None else self.controller.process(
-            event, defer_confirmation=defer_confirmation
+            event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
         ))
         if result.changed:
             self._report_detector_heating(event.detected_at)
@@ -727,6 +744,12 @@ class SaunaRuntime:
                     self.session, now, self.configuration.as_options()
                 )
                 self._archive_signature = signature
+        self._persist_decisions()
+
+    def _persist_decisions(self):
+        """Deliver pending decisions through the same cursor during close."""
+        if self.archive is None:
+            return
         for decision in self.controller.decisions[self._saved_decisions :]:
             self.archive.append(
                 "decision",
@@ -734,7 +757,7 @@ class SaunaRuntime:
                 decision,
                 decision.session_id,
             )
-        self._saved_decisions = len(self.controller.decisions)
+            self._saved_decisions += 1
 
     @property
     def session(self) -> Session | None:
@@ -1104,7 +1127,7 @@ class SaunaRuntime:
                     ),
                     now,
                 )
-            await self._cycle(sample=True)
+            await self._cycle()
 
     async def begin_session(self, session_id: str) -> Session:
         async with self.serialized():
@@ -1121,11 +1144,6 @@ class SaunaRuntime:
             result = self._process_event(event)
             await self._cycle()
             return result
-
-    async def deadline_due(self, deadline: Deadline) -> bool:
-        async with self.serialized():
-            self._require_open()
-            return self.controller.consume_deadline(deadline, self._clock())
 
     def on_close(self, unsubscribe: Callable[[], None]) -> None:
         self._require_open()
@@ -1168,6 +1186,10 @@ class SaunaRuntime:
                 except Exception as error:
                     failures.append(error)
             if self.archive is not None:
+                try:
+                    self._persist_decisions()
+                except Exception as error:
+                    failures.append(error)
                 try:
                     self.persist_completed_sessions()
                 except Exception as error:

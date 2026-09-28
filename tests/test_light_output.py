@@ -168,6 +168,19 @@ class LightOutputTests(unittest.TestCase):
         self.light.set_manual(0, phase_key="aus")
         self.assertEqual(self.update(123, "aus", "aus", 0, 35).brightness_percent, 0)
 
+    def test_manual_choice_in_unobserved_hold_phase_ends_at_release(self):
+        self.update(0, "heat", target=40)
+        # HOLD leaves the planner's previous output intact; the Controller
+        # already belongs to AUS when the manual choice is received.
+        self.light.set_manual(80, phase_key="aus")
+        plan = self.update(10, "released", "session_light", 0, 0, 610)
+        self.assertTrue(plan.automatic)
+        self.assertIsNone(self.light.manual_brightness)
+        self.assertEqual(
+            self.update(40, "released", "session_light", 0, 0, 610).brightness_percent,
+            50,
+        )
+
     def test_finished_automatic_output_returns_manual_light_to_off(self):
         self.update(0, "session", "session_light", 0, 20, 120)
         self.update(30, "session", "session_light", 0, 20, 120)

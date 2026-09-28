@@ -96,7 +96,7 @@ class DetectorTests(unittest.TestCase):
                         m = measurement(position, quantity, value, second)
                         runtime.detector.accept(m)
                         runtime.archive.append("measurement", now[0], m, "outlier")
-                await runtime._cycle(sample=True)
+                await runtime._cycle()
             await runtime.archive.flush()
             records = runtime.archive.read("outlier")["records"]
             await runtime.archive.close()
@@ -574,6 +574,44 @@ class DetectorTests(unittest.TestCase):
             events += sample(detector, i, temperature, 30+i*.002)
         self.assertEqual([e.kind for e in events], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
         self.assertGreaterEqual((events[0].detected_at-T0).total_seconds(), 25)
+
+    def test_fresh_opening_routes_reach_holds_longer_than_the_feature_window(self):
+        for route in ("mixed", "thermal"):
+            for hold in (2, 12, 15, 600):
+                with self.subTest(route=route, hold=hold):
+                    detector = Detector(detection_parameters(**{
+                        "door_open_hold_seconds": hold,
+                        "door_heating_hold_seconds": hold,
+                    }), T0, (Position.UPPER,))
+                    events = []
+                    for second in range(hold + 40):
+                        detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
+                        fall = max(0, second - 20)
+                        events += sample(detector, second, 90 - .04 * fall,
+                                         80 - .06 * fall if route == "mixed" else 30,
+                                         (Position.UPPER,))
+                    openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
+                    self.assertEqual(len(openings), 1)
+                    self.assertGreaterEqual(
+                        (openings[0].detected_at - openings[0].effective_at).total_seconds(),
+                        hold,
+                    )
+
+    def test_stale_opening_hints_do_not_complete_a_long_hold(self):
+        for route in ("mixed", "thermal"):
+            with self.subTest(route=route):
+                detector = Detector(detection_parameters(
+                    door_open_hold_seconds=30, door_heating_hold_seconds=30,
+                ), T0, (Position.UPPER,))
+                events = []
+                for second in range(100):
+                    detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
+                    fall = min(8, max(0, second - 20))
+                    events += sample(detector, second, 90 - .04 * fall,
+                                     80 - .06 * fall if route == "mixed" else 30,
+                                     (Position.UPPER,))
+                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+                self.assertIsNone(detector.door_episode)
 
     def test_temperature_rule_does_not_treat_heater_off_as_door_opening(self):
         for heating, lower_falls, duration in ((False, True, 20), (None, True, 20), (True, False, 20), (True, True, 2)):

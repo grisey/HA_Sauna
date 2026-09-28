@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
 from custom_components.ha_sauna.core.parameters import Parameters
-from custom_components.ha_sauna.core.timeline import Kind
+from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
@@ -56,6 +56,215 @@ class DeviceFeedbackTests(unittest.TestCase):
         adapter = HADevice(hass, runtime)
         runtime.device = adapter
         return runtime, adapter, light
+
+    def detection_device(self, *, both_positions=False, **parameters):
+        from custom_components.ha_sauna.device import HADevice
+
+        clock = [T0]
+        roles = {key: value for key, value in BINDINGS.values.items()
+                 if key != "heater_feedback"
+                 and (both_positions or key not in {"lower_temperature", "lower_humidity"})}
+        runtime = SaunaRuntime(Configuration(Bindings(roles), Parameters({
+            "target_temperature_c": 80, "feedback_timeout_seconds": 60, **parameters,
+        })), lambda: clock[0])
+        hass = SimpleNamespace(states=SimpleNamespace(get=lambda _entity: None),
+                               services=SimpleNamespace(async_call=AsyncMock()))
+        adapter = HADevice(hass, runtime)
+        runtime.device = adapter
+        adapter.apply_light = AsyncMock()
+        adapter.command, adapter.command_at, adapter.last_sent_at = False, T0, T0
+        adapter.ingest("heater", state("off"), T0, initial=True)
+        adapter.ingest("upper_temperature", state("90", unit="°C"), T0, initial=True)
+        adapter.ingest("upper_humidity", state("20", unit="%"), T0, initial=True)
+        if both_positions:
+            adapter.ingest("lower_temperature", state("90", unit="°C"), T0, initial=True)
+            adapter.ingest("lower_humidity", state("20", unit="%"), T0, initial=True)
+        adapter.refresh(T0)
+        return runtime, adapter, clock
+
+    @staticmethod
+    def detection_edge(runtime, role, value, old="off"):
+        return SimpleNamespace(event_type="state_changed", data={
+            "entity_id": runtime.configuration.bindings.values[role],
+            "old_state": state(old),
+            "new_state": state(str(value), unit=("°C" if role.endswith("temperature")
+                                                else "%" if role.endswith("humidity") else None)),
+        })
+
+    def test_blocked_humidity_rise_cannot_be_revived_after_waiting_off_service(self):
+        async def exercise(queued, resumes_at, off_at=2, fresh_after_resume=False):
+            runtime, adapter, clock = self.detection_device()
+            runtime.controller.begin_session("admission", T0)
+            calls, entered, release = [], asyncio.Event(), asyncio.Event()
+
+            async def service(domain, service, data, **_kwargs):
+                calls.append(service)
+                if queued and len(calls) == 1:
+                    entered.set()
+                    await release.wait()
+
+            adapter.hass.services.async_call = service
+            adapter.command = True  # Original adapter must send the required OFF.
+            initial = asyncio.create_task(runtime.tick())
+            if queued:
+                await entered.wait()
+            else:
+                await initial
+            pending = []
+            for second in range(1, 51):
+                clock[0] = T0 + timedelta(seconds=second)
+                values = []
+                if resumes_at is not None and second == off_at:
+                    values.append(("control_input", "off", "on"))
+                if second == 10:
+                    values.append(("upper_humidity", 23, "20"))
+                if second == resumes_at:
+                    values.append(("control_input", "on", "off"))
+                if fresh_after_resume and second == 40:
+                    values.append(("upper_humidity", 26, "23"))
+                for role, value, old in values:
+                    task = asyncio.create_task(runtime.device_input(
+                        self.detection_edge(runtime, role, value, old)))
+                    if queued:
+                        pending.append(task)
+                        await asyncio.sleep(0)
+                    else:
+                        await task
+                if not queued:
+                    await runtime.tick()
+            if queued:
+                release.set()
+                await asyncio.gather(initial, *pending)
+                await runtime.tick()
+            return runtime, calls
+
+        for off_at, resumes_at in ((2, 14), (2, 30), (28, 30)):
+            for queued in (False, True):
+                with self.subTest(queued=queued, resumes_at=resumes_at):
+                    runtime, calls = asyncio.run(exercise(queued, resumes_at, off_at))
+                    self.assertIsNone(runtime.session.timeline.active)
+                    if queued or off_at == 2:
+                        self.assertNotIn("turn_on", calls)
+                    else:
+                        self.assertIn("turn_on", calls)
+                        self.assertEqual(runtime.session.timeline.gang_count, 1)
+                    self.assertFalse(runtime.controller.last_decision.heat)
+        runtime, calls = asyncio.run(exercise(False, None))
+        self.assertTrue(runtime.session.timeline.active.infusion_events)
+        self.assertIn("turn_on", calls)
+        runtime, calls = asyncio.run(exercise(True, 30, 28, fresh_after_resume=True))
+        self.assertTrue(runtime.session.timeline.active.infusion_events)
+        self.assertIn("turn_on", calls)
+
+    def test_physical_session_start_delivers_all_following_measurements_in_one_batch(self):
+        async def exercise(queued, path):
+            runtime, adapter, clock = self.detection_device()
+            await runtime.start_archive(path, "start-entry")
+            pending = []
+            if queued:
+                await runtime._lock.acquire()
+            start = asyncio.create_task(runtime.device_input(
+                self.detection_edge(runtime, "control_input", "on")))
+            if queued:
+                pending.append(start)
+                await asyncio.sleep(0)
+            else:
+                await start
+            for second in range(1, 39):
+                clock[0] = T0 + timedelta(seconds=second)
+                fall = max(0, second - 15)
+                for role, value in (("upper_temperature", 90 - .04 * fall),
+                                    ("upper_humidity", 20 - .06 * fall)):
+                    task = asyncio.create_task(runtime.device_input(
+                        self.detection_edge(runtime, role, value)))
+                    if queued:
+                        pending.append(task)
+                        await asyncio.sleep(0)
+                    else:
+                        await task
+                if not queued:
+                    await runtime.tick()
+            if queued:
+                runtime._lock.release()
+                await asyncio.gather(*pending)
+            await runtime.tick()
+            await runtime.archive.flush()
+            stored = await asyncio.to_thread(runtime.archive.read, runtime.session.session_id)
+            await runtime.archive.close()
+            return runtime, stored
+
+        with TemporaryDirectory() as directory:
+            for queued in (False, True):
+                with self.subTest(queued=queued):
+                    runtime, stored = asyncio.run(exercise(
+                        queued, Path(directory) / f"start-{queued}.sqlite"))
+                    self.assertIn(Kind.DOOR_OPEN,
+                                  [event.kind for event in runtime.session.timeline.processed])
+                    self.assertEqual(sum(record["kind"] == "measurement"
+                                         for record in stored["records"]), 76)
+                    traces = [record["payload"] for record in stored["records"]
+                              if record["kind"] == "detector_trace"]
+                    self.assertTrue(any(trace["at"] == (T0 + timedelta(seconds=17)).isoformat()
+                                        and trace["metrics"]["upper"]["door_temperature_slope"] is not None
+                                        for trace in traces))
+
+    def test_measurement_and_tick_consume_equal_confirmation_only_after_sampling(self):
+        async def exercise(tick_first, confirmation_at):
+            runtime, adapter, clock = self.detection_device(
+                both_positions=tick_first == "split",
+                confirmation_minutes=1, median_seconds=1,
+                infusion_window_seconds=1, infusion_hold_seconds=1,
+            )
+            runtime.controller.begin_session("confirmation", T0)
+            await runtime.tick()
+            clock[0] = T0 + timedelta(seconds=11)
+            await runtime.receive(Event("person", "confirmation", Kind.PERSON_STRONG,
+                                        clock[0], clock[0]))
+            old = runtime.session.timeline.active
+            clock[0] = T0 + timedelta(seconds=confirmation_at - 1)
+            roles = ("upper_humidity", "lower_humidity") if tick_first == "split" else ("upper_humidity",)
+            await asyncio.gather(*(runtime.device_input(self.detection_edge(runtime, role, 22))
+                                   for role in roles))
+            clock[0] = T0 + timedelta(seconds=confirmation_at)
+            if tick_first == "split":
+                # HA dispatch order: upper callback, due tick, lower callback.
+                await asyncio.gather(
+                    runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24)),
+                    runtime.tick(),
+                    runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24)),
+                )
+                return runtime, old
+            if tick_first is None:
+                # Normal concurrently dispatched callbacks, without a test-held lock.
+                await asyncio.gather(
+                    runtime.device_input(self.detection_edge(runtime, "upper_temperature", 90)),
+                    runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24)),
+                )
+                return runtime, old
+            await runtime._lock.acquire()
+            async def humidity():
+                await runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
+            first = asyncio.create_task(runtime.tick() if tick_first else humidity())
+            await asyncio.sleep(0)
+            second = asyncio.create_task(humidity() if tick_first else runtime.tick())
+            await asyncio.sleep(0)
+            runtime._lock.release()
+            await asyncio.gather(first, second)
+            return runtime, old
+
+        for confirmation_at in (70, 71, 72):
+            for tick_first in (False, True, None, "split"):
+                with self.subTest(tick_first=tick_first, confirmation_at=confirmation_at):
+                    runtime, old = asyncio.run(exercise(tick_first, confirmation_at))
+                    gang = runtime.session.timeline.active
+                    self.assertTrue(gang.infusion_events)
+                    if confirmation_at <= 71:
+                        self.assertEqual((gang.gang_id, gang.started_at),
+                                         (old.gang_id, old.started_at))
+                        self.assertEqual(runtime.presence.current.occupancy, "present")
+                    else:
+                        self.assertNotEqual(gang.gang_id, old.gang_id)
+                        self.assertEqual(runtime.presence.current.occupancy, "unknown")
 
     def test_fifo_native_relay_off_preserves_earlier_thermal_detection(self):
         from custom_components.ha_sauna.device import HADevice
