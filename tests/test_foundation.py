@@ -365,6 +365,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 entered.set()
                 await release.wait()
 
+            async def prepare_light_handoff(self):
+                return True
+
         class Archive:
             failure = None
 

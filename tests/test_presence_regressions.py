@@ -101,6 +101,9 @@ class PresenceRegressionTests(unittest.TestCase):
             async def close(self):
                 self.closed = True
 
+            async def prepare_light_handoff(self):
+                return True
+
         async def exercise():
             clock = [START]
             runtime = _runtime(clock)
@@ -186,8 +189,14 @@ class PresenceRegressionTests(unittest.TestCase):
             runtime.notify()
 
             class TeardownDevice:
+                command = False
+                command_error = False
+
                 async def close(self):
                     pass
+
+                async def prepare_light_handoff(self):
+                    return True
 
                 def invalidate_historical_warmup(self):
                     pass
@@ -233,8 +242,14 @@ class PresenceRegressionTests(unittest.TestCase):
             before = len(runtime.consumer_events)
 
             class TeardownDevice:
+                command = False
+                command_error = False
+
                 async def close(self):
                     return None
+
+                async def prepare_light_handoff(self):
+                    return True
 
             runtime.device = TeardownDevice()
             clock[0] = START + timedelta(seconds=30)

@@ -1173,7 +1173,9 @@ class HADevice:
         gespeichert. Ein Fehler bleibt somit im nächsten Regelzyklus erneut
         ausführbar; der Lichtzustand ist keine Rückmeldung über den Dienst.
         """
-        if not self._light_owned and purpose != "light_reassignment":
+        if self.runtime.closed or (
+            not self._light_owned and purpose != "light_reassignment"
+        ):
             return False
         entity_id = self.bindings["light"] if entity_id is None else entity_id
         data = {"entity_id": entity_id}

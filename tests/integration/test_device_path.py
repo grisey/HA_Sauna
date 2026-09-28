@@ -1611,11 +1611,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.light.fail_commands = False
 
     async def _assert_same_light_reload_waits_for_actual_service(self, *, serial):
+        from custom_components.ha_sauna import _restore_failed_options
+        from custom_components.ha_sauna.runtime import SaunaRuntime
+
         for cancel_caller in (False, True):
             with self.subTest(cancel_caller=cancel_caller):
                 old = self.runtime
                 options = dict(self.entry.options)
-                entered, release, reload_finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+                entered, release, options_finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
                 platform_slot = asyncio.Semaphore(1)
                 original_on = self.light.async_turn_on
                 original_reload = self.hass.config_entries.async_reload
@@ -1633,16 +1636,18 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                     else:
                         await send_on(kwargs)
 
-                async def reload_entry(*args, **kwargs):
+                async def restore_options(*args, **kwargs):
                     try:
-                        return await original_reload(*args, **kwargs)
+                        return await _restore_failed_options(*args, **kwargs)
                     finally:
-                        reload_finished.set()
+                        # The options listener awaits rollback after HA reload
+                        # returns False; assert only at that real completion.
+                        options_finished.set()
 
                 self.light.calls.clear()
                 with (
                     patch.object(self.light, "async_turn_on", side_effect=paused_on),
-                    patch.object(self.hass.config_entries, "async_reload", side_effect=reload_entry),
+                    patch("custom_components.ha_sauna._restore_failed_options", side_effect=restore_options),
                 ):
                     selecting = asyncio.create_task(old.set_light_override(80))
                     try:
@@ -1663,7 +1668,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                                 },
                             },
                         )
-                        await asyncio.wait_for(reload_finished.wait(), 8)
+                        await asyncio.wait_for(options_finished.wait(), 8)
                         self.assertIs(self.entry.runtime_data, old)
                         self.assertFalse(old.closed)
                         self.assertFalse(old.archive.closed)
@@ -1674,9 +1679,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         release.set()
                     await service
                     await self.hass.async_block_till_done()
-                self.assertTrue(await original_reload(self.entry.entry_id))
+                with patch(
+                    "custom_components.ha_sauna.runtime.SaunaRuntime",
+                    side_effect=lambda configuration: SaunaRuntime(configuration, clock=lambda: self.now),
+                ):
+                    self.assertTrue(await original_reload(self.entry.entry_id))
                 self.runtime = self.entry.runtime_data
-                self.runtime._clock = lambda: self.now
                 self.assertIsNot(self.runtime, old)
                 await self.runtime.set_light_override(20)
                 await self.hass.async_block_till_done()
@@ -1698,6 +1706,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self._assert_same_light_reload_waits_for_actual_service(serial=True)
 
     async def test_same_light_reload_can_finish_old_service_before_new_selection(self):
+        from custom_components.ha_sauna.runtime import SaunaRuntime
+
         old = self.runtime
         entered, release, handing_off = asyncio.Event(), asyncio.Event(), asyncio.Event()
         original_on = self.light.async_turn_on
@@ -1716,6 +1726,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.light, "async_turn_on", side_effect=paused_on),
             patch.object(old.device, "prepare_light_handoff", side_effect=prepare),
+            patch(
+                "custom_components.ha_sauna.runtime.SaunaRuntime",
+                side_effect=lambda configuration: SaunaRuntime(configuration, clock=lambda: self.now),
+            ),
         ):
             selecting = asyncio.create_task(old.set_light_override(80))
             try:
@@ -1739,7 +1753,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
             await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
-        self.runtime._clock = lambda: self.now
         self.assertIsNot(self.runtime, old)
         self.assertTrue(old.closed)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
@@ -1751,6 +1764,36 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             [kwargs["brightness"] for kind, kwargs in self.light.calls if kind == "on"],
             [204, 51],
         )
+
+    async def test_waiting_reassignment_cannot_start_service_after_runtime_close(self):
+        await self.runtime.set_light_override(80)
+        await self.hass.async_block_till_done()
+        adapter = self.runtime.device
+        service = adapter._light_service_task
+        preparing = asyncio.Event()
+        original_prepare = adapter.prepare_light_handoff
+
+        async def prepare():
+            preparing.set()
+            return await original_prepare()
+
+        self.light.calls.clear()
+        await adapter._light_output_lock.acquire()
+        with patch.object(adapter, "prepare_light_handoff", side_effect=prepare):
+            closing = asyncio.create_task(self.runtime.close())
+            try:
+                await asyncio.wait_for(preparing.wait(), 3)
+                # Queue the original reassignment behind the close preflight.
+                finishing = asyncio.create_task(adapter.finish_session_light(self.now, None))
+                await asyncio.sleep(0)
+            finally:
+                adapter._light_output_lock.release()
+            await closing
+            self.assertFalse(await finishing)
+        self.assertTrue(self.runtime.closed)
+        self.assertTrue(self.runtime.archive.closed)
+        self.assertIs(adapter._light_service_task, service)
+        self.assertEqual(self.light.calls, [])
 
     async def test_close_wait_failure_keeps_archive_open_and_heater_off_then_retries(self):
         await self.runtime.set_operation(True)

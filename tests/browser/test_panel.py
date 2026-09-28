@@ -205,56 +205,76 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         await self.runtime.archive.flush()
         self.assertIsNone(self.runtime.session)
-        # Change the actual HA user behind the existing token and panel.
-        # The HTTP views and frontend remain the original production paths.
-        await self.hass.auth.async_update_user(self.user, group_ids=[GROUP_ID_USER])
+        # The first HA user is its owner and remains admin regardless of groups.
+        # Use another real user for changes behind the same token and panel.
+        user = await self.hass.auth.async_create_user(
+            "Archive projection user", group_ids=[GROUP_ID_USER]
+        )
+        self.assertFalse(user.is_owner)
+        self.assertFalse(user.is_admin)
+        refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
+        tokens = {"hassUrl": self.url, "clientId": self.url + "/",
+                  "access_token": self.hass.auth.async_create_access_token(refresh),
+                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "expires_in": 1800}
+        context = await self.browser.new_context(viewport={"width": 1440, "height": 1080})
+        self.addAsyncCleanup(context.close)
+        await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+        page = await context.new_page()
+        page.on("pageerror", lambda error: self.errors.append(str(error)))
+        await page.goto(self.url + "/ha-sauna")
+        panel = page.locator("ha-sauna-panel")
+        await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
         await self.hass.async_block_till_done()
-        await self.panel.evaluate("""async p => {
+        await panel.evaluate("""async p => {
           while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
           clearInterval(p.timer);
           await p.refresh();
         }""")
-        await self.panel.locator('.main-tabs [data-action="history"]').click()
-        await expect(self.panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
-        await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
-        self.assertTrue(await self.panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
-        self.assertEqual(await self.panel.evaluate(
+        self.assertFalse(await panel.evaluate("p => p.state.permissions.admin"))
+        await panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+        await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
+        self.assertEqual(await panel.evaluate(
             "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
-        await self.panel.evaluate("""p => {
+        await panel.evaluate("""p => {
           p.roleChart = p.historyChart;
           const [a,b] = p.window;
           p.setHistoryWindow(a, a + (b-a)/2);
           p.roleWindow = [...p.window];
         }""")
 
-        await self.hass.auth.async_update_user(self.user, group_ids=[GROUP_ID_ADMIN])
+        await self.hass.auth.async_update_user(user, group_ids=[GROUP_ID_ADMIN])
+        self.assertTrue(user.is_admin)
         await self.hass.async_block_till_done()
-        await self.panel.evaluate("""async p => {
+        await panel.evaluate("""async p => {
           await p.refresh();
           if (p.historyLoad) await p.historyLoad.promise;
         }""")
-        traces = await self.panel.evaluate(
+        traces = await panel.evaluate(
             "p => p.shown.records.filter(r => r.kind === 'detector_trace').length")
         self.assertGreater(traces, 0)
-        self.assertTrue(await self.panel.evaluate("p => p.historyChart === p.roleChart"))
-        self.assertTrue(await self.panel.evaluate(
+        self.assertTrue(await panel.evaluate("p => p.historyChart === p.roleChart"))
+        self.assertTrue(await panel.evaluate(
             "p => p.window.every((value, i) => value === p.roleWindow[i])"))
-        await self.panel.locator('.main-tabs [data-action="details"]').click()
-        await self.panel.locator('.detail-tabs [data-action="diagnostics"]').click()
-        await expect(self.panel.locator('.diagnostic-marker').first).to_be_visible(timeout=15000)
+        await panel.locator('.main-tabs [data-action="details"]').click()
+        await panel.locator('.detail-tabs [data-action="diagnostics"]').click()
+        await expect(panel.locator('.diagnostic-marker').first).to_be_visible(timeout=15000)
 
-        await self.hass.auth.async_update_user(self.user, group_ids=[GROUP_ID_USER])
+        await self.hass.auth.async_update_user(user, group_ids=[GROUP_ID_USER])
+        self.assertFalse(user.is_admin)
         await self.hass.async_block_till_done()
-        await self.panel.evaluate("p => p.refresh()")
-        await expect(self.panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
-        self.assertEqual(await self.panel.locator('.diagnostic-marker').count(), 0)
-        self.assertEqual(await self.panel.locator('[data-action^="event-row:"]').count(), 0)
-        await expect(self.panel.locator('#detection-plots')).to_be_empty()
-        await self.panel.locator('.main-tabs [data-action="history"]').click()
-        await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
-        self.assertEqual(await self.panel.evaluate(
+        await panel.evaluate("p => p.refresh()")
+        await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
+        self.assertEqual(await panel.locator('.diagnostic-marker').count(), 0)
+        self.assertEqual(await panel.locator('[data-action^="event-row:"]').count(), 0)
+        await expect(panel.locator('#detection-plots')).to_be_empty()
+        await panel.locator('.main-tabs [data-action="history"]').click()
+        await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        self.assertEqual(await panel.evaluate(
             "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
-        self.assertTrue(await self.panel.evaluate("p => p.historyChart === p.roleChart"))
+        self.assertTrue(await panel.evaluate("p => p.historyChart === p.roleChart"))
         self.assertEqual(self.errors, [])
 
     async def test_upper_probe_failure_keeps_lower_readings_and_visible_warning(self):
@@ -969,7 +989,28 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate(
             "p=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"
         )
-        self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
+        main_width = await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth")
+        if main_width > 390:
+            print("BROWSER_HISTORY_OVERFLOW", await self.panel.evaluate("""p => {
+              const main = p.shadowRoot.querySelector('main');
+              const box = node => {
+                const r = node.getBoundingClientRect(), s = getComputedStyle(node);
+                return {tag: node.tagName, id: node.id, classes: node.getAttribute('class'),
+                  left: r.left, right: r.right, width: r.width,
+                  scrollWidth: node.scrollWidth, clientWidth: node.clientWidth,
+                  display: s.display, widthStyle: s.width, minWidth: s.minWidth,
+                  maxWidth: s.maxWidth, overflowX: s.overflowX, whiteSpace: s.whiteSpace,
+                  scrollContainer: node.closest('.scroll')?.className || null};
+              };
+              const right = main.getBoundingClientRect().right;
+              return {main: box(main), host: box(p), view: p.view,
+                overflowingNodes: [...main.querySelectorAll('*')]
+                  .filter(node => {
+                    const r = node.getBoundingClientRect();
+                    return r.width > 0 && r.right > right + 0.5;
+                  }).map(box).sort((a,b) => b.right-a.right).slice(0,30)};
+            }"""))
+        self.assertLessEqual(main_width, 390)
         recorder = await self.page.evaluate("()=>document.querySelector('home-assistant').hass.callWS({type:'recorder/info'})")
         self.assertTrue(recorder["thread_running"])
         self.assertTrue(recorder["recording"])

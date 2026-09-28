@@ -46,6 +46,10 @@ parallele und serielle Plattformgrenzen, erfolgreicher und abgebrochener Reload,
 direktes Entladen und wiederholter Runtimeabschluss unterschieden. Das Archiv
 bleibt für den tatsächlichen Abschluss geöffnet. Der Ofen-AUS-Versuch hängt
 nicht am erfolgreichen Schreiben des Archivs oder am Abschluss des Lichtdiensts.
+Die unabhängige Gegenlektüre fand zusätzlich einen bereits am Ausgabelock
+wartenden Leuchtenwechsel: Er konnte erst nach dem Runtimeabschluss eintreten.
+Auch diese Übergabeausgabe wird deshalb an der zentralen Dienststartgrenze
+durch den abgeschlossenen Runtimezustand gesperrt.
 
 Beim Panel umfasst der Rechtewechsel sowohl abgeschlossene Archive als auch
 bereits laufende Seitenabrufe und verborgene Diagnoseansichten. Die neue
