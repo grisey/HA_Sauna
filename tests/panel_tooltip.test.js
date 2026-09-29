@@ -313,7 +313,10 @@ test("tooltip formatters and source-point text are reused within each fixed loca
     inTimeZone(timeZone, () => {
       const tracker = trackingIntl();
       const { tooltip, interaction } = tooltipFor(
-        measurement(), "measurement", panelSource, tracker.intl,
+        measurement(),
+        "measurement",
+        panelSource,
+        tracker.intl,
       );
       const text = tooltip.textContent,
         nodes = [...tooltip.children],
@@ -334,7 +337,10 @@ test("formatter cache separates explicit zones with equal current offsets", () =
   const past = "1900-01-01T12:00:00.123456Z";
   for (const zone of ["Europe/Berlin", "Europe/Paris", "Europe/Berlin"]) {
     const expected = inTimeZone(zone, () => {
-      const frozen = loadHelper(new EventTarget(), frozenPanelSource).timestampFunctions;
+      const frozen = loadHelper(
+        new EventTarget(),
+        frozenPanelSource,
+      ).timestampFunctions;
       return frozen.tooltipWhen(past);
     });
     assert.equal(current.tooltipWhen(past, zone), expected);

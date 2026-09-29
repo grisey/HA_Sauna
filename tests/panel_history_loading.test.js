@@ -224,7 +224,10 @@ test("redacted empty pages advance the server cursor and retry later failures", 
     assert.match(p.errors.history.message, /temporary/);
     fail = false;
     await p.startHistoryLoad();
-    assert.deepEqual(Array.from(p.shown.records, (item) => item.id), [1, 2001]);
+    assert.deepEqual(
+      Array.from(p.shown.records, (item) => item.id),
+      [1, 2001],
+    );
     assert.equal(paths.filter((path) => path.endsWith("after=1000")).length, 1);
     assert.equal(p.cache.get("live").finalSynced, ended);
     assert.equal(p.errors.history, null);
@@ -291,7 +294,8 @@ test("role loss clears diagnostic consumers even while history is hidden", async
   p.chartDataIndex = p.historyIndex(oldCache.records);
   p.historyEventKey = p.historyDiagnosticsKey = "old-admin";
   p.pendingEventFocus = { kind: "marker", eventId: "old" };
-  nodes["#event-list"].innerHTML = '<button data-action="event-row:old">Marker</button>';
+  nodes["#event-list"].innerHTML =
+    '<button data-action="event-row:old">Marker</button>';
   nodes["#detection-plots"].innerHTML = '<svg class="diagnostic-marker"></svg>';
   nodes["#history"].hidden = true;
 
@@ -317,7 +321,11 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
     if (p.state.permissions.admin && ++adminRequests === 1) return old.promise;
     const result = page([1], null, "archive", true);
     if (p.state.permissions.admin)
-      result.records.push({ id: 2, kind: "detector_trace", payload: { current: true } });
+      result.records.push({
+        id: 2,
+        kind: "detector_trace",
+        payload: { current: true },
+      });
     return result;
   });
   p.selected = "archive";
@@ -326,7 +334,10 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
   p.state.permissions.admin = false;
   await p.startHistoryLoad();
   const publicCache = p.cache.get("archive");
-  assert.deepEqual(Array.from(publicCache.records, (item) => item.id), [1]);
+  assert.deepEqual(
+    Array.from(publicCache.records, (item) => item.id),
+    [1],
+  );
   p.state.permissions.admin = true;
   await p.startHistoryLoad();
   const currentCache = p.cache.get("archive");
@@ -336,7 +347,10 @@ test("a stale admin page cannot write after role loss and return to admin", asyn
   });
   await previous;
   assert.equal(p.cache.get("archive"), currentCache);
-  assert.deepEqual(Array.from(currentCache.records, (item) => item.id), [1, 2]);
+  assert.deepEqual(
+    Array.from(currentCache.records, (item) => item.id),
+    [1, 2],
+  );
   assert.deepEqual(currentCache.phase_projection, { intervals: [] });
   assert.equal(currentCache.finalSynced, true);
   assert.equal(p.shown.records, currentCache.records);

@@ -186,28 +186,56 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await context.close()
         self.assertEqual(self.errors, [])
 
-    async def test_normal_and_admin_views_load_and_navigate_the_same_final_archive(self):
+    async def test_normal_and_admin_views_load_and_navigate_the_same_final_archive(
+        self,
+    ):
         await self.runtime.set_operation(True)
         identity = self.runtime.session.session_id
         await self.emit(Kind.DOOR_OPEN, 20)
-        event = next(item for item in self.runtime.session.timeline.processed
-                     if item.kind == Kind.DOOR_OPEN)
-        self.runtime.archive.append("detector_trace", self.now, {
-            "at": self.now, "signals": ["door_open"], "channels": ["upper"],
-            "metrics": {"upper": {"door_temperature_slope": -1.0}},
-            "conditions": {}, "checks": {}, "holds": {},
-        }, identity)
-        self.runtime.archive.append("detection", self.now, {
-            "event": event, "channels": ["upper"], "trace_at": self.now,
-        }, identity)
+        event = next(
+            item
+            for item in self.runtime.session.timeline.processed
+            if item.kind == Kind.DOOR_OPEN
+        )
+        self.runtime.archive.append(
+            "detector_trace",
+            self.now,
+            {
+                "at": self.now,
+                "signals": ["door_open"],
+                "channels": ["upper"],
+                "metrics": {"upper": {"door_temperature_slope": -1.0}},
+                "conditions": {},
+                "checks": {},
+                "holds": {},
+            },
+            identity,
+        )
+        self.runtime.archive.append(
+            "detection",
+            self.now,
+            {
+                "event": event,
+                "channels": ["upper"],
+                "trace_at": self.now,
+            },
+            identity,
+        )
         # Real archive pagination leaves the first page available while the
         # following page is delayed in each fixed permission context.
         for second in range(30, 1030):
             at = self.base + timedelta(seconds=second)
-            self.runtime.archive.append("measurement", at, {
-                "position": "upper", "quantity": "temperature", "value": 72,
-                "received_at": at,
-            }, identity)
+            self.runtime.archive.append(
+                "measurement",
+                at,
+                {
+                    "position": "upper",
+                    "quantity": "temperature",
+                    "value": 72,
+                    "received_at": at,
+                },
+                identity,
+            )
         await self.runtime.set_operation(False)
         self.now += timedelta(minutes=20)
         await self.runtime.tick()
@@ -220,29 +248,48 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(user.is_owner)
         self.assertFalse(user.is_admin)
-        refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
-        tokens = {"hassUrl": self.url, "clientId": self.url + "/",
-                  "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
-                  "expires_in": 1800}
-        context = await self.browser.new_context(viewport={"width": 1440, "height": 1080})
+        refresh = await self.hass.auth.async_create_refresh_token(
+            user, client_id=self.url + "/"
+        )
+        tokens = {
+            "hassUrl": self.url,
+            "clientId": self.url + "/",
+            "access_token": self.hass.auth.async_create_access_token(refresh),
+            "refresh_token": refresh.token,
+            "expires": (time.time() + 1800) * 1000,
+            "expires_in": 1800,
+        }
+        context = await self.browser.new_context(
+            viewport={"width": 1440, "height": 1080}
+        )
         self.addAsyncCleanup(context.close)
-        await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+        await context.add_init_script(
+            "localStorage.setItem('hassTokens', "
+            + json.dumps(json.dumps(tokens))
+            + ");"
+        )
         page = await context.new_page()
         page.on("pageerror", lambda error: self.errors.append(str(error)))
         await page.goto(self.url + "/ha-sauna")
         normal_panel = page.locator("ha-sauna-panel")
-        await expect(normal_panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await expect(
+            normal_panel.locator('#current [data-action="operation"]')
+        ).to_be_visible(timeout=60000)
         await self.hass.async_block_till_done()
         archive_url = f"**/api/ha_sauna/{self.entry.entry_id}/archive?*"
-        for page, panel, admin in ((page, normal_panel, False), (self.page, self.panel, True)):
+        for page, panel, admin in (
+            (page, normal_panel, False),
+            (self.page, self.panel, True),
+        ):
             with self.subTest(admin=admin):
                 await panel.evaluate("""async p => {
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
                   clearInterval(p.timer);
                   await p.refresh();
                 }""")
-                self.assertEqual(await panel.evaluate("p => p.state.permissions.admin"), admin)
+                self.assertEqual(
+                    await panel.evaluate("p => p.state.permissions.admin"), admin
+                )
                 entered, release = asyncio.Event(), asyncio.Event()
 
                 async def delay_archive_page(route):
@@ -258,9 +305,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 try:
                     await panel.locator('.main-tabs [data-action="history"]').click()
                     await asyncio.wait_for(entered.wait(), 10)
-                    await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
-                    self.assertEqual(await panel.evaluate("p => p.historySelectionId()"), identity)
-                    self.assertFalse(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
+                    await expect(panel.locator("svg.session-chart")).to_be_visible(
+                        timeout=15000
+                    )
+                    self.assertEqual(
+                        await panel.evaluate("p => p.historySelectionId()"), identity
+                    )
+                    self.assertFalse(
+                        await panel.evaluate(
+                            "p => p.historyCache(p.historySelectionId()).finalSynced"
+                        )
+                    )
                     chart = await panel.evaluate_handle("p => p.historyChart")
                     await panel.evaluate("""p => {
                       const [a,b] = p.window;
@@ -279,23 +334,37 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await page.mouse.down()
                     await page.mouse.move(x + 20, y)
                     await page.mouse.up()
-                    self.assertGreater(await panel.evaluate("p => p.window[0]"), before_drag[0])
+                    self.assertGreater(
+                        await panel.evaluate("p => p.window[0]"), before_drag[0]
+                    )
                     await panel.locator('[data-action="reset-zoom"]').click()
                     self.assertEqual(await panel.evaluate("p => p.zoom"), 1)
                     await panel.locator('[data-action="zoom-in"]').click()
                     window = await panel.evaluate("p => [...p.window]")
-                    self.assertTrue(await panel.evaluate("""p => {
+                    self.assertTrue(
+                        await panel.evaluate("""p => {
                       const [start, end] = p.historyDomain();
                       return p.window[0] >= start && p.window[1] <= end &&
                         end < Date.parse(p.state.now) - 365 * 24 * 3600 * 1000;
-                    }"""))
+                    }""")
+                    )
                     release.set()
-                    await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+                    await panel.evaluate(
+                        "async p => { if (p.historyLoad) await p.historyLoad.promise; }"
+                    )
                 finally:
                     release.set()
                     await page.unroute(archive_url, delay_archive_page)
-                self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
-                self.assertTrue(await panel.evaluate("(p, chart) => p.historyChart === chart", chart))
+                self.assertTrue(
+                    await panel.evaluate(
+                        "p => p.historyCache(p.historySelectionId()).finalSynced"
+                    )
+                )
+                self.assertTrue(
+                    await panel.evaluate(
+                        "(p, chart) => p.historyChart === chart", chart
+                    )
+                )
                 self.assertEqual(await panel.evaluate("p => [...p.window]"), window)
                 await chart.dispose()
                 await panel.locator("#session").select_option(identity)
@@ -303,20 +372,33 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
                   if (p.historyLoad) await p.historyLoad.promise;
                 }""")
-                await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+                await expect(panel.locator("svg.session-chart")).to_be_visible(
+                    timeout=15000
+                )
                 traces = await panel.evaluate(
-                    "p => p.shown.records.filter(r => r.kind === 'detector_trace').length")
+                    "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"
+                )
                 if admin:
                     self.assertGreater(traces, 0)
                     await panel.locator('.main-tabs [data-action="details"]').click()
-                    await panel.locator('.detail-tabs [data-action="diagnostics"]').click()
-                    await expect(panel.locator('.diagnostic-marker').first).to_be_visible(timeout=15000)
+                    await panel.locator(
+                        '.detail-tabs [data-action="diagnostics"]'
+                    ).click()
+                    await expect(
+                        panel.locator(".diagnostic-marker").first
+                    ).to_be_visible(timeout=15000)
                 else:
                     self.assertEqual(traces, 0)
-                    await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
-                    self.assertEqual(await panel.locator('.diagnostic-marker').count(), 0)
-                    self.assertEqual(await panel.locator('[data-action^="event-row:"]').count(), 0)
-                    await expect(panel.locator('#detection-plots')).to_be_empty()
+                    await expect(
+                        panel.locator('.main-tabs [data-action="details"]')
+                    ).to_be_hidden()
+                    self.assertEqual(
+                        await panel.locator(".diagnostic-marker").count(), 0
+                    )
+                    self.assertEqual(
+                        await panel.locator('[data-action^="event-row:"]').count(), 0
+                    )
+                    await expect(panel.locator("#detection-plots")).to_be_empty()
         self.assertEqual(self.errors, [])
 
     async def test_upper_probe_failure_keeps_lower_readings_and_visible_warning(self):
@@ -1086,26 +1168,38 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
+
         async def zone_snapshot(zone):
             context = await self.browser.new_context(
                 viewport={"width": 1440, "height": 1080}, timezone_id=zone
             )
             try:
-                await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");")
+                await context.add_init_script(
+                    "localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");"
+                )
                 page = await context.new_page()
                 page.on("pageerror", lambda error: self.errors.append(str(error)))
                 await page.goto(self.url + "/ha-sauna")
                 panel = page.locator("ha-sauna-panel")
-                await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+                await expect(
+                    panel.locator('#current [data-action="operation"]')
+                ).to_be_visible(timeout=60000)
                 await panel.locator('.main-tabs [data-action="history"]').click()
-                await expect(panel.locator(f'#session option[value="{identity}"]')).to_be_attached(timeout=15000)
+                await expect(
+                    panel.locator(f'#session option[value="{identity}"]')
+                ).to_be_attached(timeout=15000)
                 await panel.locator("#session").select_option(identity)
                 await panel.evaluate("""async p => {
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
                   if (p.historyLoad) await p.historyLoad.promise;
                 }""")
-                await expect(panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
-                self.assertEqual(await panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+                await expect(panel.locator("[data-gang-id]")).to_contain_text(
+                    "Bestätigt", timeout=15000
+                )
+                self.assertEqual(
+                    await panel.locator("[data-gang-id]").get_attribute("data-start"),
+                    start,
+                )
                 return await panel.evaluate("""p => ({
                   gang: p.$('#gangs tbody tr td:nth-child(2)').textContent,
                   events: [...p.shadowRoot.querySelectorAll('#event-list tbody tr td:nth-child(2)')].map(e=>e.textContent),
@@ -1114,6 +1208,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 })""")
             finally:
                 await context.close()
+
         utc = await zone_snapshot("UTC")
         berlin = await zone_snapshot("Europe/Berlin")
         self.assertTrue(utc["annotations"])
