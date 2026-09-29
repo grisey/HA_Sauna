@@ -370,8 +370,13 @@ const renderCurrent = (
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Übersteuerung/);
   assert.doesNotMatch(
     userAutomatic,
-    /data-action="(?:heater:|light:)|manual-light-value/,
+    /data-action="heater:|manual-light-value/,
   );
+  for (const preset of ["auto", "false", "true"])
+    assert.match(
+      userAutomatic,
+      new RegExp(`data-action="light:${preset}"[^>]*disabled`),
+    );
   const userManual = renderCurrent("manual", {}, false, "#current", { admin: false });
   assert.match(
     userManual,
@@ -421,6 +426,103 @@ const renderCurrent = (
       { purpose: "session_gap", token: "gap-current", due_at: "2026-09-20T12:10:00Z" },
     ],
   };
+  const controlCases = [
+    { mode: "automatic", session: null, operating: false, allowed: false },
+    { mode: "automatic", session: pausedSession, operating: false, allowed: false },
+    { mode: "automatic", session: pausedSession, operating: true, allowed: true },
+    { mode: "manual", session: null, operating: false, allowed: true },
+    { mode: "manual", session: pausedSession, operating: false, allowed: true },
+    { mode: "manual", session: pausedSession, operating: true, allowed: true },
+  ];
+  for (const admin of [false, true]) {
+    for (const light of [false, true]) {
+      for (const scenario of controlCases) {
+        const context = JSON.stringify({ admin, light, ...scenario }),
+          html = renderCurrent(
+            scenario.mode,
+            {},
+            false,
+            "#current",
+            { admin, light },
+            false,
+            scenario.session,
+            [],
+            {},
+            scenario.operating,
+          ),
+          presets = Array.from(
+            html.matchAll(/<button\b[^>]*data-action="light:([^"]+)"[^>]*>/g),
+          );
+        assert.deepEqual(
+          presets.map((match) => match[1]),
+          scenario.mode === "manual"
+            ? ["false", "normal", "true"]
+            : admin
+              ? ["auto", "false", "normal", "true"]
+              : ["auto", "false", "true"],
+          context,
+        );
+        for (const [tag, preset] of presets) {
+          assert.equal(/\bdisabled\b/.test(tag), !(light && scenario.allowed), context);
+          const invocation = makePanel({ admin, light, heater: true });
+          Object.assign(invocation.panel.state, {
+            configuration: { control_mode: scenario.mode },
+            session: scenario.session,
+            operation_enabled: scenario.operating,
+          });
+          await invocation.panel.action(`light:${preset}`);
+          assert.deepEqual(
+            JSON.parse(JSON.stringify(invocation.calls)),
+            light && scenario.allowed
+              ? [
+                  [
+                    "/entry-1/light",
+                    "POST",
+                    {
+                      value: { auto: null, false: false, normal: "normal", true: true }[
+                        preset
+                      ],
+                    },
+                  ],
+                ]
+              : [],
+            context,
+          );
+        }
+        const invocation = makePanel({ admin, light, heater: true });
+        Object.assign(invocation.panel.state, {
+          configuration: { control_mode: scenario.mode },
+          session: scenario.session,
+          operation_enabled: scenario.operating,
+        });
+        await invocation.panel.action("manual-light-overview");
+        assert.equal(
+          invocation.calls.length,
+          Number(admin && light && scenario.allowed),
+          context,
+        );
+        if (admin) {
+          assert.match(html, /data-action="manual-light-overview"/);
+          const input = html.match(
+              /<input\b[^>]*id="manual-light-value-overview"[^>]*>/,
+            )[0],
+            apply = html.match(
+              /<button\b[^>]*data-action="manual-light-overview"[^>]*>/,
+            )[0];
+          for (const tag of [input, apply])
+            assert.equal(/\bdisabled\b/.test(tag), !(light && scenario.allowed), context);
+        } else {
+          assert.doesNotMatch(html, /manual-light-value|Freie Helligkeit/);
+          if (scenario.mode === "automatic") {
+            assert.doesNotMatch(html, /data-action="heater:/);
+            invocation.calls.length = 0;
+            await invocation.panel.action("heater:true");
+            assert.equal(invocation.calls.length, 0, context);
+          }
+        }
+      }
+    }
+  }
   const namedPrograms = [
     { id: "p1", name: "Mild", start_c: 75, end_c: 80, distribution_gangs: 2 },
     {

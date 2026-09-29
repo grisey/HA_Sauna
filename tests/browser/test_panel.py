@@ -872,6 +872,314 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await operation_geometry(), operation_box)
         self.assertEqual(self.errors, [])
 
+    async def test_individual_feedback_preserves_the_entire_open_editor_geometry(self):
+        program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
+        for width in (1440, 390):
+            with self.subTest(width=width):
+                await self.page.set_viewport_size({"width": width, "height": 1080})
+                await self.panel.evaluate(
+                    'p => p.api(`/${p.entry}/program`, "POST", {profile: "constant"})'
+                )
+                await self.page.reload()
+                choice = self.panel.locator('[data-action="program-mode:individual"]')
+                await expect(choice).to_be_visible(timeout=60000)
+                entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+                async def delay_program(route):
+                    response = await route.fetch()
+                    entered.set()
+                    await release.wait()
+                    try:
+                        await route.fulfill(response=response)
+                    finally:
+                        finished.set()
+
+                # Coordinates relative to the panel exclude browser scrolling;
+                # each existing control and the complete row still has to stay put.
+                geometry = lambda: self.panel.evaluate("""p => {
+                  const origin = p.getBoundingClientRect();
+                  return ['.program-types', '.program-types button:nth-child(1)',
+                    '.program-types button:nth-child(2)', '.program-types button:nth-child(3)',
+                    '.program-form', '.manual-overrides', '.gauges', '[data-action="operation"]']
+                    .map(selector => {
+                      const r = p.$('#current ' + selector).getBoundingClientRect();
+                      return {selector, x:r.x-origin.x, y:r.y-origin.y, width:r.width, height:r.height};
+                    });
+                }""")
+                await self.page.route("**" + program_url, delay_program)
+                try:
+                    await choice.click()
+                    await asyncio.wait_for(entered.wait(), 10)
+                    await expect(self.panel.locator("#progression-end")).to_be_visible()
+                    await expect(choice).to_contain_text("Wird übernommen …")
+                    saving = await geometry()
+                    release.set()
+                    await expect(choice).to_contain_text("✓ Übernommen")
+                    saved = await geometry()
+                    self.assertEqual(saved, saving)
+                    await expect(choice).not_to_contain_text("✓ Übernommen", timeout=5000)
+                    self.assertEqual(await geometry(), saving)
+                    await self.panel.evaluate("p => p.refresh()")
+                    self.assertEqual(await geometry(), saving)
+                    self.assertEqual(self.entry.runtime_data.configuration.program_mode, "progressive")
+                finally:
+                    release.set()
+                    if entered.is_set():
+                        await asyncio.wait_for(finished.wait(), 10)
+                    await self.page.unroute("**" + program_url, delay_program)
+        self.assertEqual(self.errors, [])
+
+    async def test_individual_kind_switch_persists_only_at_the_required_confirmation(self):
+        program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
+        for running in (False, True):
+            with self.subTest(running=running):
+                await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
+                  {temperature_steps: [70, 88, 90]})''')
+                await self.page.reload()
+                await expect(self.panel.locator("[data-free-step]").nth(1)).to_have_value("88", timeout=60000)
+                if running:
+                    await self.panel.locator('#current [data-action="operation"]').click()
+                    await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible()
+                    await self.panel.locator('[data-action="program-toggle"]').click()
+                writes = []
+
+                def record_program(request):
+                    if request.method == "POST" and request.url.endswith(("/program", "/temperature")):
+                        writes.append(request.post_data_json)
+
+                self.page.on("request", record_program)
+                try:
+                    if running:
+                        await self.panel.locator('[data-action="program-kind:even"]').click()
+                        await self.panel.evaluate("p => p.refresh()")
+                        self.assertEqual(writes, [])
+                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 88, 90))
+                        await expect(self.panel.locator('[data-action="program-apply"]')).to_be_enabled()
+                    async with self.page.expect_response(
+                        lambda response: response.url.endswith(program_url)
+                        and response.request.method == "POST", timeout=5000
+                    ) as saved:
+                        await self.panel.locator(
+                            '[data-action="program-apply"]' if running else '[data-action="program-kind:even"]'
+                        ).click()
+                    response = await saved.value
+                    self.assertTrue(response.ok)
+                    self.assertEqual(writes, [{"target_temperature_c": 70, "final_temperature_c": 90, "temperature_gangs": 3}])
+                    configuration = self.entry.runtime_data.configuration
+                    self.assertIsNone(configuration.temperature_steps)
+                    self.assertEqual(configuration.parameters.values["target_temperature_c"], 70)
+                    self.assertEqual(configuration.parameters.values["final_temperature_c"], 90)
+                    self.assertEqual(configuration.parameters.values["temperature_gangs"], 3)
+                    await self.panel.locator('[data-action="program-info:free"]').click()
+                    await expect(self.panel.locator('.program-info-popup')).to_contain_text("70 → 80 → 90 °C")
+                finally:
+                    self.page.remove_listener("request", record_program)
+        self.assertEqual(self.errors, [])
+
+    async def test_individual_autosave_preserves_next_focus_and_newer_input(self):
+        for navigation in ("click", "Tab", "failure"):
+            with self.subTest(navigation=navigation):
+                await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
+                  {target_temperature_c: 70, final_temperature_c: 90, temperature_gangs: 3})''')
+                await self.page.reload()
+                end = self.panel.locator("#progression-end")
+                gangs = self.panel.locator("#progression-gangs")
+                start = self.panel.locator("#progression-start")
+                await expect(end).to_have_value("90", timeout=60000)
+                entered = [asyncio.Event(), asyncio.Event()]
+                release = [asyncio.Event(), asyncio.Event()]
+                finished = [asyncio.Event(), asyncio.Event()]
+                writes = []
+                temperature_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
+
+                async def delayed_temperature(route):
+                    index = len(writes)
+                    writes.append(route.request.post_data_json)
+                    if index >= 2:
+                        await route.continue_()
+                        return
+                    response = None if navigation == "failure" else await route.fetch()
+                    entered[index].set()
+                    await asyncio.sleep(0.5)
+                    await release[index].wait()
+                    try:
+                        if navigation == "failure":
+                            await route.fulfill(status=500, content_type="application/json",
+                                                body='{"message":"Absichtlicher Speicherfehler"}')
+                        else:
+                            await route.fulfill(response=response)
+                    finally:
+                        finished[index].set()
+
+                await self.page.route("**" + temperature_url, delayed_temperature)
+                try:
+                    await end.fill("91")
+                    if navigation == "Tab":
+                        await end.press("Tab")
+                        await self.page.keyboard.press("Tab")
+                    else:
+                        await gangs.click()
+                    await asyncio.wait_for(entered[0].wait(), 10)
+                    await expect(gangs).to_be_focused()
+                    await expect(gangs).to_be_enabled()
+                    if navigation == "failure":
+                        release[0].set()
+                        await expect(self.panel.locator("#message")).not_to_be_empty()
+                        await expect(end).to_have_value("91")
+                        await expect(gangs).to_be_focused()
+                        for _ in range(3):
+                            await self.panel.evaluate("p => p.refresh()")
+                        await self.page.wait_for_timeout(2100)
+                        self.assertEqual(writes, [{"final_temperature_c": 91}])
+                        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 90)
+                        await expect(end).to_have_value("91")
+                        continue
+                    await gangs.fill("4")
+                    await start.click()
+                    await start.fill("7")
+                    self.assertEqual(writes, [{"final_temperature_c": 91}])
+                    release[0].set()
+                    await asyncio.wait_for(entered[1].wait(), 10)
+                    await expect(start).to_be_focused()
+                    await expect(start).to_have_value("7")
+                    release[1].set()
+                    await asyncio.wait_for(finished[1].wait(), 10)
+                    await self.panel.evaluate(
+                        "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                    )
+                    await self.panel.evaluate("p => p.refresh()")
+                    await expect(start).to_be_focused()
+                    await expect(start).to_have_value("7")
+                    await expect(gangs).to_have_value("4")
+                    self.assertEqual(writes, [{"final_temperature_c": 91}, {"temperature_gangs": 4}])
+                    self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 70)
+                    self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
+                    self.assertEqual(self.entry.options["parameters"]["temperature_gangs"], 4)
+                finally:
+                    for event in release:
+                        event.set()
+                    for index, event in enumerate(entered):
+                        if event.is_set():
+                            await asyncio.wait_for(finished[index].wait(), 10)
+                    await self.page.unroute("**" + temperature_url, delayed_temperature)
+        self.assertEqual(self.errors, [])
+
+    async def test_automatic_light_presets_are_disabled_without_running_operation(self):
+        await self.panel.locator("#current .manual-overrides summary").click()
+        presets = self.panel.locator('#current .manual-overrides [data-action^="light:"]')
+        self.assertEqual(await presets.count(), 4)
+        for index in range(await presets.count()):
+            with self.subTest(preset=index):
+                await expect(presets.nth(index)).to_be_disabled()
+        await expect(self.panel.locator("#manual-light-value-overview")).to_be_disabled()
+        await expect(self.panel.locator('[data-action="manual-light-overview"]')).to_be_disabled()
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(await self.panel.evaluate("p => p.state.operation_enabled"))
+
+    async def test_normal_user_keeps_simple_light_controls_in_running_automatic_mode(self):
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        user = await self.hass.auth.async_create_user("Normal light user", group_ids=[GROUP_ID_USER])
+        self.assertFalse(user.is_admin)
+        refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
+        tokens = {"hassUrl": self.url, "clientId": self.url + "/",
+                  "access_token": self.hass.auth.async_create_access_token(refresh),
+                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "expires_in": 1800}
+        context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+        try:
+            await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+            page = await context.new_page()
+            await page.goto(self.url + "/ha-sauna")
+            panel = page.locator("ha-sauna-panel")
+            await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            self.assertEqual(await panel.evaluate("p => [p.state.permissions.admin, p.state.permissions.light]"), [False, True])
+            presets = panel.locator('#current [data-action^="light:"]')
+            self.assertEqual(await presets.evaluate_all("buttons => buttons.map(b => b.dataset.action)"),
+                             ["light:auto", "light:false", "light:true"])
+            for index in range(3):
+                await expect(presets.nth(index)).to_be_enabled()
+            self.assertEqual(await panel.locator(".manual-overrides").count(), 0)
+            self.assertEqual(await panel.locator('[data-action^="heater:"]').count(), 0)
+            self.assertEqual(await panel.locator("#manual-light-value-overview").count(), 0)
+            async with page.expect_response(lambda response: response.url.endswith("/light")
+                                            and response.request.method == "POST") as saved:
+                await panel.locator('[data-action="light:false"]').click()
+            self.assertTrue((await saved.value).ok)
+            await expect(panel.locator('[data-action="light:false"]')).to_have_attribute("aria-pressed", "true")
+            await self.runtime.set_operation(False)
+            await panel.evaluate("p => p.refresh()")
+            for index in range(3):
+                await expect(presets.nth(index)).to_be_disabled()
+        finally:
+            await context.close()
+        self.assertEqual(self.errors, [])
+
+    async def test_return_from_hidden_discovers_a_whole_finished_session(self):
+        await self.runtime.set_operation(True)
+        old_id = self.runtime.session.session_id
+        await self.runtime.set_operation(False)
+        self.now += timedelta(minutes=20)
+        await self.runtime.tick()
+        await self.runtime.archive.flush()
+        self.assertIsNone(self.runtime.session)
+        await self.panel.evaluate("p => p.refresh()")
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(self.panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+        await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), old_id)
+        old_cache = await self.panel.evaluate_handle("(p, id) => p.cache.get(id)", old_id)
+        old_records = await self.panel.evaluate("(p, id) => JSON.stringify(p.cache.get(id).records)", old_id)
+        self.assertTrue(await self.panel.evaluate("(p, id) => p.cache.get(id).finalSynced", old_id))
+        # Only visibility is simulated; sessions, status and archive responses
+        # come from the real runtime and authenticated HA endpoints.
+        await self.page.evaluate("""() => {
+          Object.defineProperty(document, 'hidden', {configurable: true, get: () => true});
+          document.dispatchEvent(new Event('visibilitychange'));
+        }""")
+        await self.panel.evaluate("async p => { while (p.busy) await new Promise(r => setTimeout(r, 10)); }")
+        await self.set_source("upper_temperature", 71)
+        await self.set_source("lower_temperature", 65)
+        await self.runtime.set_operation(True)
+        new_id = self.runtime.session.session_id
+        self.assertNotEqual(new_id, old_id)
+        await self.runtime.set_operation(False)
+        self.now += timedelta(minutes=20)
+        await self.runtime.tick()
+        await self.runtime.archive.flush()
+        self.assertIsNone(self.runtime.session)
+        requests = []
+
+        def record_archive(request):
+            if f"/api/ha_sauna/{self.entry.entry_id}/archive" in request.url:
+                requests.append(request.url)
+
+        self.page.on("request", record_archive)
+        try:
+            await self.page.evaluate("""() => {
+              delete document.hidden;
+              document.dispatchEvent(new Event('visibilitychange'));
+            }""")
+            await expect(self.panel.locator(f'#session option[value="{new_id}"]')).to_have_count(1, timeout=15000)
+            await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+            self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), new_id)
+            self.assertEqual(await self.panel.evaluate("p => p.shown.session.session_id"), new_id)
+            self.assertEqual(sum(url.endswith("/archive") for url in requests), 1)
+            self.assertTrue(await self.panel.evaluate("(p, old) => p.cache.get(old.session.session_id) === old", old_cache))
+            self.assertEqual(await self.panel.evaluate("(p, id) => JSON.stringify(p.cache.get(id).records)", old_id), old_records)
+            requests.clear()
+            for _ in range(3):
+                await self.panel.evaluate("p => p.refresh()")
+            self.assertEqual(requests, [])
+            await self.panel.locator("#session").select_option(old_id)
+            await expect(self.panel.locator("svg.session-chart")).to_be_visible()
+            self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), old_id)
+            self.assertEqual(requests, [])
+        finally:
+            self.page.remove_listener("request", record_archive)
+            await old_cache.dispose()
+        self.assertEqual(self.errors, [])
+
     async def test_catalog_editor_sorting_and_persisted_program_ids(self):
         await self.panel.locator('[data-action="program-mode:program"]').click()
         await expect(self.panel.locator('[data-action="program-select:genusszeit"]')).to_have_attribute(

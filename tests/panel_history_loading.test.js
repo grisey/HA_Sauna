@@ -4,11 +4,16 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const panelPath = process.env.PANEL_PATH || "custom_components/ha_sauna/panel.js";
+const document = { hidden: false };
 let Panel;
 vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
-  HTMLElement: class {},
+  HTMLElement: class {
+    attachShadow() {}
+  },
   customElements: { get: () => null, define: (_, value) => (Panel = value) },
   setTimeout,
+  clearTimeout,
+  document,
 });
 const turn = () => new Promise((resolve) => setTimeout(resolve, 5));
 const deferred = () => {
@@ -44,7 +49,7 @@ function panel(api) {
     "#event-list": { innerHTML: "" },
     "#detection-plots": { innerHTML: "" },
   };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(new Panel(), {
     entry: "e",
     generation: 0,
     selected: "live",
@@ -266,6 +271,95 @@ test("last-session fallback reuses its final cache without polling record pages"
   assert.equal(p.historySessionId, "old");
 });
 
+test("a completed background session refreshes the list without discarding archives or an explicit selection", async () => {
+  for (const initial of ["latest", "selected", "empty"]) {
+    const old = page([1], null, "old", true),
+      next = page([2], null, "next", true),
+      listed = (result) => ({
+        session_id: result.session.timeline.session_id,
+        started_at: "2032-01-01T10:00:00Z",
+        ended_at: result.session.ended_at,
+      });
+    let latest = initial === "empty" ? null : old,
+      lists = 0,
+      pages = 0;
+    const idleState = () => ({
+      ...state(),
+      session: null,
+      operation_enabled: false,
+      last_session: latest?.session || null,
+    });
+    const { p } = panel(async (request) => {
+      if (request.endsWith("/state")) return idleState();
+      if (request.endsWith("/archive")) {
+        lists++;
+        return latest === next
+          ? [listed(next), ...(initial === "empty" ? [] : [listed(old)])]
+          : latest
+            ? [listed(old)]
+            : [];
+      }
+      pages++;
+      return request.includes("session_id=old") ? old : next;
+    });
+    p.state = idleState();
+    p.selected = initial === "selected" ? "old" : "live";
+    await p.refresh();
+    await p.historyLoad?.promise;
+    const oldCache = p.cache.get("old");
+    assert.equal(lists, 1);
+
+    p.setPanelView("overview");
+    latest = next;
+    await p.refresh();
+    assert.equal(p.state.session, null);
+    assert.equal(p.state.last_session.timeline.session_id, "next");
+    assert.equal(lists, 1, "hidden history does not fetch archives");
+    p.setPanelView("history");
+    await p.startHistoryLoad();
+    assert.equal(lists, 2, initial);
+    assert.equal(p.sessions[0].session_id, "next", initial);
+    assert.equal(p.historySessionId, initial === "selected" ? "old" : "next");
+    assert.equal(p.cache.get("old"), oldCache, "complete old cache remains reusable");
+    const settledPages = pages;
+    for (let cycle = 0; cycle < 3; cycle++) await p.refresh();
+    assert.equal(lists, 2, "unchanged status does not reload the list");
+    assert.equal(pages, settledPages, "complete selected archive is not reread");
+  }
+});
+
+test("an older pending list cannot hide a newer last-session identity", async () => {
+  const delayedList = deferred();
+  let lists = 0;
+  const idle = (id) => ({
+    ...state(),
+    session: null,
+    operation_enabled: false,
+    last_session: state(id, true).session,
+  });
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive")) {
+      lists++;
+      if (lists === 1) return delayedList.promise;
+      return [{ session_id: "new", started_at: "2032-01-01" }];
+    }
+    return page([1], null, "new", true);
+  });
+  p.state = idle("old");
+  p.sessions = [{ session_id: "old", started_at: "2032-01-01" }];
+  p.acceptState(idle("middle"));
+  const previous = p.startHistoryLoad();
+  p.acceptState(idle("new"));
+  const current = p.startHistoryLoad();
+  assert.equal(lists, 2, "new last session has its own current list request");
+  await current;
+  delayedList.resolve([{ session_id: "middle", started_at: "2032-01-01" }]);
+  await previous;
+  assert.equal(p.sessions[0].session_id, "new");
+  assert.equal(p.historySessionId, "new");
+  assert.equal(p.historyListStale, false);
+});
+
 test("a confirmed empty archive list remains loaded across status cycles", async () => {
   let lists = 0;
   const { p } = panel(async (request) => {
@@ -279,6 +373,32 @@ test("a confirmed empty archive list remains loaded across status cycles", async
   await p.refresh();
   assert.equal(lists, 1);
   assert.deepEqual(p.sessions, []);
+});
+
+test("returning from a hidden document reconciles its archive list once", async () => {
+  let lists = 0;
+  const idle = { ...state(), session: null, operation_enabled: false };
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/state")) return idle;
+    lists++;
+    return [];
+  });
+  p.state = idle;
+  p._hass = {};
+  await p.refresh();
+  await p.historyLoad?.promise;
+  assert.equal(lists, 1);
+  document.hidden = true;
+  p.visibilityHandler();
+  assert.equal(lists, 1, "hiding the panel does not fetch archives");
+  document.hidden = false;
+  p.visibilityHandler();
+  await turn();
+  await p.historyLoad?.promise;
+  assert.equal(lists, 2, "resume checks once even when no live session was seen");
+  await p.refresh();
+  await p.refresh();
+  assert.equal(lists, 2, "a confirmed empty list remains valid afterwards");
 });
 
 test("live page polling advances without reloading the archive list", async () => {
