@@ -3594,6 +3594,17 @@ class SaunaPanel extends HTMLElement {
       session.disabled = true;
     }
   }
+  acceptState(state) {
+    const previousSessionId =
+      this.state?.session?.timeline?.session_id || null;
+    this.state = state;
+    const currentSessionId = state.session?.timeline?.session_id || null;
+    if (previousSessionId === currentSessionId) return;
+    this.historyListStale = true;
+    if (previousSessionId && !currentSessionId)
+      this.historyPendingFinalId = previousSessionId;
+    else if (currentSessionId) this.historyPendingFinalId = null;
+  }
   async refresh(requested = false) {
     if (this.busy) {
       if (requested) this.refreshPending = true;
@@ -3628,16 +3639,7 @@ class SaunaPanel extends HTMLElement {
         appearanceRevision !== (this.appearanceRevision || 0)
       )
         return;
-      const previousSessionId =
-        this.state?.session?.timeline?.session_id || null;
-      this.state = state;
-      const currentSessionId = state.session?.timeline?.session_id || null;
-      if (previousSessionId !== currentSessionId) {
-        this.historyListStale = true;
-        if (previousSessionId && !currentSessionId)
-          this.historyPendingFinalId = previousSessionId;
-        else if (currentSessionId) this.historyPendingFinalId = null;
-      }
+      this.acceptState(state);
       this.syncHistoryProjection();
       const sessionSelect = this.$("#session");
       if (sessionSelect) sessionSelect.disabled = false;

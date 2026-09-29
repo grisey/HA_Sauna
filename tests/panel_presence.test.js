@@ -142,6 +142,7 @@ console.log("presence and phase projection panel tests passed");
     shadowRoot: { activeElement: null, querySelectorAll: () => [] },
     $: (selector) => nodes[selector] || null,
     invalidateHistoryIndex: () => {},
+    scheduleRefresh: () => {},
     drawCurrent: () => {},
     drawSettings: () => {},
     message: (error) => {

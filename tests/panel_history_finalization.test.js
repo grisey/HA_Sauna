@@ -86,7 +86,7 @@ test("aa1681d failure: cached live page refetches final pages after state.sessio
   );
 
   closing = true;
-  p.state = state(null);
+  p.acceptState(state(null));
   await p.startHistoryLoad();
 
   assert.deepEqual(
@@ -118,10 +118,10 @@ test("an explicitly selected old live cache finalizes after a newer live session
     throw Error(`unexpected archive request: ${request}`);
   });
 
-  p.state = state(openSession("old"));
+  p.acceptState(state(openSession("old")));
   await p.startHistoryLoad();
   finalizeOld = true;
-  p.state = state(openSession("new"));
+  p.acceptState(state(openSession("new")));
   p.selected = "old";
   await p.startHistoryLoad();
 
@@ -153,7 +153,7 @@ test("an empty final page updates session and projection without a measurement r
     recordsRevision = cache.recordsRevision,
     metadataRevision = cache.metadataRevision;
   closing = true;
-  p.state = state(null);
+  p.acceptState(state(null));
   await p.startHistoryLoad();
 
   assert.equal(cache.recordsRevision, recordsRevision);
@@ -182,7 +182,7 @@ test("a failed final request retains its cursor and is retried without duplicate
   await p.startHistoryLoad();
   closing = true;
   fail = true;
-  p.state = state(null);
+  p.acceptState(state(null));
   await p.startHistoryLoad();
   const cache = p.cache.get("live");
   assert.equal(cache.after, 1);
