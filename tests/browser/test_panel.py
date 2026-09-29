@@ -1220,9 +1220,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(self.panel.locator(f'#session option[value="{new_id}"]')).to_have_count(1, timeout=15000)
             await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
             self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), new_id)
-            self.assertEqual(await self.panel.evaluate("p => p.shown.session.session_id"), new_id)
+            self.assertEqual(await self.panel.evaluate("p => p.shown.session.timeline.session_id"), new_id)
             self.assertEqual(sum(url.endswith("/archive") for url in requests), 1)
-            self.assertTrue(await self.panel.evaluate("(p, old) => p.cache.get(old.session.session_id) === old", old_cache))
+            self.assertTrue(await self.panel.evaluate("(p, old) => p.cache.get(old.session.timeline.session_id) === old", old_cache))
             self.assertEqual(await self.panel.evaluate("(p, id) => JSON.stringify(p.cache.get(id).records)", old_id), old_records)
             requests.clear()
             for _ in range(3):

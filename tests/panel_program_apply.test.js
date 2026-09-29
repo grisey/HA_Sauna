@@ -597,6 +597,8 @@ test("gap control keeps its apply action inside the open program editor", () => 
   p.programSelectionDraft = { mode: "program", id: "quiet" };
   p.drawCurrent();
   const control = nodes.get("#current").innerHTML;
+  for (const mode of ["program", "individual", "constant"])
+    assert.match(control, new RegExp(`data-action="program-mode:${mode}"`));
   assert.equal((control.match(/data-action="program-apply"/g) || []).length, 1);
   assert.ok(
     control.indexOf('data-action="program-apply"') >

@@ -77,7 +77,6 @@ assert.match(source, /crypto\?\.randomUUID/);
 assert.match(source, /crypto\?\.getRandomValues/);
 assert.match(source, /temperature_steps/);
 assert.doesNotMatch(source, /<select id="program-select"/);
-assert.match(source, /data-action="program-mode:program"/);
 assert.match(source, /data-action="program-select:\$\{esc\(program\.id\)\}"/);
 assert.match(
   source,
