@@ -814,17 +814,25 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
         await self.panel.get_by_role("button", name="Programm ändern").click()
         await self.panel.locator('[data-action="program-mode:program"]').click()
-        operation_box = await self.panel.locator(
-            '#current [data-action="operation"]'
-        ).bounding_box()
+        operation_geometry = lambda: self.panel.evaluate("""p => {
+          const button = p.$('#current [data-action="operation"]');
+          const card = p.$('#current .control-main');
+          const a = button.getBoundingClientRect(), b = card.getBoundingClientRect();
+          return {x: a.x - b.x, y: a.y - b.y, width: a.width, height: a.height};
+        }""")
+        operation_box = await operation_geometry()
         entered = asyncio.Event()
         release = asyncio.Event()
+        route_finished = asyncio.Event()
         program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
 
         async def delay_program(route):
             entered.set()
             await release.wait()
-            await route.continue_()
+            try:
+                await route.continue_()
+            finally:
+                route_finished.set()
 
         await self.page.route("**" + program_url, delay_program)
         try:
@@ -837,12 +845,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await expect(action).to_have_class("program-saving program-main")
                 await expect(action).to_have_css("border-style", "solid")
                 await expect(action).to_be_disabled()
-                self.assertEqual(
-                    await self.panel.locator(
-                        '#current [data-action="operation"]'
-                    ).bounding_box(),
-                    operation_box,
-                )
+                self.assertEqual(await operation_geometry(), operation_box)
                 await expect(self.panel.locator('[data-action="program-cancel-draft"]')).to_be_disabled()
                 release.set()
                 await click
@@ -851,14 +854,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await saved.json())["selected_program_id"], "genusszeit")
             await expect(action).to_have_text("✓ Übernommen", timeout=15000)
             await expect(action).to_have_class("program-saved program-main")
-            self.assertEqual(
-                await self.panel.locator(
-                    '#current [data-action="operation"]'
-                ).bounding_box(),
-                operation_box,
-            )
+            self.assertEqual(await operation_geometry(), operation_box)
         finally:
             release.set()
+            if entered.is_set():
+                await asyncio.wait_for(route_finished.wait(), 10)
             await self.page.unroute("**" + program_url, delay_program)
         self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
         await expect(active_program).to_have_text("Aktuell: Genusszeit")
@@ -869,12 +869,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(active_program).to_have_text("Aktuell: Genusszeit")
         await expect(choice).to_have_attribute("aria-pressed", "true")
         await expect(action).to_have_count(0, timeout=5000)
-        self.assertEqual(
-            await self.panel.locator(
-                '#current [data-action="operation"]'
-            ).bounding_box(),
-            operation_box,
-        )
+        self.assertEqual(await operation_geometry(), operation_box)
         self.assertEqual(self.errors, [])
 
     async def test_catalog_editor_sorting_and_persisted_program_ids(self):
@@ -1331,7 +1326,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Messung oben", gauges_text)
         await expect(self.panel.locator('[data-action="program-mode:program"]')).to_be_visible()
         await expect(self.panel.locator('[data-action="program-mode:individual"]')).to_be_visible()
-        await self.panel.locator('[data-action="program-mode:constant"]').click()
+        program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
+        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
+            await self.panel.locator('[data-action="program-mode:constant"]').click()
         await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
@@ -1339,9 +1336,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(target_arc).to_have_attribute("aria-label", "Solltemperatur einstellen")
         await target_arc.focus()
         await expect(target_arc).to_have_css("opacity", "0.35")
-        await target_arc.press("PageDown")
+        async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
+            await target_arc.press("PageDown")
         await expect(target_arc).to_have_attribute("aria-valuenow", "70", timeout=10000)
-        program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
             await self.panel.locator('[data-action="program-mode:individual"]').click()
         await expect(self.panel.locator("#progression-end")).to_be_visible()
