@@ -368,10 +368,7 @@ const renderCurrent = (
     /data-action="control-mode:manual" aria-pressed="false" >Manuell/,
   );
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Übersteuerung/);
-  assert.doesNotMatch(
-    userAutomatic,
-    /data-action="heater:|manual-light-value/,
-  );
+  assert.doesNotMatch(userAutomatic, /data-action="heater:|manual-light-value/);
   for (const preset of ["auto", "false", "true"])
     assert.match(
       userAutomatic,
@@ -510,7 +507,11 @@ const renderCurrent = (
               /<button\b[^>]*data-action="manual-light-overview"[^>]*>/,
             )[0];
           for (const tag of [input, apply])
-            assert.equal(/\bdisabled\b/.test(tag), !(light && scenario.allowed), context);
+            assert.equal(
+              /\bdisabled\b/.test(tag),
+              !(light && scenario.allowed),
+              context,
+            );
         } else {
           assert.doesNotMatch(html, /manual-light-value|Freie Helligkeit/);
           if (scenario.mode === "automatic") {

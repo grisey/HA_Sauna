@@ -1209,6 +1209,8 @@ class SaunaPanel extends HTMLElement {
       if (typeof document !== "undefined" && document.hidden) {
         clearTimeout(this.timer);
         this.timer = null;
+        this.historyListStale = true;
+        this.historyLoad = null;
         return;
       }
       if (this.isConnected && this._hass) this.start();
@@ -1234,6 +1236,7 @@ class SaunaPanel extends HTMLElement {
     clearTimeout(this.programSavedTimer);
     this.programSavedTimer = null;
     this.programRequest = null;
+    this.programPendingApply = null;
     this.appearanceRequest = null;
     this.appearanceStale = true;
     this.applyAppearance();
@@ -1244,6 +1247,7 @@ class SaunaPanel extends HTMLElement {
     this.timer = null;
     this.generation++;
     this.historyLoad = null;
+    this.historyListStale = true;
     this.pendingEventFocus = null;
     this.cancelHistoryFrame();
     this.historyChart?.destroy();
@@ -1331,8 +1335,9 @@ class SaunaPanel extends HTMLElement {
       const value = current.value,
         checked = current.checked;
       this.patchAttributes(current, next);
-      current.value = value;
-      if ("checked" in current) current.checked = checked;
+      if (current.value !== value) current.value = value;
+      if ("checked" in current && current.checked !== checked)
+        current.checked = checked;
       return current;
     }
     this.patchAttributes(current, next);
@@ -1565,10 +1570,7 @@ class SaunaPanel extends HTMLElement {
     const command = this.appearanceColor("ui_command");
     if (command) {
       style.setProperty("--sauna-command-ink", appearanceContrast(command));
-      style.setProperty(
-        "--sauna-command-focus",
-        readable(proposedFocus, command, 3),
-      );
+      style.setProperty("--sauna-command-focus", readable(proposedFocus, command, 3));
     } else {
       style.removeProperty?.("--sauna-command-ink");
       style.removeProperty?.("--sauna-command-focus");
@@ -1578,10 +1580,7 @@ class SaunaPanel extends HTMLElement {
       style.setProperty("--sauna-danger-ink", appearanceContrast(danger));
       const readableDanger = readable(danger, surfaces.card, 4.5);
       if (readableDanger) style.setProperty("--sauna-danger-text", readableDanger);
-      style.setProperty(
-        "--sauna-danger-focus",
-        readable(proposedFocus, danger, 3),
-      );
+      style.setProperty("--sauna-danger-focus", readable(proposedFocus, danger, 3));
     }
     if (accent)
       style.setProperty("--sauna-accent-focus", readable(proposedFocus, accent, 3));
@@ -3084,15 +3083,40 @@ class SaunaPanel extends HTMLElement {
         width: 100%;
         text-align: left;
       }
-      .program-named-choice span {
+      .program-named-choice > .program-choice-content > span {
         font-weight: 650;
       }
       .program-named-choice small {
+        font-weight: 400;
         white-space: normal;
         text-align: right;
       }
       .program-named-choice[aria-pressed="true"] small {
         color: inherit;
+      }
+      .program-types button,
+      .program-named-choice {
+        position: relative;
+        font-weight: 700;
+      }
+      .program-feedback > .program-choice-content {
+        visibility: hidden;
+      }
+      .program-save-label {
+        position: absolute;
+        inset: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: inherit;
+        font-size: 12px;
+        line-height: 1.2;
+        white-space: normal;
+        text-align: center;
+        pointer-events: none;
+      }
+      .program-named-choice > .program-choice-content {
+        display: contents;
       }
       .program-actions {
         display: flex;
@@ -3311,6 +3335,7 @@ class SaunaPanel extends HTMLElement {
         this.controlSessionKey = null;
         clearTimeout(this.programSavedTimer);
         this.programRequest = null;
+        this.programPendingApply = null;
         this.programSaveState = null;
         this.lastNamedProgramId = null;
         this.progressionDraft = null;
@@ -3363,18 +3388,22 @@ class SaunaPanel extends HTMLElement {
       if (e.target.closest("#parameters")) e.target.dataset.edited = "true";
       if (e.target.closest("#parameters"))
         this.settingsEditRevision = (this.settingsEditRevision || 0) + 1;
-      if (e.target.matches("#progression-start,#progression-end,#progression-gangs")) {
+      if (
+        e.target.matches(
+          "#progression-start,#progression-end,#progression-gangs,[data-free-step-count]",
+        )
+      ) {
         this.progressionDraft = {
           ...this.progressionDraft,
           [e.target.id]: e.target.value,
         };
-        this.programSaveState = null;
+        this.programSaveState = this.programRequest ? "saving" : null;
       }
       if (e.target.matches("[data-free-step]")) {
         this.freeProgramStepsDraft = [
           ...this.shadowRoot.querySelectorAll("[data-free-step]"),
-        ].map((input) => Number(input.value));
-        this.programSaveState = null;
+        ].map((input) => input.value);
+        this.programSaveState = this.programRequest ? "saving" : null;
       }
       if (e.target.matches("[data-program-field],[data-program-step]"))
         this.updateProgramEditorField(e.target);
@@ -3385,13 +3414,6 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("change", (e) => {
       if (!this.state) return;
-      if (e.target.matches("[data-free-step-count]")) {
-        this.freeProgramStepsDraft = this.resizeSteps(
-          this.freeSteps(),
-          Number(e.target.value),
-        );
-        this.markProgramEdited();
-      }
       if (e.target.matches("[data-program-step-count]")) {
         if (!this.programEditor) return;
         this.programEditor.values.temperature_steps = this.resizeSteps(
@@ -3405,10 +3427,8 @@ class SaunaPanel extends HTMLElement {
         e.target.matches(
           "#progression-start,#progression-end,#progression-gangs,[data-free-step],[data-free-step-count]",
         )
-      ) {
-        if (this.state.session) this.markProgramEdited();
-        else this.runPanelAction(() => this.applyProgram());
-      }
+      )
+        this.runPanelAction(() => this.finishFreeProgramInput(e.target));
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
       if (!this.state) return;
@@ -3461,13 +3481,12 @@ class SaunaPanel extends HTMLElement {
         this.runPanelAction(() => this.keyTemperatureTarget(e));
       if (
         e.key === "Enter" &&
-        !this.state.session &&
         e.target.matches(
           "#progression-start,#progression-end,#progression-gangs,[data-free-step],[data-free-step-count]",
         )
       ) {
         e.preventDefault();
-        this.runPanelAction(() => this.applyProgram());
+        this.runPanelAction(() => this.finishFreeProgramInput(e.target));
       }
     });
     this.shadowRoot.addEventListener("pointerdown", (e) => this.beginProgramDrag(e));
@@ -3569,9 +3588,7 @@ class SaunaPanel extends HTMLElement {
   }
   eventElement(event, selector) {
     return (
-      event
-        .composedPath?.()
-        .find((node) => node?.matches?.(selector)) ||
+      event.composedPath?.().find((node) => node?.matches?.(selector)) ||
       event.target?.closest?.(selector) ||
       null
     );
@@ -3596,15 +3613,26 @@ class SaunaPanel extends HTMLElement {
     }
   }
   acceptState(state) {
-    const previousSessionId =
-      this.state?.session?.timeline?.session_id || null;
+    const previousSessionId = this.state?.session?.timeline?.session_id || null,
+      previousLastSessionId = this.state?.last_session?.timeline?.session_id || null;
     this.state = state;
-    const currentSessionId = state.session?.timeline?.session_id || null;
-    if (previousSessionId === currentSessionId) return;
+    const currentSessionId = state.session?.timeline?.session_id || null,
+      lastSessionId = state.last_session?.timeline?.session_id || null;
+    if (
+      previousSessionId === currentSessionId &&
+      previousLastSessionId === lastSessionId
+    )
+      return;
     this.historyListStale = true;
     if (previousSessionId && !currentSessionId)
       this.historyPendingFinalId = previousSessionId;
     else if (currentSessionId) this.historyPendingFinalId = null;
+    if (
+      previousLastSessionId !== lastSessionId &&
+      lastSessionId &&
+      lastSessionId !== this.historyPendingFinalId
+    )
+      this.historyPendingFinalId = null;
   }
   async refresh(requested = false) {
     if (this.busy) {
@@ -3841,7 +3869,13 @@ class SaunaPanel extends HTMLElement {
     if (select.value !== this.selected) select.value = this.selected;
   }
   startHistoryLoad() {
-    if (!this.state) return;
+    if (
+      !this.state ||
+      !this.isConnected ||
+      (typeof document !== "undefined" && document.hidden) ||
+      this.$("#history")?.hidden
+    )
+      return;
     this.syncHistoryProjection();
     const entry = this.entry,
       generation = this.generation,
@@ -3849,8 +3883,9 @@ class SaunaPanel extends HTMLElement {
       projectionGeneration = this.historyProjectionGeneration || 0,
       selected = this.selected,
       liveId = this.state?.session?.timeline.session_id,
+      lastSessionId = this.state?.last_session?.timeline?.session_id,
       selectionGeneration = this.historySelectionGeneration || 0,
-      key = `${generation}:${projectionGeneration}:${projection}:${selectionGeneration}:${entry}:${selected}:${liveId || ""}`;
+      key = `${generation}:${projectionGeneration}:${projection}:${selectionGeneration}:${entry}:${selected}:${liveId || ""}:${lastSessionId || ""}`;
     const listNeeded = this.sessions == null || this.historyListStale,
       initialId = this.historySelectionId(),
       pageNeeded = initialId
@@ -3869,6 +3904,7 @@ class SaunaPanel extends HTMLElement {
       entry === this.entry &&
       selected === this.selected &&
       this.isConnected &&
+      (typeof document === "undefined" || !document.hidden) &&
       !this.$("#history")?.hidden;
     // A live response remains relevant while its session transitions to the
     // archive.  It is stale only when a different live session replaced it.
@@ -3882,7 +3918,12 @@ class SaunaPanel extends HTMLElement {
       try {
         if (listNeeded) {
           const list = await this.api(`/${entry}/archive`);
-          if (!current()) return;
+          if (
+            !current() ||
+            liveId !== this.state?.session?.timeline.session_id ||
+            lastSessionId !== this.state?.last_session?.timeline?.session_id
+          )
+            return;
           this.sessions = list;
           this.historyListStale = false;
           this.syncHistorySessions();
@@ -4205,17 +4246,38 @@ class SaunaPanel extends HTMLElement {
       activeProgramLabel = this.programChoiceLabel(activeChoice, programs),
       programBusy = !!this.programRequest;
     const draftLabel = (draft) =>
-      draft ? '<small class="program-draft-label">Vorgemerkt</small>' : "";
+      session && draft ? '<small class="program-draft-label">Vorgemerkt</small>' : "";
     const programFeedback = (choice) =>
       !session &&
       this.programChoiceMatches(choice, programChoice) &&
       this.programSaveState
-        ? `<small class="program-save-label">${this.programSaveState === "saving" ? "Wird übernommen …" : "✓ Übernommen"}</small>`
+        ? this.programSaveState === "saving"
+          ? "Wird übernommen …"
+          : "✓ Übernommen"
         : "";
-    const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen"><button type="button" data-action="program-mode:program" aria-pressed="${activeMode === "program"}" class="${programMode === "program" && activeMode !== "program" ? "program-draft" : ""}" ${permissions.program && programs.length && !programBusy ? "" : "disabled"}>Programm${draftLabel(programMode === "program" && activeMode !== "program")}</button><button type="button" data-action="program-mode:individual" aria-pressed="${activeMode === "individual"}" class="${programMode === "individual" && activeMode !== "individual" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Individuell${draftLabel(programMode === "individual" && activeMode !== "individual")}${programFeedback({ mode: "individual" })}</button><button type="button" data-action="program-mode:constant" aria-pressed="${activeMode === "constant"}" class="${programMode === "constant" && activeMode !== "constant" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Konstant${draftLabel(programMode === "constant" && activeMode !== "constant")}${programFeedback({ mode: "constant" })}</button></div>`;
+    const choiceContent = (content, feedback) =>
+      `<span class="program-choice-content" ${feedback ? 'aria-hidden="true"' : ""}>${content}</span>${feedback ? `<span class="program-save-label" role="status">${feedback}</span>` : ""}`;
+    const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen">${[
+      ["program", "Programm"],
+      ["individual", "Individuell"],
+      ["constant", "Konstant"],
+    ]
+      .map(([mode, label]) => {
+        const draft = programMode === mode && activeMode !== mode,
+          feedback = programFeedback({ mode });
+        return `<button type="button" data-action="program-mode:${mode}" aria-pressed="${activeMode === mode}" aria-label="${label}${feedback ? `: ${feedback}` : draft && session ? ": Vorgemerkt" : ""}" class="${draft ? "program-draft" : ""} ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" ${permissions.program && (mode !== "program" || programs.length) && !programBusy ? "" : "disabled"}>${choiceContent(`${label}${draftLabel(draft)}`, feedback)}</button>`;
+      })
+      .join("")}</div>`;
     const namedPrograms =
       programMode === "program"
-        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice ${program.id === programChoice.id && program.id !== activeChoice.id ? "program-draft" : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice.id}" ${permissions.program && !programBusy ? "" : "disabled"}><span>${esc(program.name)}${draftLabel(program.id === programChoice.id && program.id !== activeChoice.id)}${programFeedback({ mode: "program", id: program.id })}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
+        ? `<div class="program-named-list">${programs
+            .map((program) => {
+              const draft =
+                  program.id === programChoice.id && program.id !== activeChoice.id,
+                feedback = programFeedback({ mode: "program", id: program.id });
+              return `<button type="button" class="program-named-choice ${draft ? "program-draft" : ""} ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : draft && session ? ": Vorgemerkt" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>${choiceContent(`<span>${esc(program.name)}${draftLabel(draft)}</span><small>${esc(this.programSteps(program))}</small>`, feedback)}</button>`;
+            })
+            .join("")}</div>`
         : "";
     const light = s.manual_controls?.light || {};
     const roundedLight = (value) =>
@@ -4268,11 +4330,9 @@ class SaunaPanel extends HTMLElement {
     const manualLightValue =
       this.manualLightDraft ?? light.manual ?? light.automatic ?? 0;
     const isAdmin = !!permissions.admin;
-    const automaticOverrideAllowed = !!session && !!s.operation_enabled,
-      canManualHeater =
-        permissions.heater && (manualMode || (isAdmin && automaticOverrideAllowed)),
-      canManualLight =
-        permissions.light && (manualMode || (isAdmin && automaticOverrideAllowed));
+    const manualControls = this.manualControlAvailability(),
+      canManualHeater = manualControls.heater,
+      canManualLight = manualControls.brightness;
     const modeControls = `<div class="row"><small>Betriebsmodus</small><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button>${modeLocked ? '<small class="muted">Während der Sitzung gesperrt.</small>' : ""}</div>`;
     const heaterControls =
       isAdmin || manualMode
@@ -4282,7 +4342,7 @@ class SaunaPanel extends HTMLElement {
       const brightnessInput = isAdmin
         ? `<div class="row"><label for="manual-light-value-overview">Freie Helligkeit</label><input id="manual-light-value-overview" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="manual-light-overview" class="confirm" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div>${manualMode ? '<small class="muted">Die Lichtwahl bleibt im manuellen Betrieb erhalten.</small>' : ""}`
         : "";
-      return `<section class="manual-section manual-light"><div class="row"><h3>Licht</h3><span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(permissions.light, includeDimmed)}</div>${brightnessInput}</section>`;
+      return `<section class="manual-section manual-light"><div class="row"><h3>Licht</h3><span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(manualControls.light, includeDimmed)}</div>${brightnessInput}</section>`;
     };
     const overviewLightTimer =
       !session && s.phase_timer?.kind === "session_light"
@@ -4303,7 +4363,7 @@ class SaunaPanel extends HTMLElement {
         temperatureAutomation,
         manualMode,
         heaterControls,
-        lightControls: manualMode || isAdmin ? lightControls(true) : "",
+        lightControls: lightControls(manualMode || isAdmin),
         overrideLimitMinutes: num(p.manual_override_minutes, 0),
         heaterOverrideRemaining: overrideRemaining(heater.override_ends_at),
         lightOverrideRemaining: overrideRemaining(light.override_ends_at),
@@ -4648,36 +4708,91 @@ class SaunaPanel extends HTMLElement {
     this.programChoiceOpen = false;
     this.drawCurrent();
   }
-  async applyProgram() {
-    if (
-      this.programRequest ||
-      !this.state?.permissions?.program ||
-      !this.programDirty()
-    )
+  finishFreeProgramInput(input) {
+    if (input.matches("[data-free-step-count]")) {
+      if (this.progressionDraft?.[input.id] !== input.value)
+        this.progressionDraft = { ...this.progressionDraft, [input.id]: input.value };
+      const count = this.freeProgramStepCount(input.value),
+        steps = this.freeSteps();
+      if (count !== steps.length)
+        this.freeProgramStepsDraft = this.resizeSteps(steps, count);
+      this.drawCurrent();
+    }
+    if (this.state.session) this.markProgramEdited();
+    else return this.applyProgram();
+  }
+  programSubmission() {
+    const choice = this.programChoice(
+        this.state.configuration.temperature_programs || [],
+      ),
+      kind =
+        this.freeProgramKind ||
+        (Array.isArray(this.state.configuration.temperature_steps) ? "steps" : "even"),
+      values =
+        choice.mode !== "individual"
+          ? null
+          : kind === "steps"
+            ? this.freeProgramValues()
+            : this.progressionValues(),
+      draft = {
+        selection: this.programSelectionDraft,
+        progression: this.progressionDraft,
+        steps: this.freeProgramStepsDraft,
+        kind: this.freeProgramKind,
+      };
+    return {
+      choice: { ...choice },
+      kind,
+      values,
+      draft,
+      automatic: !this.state.session,
+      key: JSON.stringify([choice, kind, values]),
+    };
+  }
+  async applyProgram(submission = null) {
+    if (!this.state?.permissions?.program || this.isConnected === false) return;
+    if (!submission) {
+      if (!this.programRequest && !this.programDirty()) return;
+      submission = this.programSubmission();
+    }
+    if (this.programRequest) {
+      if (submission.automatic)
+        this.programPendingApply =
+          submission.key === this.programRequest.submission.key ? null : submission;
       return;
+    }
+    if (submission.automatic && this.state.session) {
+      this.programPendingApply = null;
+      this.programSaveState = null;
+      this.programChoiceOpen = true;
+      this.drawCurrent();
+      return;
+    }
     const entry = this.entry,
       generation = this.generation,
       configuration = this.state.configuration,
-      choice = this.programChoice(configuration.temperature_programs || []),
+      { choice, draft } = submission,
       previousTarget = this.temperatureChange,
-      draft = this.progressionDraft,
-      sessionAtStart = !!this.state.session;
+      draftUnchanged = () =>
+        this.programSelectionDraft === draft.selection &&
+        this.progressionDraft === draft.progression &&
+        this.freeProgramStepsDraft === draft.steps &&
+        this.freeProgramKind === draft.kind;
     let path = "program",
-      body;
+      body,
+      nextSubmission;
     if (choice.mode !== "individual")
       body = { profile: choice.mode === "program" ? choice.id : "constant" };
-    else if (
-      this.freeProgramKind === "steps" ||
-      (Array.isArray(configuration.temperature_steps) && !this.freeProgramKind)
-    )
-      body = { temperature_steps: this.freeProgramValues() };
+    else if (submission.kind === "steps")
+      body = { temperature_steps: submission.values };
     else {
-      const { start, end, gangs } = this.progressionValues();
-      const explicitStart = Object.hasOwn(draft || {}, "progression-start");
+      const { start, end, gangs } = submission.values;
+      const explicitStart = Object.hasOwn(draft.progression || {}, "progression-start");
       const liveEdit =
         configuration.program_mode === "progressive" &&
         configuration.selected_program_id == null &&
         !Array.isArray(configuration.temperature_steps) &&
+        draft.kind == null &&
         !explicitStart;
       if (liveEdit) {
         path = "temperature";
@@ -4696,7 +4811,7 @@ class SaunaPanel extends HTMLElement {
         body.target_temperature_c = null; // Filled from the completed target write below.
     }
     if (!Object.keys(body).length) return;
-    const request = { entry, generation };
+    const request = { entry, generation, submission };
     this.programRequest = request;
     this.programSaveState = "saving";
     clearTimeout(this.programSavedTimer);
@@ -4706,11 +4821,13 @@ class SaunaPanel extends HTMLElement {
       if (
         this.programRequest !== request ||
         this.entry !== entry ||
-        this.generation !== generation
+        this.generation !== generation ||
+        this.isConnected === false
       )
         return;
-      if (!sessionAtStart && this.state.session) {
+      if (submission.automatic && this.state.session) {
         this.programRequest = null;
+        this.programPendingApply = null;
         this.programSaveState = null;
         this.programChoiceOpen = true;
         this.drawCurrent();
@@ -4728,7 +4845,8 @@ class SaunaPanel extends HTMLElement {
       if (
         this.programRequest !== request ||
         this.entry !== entry ||
-        this.generation !== generation
+        this.generation !== generation ||
+        this.isConnected === false
       )
         return;
       const accepted = {
@@ -4755,38 +4873,50 @@ class SaunaPanel extends HTMLElement {
         ...accepted,
         parameters: { ...this.state.configuration.parameters, ...accepted.parameters },
       };
-      this.programSelectionDraft = null;
-      this.freeProgramKind = null;
-      this.freeProgramStepsDraft = null;
-      if (this.progressionDraft === draft) this.progressionDraft = null;
+      const unchanged = draftUnchanged(),
+        pending = this.programPendingApply;
+      if (unchanged) {
+        this.programSelectionDraft = null;
+        this.freeProgramKind = null;
+        this.freeProgramStepsDraft = null;
+        this.progressionDraft = null;
+        this.message(null);
+      }
       this.programRequest = null;
-      this.programSaveState = "saved";
+      this.programPendingApply = null;
+      this.programSaveState = unchanged ? "saved" : null;
+      nextSubmission = pending;
       this.drawCurrent();
-      this.programSavedTimer = setTimeout(() => {
-        if (
-          this.entry !== entry ||
-          this.generation !== generation ||
-          this.programSaveState !== "saved"
-        )
-          return;
-        this.programSaveState = null;
-        if (this.state?.session) this.programChoiceOpen = false;
-        this.drawCurrent();
-      }, 2000);
+      if (unchanged && !pending)
+        this.programSavedTimer = setTimeout(() => {
+          if (
+            this.entry !== entry ||
+            this.generation !== generation ||
+            this.programRequest
+          )
+            return;
+          this.programSaveState = null;
+          if (this.state?.session && !this.programDirty())
+            this.programChoiceOpen = false;
+          this.drawCurrent();
+        }, 2000);
     } catch (error) {
       if (
         this.programRequest !== request ||
         this.entry !== entry ||
-        this.generation !== generation
+        this.generation !== generation ||
+        this.isConnected === false
       )
         return;
       if (this.programRequest === request) {
         this.programRequest = null;
+        this.programPendingApply = null;
         this.programSaveState = null;
         this.drawCurrent();
       }
       throw error;
     }
+    if (nextSubmission) return this.applyProgram(nextSubmission);
     await this.refresh(true);
   }
   storedProgramChoice(programs = []) {
@@ -4804,7 +4934,7 @@ class SaunaPanel extends HTMLElement {
     );
   }
   markProgramEdited() {
-    this.programSaveState = null;
+    this.programSaveState = this.programRequest ? "saving" : null;
     this.drawCurrent();
   }
   programDirty() {
@@ -4901,7 +5031,12 @@ class SaunaPanel extends HTMLElement {
           ? "steps"
           : "even"),
       steps = this.freeSteps(),
-      disabled = permissions.program && !this.programRequest ? "" : "disabled";
+      disabled =
+        permissions.program &&
+        (!this.programRequest || this.programRequest.submission?.automatic)
+          ? ""
+          : "disabled",
+      kindDisabled = permissions.program && !this.programRequest ? "" : "disabled";
     const manual = kind === "steps",
       count = Math.max(1, Math.min(bounds.gangMaximum, steps.length));
     const values = {
@@ -4918,9 +5053,9 @@ class SaunaPanel extends HTMLElement {
         // Keep incomplete fields visible without explaining an older draft.
       }
     }
-    const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
+    const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${kindDisabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${kindDisabled}>Einzelne Stufen</button></div>`;
     const fields = manual
-      ? `<div class="row"><label class="field" for="free-step-count"><span>Stufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
+      ? `<div class="row"><label class="field" for="free-step-count"><span>Stufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${esc(this.progressionDraft?.["free-step-count"] ?? count)}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
           steps,
           count,
         )
@@ -4939,15 +5074,14 @@ class SaunaPanel extends HTMLElement {
     return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="Verteilung erklären" aria-expanded="${this.programInfoOpen === id}">i</button>${this.programInfoOpen === id ? `<span class="program-info-popup">${esc(text)}</span>` : ""}</span>`;
   }
   setFreeProgramKind(kind) {
+    if (!["even", "steps"].includes(kind)) throw Error("Ungültige Eingabeart");
     const inputs = [...this.shadowRoot.querySelectorAll("[data-free-step]")];
-    if (inputs.length)
-      this.freeProgramStepsDraft = inputs.map((input) => Number(input.value));
-    else if (this.$("#progression-start"))
-      this.freeProgramStepsDraft = this.distributedSteps(
-        Number(this.$("#progression-start").value),
-        Number(this.$("#progression-end").value),
-        Number(this.$("#progression-gangs").value),
-      );
+    if (inputs.length) this.freeProgramStepsDraft = inputs.map((input) => input.value);
+    else if (this.$("#progression-start")) {
+      const { start, end, gangs } = this.progressionValues();
+      this.freeProgramStepsDraft = this.distributedSteps(start, end, gangs);
+    }
+    this.progressionDraft = null;
     this.freeProgramKind = kind;
     this.markProgramEdited();
   }
@@ -4968,6 +5102,7 @@ class SaunaPanel extends HTMLElement {
         );
     if (
       !values.length ||
+      (manual && values.length !== this.freeProgramStepCount()) ||
       values.length > bounds.gangMaximum ||
       values.some(
         (value) =>
@@ -4976,6 +5111,23 @@ class SaunaPanel extends HTMLElement {
     )
       throw Error("Temperaturstufen innerhalb der zulässigen Grenzen eingeben");
     return values;
+  }
+  freeProgramStepCount(
+    value = this.progressionDraft?.["free-step-count"] ??
+      this.$("#free-step-count")?.value ??
+      this.freeSteps().length,
+  ) {
+    const count = Number(value),
+      maximum = this.programBounds().gangMaximum;
+    if (
+      !String(value ?? "").trim() ||
+      !Number.isInteger(count) ||
+      !Number.isFinite(maximum) ||
+      count < 1 ||
+      count > maximum
+    )
+      throw Error("Gültige Stufenzahl innerhalb der zulässigen Grenzen eingeben");
+    return count;
   }
   progressionValues(
     values = {
@@ -7167,20 +7319,22 @@ class SaunaPanel extends HTMLElement {
       this.historyChart?.interaction.hide();
     } else this.historyChart?.interaction.invalidateGeometry("size");
   }
+  manualControlAvailability() {
+    const permissions = this.state?.permissions || {},
+      manualMode = this.state?.configuration?.control_mode === "manual",
+      running = !!this.state?.session && !!this.state?.operation_enabled,
+      light = !!permissions.light && (manualMode || running);
+    return {
+      heater: !!permissions.heater && (manualMode || (!!permissions.admin && running)),
+      light,
+      brightness: !!permissions.admin && light,
+    };
+  }
   async action(action) {
     if (!this.state && action !== "menu") return;
     this.message(null);
-    const permissions = this.state?.permissions || {};
-    const automaticOverrideAction =
-      this.state?.configuration?.control_mode !== "manual" &&
-      (action.startsWith("heater:") ||
-        action.startsWith("light:") ||
-        action === "manual-light-overview");
-    if (
-      automaticOverrideAction &&
-      (!this.state?.session || !this.state?.operation_enabled)
-    )
-      return;
+    const permissions = this.state?.permissions || {},
+      manualControls = this.manualControlAvailability();
     if (
       ((action === "operation" || action.startsWith("finish-session:")) &&
         !permissions.control) ||
@@ -7191,10 +7345,9 @@ class SaunaPanel extends HTMLElement {
         action.startsWith("program-remove:") ||
         action === "button-program") &&
         (!permissions.program || this.state.configuration_locked)) ||
-      (action.startsWith("light:") && !permissions.light) ||
-      (action === "manual-light-overview" &&
-        (!permissions.admin || !permissions.light)) ||
-      (action.startsWith("heater:") && !permissions.heater) ||
+      (action.startsWith("light:") && !manualControls.light) ||
+      (action === "manual-light-overview" && !manualControls.brightness) ||
+      (action.startsWith("heater:") && !manualControls.heater) ||
       (action.startsWith("control-mode:") &&
         (!permissions.control || this.state.configuration_locked)) ||
       (action.startsWith("end-phase:") && !permissions.admin) ||
@@ -7327,6 +7480,7 @@ class SaunaPanel extends HTMLElement {
     if (action.startsWith("program-kind:")) {
       if (this.programRequest) return;
       this.setFreeProgramKind(action.slice(13));
+      if (!this.state.session) await this.applyProgram();
       return;
     }
     if (action.startsWith("program-info:")) {

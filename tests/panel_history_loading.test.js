@@ -272,44 +272,60 @@ test("last-session fallback reuses its final cache without polling record pages"
 });
 
 test("a completed background session refreshes the list without discarding archives or an explicit selection", async () => {
-  for (const initial of ["latest", "selected", "empty"]) {
+  for (const initial of ["latest", "selected", "empty", "running"]) {
     const old = page([1], null, "old", true),
+      active = page([3], null, "active", false),
       next = page([2], null, "next", true),
       listed = (result) => ({
         session_id: result.session.timeline.session_id,
-        started_at: "2032-01-01T10:00:00Z",
+        started_at: result.session.timeline.session_started_at,
         ended_at: result.session.ended_at,
       });
+    old.session.timeline.session_started_at = "2032-01-01T10:00:00Z";
+    old.session.ended_at = "2032-01-01T11:00:00Z";
+    active.session.timeline.session_started_at = "2032-01-01T11:15:00Z";
+    next.session.timeline.session_started_at = "2032-01-01T12:15:00Z";
+    next.session.ended_at = "2032-01-01T12:30:00Z";
     let latest = initial === "empty" ? null : old,
+      running = initial === "running",
       lists = 0,
       pages = 0;
-    const idleState = () => ({
+    const snapshot = () => ({
       ...state(),
-      session: null,
-      operation_enabled: false,
+      now: running ? "2032-01-01T12:00:00Z" : "2032-01-01T13:00:00Z",
+      session: running ? active.session : null,
+      operation_enabled: running,
       last_session: latest?.session || null,
     });
     const { p } = panel(async (request) => {
-      if (request.endsWith("/state")) return idleState();
+      if (request.endsWith("/state")) return snapshot();
       if (request.endsWith("/archive")) {
         lists++;
         return latest === next
-          ? [listed(next), ...(initial === "empty" ? [] : [listed(old)])]
+          ? [
+              listed(next),
+              ...(initial === "running" ? [listed(active)] : []),
+              ...(initial === "empty" ? [] : [listed(old)]),
+            ]
           : latest
             ? [listed(old)]
             : [];
       }
       pages++;
+      if (request.includes("session_id=active")) return active;
       return request.includes("session_id=old") ? old : next;
     });
-    p.state = idleState();
+    p.state = snapshot();
     p.selected = initial === "selected" ? "old" : "live";
     await p.refresh();
     await p.historyLoad?.promise;
-    const oldCache = p.cache.get("old");
+    const cachedId = initial === "running" ? "active" : "old",
+      oldCache = p.cache.get(cachedId);
     assert.equal(lists, 1);
 
     p.setPanelView("overview");
+    running = false;
+    active.session = { ...active.session, ended_at: "2032-01-01T12:10:00Z" };
     latest = next;
     await p.refresh();
     assert.equal(p.state.session, null);
@@ -320,7 +336,11 @@ test("a completed background session refreshes the list without discarding archi
     assert.equal(lists, 2, initial);
     assert.equal(p.sessions[0].session_id, "next", initial);
     assert.equal(p.historySessionId, initial === "selected" ? "old" : "next");
-    assert.equal(p.cache.get("old"), oldCache, "complete old cache remains reusable");
+    assert.equal(
+      p.cache.get(cachedId),
+      oldCache,
+      "previous archive cache is preserved",
+    );
     const settledPages = pages;
     for (let cycle = 0; cycle < 3; cycle++) await p.refresh();
     assert.equal(lists, 2, "unchanged status does not reload the list");

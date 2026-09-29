@@ -949,6 +949,37 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
                 self.page.on("request", record_program)
                 try:
+                    if not running:
+                        count = self.panel.locator("#free-step-count")
+                        too_many = str(int(await count.get_attribute("max")) + 1)
+                        for invalid in ("", too_many):
+                            await count.fill(invalid)
+                            await count.press("Enter")
+                            await expect(self.panel.locator("#message")).not_to_be_empty()
+                            await count.press("Tab")
+                            await self.panel.evaluate("p => p.refresh()")
+                            await expect(count).to_have_value(invalid)
+                            await expect(self.panel.locator("#message")).not_to_be_empty()
+                            self.assertEqual(writes, [])
+                            self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 88, 90))
+                        for requested_count, expected_steps in ((4, [70, 88, 90, 90]), (3, [70, 88, 90])):
+                            async with self.page.expect_response(
+                                lambda response: response.url.endswith(program_url)
+                                and response.request.method == "POST"
+                            ) as count_saved:
+                                await count.fill(str(requested_count))
+                                await count.press("Enter")
+                            self.assertTrue((await count_saved.value).ok)
+                            await self.panel.evaluate(
+                                "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                            )
+                            await count.press("Tab")
+                            await self.panel.evaluate("p => p.refresh()")
+                            self.assertEqual(writes, [{"temperature_steps": expected_steps}])
+                            self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, tuple(expected_steps))
+                            await expect(self.panel.locator("[data-free-step]")).to_have_count(requested_count)
+                            await expect(self.panel.locator("#message")).to_be_empty()
+                            writes.clear()
                     if running:
                         await self.panel.locator('[data-action="program-kind:even"]').click()
                         await self.panel.evaluate("p => p.refresh()")
@@ -1055,6 +1086,32 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 70)
                     self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
                     self.assertEqual(self.entry.options["parameters"]["temperature_gangs"], 4)
+                    completed_writes = []
+
+                    def record_completed_start(request):
+                        if request.method == "POST" and request.url.endswith("/program"):
+                            completed_writes.append(request.post_data_json)
+
+                    self.page.on("request", record_completed_start)
+                    try:
+                        async with self.page.expect_response(
+                            lambda response: response.url.endswith("/program")
+                            and response.request.method == "POST"
+                        ) as completed:
+                            await start.fill("72")
+                            await start.press("Tab")
+                        self.assertTrue((await completed.value).ok)
+                        await self.panel.evaluate(
+                            "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                        )
+                        await self.panel.evaluate("p => p.refresh()")
+                        self.assertEqual(completed_writes, [{"target_temperature_c": 72,
+                                                           "final_temperature_c": 91,
+                                                           "temperature_gangs": 4}])
+                        self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 72)
+                        await expect(start).to_have_value("72")
+                    finally:
+                        self.page.remove_listener("request", record_completed_start)
                 finally:
                     for event in release:
                         event.set()

@@ -117,11 +117,15 @@ dieser Ablauf; beim erneuten Anzeigen folgt sofort ein Abgleich.
 
 Sitzungsliste und Datenseiten werden getrennt vom Status geladen. Eine laufende
 Sitzung ergänzt Seiten über ihren Cursor, ohne zuvor wiederholt die Liste zu
-laden. Eine bestätigte leere Liste und ein vollständig synchronisiertes Archiv
-bleiben gültig, bis ein Sitzungsstart, Sitzungsabschluss, Instanzwechsel oder
-eine neue Auswahl einen konkreten Abgleich erfordert. Regelmäßige Aktualisierungen
-fügen oberhalb vorhandener Diagramme keinen Ladehinweis ein und ersetzen deren
-Zeichenflächen nicht.
+laden. Die Liste wird bei einem Sitzungsstart, Sitzungsabschluss oder einer
+geänderten zuletzt beendeten Sitzung erneuert. Nach einer Unterbrechung des
+Panels erfolgt einmalig ein Listenabgleich, sobald der Verlauf sichtbar ist.
+Das erfasst auch eine Sitzung, die vollständig im Hintergrund stattgefunden hat.
+Danach bleibt auch eine bestätigte leere Liste ohne weitere Listenabrufe gültig.
+Vollständige Archivcaches und eine ausdrücklich ausgewählte ältere Sitzung
+bleiben dabei erhalten. Die automatische Auswahl „Letzte Sitzung“ folgt dem
+neuesten Eintrag. Regelmäßige Aktualisierungen fügen oberhalb vorhandener
+Diagramme keinen Ladehinweis ein und ersetzen deren Zeichenflächen nicht.
 
 Bei festem Ausschnitt und unveränderten Skalen bleiben Messkurven über reine
 Uhr- und Phasenänderungen hinweg verwendbar. Die Zeigerbewegung aktualisiert

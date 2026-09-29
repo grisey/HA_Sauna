@@ -34,14 +34,22 @@ Obergrenze beträgt 100 °C.
 Ohne bestehende Sitzung werden benannte, konstante und individuelle Wahlen
 direkt übernommen. Bei individuellen Programmen löst ein abgeschlossener,
 gültiger Eingabevorgang die Übernahme aus; angefangene oder ungültige Eingaben
-bleiben zur Bearbeitung stehen.
+bleiben zur Bearbeitung stehen. Das gilt auch für den Wechsel zwischen
+**Gleichmäßig** und **Einzelne Stufen**. Während der Übertragung bleiben die
+Eingabefelder bedienbar. Der zuletzt abgeschlossene gültige Stand folgt nach
+dem laufenden Speicherauftrag; eine danach angefangene Eingabe bleibt im
+Entwurf. Ein Speicherfehler erhält den Entwurf und stoppt weitere automatische
+Übernahmen. Beginnt zwischenzeitlich eine Sitzung, benötigen wartende
+Änderungen die Bestätigung.
 Während einer bestehenden Sitzung öffnet **Programm ändern** die Auswahl.
 Eine Änderung bleibt bis zur Bestätigung mit **Programm übernehmen** als
 Entwurf sichtbar. **Abbrechen** erhält die bisherige Wahl. Der Entwurf
 bleibt während der laufenden Messwertaktualisierung geöffnet.
 
 Während der Übertragung erscheint **Wird übernommen …**, anschließend
-**✓ Übernommen**. Die bestätigte Auswahl steht als Programmname,
+für zwei Sekunden **✓ Übernommen** innerhalb der vorhandenen Bedienfläche.
+Die Rückmeldung verändert deren Größe und die Anordnung nicht.
+Die bestätigte Auswahl steht als Programmname,
 **Konstant** oder **Individuell** neben **Programm ändern**. Laufende Gänge
 und ihre Zeiten bleiben bei einer Temperaturänderung erhalten.
 
@@ -83,11 +91,12 @@ geht aus. Beim nächsten Einschalten beginnt eine neue Sitzung.
 
 ## Licht
 
-Im Automatikbetrieb stehen **Aus**, **Automatik** und **Hell** zur Verfügung.
-**Automatik** folgt der Temperatur und der aktuellen Phase. **Hell** verwendet
-die dafür eingestellte Helligkeit, standardmäßig 50 %. Administratoren können
-zusätzlich **Gedimmt** und eine freie Helligkeit wählen. **Gedimmt** verwendet
-die zur Tageszeit passende Normalhelligkeit.
+Im laufenden Automatikbetrieb stehen berechtigten Benutzern **Automatik**,
+**Aus** und **Hell** zur Verfügung. Ohne eingeschalteten Betrieb sind diese
+Lichttasten gesperrt. **Automatik** folgt der Temperatur und der aktuellen
+Phase. **Hell** verwendet die dafür eingestellte Helligkeit, standardmäßig
+50 %. Administratoren können zusätzlich **Gedimmt** und eine freie Helligkeit
+wählen. **Gedimmt** verwendet die zur Tageszeit passende Normalhelligkeit.
 
 Eine manuelle Lichtwahl gilt bis zum passenden Phasenwechsel, längstens für
 die eingestellte Übersteuerungsdauer. Danach folgt das Licht wieder der

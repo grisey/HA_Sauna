@@ -65,6 +65,223 @@ function panel(config = configuration(), session = null, api = async () => ({}))
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+function individualFields(p, values = { start: "80", end: "90", gangs: "3" }) {
+  const fields = new Map(
+    Object.entries(values).map(([key, value]) => [`#progression-${key}`, { value }]),
+  );
+  p.$ = (selector) => fields.get(selector) || null;
+  return (key, value) => {
+    fields.get(`#progression-${key}`).value = value;
+    p.progressionDraft = { ...p.progressionDraft, [`progression-${key}`]: value };
+  };
+}
+
+test("changing individual steps to even saves without a session and stages within one", async () => {
+  for (const session of [null, { timeline: {} }]) {
+    const { p, calls } = panel(
+      { ...configuration("progressive"), temperature_steps: [70, 88, 90] },
+      session,
+    );
+    const fields = new Map(
+      [70, 88, 90].map((value, index) => [
+        `#free-step-${index}`,
+        { value: String(value) },
+      ]),
+    );
+    p.$ = (selector) => fields.get(selector) || null;
+    p.shadowRoot = {
+      querySelectorAll: () =>
+        [...fields]
+          .filter(([selector]) => /^#free-step-\d+$/.test(selector))
+          .map(([, input]) => input),
+    };
+    // This fixture reads the production renderer's values; it does not derive
+    // the expected distribution or reproduce the program conversion.
+    p.drawCurrent = () => {
+      const form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+      fields.clear();
+      for (const [, id, value] of form.matchAll(
+        /<input id="([^"]+)"[^>]*value="([^"]*)"/g,
+      ))
+        fields.set(`#${id}`, { value });
+    };
+    p.progressionDraft = { "progression-start": "85", "progression-end": "95" };
+    await p.action("program-kind:even");
+    if (session) {
+      assert.equal(calls.length, 0);
+      assert.equal(p.programDirty(), true);
+      await p.action("program-apply");
+    }
+    assert.deepEqual(plain(calls), [
+      [
+        "/entry/program",
+        "POST",
+        {
+          target_temperature_c: 70,
+          final_temperature_c: 90,
+          temperature_gangs: 3,
+        },
+      ],
+    ]);
+    assert.equal(p.state.configuration.temperature_steps, null);
+    assert.deepEqual(plain(p.freeSteps()), [70, 80, 90]);
+    if (!session) {
+      await p.action("program-kind:steps");
+      const before = calls.length,
+        countInput = {
+          id: "free-step-count",
+          matches: (selector) => selector === "[data-free-step-count]",
+        };
+      for (const value of ["", "0", "1.5", "9"]) {
+        countInput.value = value;
+        assert.throws(() => p.finishFreeProgramInput(countInput), /Stufenzahl/);
+        await assert.rejects(() => p.applyProgram(), /Stufenzahl/);
+        assert.equal(p.progressionDraft["free-step-count"], value);
+        assert.match(
+          p.freeProgramForm(p.programBounds(), p.state.permissions),
+          new RegExp(`id="free-step-count"[^>]*value="${value}"`),
+        );
+      }
+      assert.equal(calls.length, before);
+      countInput.value = "4";
+      await p.finishFreeProgramInput(countInput);
+      await p.finishFreeProgramInput(countInput);
+      assert.equal(
+        calls.length,
+        before + 1,
+        "Enter followed by change saves one count",
+      );
+      assert.deepEqual(plain(calls.at(-1)), [
+        "/entry/program",
+        "POST",
+        {
+          temperature_steps: [70, 80, 90, 90],
+        },
+      ]);
+    }
+  }
+});
+
+test("completed fields serialize while a newer unfinished input survives both responses", async () => {
+  const releases = [];
+  const { p, calls } = panel(
+    configuration("progressive"),
+    null,
+    (_path, _method, body) =>
+      new Promise((resolve) => releases.push(() => resolve({ parameters: body }))),
+  );
+  const edit = individualFields(p);
+  edit("end", "91");
+  const saving = p.applyProgram();
+  await Promise.resolve();
+  assert.doesNotMatch(
+    p.freeProgramForm(p.programBounds(), p.state.permissions),
+    /<input[^>]*disabled/,
+    "saving one field leaves the following fields operable",
+  );
+  edit("gangs", "4");
+  await p.applyProgram();
+  await p.applyProgram(); // Enter followed by change is the same completed value.
+  edit("start", "7");
+  const unfinished = p.progressionDraft;
+  assert.equal(calls.length, 1);
+  releases[0]();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(plain(calls), [
+    ["/entry/temperature", "POST", { final_temperature_c: 91 }],
+    ["/entry/temperature", "POST", { temperature_gangs: 4 }],
+  ]);
+  assert.equal(p.progressionDraft, unfinished);
+  releases[1]();
+  await saving;
+  assert.equal(p.progressionDraft, unfinished);
+  assert.equal(p.$("#progression-start").value, "7");
+  assert.equal(p.state.configuration.parameters.target_temperature_c, 80);
+  assert.equal(p.state.configuration.parameters.final_temperature_c, 91);
+  assert.equal(p.state.configuration.parameters.temperature_gangs, 4);
+  assert.equal(
+    p.programSaveState,
+    null,
+    "an unfinished draft is not reported as saved",
+  );
+});
+
+test("a failed initial or queued field save keeps the latest draft and stops automatic writes", async () => {
+  for (const failAt of [1, 2]) {
+    let release;
+    let requestCount = 0;
+    const { p, calls } = panel(
+      configuration("progressive"),
+      null,
+      async (_path, _method, body) => {
+        const number = ++requestCount;
+        if (number === 1) await new Promise((resolve) => (release = resolve));
+        if (number === failAt) throw Error("save failed");
+        return { parameters: body };
+      },
+    );
+    const edit = individualFields(p);
+    edit("end", "91");
+    const saving = p.applyProgram();
+    await Promise.resolve();
+    edit("gangs", "4");
+    await p.applyProgram();
+    const latest = p.progressionDraft;
+    const rejected = assert.rejects(saving, /save failed/);
+    release();
+    await rejected;
+    assert.equal(calls.length, failAt);
+    assert.equal(p.progressionDraft, latest);
+    assert.equal(
+      p.state.configuration.parameters.final_temperature_c,
+      failAt === 1 ? 90 : 91,
+    );
+    assert.equal(p.state.configuration.parameters.temperature_gangs, 3);
+    assert.equal(p.programSaveState, null);
+    await p.refresh(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls.length, failAt, "errors do not retry a waiting draft");
+  }
+});
+
+test("a queued automatic change requires confirmation after session start and never crosses an entry or disconnect", async () => {
+  for (const interrupt of ["session", "entry", "disconnect"]) {
+    let release;
+    const { p, calls } = panel(
+      configuration("progressive"),
+      null,
+      async () => new Promise((resolve) => (release = resolve)),
+    );
+    const edit = individualFields(p);
+    edit("end", "91");
+    const saving = p.applyProgram();
+    await Promise.resolve();
+    edit("gangs", "4");
+    await p.applyProgram();
+    const latest = p.progressionDraft;
+    if (interrupt === "session") p.state.session = { timeline: {} };
+    if (interrupt === "entry") {
+      p.entry = "another-entry";
+      p.generation++;
+      p.programRequest = null;
+    }
+    if (interrupt === "disconnect") p.isConnected = false;
+    release({ parameters: { final_temperature_c: 91 } });
+    await saving;
+    assert.equal(calls.length, 1);
+    assert.equal(p.progressionDraft, latest);
+    assert.equal(p.state.configuration.parameters.temperature_gangs, 3);
+    assert.equal(
+      p.state.configuration.parameters.final_temperature_c,
+      interrupt === "session" ? 91 : 90,
+    );
+    if (interrupt === "session") {
+      assert.equal(p.programChoiceOpen, true);
+      assert.equal(p.programSaveState, null);
+    }
+  }
+});
+
 test("the individual distribution explains the current validated field draft", () => {
   const { p } = panel(configuration("progressive"));
   p.programInfoOpen = "free";
@@ -147,7 +364,9 @@ test("opaque named IDs retain their mode through request, saved selection and dr
   for (const program of catalog) {
     await p.action(`program-select:${program.id}`);
     assert.deepEqual(plain(calls.at(-1)), [
-      "/entry/program", "POST", { profile: program.id },
+      "/entry/program",
+      "POST",
+      { profile: program.id },
     ]);
     assert.equal(p.state.configuration.selected_program_id, program.id);
     assert.equal(p.programMode(catalog), "program");
@@ -169,14 +388,18 @@ test("opaque named IDs retain their mode through request, saved selection and dr
   await p.action("program-mode:individual");
   await p.action("program-apply");
   assert.deepEqual(plain(calls.at(-1)), [
-    "/entry/program", "POST", { temperature_steps: [80, 86, 90] },
+    "/entry/program",
+    "POST",
+    { temperature_steps: [80, 86, 90] },
   ]);
   assert.equal(p.state.configuration.selected_program_id, null);
   assert.equal(p.programMode(catalog), "individual");
   await p.action("program-mode:constant");
   await p.action("program-apply");
   assert.deepEqual(plain(calls.at(-1)), [
-    "/entry/program", "POST", { profile: "constant" },
+    "/entry/program",
+    "POST",
+    { profile: "constant" },
   ]);
   assert.equal(p.programMode(catalog), "constant");
 });
