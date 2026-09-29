@@ -1439,6 +1439,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.runtime.session)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Tür geschlossen")
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=5000)
         await self.panel.get_by_role("button", name="Programm ändern").click()
         await self.panel.locator('[data-action="program-mode:constant"]').click()
         await expect(self.panel.locator('#current .program-pending')).to_contain_text("Konstant")
