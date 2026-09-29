@@ -1,4 +1,3 @@
-from dataclasses import replace
 from datetime import timedelta
 import unittest
 from custom_components.ha_sauna.core.energy import advance

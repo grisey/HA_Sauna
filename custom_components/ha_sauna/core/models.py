@@ -8,6 +8,8 @@ from enum import StrEnum
 from math import isfinite
 
 from .timeline import Timeline, utc
+from .contracts import BasePhaseMark, ContactorMark
+from .oven_cooling import OvenCoolingResult
 
 
 class Position(StrEnum):
@@ -143,6 +145,12 @@ class TimedPhase:
     elapsed_seconds: float = 0.0
     accounted_at: datetime | None = None
     paused_at: datetime | None = None
+    active_intervals: tuple[tuple[datetime, datetime | None], ...] = ()
+    # New cooling starts counting only after an actual contactor-OFF report.
+    # Existing archived phases have no calculation and retain their old fields.
+    pending_start: bool = False
+    requested_at: datetime | None = None
+    cooling_calculation: OvenCoolingResult | None = None
 
     def __post_init__(self) -> None:
         # Ältere Aufrufer kannten nur Start und Ende. Die Dauer wird einmal
@@ -179,6 +187,8 @@ class TimedPhase:
 
 @dataclass(frozen=True)
 class CoolingCycle:
+    """Historisches Archivformat; wird von der aktiven Steuerung nicht erzeugt."""
+
     cycle_id: str
     requested_at: datetime
     duration_seconds: float
@@ -218,9 +228,13 @@ class Session:
     thermostat: ThermostatState = field(default_factory=ThermostatState)
     after_run: TimedPhase | None = None
     after_run_history: tuple[TimedPhase, ...] = ()
+    last_completed_oven_cooling_at: datetime | None = None
+    # Nur zum Lesen historischer Sitzungen; keine aktive Kühlsteuerung.
     cooling: CoolingCycle | None = None
     cooling_history: tuple[CoolingCycle, ...] = ()
     ready_at: datetime | None = None
+    base_phases: tuple[BasePhaseMark, ...] = ()
+    contactor_history: tuple[ContactorMark, ...] = ()
     # Anker verweisen in die Timeline; sie zählen keine Gänge selbst.
     temperature_base_c: float | None = None
     temperature_base_gang_count: int = 0

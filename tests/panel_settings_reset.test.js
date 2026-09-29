@@ -63,5 +63,35 @@ const makePanel = ({admin=true, locked=false}={}) => {
   test=makePanel({locked:true});
   await test.panel.action("reset-settings");
   assert.equal(test.calls.length,0, "reset during an active session must not reach the API");
+
+  test=makePanel();
+  let finishReset;
+  const originalApi=test.panel.api;
+  test.panel.api=(...args)=>args[0]==="/entry-1/parameters/reset"
+    ? new Promise(resolve=>{finishReset=resolve;})
+    : originalApi(...args);
+  const oldReset=test.panel.resetSettings();
+  test.panel.entry="entry-2";
+  test.panel.generation=1;
+  test.panel.settingsEntry="entry-2";
+  const newDraft={"progression-end":"95"};
+  test.panel.progressionDraft=newDraft;
+  finishReset({parameters:defaults,configuration});
+  await oldReset;
+  assert.equal(test.panel.settingsEntry,"entry-2");
+  assert.equal(test.panel.progressionDraft,newDraft);
+  assert.equal(test.refreshed,false,"old completion does not refresh the new sauna");
+
+  const errors=[];
+  const actionPanel=Object.assign(Object.create(Panel.prototype), {
+    entry:"entry-1", generation:0, message:error=>errors.push(error),
+  });
+  let rejectOld;
+  actionPanel.runPanelAction(()=>new Promise((_resolve,reject)=>{rejectOld=reject;}));
+  actionPanel.entry="entry-2";
+  actionPanel.generation++;
+  rejectOld(Error("old light request"));
+  await Promise.resolve();
+  assert.equal(errors.length,0,"an old action failure stays with its original instance");
   console.log("panel settings reset regressions passed");
 })().catch(error => { console.error(error); process.exitCode=1; });

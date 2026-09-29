@@ -1,5 +1,4 @@
 """Temperaturänderungen ändern Ziele, niemals die Prioritäten des Ablaufkerns."""
-from dataclasses import replace
 import unittest
 
 from custom_components.ha_sauna.core.display import phase_timer
@@ -23,6 +22,8 @@ def gang(c, index, start):
     c.process(event(f"infusion-{index}", Kind.INFUSION, start+1))
     c.process(event(f"open-{index}", Kind.DOOR_OPEN, start+2))
     c.process(event(f"vent-{index}", Kind.VENTILATION, start+3))
+    c.report_contactor(False, at(start + 3))
+    c.report_heating(False, at(start + 3))
 
 
 class LiveTemperatureTests(unittest.TestCase):
@@ -197,12 +198,12 @@ class LiveTemperatureTests(unittest.TestCase):
         gang(c, 3, 50)
         self.assertEqual(c.target_temperature, 90)
 
-    def test_live_settings_preserve_cooling_after_run_and_door_wait(self):
-        for phase in ("cooling", "after_run", "door_wait"):
+    def test_live_settings_preserve_oven_cooling_and_open_door(self):
+        for phase in ("after_run", "open_door"):
             with self.subTest(phase=phase):
                 c = controller()
                 c.report_heating(True, T0)
-                if phase == "door_wait":
+                if phase == "open_door":
                     c.process(event("wait", Kind.DOOR_OPEN, 59))
                 elif phase == "after_run":
                     gang(c, 1, 57)
@@ -210,18 +211,19 @@ class LiveTemperatureTests(unittest.TestCase):
                 before = c.session
                 change(c, 61, target_temperature_c=95, final_temperature_c=100, temperature_gangs=6)
                 self.assertEqual(c.session.session_id, before.session_id)
-                self.assertEqual(c.session.cooling.ends_at if c.session.cooling else None,
-                                 before.cooling.ends_at if before.cooling else None)
+                self.assertIsNone(c.session.cooling)
                 if before.after_run is not None:
                     self.assertEqual(c.session.after_run.phase_id, before.after_run.phase_id)
                     self.assertEqual(c.session.after_run.ends_at, before.after_run.ends_at)
-                    self.assertEqual(c.session.after_run.remaining_seconds,
-                                     before.after_run.remaining_seconds - 1)
+                    self.assertEqual(
+                        c.session.after_run.remaining_seconds,
+                        before.after_run.remaining_seconds - 1,
+                    )
                 else:
                     self.assertIsNone(c.session.after_run)
                 self.assertEqual(c.session.deadlines, before.deadlines)
                 self.assertGreaterEqual(c.session.heating.elapsed_seconds, before.heating.elapsed_seconds)
-                if phase != "door_wait":
+                if phase != "open_door":
                     self.assertFalse(c.last_decision.heat)
                 self.assertIsNone(c.session.timeline.active)
 
@@ -268,7 +270,7 @@ class LiveTemperatureTests(unittest.TestCase):
         c = controller()
         before = c.session
         with self.assertRaises(ValueError):
-            change(c, 20, heating_minutes=200)
+            change(c, 20, after_run_minutes=200)
         self.assertIs(c.session, before)
 
 
@@ -278,19 +280,21 @@ class PhaseTimerTests(unittest.TestCase):
         c.report_heating(True, T0)
         self.assertEqual(phase_timer(c, at(1))["kind"], "minimum_heating")
         c.process(event("open", Kind.DOOR_OPEN, 2))
-        self.assertEqual(phase_timer(c, at(2))["kind"], "person_wait")
+        self.assertEqual(phase_timer(c, at(2))["kind"], "minimum_heating")
         c.process(event("close", Kind.DOOR_CLOSE, 3))
         c.process(event("person", Kind.PERSON_STRONG, 4))
         self.assertEqual(phase_timer(c, at(5)), {"kind":"gang", "label":"Saunagang seit", "seconds":2, "mode":"elapsed"})
         c.process(event("infusion", Kind.INFUSION, 6))
         c.process(event("open2", Kind.DOOR_OPEN, 61))
         c.process(event("vent", Kind.VENTILATION, 62))
+        c.report_contactor(False, at(62))
         c.report_heating(False, at(62))
         self.assertEqual(phase_timer(c, at(63))["kind"], "after_run")
-        c.advance(at(92))
-        self.assertEqual(phase_timer(c, at(92))["kind"], "cooling")
+        c.advance(c.session.after_run.ends_at)
+        self.assertIsNone(c.session.after_run)
+        self.assertIsNone(c.session.cooling)
         before = c.session
-        self.assertEqual(phase_timer(c, at(93))["seconds"], 29)
+        self.assertNotEqual((phase_timer(c, at(93)) or {}).get("kind"), "cooling")
         self.assertIs(c.session, before)
         c.set_operation(False, at(94))
         self.assertEqual(phase_timer(c, at(94))["kind"], "session_gap")

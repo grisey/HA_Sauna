@@ -5,18 +5,78 @@ const esc = (v) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 const stamp = (v) => (v ? new Date(v).getTime() : null);
-const when = (v) =>
-  v
-    ? new Date(v).toLocaleString("de-DE", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      })
-    : "–";
-const clock = (v) =>
-  new Date(v).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+const timestampFormatterLimit = 12;
+const timestampFormatOptions = Object.freeze({
+  when: Object.freeze({
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }),
+  tooltip: Object.freeze({
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "shortOffset",
+  }),
+  clock: Object.freeze({ hour: "2-digit", minute: "2-digit" }),
+});
+const timestampFormatters = new Map();
+// Resolve once for a tooltip/axis batch. Zone names matter: two zones with the
+// same current offset can have different rules at the measurement's timestamp.
+const localTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
+const timestampFormatter = (style, timeZone = localTimeZone()) => {
+  const key = `${style}:${timeZone || "default"}`;
+  let formatter = timestampFormatters.get(key);
+  if (formatter) {
+    timestampFormatters.delete(key);
+    timestampFormatters.set(key, formatter);
+    return formatter;
+  }
+  formatter = new Intl.DateTimeFormat("de-DE", {
+    ...timestampFormatOptions[style],
+    ...(timeZone ? { timeZone } : {}),
+  });
+  timestampFormatters.set(key, formatter);
+  if (timestampFormatters.size > timestampFormatterLimit)
+    timestampFormatters.delete(timestampFormatters.keys().next().value);
+  return formatter;
+};
+const when = (v, timeZone) => {
+  if (!v) return "–";
+  const date = new Date(v);
+  // Intl.DateTimeFormat#format throws for an invalid date, while the original
+  // Date#toLocaleString path returns its established fallback text.
+  return Number.isFinite(date.getTime())
+    ? timestampFormatter("when", timeZone).format(date)
+    : date.toLocaleString("de-DE", timestampFormatOptions.when);
+};
+const tooltipWhen = (v, timeZone) => {
+  if (
+    (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v))) ||
+    (typeof v === "string" && !v.trim())
+  )
+    return null;
+  const date = new Date(v);
+  if (!Number.isFinite(date.getTime())) return null;
+  const fraction =
+    typeof v === "string" ? v.match(/\.(\d+)(?:Z|[+-]\d\d:\d\d)?$/i)?.[1] : null;
+  return timestampFormatter("tooltip", timeZone)
+    .formatToParts(date)
+    .map((part) =>
+      part.type === "second" && fraction ? `${part.value}.${fraction}` : part.value,
+    )
+    .join("");
+};
+const clock = (v, timeZone) => {
+  const date = new Date(v);
+  return Number.isFinite(date.getTime())
+    ? timestampFormatter("clock", timeZone).format(date)
+    : date.toLocaleTimeString("de-DE", timestampFormatOptions.clock);
+};
 const num = (v, d = 1) =>
   v == null ? "–" : Number(v).toLocaleString("de-DE", { maximumFractionDigits: d });
 const duration = (v, unit = "min") =>
@@ -28,8 +88,8 @@ const phases = {
   aufheizen: "Aufheizen",
   bereit: "Bereit",
   saunagang: "Saunagang",
-  nachlauf: "Nachlauf",
-  zwangskühlung: "Zwangskühlung",
+  nachlauf: "Ofenkühlung",
+  zwangskühlung: "Zwangskühlung (historisch)",
   manuell: "Manuell",
 };
 const events = {
@@ -80,9 +140,122 @@ const temperatureDial = Object.freeze({
   path: "M 75.75 204.25 A 105 105 0 1 1 224.25 204.25",
 });
 
+const appearanceHex = (value) =>
+  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim())
+    ? value.trim().toUpperCase()
+    : null;
+const appearanceRgb = (hex) => {
+  const value = appearanceHex(hex);
+  return value
+    ? [1, 3, 5].map((index) => parseInt(value.slice(index, index + 2), 16))
+    : null;
+};
+const appearanceThemeHex = (value) => {
+  const hex = appearanceHex(value);
+  if (hex) return hex;
+  const shorthand = String(value || "")
+    .trim()
+    .match(/^#([0-9a-f]{3})$/i);
+  if (shorthand)
+    return `#${[...shorthand[1]]
+      .map((digit) => digit.repeat(2))
+      .join("")
+      .toUpperCase()}`;
+  const rgb = String(value || "").match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  return rgb && rgb.slice(1).every((channel) => Number(channel) <= 255)
+    ? `#${rgb
+        .slice(1)
+        .map((channel) => Number(channel).toString(16).padStart(2, "0"))
+        .join("")
+        .toUpperCase()}`
+    : null;
+};
+const appearanceAlpha = (hex, alpha) => {
+  const rgb = appearanceRgb(hex);
+  return rgb ? `rgba(${rgb.join(", ")}, ${alpha})` : "transparent";
+};
+const appearanceBlend = (background, foreground, alpha) => {
+  const base = appearanceRgb(background),
+    overlay = appearanceRgb(foreground);
+  return base && overlay
+    ? `#${base
+        .map((channel, index) =>
+          Math.round(channel * (1 - alpha) + overlay[index] * alpha)
+            .toString(16)
+            .padStart(2, "0"),
+        )
+        .join("")
+        .toUpperCase()}`
+    : null;
+};
+const appearanceContrast = (hex) => {
+  const rgb = appearanceRgb(hex);
+  if (!rgb) return null;
+  const luminance = rgb.reduce((sum, channel, index) => {
+    const x = channel / 255;
+    return (
+      sum +
+      [0.2126, 0.7152, 0.0722][index] *
+        (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4)
+    );
+  }, 0);
+  return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#FFFFFF";
+};
+const appearanceContrastRatio = (left, right) => {
+  const luminance = (hex) =>
+    appearanceRgb(hex).reduce((sum, channel, index) => {
+      const x = channel / 255;
+      return (
+        sum +
+        [0.2126, 0.7152, 0.0722][index] *
+          (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4)
+      );
+    }, 0);
+  const a = luminance(left),
+    b = luminance(right);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+const appearanceTickValues = (bounds) => {
+  if (
+    !bounds ||
+    !Number.isFinite(bounds.minimum) ||
+    !Number.isFinite(bounds.maximum) ||
+    bounds.maximum <= bounds.minimum ||
+    !Number.isFinite(bounds.maximum - bounds.minimum)
+  )
+    return [];
+  const span = bounds.maximum - bounds.minimum;
+  const rough = span / 5;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const step =
+    [1, 2, 5, 10].map((unit) => unit * power).find((value) => span / value <= 7) ||
+    10 * power;
+  if (!Number.isFinite(step) || step <= 0) return [bounds.minimum, bounds.maximum];
+  const values = [bounds.minimum];
+  for (
+    let index = Math.ceil(bounds.minimum / step), count = 0;
+    count < 7;
+    index++, count++
+  ) {
+    const value = index * step;
+    if (value >= bounds.maximum - step * 1e-9) break;
+    if (value > bounds.minimum + step * 1e-9)
+      values.push(Number(value.toPrecision(12)));
+  }
+  values.push(bounds.maximum);
+  return values;
+};
+
 // Split before reducing points: a pixel-sized reduction must never hide a
 // missing measurement interval.  The cubic controls below are monotone, so
 // the display is calm without inventing peaks between measurements.
+const historyMeasurementTtlSeconds = (panel, session) =>
+  Number(
+    session?.measurement_ttl_seconds ??
+      panel.state?.measurement_ttl_seconds ??
+      session?.configuration?.parameters?.sensor_timeout_seconds ??
+      panel.state?.configuration?.parameters?.sensor_timeout_seconds,
+  );
 const historySegments = (values, start, end, ttl) => {
   const segments = [];
   let segment = [];
@@ -96,7 +269,9 @@ const historySegments = (values, start, end, ttl) => {
     if (
       segment.length &&
       ttl &&
-      time - (segment.at(-1).time ?? stamp(segment.at(-1).received_at)) > ttl
+      (point.displayGap ||
+        (!Object.hasOwn(point, "displayGap") &&
+          time - (segment.at(-1).time ?? stamp(segment.at(-1).received_at)) > ttl))
     ) {
       segments.push(segment);
       segment = [];
@@ -108,58 +283,42 @@ const historySegments = (values, start, end, ttl) => {
 };
 const reduceHistorySegment = (segment, x) => {
   const output = [];
-  let bucket = [],
-    key = null;
+  let key = null,
+    bucket = [],
+    first,
+    last,
+    minimum,
+    maximum;
   const flush = () => {
     if (!bucket.length) return;
-    const keep = new Set([
-      bucket[0],
-      bucket.at(-1),
-      bucket.reduce((a, b) => (a.value < b.value ? a : b)),
-      bucket.reduce((a, b) => (a.value > b.value ? a : b)),
-    ]);
-    output.push(...bucket.filter((point) => keep.has(point)));
-    bucket = [];
+    // Scan the original bucket so a repeated reference has the same Set/filter
+    // behavior and source ordering as before, without creating either helper.
+    for (const point of bucket)
+      if (point === first || point === last || point === minimum || point === maximum)
+        output.push(point);
+    bucket.length = 0;
   };
   for (const point of segment) {
     const next = Math.floor(x(point.time ?? stamp(point.received_at)));
     if (key !== null && next !== key) flush();
+    if (!bucket.length) {
+      first = last = minimum = maximum = point;
+    } else {
+      last = point;
+      // Negating the comparisons keeps the prior reducer's last-tie choice,
+      // including JavaScript's behavior for non-comparable values.
+      if (!(minimum.value < point.value)) {
+        minimum = point;
+      }
+      if (!(maximum.value > point.value)) {
+        maximum = point;
+      }
+    }
     key = next;
     bucket.push(point);
   }
   flush();
   return output;
-};
-const monotoneHistoryPath = (points, x, y) => {
-  if (!points.length) return "";
-  const xy = points.map((point) => [
-    x(point.time ?? stamp(point.received_at)),
-    y(point.value),
-  ]);
-  if (xy.length === 1) return `M${xy[0][0].toFixed(2)},${xy[0][1].toFixed(2)}`;
-  const slopes = xy
-    .slice(1)
-    .map(([nextX, nextY], i) => (nextY - xy[i][1]) / (nextX - xy[i][0] || 1));
-  const tangents = xy.map((_, i) => {
-    if (i === 0) return slopes[0];
-    if (i === xy.length - 1) return slopes.at(-1);
-    const previous = slopes[i - 1],
-      next = slopes[i];
-    if (previous * next <= 0) return 0;
-    const before = xy[i][0] - xy[i - 1][0],
-      after = xy[i + 1][0] - xy[i][0],
-      w1 = 2 * after + before,
-      w2 = after + 2 * before;
-    return (w1 + w2) / (w1 / previous + w2 / next);
-  });
-  let path = `M${xy[0][0].toFixed(2)},${xy[0][1].toFixed(2)}`;
-  for (let i = 0; i < xy.length - 1; i++) {
-    const [x0, y0] = xy[i],
-      [x1, y1] = xy[i + 1],
-      dx = (x1 - x0) / 3;
-    path += ` C${(x0 + dx).toFixed(2)},${(y0 + tangents[i] * dx).toFixed(2)} ${(x1 - dx).toFixed(2)},${(y1 - tangents[i + 1] * dx).toFixed(2)} ${x1.toFixed(2)},${y1.toFixed(2)}`;
-  }
-  return path;
 };
 const lowerBoundHistory = (values, time) => {
   let low = 0,
@@ -167,6 +326,16 @@ const lowerBoundHistory = (values, time) => {
   while (low < high) {
     const middle = (low + high) >> 1;
     if (values[middle].time < time) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+const lowerBoundNumber = (values, value) => {
+  let low = 0,
+    high = values.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (values[middle] < value) low = middle + 1;
     else high = middle;
   }
   return low;
@@ -186,20 +355,840 @@ const nearestHistoryPoint = (values, time, start, end) => {
         ? before
         : next;
 };
-const historyWindowValues = (values, start, end) => {
-  const first = lowerBoundHistory(values, start),
-    after = lowerBoundHistory(values, end + 1);
-  // Keep the samples that meet either edge of the clip.  They make a line
-  // arrive at the viewport edge without turning a real TTL/missing gap into a
-  // connection.
-  return values.slice(Math.max(0, first - 1), Math.min(values.length, after + 1));
+const roundHistoryCoordinate = (value) => Number(value.toFixed(2));
+
+// Return numeric Canvas commands, not SVG text.  The equations and the
+// two-decimal rounding intentionally match monotoneHistoryPath exactly.
+const monotoneHistoryCommands = (points, x, y, target) => {
+  const commands = [];
+  if (!points.length) return [];
+  const at = (value) => roundHistoryCoordinate(value);
+  const firstPoint = points[0];
+  let x0 = x(firstPoint.time ?? stamp(firstPoint.received_at)),
+    y0 = y(firstPoint.value);
+  if (target) target.moveTo(at(x0), at(y0));
+  else commands.push(["M", at(x0), at(y0)]);
+  if (points.length === 1) return commands;
+
+  let next = points[1],
+    x1 = x(next.time ?? stamp(next.received_at)),
+    y1 = y(next.value),
+    previousSlope = (y1 - y0) / (x1 - x0 || 1),
+    currentTangent = previousSlope;
+  for (let index = 0; index < points.length - 1; index++) {
+    let nextTangent = previousSlope,
+      after,
+      x2,
+      y2,
+      nextSlope;
+    if (index + 2 < points.length) {
+      after = points[index + 2];
+      x2 = x(after.time ?? stamp(after.received_at));
+      y2 = y(after.value);
+      nextSlope = (y2 - y1) / (x2 - x1 || 1);
+      if (previousSlope * nextSlope <= 0) nextTangent = 0;
+      else {
+        const before = x1 - x0,
+          afterDistance = x2 - x1,
+          w1 = 2 * afterDistance + before,
+          w2 = afterDistance + 2 * before;
+        nextTangent = (w1 + w2) / (w1 / previousSlope + w2 / nextSlope);
+      }
+    }
+    const dx = (x1 - x0) / 3,
+      controlX0 = at(x0 + dx),
+      controlY0 = at(y0 + currentTangent * dx),
+      controlX1 = at(x1 - dx),
+      controlY1 = at(y1 - nextTangent * dx),
+      endX = at(x1),
+      endY = at(y1);
+    if (target)
+      target.bezierCurveTo(controlX0, controlY0, controlX1, controlY1, endX, endY);
+    else commands.push(["C", controlX0, controlY0, controlX1, controlY1, endX, endY]);
+    if (index + 2 < points.length) {
+      x0 = x1;
+      y0 = y1;
+      next = after;
+      x1 = x2;
+      y1 = y2;
+      previousSlope = nextSlope;
+    }
+    currentTangent = nextTangent;
+  }
+  return commands;
 };
+
+const historyStyleKey = (style) =>
+  [style.stroke, style.lineWidth, style.globalAlpha, style.lineDash.join(",")].join(
+    "|",
+  );
+
+class HistoryCurves {
+  constructor(
+    canvas,
+    overviewCanvas,
+    { Path2DClass = globalThis.Path2D, styles = {} } = {},
+  ) {
+    if (!Path2DClass) throw Error("HistoryCurves requires Path2D");
+    this.canvas = canvas;
+    this.overviewCanvas = overviewCanvas;
+    this.Path2DClass = Path2DClass;
+    this.styles = styles;
+    this.mainPaths = new Map();
+    this.mainPaintKey = null;
+    this.overviewPath = null;
+    this.overviewPathKey = null;
+    this.overviewPaintKey = null;
+    this.canvasGeometry = null;
+    this.overviewGeometry = null;
+  }
+
+  curveStyle(position, quantity, supplied = {}) {
+    const defaultStyle = {
+      stroke: this.styles[`${position}:${quantity}`]?.stroke,
+      lineWidth: 3.5,
+      globalAlpha: position === "lower" ? 0.75 : 1,
+      lineDash: position === "lower" ? [8, 5] : [],
+    };
+    return {
+      ...defaultStyle,
+      ...(this.styles[`${position}:${quantity}`] || {}),
+      ...(supplied[`${position}:${quantity}`] || {}),
+      lineDash:
+        supplied[`${position}:${quantity}`]?.lineDash ||
+        this.styles[`${position}:${quantity}`]?.lineDash ||
+        defaultStyle.lineDash,
+    };
+  }
+
+  resizeCanvas(canvas, geometry, kind) {
+    if (!canvas || !geometry) return false;
+    const width = Math.max(1, Number(geometry.width)),
+      height = Math.max(1, Number(geometry.height)),
+      dpr = Math.max(1, Number(geometry.dpr) || 1),
+      bitmapWidth = Math.round(width * dpr),
+      bitmapHeight = Math.round(height * dpr),
+      previous = kind === "main" ? this.canvasGeometry : this.overviewGeometry,
+      changed =
+        !previous ||
+        previous.width !== width ||
+        previous.height !== height ||
+        previous.dpr !== dpr;
+    if (changed) {
+      // CSS and bitmap sizes have separate meanings.  This is the only place
+      // bitmap dimensions are reset; drawing uses clearRect below.
+      if (canvas.style) {
+        const cssWidth = `${width}px`,
+          cssHeight = `${height}px`;
+        if (canvas.style.width !== cssWidth) canvas.style.width = cssWidth;
+        if (canvas.style.height !== cssHeight) canvas.style.height = cssHeight;
+      }
+      if (canvas.width !== bitmapWidth) canvas.width = bitmapWidth;
+      if (canvas.height !== bitmapHeight) canvas.height = bitmapHeight;
+      const state = { width, height, dpr };
+      if (kind === "main") this.canvasGeometry = state;
+      else this.overviewGeometry = state;
+    }
+    return changed;
+  }
+
+  buildMainPath(series, snapshot, quantity) {
+    const x = snapshot.x,
+      y = quantity === "temperature" ? snapshot.yT : snapshot.yH,
+      path = new this.Path2DClass();
+    for (const segment of historySegments(
+      series.values,
+      snapshot.start,
+      snapshot.end,
+      snapshot.ttl,
+    ))
+      monotoneHistoryCommands(reduceHistorySegment(segment, x), x, y, path);
+    return { path };
+  }
+
+  mainPathKey(series, snapshot, position, quantity, style) {
+    // A caller-provided key/revision owns data invalidation.  Falling back to
+    // the values identity makes the fragment useful in small direct callers.
+    const source = series.key ?? series.revision ?? series.values;
+    return [
+      source,
+      snapshot.start,
+      snapshot.end,
+      snapshot.left,
+      snapshot.right,
+      snapshot.top,
+      snapshot.bottom,
+      snapshot.width,
+      snapshot.height,
+      snapshot.ttl,
+      position,
+      quantity,
+      historyStyleKey(style),
+      ...(quantity === "temperature"
+        ? [snapshot.low, snapshot.high]
+        : [snapshot.humidityHigh]),
+    ];
+  }
+
+  sameKey(left, right) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    );
+  }
+
+  updateMainPaths(snapshot) {
+    const visible = [];
+    let pathsChanged = false;
+    for (const position of snapshot.positions) {
+      for (const quantity of ["temperature", "humidity"]) {
+        const name = `${position}:${quantity}`,
+          series = snapshot.series.get(name);
+        if (!series) continue;
+        const style = this.curveStyle(position, quantity, snapshot.styles),
+          key = this.mainPathKey(series, snapshot, position, quantity, style),
+          cached = this.mainPaths.get(name);
+        if (!cached || !this.sameKey(cached.key, key)) {
+          const built = this.buildMainPath(series, snapshot, quantity);
+          this.mainPaths.set(name, { ...built, key, style });
+          pathsChanged = true;
+        }
+        visible.push(name);
+      }
+    }
+    for (const name of this.mainPaths.keys()) {
+      if (!visible.includes(name)) {
+        this.mainPaths.delete(name);
+        pathsChanged = true;
+      }
+    }
+    return { visible, pathsChanged };
+  }
+
+  paintMain(visible, geometry, snapshot) {
+    const context = this.canvas?.getContext?.("2d");
+    if (!context) return;
+    const width = snapshot.width ?? 1200,
+      height = snapshot.height ?? 480;
+    context.setTransform(
+      geometry.dpr * (geometry.width / width),
+      0,
+      0,
+      geometry.dpr * (geometry.height / height),
+      0,
+      0,
+    );
+    context.clearRect(0, 0, width, height);
+    // historyDisplayValues deliberately contributes neighbours outside the
+    // window.  SVG previously clipped them with #plot-clip, so Canvas must
+    // clip before replaying their controls as well.
+    context.save();
+    context.beginPath();
+    context.rect(
+      snapshot.left,
+      snapshot.top,
+      snapshot.right - snapshot.left,
+      snapshot.bottom - snapshot.top,
+    );
+    context.clip();
+    for (const name of visible) {
+      const cached = this.mainPaths.get(name),
+        style = cached.style;
+      context.strokeStyle = style.stroke;
+      context.lineWidth = style.lineWidth;
+      context.globalAlpha = style.globalAlpha;
+      context.setLineDash(style.lineDash);
+      context.stroke(cached.path);
+    }
+    context.restore();
+    context.setLineDash([]);
+    context.globalAlpha = 1;
+  }
+
+  overviewInput(snapshot) {
+    if (snapshot.overview) return snapshot.overview;
+    const series = snapshot.series.get(
+      `${snapshot.overviewPosition || "upper"}:temperature`,
+    );
+    return (
+      series && {
+        start: snapshot.start,
+        end: snapshot.end,
+        left: 20,
+        right: 1180,
+        top: 8,
+        bottom: 36,
+        low: snapshot.low,
+        high: snapshot.high,
+        ttl: snapshot.ttl,
+        values: series.values,
+        key: series.key ?? series.revision,
+      }
+    );
+  }
+
+  updateOverview(snapshot, geometry) {
+    const overview = this.overviewInput(snapshot);
+    if (!this.overviewCanvas || !overview || !geometry) return false;
+    const resized = this.resizeCanvas(this.overviewCanvas, geometry, "overview"),
+      style = {
+        stroke: this.styles.overview?.stroke,
+        lineWidth: 1.5,
+        globalAlpha: 1,
+        lineDash: [],
+      },
+      source = overview.key ?? overview.revision ?? overview.values,
+      pathKey = [
+        source,
+        overview.position,
+        overview.revision,
+        overview.start,
+        overview.end,
+        overview.low,
+        overview.high,
+        overview.ttl,
+        overview.left,
+        overview.right,
+        overview.top,
+        overview.bottom,
+        overview.width,
+        overview.height,
+        historyStyleKey(style),
+      ],
+      paintKey = [
+        this.overviewPathKey,
+        geometry.width,
+        geometry.height,
+        geometry.dpr,
+        this.styles.overview?.track,
+      ];
+    if (!this.sameKey(this.overviewPathKey, pathKey)) {
+      const left = overview.left ?? 20,
+        right = overview.right ?? 1180,
+        top = overview.top ?? 8,
+        bottom = overview.bottom ?? 36,
+        x = (time) =>
+          left +
+          ((time - overview.start) / (overview.end - overview.start)) * (right - left),
+        y = (value) =>
+          bottom -
+          ((value - overview.low) / (overview.high - overview.low || 1)) *
+            (bottom - top),
+        path = new this.Path2DClass();
+      for (const segment of historySegments(
+        overview.values,
+        overview.start,
+        overview.end,
+        overview.ttl,
+      ))
+        monotoneHistoryCommands(reduceHistorySegment(segment, x), x, y, path);
+      this.overviewPath = path;
+      this.overviewPathKey = pathKey;
+    }
+    paintKey[0] = this.overviewPathKey;
+    if (!resized && this.sameKey(this.overviewPaintKey, paintKey)) return false;
+    this.overviewPaintKey = paintKey;
+    const context = this.overviewCanvas.getContext("2d");
+    context.setTransform(
+      geometry.dpr * (geometry.width / (overview.width ?? 1200)),
+      0,
+      0,
+      geometry.dpr * (geometry.height / (overview.height ?? 46)),
+      0,
+      0,
+    );
+    context.clearRect(0, 0, overview.width ?? 1200, overview.height ?? 46);
+    // The track precedes the curve; the separate SVG handles remain above both.
+    context.fillStyle = appearanceAlpha(this.styles.overview?.track, 0.05);
+    context.strokeStyle = appearanceAlpha(this.styles.overview?.track, 0.14);
+    context.lineWidth = 1;
+    context.beginPath();
+    context.roundRect(20, 4, 1160, 36, 5);
+    context.fill();
+    context.stroke();
+    context.strokeStyle = style.stroke;
+    context.lineWidth = style.lineWidth;
+    context.globalAlpha = style.globalAlpha;
+    context.setLineDash(style.lineDash);
+    context.stroke(this.overviewPath);
+    context.setLineDash([]);
+    context.globalAlpha = 1;
+    return true;
+  }
+
+  update(snapshot, geometry) {
+    const mainGeometry = geometry;
+    const resized = this.resizeCanvas(this.canvas, mainGeometry, "main");
+    const { visible, pathsChanged } = this.updateMainPaths(snapshot);
+    const mainKey = [
+      ...visible.map((name) => this.mainPaths.get(name).key),
+      mainGeometry.width,
+      mainGeometry.height,
+      mainGeometry.dpr,
+    ];
+    const mainDrawn =
+      resized || pathsChanged || !this.sameKey(this.mainPaintKey, mainKey);
+    if (mainDrawn) {
+      this.paintMain(visible, mainGeometry, snapshot);
+      this.mainPaintKey = mainKey;
+    }
+    const minimapDrawn = this.updateOverview(snapshot, geometry.overview);
+    return { mainDrawn, minimapDrawn };
+  }
+}
+
+/*
+ * Persistent history-chart interaction layer.
+ *
+ * This is a source fragment: panel.js embeds it in its own scope, where
+ * `when`, `num`, and `tooltipWhen` retain the established display rules.
+ */
+function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
+  const view = surface?.ownerDocument?.defaultView || globalThis;
+  const document = surface?.ownerDocument || view.document;
+  const listeners = [];
+  const scrollTargets = new Set();
+  const state = {
+    dirty: true,
+    invalidationScheduled: false,
+    geometry: null,
+    disposed: false,
+    tooltip: null,
+    tooltipVisible: false,
+    cursorVisible: false,
+    cursorX: null,
+    transform: null,
+    media: null,
+    mediaListener: null,
+    resizeObserver: null,
+    rowTextCache: new WeakMap(),
+  };
+
+  const number = (value, digits) =>
+    typeof num === "function"
+      ? num(value, digits)
+      : Number(value).toLocaleString("de-DE", { maximumFractionDigits: digits });
+  const dateLabel = (value, timeZone) =>
+    typeof when === "function"
+      ? when(value, timeZone)
+      : new Date(value).toLocaleString("de-DE");
+  const sourceDateLabel = (value, timeZone) =>
+    typeof tooltipWhen === "function"
+      ? tooltipWhen(value, timeZone)
+      : value == null
+        ? null
+        : String(value);
+  const sourceValue = (value) => `${typeof value}:${String(value)}`;
+  const rowText = (nearest, quantity, timeZone) => {
+    const source = nearest.source;
+    const cacheable = source && typeof source === "object";
+    const rawPresent = source?.raw_value != null;
+    const key = [
+      timeZone,
+      quantity,
+      sourceValue(nearest.value),
+      sourceValue(source?.raw_value),
+      sourceValue(source?.received_at),
+      sourceValue(source?.measured_at),
+    ].join("|");
+    const cached = cacheable ? state.rowTextCache.get(source) : null;
+    if (cached?.key === key) return cached.value;
+    const valueText = rawPresent ? String(source.raw_value) : number(nearest.value, 6);
+    const valueLabel = rawPresent ? "Originalwert" : "Wert";
+    const receivedAt = sourceDateLabel(source?.received_at, timeZone);
+    const measuredAt = sourceDateLabel(source?.measured_at, timeZone);
+    const unit = quantity === "temperature" ? "°C" : "%";
+    const value = `${valueLabel} ${valueText} ${unit}${rawPresent ? "" : " · kein Originalwert gespeichert"} · Empfangen ${receivedAt || "–"}${measuredAt ? ` · Gemessen ${measuredAt}` : ""}`;
+    if (cacheable) state.rowTextCache.set(source, { key, value });
+    return value;
+  };
+  const pixelRatio = () => Math.max(1, Number(view.devicePixelRatio) || 1);
+  const rectFor = (node) => {
+    const rect = node?.getBoundingClientRect?.();
+    return {
+      left: Number(rect?.left) || 0,
+      top: Number(rect?.top) || 0,
+      width: Math.max(0, Number(rect?.width) || 0),
+      height: Math.max(0, Number(rect?.height) || 0),
+    };
+  };
+  const addListener = (target, type, callback, options) => {
+    if (!target?.addEventListener) return;
+    target.addEventListener(type, callback, options);
+    listeners.push([target, type, callback, options]);
+  };
+  const schedule = (reason) => {
+    if (state.disposed) return;
+    if (typeof panel.scheduleHistoryRender === "function")
+      panel.scheduleHistoryRender(reason);
+  };
+  const invalidateGeometry = (reason = "geometry", scheduleRender = true) => {
+    if (state.disposed) return;
+    state.dirty = true;
+    if (scheduleRender && !state.invalidationScheduled) {
+      state.invalidationScheduled = true;
+      schedule(reason);
+    }
+  };
+  const armPixelRatioListener = () => {
+    if (state.media && state.mediaListener) {
+      state.media.removeEventListener?.("change", state.mediaListener);
+      state.media.removeListener?.(state.mediaListener);
+    }
+    state.media = null;
+    state.mediaListener = null;
+    if (!view.matchMedia) return;
+    const media = view.matchMedia(`(resolution: ${pixelRatio()}dppx)`);
+    const changed = () => {
+      invalidateGeometry("pixelratio");
+      armPixelRatioListener();
+    };
+    state.media = media;
+    state.mediaListener = changed;
+    if (media.addEventListener) media.addEventListener("change", changed);
+    else media.addListener?.(changed);
+  };
+  const readGeometry = () => {
+    if (state.disposed) return state.geometry;
+    if (!state.dirty && state.geometry?.dpr !== pixelRatio()) {
+      state.dirty = true;
+      schedule("pixelratio");
+      armPixelRatioListener();
+    }
+    if (!state.dirty && state.geometry) return state.geometry;
+
+    // This is deliberately the only layout-read phase.  Callers must obtain
+    // geometry before changing the tooltip, cursor, SVG, or canvas.
+    const surfaceRect = rectFor(surface);
+    const wrapRect = rectFor(wrap || surface);
+    const overviewRect = rectFor(overview);
+    const dpr = pixelRatio();
+    state.geometry = {
+      dpr,
+      rects: { surface: surfaceRect, wrap: wrapRect, overview: overviewRect },
+      canvas: {
+        width: Math.max(1, Math.round(surfaceRect.width * dpr)),
+        height: Math.max(1, Math.round(surfaceRect.height * dpr)),
+        dpr,
+        cssWidth: surfaceRect.width,
+        cssHeight: surfaceRect.height,
+        css: { width: surfaceRect.width, height: surfaceRect.height },
+      },
+      overviewCanvas: {
+        width: Math.max(1, Math.round(overviewRect.width * dpr)),
+        height: Math.max(1, Math.round(overviewRect.height * dpr)),
+        dpr,
+        cssWidth: overviewRect.width,
+        cssHeight: overviewRect.height,
+        css: { width: overviewRect.width, height: overviewRect.height },
+      },
+    };
+    state.dirty = false;
+    state.invalidationScheduled = false;
+    return state.geometry;
+  };
+  const coordinatesForGeometry = (geometry, target, clientX, clientY = 0) => {
+    const isOverview = target === overview;
+    const rect = isOverview ? geometry.rects.overview : geometry.rects.surface;
+    const logicalWidth = 1200;
+    const logicalHeight = isOverview ? 46 : 480;
+    return {
+      x: ((clientX - rect.left) / (rect.width || 1)) * logicalWidth,
+      y: ((clientY - rect.top) / (rect.height || 1)) * logicalHeight,
+    };
+  };
+  const coordinates = (target, clientX, clientY = 0) =>
+    coordinatesForGeometry(readGeometry(), target, clientX, clientY);
+  const tooltipNodes = () => {
+    if (!tooltip || state.tooltip) return state.tooltip;
+    const heading = document.createElement("strong");
+    const rows = document.createElement("div");
+    const series = new Map();
+    for (const position of ["upper", "lower"])
+      for (const quantity of ["temperature", "humidity"]) {
+        const row = document.createElement("div");
+        const label = document.createElement("span");
+        const value = document.createElement("span");
+        label.style.color = "var(--sauna-card-text, inherit)";
+        row.append(label, document.createElement("br"), value);
+        row.hidden = true;
+        rows.append(row);
+        series.set(`${position}:${quantity}`, { row, label, value });
+      }
+    tooltip.replaceChildren(heading, rows);
+    state.tooltip = { heading, series };
+    return state.tooltip;
+  };
+  const setText = (node, text) => {
+    if (node.textContent !== text) node.textContent = text;
+  };
+  const hide = () => {
+    if (state.disposed) return;
+    if (tooltip && state.tooltipVisible) tooltip.hidden = true;
+    if (cursor && state.cursorVisible) cursor.setAttribute("visibility", "hidden");
+    state.tooltipVisible = false;
+    state.cursorVisible = false;
+    state.transform = null;
+    state.cursorX = null;
+  };
+  const hover = (event, snapshotTransform) => {
+    if (state.disposed || !event) return;
+    // Geometry is read before any tooltip or cursor mutation in this turn.
+    // The root renders after its own read phase.  Reuse that rectangle even
+    // when a scroll/resize invalidation is pending: a hover must never force
+    // layout after the root has written canvas or SVG pixels in this frame.
+    const geometry = state.geometry || readGeometry();
+    const point = coordinatesForGeometry(
+      geometry,
+      event.svg || surface,
+      event.clientX,
+      event.clientY,
+    );
+    const chartWindow = snapshotTransform?.window || panel.window;
+    const start = snapshotTransform?.start ?? chartWindow?.[0];
+    const end = snapshotTransform?.end ?? chartWindow?.[1];
+    const left = snapshotTransform?.left ?? 65;
+    const right = snapshotTransform?.right ?? 1135;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || right <= left)
+      return hide();
+    if (point.x < left || point.x > right) return hide();
+    const time = start + ((point.x - left) / (right - left)) * (end - start);
+    const ttl = historyMeasurementTtlSeconds(panel, panel.shown?.session) * 1000;
+    const nodes = tooltipNodes();
+    const timeZone = localTimeZone();
+    const visible = new Set();
+    for (const position of panel.positions || ["upper"])
+      for (const quantity of ["temperature", "humidity"]) {
+        const nearest = panel.nearestMeasurement?.(position, quantity, time);
+        if (nearest?.value == null || (ttl && Math.abs(nearest.time - time) > ttl))
+          continue;
+        const key = `${position}:${quantity}`;
+        const row = nodes.series.get(key);
+        if (!row) continue;
+        setText(
+          row.label,
+          `${quantity === "temperature" ? "Temperatur" : "Luftfeuchte"}${panel.historyDetail ? ` ${position === "upper" ? "oben" : "unten"}` : ""}`,
+        );
+        setText(row.value, rowText(nearest, quantity, timeZone));
+        if (row.row.hidden) row.row.hidden = false;
+        visible.add(key);
+      }
+    for (const [key, row] of nodes.series)
+      if (!visible.has(key) && !row.row.hidden) row.row.hidden = true;
+    setText(nodes.heading, dateLabel(time, timeZone));
+    if (!state.tooltipVisible) tooltip.hidden = false;
+    state.tooltipVisible = true;
+    const x = Math.max(
+      0,
+      Math.min(
+        geometry.rects.wrap.width - 290,
+        event.clientX - geometry.rects.wrap.left + 12,
+      ),
+    );
+    const y = Math.max(0, event.clientY - geometry.rects.wrap.top - 90);
+    const transform = `translate3d(${x}px, ${y}px, 0)`;
+    if (tooltip.style.transform !== transform) tooltip.style.transform = transform;
+    state.transform = transform;
+    if (cursor && state.cursorX !== point.x) {
+      cursor.setAttribute("x1", String(point.x));
+      cursor.setAttribute("x2", String(point.x));
+      state.cursorX = point.x;
+    }
+    if (cursor && !state.cursorVisible) cursor.setAttribute("visibility", "visible");
+    state.cursorVisible = true;
+    return { point, time, geometry };
+  };
+  const listenForScroll = (target) => {
+    if (!target || scrollTargets.has(target)) return;
+    scrollTargets.add(target);
+    addListener(target, "scroll", () => invalidateGeometry("scroll"), true);
+  };
+  const listenComposedAncestors = (node) => {
+    const seen = new Set();
+    let current = node;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      listenForScroll(current);
+      if (current.assignedSlot) current = current.assignedSlot;
+      else if (current.parentNode) current = current.parentNode;
+      else if (current.host) current = current.host;
+      else {
+        const root = current.getRootNode?.();
+        current = root && root !== current ? root : null;
+      }
+    }
+  };
+
+  listenComposedAncestors(surface);
+  listenComposedAncestors(wrap);
+  listenComposedAncestors(overview);
+  addListener(view, "scroll", () => invalidateGeometry("scroll"), true);
+  addListener(view, "resize", () => invalidateGeometry("resize"));
+  addListener(view.visualViewport, "scroll", () =>
+    invalidateGeometry("viewport-scroll"),
+  );
+  addListener(view.visualViewport, "resize", () =>
+    invalidateGeometry("viewport-resize"),
+  );
+  const Resize = view.ResizeObserver || globalThis.ResizeObserver;
+  if (Resize) {
+    state.resizeObserver = new Resize(() => invalidateGeometry("resize"));
+    for (const node of [surface, wrap, overview])
+      if (node) state.resizeObserver.observe(node);
+  }
+  armPixelRatioListener();
+  // Establish both persistent tooltip nodes and the initial rectangle before
+  // chart-render writes occur.  Later hover turns reuse this cache.
+  readGeometry();
+  tooltipNodes();
+
+  return {
+    readGeometry,
+    coordinates,
+    hover,
+    hide,
+    invalidateGeometry,
+    get geometry() {
+      return readGeometry();
+    },
+    dispose() {
+      if (state.disposed) return;
+      state.disposed = true;
+      for (const [target, type, callback, options] of listeners)
+        target.removeEventListener?.(type, callback, options);
+      listeners.length = 0;
+      state.resizeObserver?.disconnect();
+      if (state.media && state.mediaListener) {
+        state.media.removeEventListener?.("change", state.mediaListener);
+        state.media.removeListener?.(state.mediaListener);
+      }
+      state.media = null;
+      state.mediaListener = null;
+    },
+  };
+}
+
+// One owner for the lifetime of the selected entry/session. Canvas paths,
+// interaction nodes and geometry survive status, archive and phase updates.
+class HistoryChart {
+  constructor(panel, identity) {
+    this.panel = panel;
+    this.identity = identity;
+    this.prepared = new Map();
+    this.preparedOverview = new Map();
+    this.domain = panel.historyDomain();
+    panel.$("#plots").innerHTML = panel.historyMarkup(panel.shown.session);
+    const overview = panel.$("#history-overview");
+    overview.innerHTML =
+      '<canvas aria-hidden="true"></canvas><svg viewBox="0 0 1200 46" preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Zeitausschnitt der Saunasitzung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><rect class="overview-window" data-history-window x="20" y="5" height="34" rx="4"/><rect class="overview-handle" data-history-handle="start" x="16" y="2" width="8" height="40" rx="3"/><rect class="overview-handle" data-history-handle="end" x="1176" y="2" width="8" height="40" rx="3"/></svg>';
+    this.surface = panel.$("svg.session-chart");
+    this.curves = new HistoryCurves(
+      panel.$("canvas.history-curves"),
+      overview.querySelector("canvas"),
+      { styles: panel.historyCurveStyles() },
+    );
+    this.interaction = new HistoryInteraction(
+      panel,
+      this.surface,
+      panel.$(".history-stack"),
+      panel.$("#tooltip"),
+      panel.$("#cursor"),
+      overview.querySelector("svg"),
+    );
+  }
+  render(reasons, session, gangs) {
+    // All client geometry is read before any tooltip, layer or canvas writes.
+    const geometry = this.interaction.readGeometry();
+    if (
+      [...reasons].some((reason) => ["initial", "archive", "viewport"].includes(reason))
+    )
+      this.domain = this.panel.historyDomain();
+    const panel = this.panel,
+      model = panel.historyModel(this, session);
+    this.model = model;
+    const chromeKey = `${panel.historyTitle(session)}:${panel.historyDetail}`;
+    const chromeChanged = this.chromeKey !== chromeKey;
+    this.chromeKey = chromeKey;
+    const title = panel.historyTitle(session),
+      text = (selector, value) => {
+        const node = panel.$(selector);
+        if (node.textContent !== value) node.textContent = value;
+      };
+    text("#history-chart-title", title);
+    text(
+      '[data-action="history-detail"]',
+      panel.historyDetail ? "Messhöhen ausblenden" : "Messhöhen vergleichen",
+    );
+    panel
+      .$('[data-action="history-detail"]')
+      .setAttribute("aria-pressed", String(panel.historyDetail));
+    panel.$("[data-history-positions]").hidden = !panel.historyDetail;
+    for (const position of ["upper", "lower"])
+      panel
+        .$(`[data-action="position-${position}"]`)
+        .setAttribute("aria-pressed", String(panel.positions.has(position)));
+    text(
+      ".plot-note",
+      `${panel.historyDetail ? "Durchgezogen: oben · gestrichelt: unten · " : ""}vorläufiger Gang · schmaler Streifen: gezählte Heizzeit`,
+    );
+    this.surface.setAttribute(
+      "aria-label",
+      `Sitzungsverlauf: Temperatur und Luftfeuchte${panel.historyDetail ? " beider Messhöhen" : ""}`,
+    );
+    const timeZone = localTimeZone();
+    const axisKey = `${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${timeZone}`;
+    if (axisKey !== this.axisKey) {
+      panel.$("[data-history-axes]").innerHTML = panel.historyAxes(model);
+      this.axisKey = axisKey;
+    }
+    const phaseKey = `${model.start}:${model.end}:${panel.historyTimelineRevision}:${panel.historyRecords("phase").length}:${session.ended_at || panel.state.now}:${JSON.stringify(panel.shown.phase_projection || null)}:${timeZone}`;
+    if (phaseKey !== this.phaseKey) {
+      panel.$("[data-history-annotations]").innerHTML = panel.historyAnnotations(
+        model,
+        session,
+        gangs,
+      );
+      this.phaseKey = phaseKey;
+    }
+    // Revealing the height controls or changing a wrapped heading can move
+    // the plot without resizing it. Read the new position in the next frame.
+    if (chromeChanged) this.interaction.invalidateGeometry("layout");
+    this.curves.update(model, {
+      width: geometry.canvas.cssWidth,
+      height: geometry.canvas.cssHeight,
+      dpr: geometry.dpr,
+      overview: {
+        width: geometry.overviewCanvas.cssWidth,
+        height: geometry.overviewCanvas.cssHeight,
+        dpr: geometry.dpr,
+      },
+    });
+    panel.syncHistoryOverview();
+    if (
+      !chromeChanged &&
+      panel.lastHistoryPointer &&
+      !panel.chartPointers.size &&
+      !panel.webkitHistoryGesture &&
+      !panel.historyGesture
+    )
+      this.interaction.hover({ ...panel.lastHistoryPointer, svg: this.surface }, model);
+  }
+  destroy() {
+    this.interaction.dispose();
+    this.curves.dispose?.();
+    this.prepared.clear();
+    this.preparedOverview.clear();
+  }
+}
 
 class SaunaPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this.view = "overview";
+    this.navigation = { main: "overview", detail: "detail" };
     this.selected = "live";
     this.cache = new Map();
     this.zoom = 1;
@@ -212,7 +1201,6 @@ class SaunaPanel extends HTMLElement {
     this.historyDatasetRevision = 0;
     this.historyWindowRevision = 0;
     this.historyTimelineRevision = 0;
-    this.historyOverviewCache = null;
   }
   set hass(value) {
     this._hass = value;
@@ -222,14 +1210,35 @@ class SaunaPanel extends HTMLElement {
     return this._hass;
   }
   connectedCallback() {
-    this.shell();
+    if (!this.$("main")) this.shell();
     if (this._hass) this.start();
   }
   disconnectedCallback() {
     clearInterval(this.timer);
+    clearTimeout(this.programSavedTimer);
+    this.programSavedTimer = null;
+    this.programRequest = null;
+    this.appearanceRequest = null;
+    this.appearanceStale = true;
+    this.applyAppearance();
+    this.programSaveState = null;
+    this.programSavePending = null;
+    this.cancelProgramDrag();
     clearTimeout(this.historyWheelTimer);
     this.timer = null;
     this.generation++;
+    this.historyLoad = null;
+    this.pendingEventFocus = null;
+    this.cancelHistoryFrame();
+    this.historyChart?.destroy();
+    this.historyChart = null;
+    this.chartPointers.clear();
+    this.historyGesture =
+      this.webkitHistoryGesture =
+      this.pendingHover =
+      this.lastHistoryPointer =
+        null;
+    this.historyInputMode = null;
   }
   start() {
     this.refresh();
@@ -274,8 +1283,14 @@ class SaunaPanel extends HTMLElement {
       return current;
     }
     const focused = this.shadowRoot.activeElement === current;
-    if (focused && ["INPUT", "SELECT", "TEXTAREA"].includes(current.nodeName))
+    if (focused && ["INPUT", "SELECT", "TEXTAREA"].includes(current.nodeName)) {
+      const value = current.value,
+        checked = current.checked;
+      this.patchAttributes(current, next);
+      current.value = value;
+      if ("checked" in current) current.checked = checked;
       return current;
+    }
     this.patchAttributes(current, next);
     if (
       current.nodeName === "SELECT" &&
@@ -329,20 +1344,487 @@ class SaunaPanel extends HTMLElement {
   async api(path, method = "GET", body) {
     return this.hass.callApi(method, `ha_sauna${path}`, body);
   }
+  appearanceCatalog() {
+    return this.state?.appearance_catalog || { colors: [], scales: {} };
+  }
+  savedAppearance() {
+    return (
+      this.state?.appearance ||
+      this.state?.configuration?.appearance || { colors: {}, scales: {} }
+    );
+  }
+  appearanceValue() {
+    return this.appearanceDraft || this.savedAppearance();
+  }
+  appearanceColor(role) {
+    const definition = this.appearanceCatalog().colors?.find(
+      (item) => item.id === role,
+    );
+    return (
+      appearanceHex(this.appearanceValue().colors?.[role]) ||
+      appearanceHex(definition?.default)
+    );
+  }
+  appearancePickerColor(role) {
+    const configured = this.appearanceColor(role);
+    if (configured) return configured;
+    const themeRole = {
+      page_background: "--primary-background-color",
+      card_background: "--card-background-color",
+      text: "--primary-text-color",
+      muted_text: "--secondary-text-color",
+      border: "--divider-color",
+      ui_command: "--card-background-color",
+      focus: "--primary-color",
+    }[role];
+    const theme =
+      typeof getComputedStyle === "function" ? getComputedStyle(this) : null;
+    return (
+      appearanceThemeHex(
+        theme?.getPropertyValue(themeRole || "--primary-text-color"),
+      ) ||
+      this.appearanceColor("ui_accent") ||
+      "#FFFFFF"
+    );
+  }
+  appearanceScale(quantity) {
+    const defaultScale = this.appearanceCatalog().scales?.[quantity]?.default;
+    const selected = this.appearanceValue().scales?.[quantity];
+    const minimum = Number(selected?.minimum ?? defaultScale?.minimum);
+    const maximum = Number(selected?.maximum ?? defaultScale?.maximum);
+    const valid =
+      Number.isFinite(minimum) &&
+      Number.isFinite(maximum) &&
+      minimum < maximum &&
+      Number.isFinite(maximum - minimum) &&
+      (quantity !== "humidity" || (minimum >= 0 && maximum <= 100));
+    return valid ? { minimum, maximum } : defaultScale ? { ...defaultScale } : null;
+  }
+  historyCurveStyles() {
+    const temperature = this.appearanceColor("series_temperature"),
+      humidity = this.appearanceColor("series_humidity");
+    return {
+      "upper:temperature": { stroke: temperature },
+      "lower:temperature": { stroke: temperature },
+      "upper:humidity": { stroke: humidity },
+      "lower:humidity": { stroke: humidity },
+      overview: {
+        stroke: this.appearanceColor("series_overview"),
+        track: this.appearanceColor("chart_minimap_track"),
+      },
+    };
+  }
+  applyAppearance() {
+    const style = this.style;
+    if (!style?.setProperty) return;
+    for (const definition of this.appearanceCatalog().colors || []) {
+      const value = this.appearanceColor(definition.id);
+      const key = `--sauna-color-${definition.id.replaceAll("_", "-")}`;
+      if (value) style.setProperty(key, value);
+      else style.removeProperty?.(key);
+    }
+    const theme =
+      typeof getComputedStyle === "function" ? getComputedStyle(this) : null;
+    const surfaces = {
+      page:
+        this.appearanceColor("page_background") ||
+        appearanceThemeHex(theme?.getPropertyValue("--primary-background-color")),
+      card:
+        this.appearanceColor("card_background") ||
+        appearanceThemeHex(theme?.getPropertyValue("--card-background-color")),
+    };
+    const readable = (proposed, surface, ratio) => {
+      if (!proposed || !surface || appearanceContrastRatio(proposed, surface) >= ratio)
+        return proposed;
+      return appearanceContrastRatio("#000000", surface) >=
+        appearanceContrastRatio("#FFFFFF", surface)
+        ? "#000000"
+        : "#FFFFFF";
+    };
+    const proposedText =
+      this.appearanceColor("text") ||
+      appearanceThemeHex(theme?.getPropertyValue("--primary-text-color"));
+    const proposedFocus =
+      this.appearanceColor("focus") || this.appearancePickerColor("focus");
+    const tintedSurface = (base, role, amount) =>
+      appearanceBlend(base, this.appearanceColor(role), amount);
+    for (const [name, role, amount] of [
+      ["info", "status_info", 0.12],
+      ["warning", "status_warning", 0.12],
+      ["error", "status_error", 0.12],
+      ["unknown", "status_unknown", 0.12],
+      ["heater-on", "ui_heater_on", 0.16],
+      ["heater-off", "ui_heater_off", 0.16],
+    ]) {
+      const surface = tintedSurface(surfaces.card, role, amount);
+      if (surface) style.setProperty(`--sauna-tint-${name}-background`, surface);
+      else style.removeProperty?.(`--sauna-tint-${name}-background`);
+      const ink = surface && readable(proposedText, surface, 4.5);
+      const focus = surface && readable(proposedFocus, surface, 3);
+      if (ink) style.setProperty(`--sauna-tint-${name}-text`, ink);
+      else style.removeProperty?.(`--sauna-tint-${name}-text`);
+      if (focus) style.setProperty(`--sauna-tint-${name}-focus`, focus);
+      else style.removeProperty?.(`--sauna-tint-${name}-focus`);
+    }
+    for (const [role, themeKey] of [
+      ["text", "--primary-text-color"],
+      ["muted_text", "--secondary-text-color"],
+    ]) {
+      const proposed =
+        this.appearanceColor(role) ||
+        appearanceThemeHex(theme?.getPropertyValue(themeKey));
+      for (const [surfaceName, surface] of Object.entries(surfaces)) {
+        const adjusted = readable(proposed, surface, 4.5);
+        if (adjusted)
+          style.setProperty(
+            `--sauna-${surfaceName}-${role.replaceAll("_", "-")}`,
+            adjusted,
+          );
+      }
+    }
+    const chartText = readable(
+      this.appearanceColor("chart_text"),
+      this.appearanceColor("chart_background"),
+      4.5,
+    );
+    if (chartText) style.setProperty("--sauna-chart-ink", chartText);
+    for (const [surfaceName, surface] of Object.entries(surfaces)) {
+      const focus = readable(proposedFocus, surface, 3);
+      if (focus) style.setProperty(`--sauna-${surfaceName}-focus`, focus);
+    }
+    const chartFocus = readable(
+      proposedFocus,
+      this.appearanceColor("chart_background"),
+      3,
+    );
+    if (chartFocus) style.setProperty("--sauna-chart-focus", chartFocus);
+    const statusRoles = [
+      "ui_heater_on",
+      "ui_heater_off",
+      "ui_heater_unknown",
+      "status_info",
+      "status_success",
+      "status_warning",
+      "status_error",
+      "status_unknown",
+    ];
+    for (const role of statusRoles) {
+      const ink = readable(this.appearanceColor(role), surfaces.card, 4.5);
+      if (ink) style.setProperty(`--sauna-ink-${role.replaceAll("_", "-")}`, ink);
+    }
+    const accent = this.appearanceColor("ui_accent");
+    if (accent) {
+      style.setProperty("--sauna-accent-ink", appearanceContrast(accent));
+      const readableAccent = readable(accent, surfaces.card, 4.5);
+      if (readableAccent) style.setProperty("--sauna-accent-readable", readableAccent);
+    }
+    const command = this.appearanceColor("ui_command");
+    if (command) style.setProperty("--sauna-command-ink", appearanceContrast(command));
+    else style.removeProperty?.("--sauna-command-ink");
+    const danger = this.appearanceColor("ui_danger");
+    if (danger) {
+      style.setProperty("--sauna-danger-ink", appearanceContrast(danger));
+      const readableDanger = readable(danger, surfaces.card, 4.5);
+      if (readableDanger) style.setProperty("--sauna-danger-text", readableDanger);
+    }
+    const warning = this.appearanceColor("status_warning");
+    if (warning)
+      style.setProperty("--sauna-status-warning-ink", appearanceContrast(warning));
+    const phase =
+      this.state?.operation_enabled &&
+      this.state?.configuration?.control_mode !== "manual" &&
+      !this.appearanceStale
+        ? {
+            aufheizen: "phase_warmup",
+            bereit: "phase_ready",
+            saunagang: "phase_session",
+            nachlauf: "phase_cooling",
+          }[this.state.phase]
+        : null;
+    const tint = phase && this.appearanceColor(phase);
+    const mainSurface = tint && appearanceBlend(surfaces.card, tint, 0.08);
+    if (mainSurface) style.setProperty("--sauna-main-background", mainSurface);
+    else style.removeProperty?.("--sauna-main-background");
+    const pendingSurface = tintedSurface(
+      mainSurface || surfaces.card,
+      "status_info",
+      0.06,
+    );
+    if (pendingSurface) style.setProperty("--sauna-pending-background", pendingSurface);
+    else style.removeProperty?.("--sauna-pending-background");
+    for (const [name, proposed, ratio] of [
+      ["pending-text", proposedText, 4.5],
+      ["pending-focus", proposedFocus, 3],
+    ]) {
+      const value = pendingSurface && readable(proposed, pendingSurface, ratio);
+      if (value) style.setProperty(`--sauna-${name}`, value);
+      else style.removeProperty?.(`--sauna-${name}`);
+    }
+    for (const role of statusRoles) {
+      const ink = mainSurface && readable(this.appearanceColor(role), mainSurface, 4.5);
+      const key = `--sauna-main-ink-${role.replaceAll("_", "-")}`;
+      if (ink) style.setProperty(key, ink);
+      else style.removeProperty?.(key);
+    }
+    for (const [role, themeKey] of [
+      ["text", "--primary-text-color"],
+      ["muted_text", "--secondary-text-color"],
+      ["focus", "--primary-color"],
+    ]) {
+      const proposed =
+        this.appearanceColor(role) ||
+        appearanceThemeHex(theme?.getPropertyValue(themeKey));
+      const value =
+        mainSurface && readable(proposed, mainSurface, role === "focus" ? 3 : 4.5);
+      if (value) style.setProperty(`--sauna-main-${role.replaceAll("_", "-")}`, value);
+      else style.removeProperty?.(`--sauna-main-${role.replaceAll("_", "-")}`);
+    }
+    if (this.historyChart) this.historyChart.curves.styles = this.historyCurveStyles();
+  }
+  appearanceSettingsMarkup() {
+    const catalog = this.appearanceCatalog();
+    const groups = [
+      "Bedienung",
+      "Grunddarstellung",
+      "Zustände und Phasen",
+      "Messungen und Ereignisse",
+    ];
+    const colors = catalog.colors || [];
+    const rows = (group) =>
+      colors
+        .filter((item) => item.group === group)
+        .map((item) => {
+          const value = this.appearancePickerColor(item.id);
+          const shown =
+            this.appearanceRaw?.[item.id] ??
+            this.appearanceValue().colors?.[item.id] ??
+            item.default ??
+            "";
+          return `<div class="appearance-color-row"><label for="appearance-${esc(item.id)}">${esc(item.label)}</label><input type="color" data-appearance-picker="${esc(item.id)}" aria-label="${esc(item.label)} wählen" value="${esc(value || "#FFFFFF")}"><input id="appearance-${esc(item.id)}" data-appearance-color="${esc(item.id)}" aria-label="${esc(item.label)} als Hexwert" inputmode="text" maxlength="7" placeholder="HA-Standard" value="${esc(shown)}"><button type="button" data-action="appearance-role-default:${esc(item.id)}" aria-label="${esc(item.label)} auf Standard setzen">Standard</button></div>`;
+        })
+        .join("");
+    const scaleFields = ["temperature", "humidity"]
+      .map((name) => {
+        const label = name === "temperature" ? "Temperatur (°C)" : "Luftfeuchte (%)";
+        const scale =
+          this.appearanceScale(name) || catalog.scales?.[name]?.default || {};
+        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}<input type="number" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}"></label>`).join("")}</fieldset>`;
+      })
+      .join("");
+    return `<div class="card appearance-settings" id="appearance-settings"><h2>Darstellung</h2><p class="muted">Farben und Anzeigeskalen dieser Sauna. Änderungen werden sofort als Vorschau angezeigt und gelten nach dem Speichern für alle Benutzer.</p>${groups.map((group) => `<details class="settings-group" ${group === "Bedienung" ? "open" : ""}><summary>${group}</summary><div class="appearance-colors">${rows(group)}${group === "Messungen und Ereignisse" ? `<h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div>` : ""}</div></details>`).join("")}<div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button><button type="button" data-action="appearance-default">Standarddarstellung wiederherstellen</button></div><p id="appearance-status" role="status" class="muted"></p></div>`;
+  }
+  updateAppearanceField(input) {
+    if (!this.state?.permissions?.admin || this.appearanceRequest) return;
+    if (!this.appearanceDraft) {
+      const saved = this.savedAppearance();
+      this.appearanceDraft = {
+        colors: { ...(saved.colors || {}) },
+        scales: Object.fromEntries(
+          Object.entries(this.appearanceCatalog().scales || {}).map(([name, spec]) => [
+            name,
+            { ...spec.default, ...(saved.scales?.[name] || {}) },
+          ]),
+        ),
+      };
+    }
+    this.appearanceRaw ||= {};
+    const role = input.dataset.appearanceColor || input.dataset.appearancePicker;
+    if (role) {
+      this.appearanceRaw[role] = input.value;
+      const value = appearanceHex(input.value);
+      if (value) this.appearanceDraft.colors[role] = value;
+      else if (!input.value.trim()) delete this.appearanceDraft.colors[role];
+      const peer = this.$(
+        `[data-appearance-${input.dataset.appearancePicker ? "color" : "picker"}="${role}"]`,
+      );
+      if (peer && (value || !input.value.trim()))
+        peer.value = value || this.appearancePickerColor(role);
+    } else if (input.dataset.appearanceScale) {
+      const [name, end] = input.dataset.appearanceScale.split(".");
+      this.appearanceRaw[input.dataset.appearanceScale] = input.value;
+      const value = Number(input.value);
+      if (input.value.trim() && Number.isFinite(value))
+        this.appearanceDraft.scales[name][end] = value;
+    }
+    this.appearanceStatus = "Vorschau – noch nicht gespeichert";
+    this.appearanceStatusKind = "pending";
+    this.applyAppearance();
+    if (role && this.historyChart) this.scheduleHistoryRender("appearance");
+    this.drawCurrent();
+    this.drawAppearanceStatus();
+  }
+  drawAppearanceStatus() {
+    const node = this.$("#appearance-status");
+    if (node) {
+      node.textContent = this.appearanceStatus || "";
+      node.dataset.kind = this.appearanceStatusKind || "info";
+    }
+    this.$("#appearance-settings")
+      ?.querySelectorAll?.("input,button")
+      .forEach((element) => {
+        element.disabled = !!this.appearanceRequest;
+      });
+  }
+  syncAppearanceEditor() {
+    if (this.appearanceDraft) return;
+    for (const definition of this.appearanceCatalog().colors || []) {
+      const input = this.$(`[data-appearance-color="${definition.id}"]`);
+      const picker = this.$(`[data-appearance-picker="${definition.id}"]`);
+      if (input && input !== this.shadowRoot.activeElement)
+        input.value =
+          this.savedAppearance().colors?.[definition.id] || definition.default || "";
+      if (picker && picker !== this.shadowRoot.activeElement)
+        picker.value = this.appearancePickerColor(definition.id);
+    }
+    for (const name of ["temperature", "humidity"])
+      for (const end of ["minimum", "maximum"]) {
+        const input = this.$(`[data-appearance-scale="${name}.${end}"]`);
+        if (input && input !== this.shadowRoot.activeElement)
+          input.value = this.appearanceScale(name)?.[end] ?? "";
+      }
+  }
+  appearancePayload() {
+    if (
+      Object.entries(this.appearanceRaw || {}).some(
+        ([key, value]) => !key.includes(".") && value.trim() && !appearanceHex(value),
+      )
+    )
+      throw Error("Farben müssen im Format #RRGGBB angegeben werden");
+    if (
+      Object.entries(this.appearanceRaw || {}).some(
+        ([key, value]) =>
+          key.includes(".") && (!value.trim() || !Number.isFinite(Number(value))),
+      )
+    )
+      throw Error("Anzeigeskalen benötigen endliche Zahlen");
+    const payload = this.appearanceDraft;
+    if (!payload) return null;
+    for (const [name, spec] of Object.entries(this.appearanceCatalog().scales || {})) {
+      const bounds = payload.scales[name];
+      if (
+        !Number.isFinite(bounds?.minimum) ||
+        !Number.isFinite(bounds?.maximum) ||
+        bounds.minimum >= bounds.maximum ||
+        !Number.isFinite(bounds.maximum - bounds.minimum) ||
+        (name === "humidity" &&
+          (bounds.minimum < (spec.minimum ?? 0) ||
+            bounds.maximum > (spec.maximum ?? 100)))
+      )
+        throw Error(
+          `${name === "temperature" ? "Temperatur" : "Luftfeuchte"}: Minimum muss kleiner als Maximum sein`,
+        );
+    }
+    return payload;
+  }
+  async saveAppearance() {
+    if (!this.state?.permissions?.admin || this.appearanceRequest) return;
+    let payload;
+    try {
+      payload = this.appearancePayload();
+    } catch (error) {
+      this.appearanceStatus = errorText(error);
+      this.appearanceStatusKind = "error";
+      this.drawAppearanceStatus();
+      return;
+    }
+    if (!payload) return;
+    const entry = this.entry,
+      generation = this.generation;
+    this.appearanceRevision = (this.appearanceRevision || 0) + 1;
+    const request = this.api(`/${entry}/appearance`, "POST", payload);
+    this.appearanceRequest = request;
+    this.appearanceStatus = "Darstellung wird gespeichert …";
+    this.appearanceStatusKind = "pending";
+    this.drawAppearanceStatus();
+    try {
+      const result = await request;
+      if (
+        this.appearanceRequest !== request ||
+        entry !== this.entry ||
+        generation !== this.generation
+      )
+        return;
+      this.state.appearance = result.appearance;
+      this.state.configuration.appearance = result.appearance;
+      this.appearanceRevision++;
+      this.appearanceDraft = null;
+      this.appearanceRaw = null;
+      this.appearanceStatus = "Darstellung gespeichert";
+      this.appearanceStatusKind = "success";
+      this.applyAppearance();
+      this.drawSettings();
+      this.syncAppearanceEditor();
+      this.scheduleHistoryRender("appearance");
+    } catch (error) {
+      if (
+        this.appearanceRequest !== request ||
+        entry !== this.entry ||
+        generation !== this.generation
+      )
+        return;
+      this.appearanceStatus = errorText(error);
+      this.appearanceStatusKind = "error";
+      this.drawAppearanceStatus();
+    } finally {
+      if (this.appearanceRequest === request) {
+        this.appearanceRequest = null;
+        this.drawAppearanceStatus();
+      }
+    }
+  }
+  resetAppearanceDraft(defaults = false) {
+    if (!this.state?.permissions?.admin || this.appearanceRequest) return;
+    this.appearanceDraft = defaults
+      ? {
+          colors: {},
+          scales: Object.fromEntries(
+            Object.entries(this.appearanceCatalog().scales || {}).map(
+              ([name, spec]) => [name, { ...spec.default }],
+            ),
+          ),
+        }
+      : null;
+    this.appearanceRaw = null;
+    this.appearanceStatus = defaults
+      ? "Standarddarstellung als Vorschau – noch nicht gespeichert"
+      : "Änderungen verworfen";
+    this.appearanceStatusKind = defaults ? "pending" : "info";
+    this.applyAppearance();
+    const node = this.$("#appearance-settings");
+    if (node) {
+      const restoreAction = this.shadowRoot.activeElement?.dataset?.action;
+      const open = [...node.querySelectorAll("details")].map((detail) => detail.open);
+      const replacement = this.appearanceSettingsMarkup();
+      node.outerHTML = replacement;
+      [...this.$("#appearance-settings").querySelectorAll("details")].forEach(
+        (detail, index) => {
+          detail.open = open[index];
+        },
+      );
+      if (restoreAction) this.$(`[data-action="${restoreAction}"]`)?.focus?.();
+    }
+    this.drawCurrent();
+    this.drawAppearanceStatus();
+    this.scheduleHistoryRender("appearance");
+  }
   shell() {
     this.shadowRoot.innerHTML = `<style>
       :host {
         display: block;
         height: 100%;
         overflow: auto;
-        color: var(--primary-text-color, #203331);
-        background: var(--primary-background-color, #f4f7f6);
+        color: var(--sauna-page-text, var(--sauna-color-text, var(--primary-text-color)));
+        background: var(--sauna-color-page-background, var(--primary-background-color));
         font:
           15px/1.5 system-ui,
           sans-serif;
-        --accent: #197367;
-        --confirm: #315fba;
-        --warm: #cd693a;
+        --accent: var(--sauna-color-ui-accent);
+        --accent-ink: var(--sauna-accent-ink);
+        --confirm: var(--sauna-color-ui-command, var(--sauna-color-card-background, var(--card-background-color)));
+        --danger: var(--sauna-color-ui-danger);
+        --danger-text: var(--sauna-danger-text, var(--danger));
+        --warm: var(--sauna-color-phase-warmup);
+        --sauna-focus-current: var(--sauna-page-focus, var(--accent));
       }
       * {
         box-sizing: border-box;
@@ -358,6 +1840,7 @@ class SaunaPanel extends HTMLElement {
         align-items: center;
         gap: 18px;
         margin-bottom: 24px;
+        color: var(--sauna-page-text, var(--sauna-color-text, var(--primary-text-color)));
       }
       .header-brand {
         display: flex;
@@ -389,7 +1872,7 @@ class SaunaPanel extends HTMLElement {
       }
       small,
       .muted {
-        color: var(--secondary-text-color, #657572);
+        color: var(--sauna-page-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
         font-size: 13px;
       }
       .grow {
@@ -405,42 +1888,52 @@ class SaunaPanel extends HTMLElement {
       select,
       input {
         font: inherit;
-        border: 1px solid var(--divider-color, #d4dfdc);
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 8px;
         padding: 9px 13px;
-        background: var(--card-background-color, #fff);
-        color: inherit;
+        background: var(--sauna-color-card-background, var(--card-background-color));
+        color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
+      }
+      #session {
+        min-width: 0;
+        max-width: 100%;
       }
       button {
         cursor: pointer;
       }
-      button:hover {
-        border-color: var(--accent);
+      button:hover:not(:disabled) {
+        text-decoration: underline;
+      }
+      button:focus-visible,
+      select:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--sauna-focus-current);
+        outline-offset: 3px;
       }
       button:disabled {
         opacity: 0.5;
         cursor: default;
       }
-      button.primary {
-        background: var(--accent);
-        color: white;
-        border-color: var(--accent);
-      }
+      button.primary,
       button.confirm {
         background: var(--confirm);
-        color: white;
-        border-color: var(--confirm);
+        color: var(--sauna-command-ink, var(--sauna-card-text, inherit));
+        border-color: var(--sauna-color-ui-command, var(--sauna-color-border, var(--divider-color)));
       }
       button.stop {
-        background: #a34029;
-        color: white;
+        background: var(--danger);
+        color: var(--sauna-danger-ink);
+        border-color: var(--danger);
       }
-      button[aria-selected="true"] {
+      button[aria-current="page"],
+      button[data-action^="control-mode:"][aria-pressed="true"] {
         background: var(--accent);
-        color: white;
+        color: var(--accent-ink);
+        border-color: var(--accent);
+        font-weight: 700;
       }
       a {
-        color: var(--accent);
+        color: var(--sauna-card-text, inherit);
       }
       .tabs {
         display: flex;
@@ -449,14 +1942,56 @@ class SaunaPanel extends HTMLElement {
         margin: 8px 0 12px;
       }
       .card {
-        background: var(--card-background-color, #fff);
-        border: 1px solid var(--divider-color, #dce5e2);
+        background: var(--sauna-color-card-background, var(--card-background-color));
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 14px;
         padding: 22px;
         margin: 16px 0;
+        color: var(--sauna-card-text, inherit);
+        --sauna-focus-current: var(--sauna-card-focus, var(--accent));
       }
+      .card small,
+      .card .muted { color: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color))); }
+      .card strong,
+      .card h2,
+      .card h3 { color: inherit; }
       .hero {
         border-left: 4px solid var(--accent);
+      }
+      .control-main {
+        background: var(--sauna-main-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-main-text, var(--sauna-card-text, inherit));
+        --sauna-focus-current: var(--sauna-main-focus, var(--sauna-card-focus, var(--accent)));
+      }
+      .control-main small,
+      .control-main .muted { color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); }
+      .control-main button small { color: inherit; }
+      .oven-feedback { margin: 4px 0 10px; }
+      [data-action="program-toggle"] { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; max-width: 100%; white-space: normal; text-align: left; }
+      .program-active-label { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
+      .program-disclosure { margin-top: 12px; }
+      .scale-hint { fill: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); color: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); font-size: 11px; margin: 2px 0 0; }
+      .control-main .scale-hint { fill: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); color: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); }
+      .appearance-colors { display: grid; gap: 9px; }
+      .appearance-color-row { display: grid; grid-template-columns: minmax(130px, 1fr) 48px minmax(96px, 118px) auto; gap: 8px; align-items: center; }
+      .appearance-color-row input[type="color"] { padding: 2px; width: 48px; height: 40px; }
+      .appearance-color-row input:not([type="color"]) { min-width: 0; width: 100%; }
+      .appearance-color-row button { padding: 7px 9px; }
+      .appearance-scales { display: flex; flex-wrap: wrap; gap: 16px; }
+      .appearance-scale { display: flex; gap: 9px; align-items: end; border-top: 1px solid var(--sauna-color-border, var(--divider-color)); padding-top: 12px; }
+      .appearance-scale legend { font-weight: 600; }
+      .appearance-scale label { display: grid; gap: 4px; font-size: 13px; }
+      .appearance-scale input { width: 110px; }
+      #appearance-status[data-kind="success"] { color: var(--sauna-ink-status-success, var(--sauna-color-status-success)); }
+      #appearance-status[data-kind="error"] { color: var(--sauna-ink-status-error, var(--sauna-color-status-error)); }
+      #appearance-status[data-kind="pending"] { border-left: 3px solid var(--sauna-color-status-info); padding-left: 8px; }
+      @media (max-width: 540px) {
+        .appearance-color-row { grid-template-columns: 48px minmax(0, 1fr) auto; }
+        .appearance-color-row label { grid-column: 1 / -1; }
+        .appearance-color-row input[type="color"] { grid-column: 1; }
+        .appearance-color-row input:not([type="color"]) { grid-column: 2; }
+        .appearance-color-row button { grid-column: 3; }
+        .appearance-scale { flex-wrap: wrap; }
       }
       .phase {
         font-size: 28px;
@@ -467,21 +2002,23 @@ class SaunaPanel extends HTMLElement {
         display: inline-block;
         border-radius: 20px;
         padding: 3px 11px;
-        background: #e4f2ed;
-        color: #24584c;
+        background: var(--sauna-tint-info-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-info-text, var(--sauna-card-text, inherit));
         font-size: 13px;
       }
       .notice {
-        background: #fff1db;
-        color: #6f481d;
-        border-left: 4px solid #d79a42;
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, inherit));
+        --sauna-focus-current: var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
+        border-left: 4px solid var(--sauna-color-status-warning);
         padding: 12px 16px;
         border-radius: 8px;
         margin: 10px 0;
       }
       .error {
-        background: #fcebe6;
-        color: #862d21;
+        background: var(--sauna-tint-error-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-error-text, var(--sauna-card-text, inherit));
+        --sauna-focus-current: var(--sauna-tint-error-focus, var(--sauna-card-focus, var(--accent)));
       }
       .legend {
         display: flex;
@@ -497,10 +2034,10 @@ class SaunaPanel extends HTMLElement {
         margin-right: 6px;
       }
       .upper {
-        background: #197367;
+        background: var(--sauna-color-series-upper);
       }
       .lower {
-        background: #bd7133;
+        background: var(--sauna-color-series-lower);
       }
       .chart {
         width: 100%;
@@ -509,41 +2046,41 @@ class SaunaPanel extends HTMLElement {
         touch-action: pan-y;
       }
       .chart text {
-        fill: var(--secondary-text-color, #6d7874);
+        fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
         font: 12px system-ui;
       }
       .chart .gridline {
-        stroke: var(--divider-color, #e2e9e6);
+        stroke: var(--sauna-color-border, var(--divider-color));
         stroke-width: 1;
       }
       .chart .gang {
-        fill: #5eaa9633;
-        stroke: #5eaa96;
+        fill: color-mix(in srgb, var(--sauna-color-phase-session) 20%, transparent);
+        stroke: var(--sauna-color-phase-session);
       }
       .chart .provisional {
-        fill: #dfa94b22;
-        stroke: #bb8b35;
+        fill: color-mix(in srgb, var(--sauna-color-status-warning) 13%, transparent);
+        stroke: var(--sauna-color-status-warning);
         stroke-dasharray: 5 4;
       }
       .chart .heat {
-        fill: #d8764433;
+        fill: color-mix(in srgb, var(--sauna-color-phase-warmup) 20%, transparent);
       }
       .chart .event {
-        stroke: #83978e;
+        stroke: var(--sauna-color-chart-event);
         stroke-dasharray: 3 5;
       }
       .chart .infusion {
-        stroke: #426bbb;
+        stroke: var(--sauna-color-event-infusion);
       }
       .chart path {
         fill: none;
         stroke-width: 2;
       }
       .chart path.upper {
-        stroke: #197367;
+        stroke: var(--sauna-color-series-upper);
       }
       .chart path.lower {
-        stroke: #bd7133;
+        stroke: var(--sauna-color-series-lower);
       }
       .scroll {
         overflow: auto;
@@ -557,7 +2094,7 @@ class SaunaPanel extends HTMLElement {
       th {
         text-align: left;
         padding: 10px 12px;
-        border-bottom: 1px solid var(--divider-color, #e4ebe8);
+        border-bottom: 1px solid var(--sauna-color-border, var(--divider-color));
         white-space: nowrap;
       }
       th {
@@ -609,7 +2146,7 @@ class SaunaPanel extends HTMLElement {
       .empty {
         padding: 45px;
         text-align: center;
-        color: var(--secondary-text-color, #657572);
+        color: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
       }
       @media (max-width: 800px) {
         main {
@@ -643,7 +2180,7 @@ class SaunaPanel extends HTMLElement {
         }
       }
       :host {
-        --accent: #e58a55;
+        --accent: var(--sauna-color-ui-accent);
       }
       main {
         max-width: none;
@@ -653,13 +2190,14 @@ class SaunaPanel extends HTMLElement {
       }
       .plot-panel {
         padding: 20px 12px 30px;
-        background: #111;
-        color: #c8c8c8;
+        background: var(--sauna-color-chart-background);
+        color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
+        --sauna-focus-current: var(--sauna-chart-focus, var(--sauna-chart-ink));
         border-radius: 8px;
       }
       .plot-title {
         text-align: center;
-        color: #aaa;
+        color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
         font-weight: 500;
         font-size: 18px;
       }
@@ -684,12 +2222,14 @@ class SaunaPanel extends HTMLElement {
       }
       .position-select button {
         background: transparent;
-        color: #aaa;
+        color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
         border: 0;
         padding: 6px;
       }
-      .position-select button[aria-pressed="false"] {
-        opacity: 0.35;
+      .position-select button[aria-pressed="true"] {
+        font-weight: 700;
+        text-decoration: underline;
+        text-underline-offset: 4px;
       }
       .plot-wrap {
         position: relative;
@@ -701,7 +2241,7 @@ class SaunaPanel extends HTMLElement {
         user-select: none;
       }
       .chart text {
-        fill: #aaa;
+        fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
       .detector-chart {
         height: 220px;
@@ -710,84 +2250,98 @@ class SaunaPanel extends HTMLElement {
         justify-content: center;
         margin: 0;
         padding: 4px;
-        border: 1px solid var(--divider-color, #333);
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 11px;
+        max-width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: thin;
       }
       .main-tabs button {
         padding: 8px 12px;
         font-size: 13px;
         border-color: transparent;
+        flex: 0 0 auto;
       }
-      .normal-tabs,
       .detail-tabs {
         font-size: 13px;
       }
       .chart .gridline {
-        stroke: rgba(255, 255, 255, 0.1);
+        stroke: color-mix(in srgb, var(--sauna-color-chart-grid) 10%, transparent);
       }
       .chart .gang {
-        fill: rgba(165, 30, 85, 0.46);
+        fill: color-mix(in srgb, var(--sauna-color-phase-session) 46%, transparent);
         stroke: none;
       }
       .chart .provisional {
-        stroke: #a51e55;
+        stroke: var(--sauna-color-phase-session);
         stroke-dasharray: 5 4;
       }
       .chart .heat {
-        fill: rgba(255, 150, 35, 0.28);
+        fill: color-mix(in srgb, var(--sauna-color-phase-warmup) 28%, transparent);
       }
       .chart .ready {
-        fill: rgba(38, 125, 82, 0.3);
+        fill: color-mix(in srgb, var(--sauna-color-phase-ready) 30%, transparent);
       }
       .chart .vent {
-        fill: rgba(58, 125, 155, 0.3);
+        fill: color-mix(in srgb, var(--sauna-color-activity-ventilation) 30%, transparent);
       }
       .chart .cool {
-        fill: rgba(103, 130, 154, 0.3);
+        fill: color-mix(in srgb, var(--sauna-color-phase-forced-cooling) 30%, transparent);
       }
       .chart .after {
-        fill: rgba(58, 125, 155, 0.18);
+        fill: color-mix(in srgb, var(--sauna-color-phase-cooling) 18%, transparent);
+      }
+      .chart .phase-other {
+        fill: color-mix(in srgb, var(--sauna-color-phase-idle) 22%, transparent);
       }
       .chart .door {
-        fill: rgba(255, 205, 80, 0.75);
+        fill: color-mix(in srgb, var(--sauna-color-event-door) 75%, transparent);
       }
       .chart .infusion {
-        stroke: #f5f5f5;
+        stroke: var(--sauna-color-event-infusion);
         stroke-width: 1;
       }
       .chart path {
         stroke-width: 3.5;
       }
       .chart path.temperature {
-        stroke: #ff6b4a;
+        stroke: var(--sauna-color-series-temperature);
       }
       .chart path.humidity {
-        stroke: #42a5ff;
+        stroke: var(--sauna-color-series-humidity);
       }
       .chart path.lower {
         stroke-dasharray: 8 5;
         opacity: 0.75;
       }
       .chart .axis-temperature {
-        fill: #ff6b4a;
+        fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
       .chart .axis-humidity {
-        fill: #42a5ff;
+        fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
-      .plot-note {
+      .plot-panel .plot-note {
         text-align: center;
-        color: #999;
+        color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
-      #tooltip {
+      .history-stack { position: relative; }
+      .history-stack > .history-background,
+      .history-stack > .history-curves { position: absolute; inset: 0; pointer-events: none; }
+      .history-stack > .session-chart { position: relative; display: block; }
+      .history-overview { position: relative; }
+      .history-overview canvas { position: absolute; inset: 0; width: 100%; height: 32px; pointer-events: none; }
+      .history-overview svg { position: relative; }
+      #tooltip { left: 0; top: 0; width: 290px; box-sizing: border-box;
         position: absolute;
         pointer-events: none;
-        background: #f6f6f6;
-        color: #333;
+        background: var(--sauna-color-card-background, var(--card-background-color));
+        color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
         padding: 10px 13px;
         font: 13px/1.5 system-ui;
-        border: 1px solid #999;
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
         z-index: 2;
-        box-shadow: 0 3px 10px #0003;
+        box-shadow: 0 3px 10px color-mix(in srgb, var(--sauna-color-text, var(--primary-text-color)) 20%, transparent);
       }
       .dashboard {
         display: grid;
@@ -820,6 +2374,14 @@ class SaunaPanel extends HTMLElement {
       .operation-control > button + button {
         margin-top: 8px;
       }
+      .program-main {
+        grid-column: 1/-1;
+        min-height: 62px;
+        font-weight: 700;
+      }
+      .program-action-layout .operation-control .tile {
+        max-width: 280px;
+      }
       .session-status {
         display: block;
         margin-top: 7px;
@@ -831,22 +2393,23 @@ class SaunaPanel extends HTMLElement {
         margin: auto;
       }
       .dial text {
-        fill: var(--primary-text-color, #ddd);
+        fill: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
       }
       .dial .reading {
         font-size: 33px;
       }
       .dial .caption {
         font-size: 13px;
+        fill: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
       }
       .dial .target-reading {
         font-size: 16px;
         font-weight: 650;
-        fill: var(--accent);
+        fill: var(--sauna-accent-readable, var(--accent));
       }
       .dial .tick {
         font-size: 14px;
-        fill: var(--secondary-text-color, #aaa);
+        fill: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
       }
       .dashboard .card {
         margin-top: 0;
@@ -857,33 +2420,6 @@ class SaunaPanel extends HTMLElement {
       }
       .environment .card {
         margin: 0;
-      }
-      .environment-status {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        padding: 18px 22px;
-        gap: 18px;
-      }
-      .environment-status > div {
-        display: flex;
-        flex-direction: column;
-        gap: 7px;
-      }
-      .environment-status > div + div {
-        padding-left: 18px;
-        border-left: 1px solid var(--divider-color, #333);
-      }
-      .environment-status strong {
-        font-size: 16px;
-      }
-      .environment-status .feedback::before {
-        content: "";
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: currentColor;
-        margin-right: 8px;
       }
       .gauge-card h2 {
         text-align: center;
@@ -924,9 +2460,9 @@ class SaunaPanel extends HTMLElement {
       }
 
       .notice button {
-        background: #6f481d;
-        color: #fff;
-        border-color: #6f481d;
+        background: var(--sauna-color-status-warning);
+        color: var(--sauna-status-warning-ink);
+        border-color: var(--sauna-card-text, inherit);
       }
       .card,
       .dashboard > *,
@@ -964,7 +2500,7 @@ class SaunaPanel extends HTMLElement {
         gap: 12px;
         margin: 18px 0;
         padding: 14px 0;
-        border-block: 1px solid var(--divider-color, #333);
+        border-block: 1px solid var(--sauna-color-border, var(--divider-color));
       }
       .timer-strip small,
       .timer-strip strong {
@@ -993,7 +2529,7 @@ class SaunaPanel extends HTMLElement {
       }
       dt {
         font-size: 13px;
-        color: var(--secondary-text-color, #aaa);
+        color: var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)));
         margin-top: 12px;
       }
       dd {
@@ -1005,7 +2541,7 @@ class SaunaPanel extends HTMLElement {
       }
       .settings-group {
         margin: 12px 0;
-        border: 1px solid var(--divider-color, #333);
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 10px;
         padding: 0 16px;
       }
@@ -1015,14 +2551,14 @@ class SaunaPanel extends HTMLElement {
         font-size: 16px;
       }
       .settings-group[open] summary {
-        border-bottom: 1px solid var(--divider-color, #333);
+        border-bottom: 1px solid var(--sauna-color-border, var(--divider-color));
         margin-bottom: 16px;
       }
       .settings-group .forms {
         padding-bottom: 18px;
       }
       .expert-group + .expert-group {
-        border-top: 1px solid var(--divider-color, #333);
+        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
         margin-top: 20px;
         padding-top: 12px;
       }
@@ -1033,14 +2569,17 @@ class SaunaPanel extends HTMLElement {
         font-weight: 650;
       }
       .feedback.on {
-        color: #d86d35;
+        color: var(--sauna-ink-ui-heater-on, var(--sauna-color-ui-heater-on));
       }
       .feedback.off {
-        color: #71817d;
+        color: var(--sauna-ink-ui-heater-off, var(--sauna-color-ui-heater-off));
       }
       .feedback.unknown {
-        color: #a98536;
+        color: var(--sauna-ink-ui-heater-unknown, var(--sauna-color-ui-heater-unknown));
       }
+      .control-main .feedback.on { color: var(--sauna-main-ink-ui-heater-on, var(--sauna-ink-ui-heater-on)); }
+      .control-main .feedback.off { color: var(--sauna-main-ink-ui-heater-off, var(--sauna-ink-ui-heater-off)); }
+      .control-main .feedback.unknown { color: var(--sauna-main-ink-ui-heater-unknown, var(--sauna-ink-ui-heater-unknown)); }
       .light-controls {
         margin-top: 14px;
       }
@@ -1083,17 +2622,18 @@ class SaunaPanel extends HTMLElement {
       }
       .target-temperature-handle {
         fill: var(--accent);
-        stroke: var(--card-background-color, #fff);
+        stroke: var(--sauna-color-card-background, var(--card-background-color));
         stroke-width: 4;
         cursor: pointer;
       }
+      .target-temperature-handle[data-inert-target] { cursor: default; }
       .target-temperature-track:focus {
         outline: none;
-        stroke: #f1ba72;
-        opacity: 0.8;
+        stroke: var(--sauna-card-focus, var(--accent));
+        opacity: 1;
       }
       .manual-section + .manual-section {
-        border-top: 1px solid var(--divider-color, #333);
+        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
         margin-top: 16px;
         padding-top: 16px;
       }
@@ -1103,16 +2643,16 @@ class SaunaPanel extends HTMLElement {
         padding: 3px 10px;
         font-size: 13px;
         font-weight: 650;
-        background: #e6ece9;
-        color: #53635d;
+        background: var(--sauna-tint-unknown-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-unknown-text, var(--sauna-card-text, inherit));
       }
       .manual-status.on {
-        background: #f9dfd4;
-        color: #963f24;
+        background: var(--sauna-tint-heater-on-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-heater-on-text, var(--sauna-card-text, inherit));
       }
       .manual-status.off {
-        background: #e1eeea;
-        color: #216551;
+        background: var(--sauna-tint-heater-off-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-heater-off-text, var(--sauna-card-text, inherit));
       }
       .manual-light-value {
         width: 92px;
@@ -1128,14 +2668,6 @@ class SaunaPanel extends HTMLElement {
         margin: 0;
         padding: 14px 10px;
       }
-      .event-strip {
-        --event-marker-size: 17px;
-        --event-marker-gap: 3px;
-        position: relative;
-        height: var(--event-strip-height, 64px);
-        margin: 10px 50px 0;
-        border-bottom: 1px solid #667;
-      }
       .event-marker {
         position: absolute;
         bottom: var(--event-marker-bottom, -6px);
@@ -1143,9 +2675,9 @@ class SaunaPanel extends HTMLElement {
         height: var(--event-marker-size);
         padding: 0;
         border-radius: 50%;
-        border: 2px solid #f5f5f5;
-        background: #e58a55;
-        color: #111;
+        border: 2px solid var(--sauna-color-event-infusion);
+        background: var(--accent);
+        color: var(--accent-ink);
         font-size: 10px;
         font-weight: 700;
         line-height: 13px;
@@ -1155,7 +2687,10 @@ class SaunaPanel extends HTMLElement {
       .event-row[data-selected="true"] {
         outline: 3px solid var(--accent);
         outline-offset: 2px;
-        background: #fff1db;
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+      }
+      .event-marker[data-selected="true"] {
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, inherit));
       }
       .event-row button {
         padding: 3px 7px;
@@ -1225,23 +2760,14 @@ class SaunaPanel extends HTMLElement {
         touch-action: none;
         cursor: grab;
       }
-      .history-overview .overview-track {
-        fill: #ffffff0d;
-        stroke: #ffffff24;
-      }
-      .history-overview .overview-temperature {
-        fill: none;
-        stroke: #d98667;
-        stroke-width: 1.5;
-      }
       .history-overview .overview-window {
-        fill: #a5b1ad33;
-        stroke: #c1cbc6;
+        fill: color-mix(in srgb, var(--sauna-color-chart-minimap-track) 20%, transparent);
+        stroke: var(--sauna-color-chart-minimap-track);
         stroke-width: 1;
         cursor: grab;
       }
       .history-overview .overview-handle {
-        fill: #c1cbc6;
+        fill: var(--sauna-color-chart-minimap-track);
         cursor: ew-resize;
       }
       .history-overview svg:active {
@@ -1279,43 +2805,48 @@ class SaunaPanel extends HTMLElement {
         background: none;
       }
       .diagnostic-marker .event-marker-dot {
-        fill: #f4b183;
-        stroke: #21150e;
+        fill: var(--sauna-color-detector-marker);
+        stroke: var(--sauna-color-chart-background);
         stroke-width: 2;
       }
       .diagnostic-marker .event-marker-point {
-        fill: #f4b183;
-        stroke: #111;
+        fill: var(--sauna-color-detector-marker);
+        stroke: var(--sauna-color-chart-background);
         stroke-width: 1;
       }
       .diagnostic-marker .event-marker-link {
-        stroke: #f4b183;
+        stroke: var(--sauna-color-detector-marker);
         stroke-width: 1.5;
         stroke-dasharray: 2 2;
       }
       .diagnostic-marker .event-marker-label {
-        fill: #17110c;
+        fill: var(--sauna-color-chart-background);
         font: 700 11px system-ui;
         paint-order: stroke;
-        stroke: #fff4df;
+        stroke: var(--sauna-chart-ink, var(--sauna-color-chart-text));
         stroke-width: 3px;
         stroke-linejoin: round;
       }
       .diagnostic-marker[data-selected="true"] .event-marker-dot {
-        fill: #fff1db;
-        stroke: #e58a55;
+        fill: color-mix(in srgb, var(--sauna-color-status-warning) 12%, var(--sauna-color-chart-background));
+        stroke: var(--sauna-chart-focus, var(--sauna-chart-ink));
         stroke-width: 3;
       }
+      .diagnostic-marker:focus-visible .event-marker-dot {
+        stroke: var(--sauna-chart-focus, var(--sauna-chart-ink));
+        stroke-width: 4;
+      }
       .event-row[data-selected="true"] {
-        background: #fff1db;
-        color: #1d2421;
-        outline: 3px solid var(--accent);
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
+        outline: 3px solid var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
         outline-offset: -3px;
       }
       .event-row[data-selected="true"] button {
-        background: #fff1db;
-        color: #1d2421;
-        border-color: #1d2421;
+        --sauna-focus-current: var(--sauna-tint-warning-focus, var(--sauna-card-focus, var(--accent)));
+        background: var(--sauna-tint-warning-background, var(--sauna-color-card-background, var(--card-background-color)));
+        color: var(--sauna-tint-warning-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color))));
+        border-color: currentColor;
       }
       .state-summary {
         display: flex;
@@ -1343,7 +2874,7 @@ class SaunaPanel extends HTMLElement {
         overflow-wrap: anywhere;
       }
       .availability-line.wait {
-        color: #96651d;
+        color: inherit;
       }
       @media (max-width: 1000px) {
         .dashboard {
@@ -1399,8 +2930,25 @@ class SaunaPanel extends HTMLElement {
       }
       button[aria-pressed="true"] {
         background: var(--accent);
-        color: white;
+        color: var(--accent-ink);
         border-color: var(--accent);
+        font-weight: 700;
+      }
+      button[aria-current="page"]:disabled,
+      button[aria-pressed="true"]:disabled {
+        opacity: 1;
+        cursor: default;
+      }
+      button[data-action^="light:"][aria-pressed="true"] small {
+        color: inherit;
+      }
+      button[data-action^="heater:"]:disabled:not([aria-pressed="true"]),
+      button[data-action^="light:"]:disabled:not([aria-pressed="true"]) {
+        opacity: 0.5;
+      }
+      button[data-action^="program-remove:"] {
+        background: transparent;
+        color: var(--danger-text);
       }
       .control-mode-card {
         padding: 12px 16px;
@@ -1411,9 +2959,10 @@ class SaunaPanel extends HTMLElement {
         justify-content: center;
       }
       .manual-overrides {
-        border-left: 4px solid #9a6b2f;
         margin-top: 16px;
-        padding-left: 14px;
+      }
+      .manual-controls {
+        margin-top: 16px;
       }
       .manual-section .row {
         margin-top: 10px;
@@ -1432,7 +2981,7 @@ class SaunaPanel extends HTMLElement {
       .control-section {
         margin-top: 16px;
         padding-top: 16px;
-        border-top: 1px solid var(--divider-color, #333);
+        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
       }
       .control-section h3 {
         margin: 0 0 10px;
@@ -1472,18 +3021,37 @@ class SaunaPanel extends HTMLElement {
       }
       .program-actions {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-top: 16px;
         padding-top: 14px;
-        border-top: 1px solid var(--divider-color, #333);
+        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
       }
-      .program-saved {
-        color: #216551;
-        border-color: #9bcab6;
+      .program-saved,
+      .program-saving {
+        color: var(--sauna-command-ink, var(--sauna-card-text, inherit));
+        border-color: var(--confirm);
+        background: var(--confirm);
       }
-      .program-saved:disabled {
+      .program-saved:disabled,
+      .program-saving:disabled {
         opacity: 1;
-        background: #e4f2ed;
+      }
+      .program-draft-label {
+        display: block;
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .program-pending {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+        padding: 8px 10px;
+        background: var(--sauna-pending-background, transparent);
+        border-radius: 8px;
+        color: var(--sauna-pending-text, var(--sauna-main-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)))));
+        --sauna-focus-current: var(--sauna-pending-focus, var(--sauna-main-focus, var(--sauna-card-focus, var(--accent))));
       }
       .program-kind {
         display: flex;
@@ -1492,13 +3060,42 @@ class SaunaPanel extends HTMLElement {
         margin: 10px 0;
       }
       .program-form {
-        margin-top: 10px;
+        margin: 10px 0 0 35px;
+        padding: 12px;
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
+        border-radius: 8px;
       }
-      .settings-programs .program-form + .program-form {
-        border-top: 1px solid var(--divider-color, #333);
-        margin-top: 22px;
-        padding-top: 22px;
+      .program-row + .program-row {
+        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
       }
+      .program-row-summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 0;
+      }
+      .program-row-label {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+        flex: 1;
+      }
+      .program-row-label strong,
+      .program-row-label small {
+        overflow-wrap: anywhere;
+      }
+      .program-drag-handle {
+        touch-action: none;
+        cursor: grab;
+        flex: 0 0 auto;
+      }
+      .program-edit-button {
+        padding: 5px 8px;
+        font-size: 12px;
+        flex: 0 0 auto;
+      }
+      .program-row[data-drop-position="before"] { border-top: 3px solid var(--sauna-card-focus, var(--accent)); }
+      .program-row[data-drop-position="after"] { border-bottom: 3px solid var(--sauna-card-focus, var(--accent)); }
       .settings-footer {
         display: flex;
         align-items: center;
@@ -1539,10 +3136,12 @@ class SaunaPanel extends HTMLElement {
         width: 100%;
         max-width: 320px;
         padding: 9px 11px;
-        border: 1px solid var(--divider-color, #333);
+        border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 8px;
-        background: var(--card-background-color, #fff);
-        box-shadow: 0 4px 14px #0003;
+        background: var(--sauna-color-card-background, var(--card-background-color));
+        color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
+        --sauna-focus-current: var(--sauna-card-focus, var(--accent));
+        box-shadow: 0 4px 14px color-mix(in srgb, var(--sauna-color-text, var(--primary-text-color)) 20%, transparent);
         font-size: 12px;
         line-height: 1.4;
         overflow-wrap: anywhere;
@@ -1562,7 +3161,8 @@ class SaunaPanel extends HTMLElement {
         .main-tabs {
           grid-row: 2;
           grid-column: 1 / -1;
-          justify-self: center;
+          justify-self: stretch;
+          justify-content: flex-start;
         }
         .main-tabs button {
           padding: 7px 10px;
@@ -1590,56 +3190,92 @@ class SaunaPanel extends HTMLElement {
         }
       }
     </style><main>
-      <header><div class="header-brand"><button data-action="menu" aria-label="Menü öffnen">☰</button><h1>Sauna</h1></div><nav class="tabs main-tabs" aria-label="Ansicht"><button data-action="normal" aria-selected="true">Übersicht</button><button data-action="details" aria-selected="false">Details</button><button data-action="settings" aria-selected="false">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select></div></header>
-      <nav class="tabs normal-tabs" aria-label="Übersicht"><button data-action="overview" aria-selected="true">Steuerung</button><button data-action="history" aria-selected="false">Verlauf und Archiv</button></nav>
-      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-selected="true">Betrieb & Fristen</button><button data-action="detail-history" aria-selected="false">Detailverlauf</button><button data-action="diagnostics" aria-selected="false">Erkennungskontrolle</button></nav>
+      <header><div class="header-brand"><button data-action="menu" aria-label="Menü öffnen">☰</button><h1>Sauna</h1></div><nav class="tabs main-tabs" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select></div></header>
+      <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="row"><h2 class="grow">Sitzungsverlauf</h2><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div>
-        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><p id="history-loading" class="muted" role="status" hidden></p><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
       const b = e.target.closest("[data-action]");
-      if (b) this.action(b.dataset.action).catch((err) => this.message(err));
+      if (b) this.runPanelAction(() => this.action(b.dataset.action));
     });
     this.shadowRoot.addEventListener("change", (e) => {
+      if (e.target.id !== "instance" && !this.state) return;
       if (e.target.id === "instance") {
         this.entry = e.target.value;
+        this.state = null;
+        this.messages = {};
+        this.message(null);
         this.highlightedEventId = null;
+        this.pendingEventFocus = null;
         this.generation++;
         this.selected = "live";
+        this.sessions = null;
         this.cache.clear();
+        this.historyLoad = null;
+        this.shown = null;
+        this.clearHistoryDisplay();
         this.invalidateHistoryIndex();
         this.settingsEntry = null;
         this.programSelectionDraft = null;
+        this.programChoiceOpen = false;
+        this.controlSessionKey = null;
+        clearTimeout(this.programSavedTimer);
+        this.programRequest = null;
+        this.programSaveState = null;
         this.lastNamedProgramId = null;
         this.progressionDraft = null;
+        this.freeProgramKind = null;
+        this.freeProgramStepsDraft = null;
+        this.programDraft = null;
+        this.programEditor = null;
+        this.cancelProgramDrag();
+        this.programSavePending = null;
+        this.appearanceDraft = null;
+        this.appearanceRaw = null;
+        this.appearanceRequest = null;
+        this.appearanceStatus = null;
+        this.appearanceStatusKind = null;
+        this.appearanceRevision = (this.appearanceRevision || 0) + 1;
         this.temperatureChange = null;
+        this.temperatureInteraction = null;
+        this.manualLightDraft = null;
+        this.manualLightRevision = (this.manualLightRevision || 0) + 1;
         this.zoom = 1;
         this.window = null;
+        this.renderStateLoading();
+        this.syncNavigation();
         this.refresh(true);
       }
       if (e.target.id === "session") {
         this.selected = e.target.value;
+        this.historySelectionGeneration = (this.historySelectionGeneration || 0) + 1;
+        this.historyLoad = null;
+        this.shown = null;
+        this.clearHistoryDisplay();
         this.highlightedEventId = null;
+        this.pendingEventFocus = null;
         this.invalidateHistoryIndex();
         this.zoom = 1;
         this.window = null;
         this.refresh(true);
       }
-      if (e.target.id === "target")
-        this.action("target").catch((err) => this.message(err));
-      if (e.target.matches("[data-program-kind]")) {
-        this.setProgramKind(
-          e.target.dataset.programKind,
-          e.target.closest("[data-program-id]")?.dataset.programId,
-        );
-      }
       if (["button-program", "button-temperature"].includes(e.target.id))
-        this.action("button-program").catch((err) => this.message(err));
+        this.runPanelAction(() => this.action("button-program"));
     });
     this.shadowRoot.addEventListener("input", (e) => {
+      if (!this.state) return;
+      if (
+        e.target.matches(
+          "[data-appearance-color],[data-appearance-picker],[data-appearance-scale]",
+        )
+      )
+        this.updateAppearanceField(e.target);
       if (e.target.closest("#parameters")) e.target.dataset.edited = "true";
+      if (e.target.closest("#parameters"))
+        this.settingsEditRevision = (this.settingsEditRevision || 0) + 1;
       if (e.target.matches("#progression-start,#progression-end,#progression-gangs")) {
         this.progressionDraft = {
           ...this.progressionDraft,
@@ -1653,34 +3289,53 @@ class SaunaPanel extends HTMLElement {
         ].map((input) => Number(input.value));
         this.markProgramEdited();
       }
-      if (e.target.matches("[data-manual-light-value]"))
+      if (e.target.matches("[data-program-field],[data-program-step]"))
+        this.updateProgramEditorField(e.target);
+      if (e.target.matches("[data-manual-light-value]")) {
         this.manualLightDraft = e.target.value;
+        this.manualLightRevision = (this.manualLightRevision || 0) + 1;
+      }
     });
     this.shadowRoot.addEventListener("change", (e) => {
+      if (!this.state) return;
       if (e.target.matches("[data-free-step-count]")) {
         this.freeProgramStepsDraft = this.resizeSteps(
           this.freeSteps(),
           Number(e.target.value),
         );
         this.markProgramEdited();
-        this.drawCurrent();
       }
       if (e.target.matches("[data-program-step-count]")) {
-        const row = e.target.closest("[data-program-id]"),
-          draft = this.readProgramDraft();
-        const program = draft.find((item) => item.id === row?.dataset.programId);
-        if (program) {
-          program.temperature_steps = this.resizeSteps(
-            program.temperature_steps || [],
-            Number(e.target.value),
-          );
-          this.programDraft = draft;
-          this.programLibraryNeedsRender = true;
-          this.renderProgramLibrary();
-        }
+        if (!this.programEditor) return;
+        this.programEditor.values.temperature_steps = this.resizeSteps(
+          this.programEditor.values.temperature_steps || [],
+          Number(e.target.value),
+        );
+        this.programLibraryNeedsRender = true;
+        this.renderProgramLibrary();
       }
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
+      if (!this.state) return;
+      if (
+        e.target.matches(".diagnostic-marker[data-action]") &&
+        ["Enter", " "].includes(e.key)
+      ) {
+        e.preventDefault();
+        this.runPanelAction(() => this.action(e.target.dataset.action));
+        return;
+      }
+      if (e.target.matches("[data-program-drag]")) {
+        if (["ArrowUp", "ArrowDown"].includes(e.key)) {
+          e.preventDefault();
+          this.moveProgram(e.target.dataset.programDrag, e.key === "ArrowUp" ? -1 : 1);
+        }
+        if (e.key === "Escape") this.cancelProgramDrag();
+      }
+      if (e.key === "Escape" && this.programEditor) {
+        e.preventDefault();
+        this.cancelProgramEditor();
+      }
       if (e.key === "Escape" && this.programInfoOpen) {
         const open = this.programInfoOpen;
         this.programInfoOpen = null;
@@ -1689,9 +3344,31 @@ class SaunaPanel extends HTMLElement {
           this.renderProgramLibrary();
         } else this.drawCurrent();
       }
+      if (e.target.closest("#history-overview svg, svg.session-chart") && this.window) {
+        const width = this.window[1] - this.window[0];
+        if (["ArrowLeft", "ArrowRight", "Home", "+", "-", "="].includes(e.key)) {
+          e.preventDefault();
+          if (e.key === "Home") {
+            this.zoom = 1;
+            this.window = null;
+          } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            const offset = width * (e.key === "ArrowLeft" ? -0.1 : 0.1);
+            this.setHistoryWindow(this.window[0] + offset, this.window[1] + offset);
+          } else {
+            const middle = (this.window[0] + this.window[1]) / 2,
+              next = width * (e.key === "-" ? 2 : 0.5);
+            this.setHistoryWindow(middle - next / 2, middle + next / 2);
+          }
+          this.scheduleHistoryRender("viewport");
+        }
+      }
       if (e.target.closest("[data-target-arc]"))
-        this.keyTemperatureTarget(e).catch((err) => this.message(err));
+        this.runPanelAction(() => this.keyTemperatureTarget(e));
     });
+    this.shadowRoot.addEventListener("pointerdown", (e) => this.beginProgramDrag(e));
+    this.shadowRoot.addEventListener("pointermove", (e) => this.updateProgramDrag(e));
+    this.shadowRoot.addEventListener("pointerup", (e) => this.finishProgramDrag(e));
+    this.shadowRoot.addEventListener("pointercancel", () => this.cancelProgramDrag());
     this.shadowRoot.addEventListener("pointerdown", (e) => {
       const overview = e.target.closest("#history-overview svg");
       if (overview) return this.beginHistoryGesture(e, overview);
@@ -1702,7 +3379,7 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("pointerup", (e) => {
       if (this.temperatureInteraction?.pointerId === e.pointerId) {
-        this.endTemperatureDrag(e).catch((err) => this.message(err));
+        this.runPanelAction(() => this.endTemperatureDrag(e));
         return;
       }
       if (this.historyGesture?.pointerId === e.pointerId)
@@ -1740,8 +3417,7 @@ class SaunaPanel extends HTMLElement {
       ) {
         this.pendingHover = null;
         this.lastHistoryPointer = null;
-        this.$("#tooltip")?.setAttribute("hidden", "");
-        this.$("#cursor")?.setAttribute("visibility", "hidden");
+        this.historyChart?.interaction.hide();
       }
     });
     this.shadowRoot.addEventListener(
@@ -1771,16 +3447,44 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.saveSettings().catch((err) => this.message(err));
+      this.runPanelAction(() => this.saveSettings());
     });
+  }
+  runPanelAction(operation) {
+    const entry = this.entry,
+      generation = this.generation;
+    const report = (error) => {
+      if (this.entry === entry && this.generation === generation) this.message(error);
+    };
+    try {
+      Promise.resolve(operation()).catch(report);
+    } catch (error) {
+      report(error);
+    }
   }
   message(error, source = "action") {
     this.messages ??= {};
     this.messages[source] = error;
-    const shown = this.messages.action || this.messages.refresh;
+    const shown =
+      this.messages.action || this.messages.refresh || this.messages.history;
     const node = this.$("#message");
     node.className = shown ? "notice error" : "";
     node.textContent = shown ? errorText(shown) : "";
+  }
+  renderStateLoading() {
+    const loading = '<p role="status">Lade Saunadaten …</p>';
+    for (const selector of ["#current", "#details", "#settings"])
+      this.updateMarkup(selector, loading);
+    const session = this.$("#session");
+    if (session) {
+      session.innerHTML = '<option value="live">Letzte Sitzung</option>';
+      session.disabled = true;
+    }
+    const history = this.$("#history-loading");
+    if (history) {
+      history.hidden = false;
+      history.textContent = "Lade Saunadaten …";
+    }
   }
   async refresh(requested = false) {
     if (this.busy) {
@@ -1790,9 +3494,12 @@ class SaunaPanel extends HTMLElement {
     if (!this.isConnected) return;
     this.busy = true;
     const generation = this.generation;
+    const programRevision = this.programRevision || 0;
+    const appearanceRevision = this.appearanceRevision || 0;
     try {
       if (!this.entry) {
         const instances = await this.api("");
+        if (generation !== this.generation || !this.isConnected) return;
         this.$("#instance").innerHTML = instances
           .map((i) => `<option value="${esc(i.entry_id)}">${esc(i.title)}</option>`)
           .join("");
@@ -1805,78 +3512,31 @@ class SaunaPanel extends HTMLElement {
       }
       const entry = this.entry;
       const state = await this.api(`/${entry}/state`);
-      if (generation !== this.generation || !this.isConnected) return;
+      if (
+        generation !== this.generation ||
+        entry !== this.entry ||
+        !this.isConnected ||
+        programRevision !== (this.programRevision || 0) ||
+        appearanceRevision !== (this.appearanceRevision || 0)
+      )
+        return;
+      const wasLoading = !this.state;
       this.state = state;
+      this.syncHistoryProjection();
+      const sessionSelect = this.$("#session");
+      if (sessionSelect) sessionSelect.disabled = false;
+      if (wasLoading) this.renderHistoryLoading(null);
+      const sessionKey = state.session?.timeline?.session_started_at || null;
+      if (sessionKey !== this.controlSessionKey) {
+        this.programChoiceOpen = false;
+        this.controlSessionKey = sessionKey;
+      }
+      this.appearanceStale = false;
+      this.applyAppearance();
+      this.syncNavigation();
       // The status cards remain live every two seconds.  Archive list/pages
       // are only useful while the history section is actually on screen.
       const historyVisible = !this.$("#history")?.hidden;
-      if (historyVisible) {
-        const list = await this.api(`/${entry}/archive`);
-        if (generation !== this.generation || !this.isConnected) return;
-        this.sessions = list;
-        const liveLabel =
-          state.operation_enabled && state.session
-            ? "Laufende Sitzung"
-            : "Letzte Sitzung";
-        const optionHtml =
-          `<option value="live">${liveLabel}</option>` +
-          list
-            .filter((s) => s.session_id !== state.session?.timeline.session_id)
-            .map(
-              (s) =>
-                `<option value="${esc(s.session_id)}">Sitzung vom ${esc(when(s.started_at))}${s.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
-            )
-            .join("");
-        const sessionSelect = this.$("#session");
-        if (sessionSelect.innerHTML !== optionHtml) {
-          this.updateMarkup("#session", optionHtml);
-          sessionSelect.value = this.selected;
-        }
-        const id =
-          this.selected === "live"
-            ? state.session?.timeline.session_id || list[0]?.session_id
-            : this.selected;
-        if (id !== this.historySessionId) {
-          this.historySessionId = id;
-          this.window = null;
-          this.invalidateHistoryIndex();
-          this.historyTimelineSignature = null;
-        }
-        if (id) {
-          const cache = this.cache.get(id) || { records: [], after: 0 };
-          if (this.selected === "live" || !cache.loaded) {
-            let page;
-            do {
-              page = await this.api(
-                `/${entry}/archive?session_id=${encodeURIComponent(id)}&after=${cache.after}`,
-              );
-              if (generation !== this.generation || !this.isConnected) return;
-              cache.session = page.session;
-              const additions = page.records.filter((r) =>
-                [
-                  "measurement",
-                  "source_snapshot",
-                  "diagnostic",
-                  "phase",
-                  "detector_trace",
-                ].includes(r.kind),
-              );
-              if (additions.length) {
-                cache.records.push(...additions);
-                this.invalidateHistoryIndex();
-              }
-              cache.after = page.records.at(-1)?.id || cache.after;
-            } while (page.next_after);
-            cache.loaded = true;
-            this.cache.set(id, cache);
-          }
-          this.shown = {
-            session:
-              this.selected === "live" ? state.session || cache.session : cache.session,
-            records: cache.records,
-          };
-        } else this.shown = null;
-      }
       if (!this.temperatureInteraction) {
         const restoreTargetFocus = this.shadowRoot.activeElement?.matches?.(
           '[data-target-arc][role="slider"]',
@@ -1884,10 +3544,19 @@ class SaunaPanel extends HTMLElement {
         this.drawCurrent();
         if (restoreTargetFocus) this.$('[data-target-arc][role="slider"]')?.focus?.();
       }
-      if (historyVisible) this.drawHistory();
+      if (historyVisible) {
+        this.syncHistorySessions();
+        this.showHistoryCache();
+        this.drawHistory("status");
+        this.startHistoryLoad();
+      }
       this.drawSettings();
+      this.syncAppearanceEditor();
       this.message(null, "refresh");
     } catch (error) {
+      if (generation !== this.generation) return;
+      this.appearanceStale = true;
+      this.applyAppearance();
       this.message(error, "refresh");
     } finally {
       this.busy = false;
@@ -1897,7 +3566,272 @@ class SaunaPanel extends HTMLElement {
       }
     }
   }
+  historySelectionId() {
+    return this.selected === "live"
+      ? this.state?.session?.timeline.session_id || this.sessions?.[0]?.session_id
+      : this.selected;
+  }
+  historyProjection() {
+    return this.state?.permissions?.admin ? "admin" : "public";
+  }
+  syncHistoryProjection() {
+    const projection = this.historyProjection();
+    if (this.historyAccessProjection === projection) return;
+    const previous = this.historyAccessProjection;
+    this.historyAccessProjection = projection;
+    if (previous === undefined) return;
+    // Permission-specific cursors and data cannot be reused by another
+    // projection. The generation also rejects responses from an earlier stream.
+    this.historyProjectionGeneration = (this.historyProjectionGeneration || 0) + 1;
+    this.cache.clear();
+    this.historyLoad = null;
+    this.shown = null;
+    this.chartDataIndex = null;
+    this.invalidateHistoryIndex();
+    this.historyTimelineSignature = null;
+    this.historyGangKey = this.historyEventKey = this.historyDiagnosticsKey = null;
+    this.highlightedEventId = this.pendingEventFocus = this.pendingHover = null;
+    this.lastHistoryPointer = null;
+    this.historyChart?.interaction.hide();
+    if (this.historyChart) {
+      this.historyChart.model = null;
+      this.historyChart.prepared.clear();
+      this.historyChart.preparedOverview.clear();
+      this.historyChart.phaseKey = null;
+    }
+    const focused = this.shadowRoot.activeElement;
+    if (focused?.closest?.("#event-list, #detection-plots")) focused.blur?.();
+    for (const selector of ["#gangs", "#event-list", "#detection-plots"])
+      this.updateMarkup(selector, "");
+    this.renderHistoryLoading(null);
+  }
+  historyCache(id) {
+    const accessProjection = this.historyProjection();
+    let cache = this.cache.get(id);
+    if (cache?.accessProjection && cache.accessProjection !== accessProjection)
+      cache = null;
+    if (!cache) {
+      cache = { records: [], after: 0, pageRunLoaded: false, finalSynced: false };
+      this.cache.set(id, cache);
+    }
+    cache.accessProjection = accessProjection;
+    cache.records ??= [];
+    cache.after ??= 0;
+    // `loaded` used to mean both "this page run ended" and "this session is
+    // final".  Keep it as an alias while callers move to the explicit state.
+    cache.pageRunLoaded ??= !!cache.loaded;
+    cache.finalSynced ??= !!cache.pageRunLoaded && !!cache.session?.ended_at;
+    cache.loaded = cache.pageRunLoaded;
+    cache.recordIds ??= new Set(
+      cache.records
+        .map((record) => record.id)
+        .filter((id) => id !== undefined && id !== null),
+    );
+    return cache;
+  }
+  updateHistoryCacheMetadata(cache, page) {
+    const session = page.session,
+      projection = page.phase_projection,
+      sessionSignature = JSON.stringify(session || null),
+      projectionSignature = JSON.stringify(projection || null);
+    if (cache.sessionSignature !== sessionSignature) {
+      cache.session = session;
+      cache.sessionSignature = sessionSignature;
+      cache.sessionRevision = (cache.sessionRevision || 0) + 1;
+      cache.metadataRevision = (cache.metadataRevision || 0) + 1;
+    }
+    if (cache.projectionSignature !== projectionSignature) {
+      cache.phase_projection = projection;
+      cache.projectionSignature = projectionSignature;
+      cache.projectionRevision = (cache.projectionRevision || 0) + 1;
+      cache.metadataRevision = (cache.metadataRevision || 0) + 1;
+    }
+  }
+  appendHistoryCacheRecords(cache, records, after) {
+    const cursorRecords = records.filter((record) => record.id > after),
+      additions = cursorRecords.filter((record) => {
+        if (record.id === undefined || record.id === null) return true;
+        if (cache.recordIds.has(record.id)) return false;
+        cache.recordIds.add(record.id);
+        return true;
+      });
+    if (additions.length) {
+      cache.records.push(...additions);
+      cache.recordsRevision = (cache.recordsRevision || 0) + 1;
+      if (
+        additions.some((record) =>
+          ["measurement", "source_snapshot"].includes(record.kind),
+        )
+      )
+        cache.measurementRevision = (cache.measurementRevision || 0) + 1;
+      // The incremental index remains responsible for identifying affected
+      // series.  This only marks that its source records gained entries.
+      this.invalidateHistoryIndex();
+    }
+    return { additions, cursorRecords };
+  }
+  historyCacheNeedsFetch(cache) {
+    return !cache.pageRunLoaded || !cache.finalSynced;
+  }
+  showHistoryCache() {
+    const id = this.historySelectionId();
+    if (id !== this.historySessionId) {
+      this.historySessionId = id;
+      this.window = null;
+      this.invalidateHistoryIndex();
+      this.historyTimelineSignature = null;
+    }
+    const cache = id ? this.historyCache(id) : null,
+      live = this.selected === "live" && this.state?.session,
+      session = live || cache?.session;
+    this.shown = session
+      ? {
+          session,
+          records: cache?.records || (this.emptyHistoryRecords ??= []),
+          phase_projection: live
+            ? this.state.phase_projection
+            : cache?.phase_projection,
+        }
+      : null;
+  }
+  renderHistoryLoading(load) {
+    const node = this.$("#history-loading");
+    if (!node) return;
+    node.hidden = !load;
+    node.textContent = load
+      ? `Verlauf wird geladen · ${load.count || 0} Mess- und Ereignispunkte verfügbar`
+      : "";
+  }
+  syncHistorySessions() {
+    const select = this.$("#session");
+    if (!select || !this.sessions || !this.state) return;
+    const liveId = this.state.session?.timeline.session_id,
+      timeZone = localTimeZone(),
+      liveLabel =
+        this.state.operation_enabled && this.state.session
+          ? "Laufende Sitzung"
+          : "Letzte Sitzung",
+      options =
+        `<option value="live">${liveLabel}</option>` +
+        this.sessions
+          .filter((session) => session.session_id !== liveId)
+          .map(
+            (session) =>
+              `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at, timeZone))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
+          )
+          .join("");
+    if (select.innerHTML !== options) {
+      this.updateMarkup("#session", options);
+      select.value = this.selected;
+    }
+  }
+  startHistoryLoad() {
+    if (!this.state) return;
+    this.syncHistoryProjection();
+    const entry = this.entry,
+      generation = this.generation,
+      projection = this.historyProjection(),
+      projectionGeneration = this.historyProjectionGeneration || 0,
+      selected = this.selected,
+      liveId = this.state?.session?.timeline.session_id,
+      selectionGeneration = this.historySelectionGeneration || 0,
+      key = `${generation}:${projectionGeneration}:${projection}:${selectionGeneration}:${entry}:${selected}:${liveId || ""}`;
+    if (this.historyLoad?.key === key) return this.historyLoad.promise;
+    const load = { key, count: 0 };
+    this.historyLoad = load;
+    const current = () =>
+      this.historyLoad === load &&
+      generation === this.generation &&
+      projection === this.historyProjection() &&
+      projectionGeneration === (this.historyProjectionGeneration || 0) &&
+      selectionGeneration === (this.historySelectionGeneration || 0) &&
+      entry === this.entry &&
+      selected === this.selected &&
+      this.isConnected &&
+      !this.$("#history")?.hidden;
+    // A live response remains relevant while its session transitions to the
+    // archive.  It is stale only when a different live session replaced it.
+    const currentFor = (id) => {
+      if (!current()) return false;
+      if (selected !== "live") return id === this.historySelectionId();
+      const nowLiveId = this.state?.session?.timeline.session_id;
+      return nowLiveId === liveId || (liveId && !nowLiveId && id === liveId);
+    };
+    this.renderHistoryLoading(load);
+    load.promise = (async () => {
+      try {
+        const list = await this.api(`/${entry}/archive`);
+        if (!current()) return;
+        this.sessions = list;
+        this.syncHistorySessions();
+        const id = this.historySelectionId();
+        if (!id) {
+          this.showHistoryCache();
+          this.drawHistory("archive");
+          return;
+        }
+        const cache = this.historyCache(id);
+        if (this.historyCacheNeedsFetch(cache)) {
+          let more;
+          do {
+            const after = cache.after,
+              page = await this.api(
+                `/${entry}/archive?session_id=${encodeURIComponent(id)}&after=${after}`,
+              );
+            if (!currentFor(id)) return;
+            // Persist each complete page before the next request. A failed
+            // later page retries at this cursor and cannot duplicate records.
+            const records = Array.isArray(page.records) ? page.records : [],
+              continuation = page.next_after;
+            if (
+              continuation != null &&
+              (!Number.isSafeInteger(continuation) || continuation <= after)
+            )
+              throw Error("Archivabruf ohne Fortschritt. Erneuter Versuch folgt.");
+            const { cursorRecords } = this.appendHistoryCacheRecords(
+                cache,
+                records,
+                after,
+              ),
+              next =
+                continuation ??
+                Math.max(after, ...cursorRecords.map((record) => record.id));
+            this.updateHistoryCacheMetadata(cache, page);
+            cache.after = next;
+            more = continuation != null;
+            cache.pageRunLoaded = !more;
+            cache.loaded = cache.pageRunLoaded;
+            // A page run can be complete for an open snapshot.  Only a
+            // closed final snapshot plus its last page settles the session.
+            cache.finalSynced = !!cache.pageRunLoaded && !!cache.session?.ended_at;
+            load.count = cache.records.length;
+            this.showHistoryCache();
+            if (!this.$("#history")?.hidden) this.drawHistory("archive");
+            this.renderHistoryLoading(more ? load : null);
+            // Let input, paint and the independent status poll run between pages.
+            if (more) await new Promise((resolve) => setTimeout(resolve, 0));
+          } while (more && current());
+        } else {
+          this.showHistoryCache();
+          this.drawHistory("archive");
+        }
+        if (current()) this.message(null, "history");
+      } catch (error) {
+        if (current()) this.message(error, "history");
+      } finally {
+        if (this.historyLoad === load) {
+          this.historyLoad = null;
+          this.renderHistoryLoading(null);
+        }
+      }
+    })();
+    return load.promise;
+  }
   drawCurrent() {
+    if (!this.state) {
+      this.renderStateLoading();
+      return;
+    }
     const progressionOpen = this.$("#current details")?.open;
     const s = this.state,
       session = s.session,
@@ -1925,6 +3859,13 @@ class SaunaPanel extends HTMLElement {
         unavailable: "Messwert fehlt",
         validity_unconfigured: "Gültigkeit noch nicht eingestellt",
       })[quality(position, quantity)] || "Messwert fehlt";
+    const measurementPosition =
+      s.regulation_temperature_position || s.measurement_positions?.[0] || "upper";
+    const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
+    const measurementLabel =
+      measurementPosition === "lower" && s.measurement_positions?.includes("upper")
+        ? "Ersatzmessung unten"
+        : `Messung ${measurementHeight}`;
     const formatValue = (position, quantity, unit) =>
       `${num(value(position, quantity), 1)} ${unit}`;
     const timer = s.mechanical_timer;
@@ -1939,7 +3880,7 @@ class SaunaPanel extends HTMLElement {
         : {
             idle: "Noch nicht gestartet",
             running: "Geschätzte Restzeit bei eingeschaltetem Schütz",
-            expired: "Drehschalter neu einstellen",
+            expired: "Geschätzte Laufzeit abgelaufen",
           }[timer.state];
     const timerText = timer.state === "idle" ? "–" : duration(timer.remaining_seconds);
     const energyLabel = {
@@ -1966,7 +3907,6 @@ class SaunaPanel extends HTMLElement {
     const permissions = s.permissions || {};
     const manualMode = s.configuration.control_mode === "manual";
     const modeLocked = !!s.configuration_locked;
-    const disabled = !permissions.admin;
     const canStart =
       permissions.control && (s.operation_enabled || !s.start_errors.length);
     const sessionGap = !s.operation_enabled
@@ -1975,6 +3915,12 @@ class SaunaPanel extends HTMLElement {
         )
       : null;
     const targetBounds = this.temperatureBounds();
+    const temperatureScale = this.appearanceScale("temperature") || targetBounds;
+    const humidityScale = this.appearanceScale("humidity") || {
+      minimum: 0,
+      maximum: 100,
+    };
+    const arcBounds = this.targetArcBounds();
     const presets = Array.from(
       { length: p.preset_count },
       (_, i) => p.preset_start_c + i * p.preset_step_c,
@@ -1985,17 +3931,15 @@ class SaunaPanel extends HTMLElement {
       if (minutes < 5) return "unter 5 Minuten";
       return `${Math.max(5, Math.round(minutes / 5) * 5)} Minuten`;
     };
-    const startWindow = (seconds) => {
-      const minutes = Math.max(0, Number(seconds) || 0) / 60;
-      if (minutes < 5) return "unter 5 Minuten";
-      return `${Math.floor(minutes / 5) * 5} Minuten`;
-    };
     const timerLine = s.phase_timer;
     const phaseTimerText =
       s.operation_enabled && timerLine
         ? {
             gang: `seit ${duration(timerLine.seconds, "Minuten")}`,
-            after_run: `${timerLine.mode === "paused" ? "pausiert – noch" : "noch"} ${duration(timerLine.seconds, "Minuten")}`,
+            after_run:
+              timerLine.mode === "pending"
+                ? timerLine.label || "Ofenkühlung wird vorbereitet"
+                : `${timerLine.mode === "paused" ? "pausiert – noch" : "noch"} ${duration(timerLine.seconds, "Minuten")}`,
             cooling: `noch ${duration(timerLine.seconds, "Minuten")}`,
           }[timerLine.kind] || ""
         : "";
@@ -2013,14 +3957,7 @@ class SaunaPanel extends HTMLElement {
       availability.until_ready_seconds > 0 &&
       availability.ready_estimated
         ? `noch ${fiveMinuteEstimate(availability.until_ready_seconds)} bis bereit`
-        : s.operation_enabled &&
-            s.phase === "bereit" &&
-            availability &&
-            !availability?.blocker &&
-            availability.until_ready_seconds === 0 &&
-            availability.start_window_seconds > 0
-          ? `noch ${startWindow(availability.start_window_seconds)}`
-          : "";
+        : "";
     const availabilityLine = phaseTimerText || blockerText || readinessText;
     const availabilityText =
       s.operation_enabled &&
@@ -2041,11 +3978,19 @@ class SaunaPanel extends HTMLElement {
         ? `<small class="session-status">${active ? (s.gang_confirmation === "confirmed" ? "Saunagang durch Aufguss bestätigt" : "Saunagang vorläufig · Aufguss ausstehend") : `Sitzung seit ${when(session.timeline.session_started_at)}`}</small>`
         : "";
     const operation = sessionGap
-      ? `<div class="operation-control"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button data-action="operation" ${canStart ? "" : "disabled"}>Fortsetzen</button></div>`
+      ? `<div class="operation-control"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="primary" data-action="operation" ${canStart ? "" : "disabled"}>Fortsetzen</button></div>`
       : `<div class="operation-control"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${sessionIndicator}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
-    const stateLine = `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong><span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityLine || availabilityText || "")}</span></div><span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span></div>`;
+    const availabilityHint = availabilityLine || availabilityText;
+    const stateLine = `<div class="state-line"><div class="phase-time"><strong class="phase" data-phase="${esc(s.phase)}">${phaseLabel}</strong>${availabilityHint ? `<span class="availability-line ${availability?.blocker ? "wait" : ""}">${esc(availabilityHint)}</span>` : ""}</div><span class="badge">${count} ${count === 1 ? "Saunagang" : "Saunagänge"}</span></div>`;
+    const ovenState =
+      s.heating_feedback === true
+        ? "Ofen an"
+        : s.heating_feedback === false
+          ? "Ofen aus"
+          : "Ofen unbekannt";
+    const controlStateLine = `${stateLine}<p class="oven-feedback"><strong class="feedback ${s.heating_feedback === true ? "on" : s.heating_feedback === false ? "off" : "unknown"}">${ovenState}</strong></p>`;
     const dial = (
       reading,
       unit,
@@ -2056,11 +4001,8 @@ class SaunaPanel extends HTMLElement {
       control = "",
       minimum = 0,
     ) =>
-      `<svg class="dial ${control ? "dial-temperature" : ""}" viewBox="0 0 300 260" role="${control ? "group" : "img"}" aria-label="${esc(control ? "Temperatur und Solltemperatur" : caption)}"><path d="${temperatureDial.path}" fill="none" stroke="var(--divider-color,#444)" stroke-width="16" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid ? color : "#888"}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, (((reading ?? minimum) - minimum) / (maximum - minimum || 1)) * 100))} 100"/><text class="reading" x="150" y="119" text-anchor="middle">${num(reading, 1)} ${unit}</text>${control}${caption ? `<text class="caption" x="150" y="183" text-anchor="middle">${esc(caption)}</text>` : ""}</svg>`;
-    const deadlineLabels = {
-      confirmation: "Aufgussbestätigung",
-      person_opportunity: "Wartezeit auf Personenerkennung",
-    };
+      `<svg class="dial ${control ? "dial-temperature" : ""}" viewBox="0 0 300 260" role="${control ? "group" : "img"}" aria-label="${esc(control ? "Temperatur und Solltemperatur" : caption)}"><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="16" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, (((reading ?? minimum) - minimum) / (maximum - minimum || 1)) * 100))} 100"/>${this.temperatureTickMarks({ minimum, maximum })}<text class="reading" x="150" y="119" text-anchor="middle">${num(reading, 1)} ${unit}</text>${control}${caption ? `<text class="caption" x="150" y="240" text-anchor="middle">${esc(caption)}</text>` : ""}</svg>${reading != null && (reading < minimum || reading > maximum) ? `<p class="scale-hint">Messwert außerhalb der Anzeigeskala</p>` : ""}`;
+    const deadlineLabels = { confirmation: "Aufgussbestätigung" };
     const phaseRemaining = (phase) =>
       Math.max(
         0,
@@ -2069,10 +4011,7 @@ class SaunaPanel extends HTMLElement {
           (phase.credited_seconds ?? 0),
       );
     const timerRows = [
-      [
-        "Heizsumme (gezählt)",
-        `${duration(session?.heating.elapsed_seconds || 0)} · Grenze ${duration(s.heating_limit_seconds)}`,
-      ],
+      ["Heizsumme (gezählt)", duration(session?.heating.elapsed_seconds || 0)],
       [
         "Mechanischer Ofentimer",
         `<span data-mechanical-timer>${timerText} · ${timerStatus}</span>`,
@@ -2081,19 +4020,16 @@ class SaunaPanel extends HTMLElement {
     if (session?.after_run) {
       const phase = session.after_run;
       timerRows.push([
-        phase.paused_at ? "Nachlauf pausiert" : "Nachlauf",
-        duration(phaseRemaining(phase)),
-      ]);
-    }
-    if (session?.cooling) {
-      const cycle = session.cooling;
-      timerRows.push([
-        cycle.paused_at
-          ? "Zwangskühlung pausiert"
-          : cycle.ends_at
-            ? "Zwangskühlung"
-            : "Zwangskühlung vorgemerkt",
-        duration(phaseRemaining(cycle)),
+        phase.pending_start || (!phase.ends_at && !phase.paused_at)
+          ? "Ofenkühlung wartet auf Schütz-Aus"
+          : phase.paused_at
+            ? "Ofenkühlung pausiert"
+            : "Ofenkühlung",
+        phase.pending_start
+          ? "Ausschaltung noch nicht bestätigt"
+          : !phase.ends_at && !phase.paused_at
+            ? `Noch ${duration(phaseRemaining(phase))} bestätigte Auszeit erforderlich`
+            : duration(phaseRemaining(phase)),
       ]);
     }
     for (const deadline of session?.deadlines || []) {
@@ -2116,13 +4052,7 @@ class SaunaPanel extends HTMLElement {
     }
     if (
       s.phase_timer &&
-      !new Set([
-        "after_run",
-        "cooling",
-        "session_light",
-        "session_gap",
-        "person_wait",
-      ]).has(s.phase_timer.kind)
+      !new Set(["after_run", "session_light", "session_gap"]).has(s.phase_timer.kind)
     )
       timerRows.push([
         s.phase_timer.label,
@@ -2134,70 +4064,66 @@ class SaunaPanel extends HTMLElement {
       ? {
           purpose: "after_run",
           token: session.after_run.phase_id,
-          label: "Nachlauf jetzt beenden",
+          label: "Ofenkühlung jetzt beenden",
         }
-      : session?.cooling?.started_at
-        ? {
-            purpose: "forced_cooling",
-            token: session.cooling.cycle_id,
-            label: "Zwangskühlung jetzt beenden",
-          }
-        : null;
-    const finishPhase = manualPhase
-      ? `<div class="row"><button data-action="end-phase:${manualPhase.purpose}:${esc(encodeURIComponent(manualPhase.token))}" ${disabled ? "disabled" : ""}>${manualPhase.label}</button><small class="muted">Setzt den regulären Folgeablauf fort.</small></div>`
-      : "";
-    const temperatureColor =
-      {
-        aufheizen: "#e58a55",
-        bereit: "#4f9a6a",
-        saunagang: "#cf7447",
-        nachlauf: "#5b8ca8",
-        zwangskühlung: "#5b8ca8",
-      }[s.phase] || "#888";
-    const humidity = value("upper", "humidity"),
-      humidityColor =
-        humidity <= 20 ? "#4f9a6a" : humidity <= 30 ? "#c59b32" : "#bc5546";
-    const targetValue =
-        targetBounds &&
-        this.clampTemperature(
-          this.temperatureInteraction?.value ?? s.target_temperature,
-          targetBounds,
-        ),
-      targetPoint = targetBounds && this.temperatureArcPoint(targetValue, targetBounds);
+      : null;
+    const finishPhase =
+      manualPhase && permissions.admin && !manualMode
+        ? `<div class="row"><button class="stop" data-action="end-phase:${manualPhase.purpose}:${esc(encodeURIComponent(manualPhase.token))}">${manualPhase.label}</button></div>`
+        : "";
+    const temperatureColor = this.appearanceColor("series_temperature");
+    const humidity = value(measurementPosition, "humidity"),
+      humidityColor = this.appearanceColor("series_humidity");
+    const targetValue = this.temperatureInteraction?.value ?? s.target_temperature,
+      targetPoint =
+        temperatureScale && this.temperatureArcPoint(targetValue, temperatureScale);
     const targetControl =
-      !manualMode && targetBounds
-        ? `${this.temperatureTickMarks(targetBounds)}<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${targetBounds.minimum}" aria-valuemax="${targetBounds.maximum}" aria-valuenow="${targetValue}" aria-valuetext="${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature}"/><circle class="target-temperature-handle" data-target-arc="true" cx="${targetPoint.x}" cy="${targetPoint.y}" r="10"/><text class="target-reading" x="150" y="151" text-anchor="middle">Soll ${num(targetValue, 1)} °C</text>`
+      !manualMode && temperatureScale
+        ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="Soll ${num(targetValue, 1)} °C${targetValue < temperatureScale.minimum || targetValue > temperatureScale.maximum ? " · außerhalb der Anzeigeskala" : ""}" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="10"/><text class="target-reading" x="150" y="151" text-anchor="middle">Soll ${num(targetValue, 1)} °C</text>${targetValue < temperatureScale.minimum || targetValue > temperatureScale.maximum ? '<text class="scale-hint" x="150" y="235" text-anchor="middle">Soll außerhalb der Anzeigeskala</text>' : !arcBounds ? '<text class="scale-hint" x="150" y="235" text-anchor="middle">Sollwertwahl am Bogen nicht möglich</text>' : ""}`
         : "";
     const programs = Array.isArray(s.configuration.temperature_programs)
       ? s.configuration.temperature_programs
       : [];
     const programChoice = this.programChoice(programs),
-      programMode = this.programMode(programs);
-    const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen"><button type="button" data-action="program-mode:program" aria-pressed="${programMode === "program"}" ${permissions.program && programs.length ? "" : "disabled"}>Programm</button><button type="button" data-action="program-mode:individual" aria-pressed="${programMode === "individual"}" ${permissions.program ? "" : "disabled"}>Individuell</button><button type="button" data-action="program-mode:constant" aria-pressed="${programMode === "constant"}" ${permissions.program ? "" : "disabled"}>Konstant</button></div>`;
+      programMode = this.programMode(programs),
+      activeChoice = this.storedProgramChoice(programs),
+      activeMode = activeChoice.mode,
+      activeProgramLabel = this.programChoiceLabel(activeChoice, programs),
+      programBusy = !!this.programRequest;
+    const draftLabel = (draft) =>
+      draft ? '<small class="program-draft-label">Vorgemerkt</small>' : "";
+    const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen"><button type="button" data-action="program-mode:program" aria-pressed="${activeMode === "program"}" class="${programMode === "program" && activeMode !== "program" ? "program-draft" : ""}" ${permissions.program && programs.length && !programBusy ? "" : "disabled"}>Programm${draftLabel(programMode === "program" && activeMode !== "program")}</button><button type="button" data-action="program-mode:individual" aria-pressed="${activeMode === "individual"}" class="${programMode === "individual" && activeMode !== "individual" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Individuell${draftLabel(programMode === "individual" && activeMode !== "individual")}</button><button type="button" data-action="program-mode:constant" aria-pressed="${activeMode === "constant"}" class="${programMode === "constant" && activeMode !== "constant" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Konstant${draftLabel(programMode === "constant" && activeMode !== "constant")}</button></div>`;
     const namedPrograms =
       programMode === "program"
-        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice}" ${permissions.program ? "" : "disabled"}><span>${esc(program.name)}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
+        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice ${program.id === programChoice.id && program.id !== activeChoice.id ? "program-draft" : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice.id}" ${permissions.program && !programBusy ? "" : "disabled"}><span>${esc(program.name)}${draftLabel(program.id === programChoice.id && program.id !== activeChoice.id)}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
         : "";
     const light = s.manual_controls?.light || {};
     const roundedLight = (value) =>
       Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
     const manualLight = light.manual == null ? null : roundedLight(light.manual),
       normalLight = roundedLight(light.normal),
-      brightLight = roundedLight(p.session_light_brightness_percent);
+      brightLight = roundedLight(p.session_light_brightness_percent),
+      sameLightPresets =
+        normalLight != null && brightLight != null && normalLight === brightLight;
     const lightPreset =
       manualLight == null
         ? "auto"
         : manualLight <= 0
           ? "off"
-          : manualLight === normalLight
-            ? "normal"
-            : manualLight === brightLight
-              ? "bright"
-              : null;
+          : sameLightPresets && manualLight === brightLight
+            ? "bright"
+            : manualLight === normalLight
+              ? "normal"
+              : manualLight === brightLight
+                ? "bright"
+                : null;
     const lightPresetButtons = (canControl, includeDimmed = manualMode) =>
-      `<button data-action="light:false" aria-pressed="${lightPreset === "off"}" ${canControl ? "" : "disabled"}>Aus</button>${manualMode ? "" : `<button data-action="light:auto" aria-pressed="${lightPreset === "auto"}" ${canControl ? "" : "disabled"}>Automatik</button>`}${includeDimmed ? `<button data-action="light:normal" aria-pressed="${lightPreset === "normal"}" ${canControl ? "" : "disabled"}>Gedimmt <small>${num(light.normal, 0)} %</small></button>` : ""}<button data-action="light:true" aria-pressed="${lightPreset === "bright"}" ${canControl ? "" : "disabled"}>Hell <small>${num(p.session_light_brightness_percent, 0)} %</small></button>`;
-    const automaticLightControls = `<section class="control-section automatic-light"><h3>Licht</h3><div class="row">${lightPresetButtons(permissions.light, false)}</div></section>`;
+      `<button data-action="light:false" aria-pressed="${lightPreset === "off"}" ${canControl ? "" : "disabled"}>Aus</button>${manualMode ? "" : `<button data-action="light:auto" aria-pressed="${lightPreset === "auto"}" ${canControl ? "" : "disabled"}>Automatik</button>`}${includeDimmed && !sameLightPresets ? `<button data-action="light:normal" aria-pressed="${lightPreset === "normal"}" ${canControl ? "" : "disabled"}>Gedimmt <small>${num(light.normal, 0)} %</small></button>` : ""}<button data-action="light:true" aria-pressed="${lightPreset === "bright"}" ${canControl ? "" : "disabled"}>${includeDimmed && sameLightPresets ? "Gedimmt / Hell" : "Hell"} <small>${num(p.session_light_brightness_percent, 0)} %</small></button>`;
     const heater = s.manual_controls?.heater || {};
+    const overrideRemaining = (endsAt) =>
+      endsAt && stamp(endsAt) > now
+        ? remaining(endsAt)
+        : "Keine laufende Übersteuerung";
     const heaterMode =
       heater.manual === true ? "on" : heater.manual === false ? "off" : "auto";
     const heaterStatus =
@@ -2221,29 +4147,21 @@ class SaunaPanel extends HTMLElement {
         : `Manuell · ${num(light.manual, 0)} %`;
     const manualLightValue =
       this.manualLightDraft ?? light.manual ?? light.automatic ?? 0;
-    const isAdmin = !!this.hass.user?.is_admin;
+    const isAdmin = !!permissions.admin;
     const canManualHeater = permissions.heater;
     const canManualLight = isAdmin && permissions.light;
-    const coolingPaused = session?.cooling?.paused_at
-      ? '<p class="muted" data-cooling-status="paused">Zwangskühlung pausiert.</p>'
-      : "";
-    const modeControls = `<div class="row"><small>Betriebsmodus</small><button data-action="control-mode:automatic" aria-selected="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-selected="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button>${modeLocked ? '<small class="muted">Während der Sitzung gesperrt.</small>' : ""}</div>`;
-    const heaterControls = (scope) =>
-      isAdmin || (scope === "overview" && manualMode)
-        ? `<section class="manual-section manual-heater"><div class="row">${scope === "overview" ? "<h3>Ofen</h3>" : ""}<span class="manual-status ${heaterMode}" data-heater-status="${heaterMode}">${heaterStatus}</span></div><div class="row"><button data-action="heater:true" aria-pressed="${heater.manual === true}" ${canManualHeater ? "" : "disabled"}>EIN</button><button data-action="heater:false" aria-pressed="${heater.manual === false}" ${canManualHeater ? "" : "disabled"}>AUS</button>${manualMode ? "" : `<button data-action="heater:auto" aria-pressed="${heater.manual == null}" ${canManualHeater ? "" : "disabled"}>Automatik</button>`}</div>${!s.operation_enabled ? '<small class="muted">EIN startet zuerst den Saunabetrieb.</small>' : ""}${coolingPaused}</section>`
+    const modeControls = `<div class="row"><small>Betriebsmodus</small><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button>${modeLocked ? '<small class="muted">Während der Sitzung gesperrt.</small>' : ""}</div>`;
+    const heaterControls =
+      isAdmin || manualMode
+        ? `<section class="manual-section manual-heater"><div class="row"><h3>Ofen</h3><span class="manual-status ${heaterMode}" data-heater-status="${heaterMode}">${heaterStatus}</span></div><div class="row"><button data-action="heater:true" aria-pressed="${heater.manual === true}" ${canManualHeater ? "" : "disabled"}>EIN</button><button data-action="heater:false" aria-pressed="${heater.manual === false}" ${canManualHeater ? "" : "disabled"}>AUS</button>${manualMode ? "" : `<button data-action="heater:auto" aria-pressed="${heater.manual == null}" ${canManualHeater ? "" : "disabled"}>Automatik</button>`}</div>${!s.operation_enabled ? '<small class="muted">EIN startet zuerst den Saunabetrieb.</small>' : ""}</section>`
         : "";
-    const lightControls = (scope) => {
-      if (!isAdmin && scope !== "overview") return "";
-      const inputId =
-          scope === "details" ? "manual-light-value" : "manual-light-value-overview",
-        action = scope === "details" ? "manual-light" : "manual-light-overview";
+    const lightControls = (includeDimmed) => {
       const fallback = `Vorübergehende Übersteuerungen folgen spätestens nach ${duration(p.manual_override_minutes * 60)} wieder der Automatik.`;
       const brightnessInput = isAdmin
-        ? `<div class="row"><label for="${inputId}">Freie Helligkeit</label><input id="${inputId}" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="${action}" class="confirm" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div><small class="muted">${manualMode ? "Die Lichtwahl bleibt im manuellen Betrieb erhalten." : fallback}</small>`
+        ? `<div class="row"><label for="manual-light-value-overview">Freie Helligkeit</label><input id="manual-light-value-overview" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="manual-light-overview" class="confirm" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div><small class="muted">${manualMode ? "Die Lichtwahl bleibt im manuellen Betrieb erhalten." : fallback}</small>`
         : "";
-      return `<section class="manual-section manual-light"><div class="row">${scope === "overview" ? "<h3>Licht</h3>" : ""}<span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(permissions.light, true)}</div>${brightnessInput}</section>`;
+      return `<section class="manual-section manual-light"><div class="row"><h3>Licht</h3><span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(permissions.light, includeDimmed)}</div>${brightnessInput}</section>`;
     };
-    this.$('.main-tabs [data-action="details"]').hidden = !permissions.admin;
     const overviewLightTimer =
       !session && s.phase_timer?.kind === "session_light"
         ? `<p class="muted">Lichtnachlauf noch ${duration(s.phase_timer.seconds, "Minuten")}</p>`
@@ -2251,18 +4169,56 @@ class SaunaPanel extends HTMLElement {
     const programBounds = this.programBounds();
     // Temperaturautomatik stays the internal CSS/API term; the control uses the shorter label.
     const temperatureAutomation = !manualMode
-      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${programMode !== "individual" ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}</section>`
+      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && (session || this.programSelectionDraft != null) ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session ? "</div>" : ""}</section>`
       : "";
     const overviewQuality = (position, quantity) =>
-      quality(position, quantity) === "current"
-        ? ""
-        : `<p class="muted">${qualityText(position, quantity)}</p>`;
-    const environmentStatus = manualMode
-      ? ""
-      : `<div class="card environment-status"><div><small>Tür</small><strong data-door-status>${doorText}</strong></div><div><small>Heizung</small><strong class="feedback ${s.heating_feedback === true ? "on" : s.heating_feedback === false ? "off" : "unknown"}">${heatCaption}</strong></div></div>`;
+      `<p class="muted">${measurementLabel}${quality(position, quantity) === "current" ? "" : ` · ${qualityText(position, quantity)}`}</p>`;
     this.updateMarkup(
       "#current",
-      `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${manualMode ? `<div class="manual-overrides">${heaterControls("overview")}${lightControls("overview")}</div>` : automaticLightControls}${alert}</div><div class="environment"><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${dial(value("upper", "temperature"), "°C", "", temperatureColor, targetBounds?.maximum ?? temperatureDial.scale, quality("upper", "temperature") === "current", targetControl, targetBounds?.minimum ?? 0)}${overviewQuality("upper", "temperature")}</div><div><h2>Luftfeuchte</h2>${dial(humidity, "%", "Relative Luftfeuchte", humidityColor, 100, quality("upper", "humidity") === "current")}${overviewQuality("upper", "humidity")}</div></div></div>${environmentStatus}</div></div>`,
+      this.renderControlView({
+        modeControls,
+        stateLine: controlStateLine,
+        overviewLightTimer,
+        operation,
+        programAction:
+          !manualMode &&
+          ((session && (this.programDirty() || this.programSaveState)) ||
+            (!session &&
+              programMode !== "individual" &&
+              (this.programSelectionDraft != null || this.programSaveState)))
+            ? this.programApplyButton(permissions)
+            : "",
+        temperatureAutomation,
+        manualMode,
+        heaterControls,
+        lightControls: lightControls(manualMode || isAdmin),
+        heaterOverrideRemaining: overrideRemaining(heater.override_ends_at),
+        lightOverrideRemaining: overrideRemaining(light.override_ends_at),
+        finishPhase,
+        alert,
+        temperatureGauge: dial(
+          value(measurementPosition, "temperature"),
+          "°C",
+          `Temperatur ${measurementHeight}`,
+          temperatureColor,
+          temperatureScale?.maximum ?? temperatureDial.scale,
+          quality(measurementPosition, "temperature") === "current",
+          targetControl,
+          temperatureScale?.minimum ?? 0,
+        ),
+        temperatureQuality: overviewQuality(measurementPosition, "temperature"),
+        humidityGauge: dial(
+          humidity,
+          "%",
+          `Relative Luftfeuchte ${measurementHeight}`,
+          humidityColor,
+          humidityScale.maximum,
+          quality(measurementPosition, "humidity") === "current",
+          "",
+          humidityScale.minimum,
+        ),
+        humidityQuality: overviewQuality(measurementPosition, "humidity"),
+      }),
     );
     const temperatureProgram =
       s.configuration.program_mode === "progressive"
@@ -2288,31 +4244,155 @@ class SaunaPanel extends HTMLElement {
       : "Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.";
     this.updateMarkup(
       "#details",
-      `<div class="card hero">${stateLine}${finishPhase}${operation}${timers}${alert}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2>${heaterControls("details")}<dl><dt>Aktuelle Solltemperatur</dt><dd>${num(s.target_temperature, 1)} °C</dd><dt>Obere Regeltemperatur</dt><dd data-readiness>${num(s.thermostat_target, 1)} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${num(restartThreshold, 1)} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${esc(s.decision_text)}</p></div><div class="card"><h2>Licht</h2>${lightControls("details")}</div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${["upper", "lower"].map((pos) => `<h3>${pos === "upper" ? "Obere" : "Untere"} Messposition</h3><p>${formatValue(pos, "temperature", "°C")} · ${qualityText(pos, "temperature")}</p><p>${formatValue(pos, "humidity", "% relative Luftfeuchte")} · ${qualityText(pos, "humidity")}</p>`).join("")}<p class="muted">${esc(detectionText)}</p></div></div>`,
+      this.renderDetailView({
+        stateLine,
+        timers,
+        presence: this.presenceDetails(),
+        targetTemperature: num(s.target_temperature, 1),
+        thermostatTarget: num(s.thermostat_target, 1),
+        restartThreshold: num(restartThreshold, 1),
+        temperatureProgram,
+        heatCaption,
+        heatSource,
+        energyText,
+        powerText,
+        decisionText: esc(s.decision_text),
+        lightMode,
+        lightStatus,
+        lightAutomatic: light.automatic,
+        lightManual: light.manual,
+        lightOverrideRemaining: overrideRemaining(light.override_ends_at),
+        doorText,
+        measurements: ["upper", "lower"]
+          .map(
+            (pos) =>
+              `<h3>${pos === "upper" ? "Obere" : "Untere"} Messposition</h3><p>${formatValue(pos, "temperature", "°C")} · ${qualityText(pos, "temperature")}</p><p>${formatValue(pos, "humidity", "% relative Luftfeuchte")} · ${qualityText(pos, "humidity")}</p>`,
+          )
+          .join(""),
+        detectionText: esc(detectionText),
+      }),
     );
     if (progressionOpen) this.$("#current details").open = true;
-    for (const [id, value] of Object.entries(this.progressionDraft || {}))
-      if (this.$(`#${id}`)) this.$(`#${id}`).value = value;
+  }
+  renderControlView(view) {
+    const {
+      modeControls,
+      stateLine,
+      overviewLightTimer,
+      operation,
+      programAction,
+      temperatureAutomation,
+      manualMode,
+      heaterControls,
+      lightControls,
+      heaterOverrideRemaining,
+      lightOverrideRemaining,
+      finishPhase,
+      alert,
+      temperatureGauge,
+      temperatureQuality,
+      humidityGauge,
+      humidityQuality,
+    } = view;
+    const controls = manualMode
+      ? `<div class="manual-controls">${heaterControls}${lightControls}</div>`
+      : heaterControls
+        ? `<div class="manual-overrides"><h2>Manuelle Übersteuerung</h2>${heaterControls}<small>Ofen: ${heaterOverrideRemaining}</small>${lightControls}<small>Licht: ${lightOverrideRemaining}</small>${finishPhase}</div>`
+        : lightControls;
+    return `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles ${programAction ? "program-action-layout" : ""}">${programAction}${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="environment"><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${temperatureGauge}${temperatureQuality}</div><div><h2>Luftfeuchte</h2>${humidityGauge}${humidityQuality}</div></div></div></div></div>`;
+  }
+  renderDetailView(view) {
+    const {
+      stateLine,
+      timers,
+      presence,
+      targetTemperature,
+      thermostatTarget,
+      restartThreshold,
+      temperatureProgram,
+      heatCaption,
+      heatSource,
+      energyText,
+      powerText,
+      decisionText,
+      lightMode,
+      lightStatus,
+      lightAutomatic,
+      lightManual,
+      lightOverrideRemaining,
+      doorText,
+      measurements,
+      detectionText,
+    } = view;
+    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd><dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${num(lightAutomatic, 0)} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${num(lightManual, 0)} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}`;
+  }
+  presenceDetails() {
+    const presence = this.state?.presence;
+    const rules = this.state?.rule_inputs;
+    if (!presence && !rules) return "";
+    const report = (item) => {
+      if (!item) return "Noch keine Meldung";
+      const occupancy = item.available
+        ? { present: "Anwesend", absent: "Abwesend", unknown: "Unbekannt" }[
+            item.occupancy
+          ] || "Unbekannt"
+        : "Nicht verfügbar";
+      const assertion =
+        item.assertion === "provisional_proxy"
+          ? "Vorläufiger Proxy"
+          : item.assertion === "proxy_retraction"
+            ? "Proxy zurückgenommen; keine beobachtete Abwesenheit"
+            : "Direkte Präsenz";
+      return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${item.reason ? ` · ${item.reason}` : ""}`;
+    };
+    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Gewünschte Quelle</dt><dd>${presence?.configured_source === "ha_presence" ? "Externe Präsenz (vorbereitet)" : "Proxy"}</dd><dt>Wirksame Quelle</dt><dd>Proxy</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
+      presence?.external || {},
+    )
+      .map(([source, item]) => `<dt>${esc(source)}</dt><dd>${esc(report(item))}</dd>`)
+      .join(
+        "",
+      )}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl><p class="muted">Externe Präsenz wird beobachtet und ersetzt den Proxy noch nicht. Die Aktivierungsregeln sind offen. Das optionale Audioziel ist vorbereitet; es findet keine Wiedergabe statt.</p></div>`;
   }
   async changeTarget(value) {
+    if (!this.state?.permissions?.temperature) return;
     if (!Number.isFinite(value)) throw Error("Gültige Solltemperatur eingeben");
-    this.programSelectionDraft = "constant";
+    if (this.programRequest) return;
+    this.programSelectionDraft = { mode: "constant" };
     this.freeProgramKind = null;
     this.freeProgramStepsDraft = null;
+    this.programSaveState = null;
+    clearTimeout(this.programSavedTimer);
     const entry = this.entry,
+      generation = this.generation,
       previous = this.temperatureChange,
       draft = this.progressionDraft;
     const change = (async () => {
-      await previous;
-      if (this.entry !== entry) return;
+      // Queue ordering survives a rejected predecessor; this choice still
+      // reports its own failure to the action that submitted it.
+      await previous?.catch(() => null);
+      if (this.entry !== entry || this.generation !== generation) return;
       const saved = await this.api(`/${entry}/temperature`, "POST", {
         target_temperature_c: value,
       });
       // A dial request may finish after the user has already filled the
       // progression form. Keep that unsaved form until its own save succeeds.
-      if (this.entry !== entry) return;
+      if (this.entry !== entry || this.generation !== generation) return;
+      this.state.configuration = {
+        ...this.state.configuration,
+        program_mode: "constant",
+        selected_program_id: null,
+        temperature_steps: null,
+        parameters: {
+          ...this.state.configuration.parameters,
+          ...(saved?.parameters || { target_temperature_c: value }),
+        },
+      };
+      this.state.target_temperature = value;
+      this.programRevision = (this.programRevision || 0) + 1;
+      if (this.programSelectionDraft?.mode === "constant")
+        this.programSelectionDraft = null;
       if (this.progressionDraft === draft) this.progressionDraft = null;
-      await this.refresh();
+      await this.refresh(true);
       return saved?.parameters;
     })();
     this.temperatureChange = change;
@@ -2333,6 +4413,14 @@ class SaunaPanel extends HTMLElement {
     return Number.isFinite(minimum) && Number.isFinite(maximum) && maximum >= minimum
       ? { minimum, maximum }
       : null;
+  }
+  targetArcBounds() {
+    const target = this.temperatureBounds(),
+      display = this.appearanceScale("temperature");
+    if (!target || !display) return null;
+    const minimum = Math.max(target.minimum, display.minimum),
+      maximum = Math.min(target.maximum, display.maximum);
+    return maximum >= minimum ? { minimum, maximum } : null;
   }
   temperatureStep() {
     return this.temperatureDefinition()?.integer ? 1 : 0.5;
@@ -2360,70 +4448,228 @@ class SaunaPanel extends HTMLElement {
   }
   distributedSteps(start, end, gangs) {
     const maximum = Number(this.programBounds?.().gangMaximum),
-      count = Number(gangs);
+      count = Number(gangs),
+      first = Number(start),
+      last = Number(end);
     if (
       !Number.isFinite(maximum) ||
+      (typeof start === "string" && !start.trim()) ||
+      (typeof end === "string" && !end.trim()) ||
+      !Number.isFinite(first) ||
+      !Number.isFinite(last) ||
       !Number.isInteger(count) ||
       count < 1 ||
       count > maximum
     )
       return [];
     return count === 1
-      ? start === end
-        ? [start]
-        : [start, end]
+      ? first === last
+        ? [first]
+        : [first, last]
       : Array.from(
           { length: count },
-          (_, index) => start + ((end - start) * index) / (count - 1),
+          (_, index) => first + ((last - first) * index) / (count - 1),
         );
   }
   programChoice(programs = []) {
     const choice = this.programSelectionDraft ?? this.storedProgramChoice(programs);
-    return ["constant", "individual"].includes(choice) ||
-      programs.some((program) => program.id === choice)
+    return ["constant", "individual"].includes(choice.mode) ||
+      (choice.mode === "program" &&
+        programs.some((program) => program.id === choice.id))
       ? choice
       : this.storedProgramChoice(programs);
   }
   programMode(programs = []) {
-    const choice = this.programChoice(programs);
-    return choice === "individual"
-      ? "individual"
-      : choice === "constant"
-        ? "constant"
-        : "program";
+    return this.programChoice(programs).mode;
+  }
+  programChoiceLabel(choice, programs = []) {
+    return choice.mode === "program"
+      ? programs.find((program) => program.id === choice.id)?.name || "Individuell"
+      : choice.mode === "constant"
+        ? "Konstant"
+        : "Individuell";
   }
   selectProgramMode(mode, programs = []) {
     if (mode === "program") {
       if (!programs.length) return;
       const current = this.programChoice(programs);
-      this.programSelectionDraft = programs.some((program) => program.id === current)
-        ? current
-        : programs.find((program) => program.id === this.lastNamedProgramId)?.id ||
-          programs.find(
-            (program) => program.id === this.state?.configuration?.selected_program_id,
-          )?.id ||
-          programs[0].id;
+      this.programSelectionDraft =
+        current.mode === "program"
+          ? current
+          : {
+              mode: "program",
+              id:
+                programs.find((program) => program.id === this.lastNamedProgramId)
+                  ?.id ||
+                programs.find(
+                  (program) =>
+                    program.id === this.state?.configuration?.selected_program_id,
+                )?.id ||
+                programs[0].id,
+            };
     } else if (mode === "individual" || mode === "constant")
-      this.programSelectionDraft = mode;
+      this.programSelectionDraft = { mode };
     else throw Error("Ungültige Temperaturwahl");
-    if (programs.some((program) => program.id === this.programSelectionDraft))
-      this.lastNamedProgramId = this.programSelectionDraft;
+    if (this.programSelectionDraft.mode === "program")
+      this.lastNamedProgramId = this.programSelectionDraft.id;
     this.markProgramEdited();
-    this.drawCurrent();
   }
   selectNamedProgram(id, programs = []) {
     if (!programs.some((program) => program.id === id))
       throw Error("Unbekanntes Temperaturprogramm");
-    this.programSelectionDraft = id;
+    this.programSelectionDraft = { mode: "program", id };
     this.lastNamedProgramId = id;
     this.markProgramEdited();
+  }
+  cancelProgramDraft() {
+    this.programSelectionDraft = null;
+    this.freeProgramKind = null;
+    this.freeProgramStepsDraft = null;
+    this.progressionDraft = null;
+    this.programSaveState = null;
+    this.programChoiceOpen = false;
     this.drawCurrent();
+  }
+  async applyProgram() {
+    if (
+      this.programRequest ||
+      !this.state?.permissions?.program ||
+      !this.programDirty()
+    )
+      return;
+    const entry = this.entry,
+      generation = this.generation,
+      configuration = this.state.configuration,
+      choice = this.programChoice(configuration.temperature_programs || []),
+      previousTarget = this.temperatureChange,
+      draft = this.progressionDraft;
+    let path = "program",
+      body;
+    if (choice.mode !== "individual")
+      body = { profile: choice.mode === "program" ? choice.id : "constant" };
+    else if (
+      this.freeProgramKind === "steps" ||
+      (Array.isArray(configuration.temperature_steps) && !this.freeProgramKind)
+    )
+      body = { temperature_steps: this.freeProgramValues() };
+    else {
+      const { start, end, gangs } = this.progressionValues();
+      const explicitStart = Object.hasOwn(draft || {}, "progression-start");
+      const liveEdit =
+        configuration.program_mode === "progressive" &&
+        configuration.selected_program_id == null &&
+        !Array.isArray(configuration.temperature_steps) &&
+        !explicitStart;
+      if (liveEdit) {
+        path = "temperature";
+        body = {};
+        if (end !== configuration.parameters.final_temperature_c)
+          body.final_temperature_c = end;
+        if (gangs !== configuration.parameters.temperature_gangs)
+          body.temperature_gangs = gangs;
+      } else
+        body = {
+          target_temperature_c: start,
+          final_temperature_c: end,
+          temperature_gangs: gangs,
+        };
+      if (!explicitStart && previousTarget && !liveEdit)
+        body.target_temperature_c = null; // Filled from the completed target write below.
+    }
+    if (!Object.keys(body).length) return;
+    const request = { entry, generation };
+    this.programRequest = request;
+    this.programSaveState = "saving";
+    clearTimeout(this.programSavedTimer);
+    this.drawCurrent();
+    try {
+      const targetParameters = await previousTarget?.catch(() => null);
+      if (
+        this.programRequest !== request ||
+        this.entry !== entry ||
+        this.generation !== generation
+      )
+        return;
+      if (body.target_temperature_c === null) {
+        body.target_temperature_c = Number(
+          targetParameters?.target_temperature_c ??
+            this.state.configuration.parameters.target_temperature_c,
+        );
+        if (!Number.isFinite(body.target_temperature_c))
+          throw Error("Starttemperatur konnte nicht übernommen werden");
+      }
+      const saved = await this.api(`/${entry}/${path}`, "POST", body);
+      if (
+        this.programRequest !== request ||
+        this.entry !== entry ||
+        this.generation !== generation
+      )
+        return;
+      const accepted = {
+        parameters: saved?.parameters || { ...configuration.parameters, ...body },
+        program_mode:
+          saved?.program_mode ||
+          (path === "temperature"
+            ? "progressive"
+            : choice.mode === "constant"
+              ? "constant"
+              : "progressive"),
+        temperature_steps: Object.hasOwn(saved || {}, "temperature_steps")
+          ? saved.temperature_steps
+          : body.temperature_steps || null,
+        selected_program_id: Object.hasOwn(saved || {}, "selected_program_id")
+          ? saved.selected_program_id
+          : choice.mode === "program"
+            ? choice.id
+            : null,
+      };
+      this.programRevision = (this.programRevision || 0) + 1;
+      this.state.configuration = {
+        ...this.state.configuration,
+        ...accepted,
+        parameters: { ...this.state.configuration.parameters, ...accepted.parameters },
+      };
+      this.programSelectionDraft = null;
+      this.freeProgramKind = null;
+      this.freeProgramStepsDraft = null;
+      if (this.progressionDraft === draft) this.progressionDraft = null;
+      this.programRequest = null;
+      this.programSaveState = "saved";
+      this.programChoiceOpen = false;
+      this.drawCurrent();
+      this.programSavedTimer = setTimeout(() => {
+        if (
+          this.entry !== entry ||
+          this.generation !== generation ||
+          this.programSaveState !== "saved"
+        )
+          return;
+        this.programSaveState = null;
+        this.drawCurrent();
+      }, 2000);
+    } catch (error) {
+      if (
+        this.programRequest !== request ||
+        this.entry !== entry ||
+        this.generation !== generation
+      )
+        return;
+      if (this.programRequest === request) {
+        this.programRequest = null;
+        this.programSaveState = null;
+        this.drawCurrent();
+      }
+      throw error;
+    }
+    await this.refresh(true);
   }
   storedProgramChoice(programs = []) {
     const configuration = this.state?.configuration || {};
     if (programs.some((program) => program.id === configuration.selected_program_id))
-      return configuration.selected_program_id;
-    return configuration.program_mode === "progressive" ? "individual" : "constant";
+      return { mode: "program", id: configuration.selected_program_id };
+    return {
+      mode: configuration.program_mode === "progressive" ? "individual" : "constant",
+    };
   }
   valuesEqual(left, right) {
     return (
@@ -2433,26 +4679,21 @@ class SaunaPanel extends HTMLElement {
   }
   markProgramEdited() {
     this.programSaveState = null;
-    this.updateProgramApplyButton();
-  }
-  updateProgramApplyButton() {
-    const button = this.$('[data-action="program-apply"]');
-    if (!button) return;
-    const saving = this.programSaveState === "saving",
-      dirty = this.programDirty();
-    button.disabled = !this.state?.permissions?.program || !dirty || saving;
-    button.className = this.programApplyClass(dirty, saving);
-    button.textContent = saving
-      ? "Wird übernommen …"
-      : this.programSaveState === "saved"
-        ? "Übernommen"
-        : "Übernehmen";
+    this.drawCurrent();
   }
   programDirty() {
+    if (
+      this.programSelectionDraft == null &&
+      this.progressionDraft == null &&
+      this.freeProgramStepsDraft == null &&
+      this.freeProgramKind == null
+    )
+      return false;
     const programs = this.state?.configuration?.temperature_programs || [],
-      choice = this.programChoice(programs);
-    if (choice !== this.storedProgramChoice(programs)) return true;
-    if (choice !== "individual") return false;
+      choice = this.programChoice(programs),
+      stored = this.storedProgramChoice(programs);
+    if (choice.mode !== stored.mode || choice.id !== stored.id) return true;
+    if (choice.mode !== "individual") return false;
     const configuration = this.state.configuration,
       manual =
         this.freeProgramKind === "steps" ||
@@ -2476,11 +4717,13 @@ class SaunaPanel extends HTMLElement {
     }
   }
   programApplyClass(dirty, saving) {
-    return dirty && !saving
-      ? "confirm"
-      : this.programSaveState === "saved"
-        ? "program-saved"
-        : "";
+    return saving
+      ? "program-saving"
+      : dirty
+        ? "confirm"
+        : this.programSaveState === "saved"
+          ? "program-saved"
+          : "";
   }
   programApplyButton(permissions) {
     const saving = this.programSaveState === "saving",
@@ -2488,9 +4731,11 @@ class SaunaPanel extends HTMLElement {
       label = saving
         ? "Wird übernommen …"
         : this.programSaveState === "saved"
-          ? "Übernommen"
-          : "Übernehmen";
-    return `<button type="button" data-action="program-apply" class="${this.programApplyClass(dirty, saving)}" ${permissions.program && dirty && !saving ? "" : "disabled"}>${label}</button>`;
+          ? "✓ Übernommen"
+          : this.state?.session
+            ? "Programm übernehmen"
+            : "Übernehmen";
+    return `<button type="button" data-action="program-apply" class="${this.programApplyClass(dirty, saving)} ${this.state?.session ? "program-main" : ""}" ${permissions.program && dirty && !saving ? "" : "disabled"}>${label}</button>`;
   }
   freeSteps() {
     const bounds = this.programBounds(),
@@ -2530,9 +4775,23 @@ class SaunaPanel extends HTMLElement {
           ? "steps"
           : "even"),
       steps = this.freeSteps(),
-      disabled = permissions.program ? "" : "disabled";
+      disabled = permissions.program && !this.programRequest ? "" : "disabled";
     const manual = kind === "steps",
       count = Math.max(1, Math.min(bounds.gangMaximum, steps.length));
+    const values = {
+      start: this.progressionDraft?.["progression-start"] ?? steps[0],
+      end: this.progressionDraft?.["progression-end"] ?? steps.at(-1),
+      gangs: this.progressionDraft?.["progression-gangs"] ?? count,
+    };
+    let distribution = null;
+    if (!manual) {
+      try {
+        const { start, end, gangs } = this.progressionValues(values);
+        distribution = this.distributedSteps(start, end, gangs);
+      } catch (_error) {
+        // Keep incomplete fields visible without explaining an older draft.
+      }
+    }
     const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
     const fields = manual
       ? `<div class="row"><label class="field" for="free-step-count"><span>Stufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
@@ -2544,11 +4803,14 @@ class SaunaPanel extends HTMLElement {
               `<label class="field" for="free-step-${index}">Stufe ${index + 1}<input id="free-step-${index}" data-free-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
           )
           .join("")}</div>`
-      : `<div class="row"><label class="field" for="progression-start">Start<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(steps[0])}" ${disabled}></label><label class="field" for="progression-end">Ende<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(steps.at(-1))}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung ${this.distributionInfo("free", this.distributedSteps(steps[0], steps.at(-1), count))}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${count}" ${disabled}></label></div>`;
-    return `<div class="program-form">${kindButtons}${fields}<div class="program-actions">${this.programApplyButton(permissions)}</div></div>`;
+      : `<div class="row"><label class="field" for="progression-start">Start<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}></label><label class="field" for="progression-end">Ende<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
+    return `<div class="program-form">${kindButtons}${fields}${this.state?.session ? "" : `<div class="program-actions">${this.programApplyButton(permissions)}</div>`}</div>`;
   }
   distributionInfo(id, steps) {
-    return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="Verteilung erklären" aria-expanded="${this.programInfoOpen === id}">i</button>${this.programInfoOpen === id ? `<span class="program-info-popup">${esc(`${steps.length} Stufen von ${num(steps[0], 1)} bis ${num(steps.at(-1), 1)} °C: ${steps.map((value) => num(value, 1)).join(" → ")} °C`)}</span>` : ""}</span>`;
+    const text = steps?.length
+      ? `${steps.length} Stufen von ${num(steps[0], 1)} bis ${num(steps.at(-1), 1)} °C: ${steps.map((value) => num(value, 1)).join(" → ")} °C`
+      : "Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben";
+    return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="Verteilung erklären" aria-expanded="${this.programInfoOpen === id}">i</button>${this.programInfoOpen === id ? `<span class="program-info-popup">${esc(text)}</span>` : ""}</span>`;
   }
   setFreeProgramKind(kind) {
     const inputs = [...this.shadowRoot.querySelectorAll("[data-free-step]")];
@@ -2562,7 +4824,6 @@ class SaunaPanel extends HTMLElement {
       );
     this.freeProgramKind = kind;
     this.markProgramEdited();
-    this.drawCurrent();
   }
   freeProgramValues() {
     const bounds = this.programBounds(),
@@ -2590,12 +4851,19 @@ class SaunaPanel extends HTMLElement {
       throw Error("Temperaturstufen innerhalb der zulässigen Grenzen eingeben");
     return values;
   }
-  progressionValues() {
-    const start = Number(this.$("#progression-start").value),
-      end = Number(this.$("#progression-end").value),
-      gangs = Number(this.$("#progression-gangs").value);
+  progressionValues(
+    values = {
+      start: this.$("#progression-start").value,
+      end: this.$("#progression-end").value,
+      gangs: this.$("#progression-gangs").value,
+    },
+  ) {
+    const start = Number(values.start),
+      end = Number(values.end),
+      gangs = Number(values.gangs);
     const { minimum, maximum, gangMinimum, gangMaximum } = this.programBounds();
     if (
+      Object.values(values).some((value) => !String(value ?? "").trim()) ||
       !Number.isFinite(start) ||
       !Number.isFinite(end) ||
       !Number.isInteger(gangs) ||
@@ -2628,11 +4896,11 @@ class SaunaPanel extends HTMLElement {
   }
   temperatureArcPoint(
     value,
-    bounds = this.temperatureBounds(),
+    bounds = this.appearanceScale("temperature"),
     radius = temperatureDial.radius,
   ) {
     if (!bounds) return { x: temperatureDial.centerX, y: temperatureDial.centerY };
-    const bounded = this.clampTemperature(value, bounds);
+    const bounded = Math.max(bounds.minimum, Math.min(bounds.maximum, Number(value)));
     const ratio = (bounded - bounds.minimum) / (bounds.maximum - bounds.minimum || 1);
     const angle =
       ((temperatureDial.startAngle +
@@ -2644,19 +4912,15 @@ class SaunaPanel extends HTMLElement {
       y: (temperatureDial.centerY + radius * Math.sin(angle)).toFixed(2),
     };
   }
-  temperatureTickValues(bounds = this.temperatureBounds()) {
-    if (!bounds) return [];
-    const step = bounds.maximum - bounds.minimum <= 40 ? 10 : 20;
-    const values = new Set([bounds.minimum, bounds.maximum]);
-    for (
-      let value = Math.ceil(bounds.minimum / step) * step;
-      value < bounds.maximum;
-      value += step
-    )
-      values.add(value);
-    return [...values].sort((left, right) => left - right);
+  temperatureTickValues(bounds = this.appearanceScale("temperature")) {
+    return appearanceTickValues(bounds);
   }
-  temperatureTickMarks(bounds = this.temperatureBounds()) {
+  temperatureTickMarks(bounds = this.appearanceScale("temperature")) {
+    const span = bounds?.maximum - bounds?.minimum;
+    const formatTick = (value) =>
+      span < 0.01
+        ? Number(value).toPrecision(3)
+        : num(value, span < 1 ? 2 : span < 10 ? 1 : 0);
     return this.temperatureTickValues(bounds)
       .map((value) => {
         const tick = this.temperatureArcPoint(
@@ -2665,7 +4929,7 @@ class SaunaPanel extends HTMLElement {
             temperatureDial.radius - 12,
           ),
           label = this.temperatureArcPoint(value, bounds, temperatureDial.radius - 29);
-        return `<line x1="${tick.x}" y1="${tick.y}" x2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - 20).x}" y2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - 20).y}" stroke="var(--secondary-text-color,#aaa)" stroke-width="2"/><text class="tick" x="${label.x}" y="${Number(label.y) + 4}" text-anchor="middle">${num(value, 0)}</text>`;
+        return `<line x1="${tick.x}" y1="${tick.y}" x2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - 20).x}" y2="${this.temperatureArcPoint(value, bounds, temperatureDial.radius - 20).y}" stroke="var(--sauna-card-muted-text, var(--sauna-color-muted-text, var(--secondary-text-color)))" stroke-width="2"/><text class="tick" x="${label.x}" y="${Number(label.y) + 4}" text-anchor="middle">${formatTick(value)}</text>`;
       })
       .join("");
   }
@@ -2694,30 +4958,38 @@ class SaunaPanel extends HTMLElement {
         ? current
         : nearest,
     ).value;
-    const bounds = this.temperatureBounds();
-    if (!bounds) return null;
+    const bounds = this.appearanceScale("temperature");
+    const allowed = this.targetArcBounds();
+    if (!bounds || !allowed) return null;
     return this.clampTemperature(
       bounds.minimum +
         ((onArc - temperatureDial.startAngle) /
           (temperatureDial.endAngle - temperatureDial.startAngle)) *
           (bounds.maximum - bounds.minimum),
-      bounds,
+      allowed,
     );
   }
   renderTemperatureTarget(value) {
     const track = this.$("[data-target-arc]"),
       handle = this.$(".target-temperature-handle");
     if (!track || !handle) return;
-    const bounds = this.temperatureBounds(),
-      bounded = this.clampTemperature(value, bounds),
-      point = this.temperatureArcPoint(bounded, bounds);
-    track.setAttribute("aria-valuenow", bounded);
-    track.setAttribute("aria-valuetext", `${num(bounded, 1)} °C`);
+    const bounds = this.appearanceScale("temperature"),
+      point = this.temperatureArcPoint(value, bounds);
+    track.setAttribute("aria-valuenow", value);
+    track.setAttribute(
+      "aria-valuetext",
+      `${num(value, 1)} °C${value < bounds.minimum || value > bounds.maximum ? " · außerhalb der Anzeigeskala" : ""}`,
+    );
     handle.setAttribute("cx", point.x);
     handle.setAttribute("cy", point.y);
   }
   beginTemperatureDrag(event, svg, target) {
-    if (!this.state?.permissions?.temperature || !this.temperatureBounds() || !svg)
+    if (
+      !this.state?.permissions?.temperature ||
+      this.programRequest ||
+      !this.targetArcBounds() ||
+      !svg
+    )
       return;
     event.preventDefault();
     (target?.getAttribute("role") === "slider"
@@ -2759,14 +5031,21 @@ class SaunaPanel extends HTMLElement {
     try {
       await this.changeTarget(interaction.value);
     } finally {
-      this.temperatureInteraction = null;
-      this.drawCurrent();
-      this.$('[data-target-arc][role="slider"]')?.focus?.();
+      if (this.temperatureInteraction === interaction) {
+        this.temperatureInteraction = null;
+        this.drawCurrent();
+        this.$('[data-target-arc][role="slider"]')?.focus?.();
+      }
     }
   }
   async keyTemperatureTarget(event) {
-    if (!this.state?.permissions?.temperature || this.temperatureInteraction) return;
-    const bounds = this.temperatureBounds();
+    if (
+      !this.state?.permissions?.temperature ||
+      this.temperatureInteraction ||
+      this.programRequest
+    )
+      return;
+    const bounds = this.targetArcBounds();
     if (!bounds) return;
     const current = this.clampTemperature(this.state.target_temperature, bounds),
       step = this.temperatureStep();
@@ -2783,18 +5062,26 @@ class SaunaPanel extends HTMLElement {
     if (next === undefined) return;
     event.preventDefault();
     const value = this.clampTemperature(next, bounds);
-    this.temperatureInteraction = { value, committing: true };
+    const interaction = { value, committing: true };
+    this.temperatureInteraction = interaction;
     this.renderTemperatureTarget(value);
     try {
       await this.changeTarget(value);
     } finally {
-      this.temperatureInteraction = null;
-      this.drawCurrent();
-      this.$('[data-target-arc][role="slider"]')?.focus?.();
+      if (this.temperatureInteraction === interaction) {
+        this.temperatureInteraction = null;
+        this.drawCurrent();
+        this.$('[data-target-arc][role="slider"]')?.focus?.();
+      }
     }
   }
   async updateParameters(parameters, start = false, partial = false) {
-    const entry = this.entry;
+    if (!this.state) return;
+    const entry = this.entry,
+      generation = this.generation,
+      editRevision = this.settingsEditRevision || 0,
+      progressionDraft = this.progressionDraft,
+      request = (this.settingsRequestSerial = (this.settingsRequestSerial || 0) + 1);
     const saved = await this.api(
       `/${entry}/${partial ? "temperature" : "parameters"}`,
       "POST",
@@ -2802,8 +5089,19 @@ class SaunaPanel extends HTMLElement {
     );
     parameters = saved.parameters;
     await this.waitForConfiguration(entry, parameters);
-    this.settingsEntry = null;
-    this.progressionDraft = null;
+    if (
+      this.entry !== entry ||
+      this.generation !== generation ||
+      this.settingsRequestSerial !== request
+    )
+      return;
+    if ((this.settingsEditRevision || 0) === editRevision) {
+      this.settingsEntry = null;
+      this.shadowRoot
+        .querySelectorAll("#parameters input[data-edited]")
+        .forEach((input) => delete input.dataset.edited);
+    }
+    if (this.progressionDraft === progressionDraft) this.progressionDraft = null;
     if (start) await this.api(`/${entry}/control`, "POST", { enabled: true });
     await this.refresh();
   }
@@ -2844,54 +5142,74 @@ class SaunaPanel extends HTMLElement {
     const started = session?.timeline?.session_started_at || archive?.started_at;
     return started ? `Sitzung vom ${when(started)}` : "Archivierte Sitzung";
   }
-  drawHistory() {
+  drawHistory(reason = "viewport") {
+    this.scheduleHistoryRender(reason);
+  }
+  clearHistoryDisplay() {
+    this.historyChart?.destroy();
+    this.historyChart = null;
+    this.$("#history-overview").replaceChildren();
+    this.$("#range").textContent = "";
+    this.updateMarkup(
+      "#plots",
+      '<div class="card empty">Noch keine Sitzungsdaten. Wähle eine frühere Saunasitzung oder schalte den Betrieb ein.</div>',
+    );
+    for (const selector of ["#gangs", "#event-list", "#detection-plots"])
+      this.updateMarkup(selector, "");
+    this.historyGangKey = this.historyEventKey = this.historyDiagnosticsKey = null;
+  }
+  renderHistory(reasons = new Set(["viewport"])) {
+    if (!this.isConnected || this.$("#history")?.hidden) return;
     if (!this.shown) {
-      this.updateMarkup(
-        "#plots",
-        '<div class="card empty">Noch keine Sitzungsdaten. Wähle eine frühere Saunasitzung oder schalte den Betrieb ein.</div>',
-      );
-      this.updateMarkup("#gangs", "");
-      this.updateMarkup("#event-list", "");
-      this.updateMarkup("#detection-plots", "");
-      this.historyChartKey = null;
-      this.historyGangKey = null;
-      this.historyEventKey = null;
+      this.clearHistoryDisplay();
       return;
     }
+    if (reasons.size === 1 && reasons.has("cursor") && this.historyChart) {
+      this.historyChart.interaction.readGeometry();
+      if (this.pendingHover) this.hoverChart(this.pendingHover);
+      return;
+    }
+    const timeZone = localTimeZone();
     const { session, records } = this.shown,
       t = session.timeline;
-    this.ensureHistoryWindow();
-    this.renderHistoryOverview(records, session);
-    const gangs = [...t.completed, ...(t.active ? [t.active] : [])];
-    this.updateHistoryTimelineRevision(session);
-    const positions = [...this.positions].join(","),
-      chartNow = session.ended_at ? "" : this.state.now,
-      gangNow = t.active ? this.state.now : "";
-    const chartKey = `${this.historyDatasetRevision}:${this.historyWindowRevision}:${this.historyTimelineRevision}:${chartNow}:${this.historyDetail}:${positions}`;
     if (
-      this.historyGesture ||
-      this.chartPointers?.size ||
-      (this.webkitHistoryGesture && !this.webkitHistoryGesture.suppressed)
-    ) {
-      this.updateHistoryChart(records, session, gangs);
-      this.historyChartKey = chartKey;
-      this.historyRenderDeferred = true;
+      this.chartDataIndex?.records !== records ||
+      this.chartDataIndex.indexedCount !== records.length
+    )
+      this.historyIndex(records);
+    if (!this.historyDetail)
+      this.positions = new Set([this.historyPrimaryPosition(session)]);
+    if (this.$("#plots")?.hidden) {
+      this.ensureHistoryWindow();
+      this.updateHistoryTimelineRevision(session);
+      const key = `${this.historyProjection()}:${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
+      if (key !== this.historyDiagnosticsKey) {
+        this.historyDiagnosticsKey = key;
+        this.drawDiagnostics();
+      }
+      this.revealEventTarget("marker");
       return;
     }
-    const historyTitle = this.historyTitle(session);
-    const chromeKey = `${this.selected}:${this.state.operation_enabled}:${session.timeline?.session_id || ""}:${historyTitle}:${this.historyDetail}:${positions}`;
-    if (this.historyChromeKey !== chromeKey || !this.$("svg.session-chart")) {
-      this.historyChromeKey = chromeKey;
-      this.updateMarkup(
-        "#plots",
-        `<div class="plot-panel" aria-labelledby="history-chart-title"><h2 id="history-chart-title" class="plot-title">${esc(historyTitle)}</h2><div class="legend top-legend" aria-label="Messkurven für ${esc(historyTitle)}"><span><i style="background:#ff6b4a"></i>Temperatur</span><span><i style="background:#42a5ff"></i>Luftfeuchte</span></div><div class="row position-select"><button data-action="history-detail" aria-pressed="${this.historyDetail}">${this.historyDetail ? "Messhöhen ausblenden" : "Messhöhen vergleichen"}</button></div><div class="row position-select" data-history-positions ${this.historyDetail ? "" : "hidden"}><button data-action="position-upper" aria-pressed="${this.positions.has("upper")}">━━ Oben</button><button data-action="position-lower" aria-pressed="${this.positions.has("lower")}">┄┄ Unten</button></div><div class="plot-wrap">${this.chart(records, session, gangs)}<div id="tooltip" hidden></div></div><div class="legend"><span><i style="background:rgba(255,205,80,.95)"></i>Saunatür offen</span><span><i style="background:rgba(165,30,85,.95)"></i>Saunagang</span><span><i style="background:#f5f5f5"></i>Aufguss</span></div><div class="legend"><span><i style="background:rgba(255,150,35,.4)"></i>heizen</span><span><i style="background:rgba(38,125,82,.4)"></i>bereit</span><span><i style="background:rgba(58,125,155,.4)"></i>lüften</span><span><i style="background:#67829a"></i>Zwangskühlung</span></div><p class="muted plot-note">${this.historyDetail ? "Durchgezogen: oben · gestrichelt: unten · " : ""}vorläufiger Gang · schmaler Streifen: gezählte Heizzeit</p></div>`,
-      );
-      this.historyChartKey = chartKey;
-    } else if (this.historyChartKey !== chartKey) {
-      this.updateHistoryChart(records, session, gangs);
-      this.historyChartKey = chartKey;
+    const identity = `${this.entry}:${t.session_id}`;
+    if (this.historyChart?.identity !== identity) {
+      this.historyChart?.destroy();
+      this.historyChart = new HistoryChart(this, identity);
+      this.scheduleHistoryRender("initial");
+      return;
     }
-    const gangKey = `${this.historyTimelineRevision}:${gangNow}`;
+    // Status and archive responses often arrive in different frames. Commit a
+    // following viewport with the archive page, so the old cache isn't drawn
+    // once at the new time and then drawn again for that same measurement batch.
+    if (
+      !this.window ||
+      [...reasons].some((reason) => ["initial", "archive", "viewport"].includes(reason))
+    )
+      this.ensureHistoryWindow();
+    const gangs = [...t.completed, ...(t.active ? [t.active] : [])];
+    this.updateHistoryTimelineRevision(session);
+    this.historyChart.render(reasons, session, gangs);
+    const gangNow = t.active ? this.state.now : "";
+    const gangKey = `${this.historyTimelineRevision}:${gangNow}:${timeZone}`;
     if (this.historyGangKey !== gangKey) {
       this.historyGangKey = gangKey;
       const e = session.energy,
@@ -2903,16 +5221,14 @@ class SaunaPanel extends HTMLElement {
         `<div class="card"><h2>Saunagänge</h2>${energySummary}${gangs.length ? `<div class="scroll"><table><thead><tr><th>Gang</th><th>Beginn</th><th>Erkannt</th><th>Bestätigung</th><th>Dauer</th><th>Ende</th></tr></thead><tbody>${gangs.map((g, i) => `<tr data-gang-id="${esc(g.gang_id)}" data-start="${esc(g.started_at)}"><td>${i + 1} · ${g.infusion_events.length ? "Bestätigt" : "Vorläufig"}</td><td>${when(g.started_at)}</td><td>${when(g.detected_at)}</td><td>${g.infusion_events.length ? when(g.infusion_events[0].detected_at) : "Aufguss ausstehend"}</td><td>${duration((stamp(g.ended_at || session.ended_at || this.state.now) - stamp(g.started_at)) / 1000)}</td><td>${when(g.ended_at)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Keine Saunagänge erkannt.</p>'}</div>`,
       );
     }
-    const eventKey = `${this.historyTimelineRevision}:${this.historyDatasetRevision}`;
+    const eventKey = `${this.historyProjection()}:${this.historyTimelineRevision}:${this.historyEventRevision || 0}:${timeZone}`;
     if (this.historyEventKey !== eventKey) {
       this.historyEventKey = eventKey;
       const openEvents = [
         ...this.shadowRoot.querySelectorAll("#event-list details"),
       ].map((d) => d.open);
-      const diagnostics = records.filter((r) => r.kind === "diagnostic"),
-        traces = records
-          .filter((r) => r.kind === "detector_trace")
-          .map((r) => r.payload);
+      const diagnostics = this.historyRecords("diagnostic"),
+        traces = this.historyRecords("detector_trace").map((r) => r.payload);
       const eventRows = [...t.processed]
         .map((e, index) => ({ ...e, event_id: e.event_id || `legacy-${index}` }))
         .reverse();
@@ -2921,7 +5237,7 @@ class SaunaPanel extends HTMLElement {
         `<div class="card"><details><summary>Ereignisse & Zuordnung (${t.processed.length})</summary><div class="scroll"><table><thead><tr><th>Ereignis</th><th>Zugeordnete Zeit</th><th>Erkennungszeit</th><th>Verlauf</th></tr></thead><tbody>${eventRows
           .map((e) => {
             const linked = this.diagnosticTraceForEvent(traces, e);
-            return `<tr class="event-row" data-event-id="${esc(e.event_id)}" data-selected="false"><td>${esc(events[e.kind] || e.kind)}</td><td>${when(e.effective_at)}</td><td>${when(e.detected_at)}</td><td>${linked ? `<button data-action="event-row:${esc(e.event_id)}" aria-label="${esc(events[e.kind] || e.kind)} im Erkennungsverlauf zeigen">Zum Marker</button>` : "Kein gespeicherter Kurvenbezug"}</td></tr>`;
+            return `<tr class="event-row" data-event-id="${esc(e.event_id)}" data-selected="false"><td>${esc(events[e.kind] || e.kind)}</td><td>${when(e.effective_at)}</td><td>${when(e.detected_at)}</td><td>${linked && this.state?.permissions?.admin ? `<button data-action="event-row:${esc(e.event_id)}" aria-label="${esc(events[e.kind] || e.kind)} im Erkennungsverlauf zeigen">Zum Marker</button>` : "Kein zugänglicher Kurvenbezug"}</td></tr>`;
           })
           .join(
             "",
@@ -2932,46 +5248,25 @@ class SaunaPanel extends HTMLElement {
         .forEach((d, i) => (d.open = !!openEvents[i]));
       if (this.highlightedEventId) this.highlightEvent(this.highlightedEventId, false);
     }
-    const diagnosticsKey = `${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}`;
+    const diagnosticsKey = `${this.historyProjection()}:${this.historyDatasetRevision}:${this.historyTimelineRevision}:${this.historyWindowRevision}:${timeZone}`;
     if (this.view === "diagnostics" && this.historyDiagnosticsKey !== diagnosticsKey) {
       this.historyDiagnosticsKey = diagnosticsKey;
       this.drawDiagnostics();
     }
-  }
-  updateHistoryChart(records, session, gangs) {
-    const current = this.$("svg.session-chart");
-    if (!current) return false;
-    const markup = this.chart(records, session, gangs),
-      documentRef = this.ownerDocument || globalThis.document;
-    if (documentRef) {
-      const template = documentRef.createElement("template");
-      template.innerHTML = markup;
-      const next = template.content.querySelector("svg.session-chart");
-      if (!next) return false;
-      // Pointer capture belongs to this SVG. Patch changed paths, axes and
-      // intervals in place so a live gesture and its tooltip keep their nodes.
-      this.patchNode(current, next);
-    } else {
-      const end = markup.lastIndexOf("</svg>"),
-        open = markup.indexOf(">");
-      if (open < 0 || end < 0) return false;
-      const label = /aria-label="([^"]*)"/.exec(markup)?.[1];
-      if (label) current.setAttribute("aria-label", label);
-      current.innerHTML = markup.slice(open + 1, end);
-    }
-    if (
-      this.lastHistoryPointer &&
-      !this.chartPointers?.size &&
-      !this.webkitHistoryGesture &&
-      !this.historyGesture
-    )
-      this.scheduleHover({ ...this.lastHistoryPointer, svg: current });
-    return true;
+    this.revealEventTarget("row");
   }
   eventNavigation() {
+    const traceTimes = new Map(
+      (this.shown?.records || [])
+        .filter((record) => record.kind === "detection")
+        .map((record) => record.payload)
+        .filter((payload) => payload?.event?.event_id && payload.trace_at)
+        .map((payload) => [payload.event.event_id, payload.trace_at]),
+    );
     return (this.shown?.session.timeline.processed || []).map((event, index) => ({
       ...event,
       event_id: event.event_id || `legacy-${index}`,
+      trace_at: traceTimes.get(event.event_id) || null,
     }));
   }
   highlightEvent(eventId, reveal) {
@@ -2990,16 +5285,33 @@ class SaunaPanel extends HTMLElement {
       row?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     }
   }
+  revealEventTarget(kind) {
+    const pending = this.pendingEventFocus;
+    if (!pending || pending.kind !== kind) return;
+    const target = [
+      ...this.shadowRoot.querySelectorAll(
+        kind === "row" ? "#event-list [data-action]" : ".diagnostic-marker",
+      ),
+    ].find(
+      (node) =>
+        node.dataset.eventId === pending.eventId ||
+        node.dataset.action === `event-row:${pending.eventId}`,
+    );
+    if (!target) return;
+    this.highlightEvent(pending.eventId, kind === "row");
+    target.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    target.focus?.();
+    this.pendingEventFocus = null;
+  }
   focusEvent(eventId, revealRow = false) {
     const event = this.eventNavigation().find((item) => item.event_id === eventId),
-      at = stamp(event?.effective_at || event?.detected_at);
+      at = stamp(event?.trace_at || event?.effective_at || event?.detected_at);
     if (!event || !at) {
       this.highlightEvent(eventId, revealRow);
       return;
     }
     const [domainStart, domainEnd] = this.historyDomain();
-    const span = Math.min(domainEnd - domainStart, 30 * 60000),
-      zoom = Math.max(1, Math.min(256, (domainEnd - domainStart) / span));
+    const span = Math.min(domainEnd - domainStart, 30 * 60000);
     const left = Math.max(domainStart, Math.min(domainEnd - span, at - span / 2));
     this.setHistoryWindow(left, left + span);
     this.drawHistory();
@@ -3012,7 +5324,6 @@ class SaunaPanel extends HTMLElement {
   }
   invalidateHistoryIndex() {
     this.historyDatasetRevision = (this.historyDatasetRevision || 0) + 1;
-    this.historyOverviewCache = null;
   }
   updateHistoryTimelineRevision(session) {
     const signature = JSON.stringify({
@@ -3036,12 +5347,21 @@ class SaunaPanel extends HTMLElement {
       rebuild =
         !index || index.records !== records || index.indexedCount > records.length;
     if (rebuild)
-      index = { records, series: new Map(), byKind: new Map(), indexedCount: 0 };
+      index = {
+        records,
+        series: new Map(),
+        byKind: new Map(),
+        display: new Map(),
+        seriesState: new Map(),
+        indexedCount: 0,
+      };
     for (let i = index.indexedCount; i < records.length; i++) {
       const record = records[i],
         grouped = index.byKind.get(record.kind) || [];
       grouped.push(record);
       index.byKind.set(record.kind, grouped);
+      if (["diagnostic", "detector_trace", "detection"].includes(record.kind))
+        this.historyEventRevision = (this.historyEventRevision || 0) + 1;
       if (!["measurement", "source_snapshot"].includes(record.kind)) continue;
       const source = record.payload,
         time = stamp(source.received_at),
@@ -3051,8 +5371,22 @@ class SaunaPanel extends HTMLElement {
       const key = `${source.position}:${source.quantity}`,
         values = index.series.get(key) || [],
         point = { time, value, source };
-      if (rebuild || !values.length || values.at(-1).time <= time) values.push(point);
-      else values.splice(lowerBoundHistory(values, time), 0, point);
+      index.seriesState ??= new Map();
+      const state = index.seriesState.get(key) || { revision: 0 };
+      point.serial = ++state.revision;
+      if (value != null) state.hasValue = true;
+      index.seriesState.set(key, state);
+      const display = index.display.get(values);
+      if (rebuild || !values.length || values.at(-1).time <= time) {
+        values.push(point);
+        if (display) this.appendHistoryDisplay(display, point, values.length - 1);
+      } else {
+        values.splice(lowerBoundHistory(values, time), 0, point);
+        // Normal archive additions are chronological.  A late item or a
+        // duplicate that needs insertion is rare; rebuild only this series'
+        // display tree before it is next queried.
+        index.display.delete(values);
+      }
       index.series.set(key, values);
     }
     if (rebuild)
@@ -3061,14 +5395,193 @@ class SaunaPanel extends HTMLElement {
     index.indexedCount = records.length;
     return (this.chartDataIndex = index);
   }
+  historyDisplay(values) {
+    const key = values;
+    const displays = (this.chartDataIndex.display ??= new Map());
+    let display = displays.get(key);
+    if (!display) {
+      display = { values, levels: new Map() };
+      displays.set(key, display);
+    }
+    return display;
+  }
+  historyDisplayLevel(display, width) {
+    let level = display.levels.get(width);
+    if (level) return level;
+    level = { width, nodes: new Map(), keys: [] };
+    const child = display.levels.get(width / 2);
+    if (child) {
+      for (const key of child.keys)
+        this.appendHistoryDisplayNode(level, child.nodes.get(key));
+    } else
+      for (let index = 0; index < display.values.length; index++)
+        this.appendHistoryDisplayLevel(level, display.values[index], index);
+    display.levels.set(width, level);
+    return level;
+  }
+  appendHistoryDisplay(display, point, index) {
+    for (const level of display.levels.values())
+      this.appendHistoryDisplayLevel(level, point, index);
+  }
+  appendHistoryDisplayLevel(level, point, index) {
+    const key = Math.floor(point.time / level.width);
+    let node = level.nodes.get(key);
+    if (!node) {
+      node = {
+        firstIndex: index,
+        lastIndex: index,
+        first: point,
+        last: point,
+        minimum: point.value == null ? null : point,
+        maximum: point.value == null ? null : point,
+        firstValid: point.value == null ? null : point,
+        lastValid: point.value == null ? null : point,
+        missing: point.value == null,
+        maximumGap: 0,
+      };
+      level.nodes.set(key, node);
+      level.keys.push(key);
+      return;
+    }
+    node.lastIndex = index;
+    node.last = point;
+    if (point.value == null) {
+      node.missing = true;
+      return;
+    }
+    if (node.lastValid)
+      node.maximumGap = Math.max(node.maximumGap, point.time - node.lastValid.time);
+    node.lastValid = point;
+    if (!node.firstValid) node.firstValid = point;
+    if (!node.minimum || point.value < node.minimum.value) node.minimum = point;
+    if (!node.maximum || point.value > node.maximum.value) node.maximum = point;
+  }
+  appendHistoryDisplayNode(level, child) {
+    const key = Math.floor(child.first.time / level.width);
+    let node = level.nodes.get(key);
+    if (!node) {
+      node = { ...child };
+      level.nodes.set(key, node);
+      level.keys.push(key);
+      return;
+    }
+    node.lastIndex = child.lastIndex;
+    node.last = child.last;
+    node.missing ||= child.missing;
+    node.maximumGap = Math.max(
+      node.maximumGap,
+      child.maximumGap,
+      node.lastValid && child.firstValid
+        ? child.firstValid.time - node.lastValid.time
+        : 0,
+    );
+    if (!node.firstValid) node.firstValid = child.firstValid;
+    if (child.lastValid) node.lastValid = child.lastValid;
+    if (child.minimum && (!node.minimum || child.minimum.value < node.minimum.value))
+      node.minimum = child.minimum;
+    if (child.maximum && (!node.maximum || child.maximum.value > node.maximum.value))
+      node.maximum = child.maximum;
+  }
+  historyDisplayValues(position, quantity, start, end, ttl, pixels) {
+    const values = this.series(position, quantity);
+    if (!values.length) return values;
+    // A dyadic bucket is at most two display pixels wide.  Its first, last
+    // and extrema remain visible; a null or timeout descends to raw points.
+    const width = Math.max(1, 2 ** Math.ceil(Math.log2((end - start) / pixels || 1)));
+    const display = this.historyDisplay(values),
+      level = this.historyDisplayLevel(display, width),
+      first = Math.max(0, lowerBoundNumber(level.keys, Math.floor(start / width)) - 1),
+      after = Math.min(
+        level.keys.length,
+        lowerBoundNumber(level.keys, Math.floor(end / width) + 1) + 1,
+      ),
+      output = [];
+    let previous = null;
+    for (let offset = first; offset < after; offset++) {
+      const node = level.nodes.get(level.keys[offset]);
+      if (!node) continue;
+      const displayGap = !!previous && !!ttl && node.first.time - previous.time > ttl;
+      const edge = node.first.time < start || node.last.time > end;
+      if (edge || node.missing || (ttl && node.maximumGap > ttl)) {
+        const firstRaw = edge
+            ? Math.max(node.firstIndex, lowerBoundHistory(values, start) - 1)
+            : node.firstIndex,
+          afterRaw = edge
+            ? Math.min(node.lastIndex + 1, lowerBoundHistory(values, end + 1) + 1)
+            : node.lastIndex + 1;
+        for (let index = firstRaw; index < afterRaw; index++) {
+          const point = values[index];
+          output.push({
+            time: point.time,
+            value: point.value,
+            source: point.source,
+            displayGap:
+              index === firstRaw
+                ? displayGap
+                : !!ttl && point.time - values[index - 1].time > ttl,
+          });
+        }
+        previous = node.last;
+        continue;
+      }
+      // A changing viewport still uses the same interior aggregation bins.
+      // Retain their selected points instead of sorting and copying every bin
+      // on each wheel event or live tick. Appends change lastIndex; a late
+      // insertion discards this series' display tree in historyIndex().
+      let points = node.displayPoints;
+      if (
+        !points ||
+        node.displayLastIndex !== node.lastIndex ||
+        node.displayGap !== displayGap
+      ) {
+        const selected = [node.first, node.minimum, node.maximum, node.last]
+          .filter(Boolean)
+          .sort((a, b) => a.time - b.time);
+        points = [];
+        for (const point of selected)
+          if (points.at(-1)?.source !== point.source)
+            points.push({
+              time: point.time,
+              value: point.value,
+              source: point.source,
+              displayGap: point === selected[0] && displayGap,
+            });
+        node.displayPoints = points;
+        node.displayLastIndex = node.lastIndex;
+        node.displayGap = displayGap;
+      }
+      for (const point of points)
+        if (output.at(-1)?.source !== point.source) output.push(point);
+      previous = node.last;
+    }
+    return output;
+  }
   series(position, quantity) {
     return this.chartDataIndex?.series.get(`${position}:${quantity}`) || [];
+  }
+  historyPrimaryPosition(session = this.shown?.session) {
+    const hasValues = (position) =>
+      this.chartDataIndex?.seriesState?.get(`${position}:temperature`)?.hasValue;
+    const currentPosition =
+      this.state?.session &&
+      session?.timeline?.session_id === this.state.session.timeline?.session_id
+        ? this.state.regulation_temperature_position
+        : null;
+    if (currentPosition && hasValues(currentPosition)) return currentPosition;
+    if (hasValues("upper")) return "upper";
+    if (hasValues("lower")) return "lower";
+    return this.state?.measurement_positions?.[0] || "upper";
   }
   historyRecords(kind) {
     return this.chartDataIndex?.byKind.get(kind) || [];
   }
   nearestMeasurement(position, quantity, time) {
-    if (this.shown?.records) this.historyIndex(this.shown.records);
+    if (
+      this.shown?.records &&
+      (this.chartDataIndex?.records !== this.shown.records ||
+        this.chartDataIndex.indexedCount !== this.shown.records.length)
+    )
+      this.historyIndex(this.shown.records);
     return nearestHistoryPoint(
       this.series(position, quantity),
       time,
@@ -3077,19 +5590,17 @@ class SaunaPanel extends HTMLElement {
     );
   }
   svgCoordinates(svg, clientX, clientY = 0) {
-    if (svg.createSVGPoint && svg.getScreenCTM) {
-      const point = svg.createSVGPoint(),
-        matrix = svg.getScreenCTM();
-      if (matrix) {
-        point.x = clientX;
-        point.y = clientY;
-        return point.matrixTransform(matrix.inverse());
-      }
-    }
+    if (
+      this.historyChart?.interaction &&
+      (svg === this.historyChart.surface || svg === this.$("#history-overview svg"))
+    )
+      return this.historyChart.interaction.coordinates(svg, clientX, clientY);
     const rect = svg.getBoundingClientRect();
+    const width = svg.viewBox?.baseVal?.width || 1200,
+      height = svg.viewBox?.baseVal?.height || 480;
     return {
-      x: ((clientX - rect.left) / rect.width) * 1200,
-      y: ((clientY - rect.top) / rect.height) * 480,
+      x: ((clientX - rect.left) / rect.width) * width,
+      y: ((clientY - rect.top) / rect.height) * height,
     };
   }
   scheduleFrame(key, render) {
@@ -3104,23 +5615,39 @@ class SaunaPanel extends HTMLElement {
   scheduleHover(event) {
     this.lastHistoryPointer = { clientX: event.clientX, clientY: event.clientY };
     this.pendingHover = event;
-    this.scheduleFrame(
-      "hoverFrame",
-      () => this.pendingHover && this.hoverChart(this.pendingHover),
-    );
+    this.scheduleHistoryRender("cursor");
   }
-  scheduleHistoryRender() {
-    this.scheduleFrame("historyFrame", () => this.drawHistory());
+  scheduleHistoryRender(reason = "viewport") {
+    (this.historyReasons ??= new Set()).add(reason);
+    if (!this.isConnected || this.$("#history")?.hidden) return;
+    this.scheduleFrame("historyFrame", () => {
+      const reasons = this.historyReasons;
+      this.historyReasons = new Set();
+      this.renderHistory(reasons);
+    });
+  }
+  cancelHistoryFrame() {
+    if (this.historyFrame != null) {
+      (globalThis.cancelAnimationFrame || clearTimeout)(this.historyFrame);
+      this.historyFrame = null;
+    }
   }
   historyDomain() {
     const session = this.shown?.session,
-      started = stamp(session?.timeline.session_started_at);
+      // The archive list supplies session bounds before the first record page.
+      archive =
+        !session &&
+        this.sessions?.find((item) => item.session_id === this.historySelectionId()),
+      started = stamp(session?.timeline.session_started_at || archive?.started_at);
     const start =
       (Number.isFinite(started) ? started : stamp(this.state?.now) || Date.now()) -
       15 * 60000;
     return [
       start,
-      Math.max(start + 1000, stamp(session?.ended_at || this.state?.now) || start) +
+      Math.max(
+        start + 1000,
+        stamp(session?.ended_at || archive?.ended_at || this.state?.now) || start,
+      ) +
         15 * 60000,
     ];
   }
@@ -3153,7 +5680,6 @@ class SaunaPanel extends HTMLElement {
       this.historyWindowRevision = (this.historyWindowRevision || 0) + 1;
     this.window = next;
     this.zoom = span / width;
-    this.syncHistoryOverview();
   }
   overviewFraction(svg, clientX) {
     const point = this.svgCoordinates(svg, clientX),
@@ -3162,6 +5688,7 @@ class SaunaPanel extends HTMLElement {
   }
   beginHistoryGesture(event, svg) {
     if (!this.window) return;
+    this.historyChart?.interaction.invalidateGeometry("geometry", false);
     const handle = event.target.dataset.historyHandle,
       move = event.target.closest("[data-history-window]");
     if (!handle && !move) return;
@@ -3179,7 +5706,7 @@ class SaunaPanel extends HTMLElement {
     const gesture = this.historyGesture;
     if (!gesture) return;
     event.preventDefault();
-    const [domainStart, domainEnd] = this.historyDomain(),
+    const [domainStart, domainEnd] = this.historyChart?.domain || this.historyDomain(),
       span = domainEnd - domainStart;
     const at = domainStart + this.overviewFraction(gesture.svg, event.clientX) * span,
       [left, right] = gesture.window,
@@ -3200,14 +5727,12 @@ class SaunaPanel extends HTMLElement {
     if (!gesture) return;
     gesture.svg.releasePointerCapture?.(event.pointerId);
     this.historyGesture = null;
-    if (this.historyRenderDeferred) {
-      this.historyRenderDeferred = false;
-      this.drawHistory();
-    } else this.drawHistory();
+    this.drawHistory();
   }
   beginChartPointer(event, svg) {
     if (this.historyInputMode && this.historyInputMode !== "pointer") return;
     this.historyInputMode = "pointer";
+    this.historyChart?.interaction.invalidateGeometry("geometry", false);
     svg.setPointerCapture?.(event.pointerId);
     this.chartPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     this.pinchDistance = null;
@@ -3221,71 +5746,12 @@ class SaunaPanel extends HTMLElement {
     this.pinchDistance = null;
     if (!this.chartPointers.size && this.historyInputMode === "pointer")
       this.historyInputMode = null;
-    if (!this.chartPointers.size && this.historyRenderDeferred) {
-      this.historyRenderDeferred = false;
-      this.drawHistory();
-    }
-  }
-  minimapBackground(records, session) {
-    const [start, end] = this.historyDomain(),
-      cached = this.historyOverviewCache;
-    const ttl =
-        (session.configuration?.parameters || this.state.configuration.parameters)
-          .sensor_timeout_seconds * 1000,
-      domain = `${start}:${end}:${ttl}`;
-    if (
-      cached?.records === records &&
-      cached.revision === this.historyDatasetRevision &&
-      cached.domain === domain
-    )
-      return cached.background;
-    this.historyIndex(records);
-    const values = this.series("upper", "temperature");
-    let low = Infinity,
-      high = -Infinity;
-    for (const point of values)
-      if (point.value != null) {
-        low = Math.min(low, point.value);
-        high = Math.max(high, point.value);
-      }
-    if (!Number.isFinite(low)) {
-      low = 0;
-      high = 1;
-    }
-    const x = (time) => 20 + ((time - start) / (end - start)) * 1160,
-      y = (value) => 36 - ((value - low) / (high - low || 1)) * 28;
-    const path = historySegments(values, start, end, ttl)
-      .map((segment) => monotoneHistoryPath(reduceHistorySegment(segment, x), x, y))
-      .join(" ");
-    const background = `<rect class="overview-track" x="20" y="4" width="1160" height="36" rx="5"/><path class="overview-temperature" d="${path}"/>`;
-    this.historyOverviewCache = {
-      records,
-      revision: this.historyDatasetRevision,
-      domain,
-      path,
-      background,
-    };
-    return background;
-  }
-  renderHistoryOverview(records, session) {
-    const target = this.$("#history-overview");
-    if (!target) return;
-    let svg = target.querySelector("svg");
-    if (!svg) {
-      target.innerHTML = `<svg viewBox="0 0 1200 46" preserveAspectRatio="none" role="slider" aria-label="Zeitausschnitt der Saunasitzung">${this.minimapBackground(records, session)}<rect class="overview-window" data-history-window x="20" y="5" height="34" rx="4"/><rect class="overview-handle" data-history-handle="start" x="16" y="2" width="8" height="40" rx="3"/><rect class="overview-handle" data-history-handle="end" x="1176" y="2" width="8" height="40" rx="3"/></svg>`;
-      svg = target.querySelector("svg");
-    } else if (!this.historyGesture) {
-      this.minimapBackground(records, session);
-      svg
-        .querySelector(".overview-temperature")
-        ?.setAttribute("d", this.historyOverviewCache.path);
-    }
-    this.syncHistoryOverview();
+    if (!this.chartPointers.size) this.scheduleHistoryRender("cursor");
   }
   syncHistoryOverview() {
     const svg = this.$("#history-overview svg");
     if (!svg || !this.window) return;
-    const [start, end] = this.historyDomain(),
+    const [start, end] = this.historyChart?.domain || this.historyDomain(),
       width = end - start,
       left = 20 + ((this.window[0] - start) / width) * 1160,
       right = 20 + ((this.window[1] - start) / width) * 1160;
@@ -3300,48 +5766,144 @@ class SaunaPanel extends HTMLElement {
       "aria-valuetext",
       `${when(this.window[0])} bis ${when(this.window[1])}, Zoom ${num(this.zoom, 1)}×`,
     );
+    svg.setAttribute(
+      "aria-valuenow",
+      String(Math.round(((this.window[0] - start) / width) * 100)),
+    );
     const range = this.$("#range");
     if (range)
       range.textContent = `${when(this.window[0])} – ${when(this.window[1])} · ${num(this.zoom, 1)}×`;
   }
-  chart(records, session, gangs) {
+  historyMarkup(session) {
+    const historyTitle = this.historyTitle(session);
+    return `<div class="plot-panel" aria-labelledby="history-chart-title"><h2 id="history-chart-title" class="plot-title">${esc(historyTitle)}</h2><div class="legend top-legend" aria-label="Messkurven für ${esc(historyTitle)}"><span><i style="background:var(--sauna-color-series-temperature)"></i>Temperatur</span><span><i style="background:var(--sauna-color-series-humidity)"></i>Luftfeuchte</span></div><div class="row position-select"><button data-action="history-detail" aria-pressed="${this.historyDetail}">${this.historyDetail ? "Messhöhen ausblenden" : "Messhöhen vergleichen"}</button></div><div class="row position-select" data-history-positions ${this.historyDetail ? "" : "hidden"}><button data-action="position-upper" aria-pressed="${this.positions.has("upper")}">━━ Oben</button><button data-action="position-lower" aria-pressed="${this.positions.has("lower")}">┄┄ Unten</button></div><div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 1200 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="65" y="18" width="1070" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 1200 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" stroke-dasharray="3 3" visibility="hidden"/></svg><div id="tooltip" hidden></div></div><div class="legend"><span><i style="background:color-mix(in srgb,var(--sauna-color-event-door) 95%,transparent)"></i>Saunatür offen</span><span><i style="background:color-mix(in srgb,var(--sauna-color-phase-session) 95%,transparent)"></i>Saunagang</span><span><i style="background:var(--sauna-color-event-infusion)"></i>Aufguss</span></div><div class="legend"><span><i style="background:color-mix(in srgb,var(--sauna-color-phase-warmup) 40%,transparent)"></i>heizen</span><span><i style="background:color-mix(in srgb,var(--sauna-color-phase-ready) 40%,transparent)"></i>bereit</span><span><i style="background:color-mix(in srgb,var(--sauna-color-activity-ventilation) 40%,transparent)"></i>lüften</span><span><i style="background:var(--sauna-color-phase-cooling)"></i>Ofenkühlung</span></div><p class="muted plot-note">${this.historyDetail ? "Durchgezogen: oben · gestrichelt: unten · " : ""}vorläufiger Gang · schmaler Streifen: gezählte Heizzeit</p></div>`;
+  }
+  historyPreparedSeries(position, quantity, start, end, ttl, pixels, cache) {
+    const values = this.series(position, quantity),
+      state = this.chartDataIndex.seriesState?.get(`${position}:${quantity}`),
+      first = Math.max(0, lowerBoundHistory(values, start) - 1),
+      after = Math.min(values.length, lowerBoundHistory(values, end + 1) + 1),
+      // Only inserts in this span change its length. Late inserts before it
+      // shift both indices equally; stable neighbour identities still detect
+      // an insertion that changes an edge tangent without changing the count.
+      key = `${this.historyProjection()}:${this.historyProjectionGeneration || 0}:${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
+    const name = `${position}:${quantity}`,
+      old = cache.get(name);
+    if (old?.source === values && old.key === key) return old;
+    const prepared = this.historyDisplayValues(
+      position,
+      quantity,
+      start,
+      end,
+      ttl,
+      pixels,
+    );
+    let low = Infinity,
+      high = -Infinity;
+    for (const point of prepared)
+      if (point.value != null) {
+        low = Math.min(low, point.value);
+        high = Math.max(high, point.value);
+      }
+    const result = {
+      source: values,
+      values: prepared,
+      key,
+      revision: state?.revision || 0,
+      low,
+      high,
+    };
+    cache.set(name, result);
+    return result;
+  }
+  historyModel(chart, session) {
     const [start, end] = this.window,
-      W = 1200,
-      H = 480,
       left = 65,
       right = 1135,
       top = 18,
-      bottom = 435;
-    const x = (t) => left + ((t - start) / (end - start)) * (right - left);
-    this.historyIndex(records);
-    const visible = [];
-    for (const position of this.positions)
-      for (const value of historyWindowValues(
-        this.series(position, "temperature"),
-        start,
-        end,
-      ))
-        visible.push(value);
-    const validTemperatures = visible.filter((m) => m.value != null),
-      bounds = validTemperatures.reduce(
-        ([lo, hi], m) => [Math.min(lo, m.value), Math.max(hi, m.value)],
-        [Infinity, -Infinity],
-      );
-    const low = validTemperatures.length ? Math.floor((bounds[0] - 2) / 10) * 10 : 20,
-      high = validTemperatures.length ? Math.ceil((bounds[1] + 2) / 10) * 10 : 100;
-    const humidities = [];
-    for (const position of this.positions) {
-      const values = this.series(position, "humidity");
-      for (const value of historyWindowValues(values, start, end))
-        humidities.push(value);
-    }
-    const humidityHigh = Math.max(
-      60,
-      Math.ceil((humidities.reduce((max, m) => Math.max(max, m.value), 0) + 2) / 20) *
-        20,
-    );
-    const yT = (v) => bottom - ((v - low) / (high - low)) * (bottom - top),
-      yH = (v) => bottom - (v / humidityHigh) * (bottom - top);
+      bottom = 435,
+      ttl = historyMeasurementTtlSeconds(this, session) * 1000,
+      positions = [...this.positions],
+      series = new Map();
+    let lo = Infinity,
+      hi = -Infinity,
+      humidity = 0;
+    for (const position of positions)
+      for (const quantity of ["temperature", "humidity"]) {
+        const entry = this.historyPreparedSeries(
+          position,
+          quantity,
+          start,
+          end,
+          ttl,
+          right - left,
+          chart.prepared,
+        );
+        series.set(`${position}:${quantity}`, entry);
+        if (quantity === "temperature") {
+          lo = Math.min(lo, entry.low);
+          hi = Math.max(hi, entry.high);
+        } else humidity = Math.max(humidity, entry.high);
+      }
+    const low = Number.isFinite(lo) ? Math.floor((lo - 2) / 10) * 10 : 20,
+      high = Number.isFinite(hi) ? Math.ceil((hi + 2) / 10) * 10 : 100,
+      humidityHigh = Math.max(60, Math.ceil((humidity + 2) / 20) * 20),
+      x = (time) => left + ((time - start) / (end - start)) * (right - left),
+      yT = (value) => bottom - ((value - low) / (high - low)) * (bottom - top),
+      yH = (value) => bottom - (value / humidityHigh) * (bottom - top),
+      [domainStart, domainEnd] = chart.domain,
+      overviewPosition = this.historyPrimaryPosition(session),
+      overviewEntry = this.historyPreparedSeries(
+        overviewPosition,
+        "temperature",
+        domainStart,
+        domainEnd,
+        ttl,
+        1160,
+        chart.preparedOverview,
+      ),
+      overview = {
+        position: overviewPosition,
+        revision: overviewEntry.revision,
+        start: domainStart,
+        end: domainEnd,
+        left: 20,
+        right: 1180,
+        top: 8,
+        bottom: 36,
+        width: 1200,
+        height: 46,
+        ttl,
+        values: overviewEntry.values,
+        key: overviewEntry.key,
+        low: Number.isFinite(overviewEntry.low) ? overviewEntry.low : 0,
+        high: Number.isFinite(overviewEntry.high) ? overviewEntry.high : 1,
+      };
+    return {
+      start,
+      end,
+      left,
+      right,
+      top,
+      bottom,
+      width: 1200,
+      height: 480,
+      low,
+      high,
+      humidityHigh,
+      ttl,
+      positions,
+      overviewPosition,
+      series,
+      x,
+      yT,
+      yH,
+      overview,
+    };
+  }
+  historyAnnotations(model, session, gangs) {
+    const { start, end, left, right, top, bottom, x } = model;
+    const records = this.shown.records;
     const interval = (a, b, klass, title, y = top, height = bottom - top) => {
       const aa = Math.max(start, stamp(a)),
         bb = Math.min(end, stamp(b || session.ended_at || this.state.now));
@@ -3349,26 +5911,53 @@ class SaunaPanel extends HTMLElement {
         ? `<rect class="${klass}" x="${x(aa).toFixed(2)}" y="${y}" width="${(x(bb) - x(aa)).toFixed(2)}" height="${height}"><title>${esc(title)}</title></rect>`
         : "";
     };
-    let svg = `<svg class="chart session-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Sitzungsverlauf: Temperatur und Luftfeuchte${this.historyDetail ? " beider Messhöhen" : ""}"><defs><clipPath id="plot-clip"><rect x="${left}" y="${top}" width="${right - left}" height="${bottom - top}"/></clipPath></defs><g clip-path="url(#plot-clip)">`;
-    const phases = this.historyRecords("phase"),
-      styles = {
-        aufheizen: "heat",
-        bereit: "ready",
-        zwangskühlung: "cool",
-        nachlauf: "after",
-      };
-    phases.forEach((p, i) => {
-      if (styles[p.payload.phase])
+    let svg = "";
+    const indexedPhases = this.historyRecords("phase");
+    // The real indexed path never rereads all records.  Keep the unindexed
+    // fallback for a minimal legacy/test caller that supplies no index.
+    const phases =
+      indexedPhases.length || this.chartDataIndex
+        ? indexedPhases
+        : records.filter((item) => item.kind === "phase");
+    const styles = {
+      aufheizen: "heat",
+      bereit: "ready",
+      zwangskühlung: "cool",
+      nachlauf: "after",
+    };
+    const projection = this.shown?.phase_projection;
+    if (projection) {
+      for (const phase of projection.intervals || []) {
+        const gang = gangs.find((item) => item.gang_id === phase.source_id);
+        const klass =
+          phase.phase === "saunagang"
+            ? gang && !gang.infusion_events.length
+              ? "gang provisional"
+              : "gang"
+            : styles[phase.phase] || "phase-other";
         svg += interval(
-          p.received_at,
-          phases[i + 1]?.received_at,
-          styles[p.payload.phase],
-          p.payload.phase,
+          phase.started_at,
+          phase.ended_at,
+          klass,
+          `${phase.phase}${phase.complete === false ? " · unvollständig" : ""}`,
         );
-    });
+      }
+    } else {
+      phases.forEach((p, i) => {
+        if (styles[p.payload.phase])
+          svg += interval(
+            p.received_at,
+            phases[i + 1]?.received_at,
+            styles[p.payload.phase],
+            p.payload.phase,
+          );
+      });
+    }
     const doorEvents = session.timeline.processed.filter(
       (e) => e.kind === "door_open" || e.kind === "door_close",
     );
+    // Ventilation is an independent annotation.  It remains visible beside an
+    // exclusive main-phase projection and must never depend on its presence.
     for (const e of session.timeline.processed.filter(
       (e) => e.kind === "ventilation_confirmed",
     )) {
@@ -3378,16 +5967,17 @@ class SaunaPanel extends HTMLElement {
       );
       svg += interval(e.effective_at, close?.effective_at, "vent", "lüften");
     }
-    svg += gangs
-      .map((g) =>
-        interval(
-          g.started_at,
-          g.ended_at,
-          g.infusion_events.length ? "gang" : "gang provisional",
-          `Gang ab ${when(g.started_at)}`,
-        ),
-      )
-      .join("");
+    if (!projection)
+      svg += gangs
+        .map((g) =>
+          interval(
+            g.started_at,
+            g.ended_at,
+            g.infusion_events.length ? "gang" : "gang provisional",
+            `Gang ab ${when(g.started_at)}`,
+          ),
+        )
+        .join("");
     doorEvents.forEach((e, i) => {
       if (e.kind === "door_open")
         svg += interval(
@@ -3417,70 +6007,25 @@ class SaunaPanel extends HTMLElement {
       const xx = x(stamp(e.effective_at));
       svg += `<line class="infusion" x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}"><title>Aufguss · ${when(e.effective_at)} · erkannt ${when(e.detected_at)}</title></line>`;
     }
-    for (const position of this.positions)
-      for (const quantity of ["temperature", "humidity"]) {
-        const values = this.series(position, quantity);
-        const ttl =
-          (session.configuration?.parameters || this.state.configuration.parameters)
-            .sensor_timeout_seconds * 1000;
-        const path = historySegments(
-          historyWindowValues(values, start, end),
-          start,
-          end,
-          ttl,
-        )
-          .map((segment) =>
-            monotoneHistoryPath(
-              reduceHistorySegment(segment, x),
-              x,
-              quantity === "temperature" ? yT : yH,
-            ),
-          )
-          .join(" ");
-        svg += `<path class="${position} ${quantity}" data-series="${position}_${quantity}" d="${path}"/>`;
-      }
-    svg += "</g>";
+    return svg;
+  }
+  historyAxes(model) {
+    const { start, end, left, right, top, bottom, low, high, humidityHigh, x } = model;
+    const timeZone = localTimeZone();
+    let svg = "";
     for (let n = 0; n <= 8; n++) {
       const f = n / 8,
         yy = bottom - (bottom - top) * f,
         t = start + (end - start) * f;
-      svg += `<text class="axis-temperature" x="${left - 10}" text-anchor="end" y="${yy + 4}">${(low + (high - low) * f).toFixed(0)}</text><text class="axis-humidity" x="${right + 10}" y="${yy + 4}">${(humidityHigh * f).toFixed(0)}</text><text text-anchor="middle" x="${x(t)}" y="${bottom + 27}">${clock(t)}</text>`;
+      svg += `<text class="axis-temperature" x="${left - 10}" text-anchor="end" y="${yy + 4}">${(low + (high - low) * f).toFixed(0)}</text><text class="axis-humidity" x="${right + 10}" y="${yy + 4}">${(humidityHigh * f).toFixed(0)}</text><text text-anchor="middle" x="${x(t)}" y="${bottom + 27}">${clock(t, timeZone)}</text>`;
     }
-    svg += `<text class="axis-temperature" x="13" y="${H / 2}">°C</text><text class="axis-humidity" x="${W - 15}" y="${H / 2}">%</text><line id="cursor" x1="0" x2="0" y1="${top}" y2="${bottom}" stroke="#eee" stroke-dasharray="3 3" visibility="hidden"/>`;
-    return svg + "</svg>";
+    return (
+      svg +
+      '<text class="axis-temperature" x="13" y="240">°C</text><text class="axis-humidity" x="1185" y="240">%</text>'
+    );
   }
-  hoverChart(e) {
-    const svg = e.svg || e.target.closest("svg.session-chart"),
-      point = this.svgCoordinates(svg, e.clientX, e.clientY),
-      px = point.x;
-    if (px < 65 || px > 1135) return;
-    const time =
-      this.window[0] + ((px - 65) / 1070) * (this.window[1] - this.window[0]);
-    const ttl =
-      (
-        this.shown.session.configuration?.parameters ||
-        this.state.configuration.parameters
-      ).sensor_timeout_seconds * 1000;
-    const rows = [];
-    for (const p of this.positions)
-      for (const q of ["temperature", "humidity"]) {
-        const nearest = this.nearestMeasurement(p, q, time);
-        if (nearest?.value != null && (!ttl || Math.abs(nearest.time - time) <= ttl))
-          rows.push(
-            `<span style="color:${q === "temperature" ? "#e25d40" : "#2f8bde"}">${q === "temperature" ? "Temperatur" : "Luftfeuchte"}${this.historyDetail ? ` ${p === "upper" ? "oben" : "unten"}` : ""}</span><br>${num(nearest.value, 3)} ${q === "temperature" ? "°C" : "%"} · ${when(nearest.source.received_at)}`,
-          );
-      }
-    const tip = this.$("#tooltip");
-    tip.innerHTML = `<strong>${when(time)}</strong><br>${rows.join("<br>")}`;
-    tip.hidden = false;
-    const wrap = svg.closest(".plot-wrap"),
-      rect = wrap?.getBoundingClientRect() || svg.getBoundingClientRect();
-    tip.style.left = `${Math.max(0, Math.min(rect.width - 290, e.clientX - rect.left + 12))}px`;
-    tip.style.top = `${Math.max(0, e.clientY - rect.top - 90)}px`;
-    const cursor = this.$("#cursor");
-    cursor.setAttribute("x1", px);
-    cursor.setAttribute("x2", px);
-    cursor.setAttribute("visibility", "visible");
+  hoverChart(event) {
+    this.historyChart?.interaction.hover(event, this.historyChart.model);
   }
   zoomAt(factor, clientX, svg) {
     if (!this.window) return;
@@ -3518,13 +6063,15 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     this.historyInputMode = "webkit";
+    this.historyChart?.interaction.invalidateGeometry("geometry", false);
+    const rect =
+      this.historyChart?.interaction.readGeometry().rects.surface ||
+      svg.getBoundingClientRect();
     event.preventDefault();
     this.webkitHistoryGesture = {
       svg,
       scale: event.scale || 1,
-      clientX:
-        event.clientX ||
-        svg.getBoundingClientRect().left + svg.getBoundingClientRect().width / 2,
+      clientX: event.clientX || rect.left + rect.width / 2,
     };
   }
   updateWebkitGesture(event) {
@@ -3544,10 +6091,7 @@ class SaunaPanel extends HTMLElement {
     this.webkitHistoryGesture = null;
     if (suppressed) return;
     if (this.historyInputMode === "webkit") this.historyInputMode = null;
-    if (this.historyRenderDeferred) {
-      this.historyRenderDeferred = false;
-      this.drawHistory();
-    } else this.scheduleHistoryRender();
+    this.scheduleHistoryRender();
   }
   wheelHistoryGesture(event, svg) {
     event.preventDefault();
@@ -3593,7 +6137,7 @@ class SaunaPanel extends HTMLElement {
   diagnosticMarkers(traces, metric, start, end) {
     return this.eventNavigation().flatMap((event, index) => {
       const route = this.diagnosticRoute(event),
-        at = stamp(event.effective_at || event.detected_at);
+        at = stamp(event.trace_at || event.effective_at || event.detected_at);
       if (
         !route ||
         route[0] !== metric ||
@@ -3643,7 +6187,11 @@ class SaunaPanel extends HTMLElement {
     if (!route) return null;
     signal ??= route[1];
     metric ??= route[0];
-    const effective = stamp(event.effective_at);
+    const linked = event.trace_at
+      ? event
+      : this.eventNavigation().find((item) => item.event_id === event.event_id) ||
+        event;
+    const effective = stamp(linked.trace_at || linked.effective_at);
     if (!Number.isFinite(effective)) return null;
     return (
       traces.find(
@@ -3655,6 +6203,10 @@ class SaunaPanel extends HTMLElement {
     );
   }
   drawDiagnostics() {
+    if (!this.state?.permissions?.admin) {
+      this.updateMarkup("#detection-plots", "");
+      return;
+    }
     if (!this.shown) {
       this.$("#detection-plots").innerHTML = "<p>Keine Saunasitzung ausgewählt.</p>";
       return;
@@ -3798,7 +6350,7 @@ class SaunaPanel extends HTMLElement {
         chart += `<path class="${pos} ${pos === "upper" ? "temperature" : "humidity"}" data-series="detector_${metric}_${pos}" d="${path}"/>`;
         for (const v of thresholds(metric, pos).filter(Number.isFinite)) {
           const display = convert(v);
-          chart += `<line x1="${plotLeft}" x2="${plotRight}" y1="${y(display)}" y2="${y(display)}" stroke="${pos === "upper" ? "#ff6b4a" : "#42a5ff"}" stroke-dasharray="4 5"><title>Schwelle ${pos === "upper" ? "oben" : "unten"}: ${num(display, 2)}</title></line>`;
+          chart += `<line x1="${plotLeft}" x2="${plotRight}" y1="${y(display)}" y2="${y(display)}" stroke="var(--sauna-color-chart-threshold)" stroke-dasharray="4 5"><title>Schwelle ${pos === "upper" ? "oben" : "unten"}: ${num(display, 2)}</title></line>`;
         }
       }
       for (let n = 0; n <= 4; n++) {
@@ -3816,10 +6368,10 @@ class SaunaPanel extends HTMLElement {
         })
         .join("");
       chart += "</svg>";
-      html += `<div class="plot-panel"><h3>${group} · ${label}</h3><p class="muted">Orange: oben · Blau: unten</p>${chart}</div>`;
+      html += `<div class="plot-panel"><h3>${group} · ${label}</h3><div class="legend diagnostic-legend"><span><i style="background:var(--sauna-color-series-temperature)"></i>Durchgezogen: oben</span><span><i style="background:var(--sauna-color-series-humidity);opacity:0.75"></i>Gestrichelt: unten</span></div>${chart}</div>`;
     }
     html +=
-      '</div><div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Aktive Prüfungen</th><th>Bedingungen erfüllt</th><th>Bestätigungszeiten</th><th>Ausgelöste Signale</th></tr></thead><tbody>' +
+      '</div><div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Aktive Prüfungen</th><th>Bedingungen erfüllt</th><th>Erfüllte Prüfpunkte</th><th>Ausgelöste Signale</th></tr></thead><tbody>' +
       traces
         .filter((t) => t.signals.length)
         .map(
@@ -3839,15 +6391,20 @@ class SaunaPanel extends HTMLElement {
             )}</td><td>${esc(
               Object.entries(t.holds)
                 .filter(([, v]) => Number(v) > 0)
-                .map(([k, v]) => `${signalText[k] || "Signal"}: ${num(v)} s`)
+                .map(([k, v]) => `${signalText[k] || "Signal"}: ${num(v)} Prüfpunkte`)
                 .join(" · "),
             )}</td><td>${esc(t.signals.map((k) => events[k] || k).join(", "))}</td></tr>`,
         )
         .join("") +
       "</tbody></table></div></div>";
     this.$("#detection-plots").innerHTML = html;
+    this.revealEventTarget("marker");
   }
   drawSettings() {
+    if (!this.state) {
+      this.renderStateLoading();
+      return;
+    }
     const state = this.state,
       admin = !!state.permissions?.admin;
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
@@ -3901,14 +6458,15 @@ class SaunaPanel extends HTMLElement {
         })
         .join("");
       const administration = admin
-        ? `<div class="card"><h2>Grundeinstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters">${temperatureGroups}${otherGroups}${experts ? `<details class="settings-group"><summary>Experteneinstellungen zur Erkennung</summary><p class="muted">Diese Werte verändern die Erkennung von Türöffnungen, Personen und Aufgüssen. Die Erkennungskontrolle zeigt ihre Wirkung.</p>${experts}</details>` : ""}<button type="submit" class="confirm">Einstellungen speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a></div></div><div class="card"><h2>Standardwerte</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten.</p><button data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div><div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv bleibt unabhängig davon vollständig.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sitzungsverläufe und Ereigniszuordnungen herunterladen.</p><button data-action="export">Archiv als ZIP herunterladen</button></div>`
+        ? `<div class="card"><h2>Grundeinstellungen</h2><p id="configuration-lock" class="muted"></p><form><fieldset id="parameters">${temperatureGroups}${otherGroups}${experts ? `<details class="settings-group"><summary>Experteneinstellungen zur Erkennung</summary><p class="muted">Diese Werte verändern die Erkennung von Türöffnungen, Personen und Aufgüssen. Die Erkennungskontrolle zeigt ihre Wirkung.</p>${experts}</details>` : ""}<button type="submit" class="confirm">Einstellungen speichern</button></fieldset></form><div class="row"><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a></div></div><div class="card"><h2>Standardwerte</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div><div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv bleibt unabhängig davon vollständig.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Alle empfangenen Messwerte, Sitzungsverläufe und Ereigniszuordnungen herunterladen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button></div>`
         : "";
       this.$("#settings").innerHTML =
-        `<div class="card"><h2>Saunataster</h2><div id="button-settings"></div></div><div class="card settings-programs"><h2>Programme</h2><p id="program-lock" class="muted" hidden></p><div id="program-library"></div></div>${administration}<footer class="settings-footer"><button data-action="default-page" class="confirm">Als Startseite festlegen</button><small>Für dein Home-Assistant-Profil</small><p id="start-page-status" class="muted" role="status"></p></footer>`;
+        `<div class="card"><h2>Saunataster</h2><div id="button-settings"></div></div><div class="card settings-programs"><h2>Programme</h2><p id="program-lock" class="muted" hidden></p><div id="program-library"></div></div>${admin ? this.appearanceSettingsMarkup() : ""}${administration}<footer class="settings-footer"><button data-action="default-page" class="confirm">Als Startseite festlegen</button><small>Für dein Home-Assistant-Profil</small><p id="start-page-status" class="muted" role="status"></p></footer>`;
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
       this.programDraft = null;
+      this.programEditor = null;
       this.programLibraryNeedsRender = true;
     }
     for (const d of state.parameters) {
@@ -3922,6 +6480,7 @@ class SaunaPanel extends HTMLElement {
             : (state.configuration.parameters[d.key] ?? "");
     }
     if (admin) {
+      this.drawAppearanceStatus();
       this.$('[data-action="reset-settings"]').disabled = state.configuration_locked;
       this.$("#configuration-lock").textContent = state.configuration_locked
         ? "Grundeinstellungen sind nach Ende der Sitzung wieder änderbar. Solltemperatur, Endtemperatur und Verteilung bleiben verfügbar."
@@ -3983,36 +6542,111 @@ class SaunaPanel extends HTMLElement {
       }))
     );
   }
-  readProgramDraft() {
-    const rows = [...this.shadowRoot.querySelectorAll("[data-program-id]")];
-    if (!rows.length) return this.currentProgramDraft();
-    return rows.map((row) => {
-      const id = row.dataset.programId,
-        name = row.querySelector('[data-program-field="name"]').value,
-        kind = row.dataset.programKind || "even";
-      if (kind === "steps")
-        return {
-          id,
-          name,
-          temperature_steps: [...row.querySelectorAll("[data-program-step]")].map(
-            (input) => Number(input.value),
-          ),
-        };
-      return {
-        id,
-        name,
-        start_c: Number(row.querySelector('[data-program-field="start_c"]').value),
-        end_c: Number(row.querySelector('[data-program-field="end_c"]').value),
-        distribution_gangs: Number(
-          row.querySelector('[data-program-field="distribution_gangs"]').value,
-        ),
+  programCatalogDirty() {
+    return (
+      JSON.stringify(this.currentProgramDraft()) !==
+      JSON.stringify(this.state.configuration.temperature_programs || [])
+    );
+  }
+  openProgramEditor(id, isNew = false) {
+    if (
+      this.programEditor ||
+      this.programSavePending ||
+      this.state.configuration_locked ||
+      !this.state.permissions?.program
+    )
+      return;
+    const program = this.currentProgramDraft().find((item) => item.id === id);
+    if (!program) return;
+    this.programEditor = {
+      id,
+      isNew,
+      kind: Array.isArray(program.temperature_steps) ? "steps" : "even",
+      values: { ...program, temperature_steps: [...(program.temperature_steps || [])] },
+    };
+    this.programLibraryNeedsRender = true;
+    this.renderProgramLibrary();
+    this.shadowRoot
+      ?.querySelectorAll?.("#program-library [data-program-id]")
+      ?.forEach((row) => {
+        if (row.dataset.programId === id)
+          row.querySelector('[data-program-field="name"]')?.focus?.();
+      });
+  }
+  updateProgramEditorField(input) {
+    const editor = this.programEditor;
+    if (!editor) return;
+    if (input.matches("[data-program-step]"))
+      editor.values.temperature_steps[Number(input.dataset.programStep)] = input.value;
+    else editor.values[input.dataset.programField] = input.value;
+  }
+  finishProgramEditor() {
+    const editor = this.programEditor;
+    if (
+      !editor ||
+      this.programSavePending ||
+      this.state.configuration_locked ||
+      !this.state.permissions?.program
+    )
+      return;
+    const { minimum, maximum, gangMinimum, gangMaximum } = this.programBounds(),
+      name = String(editor.values.name || "").trim(),
+      number = (value, label) => {
+        if (String(value).trim() === "" || !Number.isFinite(Number(value)))
+          throw Error(`${label} muss eine Zahl sein.`);
+        const numeric = Number(value);
+        if (numeric < minimum || numeric > maximum)
+          throw Error(`${label} muss zwischen ${minimum} und ${maximum} °C liegen.`);
+        return numeric;
       };
-    });
+    if (!name) throw Error("Bitte einen Programmnamen eingeben.");
+    let program;
+    if (editor.kind === "steps") {
+      const steps = editor.values.temperature_steps.map((value, index) =>
+        number(value, `Stufe ${index + 1}`),
+      );
+      if (!steps.length || steps.length > gangMaximum)
+        throw Error(`Bitte 1 bis ${gangMaximum} Temperaturstufen eingeben.`);
+      program = { id: editor.id, name, temperature_steps: steps };
+    } else {
+      const distribution = Number(editor.values.distribution_gangs);
+      if (
+        String(editor.values.distribution_gangs).trim() === "" ||
+        !Number.isInteger(distribution) ||
+        distribution < gangMinimum ||
+        distribution > gangMaximum
+      )
+        throw Error(
+          `Die Verteilung muss zwischen ${gangMinimum} und ${gangMaximum} liegen.`,
+        );
+      program = {
+        id: editor.id,
+        name,
+        start_c: number(editor.values.start_c, "Starttemperatur"),
+        end_c: number(editor.values.end_c, "Endtemperatur"),
+        distribution_gangs: distribution,
+      };
+    }
+    this.programDraft = this.currentProgramDraft().map((item) =>
+      item.id === editor.id ? program : item,
+    );
+    this.programEditor = null;
+    this.programLibraryNeedsRender = true;
+    this.renderProgramLibrary();
+  }
+  cancelProgramEditor() {
+    const editor = this.programEditor;
+    if (!editor) return;
+    if (editor.isNew)
+      this.programDraft = this.currentProgramDraft().filter(
+        (item) => item.id !== editor.id,
+      );
+    this.programEditor = null;
+    this.programLibraryNeedsRender = true;
+    this.renderProgramLibrary();
   }
   catalogProgramForm(program, bounds, editable) {
-    const kind =
-        this.catalogProgramKinds?.[program.id] ||
-        (Array.isArray(program.temperature_steps) ? "steps" : "even"),
+    const kind = this.programEditor.kind,
       steps = Array.isArray(program.temperature_steps)
         ? program.temperature_steps
         : this.distributedSteps(
@@ -4037,7 +6671,11 @@ class SaunaPanel extends HTMLElement {
             )
             .join("")}</div>`
         : `<div class="row"><label class="field">Start<input data-program-field="start_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}></label><label class="field">Ende<input data-program-field="end_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}></label><label class="field" for="${esc(distributionId)}"><span>Verteilung ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label></div>`;
-    return `<div class="program-form" data-program-id="${esc(program.id)}" data-program-kind="${kind}"><label class="field">Name<input data-program-field="name" value="${esc(program.name)}" ${disabled}></label>${selector}${values}<button type="button" data-action="program-remove:${esc(program.id)}" ${disabled}>Entfernen</button></div>`;
+    const protectedProgram = [
+      this.state.configuration.selected_program_id,
+      this.state.configuration.button_program,
+    ].includes(program.id);
+    return `<div class="program-form"><label class="field">Name<input data-program-field="name" value="${esc(program.name)}" ${disabled}></label>${selector}${values}<div class="row"><button type="button" class="confirm" data-action="program-finish" ${disabled}>Fertig</button><button type="button" data-action="program-cancel">Abbrechen</button><button type="button" data-action="program-remove:${esc(program.id)}" ${protectedProgram || !editable ? "disabled" : ""}>Entfernen</button></div></div>`;
   }
   renderProgramLibrary() {
     const target = this.$("#program-library");
@@ -4045,11 +6683,30 @@ class SaunaPanel extends HTMLElement {
     const state = this.state,
       bounds = this.programBounds(),
       editable = !!state.permissions?.program && !state.configuration_locked,
-      programs = this.currentProgramDraft();
-    if (target.dataset.editable === String(editable) && !this.programLibraryNeedsRender)
+      programs = this.currentProgramDraft(),
+      editor = this.programEditor,
+      busy = !!editor || !!this.programSavePending,
+      dirty = this.programCatalogDirty();
+    const signature = JSON.stringify(programs);
+    if (
+      target.dataset.editable === String(editable) &&
+      (target.dataset.catalogSignature === signature || !!editor) &&
+      !this.programLibraryNeedsRender
+    )
       return;
-    target.innerHTML = `${programs.map((program) => this.catalogProgramForm(program, bounds, editable)).join("")}<div class="program-actions"><button type="button" data-action="program-add" ${editable ? "" : "disabled"}>Programm hinzufügen</button><button type="button" data-action="program-save" class="confirm" ${editable ? "" : "disabled"}>Programme speichern</button></div>`;
+    target.innerHTML = `<div class="program-list">${programs
+      .map((program, index) => {
+        const open = editor?.id === program.id,
+          summary = Array.isArray(program.temperature_steps)
+            ? `${program.temperature_steps.map((value) => num(value, 1)).join(" → ")} °C · Einzelne Stufen`
+            : `${num(program.start_c, 1)} → ${num(program.end_c, 1)} °C · Verteilung: ${program.distribution_gangs} · Gleichmäßig`;
+        return `<div class="program-row" data-program-id="${esc(program.id)}"><div class="program-row-summary"><button type="button" class="program-drag-handle" data-program-drag="${esc(program.id)}" aria-label="${esc(program.name)} verschieben, Position ${index + 1} von ${programs.length}; Pfeiltasten verwenden" ${editable && !busy ? "" : "disabled"}>☰</button><div class="program-row-label"><strong>${esc(program.name)}</strong><small>${esc(summary)}</small></div><button type="button" class="program-edit-button" data-action="program-edit:${esc(program.id)}" aria-label="${esc(program.name)} bearbeiten" ${editable && !busy ? "" : "disabled"}>Bearbeiten</button></div>${open ? this.catalogProgramForm(editor.values, bounds, editable) : ""}</div>`;
+      })
+      .join(
+        "",
+      )}</div><div class="program-actions"><button type="button" data-action="program-add" ${editable && !busy ? "" : "disabled"}>Programm hinzufügen</button><button type="button" data-action="program-save" class="confirm" ${editable && !busy && dirty ? "" : "disabled"}>Programme speichern</button><button type="button" data-action="program-discard" ${editable && !busy && dirty ? "" : "disabled"}>Änderungen verwerfen</button></div><p id="program-order-status" class="muted" role="status">${esc(this.programOrderStatus || "")}</p>`;
     target.dataset.editable = String(editable);
+    target.dataset.catalogSignature = signature;
     this.programLibraryNeedsRender = false;
   }
   drawButtonProgram() {
@@ -4071,32 +6728,216 @@ class SaunaPanel extends HTMLElement {
     return `program-${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
   }
   addProgram() {
+    if (
+      this.programEditor ||
+      this.programSavePending ||
+      this.state.configuration_locked ||
+      !this.state.permissions?.program
+    )
+      return;
     const bounds = this.programBounds(),
-      programs = this.readProgramDraft();
+      programs = this.currentProgramDraft(),
+      id = this.newProgramId();
     programs.push({
-      id: this.newProgramId(),
+      id,
       name: "Neues Programm",
       start_c: bounds.minimum,
       end_c: bounds.minimum,
       distribution_gangs: Math.max(1, bounds.gangMinimum),
     });
     this.programDraft = programs;
+    this.openProgramEditor(id, true);
+  }
+  removeProgram(id) {
+    if (
+      this.state.configuration_locked ||
+      this.programSavePending ||
+      !this.state.permissions?.program ||
+      this.programEditor?.id !== id ||
+      [
+        this.state.configuration.selected_program_id,
+        this.state.configuration.button_program,
+      ].includes(id)
+    )
+      return;
+    this.programDraft = this.currentProgramDraft().filter(
+      (program) => program.id !== id,
+    );
+    this.programEditor = null;
     this.programLibraryNeedsRender = true;
     this.renderProgramLibrary();
   }
-  removeProgram(id) {
-    this.programDraft = this.readProgramDraft().filter((program) => program.id !== id);
+  moveProgram(id, offset, targetIndex = null) {
+    if (
+      !this.state ||
+      this.programEditor ||
+      this.programSavePending ||
+      this.state.configuration_locked ||
+      !this.state.permissions?.program
+    )
+      return;
+    const programs = [...this.currentProgramDraft()],
+      oldIndex = programs.findIndex((program) => program.id === id),
+      nextIndex = targetIndex ?? oldIndex + offset;
+    if (
+      oldIndex < 0 ||
+      nextIndex < 0 ||
+      nextIndex >= programs.length ||
+      oldIndex === nextIndex
+    )
+      return;
+    programs.splice(nextIndex, 0, ...programs.splice(oldIndex, 1));
+    this.programDraft = programs;
+    this.programOrderStatus = `${programs[nextIndex].name}, Position ${nextIndex + 1} von ${programs.length}`;
+    this.programLibraryNeedsRender = true;
+    this.renderProgramLibrary();
+    [...(this.shadowRoot?.querySelectorAll?.("[data-program-drag]") || [])]
+      .find((handle) => handle.dataset.programDrag === id)
+      ?.focus?.();
+  }
+  beginProgramDrag(event) {
+    const handle = event.target.closest?.("[data-program-drag]");
+    if (
+      !this.state ||
+      !handle ||
+      handle.disabled ||
+      this.programEditor ||
+      this.state.configuration_locked
+    )
+      return;
+    const id = handle.dataset.programDrag,
+      from = this.currentProgramDraft().findIndex((program) => program.id === id);
+    if (from < 0) return;
+    this.programDrag = { id, from, to: from, pointerId: event.pointerId, handle };
+    handle.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  }
+  updateProgramDrag(event) {
+    const drag = this.programDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.clientX = event.clientX;
+    drag.clientY = event.clientY;
+    const row = this.shadowRoot
+      .elementFromPoint?.(event.clientX, event.clientY)
+      ?.closest?.("[data-program-id]");
+    this.shadowRoot
+      .querySelectorAll(".program-row")
+      .forEach((item) => item.removeAttribute("data-drop-position"));
+    if (row) {
+      const programs = this.currentProgramDraft(),
+        index = programs.findIndex((program) => program.id === row.dataset.programId),
+        rect = row.getBoundingClientRect(),
+        after = event.clientY >= rect.top + rect.height / 2;
+      if (index >= 0) {
+        drag.to = Math.max(
+          0,
+          Math.min(
+            programs.length - 1,
+            index +
+              (after && index < drag.from ? 1 : !after && index > drag.from ? -1 : 0),
+          ),
+        );
+        row.dataset.dropPosition = after ? "after" : "before";
+      }
+    }
+    const edge = 48,
+      host = this.getBoundingClientRect?.();
+    drag.edgeDirection =
+      host && event.clientY < host.top + edge
+        ? -1
+        : host && event.clientY > host.bottom - edge
+          ? 1
+          : 0;
+    if (drag.edgeDirection && !drag.scrollFrame) this.scrollProgramDrag();
+    event.preventDefault();
+  }
+  scrollProgramDrag() {
+    const drag = this.programDrag;
+    if (!drag || !drag.edgeDirection) return;
+    drag.scrollFrame = globalThis.requestAnimationFrame?.(() => {
+      drag.scrollFrame = null;
+      if (this.programDrag !== drag || !drag.edgeDirection) return;
+      this.scrollTop += drag.edgeDirection * 18;
+      this.updateProgramDrag({
+        pointerId: drag.pointerId,
+        clientX: drag.clientX,
+        clientY: drag.clientY,
+        preventDefault() {},
+      });
+    });
+  }
+  finishProgramDrag(event) {
+    const drag = this.programDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    this.cancelProgramDrag();
+    this.moveProgram(drag.id, 0, drag.to);
+  }
+  cancelProgramDrag() {
+    const drag = this.programDrag;
+    if (!drag) return;
+    if (drag.scrollFrame) globalThis.cancelAnimationFrame?.(drag.scrollFrame);
+    drag.handle.releasePointerCapture?.(drag.pointerId);
+    this.shadowRoot
+      .querySelectorAll(".program-row")
+      .forEach((item) => item.removeAttribute("data-drop-position"));
+    this.programDrag = null;
+  }
+  discardPrograms() {
+    if (this.programEditor || this.programSavePending) return;
+    this.programDraft = null;
+    this.programOrderStatus = "";
     this.programLibraryNeedsRender = true;
     this.renderProgramLibrary();
   }
   async savePrograms() {
-    this.programDraft = this.readProgramDraft();
-    await this.api(`/${this.entry}/programs`, "POST", { programs: this.programDraft });
-    this.programDraft = null;
-    this.settingsEntry = null;
-    await this.refresh();
+    if (!this.state) return;
+    if (
+      this.programEditor ||
+      this.programSavePending ||
+      this.state.configuration_locked ||
+      !this.state.permissions?.program ||
+      !this.programCatalogDirty()
+    )
+      return;
+    const entry = this.entry,
+      generation = this.generation,
+      programs = this.currentProgramDraft(),
+      pending = { entry, generation };
+    this.programSavePending = pending;
+    this.programLibraryNeedsRender = true;
+    this.renderProgramLibrary();
+    try {
+      const result = await this.api(`/${entry}/programs`, "POST", { programs });
+      if (
+        this.entry !== entry ||
+        this.generation !== generation ||
+        this.programSavePending !== pending
+      )
+        return;
+      this.state.configuration.temperature_programs = result?.programs || programs;
+      this.programDraft = null;
+      this.programRevision = (this.programRevision || 0) + 1;
+      this.programSavePending = null;
+      this.programLibraryNeedsRender = true;
+      this.renderProgramLibrary();
+    } catch (error) {
+      if (
+        this.programSavePending !== pending ||
+        this.entry !== entry ||
+        this.generation !== generation
+      )
+        return;
+      if (this.programSavePending === pending) {
+        this.programSavePending = null;
+        this.programLibraryNeedsRender = true;
+        this.renderProgramLibrary();
+      }
+      throw error;
+    }
+    await this.refresh(true);
   }
   async saveSettings() {
+    if (!this.state) return;
     this.message(null);
     const partial = this.state.configuration_locked;
     const values = partial ? {} : { ...this.state.configuration.parameters };
@@ -4114,48 +6955,113 @@ class SaunaPanel extends HTMLElement {
     await this.updateParameters(values, false, partial);
   }
   async resetSettings() {
-    const entry = this.entry;
+    if (!this.state) return;
+    const entry = this.entry,
+      generation = this.generation,
+      editRevision = this.settingsEditRevision || 0,
+      progressionDraft = this.progressionDraft,
+      request = (this.settingsRequestSerial = (this.settingsRequestSerial || 0) + 1);
     const saved = await this.api(`/${entry}/parameters/reset`, "POST");
     await this.waitForConfiguration(entry, saved.parameters, saved.configuration);
-    this.settingsEntry = null;
-    this.progressionDraft = null;
-    this.shadowRoot
-      .querySelectorAll("#parameters input[data-edited]")
-      .forEach((input) => delete input.dataset.edited);
+    if (
+      this.entry !== entry ||
+      this.generation !== generation ||
+      this.settingsRequestSerial !== request
+    )
+      return;
+    if ((this.settingsEditRevision || 0) === editRevision) {
+      this.settingsEntry = null;
+      this.shadowRoot
+        .querySelectorAll("#parameters input[data-edited]")
+        .forEach((input) => delete input.dataset.edited);
+    }
+    if (this.progressionDraft === progressionDraft) this.progressionDraft = null;
     await this.refresh();
+    if (
+      this.entry !== entry ||
+      this.generation !== generation ||
+      this.settingsRequestSerial !== request
+    )
+      return;
     const status = this.shadowRoot.querySelector("#settings-reset-status");
     if (status) status.textContent = "Standardwerte wurden wiederhergestellt.";
   }
-  setPanelView(action) {
-    this.view = action;
-    this.$("#current").hidden = action !== "overview";
-    this.$("#details").hidden = action !== "detail";
-    this.$("#history").hidden = !["history", "diagnostics"].includes(action);
-    this.$("#settings").hidden = action !== "settings";
-    this.$("#plots").hidden = action === "diagnostics";
-    this.$("#detection-plots").hidden = action !== "diagnostics";
-    this.$("#gangs").hidden = action === "diagnostics";
-    this.$("#event-list").hidden = action === "diagnostics";
+  syncNavigation() {
+    this.navigation ??= { main: "overview", detail: "detail" };
+    if (
+      this.state &&
+      this.navigation.main === "details" &&
+      !this.state.permissions?.admin
+    )
+      this.navigation.main = "overview";
+    const { main, detail } = this.navigation;
+    const view =
+      main === "details" ? (detail === "detail-history" ? "history" : detail) : main;
+    this.view = view;
+    const detailsButton = this.$('.main-tabs [data-action="details"]');
+    if (detailsButton) detailsButton.hidden = !this.state?.permissions?.admin;
+    const detailTabs = this.$(".detail-tabs");
+    if (detailTabs) detailTabs.hidden = main !== "details";
+    this.shadowRoot
+      ?.querySelectorAll(".main-tabs button")
+      ?.forEach((button) =>
+        button.setAttribute(
+          "aria-current",
+          button.dataset.action === main ? "page" : "false",
+        ),
+      );
+    this.shadowRoot
+      ?.querySelectorAll(".detail-tabs button")
+      ?.forEach((button) =>
+        button.setAttribute(
+          "aria-current",
+          button.dataset.action === detail ? "page" : "false",
+        ),
+      );
+    for (const [selector, hidden] of [
+      ["#current", view !== "overview"],
+      ["#details", view !== "detail"],
+      ["#history", !["history", "diagnostics"].includes(view)],
+      ["#settings", view !== "settings"],
+      ["#plots", view === "diagnostics"],
+      ["#detection-plots", view !== "diagnostics"],
+      ["#gangs", view === "diagnostics"],
+      ["#event-list", view === "diagnostics"],
+    ]) {
+      const node = this.$(selector);
+      if (node) node.hidden = hidden;
+    }
+  }
+  setPanelView(action, preserveEventFocus = false) {
+    if (!preserveEventFocus) this.pendingEventFocus = null;
+    this.navigation ??= { main: "overview", detail: "detail" };
+    if (["detail", "detail-history", "diagnostics"].includes(action)) {
+      this.navigation.main = "details";
+      this.navigation.detail = action;
+    } else this.navigation.main = action === "normal" ? "overview" : action;
+    this.syncNavigation();
+    if (!["history", "diagnostics"].includes(this.view)) {
+      this.cancelHistoryFrame();
+      this.historyLoad = null;
+      this.historyChart?.interaction.hide();
+    } else this.historyChart?.interaction.invalidateGeometry("size");
   }
   async action(action) {
+    if (!this.state && action !== "menu") return;
     this.message(null);
     const permissions = this.state?.permissions || {};
     if (
       ((action === "operation" || action.startsWith("finish-session:")) &&
         !permissions.control) ||
-      ((action === "target" || action.startsWith("preset:")) &&
-        !permissions.temperature) ||
-      ((action === "program-free" ||
-        action === "program-apply" ||
-        action.startsWith("profile:")) &&
-        !permissions.program) ||
+      (action.startsWith("preset:") && !permissions.temperature) ||
+      (action === "program-apply" && !permissions.program) ||
       ((action === "program-add" ||
         action === "program-save" ||
         action.startsWith("program-remove:") ||
         action === "button-program") &&
         (!permissions.program || this.state.configuration_locked)) ||
       (action.startsWith("light:") && !permissions.light) ||
-      ((action === "manual-light" || action === "manual-light-overview") &&
+      (action === "manual-light-overview" &&
         (!permissions.admin || !permissions.light)) ||
       (action.startsWith("heater:") && !permissions.heater) ||
       (action.startsWith("control-mode:") &&
@@ -4163,6 +7069,7 @@ class SaunaPanel extends HTMLElement {
       (action.startsWith("end-phase:") && !permissions.admin) ||
       (action === "reset-settings" &&
         (!permissions.admin || this.state.configuration_locked)) ||
+      (action.startsWith("appearance-") && !permissions.admin) ||
       ((action === "details" ||
         action === "detail" ||
         action === "detail-history" ||
@@ -4175,6 +7082,36 @@ class SaunaPanel extends HTMLElement {
     if (action === "default-page") return this.setDefaultPage();
     if (action === "configure") return this.action("settings");
     if (action === "reset-settings") return this.resetSettings();
+    if (action === "appearance-save") return this.saveAppearance();
+    if (action === "appearance-discard") return this.resetAppearanceDraft();
+    if (action === "appearance-default") return this.resetAppearanceDraft(true);
+    if (action.startsWith("appearance-role-default:")) {
+      const role = action.slice("appearance-role-default:".length);
+      if (!this.appearanceCatalog().colors?.some((item) => item.id === role)) return;
+      if (!this.appearanceDraft)
+        this.updateAppearanceField(this.$(`[data-appearance-color="${role}"]`));
+      delete this.appearanceDraft.colors[role];
+      delete this.appearanceRaw?.[role];
+      this.appearanceStatus = "Vorschau – noch nicht gespeichert";
+      this.applyAppearance();
+      this.drawCurrent();
+      this.drawAppearanceStatus();
+      this.scheduleHistoryRender("appearance");
+      const input = this.$(`[data-appearance-color="${role}"]`);
+      if (input)
+        input.value =
+          this.appearanceCatalog().colors.find((item) => item.id === role)?.default ||
+          "";
+      const picker = this.$(`[data-appearance-picker="${role}"]`);
+      if (picker) picker.value = this.appearancePickerColor(role);
+      return;
+    }
+    if (action === "program-toggle") {
+      if (!this.state?.session || this.programDirty() || this.programRequest) return;
+      this.programChoiceOpen = !this.programChoiceOpen;
+      this.drawCurrent();
+      return;
+    }
     if (action === "logging") {
       await this.api(`/${this.entry}/logging`, "POST", {
         level: this.$("#log-level").value,
@@ -4189,70 +7126,80 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action.startsWith("event-marker:")) {
-      this.highlightEvent(action.slice(13), true);
+      if (!permissions.admin) return;
+      const eventId = action.slice(13);
+      this.historyDetail = true;
+      this.positions = new Set(["upper", "lower"]);
+      this.pendingEventFocus = { kind: "row", eventId };
+      this.setPanelView("detail-history", true);
+      this.focusEvent(eventId, true);
       return;
     }
     if (action.startsWith("event-row:")) {
-      this.focusEvent(action.slice(10));
+      if (!permissions.admin) return;
+      const eventId = action.slice(10);
+      this.pendingEventFocus = { kind: "marker", eventId };
+      this.setPanelView("diagnostics", true);
+      this.focusEvent(eventId);
       return;
     }
-    if (["normal", "details", "settings"].includes(action)) {
-      this.$(".normal-tabs").hidden = action !== "normal";
-      this.$(".detail-tabs").hidden = action !== "details";
-      this.shadowRoot
-        .querySelectorAll(".main-tabs button")
-        .forEach((b) =>
-          b.setAttribute("aria-selected", String(b.dataset.action === action)),
-        );
-      if (action === "settings") {
-        this.setPanelView("settings");
-        this.drawSettings();
-        return;
-      }
-      return this.action(action === "normal" ? "overview" : "detail");
-    }
-    if (["overview", "history", "detail", "diagnostics"].includes(action)) {
+    if (action === "details") return this.action(this.navigation?.detail || "detail");
+    if (action === "normal") return this.action("overview");
+    if (
+      [
+        "overview",
+        "history",
+        "detail",
+        "detail-history",
+        "diagnostics",
+        "settings",
+      ].includes(action)
+    ) {
       if (action === "history") {
         this.historyDetail = false;
-        this.positions = new Set(["upper"]);
+        this.positions = new Set([this.historyPrimaryPosition()]);
+      }
+      if (action === "detail-history") {
+        this.historyDetail = true;
+        this.positions = new Set(["upper", "lower"]);
       }
       this.setPanelView(action);
-      this.shadowRoot
-        .querySelectorAll(".normal-tabs button,.detail-tabs button")
-        .forEach((b) =>
-          b.setAttribute("aria-selected", String(b.dataset.action === action)),
-        );
-      if (["history", "diagnostics"].includes(action)) return this.refresh(true);
-      if (action !== "overview") this.drawHistory();
+      if (action === "settings") return this.drawSettings();
+      if (["history", "detail-history", "diagnostics"].includes(action))
+        return this.refresh(true);
+      if (action === "detail") this.drawHistory();
       return;
-    }
-    if (action === "detail-history") {
-      this.historyDetail = true;
-      this.positions = new Set(["upper", "lower"]);
-      this.setPanelView("history");
-      this.shadowRoot
-        .querySelectorAll(".detail-tabs button")
-        .forEach((b) =>
-          b.setAttribute("aria-selected", String(b.dataset.action === action)),
-        );
-      return this.refresh(true);
     }
     if (action.startsWith("preset:")) return this.changeTarget(Number(action.slice(7)));
     if (action.startsWith("program-mode:")) {
+      if (this.programRequest) return;
       this.selectProgramMode(
         action.slice(13),
         this.state.configuration.temperature_programs || [],
       );
+      if (
+        !this.state.session &&
+        this.programMode(this.state.configuration.temperature_programs || []) !==
+          "individual"
+      )
+        await this.applyProgram();
       return;
     }
     if (action.startsWith("program-select:")) {
+      if (this.programRequest) return;
       this.selectNamedProgram(
         action.slice(15),
         this.state.configuration.temperature_programs || [],
       );
+      if (!this.state.session) await this.applyProgram();
+      return;
+    }
+    if (action === "program-cancel-draft") {
+      if (!this.programRequest) this.cancelProgramDraft();
       return;
     }
     if (action.startsWith("program-kind:")) {
+      if (this.programRequest) return;
       this.setFreeProgramKind(action.slice(13));
       return;
     }
@@ -4266,89 +7213,44 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action.startsWith("catalog-kind:")) {
-      const [, kind, id] = action.split(":");
-      const drafts = this.readProgramDraft(),
-        program = drafts.find((item) => item.id === id);
-      if (!program) return;
-      const steps = Array.isArray(program.temperature_steps)
-        ? program.temperature_steps
-        : this.distributedSteps(
-            program.start_c,
-            program.end_c,
-            program.distribution_gangs,
-          );
+      const choice = action.slice("catalog-kind:".length),
+        separator = choice.indexOf(":"),
+        kind = choice.slice(0, separator),
+        id = choice.slice(separator + 1);
+      if (separator < 0 || !["even", "steps"].includes(kind)) return;
+      const editor = this.programEditor;
+      if (!editor || editor.id !== id) return;
+      const program = editor.values;
+      const steps =
+        editor.kind === "steps"
+          ? program.temperature_steps
+          : this.distributedSteps(
+              program.start_c,
+              program.end_c,
+              program.distribution_gangs,
+            );
+      if (!steps?.length) throw Error("Programmwerte zuerst prüfen");
       if (kind === "steps") program.temperature_steps = steps;
       else {
         program.start_c = steps[0];
         program.end_c = steps.at(-1);
         program.distribution_gangs = steps.length;
-        delete program.temperature_steps;
       }
-      this.catalogProgramKinds = { ...this.catalogProgramKinds, [id]: kind };
-      this.programDraft = drafts;
+      editor.kind = kind;
       this.programLibraryNeedsRender = true;
       this.renderProgramLibrary();
       return;
     }
-    if (action === "program-apply") {
-      const choice = this.programChoice(
-          this.state.configuration.temperature_programs || [],
-        ),
-        entry = this.entry;
-      if (!this.programDirty()) return;
-      this.programSaveState = "saving";
-      this.drawCurrent();
-      try {
-        if (
-          choice === "individual" &&
-          (this.freeProgramKind === "steps" ||
-            (Array.isArray(this.state.configuration.temperature_steps) &&
-              !this.freeProgramKind))
-        ) {
-          await this.api(`/${entry}/program`, "POST", {
-            temperature_steps: this.freeProgramValues(),
-          });
-        } else if (choice === "individual") {
-          const configuration = this.state.configuration,
-            liveEdit =
-              configuration.program_mode === "progressive" &&
-              configuration.selected_program_id == null &&
-              !Array.isArray(configuration.temperature_steps) &&
-              !(
-                this.progressionDraft &&
-                Object.hasOwn(this.progressionDraft, "progression-start")
-              );
-          await this.action(liveEdit ? "progression" : "program-free");
-        } else await this.api(`/${entry}/program`, "POST", { profile: choice });
-        if (this.entry !== entry) return;
-        this.programSelectionDraft = null;
-        this.freeProgramKind = null;
-        this.freeProgramStepsDraft = null;
-        this.progressionDraft = null;
-        this.programSaveState = "saved";
-        await this.refresh();
-        return;
-      } catch (error) {
-        this.programSaveState = null;
-        this.drawCurrent();
-        throw error;
-      }
-    }
-    if (action.startsWith("profile:")) {
-      const entry = this.entry,
-        draft = this.progressionDraft;
-      await this.temperatureChange;
-      if (this.entry !== entry) return;
-      await this.api(`/${entry}/program`, "POST", { profile: action.slice(8) });
-      if (this.entry !== entry) return;
-      if (this.progressionDraft === draft) this.progressionDraft = null;
-      await this.refresh();
-      return;
-    }
+    if (action === "program-apply") return this.applyProgram();
     if (action === "program-add") {
       this.addProgram();
       return;
     }
+    if (action.startsWith("program-edit:"))
+      return this.openProgramEditor(action.slice(13));
+    if (action === "program-finish") return this.finishProgramEditor();
+    if (action === "program-cancel") return this.cancelProgramEditor();
+    if (action === "program-discard") return this.discardPrograms();
     if (action.startsWith("program-remove:")) {
       this.removeProgram(action.slice(15));
       return;
@@ -4377,57 +7279,6 @@ class SaunaPanel extends HTMLElement {
       await this.refresh();
       return;
     }
-    if (action === "progression") {
-      const { start, end, gangs } = this.progressionValues();
-      const entry = this.entry,
-        draft = this.progressionDraft;
-      if (
-        this.progressionDraft &&
-        Object.hasOwn(this.progressionDraft, "progression-start")
-      )
-        return this.action("program-free");
-      if (!permissions.temperature) return;
-      const changed = {};
-      if (end !== this.state.configuration.parameters.final_temperature_c)
-        changed.final_temperature_c = end;
-      if (gangs !== this.state.configuration.parameters.temperature_gangs)
-        changed.temperature_gangs = gangs;
-      if (Object.keys(changed).length) {
-        await this.temperatureChange;
-        if (this.entry !== entry) return;
-        await this.api(`/${entry}/temperature`, "POST", changed);
-        if (this.entry !== entry) return;
-        if (this.progressionDraft === draft) this.progressionDraft = null;
-        await this.refresh();
-      }
-      return;
-    }
-    if (action === "program-free") {
-      const entry = this.entry,
-        draft = this.progressionDraft;
-      const { start, end, gangs } = this.progressionValues();
-      const explicitStart = Object.hasOwn(draft || {}, "progression-start");
-      const pendingTemperatureChange = this.temperatureChange,
-        parameters = await pendingTemperatureChange;
-      if (this.entry !== entry) return;
-      const body = {
-        target_temperature_c: explicitStart
-          ? start
-          : pendingTemperatureChange
-            ? Number(parameters?.target_temperature_c)
-            : start,
-        final_temperature_c: end,
-        temperature_gangs: gangs,
-      };
-      if (!Number.isFinite(body.target_temperature_c))
-        throw Error("Start, Ende und Verteilung vollständig eingeben");
-      await this.api(`/${entry}/program`, "POST", body);
-      if (this.entry !== entry) return;
-      if (this.progressionDraft === draft) this.progressionDraft = null;
-      await this.refresh();
-      return;
-    }
-    if (action === "target") return this.changeTarget(Number(this.$("#target").value));
     if (action.startsWith("control-mode:")) {
       const mode = action.slice(13);
       if (mode !== "automatic" && mode !== "manual")
@@ -4445,22 +7296,36 @@ class SaunaPanel extends HTMLElement {
               ? false
               : preset === "auto"
                 ? null
-                : "normal";
-      await this.api(`/${this.entry}/light`, "POST", { value });
-      this.manualLightDraft = null;
+                : "normal",
+        entry = this.entry,
+        generation = this.generation,
+        revision = this.manualLightRevision || 0,
+        request = (this.manualLightRequest = (this.manualLightRequest || 0) + 1);
+      await this.api(`/${entry}/light`, "POST", { value });
+      if (this.entry !== entry || this.generation !== generation) return;
+      if (
+        (this.manualLightRevision || 0) === revision &&
+        this.manualLightRequest === request
+      )
+        this.manualLightDraft = null;
       await this.refresh();
       return;
     }
-    if (action === "manual-light" || action === "manual-light-overview") {
-      const input =
-        action === "manual-light"
-          ? "#manual-light-value"
-          : "#manual-light-value-overview";
-      const value = Number(this.$(input).value);
+    if (action === "manual-light-overview") {
+      const value = Number(this.$("#manual-light-value-overview").value);
       if (!Number.isFinite(value) || value < 0 || value > 100)
         throw Error("Helligkeit zwischen 0 und 100 % eingeben");
-      await this.api(`/${this.entry}/light`, "POST", { value });
-      this.manualLightDraft = null;
+      const entry = this.entry,
+        generation = this.generation,
+        revision = this.manualLightRevision || 0,
+        request = (this.manualLightRequest = (this.manualLightRequest || 0) + 1);
+      await this.api(`/${entry}/light`, "POST", { value });
+      if (this.entry !== entry || this.generation !== generation) return;
+      if (
+        (this.manualLightRevision || 0) === revision &&
+        this.manualLightRequest === request
+      )
+        this.manualLightDraft = null;
       await this.refresh();
       return;
     }
@@ -4469,14 +7334,26 @@ class SaunaPanel extends HTMLElement {
         value = preset === "true" ? true : preset === "false" ? false : null;
       if (preset !== "true" && preset !== "false" && preset !== "auto")
         throw Error("Ungültige Ofensteuerung");
-      if (
-        value === true &&
-        this.state.configuration?.control_mode === "manual" &&
-        !this.state.operation_enabled
-      )
-        await this.api(`/${this.entry}/control`, "POST", { enabled: true });
-      await this.api(`/${this.entry}/heater`, "POST", { value });
-      await this.refresh();
+      const entry = this.entry,
+        generation = this.generation,
+        request = (this.heaterRequestSerial = (this.heaterRequestSerial || 0) + 1);
+      const current = () =>
+        this.entry === entry &&
+        this.generation === generation &&
+        this.heaterRequestSerial === request;
+      try {
+        if (
+          value === true &&
+          this.state.configuration?.control_mode === "manual" &&
+          !this.state.operation_enabled
+        )
+          await this.api(`/${entry}/control`, "POST", { enabled: true });
+        if (!current()) return;
+        await this.api(`/${entry}/heater`, "POST", { value });
+        if (current()) await this.refresh();
+      } catch (error) {
+        if (current()) throw error;
+      }
       return;
     }
     if (action.startsWith("end-phase:")) {
@@ -4507,13 +7384,10 @@ class SaunaPanel extends HTMLElement {
       const svg = this.$("svg.session-chart"),
         [left, right] = this.window,
         factor = action === "zoom-in" ? 2 : 0.5;
-      if (svg)
-        this.zoomAt(
-          factor,
-          svg.getBoundingClientRect().left + svg.getBoundingClientRect().width / 2,
-          svg,
-        );
-      else {
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        this.zoomAt(factor, rect.left + rect.width / 2, svg);
+      } else {
         const center = (left + right) / 2,
           width = (right - left) / factor;
         this.setHistoryWindow(center - width / 2, center + width / 2);
@@ -4528,7 +7402,7 @@ class SaunaPanel extends HTMLElement {
     if (action === "history-detail") {
       this.historyDetail = !this.historyDetail;
       if (this.historyDetail) this.positions = new Set(["upper", "lower"]);
-      else this.positions = new Set(["upper"]);
+      else this.positions = new Set([this.historyPrimaryPosition()]);
       this.drawHistory();
     }
     if (action.startsWith("position-")) {

@@ -7,8 +7,9 @@ PHASES = {
     "aufheizen": "Aufheizen",
     "bereit": "Bereit",
     "saunagang": "Saunagang",
-    "nachlauf": "Nachlauf",
-    "zwangskühlung": "Zwangskühlung",
+    "nachlauf": "Ofenkühlung",
+    # Alte Archivphasen bleiben verständlich, werden aber nicht mehr erzeugt.
+    "zwangskühlung": "Zwangskühlung (historisch)",
     "manuell": "Manueller Betrieb",
 }
 EVENTS = {
@@ -29,7 +30,7 @@ ROLES = {
     "heater_feedback": "Unabhängige Heizrückmeldung",
 }
 FAULTS = {
-    "regulation_temperature_unavailable": "Für die Heizregelung fehlt ein gültiger oberer Temperaturwert.",
+    "regulation_temperature_unavailable": "Für die Heizregelung fehlt ein gültiger Temperaturwert.",
     "heater_feedback_unavailable": "Die Stellung des Heizschützes ist nicht verfügbar.",
     "heater_feedback_mismatch": "Der Heizschütz hat den Schaltbefehl nicht bestätigt.",
     "heater_still_heating": "Trotz Ausschaltbefehl wird weiterhin Heizleistung gemessen.",
@@ -37,17 +38,22 @@ FAULTS = {
     "heater_no_power": "Der Heizschütz ist eingeschaltet, es wird jedoch keine Heizleistung gemessen.",
     "archive": "Das Sitzungsarchiv konnte nicht geschrieben werden.",
     "operation_light": "Das Saunalicht konnte beim Start des Saunabetriebs nicht eingeschaltet werden.",
-    "after_run_light": "Das Saunalicht konnte für den Nachlauf nicht gedimmt werden.",
+    "after_run_light": "Das Saunalicht konnte für die Ofenkühlung nicht gedimmt werden.",
     "session_light": "Das Saunalicht konnte nach dem Sitzungsende nicht eingestellt werden.",
     "start_rejected": "Der Start wurde verhindert. Bitte die fehlenden Einstellungen und Messwerte prüfen.",
 }
 REASONS = {
     "operation_off": "Der Saunabetrieb ist ausgeschaltet.",
     "temperature_configuration_required": "Die Temperatureinstellungen sind noch unvollständig.",
-    "upper_temperature_unavailable": "Ein gültiger oberer Temperaturwert fehlt.",
+    "upper_temperature_unavailable": "Ein gültiger Temperaturwert für die Heizregelung fehlt.",
+    "gang_veto": "Historisches Gang-Abschaltveto für eine bereits laufende Heizung.",
+    "gang_heat_demand": "Der Saunagang fordert durchgehend Heizen an.",
+    "temporary_door_heat": "Die Türschließung fordert vorübergehend Heizen mit Mindestdauer an.",
+    "door_request": "Historische einmalige Heizanforderung aus dem Türereignis.",
+    "door_request_at_limit": "Historische Türanforderung ohne Einschalten an der oberen Temperaturgrenze.",
     "gang": "Die Heizung bleibt während des Saunagangs eingeschaltet.",
-    "forced_cooling": "Die Zwangskühlung läuft; der Ofen bleibt aus.",
-    "after_run": "Der Nachlauf läuft; der Ofen bleibt aus.",
+    "forced_cooling": "Historische Zwangskühlung; der Ofen blieb aus.",
+    "after_run": "Die Ofenkühlung läuft; der Ofen bleibt aus.",
     "minimum_heating": "Die Mindestheizzeit ist noch nicht abgelaufen.",
     "temperature_reached": "Die obere Regeltemperatur ist erreicht.",
     "thermostat_cooldown": "Die Heizpause nach der Temperaturabschaltung läuft.",
@@ -75,7 +81,6 @@ def fault_resolved(key):
         "heater_still_heating": "Heizabschaltung",
         "heater_no_power": "Heizleistung",
         "archive": "Sitzungsarchiv",
-        "cooling_light": "Saunalicht",
         "operation_light": "Saunalicht",
         "after_run_light": "Saunalicht",
         "session_light": "Lichtnachlauf",
@@ -97,11 +102,6 @@ def fault_message(key, value):
             "validity_unconfigured": "Das Höchstalter eines Messwerts ist noch nicht eingestellt.",
         }.get(value, "Zurzeit ist kein gültiger Messwert verfügbar.")
         return ROLES[key] + ": " + detail
-    if key == "cooling_light":
-        return {
-            "brightness_required": "Die Lichthelligkeit für die Zwangskühlung ist noch nicht eingestellt.",
-            "restore_failed": "Die vorherige Lichthelligkeit konnte nicht wiederhergestellt werden.",
-        }.get(value, "Das Saunalicht konnte nicht eingestellt werden.")
     text = FAULTS.get(
         key, "Eine Störung wurde erkannt. Bitte die Gerätediagnose prüfen."
     )
@@ -160,7 +160,6 @@ def parameter_error(error):
         "too_large": "Der Wert liegt über der zulässigen Obergrenze.",
         "integer_required": "Bitte eine ganze Zahl eingeben.",
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
-        "below_start_temperature": "Die Endtemperatur darf nicht unter der Starttemperatur liegen.",
         "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
         "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",

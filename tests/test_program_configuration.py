@@ -13,6 +13,7 @@ from custom_components.ha_sauna.core.parameters import (
     Parameters,
 )
 from custom_components.ha_sauna.core.program_catalog import NamedTemperatureProgram
+from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
     ConfigurationLocked,
@@ -23,10 +24,15 @@ from custom_components.ha_sauna.settings import (
     async_set_temperature_steps,
     program_parameters,
 )
+from test_foundation import T0, event
 
 
 def bindings():
-    return {role.key: f"{role.domains[0]}.test_{role.key}" for role in ROLES if not role.optional}
+    return {
+        role.key: f"{role.domains[0]}.test_{role.key}"
+        for role in ROLES
+        if not role.optional or role.device_class in {"temperature", "humidity"}
+    }
 
 
 def options(parameters=None, **configuration):
@@ -38,6 +44,79 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_saved_override_is_adopted_before_validation_and_roundtrips(self):
+        initial = Configuration(
+            Bindings(bindings()),
+            Parameters({"nominal_power_kw": 7}),
+            program_mode="progressive",
+            button_program="genusszeit",
+            selected_program_id="genusszeit",
+            temperature_steps=(80, 85, 95),
+            log_level="DEBUG",
+            control_input_mode="button",
+        )
+        for old, expected in (
+            (20, 10),
+            (1_000_000, 10),
+            (0.5, 0.5),
+            (10, 10),
+            (None, 10),
+        ):
+            with self.subTest(old=old):
+                saved = initial.as_options()
+                if old is None:
+                    saved[CONF_PARAMETERS].pop("manual_override_minutes")
+                else:
+                    saved[CONF_PARAMETERS]["manual_override_minutes"] = old
+                loaded = Configuration.from_options(saved)
+                effective = loaded.as_options()
+                self.assertEqual(
+                    loaded.parameters.values["manual_override_minutes"], expected
+                )
+                self.assertEqual(
+                    effective[CONF_PARAMETERS]["manual_override_minutes"], expected
+                )
+                self.assertEqual(Configuration.from_options(effective), loaded)
+                self.assertEqual(
+                    {
+                        key: value
+                        for key, value in effective.items()
+                        if key != CONF_PARAMETERS
+                    },
+                    {
+                        key: value
+                        for key, value in initial.as_options().items()
+                        if key != CONF_PARAMETERS
+                    },
+                )
+                self.assertEqual(loaded.parameters.values["nominal_power_kw"], 7)
+                if old is not None:
+                    self.assertEqual(
+                        saved[CONF_PARAMETERS]["manual_override_minutes"], old
+                    )
+
+    def test_saved_override_adoption_does_not_heal_previously_invalid_values(self):
+        cases = (
+            (True, "invalid_number"),
+            ("20", "invalid_number"),
+            (None, "invalid_number"),
+            ([], "invalid_number"),
+            (float("nan"), "invalid_number"),
+            (float("inf"), "invalid_number"),
+            (float("-inf"), "invalid_number"),
+            (10**400, "invalid_number"),
+            (0, "positive"),
+            (-1, "positive"),
+            (1_000_001, "too_large"),
+        )
+        for value, code in cases:
+            with self.subTest(value=value), self.assertRaises(ParameterError) as raised:
+                Configuration.from_options(options({"manual_override_minutes": value}))
+            self.assertEqual(
+                (raised.exception.key, raised.exception.code),
+                ("manual_override_minutes", code),
+            )
+
     def test_common_temperature_minimum_validates_live_targets_and_ui_metadata(self):
         for key in ("preset_start_c", "target_temperature_c", "final_temperature_c"):
             with self.subTest(key=key, value=59):
@@ -354,28 +433,66 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertIsNone(runtime.configuration.temperature_steps)
 
     def test_even_program_request_explicitly_replaces_free_steps(self):
-        configuration = Configuration(Bindings(bindings()), Parameters({}))
-        runtime = SaunaRuntime(configuration)
-        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
-        hass = _FakeHass()
-        asyncio.run(async_set_temperature_steps(hass, entry, [80, 86, 90]))
-        asyncio.run(
-            async_set_parameters(
+        async def select_even(active):
+            configuration = Configuration(Bindings(bindings()), Parameters({}))
+            runtime = SaunaRuntime(configuration, clock=lambda: T0)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=configuration.as_options(), entry_id="even"
+            )
+            hass = _FakeHass()
+            await async_set_temperature_steps(hass, entry, [80, 86, 90])
+            if active:
+                runtime._set_operation(True)
+            await async_set_parameters(
                 hass,
                 entry,
                 {
-                    "target_temperature_c": 70,
-                    "final_temperature_c": 100,
-                    "temperature_gangs": 4,
+                    "target_temperature_c": 80,
+                    "final_temperature_c": 90,
+                    "temperature_gangs": 3,
                 },
                 partial=True,
                 explicit_target=False,
                 program_mode="progressive",
                 new_program=True,
             )
-        )
-        self.assertIsNone(runtime.configuration.temperature_steps)
-        self.assertEqual(runtime.controller.target_temperature, 70)
+            await async_options_updated(hass, entry)
+            self.assertIs(entry.runtime_data, runtime)
+            self.assertIsNone(runtime.configuration.temperature_steps)
+            self.assertIsNone(entry.options["temperature_steps"])
+            self.assertIsNone(runtime.controller.temperature_steps)
+            if not active:
+                runtime._set_operation(True)
+            for second, kind in enumerate(
+                (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 10
+            ):
+                runtime.controller.process(
+                    event(str(second), kind, second, runtime.session.session_id)
+                )
+            self.assertEqual(runtime.session.timeline.gang_count, 1)
+            self.assertEqual(runtime.controller.target_temperature, 85)
+
+        for active in (False, True):
+            with self.subTest(active=active):
+                asyncio.run(select_even(active))
+
+    def test_repeated_end_value_keeps_active_manual_steps_and_saved_shape(self):
+        async def repeat_end():
+            configuration = Configuration(Bindings(bindings()), Parameters({}))
+            runtime = SaunaRuntime(configuration)
+            entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+            hass = _FakeHass()
+            await async_set_temperature_steps(hass, entry, [80, 86, 90])
+            runtime._set_operation(True)
+            before = runtime.session.temperature_program_steps
+            await async_set_parameters(
+                hass, entry, {"final_temperature_c": 90}, partial=True
+            )
+            self.assertEqual(runtime.session.temperature_program_steps, before)
+            self.assertEqual(runtime.configuration.temperature_steps, (80, 86, 90))
+            self.assertEqual(entry.options["temperature_steps"], (80, 86, 90))
+
+        asyncio.run(repeat_end())
 
     def test_explicit_catalog_does_not_accept_removed_legacy_profiles(self):
         parameters = Parameters({})
@@ -480,6 +597,7 @@ class _FakeConfigEntries:
         self.entry.runtime_data = SaunaRuntime(
             Configuration.from_options(self.entry.options)
         )
+        return True
 
 
 class _FakeHass:

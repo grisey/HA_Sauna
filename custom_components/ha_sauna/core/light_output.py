@@ -22,11 +22,11 @@ def _remaining(now, ends_at) -> float | None:
 
 
 def _percent(value) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not isfinite(value)
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Helligkeit muss eine endliche Zahl von 0 bis 100 sein")
+    if isinstance(value, int):
+        return float(max(0, min(100, value)))
+    if not isfinite(value):
         raise ValueError("Helligkeit muss eine endliche Zahl von 0 bis 100 sein")
     return max(0.0, min(100.0, float(value)))
 
@@ -57,7 +57,7 @@ class LightOutput:
     bleibt Eigentum des Controllers und wird bei jedem ``update`` neu gelesen.
     """
 
-    _DIM_PHASES = frozenset(("nachlauf", "zwangskühlung"))
+    _DIM_PHASES = frozenset(("nachlauf",))
     _SESSION_PHASES = frozenset(("session_light",))
 
     def __init__(self, parameters: Parameters) -> None:
@@ -118,6 +118,10 @@ class LightOutput:
         veralteten Helligkeitswert wieder aufbaut.
         """
         self._last_automatic = 0.0
+        self._motion = None
+        self._resume_pending = False
+        self._phase_paused = False
+        self._paused_automatic = None
 
     @property
     def manual_brightness(self) -> float | None:
@@ -140,25 +144,25 @@ class LightOutput:
         temperature_target_percent: float,
         actual_percent: float,
         phase_ends_at=None,
-        phase_started_at=None,
         *,
         phase_paused=False,
         phase_brightness_percent=None,
     ) -> LightPlan:
         """Gibt ausschließlich die nächste gewünschte Helligkeit zurück.
 
-        ``phase_started_at`` beschreibt den führenden Ablauf für Adapter und
-        Aufrufer, die Lichtbewegung beginnt jedoch bewusst beim beobachteten
-        Eingangswert dieses Updates.
+        Die Lichtbewegung beginnt beim beobachteten Eingangswert dieses Updates.
         """
         target, actual = _percent(temperature_target_percent), _percent(actual_percent)
+        if self._manual is not None and self._manual_phase_key != phase_key:
+            # The incoming Controller phase owns the choice's lifetime, even
+            # when HOLD prevented the planner from observing an intermediate
+            # phase. Its previous output phase is not that lifetime's owner.
+            self._manual = None
+            self._manual_phase_key = None
+            self._manual_ends_at = None
         changed = phase_key != self._phase_key
         if changed:
             had_phase = self._phase_key is not None
-            if self._manual_phase_key == self._phase_key:
-                self._manual = None
-                self._manual_phase_key = None
-                self._manual_ends_at = None
             self._phase_key = phase_key
             self._motion = self._start_motion(
                 now,
@@ -171,8 +175,16 @@ class LightOutput:
             self._phase_paused = False
             self._paused_automatic = None
             self._phase_ends_at = phase_ends_at
+        if phase == "aus":
+            # Das automatische Ende besitzt keinen Rückkehrübergang. Auch
+            # bei gleichzeitigem Override-Ende darf der vorige Phasenwert
+            # deshalb nicht noch einmal als Starthelligkeit erscheinen.
+            self.finish_automatic()
+            if self._manual is not None:
+                return LightPlan(self._manual, False, True)
+            return LightPlan(0.0, True, False)
         if phase in self._SESSION_PHASES and _remaining(now, phase_ends_at) == 0:
-            self._last_automatic = 0.0
+            self.finish_automatic()
             return LightPlan(0.0, True, False)
         if phase_paused:
             if not self._phase_paused:
@@ -201,7 +213,9 @@ class LightOutput:
             self._paused_automatic = None
         self._phase_ends_at = phase_ends_at
         automatic = self._automatic(now, phase, target, phase_ends_at)
-        if self._resume_pending:
+        if self._resume_pending and phase not in (
+            self._DIM_PHASES | self._SESSION_PHASES
+        ):
             self._motion = _Motion(
                 "resume",
                 now,
@@ -212,6 +226,10 @@ class LightOutput:
             )
             self._resume_pending = False
             automatic = self._last_automatic
+        elif self._resume_pending:
+            # A live phase owns its curve and deadline. A manual choice does
+            # not replace either with the ordinary temperature return.
+            self._resume_pending = False
         self._last_automatic = automatic
         return LightPlan(automatic, True, False)
 
@@ -230,11 +248,7 @@ class LightOutput:
         duration = self.parameters.values["light_transition_seconds"]
         remaining = _remaining(now, ends_at)
         if phase in self._DIM_PHASES:
-            low = (
-                self.parameters.values["after_run_brightness_percent"]
-                if phase == "nachlauf"
-                else self.parameters.values["cooling_brightness_percent"]
-            )
+            low = self.parameters.values["after_run_brightness_percent"]
             fade = min(duration, remaining / 2) if remaining is not None else duration
             return _Motion("dim", now, actual, low, fade)
         if phase in self._SESSION_PHASES:

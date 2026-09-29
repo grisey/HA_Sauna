@@ -10,23 +10,26 @@ from .const import DOMAIN
 
 async def register(hass):
     data = hass.data.setdefault(DOMAIN, {})
-    if data.get("panel_registered"):
-        return
-    panel = Path(__file__).with_name("panel.js")
-    # Auch bei unveränderter Integrationsversion muss ein HACS-Update eine
-    # neue Moduladresse bekommen; Browser halten bereits geladene Module vor.
-    fingerprint = sha256(await asyncio.to_thread(panel.read_bytes)).hexdigest()[:16]
-    await hass.http.async_register_static_paths(
-        [StaticPathConfig("/ha_sauna/panel.js", str(panel), False)]
-    )
-    await async_register_panel(
-        hass,
-        frontend_url_path="ha-sauna",
-        webcomponent_name="ha-sauna-panel",
-        sidebar_title="Sauna",
-        sidebar_icon="mdi:radiator",
-        module_url=f"/ha_sauna/panel.js?v={fingerprint}",
-        embed_iframe=False,
-        require_admin=False,
-    )
-    data["panel_registered"] = True
+    async with data.setdefault("panel_register_lock", asyncio.Lock()):
+        if data.get("panel_registered"):
+            return
+        panel = Path(__file__).with_name("panel.js")
+        # Auch bei unveränderter Integrationsversion muss ein HACS-Update eine
+        # neue Moduladresse bekommen; Browser halten bereits geladene Module vor.
+        fingerprint = sha256(await asyncio.to_thread(panel.read_bytes)).hexdigest()[:16]
+        if not data.get("panel_static_registered"):
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig("/ha_sauna/panel.js", str(panel), False)]
+            )
+            data["panel_static_registered"] = True
+        await async_register_panel(
+            hass,
+            frontend_url_path="ha-sauna",
+            webcomponent_name="ha-sauna-panel",
+            sidebar_title="Sauna",
+            sidebar_icon="mdi:radiator",
+            module_url=f"/ha_sauna/panel.js?v={fingerprint}",
+            embed_iframe=False,
+            require_admin=False,
+        )
+        data["panel_registered"] = True

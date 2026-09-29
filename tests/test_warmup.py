@@ -247,3 +247,39 @@ class WarmupEstimateTests(unittest.TestCase):
         for seconds in range(0, 361, 60):
             self._accept(estimate, seconds, 20)
         self.assertIsNone(estimate.remaining_seconds(at(360)))
+
+    def test_short_jitter_after_accepted_slower_live_rate_cannot_raise_eta(self):
+        estimate = WarmupEstimate(300)
+        # The history's 2 °C/min has yielded to thirty minutes at 1 °C/min.
+        for seconds in range(0, 1801, 30):
+            self._accept(estimate, seconds, 20 + seconds / 60, history=2 / 60)
+        before = estimate.remaining_seconds(at(1800))
+        self._accept(estimate, 1830, 49.5, history=2 / 60)  # one -0.5 °C fall
+        self.assertLessEqual(estimate.remaining_seconds(at(1830)), before)
+        self._accept(estimate, 1831, 20 + 1831 / 60, history=2 / 60)
+        self.assertLessEqual(estimate.remaining_seconds(at(1831)), before)
+
+    def test_new_sustained_slowdown_after_accepted_rate_can_raise_eta(self):
+        estimate = WarmupEstimate(300)
+        for seconds in range(0, 1801, 30):
+            self._accept(estimate, seconds, 20 + seconds / 60, history=2 / 60)
+        before = estimate.remaining_seconds(at(1800))
+        # Another sustained slowdown to 0.5 °C/min must remain eligible.
+        for seconds in range(1830, 2401, 30):
+            self._accept(
+                estimate, seconds, 50 + (seconds - 1800) / 120, history=2 / 60
+            )
+        self.assertGreater(estimate.remaining_seconds(at(2400)), before)
+
+    def test_short_fall_cannot_raise_eta_while_fitted_rate_is_still_accelerating(self):
+        estimate = WarmupEstimate(300)
+        for seconds in range(0, 451, 30):
+            self._accept(estimate, seconds, 20 + seconds / 60, history=2 / 60)
+        self._accept(estimate, 480, 29.5, history=2 / 60)
+        before = estimate.remaining_seconds(at(480))
+        rate_before = estimate.trend.rate(at(480))
+        self._accept(estimate, 490, 29, history=2 / 60)
+        # Older acceleration can keep increasing the full-window regression
+        # despite a current temperature fall. Neither licenses that fall's ETA.
+        self.assertGreater(estimate.trend.rate(at(490)), rate_before)
+        self.assertLessEqual(estimate.remaining_seconds(at(490)), before)

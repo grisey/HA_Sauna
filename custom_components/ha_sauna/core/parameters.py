@@ -78,20 +78,34 @@ def definition(key, unit, allow_zero=False, **kwargs):
 LIVE_TEMPERATURE_KEYS = frozenset(
     {"target_temperature_c", "final_temperature_c", "temperature_gangs"}
 )
+# Read compatibility only: obsolete values in saved options and archives have
+# no defaults, validation constraints, editable fields, or control effect.
+LEGACY_PARAMETER_KEYS = frozenset(
+    {
+        "button_hold_brightness_percent",
+        "door_request_minutes",
+        "forced_cooling_minutes",
+        "heating_minutes",
+        "heating_reduction_minutes",
+        "open_door_wait_minutes",
+        "overtemperature_cooling_factor",
+        "overtemperature_minutes",
+        "person_wait_minutes",
+        "safety_temperature_c",
+    }
+)
 DEFINITIONS = (
     definition("session_gap_minutes", "min", default=15),
     definition("confirmation_minutes", "min", default=12),
-    definition("heating_minutes", "min", default=90),
-    definition("heating_reduction_minutes", "min", True, default=30),
     definition("heat_reset_minutes", "min", default=10),
     definition("thermostat_cooldown_minutes", "min", True, default=5),
     definition("minimum_heating_minutes", "min", True, default=10),
     definition("mechanical_timer_minutes", "min", default=240),
     definition("mechanical_timer_warning_minutes", "min", optional=True),
-    definition("forced_cooling_minutes", "min", default=15),
-    definition("person_wait_minutes", "min", default=4),
-    definition("open_door_wait_minutes", "min", default=10),
-    definition("after_run_minutes", "min", default=8),
+    definition("after_run_minutes", "min", default=5),
+    definition("oven_cooling_max_minutes", "min", default=15),
+    definition("oven_cooling_half_life_minutes", "min", default=15, maximum=240),
+    definition("oven_cooling_heat_idle_ratio", "Verhältnis", default=2, maximum=20),
     definition("readiness_offset_c", "°C", True, default=5),
     definition("readiness_hysteresis_c", "°C", default=3),
     definition("warmup_estimation_minutes", "min", default=5),
@@ -131,23 +145,23 @@ DEFINITIONS = (
     definition(
         "program_2_gangs", "Anzahl", default=3, minimum=1, maximum=20, integer=True
     ),
-    definition("safety_temperature_c", "°C", default=105),
-    definition("overtemperature_minutes", "min", default=10),
-    definition("overtemperature_cooling_factor", "×", default=2, minimum=1),
     definition("fault_confirmation_seconds", "s", default=60),
     definition("sensor_timeout_seconds", "s", default=180),
     definition("feedback_timeout_seconds", "s", default=10),
     definition("power_heating_threshold_w", "W", True, default=50),
-    definition("manual_override_minutes", "min", default=10),
+    definition("manual_override_minutes", "min", default=10, maximum=10),
     definition("nominal_power_kw", "kW", default=4.5),
     definition("button_hold_seconds", "s", True, default=2),
     definition("light_reference_temperature_c", "°C", default=30, maximum=100),
     definition("light_transition_seconds", "s", True, default=30),
+    definition(
+        "light_brightness_scale", "Stufen", default=255,
+        minimum=1, maximum=65535, integer=True,
+    ),
     definition("night_brightness_percent", "%", default=25, maximum=100),
     definition("operation_brightness_percent", "%", default=40, maximum=100),
     definition("after_run_brightness_percent", "%", default=15, maximum=100),
     definition("cooling_brightness_percent", "%", default=5, maximum=100),
-    definition("button_hold_brightness_percent", "%", True, default=1, maximum=100),
     definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
 ) + tuple(
     definition(
@@ -194,19 +208,38 @@ class Parameters:
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
             raise ParameterError("base", "invalid_parameters")
-        unknown = set(self.values) - BY_KEY.keys()
+        unknown = set(self.values) - BY_KEY.keys() - LEGACY_PARAMETER_KEYS
         if unknown:
             raise ParameterError("base", "unknown_parameter")
+        # Configurations from before the adaptive cooling limit only contain the
+        # former fixed duration.  Preserve an explicitly saved value above the
+        # new default cap by supplying an equal cap on first load.  The next
+        # normal configuration write persists that effective value.
+        supplied = self.values
+        values = dict(supplied)
+        base = values.get("after_run_minutes")
+        max_key = "oven_cooling_max_minutes"
+        if (
+            max_key not in values
+            and isinstance(base, (int, float))
+            and not isinstance(base, bool)
+            and base > BY_KEY[max_key].default
+        ):
+            values[max_key] = base
+
         checked = {}
         for definition in DEFINITIONS:
-            if definition.key not in self.values:
+            if definition.key not in values:
                 if definition.default is not None:
                     checked[definition.key] = definition.validate(definition.default)
                     continue
                 if definition.optional:
                     continue
                 raise ParameterError(definition.key, "required")
-            checked[definition.key] = definition.validate(self.values[definition.key])
+            checked[definition.key] = definition.validate(values[definition.key])
+        if checked["oven_cooling_max_minutes"] < checked["after_run_minutes"]:
+            raise ParameterError("oven_cooling_max_minutes", "too_small")
+
         sauna_minimum = checked["sauna_min_temperature_c"]
         for key in (
             "preset_start_c",
@@ -215,8 +248,6 @@ class Parameters:
         ):
             if checked[key] < sauna_minimum:
                 raise ParameterError(key, "too_small")
-        if checked["heating_reduction_minutes"] >= checked["heating_minutes"]:
-            raise ParameterError("heating_reduction_minutes", "reduction_too_large")
         for route in ("strong", "weak"):
             if checked[f"{route}_window_seconds"] % checked["person_step_seconds"]:
                 raise ParameterError(f"{route}_window_seconds", "window_not_divisible")
@@ -238,6 +269,8 @@ class Parameters:
             "final_temperature_c",
         }:
             return self.values["sauna_min_temperature_c"]
+        if key == "oven_cooling_max_minutes":
+            return self.values["after_run_minutes"]
         definition = BY_KEY[key]
         return definition.minimum if definition.minimum is not None else 0
 

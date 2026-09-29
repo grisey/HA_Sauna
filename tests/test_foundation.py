@@ -1,7 +1,7 @@
 """Grundgerüst mit synthetischen Daten: keine HA-Instanz und keine Geräte nötig."""
 import asyncio
 import ast
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
@@ -20,12 +20,16 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
-                       "heating_minutes": 2.5, "heating_reduction_minutes": 0.5, "session_gap_minutes": 2.5})
+    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key not in {"final_temperature_c", "door_request_minutes"}},
+                       "session_gap_minutes": 2.5})
 
 
 def bindings():
-    return Bindings({role.key: f"{role.domains[0]}.test_{role.key}" for role in ROLES if not role.optional})
+    return Bindings({
+        role.key: f"{role.domains[0]}.test_{role.key}"
+        for role in ROLES
+        if not role.optional or role.device_class in {"temperature", "humidity"}
+    })
 
 
 def metadata(binding):
@@ -60,15 +64,49 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(defaults.values["sensor_timeout_seconds"], 180)
         self.assertEqual(Parameters({"sensor_timeout_seconds": 7}).values["sensor_timeout_seconds"], 7)
 
+    def test_oven_cooling_defaults_and_legacy_base_compatibility(self):
+        defaults = Parameters({})
+        self.assertEqual(defaults.values["after_run_minutes"], 5)
+        self.assertEqual(defaults.values["oven_cooling_max_minutes"], 15)
+        self.assertEqual(defaults.values["oven_cooling_half_life_minutes"], 15)
+        self.assertEqual(defaults.values["oven_cooling_heat_idle_ratio"], 2)
+
+        # Older saved options contain only the former fixed cooling duration.
+        # Retain a value above the new default cap by deriving that cap once.
+        legacy = Parameters({"after_run_minutes": 30})
+        self.assertEqual(legacy.values["after_run_minutes"], 30)
+        self.assertEqual(legacy.values["oven_cooling_max_minutes"], 30)
+        self.assertEqual(legacy.minimum_for("oven_cooling_max_minutes"), 30)
+
+        with self.assertRaises(ParameterError) as raised:
+            Parameters({"after_run_minutes": 16, "oven_cooling_max_minutes": 15})
+        self.assertEqual(raised.exception.key, "oven_cooling_max_minutes")
+
     def test_unknown_parameter_fails(self):
         with self.assertRaises(ParameterError):
             Parameters({**parameters().as_dict(), "unknown": 3})
 
+    def test_automatic_override_has_a_strict_ten_minute_maximum(self):
+        definition = next(d for d in DEFINITIONS if d.key == "manual_override_minutes")
+        for value in (10, 0.5):
+            with self.subTest(value=value):
+                checked = Parameters({"manual_override_minutes": value})
+                self.assertEqual(checked.values[definition.key], value)
+                self.assertEqual(checked.seconds(definition.key), value * 60)
+        for value in (10.000000000000002, 20):
+            with self.subTest(value=value), self.assertRaises(ParameterError) as raised:
+                Parameters({"manual_override_minutes": value})
+            self.assertEqual(
+                (raised.exception.key, raised.exception.code),
+                ("manual_override_minutes", "too_large"),
+            )
+        self.assertEqual((definition.default, definition.maximum), (10, 10))
+
     def test_invalid_numbers_fail_with_field_context(self):
         for value in (True, "2", None, float("nan"), float("inf"), -1, 10**400):
             with self.subTest(value=type(value)), self.assertRaises(ParameterError) as raised:
-                Parameters({**parameters().as_dict(), "heating_minutes": value})
-            self.assertEqual(raised.exception.key, "heating_minutes")
+                Parameters({**parameters().as_dict(), "session_gap_minutes": value})
+            self.assertEqual(raised.exception.key, "session_gap_minutes")
 
     def test_zero_policy_is_explicit(self):
         for d in DEFINITIONS:
@@ -81,21 +119,21 @@ class ParameterTests(unittest.TestCase):
                         Parameters(data)
 
     def test_seconds_are_derived_from_the_only_value(self):
-        self.assertEqual(parameters().seconds("heating_minutes"), 150)
+        self.assertEqual(parameters().seconds("session_gap_minutes"), 150)
         with self.assertRaises(ParameterError):
             parameters().seconds("readiness_hysteresis_c")
 
     def test_caller_cannot_mutate_parameters(self):
         original = parameters().as_dict()
         result = Parameters(original)
-        original["heating_minutes"] = 999
-        self.assertEqual(result.values["heating_minutes"], 2.5)
+        original["session_gap_minutes"] = 999
+        self.assertEqual(result.values["session_gap_minutes"], 2.5)
         with self.assertRaises(TypeError):
-            result.values["heating_minutes"] = 3
+            result.values["session_gap_minutes"] = 3
 
     def test_time_conversion_must_stay_finite(self):
         with self.assertRaises(ParameterError):
-            Parameters({**parameters().as_dict(), "heating_minutes": 1e308})
+            Parameters({**parameters().as_dict(), "session_gap_minutes": 1e308})
 
 
 class BindingTests(unittest.TestCase):
@@ -290,8 +328,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         options = self.runtime.configuration.as_options()
         rebuilt = Configuration.from_options(options)
         self.assertEqual(rebuilt, self.runtime.configuration)
-        options["parameters"]["heating_minutes"] = 999
-        self.assertEqual(rebuilt.parameters.values["heating_minutes"], 2.5)
+        options["parameters"]["session_gap_minutes"] = 999
+        self.assertEqual(rebuilt.parameters.values["session_gap_minutes"], 2.5)
 
     async def test_configuration_cannot_silently_fill_missing_values(self):
         with self.assertRaises(ValueError):
@@ -332,13 +370,39 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(called, ["still_removed"])
         self.assertTrue(self.runtime.closed)
 
-    async def test_deadline_uses_injected_clock(self):
-        await self.runtime.begin_session("s")
-        d = Deadline("s", "test", "one", T0 + timedelta(seconds=5))
-        self.runtime.controller.register_deadline(d)
-        self.now += timedelta(seconds=5)
-        self.assertTrue(await self.runtime.deadline_due(d))
+    async def test_cancelled_unload_is_joined_by_next_close(self):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
 
+        class Device:
+            async def close(self):
+                calls.append("device")
+                entered.set()
+                await release.wait()
+
+            async def prepare_light_handoff(self):
+                return True
+
+        class Archive:
+            failure = None
+
+            def append(self, *args):
+                pass
+
+            async def close(self):
+                calls.append("archive")
+
+        self.runtime.device = Device()
+        self.runtime.archive = Archive()
+        first = asyncio.create_task(self.runtime.close())
+        await entered.wait()
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await first
+        release.set()
+        await self.runtime.close()
+        self.assertEqual(calls, ["device", "archive"])
 
 class PackagingTests(unittest.TestCase):
     def test_manifest_and_translation_fields(self):
@@ -352,7 +416,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(strings, translated)
         self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]),
                          {d.key for d in DEFINITIONS} | {"program_mode", "button_program", "button_temperature_c"})
-        self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type"})
+        self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type", "presence_source"})
 
     def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"

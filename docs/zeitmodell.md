@@ -1,37 +1,83 @@
 # Zeitmodell
 
-Diese Bezüge ergänzen [Betrieb](betrieb.md) und [Gangmodell](gangmodell.md).
-Alle Dauern sind einstellbare Standardwerte; die Solltemperatur-Obergrenze von
-100 °C ist davon ausgenommen.
+Zeitstempel tragen eine Zeitzone und werden intern in UTC geführt. Die
+Oberfläche verwendet die lokale Zeitzone des Browsers.
 
-| Größe | Bezug und Standard |
+## Laufzeiten und Fristen
+
+Die angegebenen Dauern sind einstellbare Standardwerte. Vorübergehende
+Übersteuerungen in Automatik haben zusätzlich eine feste Obergrenze von 10 Minuten.
+
+| Vorgang | Beginn und Zeitbezug |
 | --- | --- |
-| Gangbeginn | Passende Türschließung, sonst gekennzeichnete Erkennung. |
-| Aufgussbestätigung | Tatsächliche Zeit des ersten zugeordneten Aufgusses; Frist: Beginn + 12 min. |
-| Sitzungswiederaufnahme und Lichtnachlauf | Betrieb-Aus + 15 min, mit gemeinsamem Endzeitpunkt. Wiedereinschalten beendet den Lichtnachlauf. Nach langem Tasterdruck beginnt nur der Lichtnachlauf mit dem Loslassen, ebenfalls mit dieser Dauer. |
-| Nachlauf | Ende des bestätigten Gangs + 8 min tatsächliche Laufzeit. Manuelles Heizen pausiert die Uhr. |
-| Heizbudget | 90 min; nach erster abgeschlossener Kühlung einmalig 60 min. |
-| Mindestheizzeit | Tatsächlicher Beginn eines Heizintervalls + 10 min. |
-| Thermostat-Cooldown | Reguläre Temperaturabschaltung + 5 min. |
-| Türwartefrist für fällige Kühlung | Öffnung + 10 min; bei rechtzeitiger Schließung Schließung + 4 min. |
-| Zwangskühlung | Kühlstart + noch nicht gelaufene oder gutgeschriebene Restdauer; Vorgabe 15 min. |
-| Übertemperatur | Durchgehend gültige obere Temperatur über 105 °C + 10 min. |
-| Lichtübergang | 30 s; Lichtnachlauf bei 50 %, am Ende unmittelbar aus. |
-| Vorübergehende Übersteuerung | Wahl + höchstens 10 min, mit früheren Rückkehrpunkten gemäß Betrieb. |
-| Mechanischer Timer | Zählt maximal 240 min nur bei Betrieb-Ein und Schütz-Ein. |
+| Gangbeginn | Passende Türschließung derselben Sitzung und Türöffnung; ersatzweise Buchungszeit des zulässigen Personensignals oder Aufgusses. |
+| Aufgussbestätigung im Proxyverfahren | Frist bis Gangbeginn + standardmäßig 12 Minuten. Der erste zugeordnete Aufguss bestätigt den bestehenden Gang. |
+| Wiederaufnahme und Lichtnachlauf | Betrieb-AUS + 15 Minuten, mit gemeinsamem Endzeitpunkt. Wiedereinschalten beendet den Lichtnachlauf. Nach einem langen Enddruck beginnt der Lichtnachlauf mit dem bestätigten Loslassen; die Sitzung ist bereits abgeschlossen. Die [Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart) unterscheidet Start- und Enddruck. |
+| Ofenkühlung | Bestätigtes Schütz-AUS startet Berechnung und Laufzeit. Ausschließlich bestätigte AUS-Zeit zählt zur gespeicherten Dauer gemäß [Ofenkühlung](ofenkuehlung.md). |
+| Mindestheizzeit | Tatsächlich bestätigter Beginn eines Heizintervalls + 10 Minuten. Ein laufendes Intervall behält seinen Beginn. |
+| Thermostatpause | Reguläre Temperaturabschaltung + 5 Minuten. |
+| Lichtübergang | Standardmäßig 30 Sekunden; bei Kühlbeginn höchstens die Hälfte der verbleibenden Kühlzeit. Der Lichtnachlauf endet durch unmittelbares Ausschalten. |
+| Vorübergehende Ofen- oder Lichtwahl in Automatik | Wahl + eingestellte Dauer, standardmäßig und höchstens 10 Minuten. Danach gilt die aktuelle Automatik. Frühere Rückkehrpunkte richten sich nach der jeweiligen [Bedienhandlung](betrieb.md#bedienhandlungen-und-betriebsart). |
+| Mechanischer Timer | Zählt maximal 240 Minuten bei Betrieb-EIN und bestätigtem Schütz-EIN. |
 
-Die Nachlaufzeit läuft nur, solange sie nicht manuell pausiert ist. Ihre echte
-verstrichene Dauer wird einmalig einer folgenden Kühlung gutgeschrieben; die
-Pause selbst zählt weder als Nachlauf noch als Kühlung. Bei einem vorläufigen
-Gang während des pausierten Nachlaufs bleibt der Rest eingefroren. Erst dessen
-Aufgussbestätigung storniert den alten Nachlauf. Aufhebung oder Fristablauf
-setzen den alten Rest fort, ohne eine zweite Gutschrift.
+Jede Frist gehört zu einer Sitzung und einem bestimmten Vorgang. Ausschließlich
+die aktuelle Frist dieses Vorgangs ist wirksam. Wiederholte Ereignisse behalten
+dieselbe einmalige Wirkung.
 
-Zeitstempel tragen eine Zeitzone und werden intern in UTC geführt.
-`effective_at` bezeichnet die zugeordnete Ereigniszeit, `detected_at` den
-tatsächlichen Entscheidungszeitpunkt. Messungen bewahren ihren Empfangszeitpunkt;
-ein unbekannter Gerätezeitpunkt wird nicht erfunden. Fristen gehören zu einer
-Sitzung und einem Vorgangstoken. Ersetzte Fristen wirken nicht weiter,
-wiederholte Ereignisse sind idempotent, und die Laufzeituhr läuft nicht zurück.
-Eingänge genau am Ende einer Bestätigungs- oder Türwartefrist werden zuerst
-verarbeitet.
+Ofen- und Lichtwahl in der eigenständigen Betriebsart Manuell haben keine
+Übersteuerungsfrist. Die Aufgussbestätigungsfrist gehört ausschließlich zum
+Proxyverfahren; eine spätere direkte Präsenzführung benötigt sie nicht.
+
+[Betriebsarten](betrieb.md#bedienhandlungen-und-betriebsart) ·
+[Präsenzquellen](praesenz-ofen-phasen.md#präsenzquellen-im-aktuellen-programm)
+
+## Fachlicher Zeitpunkt und Verarbeitung
+
+Ein Erkennungsereignis führt drei Zeitbezüge:
+
+| Feld | Bedeutung |
+| --- | --- |
+| `effective_at` | Fachlich zugeordneter Ereigniszeitpunkt, beispielsweise der Beginn einer nachträglich bestätigten Türbewegung. |
+| `booking_at` | Zeitpunkt der chronologischen Buchung im führenden Controller. |
+| `detected_at` | Tatsächlicher Zeitpunkt, an dem die Erkennung das Ereignis feststellt. |
+
+Es gilt `effective_at <= booking_at <= detected_at`. Bei unmittelbarer
+Verarbeitung stimmen Buchungs- und Erkennungszeit überein. Originalmessungen
+bewahren ihren Empfangszeitpunkt; ein Gerätezeitpunkt wird bei vorhandener
+Quellenangabe übernommen.
+
+[Datenverträge](schnittstellen.md)
+
+Beim Aufholen bereits empfangener Messungen verarbeitet der Controller deren
+Erkennungsschritte vor zeitlich späteren Bedienhandlungen. Für jeden Schritt
+gelten die damaligen Betriebs- und Kühlfreigaben. Ein damals zulässiger Aufguss
+kann so einen Gang bestätigen, der durch eine folgende Bedienhandlung bereits
+wieder beendet wird. Dieser Gang zählt zur damaligen Sitzung und zur
+Temperaturfolge. Die aktuelle Heizanforderung ergibt sich anschließend aus dem
+bis zur Gegenwart fortgeschriebenen Zustand. Gerätebefehle werden ausschließlich
+zur tatsächlichen Verarbeitungszeit ausgegeben.
+
+Am Ende einer Bestätigungsfrist werden die bereits empfangenen Messungen dieses
+Zeitpunkts zuerst ausgewertet. Anschließend schließt die Steuerung die Frist
+einschließlich ihres Endzeitpunkts ab. Gemeinsam bereitstehende
+Geräterückmeldungen werden vor Beginn dieses Verarbeitungsschritts zugestellt.
+Seine Eingangsmenge besteht aus den bis dahin empfangenen Messungen.
+
+Jede empfangene, zeitlich wirksame Regeltemperatur erreicht den bestehenden
+Controller in Eingangsreihenfolge. Das gilt auch für mehrere Meldungen, die
+während eines wartenden Dienstaufrufs eingegangen sind. Die Auswahl verwendet
+den gültigen oberen Wert und bei dessen Ausfall den gültigen unteren Wert.
+Ein zwischenzeitliches Erreichen der Solltemperatur setzt die Bereitschaft
+im selben Controllerzustand wie bei fortlaufender Verarbeitung.
+
+Heizentscheidungen führen ihre logische Buchungszeit in `Decision.at` und
+ihre tatsächliche Erzeugungszeit im Controller in `Decision.created_at`.
+Der Archivrecord übernimmt `created_at` als `received_at`. Diese Herkunft
+bleibt beim Puffern und späteren Schreiben erhalten. Historische Entscheidungen
+werden weiterhin mit ihren ursprünglich gespeicherten Feldern gelesen.
+
+Die historische Phasenansicht ordnet den Verlauf rückblickend zu. Zeitlich spät
+erkannte Ereignisse können diese Zuordnung ergänzen. Die bestätigten
+Schalterrückmeldungen bewahren dabei den tatsächlich gemeldeten Verlauf.
+
+[Phasen und Heizanforderung](praesenz-ofen-phasen.md)

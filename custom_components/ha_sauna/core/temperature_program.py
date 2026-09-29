@@ -8,14 +8,16 @@ from math import isfinite
 
 from .parameters import BY_KEY
 
-
 MAXIMUM_TEMPERATURE_C = BY_KEY["target_temperature_c"].maximum
 
 
 def _temperature(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite temperature")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise ValueError(f"{name} must be a finite temperature") from None
     if not isfinite(number) or not 0 <= number <= MAXIMUM_TEMPERATURE_C:
         raise ValueError(f"{name} must be between 0 and {MAXIMUM_TEMPERATURE_C}")
     return number

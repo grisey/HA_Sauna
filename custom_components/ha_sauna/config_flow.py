@@ -20,7 +20,7 @@ from .core.parameters import (
 )
 from .core.program_catalog import DEFAULT_PROGRAMS, validate_programs
 from .log import LEVELS
-from .settings import ConfigurationLocked, async_set_parameters
+from .settings import ConfigurationLocked, async_set_parameters, parameter_change
 
 
 def binding_schema(*, include_name: bool = False) -> vol.Schema:
@@ -37,6 +37,9 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
         selector.SelectSelector(
             {"options": ["button", "switch"], "translation_key": "control_input_mode"}
         )
+    )
+    fields[vol.Required("presence_source", default="proxy")] = selector.SelectSelector(
+        {"options": ["proxy", "ha_presence"], "translation_key": "presence_source"}
     )
     fields[vol.Optional("button_event_type", default="")] = selector.TextSelector()
     return vol.Schema(fields)
@@ -108,11 +111,13 @@ def parameter_schema(
 
 
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
+    if user_input.get("presence_source", "proxy") not in ("proxy", "ha_presence"):
+        raise BindingError("presence_source", "invalid_presence_source")
     bindings = Bindings(
         {
             k: v
             for k, v in user_input.items()
-            if k not in ("control_input_mode", "button_event_type")
+            if k not in ("control_input_mode", "button_event_type", "presence_source")
         }
     )
     metadata = {
@@ -160,6 +165,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                     raise BindingError("heater", "heater_already_used")
                 self._bindings = bindings
                 self._input_options = {
+                    "presence_source": user_input.get("presence_source", "proxy"),
                     "control_input_mode": user_input.get(
                         "control_input_mode", "button"
                     ),
@@ -325,6 +331,7 @@ class SaunaOptionsFlow(OptionsFlow):
                     data={
                         **self.config_entry.options,
                         CONF_BINDINGS: bindings.as_dict(),
+                        "presence_source": user_input.get("presence_source", self.config_entry.options.get("presence_source", "proxy")),
                         "control_input_mode": user_input.get(
                             "control_input_mode",
                             self.config_entry.options.get(
@@ -344,6 +351,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 if user_input is not None
                 else {
                     **self.config_entry.options[CONF_BINDINGS],
+                    "presence_source": self.config_entry.options.get("presence_source", "proxy"),
                     "control_input_mode": self.config_entry.options.get(
                         "control_input_mode", "switch"
                     ),
@@ -410,6 +418,11 @@ class SaunaOptionsFlow(OptionsFlow):
                         or program_mode
                         != self.config_entry.options.get("program_mode", "progressive"),
                     )
+                    # The shared writer has persisted its complete candidate,
+                    # including program identity and any cleared free stages.
+                    from .runtime import Configuration
+
+                    configuration = Configuration.from_options(self.config_entry.options)
                 else:
                     program_mode = values.pop(
                         "program_mode",
@@ -424,21 +437,12 @@ class SaunaOptionsFlow(OptionsFlow):
                             BY_KEY["temperature_increase_c"].default,
                         ),
                     )
-                    parameters = Parameters(values).as_dict()
-                    try:
-                        from .runtime import Configuration
-
-                        configuration = Configuration.from_options(
-                            {
-                                **configuration.as_options(),
-                                CONF_PARAMETERS: parameters,
-                                "program_mode": program_mode,
-                            }
-                        )
-                    except ValueError as error:
-                        raise ParameterError(
-                            "sauna_min_temperature_c", "program_catalog_invalid"
-                        ) from error
+                    configuration = parameter_change(
+                        configuration, values, explicit_target=False,
+                        program_mode=program_mode,
+                        new_program=program_mode != configuration.program_mode,
+                    ).configuration
+                    parameters = configuration.parameters.as_dict()
             except ParameterError as error:
                 errors[error.key] = error.code
             except ConfigurationLocked:
@@ -449,12 +453,8 @@ class SaunaOptionsFlow(OptionsFlow):
                 # temperature.  Keep those normalized values through every
                 # technical-options save.
                 options = {
+                    **self.config_entry.options,
                     **configuration.as_options(),
-                    **{
-                        key: value
-                        for key, value in self.config_entry.options.items()
-                        if key not in {"button_program", "button_temperature_c"}
-                    },
                     CONF_PARAMETERS: parameters,
                     "program_mode": program_mode,
                 }
@@ -462,7 +462,14 @@ class SaunaOptionsFlow(OptionsFlow):
                     title="",
                     data=options,
                 )
-        suggested = dict(self.config_entry.options[CONF_PARAMETERS])
+        # Use the validated effective values.  This preserves a historical
+        # cooling base above the new default cap and shows that derived cap in
+        # the form instead of suggesting an invalid replacement.
+        suggested = {
+            definition.key: configuration.parameters.values[definition.key]
+            for definition in EDITABLE_DEFINITIONS
+            if definition.key in configuration.parameters.values
+        }
         suggested["program_mode"] = self.config_entry.options.get(
             "program_mode", "progressive"
         )

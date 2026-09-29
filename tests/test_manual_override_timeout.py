@@ -3,10 +3,11 @@
 import unittest
 from datetime import timedelta
 
-from test_foundation import T0, parameters
+from test_foundation import T0, bindings, parameters
 
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.runtime import Configuration
 
 
 def at(seconds):
@@ -31,6 +32,34 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
         controller.advance(at(1199))
         self.assertIsNone(controller.heater_override)
         self.assertIsNone(controller.heater_override_ends_at)
+
+    def test_loaded_override_duration_returns_to_current_automatic_demand(self):
+        for stored, seconds in ((10, 600), (20, 600), (0.5, 30)):
+            with self.subTest(stored=stored):
+                configuration = Configuration.from_options(
+                    {
+                        "bindings": bindings().as_dict(),
+                        "parameters": {
+                            **parameters().as_dict(),
+                            "manual_override_minutes": stored,
+                        },
+                    }
+                )
+                controller = Controller(configuration.parameters)
+                controller.set_temperature(60, at(0))
+                controller.set_operation(True, at(0), session_id="loaded")
+                controller.set_heater_override(False, at(1))
+                self.assertEqual(controller.heater_override_ends_at, at(1 + seconds))
+                controller.advance(at(seconds))
+                self.assertFalse(controller.heater_override)
+                self.assertFalse(controller.last_decision.heat)
+                controller.advance(at(1 + seconds))
+                self.assertIsNone(controller.heater_override)
+                self.assertIsNone(controller.heater_override_ends_at)
+                self.assertTrue(controller.last_decision.heat)
+                self.assertEqual(
+                    controller.last_decision.heat, controller.automatic_decision.heat
+                )
 
     def test_explicit_return_clears_deadline_and_manual_mode_has_none(self):
         controller = self.automatic()

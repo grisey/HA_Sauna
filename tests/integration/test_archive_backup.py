@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 from aiohttp import ClientSession
 from homeassistant.setup import async_setup_component
@@ -15,6 +16,8 @@ from homeassistant.components.backup.manager import CoreBackupReaderWriter
 from homeassistant.backup_restore import restore_backup
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from harness import create_sauna, credentials, start_hass
+from custom_components.ha_sauna import backup
+from custom_components.ha_sauna.const import DOMAIN
 
 
 class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -35,6 +38,61 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.hass.async_stop(force=True)
         self.temp.cleanup()
+
+    async def test_new_entry_cannot_initialize_database_during_backup(self):
+        await backup.async_pre_backup(self.hass)
+        entered = asyncio.Event()
+        paths = []
+        original = backup.async_start_archive
+
+        async def observe_start(hass, runtime, path, entry_id):
+            paths.append(Path(path))
+            entered.set()
+            await original(hass, runtime, path, entry_id)
+
+        with patch.object(backup, "async_start_archive", observe_start):
+            creating = asyncio.create_task(create_sauna(
+                self.hass, binding_overrides={"heater": "switch.second_heater"}
+            ))
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                self.assertFalse(paths[0].exists())
+                self.assertFalse(creating.done())
+            finally:
+                await backup.async_post_backup(self.hass)
+            entry = await asyncio.wait_for(creating, 10)
+        self.assertTrue(paths[0].exists())
+        self.assertIn(entry.runtime_data.archive, self.hass.data[DOMAIN]["archives"])
+
+    async def test_closing_runtime_stays_in_backup_until_writer_stops(self):
+        entered, release, device_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = self.runtime.device.close
+
+        async def delayed_close():
+            entered.set()
+            await release.wait()
+            await original()
+            device_done.set()
+
+        with patch.object(self.runtime.device, "close", delayed_close):
+            closing = asyncio.create_task(self.runtime.close())
+            await asyncio.wait_for(entered.wait(), 5)
+            self.assertFalse(self.runtime.closed)
+            await backup.async_pre_backup(self.hass)
+            archive = self.runtime.archive
+            try:
+                before = await asyncio.to_thread(archive.read, self.session_id)
+                release.set()
+                await asyncio.wait_for(device_done.wait(), 5)
+                self.assertFalse(closing.done())
+                self.assertEqual(await asyncio.to_thread(archive.read, self.session_id), before)
+            finally:
+                release.set()
+                await backup.async_post_backup(self.hass)
+            await closing
+        self.assertTrue(self.runtime.closed)
+        self.assertTrue(archive.worker.done())
+        self.assertNotIn(archive, backup.archives(self.hass))
 
     async def test_authenticated_download_during_capture(self):
         token = await credentials(self.hass)

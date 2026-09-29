@@ -1,9 +1,14 @@
 """Synthetische Zeitreihen prüfen Kausalität, Ausfall und Quellenwechsel."""
 from datetime import timedelta
+import asyncio
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
+from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.detection_parameters import candidate_values
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
@@ -44,6 +49,65 @@ def trace(second):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_finite_temperature_outlier_keeps_archived_cycle_and_output_alive(self):
+        async def exercise(path):
+            now = [T0]
+            runtime = SaunaRuntime(
+                Configuration(Bindings({
+                    "upper_temperature": "sensor.top_t",
+                    "upper_humidity": "sensor.top_h",
+                    "lower_temperature": "sensor.bottom_t",
+                    "lower_humidity": "sensor.bottom_h",
+                    "heater": "switch.heater",
+                    "light": "light.sauna",
+                    "control_input": "event.button",
+                }), parameters()),
+                lambda: now[0],
+            )
+
+            class Device:
+                measurements = {}
+                command = False
+                command_error = False
+                faults = {}
+
+                def feedback(self):
+                    return False
+
+                def refresh(self, at):
+                    runtime.controller.advance(at)
+
+                async def apply(self, at):
+                    outputs.append(at)
+
+            outputs = []
+            runtime.device = Device()
+            await runtime.start_archive(path, "outlier-entry")
+            runtime.controller.begin_session("outlier", T0)
+            runtime._sync_detector()
+            for second in range(18):
+                now[0] = T0 + timedelta(seconds=second)
+                for position in (Position.UPPER, Position.LOWER):
+                    temperature = 1e308 if position == Position.UPPER and 12 <= second <= 16 else 80.0
+                    for quantity, value in (
+                        (Quantity.TEMPERATURE, temperature),
+                        (Quantity.HUMIDITY, 40.0),
+                    ):
+                        m = measurement(position, quantity, value, second)
+                        runtime.detector.accept(m)
+                        runtime.archive.append("measurement", now[0], m, "outlier")
+                await runtime._cycle()
+            await runtime.archive.flush()
+            records = runtime.archive.read("outlier")["records"]
+            await runtime.archive.close()
+            return outputs, records
+
+        with TemporaryDirectory() as directory:
+            outputs, records = asyncio.run(exercise(Path(directory) / "outlier.sqlite"))
+        self.assertEqual(len(outputs), 18)
+        self.assertEqual(sum(r["kind"] == "measurement" for r in records), 72)
+        self.assertTrue(any(r["kind"] == "detector_trace" for r in records))
+
     def test_temperature_veto_legacy_values_are_not_editable(self):
         editable = {definition.key for definition in EDITABLE_DEFINITIONS}
         self.assertTrue({
@@ -511,6 +575,44 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
         self.assertGreaterEqual((events[0].detected_at-T0).total_seconds(), 25)
 
+    def test_fresh_opening_routes_reach_holds_longer_than_the_feature_window(self):
+        for route in ("mixed", "thermal"):
+            for hold in (2, 12, 15, 600):
+                with self.subTest(route=route, hold=hold):
+                    detector = Detector(detection_parameters(**{
+                        "door_open_hold_seconds": hold,
+                        "door_heating_hold_seconds": hold,
+                    }), T0, (Position.UPPER,))
+                    events = []
+                    for second in range(hold + 40):
+                        detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
+                        fall = max(0, second - 20)
+                        events += sample(detector, second, 90 - .04 * fall,
+                                         80 - .06 * fall if route == "mixed" else 30,
+                                         (Position.UPPER,))
+                    openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
+                    self.assertEqual(len(openings), 1)
+                    self.assertGreaterEqual(
+                        (openings[0].detected_at - openings[0].effective_at).total_seconds(),
+                        hold,
+                    )
+
+    def test_stale_opening_hints_do_not_complete_a_long_hold(self):
+        for route in ("mixed", "thermal"):
+            with self.subTest(route=route):
+                detector = Detector(detection_parameters(
+                    door_open_hold_seconds=30, door_heating_hold_seconds=30,
+                ), T0, (Position.UPPER,))
+                events = []
+                for second in range(100):
+                    detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
+                    fall = min(8, max(0, second - 20))
+                    events += sample(detector, second, 90 - .04 * fall,
+                                     80 - .06 * fall if route == "mixed" else 30,
+                                     (Position.UPPER,))
+                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+                self.assertIsNone(detector.door_episode)
+
     def test_temperature_rule_does_not_treat_heater_off_as_door_opening(self):
         for heating, lower_falls, duration in ((False, True, 20), (None, True, 20), (True, False, 20), (True, True, 2)):
             with self.subTest(heating=heating, lower_falls=lower_falls, duration=duration):
@@ -526,7 +628,7 @@ class DetectorTests(unittest.TestCase):
                     events += d.advance(T0+timedelta(seconds=i),enabled=True)
                 self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
 
-    def test_additional_rule_requires_both_positions_and_restarts_proof_after_heater_change(self):
+    def test_heater_change_restarts_additional_door_proof(self):
         for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
             d=Detector(detection_parameters(),T0,positions)
             events=[]
@@ -535,6 +637,111 @@ class DetectorTests(unittest.TestCase):
                 d.report_heating(False if i%8==0 else True,T0+timedelta(seconds=i))
                 events+=sample(d,i,50-.03*i,30,positions)
             self.assertNotIn(Kind.DOOR_OPEN,[e.kind for e in events])
+
+    def test_catchup_uses_booked_heating_intervals_at_each_sample_time(self):
+        controller = Controller(detection_parameters())
+        controller.begin_session("heating", T0)
+        for second, heating in ((0, True), (2.25, False), (2.75, True), (5, None), (6.5, True)):
+            controller.report_heating(heating, T0 + timedelta(seconds=second))
+        observed = []
+        detector = Detector(
+            detection_parameters(), T0,
+            observer=lambda trace: observed.append(detector.heating_since),
+        )
+        detector.advance(
+            T0 + timedelta(seconds=8), enabled=True,
+            heating_intervals=controller.session.heating.intervals,
+            heating_after=T0 + timedelta(seconds=0.5),
+        )
+        # The short OFF stretch fits between samples 2 and 3. Unknown covers
+        # samples 5 and 6; neither those nor sample 0 may use a future ON.
+        expected = (None, 0.5, 0.5, 2.75, 2.75, None, None, 6.5, 6.5)
+        self.assertEqual(observed, [
+            T0 + timedelta(seconds=second) if second is not None else None
+            for second in expected
+        ])
+
+    def test_catchup_keeps_earlier_heat_when_last_feedback_is_off(self):
+        controller = Controller(detection_parameters())
+        controller.begin_session("heating", T0)
+        controller.report_heating(True, T0)
+        controller.report_heating(False, T0 + timedelta(seconds=40))
+        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+        for second in range(61):
+            detector.accept(measurement(
+                Position.UPPER, Quantity.TEMPERATURE, 50 - .03 * second, second
+            ))
+            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
+        events = detector.advance(
+            T0 + timedelta(seconds=60), enabled=True,
+            heating_intervals=controller.session.heating.intervals,
+            heating_gates=((T0, True), (T0 + timedelta(seconds=40), False)),
+        )
+        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        self.assertIsNone(detector.heating_since)
+
+    def test_logical_off_on_restarts_thermal_proof_during_physical_on(self):
+        controller = Controller(detection_parameters())
+        controller.begin_session("heating", T0)
+        controller.report_heating(True, T0)
+        observed = []
+        detector = Detector(
+            detection_parameters(), T0, (Position.UPPER,),
+            observer=lambda trace: observed.append(detector.heating_since),
+        )
+        detector.advance(
+            T0 + timedelta(seconds=30), enabled=True,
+            heating_intervals=controller.session.heating.intervals,
+            heating_gates=(
+                (T0, True),
+                (T0 + timedelta(seconds=28), False),
+                (T0 + timedelta(seconds=29), True),
+            ),
+        )
+        self.assertIsNone(observed[28])
+        self.assertEqual(observed[29], T0 + timedelta(seconds=29))
+
+    def test_door_hold_starts_again_after_required_position_is_missing(self):
+        detector = Detector(detection_parameters(
+            median_seconds=1, door_window_seconds=2,
+            door_heating_hold_seconds=4, door_heating_slope=-.1,
+        ), T0, (Position.UPPER,))
+        for second in range(6):
+            detector.report_heating(True, T0 + timedelta(seconds=second))
+            sample(detector, second, 60 - .3 * second, 30, (Position.UPPER,))
+        self.assertGreater(detector.diagnostic["holds"].get("door_heating", 0), 0)
+        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, None, 6))
+        detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, 6))
+        detector.advance(T0 + timedelta(seconds=6), enabled=True)
+        self.assertEqual(detector.diagnostic["holds"].get("door_heating", 0), 0)
+        events = []
+        for second in range(7, 11):
+            events += sample(detector, second, 60 - .3 * second, 30,
+                             (Position.UPPER,))
+        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+
+    def test_additional_door_rule_uses_all_available_positions(self):
+        cases = (
+            ("only upper configured", (Position.UPPER,), (Position.UPPER,), (Position.UPPER,), True),
+            ("only lower configured", (Position.LOWER,), (Position.LOWER,), (Position.LOWER,), True),
+            ("upper survives", (Position.UPPER, Position.LOWER), (Position.UPPER,), (Position.UPPER,), True),
+            ("lower survives", (Position.UPPER, Position.LOWER), (Position.LOWER,), (Position.LOWER,), True),
+            ("both fall", (Position.UPPER, Position.LOWER), (Position.UPPER, Position.LOWER), (Position.UPPER, Position.LOWER), True),
+            ("one falls", (Position.UPPER, Position.LOWER), (Position.UPPER, Position.LOWER), (Position.UPPER,), False),
+        )
+        for name, configured, reporting, falling, opens in cases:
+            with self.subTest(name=name):
+                detector = Detector(detection_parameters(), T0, configured)
+                events = []
+                for second in range(80):
+                    detector.report_heating(True, T0 + timedelta(seconds=second))
+                    for position in reporting:
+                        temperature = 50 - .03 * second if position in falling else 50
+                        detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
+                        detector.accept(measurement(position, Quantity.HUMIDITY, 30, second))
+                    events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+                self.assertEqual(detector.active_positions, reporting)
+                self.assertEqual(Kind.DOOR_OPEN in [event.kind for event in events], opens)
 
     def test_hot_operation_uses_the_continuous_heating_route(self):
         for base, minimum in ((90, 60), (65, 60), (59, 60)):

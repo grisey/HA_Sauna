@@ -1,66 +1,90 @@
-# Produktive Erkennung
+# Erkennung aus Temperatur und Feuchte
 
 HA Sauna erkennt Türbewegungen, Personen, Aufgüsse und Durchlüften aus den
-zugeordneten Temperatur- und Feuchtesensoren. Zunächst liefern Veränderungen
-einen Hinweis; die passende Ereignisprüfung sucht anschließend nach einem
-zusammenhängenden Nachweis und berücksichtigt Gegenzeichen. Die Messungen
-werden in Empfangsreihenfolge ausgewertet. Fehlende Werte werden nicht ergänzt,
-und die Originalmessungen bleiben unverändert im Archiv.
+zugeordneten Temperatur- und Feuchtemessungen. Veränderungen liefern zunächst
+einen Hinweis. Die jeweilige Ereignisprüfung sucht anschließend einen
+zusammenhängenden Nachweis und berücksichtigt Gegenzeichen. Die Verarbeitung
+folgt der Empfangsreihenfolge; Messlücken bleiben sichtbar und das Archiv
+bewahrt die Originalwerte.
 
-## Tür, Person und Aufguss
+## Türbewegungen
 
-Eine Türöffnung kann sich durch fallende Temperatur und Feuchte zeigen.
-Die Sensoren müssen diese Veränderungen innerhalb der eingestellten
-Beobachtungsfenster bestätigen; sie müssen nicht im selben Moment melden.
-Während eines durchgehend bestätigten Heizvorgangs kann auch ein deutlicher
-Temperaturabfall an beiden Messpositionen die Öffnung belegen. Diese zusätzliche
-Regel gilt ebenfalls in der heißen Sauna. Eine Schließung wird erst nach einer
-erkannten Öffnung geprüft. Sie folgt der Temperaturerholung an den verfügbaren
-Messpositionen. Fällt dabei ein Feuchtesensor aus, kann die Tür weiterhin als
-geschlossen erkannt werden; der Sensorfehler bleibt sichtbar.
+Die Öffnungsprüfung verbindet fallende Temperatur und Feuchte innerhalb der
+eingestellten Beobachtungsfenster. Beide Änderungen können zeitlich versetzt
+eintreffen. Während eines durchgehend bestätigten Heizvorgangs kann auch ein
+ausreichender Temperaturabfall die Öffnung belegen. Die Prüfung verwendet die
+verfügbaren vollständigen Messpositionen. Eine Position genügt für den vollen
+Betrieb; bei zwei gültigen Positionen belegen beide den Abfall. Diese Regeln
+gelten auch in der heißen Sauna.
 
-Personen und Aufgüsse erhöhen die relative Luftfeuchte. Da diese aber auch
-allein durch Abkühlung steigen kann, prüft HA Sauna zusätzlich, ob der daraus
-berechnete absolute Wassergehalt tatsächlich zunimmt. Ein Temperaturanstieg
-ist dafür nicht erforderlich. So kann ein Aufguss trotz des anschließenden
-Temperatureinbruchs beim Wedeln erkannt werden.
+Eine Schließprüfung setzt eine erkannte Öffnung voraus. Sie folgt der
+Temperaturerholung an den verfügbaren Messpositionen. Gültige Temperaturwerte
+können die Schließung auch während einer Feuchtestörung belegen. Fehler
+konfigurierter Quellen bleiben sichtbar.
+
+## Personen und Aufgüsse
+
+Eine Zunahme der relativen Feuchte zusammen mit zunehmendem absolutem
+Wassergehalt belegt den Feuchteanstieg. Dadurch bleibt ein Aufguss auch bei
+sinkender Temperatur, etwa während des anschließenden Wedelns, erkennbar.
 
 Ein ausgeprägtes Personensignal benötigt ein vollständiges Messfenster und die
-eingestellte Bestätigungsdauer. Das schwächere Signal benötigt zusätzlich den
-Zusammenhang mit einer Türöffnung und anschließender Schließung. Ein bereits
-vor der Türöffnung bestehender Feuchteanstieg zählt dabei nicht als neuer
-Eintritt. In einem laufenden Gang wird nicht erneut nach Personen gesucht;
-weitere Aufgüsse bleiben erkennbar. Die Wirkung auf einen vorläufigen oder
-bestätigten Gang beschreibt das [Gangmodell](gangmodell.md).
+eingestellte Bestätigungsdauer. Das empfindlichere Signal ordnet einen neuen
+Feuchteanstieg einer erkannten Türöffnung mit anschließender Schließung zu.
+Es setzt eine neue Feuchteentwicklung nach der Öffnung voraus. Während eines
+Gangs führt die Erkennung die Aufgussprüfung fort. Personenprüfung ist für die
+Eröffnung eines neuen Gangs vorgesehen.
 
-## Absoluter Wassergehalt und Lüften
+[Gangübergänge](gangmodell.md#beginn-und-bestätigung)
 
-Aus jedem verbundenen Temperatur-/Feuchte-Paar entsteht eine zusätzliche
-diagnostische Entität für absoluten Wassergehalt oben bzw. unten. Sie ist nur
-verfügbar, wenn beide Quellen frisch und gültig sind. Für die Lüftungsprüfung
-merkt sich die Erkennung bereits beim ersten Öffnungshinweis eine vollständige
-Messung aus der Zeit davor. Mit dieser Referenz vergleicht sie anschließend
-den Temperaturverlust und den relativen Verlust des absoluten Wassergehalts.
+## Absoluter Wassergehalt und Durchlüften
 
-Bei zwei von Beginn an gültigen Kanälen gilt Lüften, sobald **beide** mindestens
-3 °C Temperaturverlust und 30 % relativen Verlust an absolutem Wassergehalt
-zeigen. Dafür gibt es keine feste Haltezeit. Beginnt die Öffnung dagegen mit
-nur einem gültigen Kanal, gelten dieselben beiden Schwellen und zusätzlich
-60 s seit dem Öffnen. Fällt bei einem ursprünglich zweikanaligen Vorgang ein
-Kanal aus oder wechselt die Quelle, wird er nicht zu einem leichteren
-Einkanalvorgang herabgestuft.
+Aus jedem verbundenen Temperatur- und Feuchtepaar entsteht eine diagnostische
+Entität für den absoluten Wassergehalt dieser Messposition. Ihre Verfügbarkeit
+setzt frische, gültige Werte beider Quellen voraus.
 
-Eine kurze Messlücke pausiert den Vergleich; sie löscht die Referenz nicht.
-Werte einer ausgetauschten Quelle werden dagegen nicht mit der alten Quelle
-vermengt. Beginnen beide Temperaturen bereits wieder zu steigen, spricht das
-gegen noch anhaltendes Durchlüften. Diese Erholung verhindert eine verspätete
-Lüftungsbestätigung schon während der Schließprüfung. Eine kurze Öffnung soll
-dadurch den bestehenden Saunagang erhalten.
+Beim ersten Öffnungshinweis speichert die Erkennung eine vollständige Messung
+aus der Zeit davor als Lüftungsreferenz. Anschließend vergleicht sie damit den
+Temperaturverlust und den relativen Verlust an absolutem Wassergehalt. Die beim
+Beginn verwendete Quellenzuordnung gilt für den gesamten Lüftungsnachweis.
 
-Die konkreten Expertenwerte bleiben zentral validierte Einstellungen. Sie
-verändern den einen produktiven Detektor; die Erkennungskontrolle zeigt dessen
-archivierte Merkmale und berechnet im Browser keine zweite Regel.
+Bei zwei anfangs gültigen Messpositionen ist das Durchlüften mit dem beidseitigen
+Erreichen der Verlustschwellen bestätigt: standardmäßig **3 °C** Temperaturverlust
+und **30 %** Verlust an absolutem Wassergehalt. Bei anfangs einer gültigen
+Position kommt eine Öffnungsdauer von standardmäßig **60 Sekunden** hinzu.
+Ein mit zwei Positionen begonnener Nachweis setzt beide ursprünglichen
+Positionen voraus.
 
-Der ältere [Offline-Kandidat](kandidat.md) bleibt als unveränderte
-Kalibrierreferenz erhalten. Er beschreibt einen historischen Erprobungsstand;
-die aktuellen Regeln sind auf dieser Seite zusammengefasst.
+Eine kurze Messlücke pausiert den Vergleich und erhält seine Referenz.
+Sobald dieselben gültigen Quellen wieder vorliegen, wird der Vergleich
+fortgesetzt. Ein Quellenwechsel verwirft die bisherige Referenz. Eine
+Temperaturerholung leitet die Schließprüfung ein und beendet den noch offenen
+Lüftungsnachweis. So erhält eine kurze Öffnung mit anschließender Schließung
+den bestehenden Gang.
+
+## Bestätigung und Diagnose
+
+Die zentral validierten [Parameter](parameter.md) bestimmen Beobachtungsfenster
+und Bestätigungsdauern. Ein Wechsel oder Ausfall der vollständigen Messpositionen
+sowie das Ende einer Türöffnung beendet den zugehörigen zusammenhängenden
+Bestätigungsnachweis. Für die gesonderte Lüftungsreferenz gilt die oben
+beschriebene Pausenregel.
+
+Ein fortlaufend belegter Öffnungsweg kann mehrere Merkmalsfenster bis zum Ende
+seiner Bestätigungsdauer durchlaufen. Das Fenster begrenzt jeweils das Alter
+der verwendeten Hinweise. Die Erkennungskontrolle zeigt die archivierten
+Merkmale des produktiven Detektors. Ihre Haltezähler geben die Anzahl erfüllter
+Prüfpunkte an; deren zeitlicher Abstand folgt dem eingestellten Prüfschritt.
+
+Beim Aufholen bereits empfangener Messungen gelten die Betriebsfreigaben ihres
+jeweiligen Beobachtungszeitpunkts. Nach einer erneuten Freigabe stammen die
+beitragenden Messfenster aus dem neu freigegebenen Abschnitt.
+
+[Zeitliche Zuordnung zur Gangführung](zeitmodell.md)
+
+Aktuelle Erkennungsdatensätze verbinden das Ereignis über `trace_at` mit genau
+dem Diagnosepunkt, der es ausgelöst hat. Das gilt auch für einen früheren
+fachlichen Beginn und eine spätere Verarbeitung. Archive mit dem früheren
+Datenschema verwenden für diese Zuordnung den fachlichen Ereignisbeginn.
+
+[Historisches Referenz-Replay](kandidat.md)

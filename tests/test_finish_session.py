@@ -48,6 +48,19 @@ class FinishSessionTests(unittest.TestCase):
         controller.set_operation(True, at(3), session_id="new")
         self.assertEqual(controller.session.session_id, "new")
 
+    def test_off_decision_keeps_origin_across_immediate_new_session(self):
+        controller = self.controller()
+        controller.set_temperature(60, T0)
+        controller.set_operation(True, T0, session_id="old")
+        controller.finish_session(at(1))
+        closing = controller.last_decision
+        self.assertFalse(closing.heat)
+        self.assertEqual(closing.session_id, "old")
+        controller.set_operation(True, at(2), session_id="new")
+        self.assertEqual(controller.session.session_id, "new")
+        self.assertIn(closing, controller.decisions)
+        self.assertEqual(closing.session_id, "old")
+
     def test_accounts_real_time_until_the_manual_finish(self):
         controller = self.controller()
         controller.set_temperature(60, T0)

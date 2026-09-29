@@ -83,7 +83,7 @@ PARAMETER_TEXT = {
     ),
     "minimum_heating_minutes": (
         "Mindestheizzeit nach dem Einschalten",
-        "Verhindert kurze Heizintervalle. Nachlauf, Zwangskühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
+        "Verhindert kurze Heizintervalle. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
         "temperature",
     ),
     "session_gap_minutes": (
@@ -93,17 +93,7 @@ PARAMETER_TEXT = {
     ),
     "confirmation_minutes": (
         "Zeit für die Aufgussbestätigung",
-        "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
-        "operation",
-    ),
-    "heating_minutes": (
-        "Heizzeit bis zur ersten Zwangskühlung",
-        "Gezählte Heizzeit, nach der die erste Zwangskühlung fällig wird.",
-        "operation",
-    ),
-    "heating_reduction_minutes": (
-        "Verkürzung der Heizzeit nach erster Kühlung",
-        "Wird nach der ersten abgeschlossenen Kühlung einmal von der Heizzeitgrenze abgezogen. Danach bleibt die Grenze gleich.",
+        "Bestätigungsfrist der Proxyerkennung ab dem zugeordneten Gangbeginn; Standard zwölf Minuten. Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Bei späterer direkter Präsenzführung wird diese Proxyfrist nicht benötigt.",
         "operation",
     ),
     "heat_reset_minutes": (
@@ -111,24 +101,24 @@ PARAMETER_TEXT = {
         "Nach dieser zusammenhängenden Auszeit beginnt der Heizzeitzähler wieder bei null. Die Saunasitzung und ihr Energieverbrauch bleiben erhalten.",
         "operation",
     ),
-    "forced_cooling_minutes": (
-        "Dauer der Zwangskühlung",
-        "Zeit mit ausgeschaltetem Ofen. Ein vorausgehender Nachlauf wird vollständig angerechnet.",
-        "operation",
-    ),
     "after_run_minutes": (
-        "Nachlauf nach einem Saunagang",
-        "Ofen-Auszeit nach einem beendeten, durch Aufguss bestätigten Saunagang. Manuelles Heizen pausiert sie und ermöglicht einen neuen Gang; dieser storniert den alten Nachlauf.",
+        "Mindestdauer der Ofenkühlung",
+        "Mindestens diese Zeit bleibt der Ofen nach einem beendeten, durch Aufguss bestätigten Saunagang aus.",
         "operation",
     ),
-    "person_wait_minutes": (
-        "Wartezeit nach dem Schließen der Tür",
-        "Verschiebt eine fällige Zwangskühlung, damit eine eintretende Person erkannt werden kann.",
+    "oven_cooling_max_minutes": (
+        "Höchstdauer der Ofenkühlung",
+        "Begrenzt die gezählte Kühlzeit mit bestätigtem Schütz AUS. Zeiten ohne AUS-Bestätigung zählen nicht mit; dadurch kann die insgesamt verstrichene Zeit länger sein. Der Wert muss mindestens so groß wie die Mindestdauer sein.",
         "operation",
     ),
-    "open_door_wait_minutes": (
-        "Wartezeit bei offen bleibender Tür",
-        "Längster Kühlaufschub ab der Türöffnung während Aufheizen oder Bereitschaft.",
+    "oven_cooling_half_life_minutes": (
+        "Halbwertszeit der Ofenkühlung",
+        "Jüngere Heizzeiten und Bereitschaftspausen zählen stärker. Bei 15 Minuten halbiert sich ihr Einfluss nach jeweils 15 Minuten.",
+        "operation",
+    ),
+    "oven_cooling_heat_idle_ratio": (
+        "Heizminuten je Bereitschaftsminute",
+        "Eine gewichtete Minute Bereitschaftspause gleicht die hier eingestellte Anzahl gewichteter Heizminuten aus; Standard sind zwei.",
         "operation",
     ),
     "light_reference_temperature_c": (
@@ -141,6 +131,11 @@ PARAMETER_TEXT = {
         "Zeit für einen sanften Wechsel der automatisch vorgegebenen Lichthelligkeit. Null schaltet ohne Übergang.",
         "light",
     ),
+    "light_brightness_scale": (
+        "Helligkeitsskala des Lichtgeräts",
+        "Native Helligkeitsstufen des Geräts für die Erkennung eigener Rückmeldungen. Standard 255 entspricht Home Assistant. Bei gröberer Auflösung den tatsächlich konfigurierten Maximalwert verwenden, etwa 10 bei MQTT brightness_scale 10. Die Bedienung bleibt in Prozent.",
+        "light",
+    ),
     "night_brightness_percent": (
         "Lichthelligkeit nachts",
         "Automatische Lichthelligkeit während der Nacht.",
@@ -148,7 +143,7 @@ PARAMETER_TEXT = {
     ),
     "cooling_brightness_percent": (
         "Grundhelligkeit",
-        "Helligkeit am Kaltpunkt der Temperaturkurve. Zu Beginn einer Zwangskühlung wird ebenfalls auf diesen Wert gedimmt; anschließend steigt das Licht bis zum Kühlende wieder temperaturabhängig an.",
+        "Helligkeit am Kaltpunkt der normalen temperaturabhängigen Lichtkurve.",
         "light",
     ),
     "operation_brightness_percent": (
@@ -157,28 +152,13 @@ PARAMETER_TEXT = {
         "light",
     ),
     "after_run_brightness_percent": (
-        "Lichthelligkeit zu Nachlaufbeginn",
-        "Auf diesen Wert wird zu Beginn des Nachlaufs gedimmt. Anschließend steigt die Helligkeit bis zum Nachlaufende wieder auf das temperaturabhängige Niveau.",
+        "Lichthelligkeit zu Beginn der Ofenkühlung",
+        "Auf diesen Wert wird zu Beginn der Ofenkühlung gedimmt. Anschließend steigt die Helligkeit bis zum Ende der Ofenkühlung wieder auf das temperaturabhängige Niveau.",
         "light",
-    ),
-    "safety_temperature_c": (
-        "Temperaturgrenze für zusätzliche Kühlung",
-        "Wird diese Temperatur anhaltend überschritten, ist eine verlängerte Zwangskühlung fällig; die Sitzung wird nicht abgebrochen.",
-        "monitoring",
-    ),
-    "overtemperature_minutes": (
-        "Dauer der Temperaturüberschreitung",
-        "Die Temperaturgrenze muss länger als diese Zeit ununterbrochen überschritten sein.",
-        "monitoring",
-    ),
-    "overtemperature_cooling_factor": (
-        "Verlängerung der Kühlzeit bei Übertemperatur",
-        "Faktor für die eingestellte Kühlzeit. Der Wert 2 bedeutet doppelte Kühlzeit.",
-        "monitoring",
     ),
     "sensor_timeout_seconds": (
         "Höchstalter eines Messwerts",
-        "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Fehlt ein gültiger oberer Temperaturwert, pausiert die Heizung sofort.",
+        "Nach dieser Zeit ohne neue Meldung gilt ein Sensorwert als veraltet. Der Standard beträgt 180 Sekunden. Die Frist muss die normalen Meldeabstände der Sensoren abdecken; ein zu kurzer Wert verursacht unnötige Heizunterbrechungen. Ist oben kein gültiger Temperaturwert verfügbar, verwendet die Regelung den gültigen unteren Wert. Fehlt an beiden Positionen ein gültiger Wert, pausiert die Heizung sofort.",
         "monitoring",
     ),
     "feedback_timeout_seconds": (
@@ -188,17 +168,17 @@ PARAMETER_TEXT = {
     ),
     "fault_confirmation_seconds": (
         "Dauer bis zur bestätigten Störung",
-        "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Ein fehlender gültiger oberer Temperaturwert pausiert die Heizung bereits vorher. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
+        "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Fehlt an allen konfigurierten Messpositionen ein gültiger Temperaturwert, pausiert die Heizung bereits vorher. Der Ausfall nur einer von zwei Messpositionen wird als Störung angezeigt und sperrt den Betrieb mit der anderen nicht. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
         "monitoring",
     ),
     "mechanical_timer_minutes": (
         "Laufzeit des mechanischen Ofentimers",
-        "Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb und eingeschaltetem Schütz. Bei ausgeschaltetem oder nicht verfügbarem Schütz hält die Anzeige an, auch während Heizpause, Nachlauf und Kühlung. Nach einer beendeten Sitzung mit gezählten Saunagängen beginnt sie beim nächsten Start neu. Die Anzeige schaltet nichts.",
+        "Geschätzte Laufzeit bei eingeschaltetem Saunabetrieb und eingeschaltetem Schütz. Bei ausgeschaltetem oder nicht verfügbarem Schütz hält die Anzeige an, auch während Heizpause und Ofenkühlung. Nach einer beendeten Sitzung mit gezählten Saunagängen beginnt sie beim nächsten Start neu. Die Anzeige schaltet nichts.",
         "timer",
     ),
     "mechanical_timer_warning_minutes": (
         "Erinnerung vor Ablauf des Ofentimers",
-        "So lange vor dem geschätzten Ablauf erscheint eine Erinnerung zum Einstellen des Drehschalters. Leer lassen, wenn keine Vorwarnung gewünscht ist.",
+        "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
         "timer",
     ),
     "nominal_power_kw": (
@@ -213,18 +193,13 @@ PARAMETER_TEXT = {
     ),
     "manual_override_minutes": (
         "Höchstdauer manueller Übersteuerungen",
-        "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
+        "Vorübergehende Ofen- und Lichtübersteuerungen in Automatik gelten höchstens zehn Minuten. Ein passender Programm-, Phasen- oder Schaltwechsel beendet sie früher. Die eigenständige Betriebsart Manuell bleibt bis zum Betriebsartwechsel gewählt.",
         "operation",
     ),
     "button_hold_seconds": (
         "Langdruckdauer des Saunatasters",
         "So lange muss ein binärer Saunataster gedrückt bleiben, um die Sitzung zu beenden.",
         "operation",
-    ),
-    "button_hold_brightness_percent": (
-        "Lichthelligkeit bei Langdruck",
-        "Helligkeit zur Bestätigung des Sitzungsendes, solange der Saunataster noch gedrückt ist. Beim Loslassen beginnt der normale Lichtnachlauf.",
-        "light",
     ),
     "preset_start_c": (
         "Niedrigste Temperatur der Schnellauswahl",
@@ -283,12 +258,12 @@ PARAMETER_TEXT = {
     ),
     "door_heating_slope": (
         "Türöffnung: Temperaturabfall trotz eingeschalteter Heizung",
-        "Zusätzliche Erkennung ohne Feuchteabfall: Beide Temperaturtrends müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Bei nur einer verfügbaren Messposition bleibt die bisherige Regel mit Luftfeuchte maßgeblich.",
+        "Zusätzliche Erkennung ohne Feuchteabfall: Die Temperaturtrends der verfügbaren Messpositionen müssen unter diesem Wert liegen, während die Heizung durchgehend eingeschaltet ist. Eine verfügbare Messposition genügt; sind beide verfügbar, müssen beide den Abfall bestätigen.",
         "detection",
     ),
     "door_heating_hold_seconds": (
         "Bestätigungsdauer des Temperaturabfalls beim Heizen",
-        "So lange muss der zusätzliche Temperaturabfall an beiden Messpositionen gleichzeitig bestehen. Eine Heizabschaltung verwirft diesen Nachweis.",
+        "So lange muss der zusätzliche Temperaturabfall an den verfügbaren Messpositionen bestehen. Eine verfügbare Messposition genügt; eine Heizabschaltung verwirft den Nachweis.",
         "detection",
     ),
     "door_heating_max_temperature_c": (
@@ -313,7 +288,7 @@ PARAMETER_TEXT = {
     ),
     "vent_hold_seconds": (
         "Mindestdauer des Durchlüftens",
-        "So lange muss die Tür offen sein, bevor Durchlüften bestätigt werden kann.",
+        "Bei nur einem gültigen Messkanal muss die Tür mindestens so lange offen sein, bevor Durchlüften bestätigt werden kann. Bei zwei gültigen Kanälen gilt keine feste Mindestdauer.",
         "detection",
     ),
     "vent_drop_upper": (
@@ -368,7 +343,7 @@ PARAMETER_TEXT = {
     ),
     "weak_window_seconds": (
         "Zeitfenster für schwache Personensignale",
-        "Längerer Vergleichszeitraum für schwache Personensignale nach bestätigtem Durchlüften.",
+        "Längerer Vergleichszeitraum für schwache Personensignale nach einer Türöffnung und anschließender Schließung. Bestätigtes Durchlüften ist nicht erforderlich.",
         "detection",
     ),
     "weak_humidity_upper": (

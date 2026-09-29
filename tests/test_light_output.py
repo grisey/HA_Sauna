@@ -33,6 +33,22 @@ class LightOutputTests(unittest.TestCase):
         self.assertEqual(self.update(75, "run", "nachlauf", 40, 15, 120).brightness_percent, 27.5)
         self.assertEqual(self.update(120, "run", "nachlauf", 40, 15, 120).brightness_percent, 40)
 
+    def test_joint_session_light_and_manual_expiry_keeps_automatic_end_off(self):
+        self.update(0, "heat", target=21)
+        self.update(1, "session", "session_light", 0, 21, 61)
+        self.light.set_manual(80, phase_key="session", ends_at=61)
+        self.assertEqual(
+            self.update(60, "session", "session_light", 0, 80, 61).brightness_percent,
+            80,
+        )
+        self.assertTrue(self.light.expire_manual(61))
+        for second in (61, 62, 65, 75, 90, 121):
+            with self.subTest(second=second):
+                plan = self.update(second, "idle", "aus", 0, 0)
+                self.assertEqual(plan.brightness_percent, 0)
+                self.assertTrue(plan.automatic)
+                self.assertEqual(self.light.last_automatic_brightness, 0)
+
     def test_paused_after_run_holds_its_current_value_and_resumes_from_it(self):
         self.update(0, "run", "nachlauf", 40, 40, 120)
         before_pause = self.update(45, "run", "nachlauf", 40, 15, 120).brightness_percent
@@ -59,9 +75,9 @@ class LightOutputTests(unittest.TestCase):
     def test_new_phase_and_deadline_begin_from_observed_value(self):
         self.update(0, "run-a", "nachlauf", 40, 60, 120)
         self.assertEqual(self.update(20, "run-a", "nachlauf", 40, 60, 120).brightness_percent, 30)
-        plan = self.update(20, "cool-b", "zwangskühlung", 40, 30, 80)
+        plan = self.update(20, "run-b", "nachlauf", 40, 30, 140)
         self.assertEqual(plan.brightness_percent, 30)
-        self.assertEqual(self.update(50, "cool-b", "zwangskühlung", 40, 30, 80).brightness_percent, 5)
+        self.assertEqual(self.update(50, "run-b", "nachlauf", 40, 30, 140).brightness_percent, 15)
 
     def test_manual_override_holds_until_phase_key_changes(self):
         self.update(0, "heat", target=40)
@@ -100,6 +116,42 @@ class LightOutputTests(unittest.TestCase):
         self.assertEqual(self.update(17, target=30).brightness_percent, 35)
         self.assertEqual(self.update(32, target=30).brightness_percent, 30)
 
+    def test_return_to_automatic_keeps_live_session_light(self):
+        self.update(0, "session", "session_light", 0, 20, 120,
+                    phase_brightness_percent=50)
+        self.update(30, "session", "session_light", 0, 50, 120)
+        self.light.set_manual(80, phase_key="session")
+        self.assertEqual(
+            self.update(31, "session", "session_light", 0, 80, 120).brightness_percent,
+            80,
+        )
+        self.light.return_to_automatic()
+        for second, expected in ((32, 50), (119, 50), (120, 0)):
+            with self.subTest(second=second):
+                self.assertEqual(
+                    self.update(
+                        second, "session", "session_light", 0, 50, 120
+                    ).brightness_percent,
+                    expected,
+                )
+
+    def test_expired_override_keeps_live_cooling_curve(self):
+        control = LightOutput(self.light.parameters)
+        self.update(0, "cooling", "nachlauf", 40, 40, 120)
+        control.update(0, "cooling", "nachlauf", 40, 40, 120)
+        before = self.update(60, "cooling", "nachlauf", 40, 15, 120)
+        expected_before = control.update(60, "cooling", "nachlauf", 40, 15, 120)
+        self.assertAlmostEqual(
+            before.brightness_percent, expected_before.brightness_percent
+        )
+        self.light.set_manual(80, phase_key="cooling", ends_at=61)
+        self.update(60, "cooling", "nachlauf", 40, 80, 120)
+        self.assertTrue(self.light.expire_manual(61))
+        resumed = self.update(61, "cooling", "nachlauf", 40, 80, 120)
+        expected = control.update(61, "cooling", "nachlauf", 40, 15, 120)
+        self.assertAlmostEqual(resumed.brightness_percent, expected.brightness_percent)
+        self.assertLess(resumed.brightness_percent, 40)
+
     def test_normal_phase_change_fades_from_the_observed_manual_value(self):
         self.update(0, "heat", target=40)
         self.light.set_manual(50)
@@ -131,6 +183,19 @@ class LightOutputTests(unittest.TestCase):
         self.assertEqual(self.update(122, "aus", "aus", 0, 50).brightness_percent, 35)
         self.light.set_manual(0, phase_key="aus")
         self.assertEqual(self.update(123, "aus", "aus", 0, 35).brightness_percent, 0)
+
+    def test_manual_choice_in_unobserved_hold_phase_ends_at_release(self):
+        self.update(0, "heat", target=40)
+        # HOLD leaves the planner's previous output intact; the Controller
+        # already belongs to AUS when the manual choice is received.
+        self.light.set_manual(80, phase_key="aus")
+        plan = self.update(10, "released", "session_light", 0, 0, 610)
+        self.assertTrue(plan.automatic)
+        self.assertIsNone(self.light.manual_brightness)
+        self.assertEqual(
+            self.update(40, "released", "session_light", 0, 0, 610).brightness_percent,
+            50,
+        )
 
     def test_finished_automatic_output_returns_manual_light_to_off(self):
         self.update(0, "session", "session_light", 0, 20, 120)

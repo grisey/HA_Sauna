@@ -34,7 +34,9 @@ class PresentationTests(unittest.TestCase):
         records=[]
         class Capture(logging.Handler):
             def emit(self,record): records.append(record)
-        handler=Capture();log.logger.addHandler(handler);log.logger.propagate=False
+        handler=Capture()
+        log.logger.addHandler(handler)
+        log.logger.propagate=False
         self.addCleanup(log.logger.removeHandler,handler)
         log.debug("measurement","Messwert: %s",42)
         log.change("phase","aus",logging.INFO,"Betriebszustand: %s","aus")
@@ -47,4 +49,5 @@ class PresentationTests(unittest.TestCase):
         log.set_level("DEBUG")
         log.debug("measurement","Messwert: %s",42)
         self.assertEqual([r.levelname for r in records],["INFO","ERROR","DEBUG"])
-        with self.assertRaises(ValueError): log.set_level("invalid")
+        with self.assertRaises(ValueError):
+            log.set_level("invalid")

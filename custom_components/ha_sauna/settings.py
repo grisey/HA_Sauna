@@ -1,8 +1,9 @@
 """Gemeinsamer, serialisierter Schreibweg für Parameter aller Bedienoberflächen."""
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
+from .appearance import validate_appearance
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .core.program_catalog import load_programs, validate_programs
 from .core.temperature_program import temperature_steps as validate_temperature_steps
@@ -64,7 +65,7 @@ async def async_set_parameters(
     new_program=False,
 ):
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         return await _async_set_parameters_locked(
             hass,
             entry,
@@ -79,7 +80,7 @@ async def async_set_parameters(
 async def async_reset_parameters(hass, entry):
     """Restore software settings while retaining physical entity associations."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         # Import here because Runtime imports ``program_parameters`` from this
         # module.  Configuration owns the defaults for the non-parameter UI
         # preferences while retaining the configured hardware bindings.
@@ -100,6 +101,7 @@ async def async_reset_parameters(hass, entry):
             defaults,
             control_input_mode=runtime.configuration.control_input_mode,
             button_event_type=runtime.configuration.button_event_type,
+            appearance=runtime.configuration.appearance,
         )
         # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
         # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.
@@ -107,6 +109,127 @@ async def async_reset_parameters(hass, entry):
             entry, options=reset.as_options()
         )
         return reset.parameters.as_dict()
+
+
+async def async_set_appearance(hass, entry, value):
+    """Persist only display preferences without cycling the active controller."""
+    appearance = validate_appearance(value)
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        runtime._require_open()
+        if runtime.reconfiguring:
+            raise ConfigurationLocked(
+                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        runtime.configuration = replace(runtime.configuration, appearance=appearance)
+        hass.config_entries.async_update_entry(
+            entry, options=runtime.configuration.as_options()
+        )
+        return appearance
+
+
+@dataclass(frozen=True)
+class ParameterChange:
+    """One validated edit, shared by loaded and unloaded options paths."""
+
+    configuration: object
+    changed: frozenset[str]
+    selected_mode: str | None
+    explicit_target: bool
+    clear_program: bool
+
+
+def parameter_change(
+    configuration,
+    values,
+    *,
+    partial=False,
+    explicit_target=None,
+    program_mode=None,
+    new_program=False,
+):
+    """Build the complete candidate before a live or offline edit is saved."""
+    if not isinstance(values, Mapping):
+        raise ParameterError("base", "invalid_parameters")
+    before = configuration.parameters.as_dict()
+    merged = {**before, **values} if partial else dict(values)
+    # Ein leer übermittelter Endwert fällt auf den zentralen Standard zurück.
+    if partial and merged.get("final_temperature_c", False) is None:
+        merged.pop("final_temperature_c")
+    parameters = Parameters(merged)
+    button_temperature = configuration.button_temperature_c
+    if not (
+        parameters.minimum_for("target_temperature_c")
+        <= button_temperature
+        <= BY_KEY["target_temperature_c"].maximum
+    ):
+        raise ParameterError("sauna_min_temperature_c", "button_temperature_invalid")
+    # A changed lower bound must be valid for the whole stored catalog before
+    # options are written; otherwise the next reload would reject saved data.
+    try:
+        validate_programs(
+            configuration.temperature_programs,
+            minimum_c=parameters.minimum_for("target_temperature_c"),
+            maximum_c=BY_KEY["target_temperature_c"].maximum,
+            maximum_gangs=BY_KEY["temperature_gangs"].maximum,
+        )
+    except ValueError as error:
+        raise ParameterError(
+            "sauna_min_temperature_c", "program_catalog_invalid"
+        ) from error
+    changed = {
+        k
+        for k in before.keys() | parameters.values.keys()
+        if before.get(k) != parameters.values.get(k)
+    }
+    explicit_target = (
+        "target_temperature_c" in (values if partial else changed)
+        if explicit_target is None
+        else explicit_target
+    )
+    selected_mode = (
+        program_mode
+        if program_mode is not None
+        else "constant"
+        if explicit_target
+        else None
+    )
+    # Re-sending the existing progressive mode for an end/count edit must
+    # not turn it into a fresh program: that would discard its live anchor.
+    if selected_mode == configuration.program_mode and not new_program:
+        selected_mode = None
+    clear_selected_program = bool(
+        new_program
+        or changed & LIVE_TEMPERATURE_KEYS
+        or (explicit_target and "target_temperature_c" in values)
+    )
+    # The legacy start/end/count form is always the evenly distributed form.
+    # Passing ``None`` explicitly also lets a live end edit retain its current
+    # target as the new anchor instead of continuing an old explicit list.
+    selected_steps = None if clear_selected_program else ...
+    # Validate the resulting configuration, including free interior stages,
+    # before either the controller or persisted options can change. A full
+    # form carrying an unchanged target is not a new constant selection.
+    try:
+        candidate = replace(
+            configuration,
+            parameters=parameters,
+            program_mode=selected_mode or configuration.program_mode,
+            selected_program_id=(
+                None if clear_selected_program else configuration.selected_program_id
+            ),
+            temperature_steps=(
+                configuration.temperature_steps
+                if selected_steps is ...
+                else selected_steps
+            ),
+        )
+    except ValueError as error:
+        raise ParameterError("base", "invalid_parameters") from error
+    return ParameterChange(
+        candidate, frozenset(changed), selected_mode, explicit_target,
+        clear_selected_program,
+    )
 
 
 async def _async_set_parameters_locked(
@@ -126,66 +249,23 @@ async def _async_set_parameters_locked(
         raise ConfigurationLocked(
             "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
         )
-    if not isinstance(values, Mapping):
-        raise ParameterError("base", "invalid_parameters")
-    before = runtime.configuration.parameters.as_dict()
-    merged = {**before, **values} if partial else dict(values)
-    # Ein leer übermittelter Endwert fällt auf den zentralen Standard zurück.
-    if partial and merged.get("final_temperature_c", False) is None:
-        merged.pop("final_temperature_c")
-    parameters = Parameters(merged)
-    button_temperature = runtime.configuration.button_temperature_c
-    if not (
-        parameters.minimum_for("target_temperature_c")
-        <= button_temperature
-        <= BY_KEY["target_temperature_c"].maximum
-    ):
-        raise ParameterError("sauna_min_temperature_c", "button_temperature_invalid")
-    # A changed lower bound must be valid for the whole stored catalog before
-    # options are written; otherwise the next reload would reject saved data.
-    try:
-        validate_programs(
-            runtime.configuration.temperature_programs,
-            minimum_c=parameters.minimum_for("target_temperature_c"),
-            maximum_c=BY_KEY["target_temperature_c"].maximum,
-            maximum_gangs=BY_KEY["temperature_gangs"].maximum,
-        )
-    except ValueError as error:
-        raise ParameterError(
-            "sauna_min_temperature_c", "program_catalog_invalid"
-        ) from error
-    changed = {
-        k
-        for k in before.keys() | parameters.values.keys()
-        if before.get(k) != parameters.values.get(k)
-    }
+    change = parameter_change(
+        runtime.configuration, values, partial=partial,
+        explicit_target=explicit_target, program_mode=program_mode,
+        new_program=new_program,
+    )
+    candidate, changed = change.configuration, change.changed
+    parameters = candidate.parameters
+    selected_mode, explicit_target = change.selected_mode, change.explicit_target
+    clear_selected_program = change.clear_program
+    selected_steps = None if clear_selected_program else ...
     if runtime.session and changed - LIVE_TEMPERATURE_KEYS:
         raise ConfigurationLocked(
             "Während einer Saunasitzung sind nur Solltemperatur, Steigerungsverteilung und Endtemperatur änderbar. Andere Einstellungen gelten nach Ende der Sitzung."
         )
-    explicit_target = (
-        "target_temperature_c" in values if explicit_target is None else explicit_target
-    )
-    selected_mode = (
-        program_mode
-        if program_mode is not None
-        else "constant"
-        if explicit_target
-        else None
-    )
-    # Re-sending the existing progressive mode for an end/count edit must
-    # not turn it into a fresh program: that would discard its live anchor.
-    if selected_mode == runtime.configuration.program_mode and not new_program:
-        selected_mode = None
-    mode_changed = (
-        selected_mode is not None
-        and selected_mode != runtime.configuration.program_mode
-    )
-    clear_selected_program = bool(set(values) & LIVE_TEMPERATURE_KEYS)
-    # The legacy start/end/count form is always the evenly distributed form.
-    # Passing ``None`` explicitly also lets a live end edit retain its current
-    # target as the new anchor instead of continuing an old explicit list.
-    selected_steps = None if clear_selected_program else ...
+    mode_changed = candidate.program_mode != runtime.configuration.program_mode
+    if not changed and not mode_changed and not new_program and not explicit_target:
+        return parameters.as_dict()
     if not changed - LIVE_TEMPERATURE_KEYS:
         await apply_temperature_parameters(
             runtime,
@@ -215,7 +295,7 @@ async def _async_set_parameters_locked(
             **({"program_mode": selected_mode} if selected_mode is not None else {}),
             **({"selected_program_id": None} if clear_selected_program else {}),
             **(
-                {"temperature_steps": runtime.configuration.temperature_steps}
+                {"temperature_steps": candidate.temperature_steps}
                 if selected_steps is not ...
                 else {}
             ),
@@ -233,7 +313,7 @@ async def async_set_program(hass, entry, profile):
     exactly the selected choice.
     """
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -370,7 +450,7 @@ async def apply_temperature_parameters(
 async def async_set_button_program(hass, entry, profile, temperature_c=None):
     """Atomically persist the physical button's named or constant program."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring or runtime.session:
             raise ConfigurationLocked(
@@ -409,7 +489,7 @@ async def async_set_button_program(hass, entry, profile, temperature_c=None):
 async def async_set_program_catalog(hass, entry, stored):
     """Replace the complete catalog atomically while no sauna session exists."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -496,7 +576,7 @@ async def async_set_program_catalog(hass, entry, stored):
 async def async_set_temperature_steps(hass, entry, values):
     """Select explicitly entered stages through the same controller path."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -535,7 +615,7 @@ async def async_set_temperature_steps(hass, entry, values):
 async def async_set_control_mode(hass, entry, mode):
     """Switch controller mode and save the matching configuration atomically."""
     runtime = entry.runtime_data
-    async with runtime._lock:
+    async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
             raise ConfigurationLocked(
@@ -544,11 +624,13 @@ async def async_set_control_mode(hass, entry, mode):
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
         runtime.controller.set_control_mode(mode)
-        runtime.configuration = replace(runtime.configuration, control_mode=mode)
+        configuration = replace(runtime.configuration, control_mode=mode)
+        runtime.configuration = configuration
         hass.config_entries.async_update_entry(
-            entry, options=runtime.configuration.as_options()
+            entry, options=configuration.as_options()
         )
         await runtime._cycle()
+        return configuration
 
 
 async def async_set_entity_parameter(hass, entry, key, value):

@@ -1,17 +1,23 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
+from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 import zipfile
 
-from custom_components.ha_sauna.archive import Archive
+from custom_components.ha_sauna.archive import Archive, encoded, plain
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.core.models import Position, Quantity
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, event, parameters, bindings
 from test_detector import measurement
 
@@ -34,6 +40,81 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
     def record(self, n):
         m = measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 1000, n / 1000)
         self.archive.append("measurement", m.received_at, m, "s")
+
+    async def test_runtime_close_persists_the_final_off_decision_once(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, T0)
+        runtime.controller.begin_session("closing", T0)
+        runtime.persist()
+        self.assertTrue(runtime.controller.last_decision.heat)
+
+        async def close_device():
+            return None
+
+        runtime.device = SimpleNamespace(
+            close=close_device, prepare_light_handoff=AsyncMock(return_value=True),
+        )
+        await runtime.close()
+        await runtime.close()
+        stored = await asyncio.to_thread(self.archive.read, "closing")
+        off = [record for record in stored["records"]
+               if record["kind"] == "decision" and not record["payload"]["heat"]]
+        self.assertEqual(len(off), 1)
+        self.assertEqual(off[0]["payload"]["reason"], "operation_off")
+        self.assertEqual(off[0]["session_id"], "closing")
+        self.assertFalse(stored["session"]["operation_enabled"])
+
+    async def test_decision_append_failure_during_close_still_attempts_device_off(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: T0)
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, T0)
+        runtime.controller.begin_session("closing-error", T0)
+        runtime.persist()
+        calls = []
+
+        async def close_device():
+            calls.append("off")
+
+        runtime.device = SimpleNamespace(
+            close=close_device, prepare_light_handoff=AsyncMock(return_value=True),
+        )
+        original_append = self.archive.append
+
+        def append(kind, *args, **kwargs):
+            if kind == "decision":
+                raise OSError("decision append")
+            return original_append(kind, *args, **kwargs)
+
+        self.archive.append = append
+        with self.assertRaises(ExceptionGroup) as caught:
+            await runtime.close()
+        self.assertEqual(calls, ["off"])
+        self.assertTrue(any(str(error) == "decision append" for error in caught.exception.exceptions))
+        self.assertFalse(runtime.controller.last_decision.heat)
+        self.assertLess(runtime._saved_decisions, len(runtime.controller.decisions))
+
+    async def test_decision_receipt_uses_creation_clock_before_a_later_persist(self):
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()),
+                               lambda: T0 + timedelta(seconds=30))
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(60, T0)
+        runtime.controller.begin_session("decision-clock", T0)
+        runtime._clock = lambda: T0 + timedelta(seconds=31)
+        runtime.controller.set_operation(False, T0 + timedelta(seconds=28))
+        runtime._clock = lambda: T0 + timedelta(seconds=50)
+        runtime.persist()
+        await self.archive.flush()
+        stored = await asyncio.to_thread(self.archive.read, "decision-clock")
+        decisions = [r for r in stored["records"] if r["kind"] == "decision"]
+        self.assertEqual([(r["payload"]["at"], r["payload"]["created_at"], r["received_at"])
+                          for r in decisions], [
+            (T0.isoformat(), (T0 + timedelta(seconds=30)).isoformat(),
+             (T0 + timedelta(seconds=30)).isoformat()),
+            ((T0 + timedelta(seconds=28)).isoformat(),
+             (T0 + timedelta(seconds=31)).isoformat(),
+             (T0 + timedelta(seconds=31)).isoformat()),
+        ])
 
     async def test_full_resolution_references_and_earlier_assignments_survive(self):
         for n in range(30):
@@ -58,6 +139,19 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["session"]["configuration"], self.config)
         self.assertFalse(str(self.archive.path).endswith("www"))
 
+    async def test_historical_cooling_cycles_remain_readable(self):
+        from custom_components.ha_sauna.core.models import CoolingCycle
+        cycle = CoolingCycle("legacy", T0, 900, credited_seconds=480,
+                             started_at=T0, ends_at=T0 + timedelta(seconds=420))
+        historical = replace(self.c.session, cooling_history=(cycle,))
+        self.archive.save_session(historical, T0, self.config)
+        await self.archive.flush()
+        stored = await asyncio.to_thread(self.archive.read, "s")
+        saved = stored["session"]["cooling_history"][0]
+        self.assertEqual(saved["cycle_id"], "legacy")
+        self.assertEqual(saved["duration_seconds"], 900)
+        self.assertEqual(saved["credited_seconds"], 480)
+
     async def test_backup_pause_buffers_without_blocking_received_measurements(self):
         self.record(1)
         await self.archive.pre_backup()
@@ -65,7 +159,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             self.record(n)
         frozen = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in frozen["records"]), 1)
-        await self.archive.post_backup()
+        self.archive.release_backup()
+        await self.archive.flush()
         final = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in final["records"]), 11)
 
@@ -89,6 +184,38 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         finally:
             path.unlink()
 
+    async def test_session_and_records_share_one_read_snapshot(self):
+        # WAL lets a real second connection commit between the two SELECTs;
+        # production's DELETE journal may instead delay that writer.
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+        at = T0 + timedelta(seconds=20)
+        finished = plain(replace(self.c.session, ended_at=at))
+        finished["configuration"] = self.config
+        archive = self.archive
+        connect = sqlite3.connect
+
+        class InterleavedConnection(sqlite3.Connection):
+            def execute(self, sql, *args):
+                if sql.startswith("SELECT * FROM records"):
+                    archive._write(("session", at.isoformat(), encoded(finished), "s"))
+                return super().execute(sql, *args)
+
+        with patch(
+            "custom_components.ha_sauna.archive.sqlite3.connect",
+            side_effect=lambda *args, **kwargs: connect(
+                *args, **kwargs, factory=InterleavedConnection
+            ),
+        ):
+            result = archive.read("s")
+        latest_record = next(
+            record["payload"] for record in reversed(result["records"])
+            if record["kind"] == "session"
+        )
+        self.assertEqual(result["session"]["ended_at"], latest_record["ended_at"])
+        self.assertIsNone(result["session"]["ended_at"])
+        self.assertEqual(archive.read("s")["session"]["ended_at"], at.isoformat())
+
     async def test_cancelled_reader_does_not_poison_archive_writer(self):
         await self.archive.pre_backup()
         waiter = asyncio.create_task(self.archive.flush())
@@ -97,7 +224,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await waiter
         self.record(2)
-        await self.archive.post_backup()
+        self.archive.release_backup()
+        await self.archive.flush()
         self.assertIsNone(self.archive.failure)
         saved = await asyncio.to_thread(self.archive.read, "s")
         self.assertEqual(sum(r["kind"] == "measurement" for r in saved["records"]), 1)
@@ -291,3 +419,91 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["session"]["configuration"]["parameters"]["target_temperature_c"], old_target)
         self.assertEqual(runtime.controller.target_temperature, 91)
         self.assertIsNone(runtime.session)
+
+    async def test_projection_uses_full_evidence_even_on_paginated_read(self):
+        self.archive.append("phase", T0, {"phase": "aufheizen"}, "s")
+        self.archive.append("phase", T0 + timedelta(seconds=10), {"phase": "bereit"}, "s")
+        self.archive.append("source_state", T0, {"role": "heater", "state": "off"}, "s")
+        legacy = plain(self.c.session)
+        legacy.pop("base_phases", None)
+        legacy.pop("contactor_history", None)
+        self.archive.append("session", T0 + timedelta(seconds=20), legacy, "s")
+        await self.archive.flush()
+        full = self.archive.read("s")
+        page = self.archive.read("s", after=2, limit=1)
+        self.assertEqual(full["phase_projection"], page["phase_projection"])
+        self.assertEqual(full["phase_projection"]["intervals"][-1]["phase"], "bereit")
+        self.assertEqual(full["phase_projection"]["readiness_pauses"][0]["started_at"], (T0 + timedelta(seconds=10)).isoformat())
+        self.assertFalse(full["phase_projection"]["complete"])
+
+    async def test_consumer_identities_survive_reload_and_are_scoped_to_entry(self):
+        self.archive.append("consumer_event", T0, {"event_id": "present-1"}, "s")
+        self.archive.append("consumer_event", T0, {"event_id": "present-1"}, "s")
+        self.archive.append("event", T0, {"event_id": "other"}, "s")
+        await self.archive.flush()
+        self.assertEqual(self.archive.consumer_event_ids(), {"present-1"})
+        other = Archive(self.archive.path, "different-entry")
+        self.assertEqual(other.consumer_event_ids(), set())
+
+
+class ExportShutdownTests(unittest.TestCase):
+    def test_cancelled_export_is_removed_even_after_all_loop_tasks_are_cancelled(self):
+        for finished in (False, True):
+            with self.subTest(writer_already_finished=finished):
+                self.cancel_export(finished)
+
+    def cancel_export(self, finished):
+        # A dedicated loop lets shutdown cancel every task before the real
+        # thread finishes, without cancelling this suite's own test runner.
+        with tempfile.TemporaryDirectory() as directory:
+            loop = asyncio.new_event_loop()
+            executor = ThreadPoolExecutor()
+            loop.set_default_executor(executor)
+            archive = Archive(Path(directory) / "sessions.sqlite", "entry")
+            started, release = threading.Event(), threading.Event()
+            paths = []
+            original_export = archive._export
+
+            def blocked_export():
+                started.set()
+                release.wait()
+                path = original_export()
+                paths.append(path)
+                return path
+
+            archive._export = blocked_export
+
+            async def start_request():
+                await archive.start()
+                request = asyncio.create_task(archive.export())
+                self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                await archive.close()
+                return request
+
+            try:
+                request = loop.run_until_complete(start_request())
+                if finished:
+                    # Finish the real writer while the loop cannot deliver
+                    # its result. Cancellation must still remove that result.
+                    release.set()
+                    executor.shutdown(wait=True)
+                request.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    loop.run_until_complete(request)
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            finally:
+                release.set()
+                loop.run_until_complete(loop.shutdown_default_executor())
+                loop.close()
+            try:
+                self.assertEqual(len(paths), 1)
+                self.assertFalse(paths[0].exists())
+            finally:
+                for path in paths:
+                    path.unlink(missing_ok=True)

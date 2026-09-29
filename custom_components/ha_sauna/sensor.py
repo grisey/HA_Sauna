@@ -13,12 +13,16 @@ from .entity import SaunaEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    bindings = entry.runtime_data.configuration.bindings.values
     async_add_entities(
         [
             SaunaPhase(entry),
             SaunaEnergy(entry),
-            SaunaAbsoluteHumidity(entry, Position.UPPER),
-            SaunaAbsoluteHumidity(entry, Position.LOWER),
+            *(
+                SaunaAbsoluteHumidity(entry, position)
+                for position in Position
+                if f"{position.value}_temperature" in bindings
+            ),
         ]
     )
 
@@ -109,7 +113,6 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "confirmation": active.confirmation if active else None,
             "gang_count": session.timeline.gang_count if session else 0,
             "heating_seconds": session.heating.elapsed_seconds if session else 0,
-            "heating_limit_seconds": self.runtime.controller.heating_limit_seconds,
             "thermostat_target": self.runtime.controller.thermostat_target,
             "after_run_ends_at": session.after_run.ends_at.isoformat()
             if session and session.after_run and session.after_run.ends_at
@@ -117,14 +120,14 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "after_run_paused": bool(
                 session and session.after_run and session.after_run.paused_at
             ),
+            "oven_cooling_pending": bool(
+                session and session.after_run and session.after_run.pending_start
+            ),
+            "oven_cooling_waiting_for_off": bool(
+                session and session.after_run and session.after_run.ends_at is None
+            ),
             "after_run_remaining_seconds": session.after_run.remaining_seconds
-            if session and session.after_run
-            else None,
-            "cooling_ends_at": session.cooling.ends_at.isoformat()
-            if session and session.cooling and session.cooling.ends_at
-            else None,
-            "cooling_wait_until": self.runtime.controller.cooling_wait_until.isoformat()
-            if self.runtime.controller.cooling_wait_until
+            if session and session.after_run and not session.after_run.pending_start
             else None,
             "mechanical_timer_ends_at": self.runtime.controller.mechanical_timer_ends_at.isoformat()
             if self.runtime.controller.mechanical_timer_ends_at

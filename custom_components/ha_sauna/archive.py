@@ -11,12 +11,18 @@ from datetime import datetime
 from enum import Enum
 import io
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import zipfile
 from collections.abc import Mapping
 from math import isfinite
+
+from .core.phases import project_archive, project_session
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def plain(value):
@@ -41,6 +47,39 @@ def encoded(value):
     )
 
 
+class _ExportWork:
+    """Own the temporary file across both thread completion and caller cancellation."""
+
+    def __init__(self, create):
+        self.create = create
+        self.lock = threading.Lock()
+        self.abandoned = False
+        self.path = None
+
+    def run(self):
+        path = self.create()
+        with self.lock:
+            if not self.abandoned:
+                self.path = path
+                return path
+        self._remove(path)
+        return None
+
+    def discard(self):
+        with self.lock:
+            self.abandoned = True
+            path, self.path = self.path, None
+        if path is not None:
+            self._remove(path)
+
+    @staticmethod
+    def _remove(path):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            _LOGGER.exception("Abgebrochenen Saunaexport konnte nicht entfernt werden")
+
+
 class Archive:
     def __init__(self, path, entry_id):
         self.path = Path(path)
@@ -52,6 +91,7 @@ class Archive:
         self.failure = None
         self.failed_records = deque()
         self.closed = False
+        self._close_task = None
 
     async def start(self):
         await asyncio.to_thread(self._initialize)
@@ -124,7 +164,6 @@ class Archive:
                 if kind == "fence":
                     payload.set_result(None)
                 elif kind == "pause":
-                    self.resume.clear()
                     payload.set_result(None)
                     await self.resume.wait()
             except Exception as error:
@@ -181,31 +220,55 @@ class Archive:
         await future
 
     async def flush(self):
-        await self._barrier("fence")
+        if self._close_task is not None:
+            await asyncio.shield(self._close_task)
+        else:
+            await self._barrier("fence")
 
     async def pre_backup(self):
         # Alle bisherigen Aufträge sind dauerhaft geschrieben. Nur der Schreiber
         # pausiert; Regelung und Eingangserfassung dürfen weiterarbeiten.
-        await self._barrier("pause")
+        if self._close_task is not None:
+            # Closing rejects new records, but its queued writes may still be
+            # running. Finish them before the backup may copy this database.
+            await asyncio.shield(self._close_task)
+            return
+        if not self.resume.is_set():
+            raise RuntimeError("Archiv wird bereits gesichert")
+        # Establish ownership before enqueueing: a release while the writer is
+        # catching up must not be lost when it eventually reaches the pause.
+        self.resume.clear()
+        try:
+            await self._barrier("pause")
+        except BaseException:
+            self.release_backup()
+            raise
 
-    async def post_backup(self):
+    def release_backup(self):
+        """Release a backup pause without waiting for pending writes."""
         self.resume.set()
-        await self.flush()
 
     async def close(self):
-        if self.closed:
-            return
-        self.resume.set()
-        try:
-            await self.flush()
-        finally:
+        if self._close_task is None:
             self.closed = True
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self):
+        if self.worker is None:
+            return
+        try:
+            # Only the backup owner may release its pause. Its post-hook keeps
+            # this archive reachable even after the runtime begins unloading.
+            await self._barrier("fence")
+        finally:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
     def read(self, session_id=None, *, after=0, limit=1000):
         with closing(sqlite3.connect(self.path)) as db:
             db.row_factory = sqlite3.Row
+            db.execute("BEGIN")
             if session_id is None:
                 rows = db.execute(
                     "SELECT session_id,started_at,updated_at,ended_at FROM sessions WHERE entry_id=? ORDER BY started_at DESC",
@@ -213,7 +276,7 @@ class Archive:
                 )
                 return [dict(row) for row in rows]
             row = db.execute(
-                "SELECT payload FROM sessions WHERE entry_id=? AND session_id=?",
+                "SELECT payload,updated_at FROM sessions WHERE entry_id=? AND session_id=?",
                 (self.entry_id, session_id),
             ).fetchone()
             if row is None:
@@ -222,12 +285,43 @@ class Archive:
                 "SELECT * FROM records WHERE entry_id=? AND session_id=? AND id>? ORDER BY id LIMIT ?",
                 (self.entry_id, session_id, after, limit),
             ).fetchall()
+            session = json.loads(row["payload"])
+            if session.get("base_phases"):
+                projection = project_session(session, row["updated_at"])
+            else:
+                # Legacy snapshots need the complete evidence stream,
+                # independent of pagination. Original records stay unchanged.
+                evidence = [
+                    {
+                        "kind": r["kind"],
+                        "received_at": r["received_at"],
+                        "payload": json.loads(r["payload"]),
+                    }
+                    for r in db.execute(
+                        "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
+                        (self.entry_id, session_id),
+                    )
+                ]
+                projection = project_archive(session, evidence, row["updated_at"])
             return {
-                "session": json.loads(row["payload"]),
+                "session": session,
+                "phase_projection": plain(projection),
                 "records": [
                     {**dict(r), "payload": json.loads(r["payload"])} for r in records
                 ],
                 "next_after": records[-1]["id"] if len(records) == limit else None,
+            }
+
+    def consumer_event_ids(self):
+        """Stable delivered identities for reload deduplication, read only."""
+        with closing(sqlite3.connect(self.path)) as db:
+            return {
+                event_id
+                for (payload,) in db.execute(
+                    "SELECT payload FROM records WHERE entry_id=? AND kind='consumer_event'",
+                    (self.entry_id,),
+                )
+                if isinstance((event_id := json.loads(payload).get("event_id")), str)
             }
 
     def latest_completed_warmup(self, source, maximum_gap_seconds):
@@ -329,7 +423,14 @@ class Archive:
 
     async def export(self):
         await self.flush()
-        return await asyncio.to_thread(self._export)
+        work = _ExportWork(self._export)
+        try:
+            return await asyncio.to_thread(work.run)
+        except asyncio.CancelledError:
+            # The actual writer owns cleanup, not a cancellable asyncio proxy.
+            # This still removes its result after final loop task cancellation.
+            work.discard()
+            raise
 
     def _export(self):
         # SQLite-Backup liest einen konsistenten Stand, während neue Eingänge

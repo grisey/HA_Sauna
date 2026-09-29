@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import isfinite
 
+from .contracts import ControlInputs
 from .models import ThermostatState
 from .parameters import Parameters
 
@@ -13,6 +14,8 @@ class Decision:
     at: datetime
     heat: bool
     reason: str
+    session_id: str | None = None
+    created_at: datetime | None = None
 
 
 def evaluate(
@@ -22,15 +25,25 @@ def evaluate(
     parameters: Parameters,
     temperature: float | None,
     enabled: bool,
-    gang: bool,
-    cooling: bool,
-    after_run: bool,
+    gang: bool = False,
+    after_run: bool = False,
+    inputs: ControlInputs | None = None,
     protection: tuple[str, ...] = (),
     inhibits: tuple[str, ...] = (),
     heating_since: datetime | None = None,
+    heating_active: bool = False,
     target_temperature: float | None = None,
 ):
+    """Return the present heat command using the fixed demand priority.
+
+    Positive live gang and temporary-door levels bypass the normal temperature
+    cut-off and thermostat cooldown. They never bypass operation, protection,
+    inhibitions, or a missing/invalid selected regulation temperature.
+    """
     values = parameters.values
+    controls = inputs if inputs is not None else ControlInputs(
+        gang_heat_demand=gang, cooling=after_run
+    )
 
     def result(demand, reason, cooldown=state.cooldown_until):
         return replace(state, demand=demand, cooldown_until=cooldown), Decision(
@@ -48,25 +61,27 @@ def evaluate(
         if target_temperature is not None
         else values.get("target_temperature_c")
     )
-    limit = values.get("safety_temperature_c")
-    if target is None or limit is None:
+    if target is None:
         return result(False, "temperature_configuration_required")
-    if cooling:
-        return result(False, "forced_cooling")
-    if after_run:
-        return result(False, "after_run")
     if temperature is None or not isfinite(temperature):
         return result(False, "upper_temperature_unavailable")
-    if gang:
-        return result(True, "gang")
+    if controls.cooling:
+        return result(False, "after_run")
+
+    if controls.gang_heat_demand:
+        return result(True, "gang_heat_demand", None)
+    if controls.temporary_door_heat:
+        return result(True, "temporary_door_heat", None)
+
     if (
-        state.demand
+        (state.demand or heating_active)
         and heating_since is not None
         and now
         < heating_since
         + timedelta(seconds=parameters.seconds("minimum_heating_minutes"))
     ):
         return result(True, "minimum_heating")
+
     readiness_target = target + values["readiness_offset_c"]
     if temperature >= readiness_target:
         cooldown = (

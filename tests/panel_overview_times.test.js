@@ -23,10 +23,13 @@ const baseState = () => ({
   session: {timeline: {active: null, door: "closed", completed: []}, heating: {elapsed_seconds: 0}, deadlines: []},
   configuration: {parameters}, last_session: null, measurements: [], measurement_status: {},
   parameters: [{key: "target_temperature_c", minimum: 60, maximum: 100}, {key: "temperature_gangs", minimum: 1, maximum: 8}],
-  mechanical_timer: {state: "idle"}, heating_limit_seconds: 5400,
+  mechanical_timer: {state: "idle"},
   heating_feedback: false, permissions: {control: true, temperature: true, program: true, light: true},
   start_errors: [], issues: [], detection_channels: [], target_temperature: 80,
-  manual_controls: {light: {}}, start_availability: {}, phase_timer: null,
+  manual_controls: {light: {}}, start_availability: {
+    until_ready_seconds: 0, ready_estimated: false, minimum_wait_seconds: null,
+    message: "Bereit für einen Saunagang.", blocker: null, gang_elapsed_seconds: null,
+  }, phase_timer: null,
 });
 const render = state => {
   const nodes = {};
@@ -60,13 +63,13 @@ assert.match(render(state), /Heizen<\/strong><span class="availability-line ">no
 assert.doesNotMatch(render(state), /8:00 Minuten/, "estimated readiness never exposes a changing seconds timer");
 
 state = baseState();
-state.start_availability = {until_ready_seconds: 0, ready_estimated: false, start_window_seconds: 1200, start_window_label: "mindestens"};
-assert.match(render(state), /Bereit<\/strong><span class="availability-line ">noch 20 Minuten/, "ready state shows the supplied conservative start window without repeating its state");
+assert.match(render(state), /Bereit<\/strong>/, "ready state uses the backend's readiness without a fabricated start deadline");
+assert.doesNotMatch(render(state), /availability-line/, "readiness without a phase timer has no empty information area");
 assert.doesNotMatch(render(state), /Jetzt bereit|Bereitschaft/, "ready state is not repeated in a second announcement");
 
 state = baseState();
 state.start_availability = {minimum_wait_seconds: 300, until_ready_seconds: null};
-state.start_availability.blocker = {kind: "cooling"};
+state.start_availability.blocker = {kind: "after_run"};
 assert.match(render(state), /Start gesperrt – noch 5:00 Minuten/, "a blocker remains distinct from readiness");
 
 state = baseState();
@@ -78,10 +81,6 @@ state = baseState();
 state.phase = "aufheizen";
 state.start_availability = {until_ready_seconds: 360, ready_estimated: true};
 assert.match(render(state), /noch 5 Minuten bis bereit/, "an estimate above five minutes uses the nearest five-minute step");
-
-state = baseState();
-state.start_availability = {until_ready_seconds: 0, start_window_seconds: 299};
-assert.match(render(state), /Bereit<\/strong><span class="availability-line ">noch unter 5 Minuten/, "a positive start window never pretends it is already exhausted");
 
 state = baseState();
 state.start_availability = {until_ready_seconds: null, message: "Startzeit noch nicht abschätzbar."};
@@ -97,11 +96,18 @@ state = baseState();
 state.phase = "nachlauf";
 state.start_availability = {blocker: {kind: "after_run"}, minimum_wait_seconds: 600};
 state.phase_timer = {kind: "after_run", seconds: 300, mode: "remaining"};
-assert.match(render(state), /Nachlauf<\/strong><span class="availability-line wait">noch 5:00 Minuten/, "after-run time does not claim readiness");
+assert.match(render(state), /Ofenkühlung<\/strong><span class="availability-line wait">noch 5:00 Minuten/, "after-run time does not claim readiness");
+
+state = baseState();
+state.phase = "nachlauf";
+state.phase_timer = {kind: "after_run", label: "Ofenkühlung wartet auf Schütz-Aus", seconds: null, mode: "pending"};
+let overview = render(state);
+assert.match(overview, /Ofenkühlung wartet auf Schütz-Aus/, "a pending cooling phase states what it is waiting for");
+assert.doesNotMatch(overview, /noch 0:00 Minuten/, "a pending cooling phase does not invent a zero duration");
 
 state = baseState();
 state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
-let overview = render(state);
+overview = render(state);
 assert.doesNotMatch(overview, /Heizpause/, "technical phase timers stay out of the overview");
 assert.equal((overview.match(/data-action="preset:/g) || []).length, 3, "presets over the 100 °C maximum are hidden");
 assert.match(overview, /data-action="program-mode:program" aria-pressed="false"/, "the named-program type remains selectable");
@@ -136,10 +142,10 @@ assert.doesNotMatch(overview, /Mindestheizzeit/, "minimum heating stays in detai
 
 state = baseState();
 state.phase = "bereit";
-state.start_availability = {until_ready_seconds: 0, start_window_seconds: 1200};
+state.start_availability = {until_ready_seconds: 0};
 state.phase_timer = {kind: "thermostat_pause", label: "Heizpause noch", seconds: 600};
 overview = render(state);
-assert.match(overview, /Bereit<\/strong><span class="availability-line ">noch 20 Minuten/, "a heating pause does not displace the start window");
+assert.match(overview, /Bereit<\/strong>/, "a heating pause preserves the ready state without a countdown");
 assert.doesNotMatch(overview, /Heizpause/, "heating pauses remain in details when ready");
 
 state = baseState();
@@ -148,5 +154,6 @@ state.session = null;
 state.phase_timer = {kind: "session_light", seconds: 90};
 overview = render(state);
 assert.match(overview, /Lichtnachlauf noch 1:30 Minuten/, "only the compact end-of-session light timer remains off-session");
+assert.doesNotMatch(overview, /availability-line/, "operation off has no empty availability information area");
 
 console.log("panel overview time regressions passed");

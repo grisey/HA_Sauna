@@ -4,10 +4,11 @@ import asyncio
 from dataclasses import asdict
 
 from aiohttp import web
-from homeassistant.auth.permissions.const import POLICY_CONTROL
+from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
 
+from .appearance import APPEARANCE_CATALOG
 from .archive import plain
 from .const import DOMAIN
 from .core.detection_parameters import SPECS
@@ -18,6 +19,7 @@ from .presentation import decision_message, fault_message, issues, parameter_err
 from .settings import (
     ConfigurationLocked,
     async_reset_parameters,
+    async_set_appearance,
     async_set_button_program,
     async_set_control_mode,
     async_set_parameters,
@@ -37,6 +39,67 @@ def can_control(request, entry_id):
         entity_id
         and request["hass_user"].permissions.check_entity(entity_id, POLICY_CONTROL)
     )
+
+
+def can_read(request, entry_id):
+    """Use the operation entity as the instance's read permission boundary."""
+    hass = request.app[KEY_HASS]
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry_id}_operation"
+    )
+    return bool(
+        entity_id
+        and request["hass_user"].permissions.check_entity(entity_id, POLICY_READ)
+    )
+
+
+def require_read(request, entry_id):
+    if not can_read(request, entry_id):
+        raise web.HTTPForbidden()
+
+
+def public_configuration(options):
+    """Only the choices and bounds used by normal control remain visible."""
+    parameters = options.get("parameters", {})
+    keys = (
+        "target_temperature_c",
+        "final_temperature_c",
+        "temperature_gangs",
+        "sauna_min_temperature_c",
+        "preset_count",
+        "preset_start_c",
+        "preset_step_c",
+        "session_light_brightness_percent",
+    )
+    return {
+        key: value
+        for key, value in options.items()
+        if key in {
+            "program_mode", "temperature_programs", "selected_program_id",
+            "control_mode", "temperature_steps", "appearance",
+            "button_program", "button_temperature_c",
+        }
+    } | {"parameters": {key: parameters[key] for key in keys if key in parameters}}
+
+
+def historical_measurement_ttl(session, fallback):
+    parameters = session.get("configuration", {}).get("parameters", {})
+    return parameters.get("sensor_timeout_seconds", fallback)
+
+
+def public_measurement(measurement):
+    """Keep chart values and timestamps without exposing entity bindings."""
+    return {key: value for key, value in measurement.items() if key != "source"}
+
+
+async def json_body(request):
+    """Return a consistent client error for malformed JSON on every write path."""
+    try:
+        return await request.json()
+    except (ValueError, UnicodeError, web.HTTPBadRequest) as error:
+        raise web.HTTPBadRequest(
+            text='{"error":"Ungültiger JSON-Körper."}', content_type="application/json"
+        ) from error
 
 
 def require_control(request, entry_id):
@@ -96,6 +159,7 @@ class InstancesView(HomeAssistantView):
                 for entry in request.app[KEY_HASS].config_entries.async_entries(DOMAIN)
                 if getattr(entry, "runtime_data", None)
                 and not entry.runtime_data.closed
+                and can_read(request, entry.entry_id)
             ]
         )
 
@@ -106,6 +170,7 @@ class StateView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request, entry_id):
+        require_read(request, entry_id)
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         async with runtime._lock:
             controller, device, session = (
@@ -116,13 +181,23 @@ class StateView(HomeAssistantView):
             now = runtime._clock()
             active = session.timeline.active if session else None
             experts = {s[0] for s in SPECS}
-            return self.json(
-                plain(
+            regulation_measurement = (
+                device.regulation_measurement(now) if device else None
+            )
+            result = plain(
                     {
                         "now": now,
                         "phase": controller.phase,
+                        "presence": runtime.presence_status,
+                        "rule_inputs": controller.regulation_inputs,
+                        "phase_projection": controller.phase_projection(now),
                         "session": session,
                         "configuration": runtime.configuration.as_options(),
+                        "measurement_ttl_seconds": runtime.configuration.parameters.values[
+                            "sensor_timeout_seconds"
+                        ],
+                        "appearance": runtime.configuration.appearance,
+                        "appearance_catalog": APPEARANCE_CATALOG,
                         "last_session": controller.completed_sessions[-1]
                         if controller.completed_sessions
                         else None,
@@ -149,10 +224,8 @@ class StateView(HomeAssistantView):
                         "energy_source": session.energy.source
                         if session
                         else "estimated",
-                        "heating_limit_seconds": controller.heating_limit_seconds,
                         "thermostat_target": controller.thermostat_target,
                         "target_temperature": controller.target_temperature,
-                        "cooling_wait_until": controller.cooling_wait_until,
                         "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
                         "mechanical_timer": controller.mechanical_timer_status,
                         "phase_timer": phase_timer(controller, now),
@@ -170,6 +243,16 @@ class StateView(HomeAssistantView):
                         "measurement_status": device.measurement_status(now)
                         if device
                         else {},
+                        "regulation_temperature_position": (
+                            regulation_measurement.position.value
+                            if regulation_measurement else None
+                        ),
+                        "measurement_positions": [
+                            position
+                            for position in ("upper", "lower")
+                            if f"{position}_temperature"
+                            in runtime.configuration.bindings.values
+                        ],
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
                         "gang_duration_seconds": active.elapsed_seconds(now)
@@ -202,7 +285,23 @@ class StateView(HomeAssistantView):
                         },
                     }
                 )
-            )
+            if not request["hass_user"].is_admin:
+                result["configuration"] = public_configuration(result["configuration"])
+                result["parameters"] = [
+                    item for item in result["parameters"]
+                    if item["key"] in LIVE_TEMPERATURE_KEYS
+                ]
+                result["measurements"] = [
+                    public_measurement(item) for item in result["measurements"]
+                ]
+                for key in (
+                    "rule_inputs", "heating_observation",
+                    "decision", "faults", "protection",
+                    "inhibits", "archive_error", "detection_channels",
+                    "detector_trace", "presence",
+                ):
+                    result.pop(key, None)
+            return self.json(result)
 
 
 class ControlView(HomeAssistantView):
@@ -213,7 +312,7 @@ class ControlView(HomeAssistantView):
     async def post(self, request, entry_id):
         require_control(request, entry_id)
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
-        body = await request.json()
+        body = await json_body(request)
         if (
             not isinstance(body, dict)
             or set(body) != {"enabled"}
@@ -236,18 +335,18 @@ class FinishPhaseView(HomeAssistantView):
         if not request["hass_user"].is_admin:
             raise web.HTTPForbidden()
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
-        body = await request.json()
+        body = await json_body(request)
         if (
             not isinstance(body, dict)
             or set(body) != {"purpose", "token"}
             or not isinstance(body["purpose"], str)
-            or body["purpose"] not in ("after_run", "forced_cooling")
+            or body["purpose"] != "after_run"
             or not isinstance(body["token"], str)
             or not body["token"]
         ):
             return self.json(
                 {
-                    "error": "Bitte einen laufenden Nachlauf oder eine laufende Zwangskühlung auswählen."
+                    "error": "Bitte eine laufende Ofenkühlung auswählen."
                 },
                 status_code=400,
             )
@@ -266,7 +365,7 @@ class FinishSessionView(HomeAssistantView):
     async def post(self, request, entry_id):
         require_control(request, entry_id)
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
-        body = await request.json()
+        body = await json_body(request)
         if (
             not isinstance(body, dict)
             or set(body) != {"token"}
@@ -297,7 +396,7 @@ class ParametersView(HomeAssistantView):
             raise web.HTTPForbidden()
         hass = request.app[KEY_HASS]
         runtime_for(hass, entry_id)
-        body = await request.json()
+        body = await json_body(request)
         try:
             if self.partial and (
                 not isinstance(body, dict)
@@ -353,6 +452,28 @@ class ResetParametersView(HomeAssistantView):
         )
 
 
+class AppearanceView(HomeAssistantView):
+    """Replace one instance's appearance while leaving its operation intact."""
+
+    url = "/api/ha_sauna/{entry_id}/appearance"
+    name = "api:ha_sauna:appearance"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime_for(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        try:
+            appearance = await async_set_appearance(hass, entry, await json_body(request))
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({"success": True, "appearance": appearance})
+
+
 class ProgramView(HomeAssistantView):
     """Select a stored profile or an explicit start/end/distribution program."""
 
@@ -365,8 +486,8 @@ class ProgramView(HomeAssistantView):
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime_for(hass, entry_id)
-        body = await request.json()
         try:
+            body = await json_body(request)
             if isinstance(body, dict) and set(body) == {"profile"}:
                 if not isinstance(body["profile"], str):
                     raise ValueError("Ungültiges Temperaturprogramm")
@@ -416,6 +537,7 @@ class ProgramView(HomeAssistantView):
                 "success": True,
                 "parameters": parameters,
                 "program_mode": entry.runtime_data.configuration.program_mode,
+                "selected_program_id": entry.runtime_data.configuration.selected_program_id,
                 "temperature_steps": entry.runtime_data.configuration.temperature_steps,
             }
         )
@@ -433,10 +555,10 @@ class ProgramsView(HomeAssistantView):
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime_for(hass, entry_id)
-        body = await request.json()
-        if not isinstance(body, dict) or set(body) != {"programs"}:
-            raise web.HTTPBadRequest(text="Programmliste fehlt oder ist ungültig")
         try:
+            body = await json_body(request)
+            if not isinstance(body, dict) or set(body) != {"programs"}:
+                raise web.HTTPBadRequest(text="Programmliste fehlt oder ist ungültig")
             programs = await async_set_program_catalog(hass, entry, body["programs"])
         except ConfigurationLocked as error:
             return self.json({"error": str(error)}, status_code=409)
@@ -454,8 +576,8 @@ class ButtonProgramView(HomeAssistantView):
         require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
-        runtime = runtime_for(hass, entry_id)
-        body = await request.json()
+        runtime_for(hass, entry_id)
+        body = await json_body(request)
         if not isinstance(body, dict) or set(body) not in (
             {"profile"},
             {"profile", "temperature_c"},
@@ -467,7 +589,7 @@ class ButtonProgramView(HomeAssistantView):
         ):
             raise web.HTTPBadRequest(text="Tastertemperatur fehlt oder ist ungültig")
         try:
-            await async_set_button_program(
+            configuration = await async_set_button_program(
                 hass, entry, body["profile"], body.get("temperature_c")
             )
         except ConfigurationLocked as error:
@@ -484,8 +606,8 @@ class ButtonProgramView(HomeAssistantView):
         return self.json(
             {
                 "success": True,
-                "button_program": runtime.configuration.button_program,
-                "button_temperature_c": runtime.configuration.button_temperature_c,
+                "button_program": configuration.button_program,
+                "button_temperature_c": configuration.button_temperature_c,
             }
         )
 
@@ -499,16 +621,16 @@ class ControlModeView(HomeAssistantView):
         require_control(request, entry_id)
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
-        runtime = runtime_for(hass, entry_id)
-        body = await request.json()
+        runtime_for(hass, entry_id)
+        body = await json_body(request)
         if not isinstance(body, dict) or set(body) != {"mode"}:
             raise web.HTTPBadRequest(text="Betriebsmodus fehlt oder ist ungültig")
         try:
-            await async_set_control_mode(hass, entry, body["mode"])
+            configuration = await async_set_control_mode(hass, entry, body["mode"])
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json(
-            {"success": True, "control_mode": runtime.configuration.control_mode}
+            {"success": True, "control_mode": configuration.control_mode}
         )
 
 
@@ -519,7 +641,7 @@ class LightView(HomeAssistantView):
 
     async def post(self, request, entry_id):
         require_control(request, entry_id)
-        body = await request.json()
+        body = await json_body(request)
         if not isinstance(body, dict) or set(body) != {"value"}:
             raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
         value = body["value"]
@@ -546,7 +668,7 @@ class HeaterView(HomeAssistantView):
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         if not can_control_heater(request, entry_id, runtime):
             raise web.HTTPForbidden()
-        body = await request.json()
+        body = await json_body(request)
         if (
             not isinstance(body, dict)
             or set(body) != {"value"}
@@ -574,7 +696,7 @@ class LoggingView(HomeAssistantView):
             raise web.HTTPForbidden()
         hass = request.app[KEY_HASS]
         runtime = runtime_for(hass, entry_id)
-        body = await request.json()
+        body = await json_body(request)
         if (
             not isinstance(body, dict)
             or set(body) != {"level"}
@@ -598,23 +720,43 @@ class ArchiveView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request, entry_id):
+        require_read(request, entry_id)
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         await runtime.archive.flush()
         session_id = request.query.get("session_id")
         try:
             after = max(0, int(request.query.get("after", "0")))
+            if after > 2**63 - 1:
+                raise ValueError("Archivcursor außerhalb des gültigen Bereichs")
         except ValueError as error:
             raise web.HTTPBadRequest() from error
         result = await asyncio.to_thread(runtime.archive.read, session_id, after=after)
         if result is None:
             raise web.HTTPNotFound()
         if session_id:
-            for record in result["records"]:
-                if record["kind"] == "diagnostic":
-                    record["payload"]["messages"] = [
-                        fault_message(k, v)
-                        for k, v in record["payload"].get("faults", {}).items()
-                    ]
+            session = result["session"]
+            session["measurement_ttl_seconds"] = historical_measurement_ttl(
+                session, runtime.configuration.parameters.values["sensor_timeout_seconds"]
+            )
+            if request["hass_user"].is_admin:
+                for record in result["records"]:
+                    if record["kind"] == "diagnostic":
+                        record["payload"]["messages"] = [
+                            fault_message(k, v)
+                            for k, v in record["payload"].get("faults", {}).items()
+                        ]
+            else:
+                session.pop("configuration", None)
+                result["records"] = [
+                    {
+                        **record,
+                        "payload": public_measurement(record["payload"]),
+                    }
+                    if record["kind"] in {"measurement", "source_snapshot"}
+                    else record
+                    for record in result["records"]
+                    if record["kind"] in {"measurement", "source_snapshot", "phase"}
+                ]
         return self.json(result)
 
 
@@ -670,6 +812,7 @@ def register(hass):
     hass.http.register_view(ParametersView)
     hass.http.register_view(TemperatureView)
     hass.http.register_view(ResetParametersView)
+    hass.http.register_view(AppearanceView)
     hass.http.register_view(ProgramView)
     hass.http.register_view(ProgramsView)
     hass.http.register_view(ButtonProgramView)

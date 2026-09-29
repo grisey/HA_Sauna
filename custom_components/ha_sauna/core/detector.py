@@ -17,16 +17,21 @@ class Detection:
     effective_at: object
     detected_at: object
     channels: tuple[str, ...]
+    trace_at: object | None = None
 
 
 def robust_slope(values, step=1):
     if len(values) < 2 or any(v is None for v in values):
         return None
-    return median(
+    slopes = [
         (values[j] - values[i]) / ((j - i) * step / 60)
         for i in range(len(values))
         for j in range(i + 1, len(values))
-    )
+    ]
+    if not all(isfinite(slope) for slope in slopes):
+        return None
+    result = median(slopes)
+    return result if isfinite(result) else None
 
 
 class Detector:
@@ -176,7 +181,8 @@ class Detector:
         series = self._series(position, key, window)
         if not series or series[0] is None or series[-1] is None:
             return None
-        return series[-1] - series[0]
+        difference = series[-1] - series[0]
+        return difference if isfinite(difference) else None
 
     def _sustain(self, name, condition, seconds, step=1):
         self.counts[name] = self.counts.get(name, 0) + 1 if condition else 0
@@ -427,26 +433,120 @@ class Detector:
         trace["checks"]["ventilation"] = True
         return proven
 
-    def advance(self, at, *, enabled, allowed=None, on_detection=None):
+    def advance(
+        self, at, *, enabled, allowed=None, on_detection=None,
+        heating_intervals=None, heating_after=None, heating_gates=None,
+        recognition_context=None, allowed_at=None,
+        before_sample=None, after_sample=None, include_current=True, detected_at=None,
+    ):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
         Ohne Kontext bleibt der reine Messvergleich zum Referenzkandidaten möglich.
         Im Betrieb liefert ausschließlich der Controller die Erkennungsfreigaben.
+        Übergebene Heizintervalle gelten an ihrer jeweiligen Rasterzeit;
+        Die zur Eingangszeit gebuchten Laufzeit-Gates begrenzen sie zusätzlich.
+        heating_after bleibt für reine Detektoraufrufe ohne Gate-Historie.
+        recognition_context liest bereits gebuchte Controllerfreigaben je Raster;
+        die aktuelle allowed-Freigabe gilt zusätzlich zwischen den Signalen.
+        Runtime-Hooks buchen den führenden Controller vor/nach jedem Raster;
+        False vor einer Probe beendet die Zustellung einer abgeschlossenen Session.
+        include_current=False lässt das Raster für gleichzeitige Eingänge offen.
+        detected_at kann die reale Erkennungsuhr liefern, getrennt vom Rasterende.
         """
         at = utc(at)
         final = int((at - self.origin).total_seconds())
+        if not include_current and self.origin + timedelta(seconds=final) == at:
+            final -= 1
         if final < self.index:
-            raise ValueError("Detektoruhr darf nicht rückwärts laufen")
+            if at < self.origin + timedelta(seconds=self.index):
+                raise ValueError("Detektoruhr darf nicht rückwärts laufen")
+            return []
         output = []
         while self.index < final:
+            now = self.origin + timedelta(seconds=self.index + 1)
+            if before_sample is not None and before_sample(now) is False:
+                break
             self.index += 1
-            now = self.origin + timedelta(seconds=self.index)
+            sample_enabled, sample_allowed = enabled, allowed
+            gang_permitted, recognition_since = True, None
+            if recognition_context is not None:
+                sample_enabled, blocked, recognition_since = recognition_context(now)
+                gang_permitted = blocked is None
+
+                def sample_allowed(kind):
+                    return (
+                        blocked is None and (allowed is None or allowed(kind))
+                        and (allowed_at is None or allowed_at(kind, now))
+                    )
+
+            if heating_intervals is not None:
+                intervals = (heating_intervals() if callable(heating_intervals)
+                             else heating_intervals)
+                interval = next((
+                    interval for interval in reversed(intervals)
+                    if interval.started_at <= now
+                    and (interval.ended_at is None or now < interval.ended_at)
+                ), None)
+                since = interval.started_at if interval is not None else None
+                if since is not None and heating_gates is not None:
+                    permitted, permitted_since = False, None
+                    for gate_at, gate in heating_gates:
+                        if gate_at > now:
+                            break
+                        if gate and not permitted:
+                            permitted_since = gate_at
+                        elif not gate:
+                            permitted_since = None
+                        permitted = gate
+                    if not permitted:
+                        since = None
+                    else:
+                        # OFF/ON can interrupt continuous physical heating.
+                        since = max(since, permitted_since)
+                elif since is not None and heating_after is not None:
+                    since = max(since, heating_after)
+                if recognition_context is not None:
+                    if not sample_enabled:
+                        since = None
+                    elif since is not None and recognition_since is not None:
+                        # Received OFF/ON remains an interruption even when a
+                        # completed service has already booked a later heat gate.
+                        since = max(since, recognition_since)
+                if since is not None and since > now:
+                    since = None
+                if since != self.heating_since:
+                    # An interruption may lie entirely between raster points.
+                    # The canonical interval start still invalidates old proof.
+                    self.report_heating(False, now)
+                    if since is not None:
+                        self.report_heating(True, since)
             self._consume(now)
-            output.extend(self._sample(now, at, enabled, allowed, on_detection))
+            output.extend(self._sample(
+                now, utc(detected_at() if callable(detected_at) else detected_at or at),
+                sample_enabled, sample_allowed, on_detection,
+                gang_permitted=gang_permitted, recognition_since=recognition_since,
+            ))
+            if after_sample is not None:
+                after_sample(now)
         return output
 
-    def _sample(self, now, decision_at, enabled, allowed=None, on_detection=None):
+    def _sample(
+        self, now, decision_at, enabled, allowed=None, on_detection=None,
+        *, gang_permitted=True, recognition_since=None,
+    ):
         p = self.p
+        if not enabled or not gang_permitted:
+            # An OFF/cooling stretch cannot leave a later weak-person opportunity.
+            # Door observation itself continues without inventing an edge.
+            self.weak_anchor_at = None
+        elif (
+            self.weak_anchor_at is not None
+            and recognition_since is not None
+            and self.weak_anchor_at < recognition_since
+        ):
+            # A complete OFF/ON can fall between raster points. Its booked
+            # boundary still retires an entry anchor from before the pause.
+            self.weak_anchor_at = None
         available, faults = [], []
         for position in self.positions:
             frames = self.frames[position]
@@ -489,17 +589,7 @@ class Detector:
             # Kein Haltebeweis über eine Änderung der benutzten Quellen hinweg.
             if self.active_positions:
                 self._update_moisture_state(None, now)
-            preserved = (
-                {
-                    name: self.counts[name]
-                    for name in ("door", "door_heating")
-                    if name in self.counts
-                }
-                if self.door_episode is not None
-                else {}
-            )
             self.counts.clear()
-            self.counts.update(preserved)
             self.levels.clear()
         self.active_positions, self.faults = channels, tuple(faults)
         trace = {
@@ -528,6 +618,7 @@ class Detector:
                 effective_at or now,
                 decision_at,
                 tuple(c.value for c in (event_channels or channels)),
+                now,
             )
             output.append(detection)
             if on_detection:
@@ -586,6 +677,8 @@ class Detector:
             mixed_opening = self._episode_route(
                 "temperature", now
             ) and self._episode_route("humidity", now)
+            # Eine verfügbare T/RH-Höhe genügt; bei zweien müssen beide die
+            # eingefrorene Episode gemeinsam belegen.
             thermal_opening = self._episode_route("thermal", now)
         if episode and self.open:
             closing_slopes = {
@@ -634,7 +727,7 @@ class Detector:
         if self.open and close_toggle:
             self.open = False
             self.closed_at = now
-            self.weak_anchor_at = now
+            self.weak_anchor_at = now if enabled and gang_permitted else None
             self.counts["door"] = 0
             self.counts["door_heating"] = 0
             emit(Kind.DOOR_CLOSE, now, closing_positions)
@@ -666,8 +759,15 @@ class Detector:
             emit(Kind.DOOR_OPEN, episode["started_at"], episode["positions"])
         elif not self.open and episode:
             expiry = max(p["door_window_seconds"], p["door_humidity_seconds"])
-            if (now - episode["started_at"]).total_seconds() > expiry:
+            # Feature windows limit the age of individual hints. A complete,
+            # still fresh route may need a longer configured confirmation hold.
+            if (
+                (now - episode["started_at"]).total_seconds() > expiry
+                and not (mixed_opening or thermal_opening)
+            ):
                 self.door_episode = None
+                self.counts["door"] = 0
+                self.counts["door_heating"] = 0
                 self.baseline = {}
                 self.ventilation_positions = ()
                 self.ventilation_invalid = set()
@@ -675,8 +775,20 @@ class Detector:
             self._update_moisture_state(None, now)
             observe()
             return output
-        eligible = bool(enabled and not self.open)
-        infusion_check = eligible and (allowed is None or allowed(Kind.INFUSION))
+
+        def admitted_window(route):
+            # Every contributing smoothed frame must belong to the current
+            # permitted stretch. Old blocked rises cannot cross its boundary.
+            return recognition_since is None or (
+                (now - recognition_since).total_seconds()
+                >= p[f"{route}_window_seconds"] + p["median_seconds"] - 1
+            )
+
+        eligible = bool(enabled and gang_permitted and not self.open)
+        infusion_check = (
+            eligible and admitted_window("infusion")
+            and (allowed is None or allowed(Kind.INFUSION))
+        )
         trace["checks"]["infusion"] = infusion_check
         infusion = infusion_check
         if infusion_check:
@@ -714,6 +826,7 @@ class Detector:
             ):
                 checking = (
                     eligible
+                    and admitted_window(route)
                     and (route != "weak" or weak_opportunity)
                     and (allowed is None or allowed(kind))
                 )

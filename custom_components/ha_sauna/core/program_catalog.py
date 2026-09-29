@@ -15,7 +15,10 @@ MAXIMUM_DISTRIBUTION_GANGS = int(BY_KEY["temperature_gangs"].maximum)
 def _finite_number(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} muss eine endliche Zahl sein")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise ValueError(f"{name} muss eine endliche Zahl sein") from None
     if not isfinite(number):
         raise ValueError(f"{name} muss eine endliche Zahl sein")
     return number

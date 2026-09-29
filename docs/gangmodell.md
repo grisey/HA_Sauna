@@ -1,45 +1,61 @@
 # Gangmodell
 
-Der Ablaufkern führt Gänge, Fristen und Heizwirkung. Die Erkennung liefert nur
-Signale; sie verwaltet keine zweite Bestätigung. Kühlung, Nachlauf und
-Heizsteuerung stehen in [Betrieb](betrieb.md), die Zeitbezüge in
-[Zeitmodell](zeitmodell.md).
+Der Ablaufkern ordnet Erkennungssignale einem Saunagang zu und führt dessen
+Bestätigung, Ende und Zählung. Die [Erkennung](erkennung.md) liefert dafür
+Ereignisse aus dem Messverlauf. Der Controller führt den verbindlichen Gangzustand.
+Das aktuelle Programm führt die Gangzuordnung aus der Proxyerkennung.
+Direkte Präsenzmeldungen bleiben beobachtend.
 
-Ein Personenzeichen legt einen vorläufigen Gang an. Ein zugeordneter Aufguss
-bestätigt denselben Gang: ID und Beginn bleiben gleich. Ein Aufguss ohne vorher
-erkannten Gang kann ihn sofort bestätigt anlegen. Der Beginn gehört zur passenden
-Türschließung derselben Episode und Sitzung; ohne solchen Anker ist ausdrücklich
-die Erkennungszeit der Beginn. Rückwirkende Zuordnung erzeugt keine historischen
-Heizbefehle.
+## Beginn und Bestätigung
 
-Vor dem Eintritt muss nicht vollständig durchgelüftet werden. Eine erkannte
-Türöffnung mit anschließender Schließung genügt als Ausgangspunkt für die
-empfindlichere Personenprüfung. Erst die passenden Temperatur- und
-Feuchteverläufe lösen den vorläufigen Gang aus. Diese Gelegenheit endet mit der
-Bestätigungsfrist ab Türschluss; eine erneute Öffnung verwirft sie. Nachträglich
-eingetroffene Signale aus einer abgelaufenen oder ersetzten Türöffnungsepisode
-starten keinen Gang.
-
-| Ereignis | Wirkung |
+| Ereignis | Wirkung auf den Gang |
 | --- | --- |
-| Personensignal | Legt einen vorläufigen Gang an und aktiviert die Gang-Heizbehandlung. |
-| Erster zugeordneter Aufguss | Bestätigt denselben Gang. |
-| Weitere Aufgüsse | Bleiben dem bestätigten Gang zugeordnet. |
-| Bestätigungsfrist ohne Aufguss | Hebt den vorläufigen Gang vollständig auf. |
-| Durchlüften vor Bestätigung | Hebt den vorläufigen Gang vollständig auf. |
-| Durchlüften nach Bestätigung | Beendet den Gang zum tatsächlichen Bestätigungszeitpunkt. |
-| Betrieb-Aus | Beendet den offenen Gang sofort; späteres Ein schließt ihn nicht wieder an. |
+| Zulässiges Personensignal | Eröffnet einen vorläufigen Gang. |
+| Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit derselben Identität und demselben Beginn oder eröffnet unmittelbar einen bestätigten Gang. |
+| Weiterer Aufguss | Ergänzt den aktiven Gang unter derselben Identität. |
+| Ablauf der Bestätigungsfrist | Nimmt den noch vorläufigen Gang zurück. |
+| Bestätigtes Durchlüften während eines vorläufigen Gangs | Nimmt den vorläufigen Gang zurück. |
+| Bestätigtes Durchlüften nach einem Aufguss | Beendet den bestätigten Gang zum Buchungszeitpunkt der Lüftungsbestätigung. |
+| Betrieb-AUS | Beendet den offenen Gang. |
 
-Die Aufgussbestätigung muss innerhalb von 12 min erfolgen. Eine ungefähre
-Gangdauer ist keine automatische Endbedingung. Vorläufige oder aufgehobene Gänge
-zählen nicht und erzeugen keinen Nachlauf. Jeder bestätigte, beendete Gang zählt
-genau einmal, unabhängig vom Endgrund; die Zählbarkeit folgt aus dem Gang und
-seinen Aufgüssen, nicht aus einem separaten Merker.
+Als Beginn dient die passende Türschließung derselben Sitzung und Türöffnung.
+Ersatzweise gilt der Buchungszeitpunkt des zulässigen Personensignals oder
+Aufgusses. Die tatsächliche Erkennungszeit wird gesondert festgehalten.
 
-Nachlauf und aktive Kühlung sperren reguläre neue Gangsignale. Eine manuelle
-Ofenübersteuerung kann sie pausieren und einen neuen Gang zulassen. Trifft ein
-Personensignal während eines dadurch pausierten Nachlaufs ein, bleibt dieser
-Nachlauf erhalten, bis ein Aufguss den neuen Gang bestätigt. Bei Aufhebung oder
-Fristablauf läuft der alte Rest weiter; nur die Bestätigung storniert ihn. Die
-bis dahin wirklich gelaufene Nachlaufzeit wird höchstens einmal auf eine Kühlung
-angerechnet. Ein laufender Gang wird von fälliger Kühlung nicht unterbrochen.
+Eine erkannte Türöffnung mit anschließender Schließung eröffnet die empfindlichere
+Personenprüfung für die eingestellte Bestätigungsfrist. Ein neuer Feuchteanstieg
+mit zunehmendem absolutem Wassergehalt kann in dieser Zeit einen vorläufigen
+Gang auslösen. Eine weitere Türöffnung beginnt einen neuen Türbezug. Diese
+Zuordnung setzt eine neue Feuchteentwicklung nach der Öffnung voraus.
+
+Die Aufgussbestätigungsfrist des Proxyverfahrens endet standardmäßig 12 Minuten
+nach dem Gangbeginn.
+Ein rechtzeitig zugeordneter Aufguss bestätigt den Gang bis einschließlich dieses
+Endzeitpunkts. Nach einer Rücknahme kann ein neuer gültiger Aufguss einen eigenen
+bestätigten Gang beginnen. Die Anzeige nennt die seit Gangbeginn verstrichene
+Zeit.
+
+Eine kurze Türöffnung mit anschließender Schließung erhält den aktiven Gang.
+Die Lüftungsbestätigung schützt den laufenden Gang bei kurzem Austritt einzelner
+Personen, während mindestens eine Person bleibt. Die spätere Kopplung dieser
+Bestätigung an direkte Präsenz bleibt bis zur Prüfung von Sensorposition und
+realem Verhalten unkonkretisiert.
+
+[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md) ·
+[Erweiterungsvertrag für direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
+
+## Zählung und Folge
+
+Die Gangzahl steigt genau einmal beim Ende eines bestätigten Gangs, unabhängig
+vom Endgrund. Zugleich wechselt die Temperaturautomatik zur nächsten Stufe.
+Der abgeschlossene Gang bewahrt seinen Beginn und seine zugeordneten Aufgüsse.
+
+Während angeforderter oder laufender Kühlung bleibt die Gangzuordnung für neue
+Personen- und Aufgusssignale gesperrt. Nach ihrer Freigabe
+beginnt die Erkennung mit Messfenstern aus dem freigegebenen Abschnitt.
+
+Ein aktuell aktiver Gang fordert im Automatikbetrieb Heizen an. Das gilt für
+vorläufige und bestätigte Gänge gleichermaßen.
+
+[Heizpriorität](praesenz-ofen-phasen.md#heizpriorität) ·
+[Gangende und Kühlung](ofenkuehlung.md#auslösung)
