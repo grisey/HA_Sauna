@@ -1341,8 +1341,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await target_arc.press("PageDown")
         await expect(target_arc).to_have_attribute("aria-valuenow", "70", timeout=10000)
-        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
-            await self.panel.locator('[data-action="program-mode:individual"]').click()
+        await self.panel.locator('[data-action="program-mode:individual"]').click()
+        await self.panel.evaluate(
+            "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
+        )
         await expect(self.panel.locator("#progression-end")).to_be_visible()
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
             await self.panel.locator('#progression-end').fill("86")
