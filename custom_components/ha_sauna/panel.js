@@ -4770,6 +4770,7 @@ class SaunaPanel extends HTMLElement {
         )
           return;
         this.programSaveState = null;
+        if (this.state?.session) this.programChoiceOpen = false;
         this.drawCurrent();
       }, 2000);
     } catch (error) {
