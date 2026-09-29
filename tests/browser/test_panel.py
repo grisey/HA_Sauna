@@ -1346,10 +1346,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
         )
         await expect(self.panel.locator("#progression-end")).to_be_visible()
-        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
+        async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await self.panel.locator('#progression-end').fill("86")
             await self.panel.locator('#progression-end').press("Tab")
-        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
+        async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST") as result:
             await self.panel.locator('#progression-gangs').fill("3")
             await self.panel.locator('#progression-gangs').press("Enter")
         await self.panel.locator('[data-action="program-info:free"]').click()
