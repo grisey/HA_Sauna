@@ -15,8 +15,9 @@ Beide Verträge verwenden `effective_at` für den fachlichen Zeitpunkt und
 `received_at` für den Zeitpunkt, zu dem die Aussage im jeweiligen Vertrag
 verfügbar wurde. Bei abgeleiteten Gangereignissen stammt dieser zweite Zeitpunkt
 aus der Erkennung beziehungsweise Zustellung der zugrunde liegenden Änderung.
-Der Ablaufkern unterscheidet daneben die Buchungszeit eines `Event`. Die
-Zuordnung dieser Zeiten und ihre Reihenfolge stehen im [Zeitmodell](zeitmodell.md).
+Der Ablaufkern unterscheidet daneben die Buchungszeit eines `Event`.
+
+[Zeitbezüge und Reihenfolge](zeitmodell.md)
 
 Eine `proxy_retraction` nimmt den Beleg für eine bisher angenommene Belegung
 zurück und meldet `unknown`. Beobachtete Abwesenheit wird durch `absent`
@@ -24,8 +25,9 @@ ausgedrückt. Eine Rücknahme gehört zu ihrem ursprünglichen Beleg; eine jüng
 Präsenzmeldung mit anderer Referenz bleibt eigenständig.
 
 Die Proxyquelle führt die Gangzuordnung. Direkte Präsenzmeldungen werden mit
-ihrem eigenen Herkunfts- und Verfügbarkeitsnachweis beobachtet. Das fachliche
-Verhältnis der Quellen beschreibt [Präsenz und Phasen](praesenz-ofen-phasen.md).
+ihrem eigenen Herkunfts- und Verfügbarkeitsnachweis beobachtet.
+
+[Präsenzquellen](praesenz-ofen-phasen.md#präsenzquellen-im-aktuellen-programm)
 
 `ConsumerEvent.delivery` unterscheidet `live` und `archive_correction`.
 Archivkorrekturen aktualisieren Zuordnung und Darstellung. Gerätebefehle
@@ -38,7 +40,6 @@ auch über erneute Archivabfragen hinweg.
 `ControlInputs` fasst die laufenden Anforderungen zusammen:
 `gang_heat_demand` beschreibt den Heizbedarf des Gangs,
 `temporary_door_heat` die bestehende Türhilfe und `cooling` die Ofenkühlung.
-Der zuständige Ablauf hält eine Anforderung bis zu ihrer Erledigung aufrecht.
 Der Controller wertet diese Anforderungen zusammen mit Betriebsart, Betrieb-AUS
 und technischen Schutzbedingungen aus. `gang_veto` und `door_request` sind
 kompatible Namen für die beiden ersten Werte und lesen denselben Zustand.
@@ -76,8 +77,9 @@ auch bei derselben Zahl. Das Panel übermittelt den Sollwert im Vollformular;
 Wird ein freies Programm durch eine neue Start-/End-/Verteilungsvorgabe ersetzt,
 bilden gespeicherte Werte und aktive Stufen denselben gewählten Stand ab. Gültige
 Live-Änderungen werden in den bestehenden Controller übernommen und erhalten die
-laufende Sitzung. Änderbarkeit und Benutzerrechte stehen in
-[Parameter](parameter.md) und [Bedienung](bedienung.md).
+laufende Sitzung.
+
+[Änderbarkeit](parameter.md) · [Bedienrechte](bedienung.md)
 
 Die Antworten auf Änderungen von Betriebsart und Tasterprogramm stammen aus
 dem unveränderlichen Ergebnis des gemeinsamen Einstellungsschreibers. Der
@@ -100,8 +102,9 @@ Betriebskontext. Ein Start bei AUS verbraucht seine eigene Geste. Erst eine neue
 lange Geste bei laufendem Betrieb erzeugt den Sitzungsabschluss `END_HOLD` und
 fordert Licht-AUS an. Eine reine Langklassifikation liefert für sich den
 Langdrucknachweis. Der bestätigte Loslassnachweis erzeugt `END_RELEASE` und
-startet den Lichtnachlauf. Den fachlichen Ablauf beschreibt
-[Betrieb](betrieb.md#bedienhandlungen-und-betriebsart).
+startet den Lichtnachlauf.
+
+[Tasterbedienung](betrieb.md#bedienhandlungen-und-betriebsart)
 
 ## Technisches Neuladen und Geräteübergabe
 
@@ -131,6 +134,7 @@ Lichtaufgabe behält das offene Archiv für ihren Abschluss. Der Runtimeabschlus
 kann erneut versucht werden; die Übernahme durch eine neue Runtime setzt den
 erfolgreichen Abschluss des bisherigen Besitzers voraus.
 
-Archivzugriff, Seitenzeiger und Downloadberechtigung beschreibt
-[Speicherung](speicherung.md). Die dortigen Originaldaten bleiben auch bei einer
-späteren Neuzuordnung von Geräten ihrer ursprünglichen Quelle zugeordnet.
+Archivierte Originaldaten bleiben auch bei einer späteren Neuzuordnung von
+Geräten ihrer ursprünglichen Quelle zugeordnet.
+
+[Archivzugriff, Seitenzeiger und Downloadberechtigung](speicherung.md)

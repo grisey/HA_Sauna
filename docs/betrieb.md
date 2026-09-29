@@ -1,11 +1,5 @@
 # Saunabetrieb
 
-Eine Sitzung verbindet den Saunabetrieb mit seinem Verlauf. Diese Seite erklärt
-Bedienung und Regelung im Zusammenhang. Die Zuordnung von Aufgüssen erläutert
-das [Gangmodell](gangmodell.md); die [Heizpriorität](praesenz-ofen-phasen.md)
-und das [Zeitmodell](zeitmodell.md) beschreiben die zugehörigen Regeln.
-Genannte Standardwerte sind in den [Parametern](parameter.md) einstellbar.
-
 ## Sitzung
 
 Betrieb-EIN beginnt eine Sitzung. Betrieb-AUS beendet den offenen Gang und
@@ -16,8 +10,14 @@ Sitzung. Jeder Sitzungsstart beendet einen laufenden Lichtnachlauf.
 
 Während der Sitzung lassen sich Solltemperatur und Temperaturprogramm anpassen.
 Grundlegende Einstellungen und Gerätezuordnungen werden nach Sitzungsende
-geändert. Die Wiederaufnahmefrist gehört zur bestehenden Sitzung. Bei einem Neustart von Home Assistant bleibt der gespeicherte
-Verlauf erhalten; der Ofenbetrieb beginnt wieder durch ausdrückliches Einschalten.
+geändert. Die Wiederaufnahmefrist gehört zur bestehenden Sitzung. Bei einem
+Neustart von Home Assistant bleibt der gespeicherte Verlauf erhalten; der
+Ofenbetrieb beginnt wieder durch ausdrückliches Einschalten.
+
+Genannte Standardwerte sind in den [Parametern](parameter.md) einstellbar.
+
+[Gangmodell](gangmodell.md) · [Heizpriorität](praesenz-ofen-phasen.md) ·
+[Zeitmodell](zeitmodell.md)
 
 ## Temperatur und Bereitschaft
 
@@ -50,7 +50,8 @@ Die Phasenanzeige beschreibt den aktuellen Betriebsabschnitt. Beim Aufheizen
 steht daneben eine Prognose aus einem geeigneten früheren Aufheizverlauf und
 dem zunehmend belastbaren aktuellen Temperaturtrend. Sie dient der Anzeige
 und erscheint in Fünf-Minuten-Stufen.
-Ihre Berechnung erläutert [Darstellung](darstellung.md).
+
+[Aufheizprognose](darstellung.md#zustand-und-zeit)
 
 ## Temperaturprogramm
 
@@ -65,8 +66,9 @@ Stufe gilt deren Temperatur auch für weitere Gänge.
 Bei einer gleichmäßigen Verteilung erhält eine Änderung ausschließlich der
 Endtemperatur das nächste Ziel; die verbleibenden Steigerungen verteilen sich
 bis zum neuen Endwert. Eine neue Starttemperatur beginnt eine neue Verteilung.
-Gangzählung und laufende Zeitabläufe bleiben erhalten. Die Auswahl und
-Bearbeitung der Programme beschreibt [Bedienung](bedienung.md).
+Gangzählung und laufende Zeitabläufe bleiben erhalten.
+
+[Programme auswählen und bearbeiten](bedienung.md#einschalten-und-temperatur-wählen)
 
 ## Heizzeit, Timer und Energie
 
@@ -94,11 +96,11 @@ und lokale Heizzeitrücksetzungen hinweg erhalten.
 
 ## Ofenkühlung
 
-Eine angeforderte Ofenkühlung fordert Ofen-AUS an. Mit der bestätigten
+Zur Ofenkühlung fordert die Steuerung Ofen-AUS an. Mit der bestätigten
 Schützstellung AUS berechnet die Steuerung die Dauer und beginnt, die bestätigte
 AUS-Laufzeit zu zählen. Die Standarddauer liegt zwischen 5 und 15 Minuten.
-Auslösung, Berechnungsregel und ausdrückliches vorzeitiges Ende beschreibt
-[Ofenkühlung](ofenkuehlung.md).
+
+[Auslösung, Dauer und vorzeitiges Ende der Ofenkühlung](ofenkuehlung.md)
 
 ## Licht
 
@@ -145,9 +147,9 @@ Eine neue lange Geste bei laufendem Betrieb beendet den Betrieb und schließt di
 Sitzung ab. Bei einer reinen Ereignisquelle ist jede neue Langklassifikation eine
 eigenständige Geste mit dem aktuellen Betriebskontext: Die erste startet bei AUS,
 die nächste beendet die laufende Sitzung. Tatsächliches Halten und bestätigtes
-Loslassen bestimmen den oben beschriebenen Lichtabschluss. Die zugehörigen
-Meldungen und ihre einmalige Verarbeitung beschreibt der
-[Ereignisvertrag](schnittstellen.md#tasterereignisse).
+Loslassen bestimmen den oben beschriebenen Lichtabschluss.
+
+[Tastermeldungen und einmalige Verarbeitung](schnittstellen.md#tasterereignisse)
 
 Die vorübergehende Ofenwahl in Automatik gilt bis zur Rückgabe, einem Wechsel
 der Phase oder der automatischen EIN-/AUS-Anforderung, längstens 10 Minuten.
@@ -158,7 +160,8 @@ Regeltemperatur voraus. Schutz, Betrieb-AUS und Ofenkühlung haben Vorrang.
 Bei der Rückgabe eines manuell eingeschalteten Ofens an die Automatik bleibt
 eine noch laufende Mindestheizzeit mit ihrem ursprünglichen tatsächlichen
 Beginn erhalten. Ausdrücklich gewähltes Ofen-AUS beendet diese Anforderung.
-Die Rollen und verfügbaren Bedienelemente erläutert [Bedienung](bedienung.md).
+
+[Bedienrechte und Übersteuerung](bedienung.md#betriebsart-manuell-und-übersteuerung)
 
 Die Betriebsart Manuell wird nach Sitzungsende gewählt und bleibt bis zur
 nächsten ausdrücklichen Betriebsartwahl bestehen. Dort steuern
@@ -169,10 +172,10 @@ technische Schutzgründe und Betrieb-AUS behalten Vorrang.
 
 Gültige Temperaturmessungen und bestätigte Geräterückmeldungen bilden die
 Grundlage der Heizfreigabe. Messwerte und Befehlsrückmeldungen haben eigene
-Gültigkeits- beziehungsweise Bestätigungsfristen. Die [Parameterreferenz](parameter.md#überwachung)
-erläutert diese Zeitbedingungen. Die technische Überwachung bewertet jede
-Störung nach den für sie festgelegten Bedingungen. Eine ausgelöste
+Gültigkeits- beziehungsweise Bestätigungsfristen. Eine ausgelöste
 Schutzabschaltung verriegelt die Heizfreigabe.
+
+[Überwachungsfristen](parameter.md#überwachung)
 
 Während einer Lücke der gültigen Regeltemperatur bleibt die Heizung aus.
 Fehler einzelner konfigurierter Quellen bleiben sichtbar; gültige Ersatzquellen

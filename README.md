@@ -7,18 +7,10 @@ im Verlauf verfolgen Sie Messwerte und erkannte Gänge.
 
 ## Einstieg
 
-Die [Einrichtung](docs/einrichtung.md) führt durch Installation und
-Gerätezuordnung. Die [Bedienungsanleitung](docs/bedienung.md) erklärt die tägliche
-Nutzung über die Oberfläche und die vorhandenen Taster.
+[Einrichtung](docs/einrichtung.md) · [Bedienungsanleitung](docs/bedienung.md)
 
 ## Technische Dokumentation
 
-[Betrieb](docs/betrieb.md) erklärt den Ablauf,
-[Parameter](docs/parameter.md) die Einstellungen.
-[Architektur](docs/architektur.md) beschreibt den Aufbau der Integration und
-verweist auf die Fach- und Schnittstellenbeschreibungen.
-
-Die Datenhaltung und ihre Sicherung stehen unter
-[Speicherung](docs/speicherung.md). Die [Prüfanleitung](docs/abnahme.md)
-erläutert die Prüfverfahren. Für Arbeiten am Projekt gelten die
-[Arbeitsregeln](AGENTS.md).
+[Betrieb](docs/betrieb.md) · [Parameter](docs/parameter.md) ·
+[Architektur](docs/architektur.md) · [Speicherung](docs/speicherung.md) ·
+[Prüfanleitung](docs/abnahme.md) · [Arbeitsregeln](AGENTS.md)

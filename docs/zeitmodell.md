@@ -1,8 +1,7 @@
 # Zeitmodell
 
-Diese Seite beschreibt, ab welchem Ereignis Fristen und Laufzeiten des
-[Saunabetriebs](betrieb.md) zählen. Zeitstempel tragen eine Zeitzone und werden
-intern in UTC geführt. Die Oberfläche verwendet die aktuelle lokale Zeitzone des Browsers.
+Zeitstempel tragen eine Zeitzone und werden intern in UTC geführt. Die
+Oberfläche verwendet die lokale Zeitzone des Browsers.
 
 ## Laufzeiten und Fristen
 
@@ -22,7 +21,7 @@ Die angegebenen Dauern sind einstellbare Standardwerte.
 
 Jede Frist gehört zu einer Sitzung und einem bestimmten Vorgang. Ausschließlich
 die aktuelle Frist dieses Vorgangs ist wirksam. Wiederholte Ereignisse behalten
-dieselbe einmalige Wirkung; die Laufzeituhr schreitet zeitlich voran.
+dieselbe einmalige Wirkung.
 
 ## Fachlicher Zeitpunkt und Verarbeitung
 
@@ -37,8 +36,9 @@ Ein Erkennungsereignis führt drei Zeitbezüge:
 Es gilt `effective_at <= booking_at <= detected_at`. Bei unmittelbarer
 Verarbeitung stimmen Buchungs- und Erkennungszeit überein. Originalmessungen
 bewahren ihren Empfangszeitpunkt; ein Gerätezeitpunkt wird bei vorhandener
-Quellenangabe übernommen. Die technischen Datenverträge stehen unter
-[Schnittstellen](schnittstellen.md).
+Quellenangabe übernommen.
+
+[Datenverträge](schnittstellen.md)
 
 Beim Aufholen bereits empfangener Messungen verarbeitet der Controller deren
 Erkennungsschritte vor zeitlich späteren Bedienhandlungen. Für jeden Schritt
@@ -70,5 +70,6 @@ werden weiterhin mit ihren ursprünglich gespeicherten Feldern gelesen.
 
 Die historische Phasenansicht ordnet den Verlauf rückblickend zu. Zeitlich spät
 erkannte Ereignisse können diese Zuordnung ergänzen. Die bestätigten
-Schalterrückmeldungen bewahren dabei den tatsächlich gemeldeten Verlauf; ihre
-Rolle für die [Phasen und Heizanforderung](praesenz-ofen-phasen.md) bleibt eindeutig.
+Schalterrückmeldungen bewahren dabei den tatsächlich gemeldeten Verlauf.
+
+[Phasen und Heizanforderung](praesenz-ofen-phasen.md)

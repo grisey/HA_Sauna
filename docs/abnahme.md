@@ -1,9 +1,6 @@
 # Prüfanleitung
 
-Ein Prüflauf belegt seine ausgeführten Fälle und Prüfbedingungen. Die fachliche
-Prüfung verfolgt zusätzlich den Weg vom Eingang über den führenden Zustand bis
-zum tatsächlichen Verbraucher. Ausgangspunkt sind die Regeln in
-[Betrieb](betrieb.md), [Gangmodell](gangmodell.md) und [Zeitmodell](zeitmodell.md).
+[Arbeitsregeln zur Prüfung](../AGENTS.md#prüfung)
 
 Tests laufen ausschließlich unter Linux. Die maßgeblichen Versionen,
 Abhängigkeiten und Zeitgrenzen stehen in der
@@ -21,12 +18,6 @@ Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 | HA-Integration | Laufende Testinstanz mit HA-Listenern, Diensten, Rechten und HTTP-Schnittstellen; externe Geräte sind Testquellen. | `tests/integration/` |
 | Browser | Bedienung im HA-Frontend über Chromium. | `tests/browser/` |
 
-Die Prüfung verwendet den zur Änderung passenden Originalpfad und vorhandene
-Fixtures. Ein Gegenfall verändert gezielt die entscheidende Bedingung. Beispielsweise
-wird eine verzögerte Rückmeldung mit einer rechtzeitig eintreffenden verglichen.
-Erwartete Werte stammen aus der fachlichen Regel; der Test beobachtet deren
-Umsetzung und den betroffenen Verbraucher.
-
 ## Fachkern und JavaScript
 
 Der Fachkern verwendet Python und seine Standardbibliothek. Die CI wählt dafür
@@ -42,9 +33,10 @@ node --test tests/panel_*.test.js
 
 Die Variable `SAUNA_RECORDER_ARCHIVE` aktiviert die privaten Vergleichsfälle
 mit einem freigegebenen Recorderexport. Der Standardlauf kennzeichnet diese
-Fälle als übersprungen. Die [Replaybeschreibung](kandidat.md) erklärt
-Datengrundlage, Aufbereitung und Reproduktion. Die Auswertung einer zur
+Fälle als übersprungen. Die Auswertung einer zur
 Kalibrierung verwendeten Sitzung belegt den Vergleich an genau dieser Sitzung.
+
+[Replaydatengrundlage und Reproduktion](kandidat.md)
 
 ## Home Assistant
 
@@ -92,16 +84,14 @@ python -m playwright install --with-deps chromium
 HA_TEST_REQUIRED=1 python -m unittest discover -s tests/browser -v
 ```
 
-Die ergänzenden Mess- und Interaktionsprogramme für den Sitzungsverlauf stehen
-im [Verlaufsvertrag](livekurve.md). Ihre Messgrenzen beschreiben, welcher Teil
-der Verarbeitung jeweils erfasst wird.
+[Mess- und Interaktionsprogramme für den Sitzungsverlauf](livekurve.md#reproduzierbare-prüfmethode)
 
 ## Nachweis festhalten
 
 Ein Prüfprotokoll verbindet den Quellstand mit Umgebung, exaktem Kommando,
 Exitcode und den beobachteten Ergebnissen. Ausgeführte Fälle, übersprungene Fälle
-und fehlgeschlagene Prozesse werden getrennt ausgewiesen. Erfolgreich ist ein
-Prozess mit erfolgreichem Abschluss; ein nachfolgender Absturz gehört zum
+und fehlgeschlagene Prozesse werden getrennt ausgewiesen. Der Nachweis erfasst
+den vollständigen Prozessabschluss; ein nachfolgender Absturz gehört zum
 Ergebnis desselben Laufs.
 
 Bei einer PR-Prüfung werden der gemeldete PR-Head und der tatsächlich
@@ -127,13 +117,11 @@ richtet sich nach relevanten Abweichungen und anschließend vorgenommenen
 ihre Zuordnung zum geprüften Stand steht im aktuellen Arbeitsnachweis.
 
 Prüfrunden, Befunde und konkrete Ergebnisse liegen im getrennten Arbeitsbereich
-`arbeit/`. Diese Anleitung beschreibt die dauerhaft ausführbaren Prüfwege.
+`arbeit/`.
 Die CI führt die Befehle mit ihren im Workflow festgelegten Zeitgrenzen aus und
 beendet überholte parallele Läufe.
 
 Die Wirkung an einer realen Anlage wird in einer eigenen, ausdrücklich
 beauftragten Prüfung durch den Benutzer beobachtet. Ihr Nachweis benennt die
 verwendeten Geräte und Rückmeldungen. Die Softwareprüfungen beschreiben
-ihre jeweiligen Testquellen und simulierten Außenwirkungen. Einrichtung und
-Bedienung sind in [Einrichtung](einrichtung.md) und [Bedienung](bedienung.md)
-beschrieben.
+ihre jeweiligen Testquellen und simulierten Außenwirkungen.

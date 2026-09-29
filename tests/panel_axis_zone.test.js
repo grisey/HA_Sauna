@@ -5,8 +5,8 @@ const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 
-let zone = "UTC";
-const context = {
+const loadContext = (timeZone) => {
+  const context = {
   HTMLElement: class {},
   customElements: {
     get: () => null,
@@ -16,25 +16,33 @@ const context = {
     DateTimeFormat: function (locale, options) {
       return new Intl.DateTimeFormat(locale, {
         ...options,
-        timeZone: options?.timeZone || zone,
+        timeZone: options?.timeZone || timeZone,
       });
     },
   },
-};
-vm.runInNewContext(
+  };
+  vm.runInNewContext(
   fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8") +
     ";globalThis.HistoryChartForTest = HistoryChart;",
-  context,
-);
+    context,
+  );
+  return context;
+};
 
-test("retained history axes refresh when the local zone changes", () => {
-  zone = "UTC";
+test("history axes use the fixed local zone and reuse unchanged layers", () => {
+  for (const [zone, clock] of [["UTC", "10:10"], ["Europe/Berlin", "11:10"]]) {
+  const context = loadContext(zone);
   const nodes = new Map();
   const node = (key) => {
     if (!nodes.has(key)) nodes.set(key, { textContent: "", innerHTML: "", setAttribute() {} });
     return nodes.get(key);
   };
-  const model = { start: 1, end: 2, low: 20, high: 100, humidityHigh: 80 };
+  const start = Date.parse("2032-01-01T10:10:00Z"),
+    end = Date.parse("2032-01-01T10:20:00Z");
+  const model = {
+    start, end, left: 0, right: 100, top: 0, bottom: 100,
+    low: 20, high: 100, humidityHigh: 80, x: (time) => (time - start) / 6000,
+  };
   let axes = 0,
     annotations = 0;
   const panel = {
@@ -44,7 +52,10 @@ test("retained history axes refresh when the local zone changes", () => {
     historyTimelineRevision: 1,
     historyTitle: () => "Archiv",
     historyModel: () => model,
-    historyAxes: () => `zone-${++axes}`,
+    historyAxes: () => {
+      axes++;
+      return context.PanelForTest.prototype.historyAxes.call(panel, model);
+    },
     historyRecords: () => [],
     historyAnnotations: () => `annotations-${++annotations}`,
     syncHistoryOverview() {},
@@ -66,18 +77,17 @@ test("retained history axes refresh when the local zone changes", () => {
   });
   const session = { ended_at: "2032-01-01T01:00:00Z" };
   chart.render(new Set(["status"]), session, []);
-  assert.equal(node("[data-history-axes]").innerHTML, "zone-1");
+  assert.match(node("[data-history-axes]").innerHTML, new RegExp(clock));
   chart.render(new Set(["status"]), session, []);
   assert.equal(axes, 1);
   assert.equal(annotations, 1);
-  zone = "Europe/Berlin";
-  chart.render(new Set(["status"]), session, []);
-  assert.equal(node("[data-history-axes]").innerHTML, "zone-2");
-  assert.equal(node("[data-history-annotations]").innerHTML, "annotations-2");
+  assert.equal(node("[data-history-annotations]").innerHTML, "annotations-1");
+  }
 });
 
-test("retained tables, diagnostics and session labels share the new local zone", () => {
-  zone = "UTC";
+test("tables, diagnostics, annotations and session labels use each fixed local zone", () => {
+  for (const [zone, clock] of [["UTC", "10:10"], ["Europe/Berlin", "11:10"]]) {
+  const context = loadContext(zone);
   const at = "2032-01-01T10:10:00Z",
     later = "2032-01-01T10:20:00Z";
   const event = {
@@ -146,23 +156,15 @@ test("retained tables, diagnostics and session labels share the new local zone",
   panel.renderHistory(new Set(["status"]));
   panel.syncHistorySessions();
   for (const selector of ["#gangs", "#event-list", "#session"])
-    assert.match(node(selector).innerHTML, /10:10/);
+    assert.match(node(selector).innerHTML, new RegExp(clock));
   const model = {
     start: Date.parse(at), end: Date.parse(later), left: 0, right: 100,
     top: 0, bottom: 100, x: (time) => (time - Date.parse(at)) / 6000,
   };
-  assert.match(panel.historyAnnotations(model, session, [gang]), /10:10/);
-  zone = "Europe/Berlin";
-  panel.renderHistory(new Set(["status"]));
-  panel.syncHistorySessions();
-  for (const selector of ["#gangs", "#event-list", "#session"])
-    assert.match(node(selector).innerHTML, /11:10/);
-  assert.match(panel.historyAnnotations(model, session, [gang]), /11:10/);
+  assert.match(panel.historyAnnotations(model, session, [gang]), new RegExp(clock));
   node("#plots").hidden = true;
   panel.view = "diagnostics";
   panel.renderHistory(new Set(["status"]));
-  assert.match(node("#detection-plots").innerHTML, /11:10/);
-  zone = "UTC";
-  panel.renderHistory(new Set(["status"]));
-  assert.match(node("#detection-plots").innerHTML, /10:10/);
+  assert.match(node("#detection-plots").innerHTML, new RegExp(clock));
+  }
 });

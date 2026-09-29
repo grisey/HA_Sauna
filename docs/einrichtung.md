@@ -1,7 +1,7 @@
 # Einrichtung
 
-Diese Anleitung richtet sich an Home-Assistant-Administratoren. HA Sauna setzt
-Home Assistant ab **2026.9.0** voraus. Die Zuordnung erfolgt über die bereits in
+Die Einrichtung erfordert Home-Assistant-Administratorrechte und
+Home Assistant ab **2026.9.0**. Die Zuordnung erfolgt über die bereits in
 Home Assistant vorhandenen Entitäten Ihrer Anlage.
 
 ## Integration installieren
@@ -41,8 +41,9 @@ verfügbaren Position weiterläuft.
 Die bestätigte Schalterstellung des Heizschützes liefert die erforderliche
 Relaisrückmeldung. Dafür genügt auch die bestätigte Stellung des verwendeten
 Shelly-Schalters. Ein Leistungssensor oder ein unabhängiger binärer Heiznachweis
-kann die Anlage ergänzen. Die möglichen Zuordnungen und Einheiten beschreibt
-die [Parameterreferenz](parameter.md#entitätsrollen).
+kann die Anlage ergänzen.
+
+[Entitätsrollen und Einheiten](parameter.md#entitätsrollen)
 
 ## Bedieneingang einrichten
 
@@ -61,8 +62,9 @@ unmittelbar bedienbar.
 Öffnen Sie im Saunapanel **Einstellungen → Grundeinstellungen**. Prüfen Sie
 zuerst, ob das **Höchstalter eines Messwerts** die üblichen Meldeabstände Ihrer
 Sensoren abdeckt. Kontrollieren Sie anschließend die Schützrückmeldung und die
-**Helligkeitsskala des Lichtgeräts** anhand der Gerätekonfiguration. Die
-[Parameterreferenz](parameter.md) erläutert die Werte und ihre Standards.
+**Helligkeitsskala des Lichtgeräts** anhand der Gerätekonfiguration.
+
+[Parameterreferenz](parameter.md)
 
 Die Untergrenze für Solltemperaturen beträgt bei einer neuen Einrichtung
 60 °C und lässt sich einstellen. Die feste Obergrenze beträgt 100 °C.
@@ -77,6 +79,7 @@ Deaktivieren Sie vor dem ersten Betrieb die bisherigen Sauna-Automationen,
 die denselben Ofen oder dasselbe Licht steuern. Damit führt HA Sauna den
 automatischen Ablauf; die vorhandenen Lichttaster bleiben Teil der Bedienung.
 
-Die tägliche Nutzung erklärt die [Bedienungsanleitung](bedienung.md).
 Gerätezuordnungen und technische Grundeinstellungen lassen sich nach Ende einer
 Sitzung über **Einstellungen** erneut bearbeiten.
+
+[Bedienungsanleitung](bedienung.md)

@@ -6,24 +6,25 @@ eingehenden Meldungen und Bedienungen zeitlich ein. Der Geräteadapter verbindet
 diesen Ablauf mit Home Assistant: Er liest die konfigurierten Quellen, sendet
 Gerätebefehle und verarbeitet deren Rückmeldungen.
 
-Die [Designentscheidungen](entscheidungen.md) erläutern diese Aufteilung. Die
-fachlichen Abläufe stehen in [Betrieb](betrieb.md), [Gangmodell](gangmodell.md)
-und [Ofenkühlung](ofenkuehlung.md).
+[Designentscheidungen](entscheidungen.md) · [Betrieb](betrieb.md) ·
+[Gangmodell](gangmodell.md) · [Ofenkühlung](ofenkuehlung.md)
 
 ## Konfiguration und Bedienung
 
 `bindings.py` beschreibt die Rollen externer Entitäten. `config_flow.py` ordnet
 ihnen konkrete Quellen und Geräte zu und prüft ihre Metadaten. `Configuration`
 in `runtime.py` fasst diese Zuordnung mit den Einstellungen zusammen;
-`core/parameters.py` bildet den unveränderlichen Parameterstand.
+`core/parameters.py` definiert Standardwert, Einheit und zulässigen Bereich der
+Parameter und bildet ihren unveränderlichen Stand.
 `core/program_catalog.py` beschreibt benannte Temperaturprogramme.
 
 `settings.py` ist der gemeinsame Schreibweg für Einstellungen. Er prüft den
 vollständigen Änderungskandidaten und übernimmt gültige Live-Temperaturänderungen
 in den bestehenden Controller. Dessen Sitzung und Fristen bleiben dabei erhalten.
 Technische Einstellungen und Gerätezuordnungen werden nach Sitzungsende
-geändert. Die während einer Sitzung verfügbaren Änderungen und ihre Rechte
-stehen in [Parameter](parameter.md) und [Bedienung](bedienung.md).
+geändert.
+
+[Änderbarkeit der Einstellungen](parameter.md) · [Bedienrechte](bedienung.md)
 
 Darstellung und Protokollstufe besitzen eigene Änderungswege. Ihre Wirkung bleibt
 auf Anzeige beziehungsweise Protokollierung beschränkt. Die Konfiguration wird
@@ -40,14 +41,16 @@ gleichzeitige Messkanäle gemeinsam für das Erkennungsraster bereit.
 Temperatur-/Feuchtepaar derselben Messposition. `sensor.py` stellt diese
 abgeleiteten Werte als Diagnoseentitäten bereit. `core/detector.py` wertet
 bereits empfangene Messungen in begrenzten Zeitfenstern aus und meldet
-Erkennungsereignisse an den Ablaufkern. Ihre Bedingungen stehen in
-[Erkennung](erkennung.md); Messzeit, Empfang, Erkennung und Buchung erklärt das
-[Zeitmodell](zeitmodell.md).
+Erkennungsereignisse an den Ablaufkern. Der Controller liefert den
+Erkennungskontext nach jedem verarbeiteten Signal neu.
+
+[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md)
 
 `core/timeline.py` ordnet die Ereignisse Gängen zu. Die Proxy-Präsenz folgt diesen
 Zuordnungen. Direkte Präsenzmeldungen werden mit ihrer eigenen Quelle als
-zusätzliche Beobachtungen geführt. Der gemeinsame Datenvertrag steht in
-[Schnittstellen](schnittstellen.md).
+zusätzliche Beobachtungen geführt.
+
+[Datenverträge](schnittstellen.md)
 
 ## Regelung und Geräteausgabe
 
@@ -55,14 +58,16 @@ zusätzliche Beobachtungen geführt. Der gemeinsame Datenvertrag steht in
 Ofenkühlung. `core/thermostat.py` wertet die Heizanforderung unter den geltenden
 Schutzbedingungen aus. Die vorübergehende Türhilfe liegt in
 `core/temporary_door_heat.py`. Der Geräteadapter setzt die Entscheidung um und
-führt die beobachteten Zustände an den Controller zurück. Die Bedeutung einer
-ausdrücklichen manuellen Ofenwahl und ihre Rückkehrpunkte stehen in
-[Betrieb](betrieb.md).
+führt die beobachteten Zustände an den Controller zurück.
+
+[Manuelle Ofenwahl und Rückkehrpunkte](betrieb.md#bedienhandlungen-und-betriebsart)
 
 `core/heating.py` zählt Heizintervalle anhand der verfügbaren Rückmeldung.
 `core/power.py` und `core/energy.py` kennzeichnen die Mess- oder Schätzgrundlage
 der Energieangabe. Die mechanische Timeranzeige verwendet ihre eigene
-Schützrückmeldung; ihre Bedeutung ist ebenfalls in Betrieb beschrieben.
+Schützrückmeldung.
+
+[Heizzeit, Timer und Energie](betrieb.md#heizzeit-timer-und-energie)
 
 `core/light.py` berechnet Zielhelligkeiten aus Betriebsphase, Temperatur und
 Tageslicht. `core/light_output.py` plant Übergänge und manuelle Lichtwahlen.
@@ -81,8 +86,8 @@ beginnt mit einem erneuten Einschaltauftrag.
 `archive.py` schreibt Originaldaten und Zustandsrevisionen nach SQLite.
 `backup.py` koordiniert die Schreibpause für das Home-Assistant-Backup.
 `api.py` stellt den berechtigten Zugriff auf Status, Archiv und Export bereit.
-Das Schema, die Haltbarkeit und die Zugriffsgrenzen beschreibt
-[Speicherung](speicherung.md).
+
+[Archivschema, Backup und Zugriff](speicherung.md)
 
 `core/phases.py` leitet die Phasenansicht aus den fachlichen Objekten und der
 Schützspur ab. `presentation.py`, `frontend.py` und `panel.js` bereiten den
@@ -90,4 +95,6 @@ führenden Zustand für die Oberfläche auf. `core/warmup.py` berechnet eine
 Anzeigeprognose aus der letzten abgeschlossenen Aufheizphase und dem aktuellen
 Messverlauf. Neue Messungen verändern die Schätzung; Statusabfragen lesen das
 vorbereitete Ergebnis. Die Regelung verwendet ihre eigenen Messwerte und
-Freigaben. Der [Verlaufsvertrag](livekurve.md) beschreibt Datenladen und Zeichnung.
+Freigaben.
+
+[Datenladen und Zeichnung](livekurve.md)

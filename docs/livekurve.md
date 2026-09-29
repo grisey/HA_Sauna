@@ -2,9 +2,10 @@
 
 Der Sitzungsverlauf wird in `panel.js` aus Status- und Archivantworten aufgebaut.
 Er verbindet fortlaufende Messkurven mit der zeitlichen Einordnung einer
-Saunasitzung. Die [Darstellungsreferenz](darstellung.md) legt die Gestaltung fest,
-die [Bedienungsanleitung](bedienung.md) erklärt die Nutzung. Für die dauerhafte
-Datenhaltung gilt der [Archivvertrag](speicherung.md).
+Saunasitzung.
+
+[Darstellungsreferenz](darstellung.md) · [Bedienungsanleitung](bedienung.md) ·
+[Archivvertrag](speicherung.md)
 
 ## Datenübernahme und Sitzungsabschluss
 
@@ -87,12 +88,7 @@ Maus, Berührung und Tastatur verwenden denselben begrenzten Fensterzustand.
 Zoomtasten und Vergrößerungsgesten ändern die Zeitabbildung. Strg/Cmd mit dem
 Mausrad vergrößert am Zeiger, das gewöhnliche Mausrad bewegt die Seite.
 
-Beim Wechsel der Rechteprojektion bleibt die Zeitdomäne an der weiterhin
-ausgewählten Sitzung ausgerichtet. Während die neue Archivantwort lädt,
-verwenden sichtbare Zoom-, Verschiebe- und Übersichtsaktionen dieselben
-Sitzungsgrenzen. Ein dabei geänderter Ausschnitt gilt auch nach der Antwort.
-Die Rechtefilterung und die Zuordnung jeder Antwort zu ihrer Abrufgeneration
-folgen dem [Archivvertrag](speicherung.md#archivzugriff).
+[Rechtefilterung und Antwortzuordnung](speicherung.md#archivzugriff)
 
 Der Tooltip sucht mit einer binären Suche in den Originalreihen nach dem
 passenden Messpunkt. `raw_value` liefert den empfangenen Originalwert,
@@ -126,8 +122,8 @@ Panelhülle und richtet die Zeicheninstanz für die aktuelle Auswahl ein.
 
 ## Reproduzierbare Prüfmethode
 
-Die Prüfungen laufen ausschließlich auf Linux. Die Methodenprüfung verwendet die Original-
-Panelmethoden mit synthetischen Daten und kontrollierten Canvasantworten:
+Die Prüfungen laufen ausschließlich auf Linux. Die Methodenprüfung verwendet
+die Original-Panelmethoden mit synthetischen Daten und kontrollierten Canvasantworten:
 
 ```sh
 node --test tests/panel_*.test.js
@@ -135,8 +131,7 @@ node --test tests/panel_*.test.js
 
 Für Browserprüfungen werden Node, Playwright als Entwicklungswerkzeug und eine
 installierte Browserlaufzeit benötigt. Die folgenden Aufrufe erfolgen aus dem
-Repositoryverzeichnis. Jeder Prozess wird einzeln mit seinem Exitcode und dem
-geprüften Quellstand erfasst.
+Repositoryverzeichnis.
 
 ```sh
 node tests/browser/live_history/accept.cjs
@@ -170,9 +165,4 @@ laden; dafür müssen diese Revisionen im lokalen Repository vorhanden sein.
 Messberichte halten die tatsächlich verwendeten Revisionen und
 Umgebungsbedingungen fest.
 
-Die Leistungsziele ergeben sich aus der beschriebenen Arbeitsweise:
-Aktualisierungen verwenden passende Daten- und Geometriecaches weiter,
-Zeigerbewegungen bearbeiten Cursor und Tooltip, und ein Messnachtrag wird als
-zusammengehörige Änderung gezeichnet. Die Skripte liefern Messwerte für die
-jeweilige Umgebung; die [Prüfanleitung](abnahme.md) ordnet den Umfang dieser
-Methoden ein.
+[Prüfanleitung](abnahme.md)

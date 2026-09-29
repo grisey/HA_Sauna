@@ -260,7 +260,7 @@ test("persistent tooltip nodes are reused", () => {
   assert.deepEqual(tooltip.children, nodes);
 });
 
-test("cached tooltip text matches frozen formatter behavior and refreshes its zone", () => {
+test("cached tooltip text matches frozen formatter behavior in each fixed local zone", () => {
   const formatterInputs = {
     when: [undefined, null, false, 0, "", "not-a-time", "2026-01-01T08:00:20Z"],
     tooltipWhen: [
@@ -306,44 +306,37 @@ test("cached tooltip text matches frozen formatter behavior and refreshes its zo
       const actual = inTimeZone(timeZone, () => tooltipFor(source).tooltip.textContent);
       assert.equal(actual, expected);
     }
-
-  const tracker = trackingIntl();
-  const { tooltip, interaction } = inTimeZone("UTC", () =>
-    tooltipFor(measurement(), "measurement", panelSource, tracker.intl),
-  );
-  const initialConstructions = tracker.constructions;
-  const utc = inTimeZone("UTC", () => {
-    interaction.hover({ clientX: 600, clientY: 100 });
-    return tooltip.textContent;
-  });
-  assert.equal(
-    tracker.constructions,
-    initialConstructions + 1,
-    "one zone lookup; timestamp formatters and source-point text are reused",
-  );
-  const expectedNewYork = inTimeZone(
-    "America/New_York",
-    () =>
-      tooltipFor(measurement(), "measurement", frozenPanelSource).tooltip.textContent,
-  );
-  const newYork = inTimeZone("America/New_York", () => {
-    interaction.hover({ clientX: 600, clientY: 100 });
-    return tooltip.textContent;
-  });
-  assert.equal(newYork, expectedNewYork);
-  assert.notEqual(newYork, utc, "a local-zone change invalidates cached tooltip text");
-  assert.ok(
-    tracker.constructions > initialConstructions,
-    "the new zone receives its own cached formatters",
-  );
 });
 
-test("zone changes with equal current offsets still refresh historical formatting", () => {
+test("tooltip formatters and source-point text are reused within each fixed local zone", () => {
+  for (const timeZone of ["UTC", "Europe/Berlin", "America/New_York"])
+    inTimeZone(timeZone, () => {
+      const tracker = trackingIntl();
+      const { tooltip, interaction } = tooltipFor(
+        measurement(), "measurement", panelSource, tracker.intl,
+      );
+      const text = tooltip.textContent,
+        nodes = [...tooltip.children],
+        initialConstructions = tracker.constructions;
+      interaction.hover({ clientX: 600, clientY: 100 });
+      assert.equal(tooltip.textContent, text);
+      assert.deepEqual(tooltip.children, nodes);
+      assert.equal(
+        tracker.constructions,
+        initialConstructions + 1,
+        "one zone lookup; timestamp formatters and source-point text are reused",
+      );
+    });
+});
+
+test("formatter cache separates explicit zones with equal current offsets", () => {
   const current = loadHelper(new EventTarget()).timestampFunctions;
-  const frozen = loadHelper(new EventTarget(), frozenPanelSource).timestampFunctions;
   const past = "1900-01-01T12:00:00.123456Z";
-  for (const zone of ["Europe/Berlin", "Europe/Paris", "Europe/Berlin"])
-    inTimeZone(zone, () =>
-      assert.equal(current.tooltipWhen(past), frozen.tooltipWhen(past)),
-    );
+  for (const zone of ["Europe/Berlin", "Europe/Paris", "Europe/Berlin"]) {
+    const expected = inTimeZone(zone, () => {
+      const frozen = loadHelper(new EventTarget(), frozenPanelSource).timestampFunctions;
+      return frozen.tooltipWhen(past);
+    });
+    assert.equal(current.tooltipWhen(past, zone), expected);
+  }
 });

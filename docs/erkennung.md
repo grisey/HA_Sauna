@@ -33,8 +33,9 @@ eingestellte Bestätigungsdauer. Das empfindlichere Signal ordnet einen neuen
 Feuchteanstieg einer erkannten Türöffnung mit anschließender Schließung zu.
 Es setzt eine neue Feuchteentwicklung nach der Öffnung voraus. Während eines
 Gangs führt die Erkennung die Aufgussprüfung fort. Personenprüfung ist für die
-Eröffnung eines neuen Gangs vorgesehen; die Übergänge erklärt das
-[Gangmodell](gangmodell.md).
+Eröffnung eines neuen Gangs vorgesehen.
+
+[Gangübergänge](gangmodell.md#beginn-und-bestätigung)
 
 ## Absoluter Wassergehalt und Durchlüften
 
@@ -77,15 +78,13 @@ Prüfpunkte an; deren zeitlicher Abstand folgt dem eingestellten Prüfschritt.
 
 Beim Aufholen bereits empfangener Messungen gelten die Betriebsfreigaben ihres
 jeweiligen Beobachtungszeitpunkts. Nach einer erneuten Freigabe stammen die
-beitragenden Messfenster aus dem neu freigegebenen Abschnitt. Die zeitliche
-Zuordnung zur Gangführung beschreibt das [Zeitmodell](zeitmodell.md).
+beitragenden Messfenster aus dem neu freigegebenen Abschnitt.
+
+[Zeitliche Zuordnung zur Gangführung](zeitmodell.md)
 
 Aktuelle Erkennungsdatensätze verbinden das Ereignis über `trace_at` mit genau
 dem Diagnosepunkt, der es ausgelöst hat. Das gilt auch für einen früheren
 fachlichen Beginn und eine spätere Verarbeitung. Archive mit dem früheren
 Datenschema verwenden für diese Zuordnung den fachlichen Ereignisbeginn.
 
-Das [Replayprogramm](kandidat.md) wertet gespeicherte Messreihen mit einem
-festgehaltenen Erkennungsverfahren aus und unterstützt den Vergleich von
-Parametern. Die laufende Steuerung verwendet die auf dieser Seite beschriebenen
-Erkennungsregeln.
+[Historisches Referenz-Replay](kandidat.md)

@@ -3454,8 +3454,7 @@ class SaunaPanel extends HTMLElement {
     const entry = this.entry,
       generation = this.generation;
     const report = (error) => {
-      if (this.entry === entry && this.generation === generation)
-        this.message(error);
+      if (this.entry === entry && this.generation === generation) this.message(error);
     };
     try {
       Promise.resolve(operation()).catch(report);
@@ -3581,13 +3580,12 @@ class SaunaPanel extends HTMLElement {
     const previous = this.historyAccessProjection;
     this.historyAccessProjection = projection;
     if (previous === undefined) return;
-    // Cursors describe the server's permission-specific stream. A new
-    // projection must start at zero, including after a return to an old role.
+    // Permission-specific cursors and data cannot be reused by another
+    // projection. The generation also rejects responses from an earlier stream.
     this.historyProjectionGeneration = (this.historyProjectionGeneration || 0) + 1;
     this.cache.clear();
     this.historyLoad = null;
     this.shown = null;
-    this.historyProjectionPending = true;
     this.chartDataIndex = null;
     this.invalidateHistoryIndex();
     this.historyTimelineSignature = null;
@@ -3695,7 +3693,6 @@ class SaunaPanel extends HTMLElement {
             : cache?.phase_projection,
         }
       : null;
-    if (session || !id) this.historyProjectionPending = false;
   }
   renderHistoryLoading(load) {
     const node = this.$("#history-loading");
@@ -4477,7 +4474,8 @@ class SaunaPanel extends HTMLElement {
   programChoice(programs = []) {
     const choice = this.programSelectionDraft ?? this.storedProgramChoice(programs);
     return ["constant", "individual"].includes(choice.mode) ||
-      (choice.mode === "program" && programs.some((program) => program.id === choice.id))
+      (choice.mode === "program" &&
+        programs.some((program) => program.id === choice.id))
       ? choice
       : this.storedProgramChoice(programs);
   }
@@ -4501,7 +4499,8 @@ class SaunaPanel extends HTMLElement {
           : {
               mode: "program",
               id:
-                programs.find((program) => program.id === this.lastNamedProgramId)?.id ||
+                programs.find((program) => program.id === this.lastNamedProgramId)
+                  ?.id ||
                 programs.find(
                   (program) =>
                     program.id === this.state?.configuration?.selected_program_id,
@@ -4852,11 +4851,13 @@ class SaunaPanel extends HTMLElement {
       throw Error("Temperaturstufen innerhalb der zulässigen Grenzen eingeben");
     return values;
   }
-  progressionValues(values = {
-    start: this.$("#progression-start").value,
-    end: this.$("#progression-end").value,
-    gangs: this.$("#progression-gangs").value,
-  }) {
+  progressionValues(
+    values = {
+      start: this.$("#progression-start").value,
+      end: this.$("#progression-end").value,
+      gangs: this.$("#progression-gangs").value,
+    },
+  ) {
     const start = Number(values.start),
       end = Number(values.end),
       gangs = Number(values.gangs);
@@ -5145,7 +5146,6 @@ class SaunaPanel extends HTMLElement {
     this.scheduleHistoryRender(reason);
   }
   clearHistoryDisplay() {
-    this.historyProjectionPending = false;
     this.historyChart?.destroy();
     this.historyChart = null;
     this.$("#history-overview").replaceChildren();
@@ -5161,9 +5161,6 @@ class SaunaPanel extends HTMLElement {
   renderHistory(reasons = new Set(["viewport"])) {
     if (!this.isConnected || this.$("#history")?.hidden) return;
     if (!this.shown) {
-      // Keep the selected session's chart and viewport while its replacement
-      // projection loads; its diagnostic sources were removed synchronously.
-      if (this.historyProjectionPending) return;
       this.clearHistoryDisplay();
       return;
     }
@@ -5637,8 +5634,7 @@ class SaunaPanel extends HTMLElement {
   }
   historyDomain() {
     const session = this.shown?.session,
-      // The archive list retains the selected session's public time bounds
-      // while its permission-specific records and snapshot are replaced.
+      // The archive list supplies session bounds before the first record page.
       archive =
         !session &&
         this.sessions?.find((item) => item.session_id === this.historySelectionId()),
@@ -6193,7 +6189,8 @@ class SaunaPanel extends HTMLElement {
     metric ??= route[0];
     const linked = event.trace_at
       ? event
-      : this.eventNavigation().find((item) => item.event_id === event.event_id) || event;
+      : this.eventNavigation().find((item) => item.event_id === event.event_id) ||
+        event;
     const effective = stamp(linked.trace_at || linked.effective_at);
     if (!Number.isFinite(effective)) return null;
     return (

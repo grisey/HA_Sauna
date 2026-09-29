@@ -186,7 +186,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await context.close()
         self.assertEqual(self.errors, [])
 
-    async def test_running_role_change_reloads_the_final_archive_projection(self):
+    async def test_normal_and_admin_views_load_and_navigate_the_same_final_archive(self):
         await self.runtime.set_operation(True)
         identity = self.runtime.session.session_id
         await self.emit(Kind.DOOR_OPEN, 20)
@@ -200,6 +200,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.runtime.archive.append("detection", self.now, {
             "event": event, "channels": ["upper"], "trace_at": self.now,
         }, identity)
+        # Real archive pagination leaves the first page available while the
+        # following page is delayed in each fixed permission context.
+        for second in range(30, 1030):
+            at = self.base + timedelta(seconds=second)
+            self.runtime.archive.append("measurement", at, {
+                "position": "upper", "quantity": "temperature", "value": 72,
+                "received_at": at,
+            }, identity)
         await self.runtime.set_operation(False)
         self.now += timedelta(minutes=20)
         await self.runtime.tick()
@@ -207,10 +215,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         # Keep the completed archive far from the live status time.
         self.now += timedelta(days=3650)
-        # The first HA user is its owner and remains admin regardless of groups.
-        # Use another real user for changes behind the same token and panel.
         user = await self.hass.auth.async_create_user(
-            "Archive projection user", group_ids=[GROUP_ID_USER]
+            "Normal archive user", group_ids=[GROUP_ID_USER]
         )
         self.assertFalse(user.is_owner)
         self.assertFalse(user.is_admin)
@@ -225,107 +231,92 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         page = await context.new_page()
         page.on("pageerror", lambda error: self.errors.append(str(error)))
         await page.goto(self.url + "/ha-sauna")
-        panel = page.locator("ha-sauna-panel")
-        await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        normal_panel = page.locator("ha-sauna-panel")
+        await expect(normal_panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
         await self.hass.async_block_till_done()
-        await panel.evaluate("""async p => {
-          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
-          clearInterval(p.timer);
-          await p.refresh();
-        }""")
-        self.assertFalse(await panel.evaluate("p => p.state.permissions.admin"))
-        await panel.locator('.main-tabs [data-action="history"]').click()
-        await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
-        await panel.locator("#session").select_option(identity)
-        await panel.evaluate("""async p => {
-          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
-          if (p.historyLoad) await p.historyLoad.promise;
-        }""")
-        await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
-        self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
-        self.assertEqual(await panel.evaluate(
-            "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
-        await panel.evaluate("""p => {
-          p.roleChart = p.historyChart;
-          const [a,b] = p.window;
-          p.setHistoryWindow(a, a + (b-a)/2);
-          p.roleWindow = [...p.window];
-          p.drawHistory();
-        }""")
-
-        await self.hass.auth.async_update_user(user, group_ids=[GROUP_ID_ADMIN])
-        self.assertTrue(user.is_admin)
-        await self.hass.async_block_till_done()
-        entered, release = asyncio.Event(), asyncio.Event()
         archive_url = f"**/api/ha_sauna/{self.entry.entry_id}/archive?*"
+        for page, panel, admin in ((page, normal_panel, False), (self.page, self.panel, True)):
+            with self.subTest(admin=admin):
+                await panel.evaluate("""async p => {
+                  while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+                  clearInterval(p.timer);
+                  await p.refresh();
+                }""")
+                self.assertEqual(await panel.evaluate("p => p.state.permissions.admin"), admin)
+                entered, release = asyncio.Event(), asyncio.Event()
 
-        async def delay_archive(route):
-            response = await route.fetch()
-            entered.set()
-            await release.wait()
-            await route.fulfill(response=response)
+                async def delay_archive_page(route):
+                    if route.request.url.endswith("after=0"):
+                        await route.continue_()
+                        return
+                    response = await route.fetch()
+                    entered.set()
+                    await release.wait()
+                    await route.fulfill(response=response)
 
-        await page.route(archive_url, delay_archive)
-        try:
-            await panel.evaluate("p => p.refresh()")
-            await asyncio.wait_for(entered.wait(), 10)
-            self.assertIsNone(await panel.evaluate("p => p.shown"))
-            await panel.locator('[data-action="zoom-in"]').click()
-            self.assertEqual(await panel.evaluate("p => p.zoom"), 4)
-            await panel.locator("svg.session-chart").press("ArrowRight")
-            overview = panel.locator("#history-overview [data-history-window]")
-            box = await overview.bounding_box()
-            self.assertIsNotNone(box)
-            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-            before_drag = await panel.evaluate("p => [...p.window]")
-            await page.mouse.move(x, y)
-            await page.mouse.down()
-            await page.mouse.move(x + 20, y)
-            await page.mouse.up()
-            self.assertGreater(await panel.evaluate("p => p.window[0]"), before_drag[0])
-            await panel.locator('[data-action="reset-zoom"]').click()
-            self.assertEqual(await panel.evaluate("p => p.zoom"), 1)
-            await panel.locator('[data-action="zoom-in"]').click()
-            await panel.evaluate("p => { p.roleWindow = [...p.window]; }")
-            self.assertTrue(await panel.evaluate("""p => {
-              const [start, end] = p.historyDomain();
-              return p.window[0] >= start && p.window[1] <= end &&
-                end < Date.parse(p.state.now) - 365 * 24 * 3600 * 1000;
-            }"""))
-            release.set()
-            await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
-        finally:
-            release.set()
-            await page.unroute(archive_url, delay_archive)
-        traces = await panel.evaluate(
-            "p => p.shown.records.filter(r => r.kind === 'detector_trace').length")
-        self.assertGreater(traces, 0)
-        self.assertTrue(await panel.evaluate("p => p.historyChart === p.roleChart"))
-        self.assertTrue(await panel.evaluate(
-            "p => p.window.every((value, i) => value === p.roleWindow[i])"))
-        await panel.locator('.main-tabs [data-action="details"]').click()
-        await panel.locator('.detail-tabs [data-action="diagnostics"]').click()
-        await expect(panel.locator('.diagnostic-marker').first).to_be_visible(timeout=15000)
-
-        await self.hass.auth.async_update_user(user, group_ids=[GROUP_ID_USER])
-        self.assertFalse(user.is_admin)
-        await self.hass.async_block_till_done()
-        await panel.evaluate("p => p.refresh()")
-        await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
-        self.assertEqual(await panel.locator('.diagnostic-marker').count(), 0)
-        self.assertEqual(await panel.locator('[data-action^="event-row:"]').count(), 0)
-        await expect(panel.locator('#detection-plots')).to_be_empty()
-        await panel.locator('.main-tabs [data-action="history"]').click()
-        await panel.evaluate("""async p => {
-          // The DOM click dispatches refresh through runPanelAction. Its state
-          // response may start the archive loader after the click returns.
-          while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
-          if (p.historyLoad) await p.historyLoad.promise;
-        }""")
-        self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
-        self.assertEqual(await panel.evaluate(
-            "p => p.shown.records.filter(r => r.kind === 'detector_trace').length"), 0)
-        self.assertTrue(await panel.evaluate("p => p.historyChart === p.roleChart"))
+                await page.route(archive_url, delay_archive_page)
+                try:
+                    await panel.locator('.main-tabs [data-action="history"]').click()
+                    await asyncio.wait_for(entered.wait(), 10)
+                    await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+                    self.assertEqual(await panel.evaluate("p => p.historySelectionId()"), identity)
+                    self.assertFalse(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
+                    chart = await panel.evaluate_handle("p => p.historyChart")
+                    await panel.evaluate("""p => {
+                      const [a,b] = p.window;
+                      p.setHistoryWindow(a, a + (b-a)/2);
+                      p.drawHistory();
+                    }""")
+                    await panel.locator('[data-action="zoom-in"]').click()
+                    self.assertEqual(await panel.evaluate("p => p.zoom"), 4)
+                    await panel.locator("svg.session-chart").press("ArrowRight")
+                    overview = panel.locator("#history-overview [data-history-window]")
+                    box = await overview.bounding_box()
+                    self.assertIsNotNone(box)
+                    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                    before_drag = await panel.evaluate("p => [...p.window]")
+                    await page.mouse.move(x, y)
+                    await page.mouse.down()
+                    await page.mouse.move(x + 20, y)
+                    await page.mouse.up()
+                    self.assertGreater(await panel.evaluate("p => p.window[0]"), before_drag[0])
+                    await panel.locator('[data-action="reset-zoom"]').click()
+                    self.assertEqual(await panel.evaluate("p => p.zoom"), 1)
+                    await panel.locator('[data-action="zoom-in"]').click()
+                    window = await panel.evaluate("p => [...p.window]")
+                    self.assertTrue(await panel.evaluate("""p => {
+                      const [start, end] = p.historyDomain();
+                      return p.window[0] >= start && p.window[1] <= end &&
+                        end < Date.parse(p.state.now) - 365 * 24 * 3600 * 1000;
+                    }"""))
+                    release.set()
+                    await panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+                finally:
+                    release.set()
+                    await page.unroute(archive_url, delay_archive_page)
+                self.assertTrue(await panel.evaluate("p => p.historyCache(p.historySelectionId()).finalSynced"))
+                self.assertTrue(await panel.evaluate("(p, chart) => p.historyChart === chart", chart))
+                self.assertEqual(await panel.evaluate("p => [...p.window]"), window)
+                await chart.dispose()
+                await panel.locator("#session").select_option(identity)
+                await panel.evaluate("""async p => {
+                  while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+                  if (p.historyLoad) await p.historyLoad.promise;
+                }""")
+                await expect(panel.locator("svg.session-chart")).to_be_visible(timeout=15000)
+                traces = await panel.evaluate(
+                    "p => p.shown.records.filter(r => r.kind === 'detector_trace').length")
+                if admin:
+                    self.assertGreater(traces, 0)
+                    await panel.locator('.main-tabs [data-action="details"]').click()
+                    await panel.locator('.detail-tabs [data-action="diagnostics"]').click()
+                    await expect(panel.locator('.diagnostic-marker').first).to_be_visible(timeout=15000)
+                else:
+                    self.assertEqual(traces, 0)
+                    await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
+                    self.assertEqual(await panel.locator('.diagnostic-marker').count(), 0)
+                    self.assertEqual(await panel.locator('[data-action^="event-row:"]').count(), 0)
+                    await expect(panel.locator('#detection-plots')).to_be_empty()
         self.assertEqual(self.errors, [])
 
     async def test_upper_probe_failure_keeps_lower_readings_and_visible_warning(self):
@@ -1094,28 +1085,40 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator("#session").select_option(identity)
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
-        # A native Chromium zone change must refresh retained archive text even
-        # when neither the archived data nor the viewport changed.
-        cdp = await self.context.new_cdp_session(self.page)
+        tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
         async def zone_snapshot(zone):
-            await cdp.send("Emulation.setTimezoneOverride", {"timezoneId": zone})
-            return await self.panel.evaluate("""p => {
-              p.renderHistory(new Set(['status']));
-              p.syncHistorySessions();
-              return {
-                gang: p.$('#gangs tbody tr td:nth-child(2)').textContent,
-                events: [...p.shadowRoot.querySelectorAll('#event-list tbody tr td:nth-child(2)')].map(e=>e.textContent),
-                annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
-                session: p.$('#session').selectedOptions[0].textContent,
-              };
-            }""")
+            context = await self.browser.new_context(
+                viewport={"width": 1440, "height": 1080}, timezone_id=zone
+            )
+            try:
+                await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");")
+                page = await context.new_page()
+                page.on("pageerror", lambda error: self.errors.append(str(error)))
+                await page.goto(self.url + "/ha-sauna")
+                panel = page.locator("ha-sauna-panel")
+                await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+                await panel.locator('.main-tabs [data-action="history"]').click()
+                await expect(panel.locator(f'#session option[value="{identity}"]')).to_be_attached(timeout=15000)
+                await panel.locator("#session").select_option(identity)
+                await panel.evaluate("""async p => {
+                  while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
+                  if (p.historyLoad) await p.historyLoad.promise;
+                }""")
+                await expect(panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
+                self.assertEqual(await panel.locator('[data-gang-id]').get_attribute("data-start"), start)
+                return await panel.evaluate("""p => ({
+                  gang: p.$('#gangs tbody tr td:nth-child(2)').textContent,
+                  events: [...p.shadowRoot.querySelectorAll('#event-list tbody tr td:nth-child(2)')].map(e=>e.textContent),
+                  annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
+                  session: p.$('#session').selectedOptions[0].textContent,
+                })""")
+            finally:
+                await context.close()
         utc = await zone_snapshot("UTC")
         berlin = await zone_snapshot("Europe/Berlin")
         self.assertTrue(utc["annotations"])
         for consumer in ("gang", "events", "annotations", "session"):
             self.assertNotEqual(utc[consumer], berlin[consumer], consumer)
-        await cdp.send("Emulation.setTimezoneOverride", {"timezoneId": "UTC"})
-        await cdp.detach()
         await self.page.set_viewport_size({"width": 390, "height": 844})
         await self.panel.evaluate(
             "p=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"

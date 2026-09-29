@@ -49,8 +49,7 @@ Sitzung, Phase, Herleitung und Frist, auch wenn das Warten zuvor abgebrochen
 wurde oder seine Zeitgrenze erreicht hatte. `planned_at` bezeichnet die Planung,
 `sent_at` den tatsächlichen Dienstbeginn und `completed_at` den Abschluss.
 Der Archivrecord verwendet den Abschluss als `received_at`. `service_error`
-beschreibt den tatsächlichen Dienstausgang. Wartezeitgrenze, Dienstausgang und
-gesonderte Archivfehler werden jeweils mit ihrer eigenen Bedeutung behandelt.
+beschreibt den tatsächlichen Dienstausgang.
 
 Die bei der Planung bekannte Phasenfrist wird als `ends_at` an den
 Dienstauftrag übergeben. Sein Abschlussrecord erhält diese ursprüngliche Frist,
@@ -78,8 +77,9 @@ Das Archiv gehört zur Sicherung des Home-Assistant-Konfigurationsverzeichnisses
 Der Integrationstest `tests/integration/test_archive_backup.py` verwendet dazu
 die offizielle HA-Core-Backup- und Restore-Routine und startet eine getrennte
 Instanz mit den wiederhergestellten Optionen und Originaldaten. Der Vergleich
-umfasst die Sitzungszuordnungen. Die Ausführung ist in der
-[Prüfanleitung](abnahme.md) beschrieben.
+umfasst die Sitzungszuordnungen.
+
+[Prüfanleitung](abnahme.md)
 
 Nach einem Neustart steht die archivierte Historie zur Verfügung. Der
 Saunabetrieb beginnt mit einem erneuten Einschaltauftrag.
@@ -108,13 +108,10 @@ leeren, obwohl dieser Zeiger eine weitere Seite bezeichnet. Der Verbraucher
 übernimmt deshalb den Serverzeiger.
 
 Archivcache, Seitenzeiger und abgeleitete Ansichten gehören zur jeweiligen
-Rechteprojektion. Ein Wechsel zwischen öffentlicher und administrativer Ansicht
-startet den Abruf bei null. Jede Antwort bleibt an die Projektion und Generation
-ihres Auftrags gebunden. Bei Rechteentzug werden bereits geladene
-Diagnoseansichten sofort geleert. Die weiter ausgewählte Sitzung behält ihre
-Zeitgrenzen und ihren sichtbaren Ausschnitt auch während des neuen Abrufs.
-Der [Verlaufsvertrag](livekurve.md#ausschnitt-zoom-und-tooltip) beschreibt den
-Sitzungsbezug der dabei erreichbaren Zoom-, Verschiebe- und Übersichtsaktionen.
+Rechteprojektion. Jede Antwort bleibt an die Projektion und Abrufgeneration
+ihres Auftrags gebunden. Veraltete Antworten werden verworfen; bei fehlenden
+Administratorrechten werden bereits geladene Diagnosedaten und ihre abgeleiteten
+Ansichten entfernt.
 
 ## Export herunterladen
 
@@ -140,6 +137,4 @@ Schreibvorgangs. Ein abgebrochener Auftrag gibt diese Datei zur Bereinigung frei
 Der HTTP-Download streamt die fertige ZIP-Datei und entfernt sie beim Abschluss
 oder Abbruch. Der Server kennzeichnet die Antwort mit `Cache-Control: no-store`.
 
-Die Oberfläche lädt Archivdaten für ihre Anzeige. Ihre Caches und die
-Bildschirmaggregation sind abgeleitete Ansichten des Archivs. Der
-[Verlaufsvertrag](livekurve.md) beschreibt deren Lebensdauer und Originalwertzugriff.
+[Verlaufsvertrag](livekurve.md)

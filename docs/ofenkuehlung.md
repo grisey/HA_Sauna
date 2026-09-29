@@ -1,8 +1,7 @@
 # Ofenkühlung
 
 Die Ofenkühlung hält den Ofen für eine aus dem bisherigen Betrieb berechnete
-AUS-Laufzeit ausgeschaltet. Die Oberfläche verwendet die Bezeichnung
-**Ofenkühlung**; der technische Zustandsname lautet `after_run`.
+AUS-Laufzeit ausgeschaltet. Der technische Zustandsname lautet `after_run`.
 
 ## Auslösung
 
@@ -79,8 +78,7 @@ und begrenzt anschließend das Ergebnis. Mit den Standardwerten ergibt sich
 zwei gewichtete Heizminuten aus. Ein verbleibender positiver Heizanteil
 verlängert die Basisdauer.
 
-Halbwertszeit und Verhältnis bilden die einstellbare Betriebsregel für diese
-Berechnung. Technische Schutzgründe wirken gemäß der
+Technische Schutzgründe wirken gemäß der
 [Heizpriorität](praesenz-ofen-phasen.md).
 
 ## Nachvollziehbarkeit

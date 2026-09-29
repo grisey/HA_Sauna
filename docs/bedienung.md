@@ -17,8 +17,7 @@ Messwerte erforderlich sind.
 Eine Temperaturtaste oder die direkte Wahl am Anzeigebogen legt eine
 **konstante Solltemperatur** fest. Am Bogen können Sie klicken, ziehen oder
 die Pfeiltasten verwenden. Die gewählte Temperatur gilt sofort und bleibt auch
-nach weiteren Saunagängen erhalten. Die Regelung steuert den Ofen anhand
-dieser Vorgabe und des aktuellen Betriebszustands.
+nach weiteren Saunagängen erhalten.
 
 Für eine Temperaturfolge wählen Sie unter **Temperaturwahl** ein
 **Programm** oder **Individuell**. Ein eigenes Programm lässt sich auf zwei
@@ -62,8 +61,9 @@ die verbleibende Kühlzeit oder den Stand der Vorbereitung. Die Kühlzeit zählt
 ab der bestätigten AUS-Rückmeldung des Heizschützes. Administratoren können
 die laufende Phase auf **Steuerung** mit **Ofenkühlung jetzt beenden** vorzeitig
 abschließen. Die Grundlage für die nächste Dauerberechnung bleibt dann die
-letzte vollständig beendete Kühlung. Den fachlichen Ablauf beschreibt
-[Ofenkühlung](ofenkuehlung.md).
+letzte vollständig beendete Kühlung.
+
+[Ofenkühlung](ofenkuehlung.md)
 
 Der mechanische Ofentimer unterstützt als Anzeige und Erinnerung. Er zählt
 bei eingeschaltetem Saunabetrieb und bestätigtem Schütz-EIN. Stellen Sie den
@@ -120,9 +120,9 @@ beendet.
 
 Auch eine Quelle, die ausschließlich fertige Tasterereignisse meldet, kann die
 Sauna bedienen: Eine neue Langmeldung startet bei AUS; die nächste eigenständige
-Langmeldung beendet die laufende Sitzung. Der
-[Betriebsablauf](betrieb.md#bedienhandlungen-und-betriebsart) erklärt die
-Gestenzuordnung und den Lichtabschluss.
+Langmeldung beendet die laufende Sitzung.
+
+[Gestenzuordnung und Lichtabschluss](betrieb.md#bedienhandlungen-und-betriebsart)
 
 Die vorhandenen Lichttaster bedienen das Licht unmittelbar. Ihre tatsächliche
 Lichtwahl wird als manuelle Übersteuerung übernommen und folgt derselben
@@ -177,7 +177,9 @@ Administratoren finden unter **Details → Betrieb & Fristen** die technischen
 Zustände und unter **Detailverlauf** die Messungen beider Positionen. Die
 **Erkennungskontrolle** verbindet Ereigniszeilen mit den zugehörigen Markern.
 Unter **Einstellungen** lädt **Archiv als ZIP herunterladen** das Sitzungsarchiv
-herunter. Den Inhalt beschreibt [Speicherung](speicherung.md).
+herunter.
+
+[Archivinhalt](speicherung.md#export-herunterladen)
 
 ## Darstellung und persönliche Startseite
 
@@ -189,8 +191,9 @@ wiederherstellen** setzt zunächst den Entwurf auf die Vorgaben.
 
 Die Skalen bestimmen den sichtbaren Bereich der Messbögen. Die Zahlenwerte
 bleiben auch außerhalb dieses Bereichs lesbar. Der Sollschieber verwendet den
-gemeinsamen Bereich von Anzeigeskala und zulässigen Solltemperaturen. Die
-[Darstellungsreferenz](darstellung.md) erläutert die Anzeigeprinzipien.
+gemeinsamen Bereich von Anzeigeskala und zulässigen Solltemperaturen.
+
+[Darstellungsreferenz](darstellung.md)
 
 Ganz unten unter **Einstellungen** macht **Als Startseite festlegen** die
 Saunaübersicht zur persönlichen Home-Assistant-Startseite. Diese Auswahl gilt
@@ -207,5 +210,6 @@ an den Grundeinstellungen bestätigen Sie mit **Einstellungen speichern**.
 **Standardwerte wiederherstellen** stellt nach Sitzungsende die zentrale
 Standardkonfiguration wieder her. Dazu gehören die Betriebsparameter und die
 Temperaturvorgaben. Gerätezuordnungen, die Taster-/Schalterkonfiguration und die
-gespeicherte Darstellung bleiben erhalten. Den genauen Umfang und die
-Standardwerte erläutert die [Parameterreferenz](parameter.md#standardwerte-wiederherstellen).
+gespeicherte Darstellung bleiben erhalten.
+
+[Umfang und Standardwerte](parameter.md#standardwerte-wiederherstellen)

@@ -8,12 +8,11 @@ Ausgaben sind lokale Dateien.
 
 Die laufende Integration verwendet den
 [produktiven Detector](../custom_components/ha_sauna/core/detector.py).
-Dessen aktuelle Regeln beschreibt [Erkennung](erkennung.md); die Verarbeitung
-seiner Signale steht im [Gangmodell](gangmodell.md). Der Referenzkandidat macht
-den früheren Rechenweg mit seinem damaligen Parametersatz weiterhin
-nachvollziehbar. Die Kanalbezeichnungen K3 und K6 gehören zu diesem festgehaltenen
+Die Kanalbezeichnungen K3 und K6 gehören zu diesem festgehaltenen
 Export. Die Integration ordnet ihre Quellen über die konfigurierten Rollen
 oben und unten zu.
+
+[Produktive Erkennung](erkennung.md) · [Gangmodell](gangmodell.md)
 
 ## Eingabeformat
 
@@ -96,22 +95,19 @@ Parametersatz. Unter `modes` stehen Auswertung und Öffnungsepisoden je
 Kanalvariante. `proof_open` verweist mit `state_id` und `states_jsonl_line` auf
 die zugrunde liegenden Originalzeilen. Temperaturminima und deren Abstand zum
 Schließsignal sind nachträgliche Kurvenmerkmale in der Ergebnisbeschreibung.
-Das Prüfverfahren und die Voraussetzungen für optionale private Replays stehen
-in [Prüfanleitung](abnahme.md).
+
+[Prüfverfahren für optionale private Replays](abnahme.md#fachkern-und-javascript)
 
 ## Provenienz und Datenhaltung
 
 [candidate/provenienz.json](../candidate/provenienz.json) beschreibt die Herkunft
 der Referenz. `source_archive` und `source_sha256` kennzeichnen den verwendeten
-Recorderexport. `candidate_files_sha256` bindet die dort genannten Dateien
-an ihre Prüfsummen.
-Programm und Parametersatz bilden die eingefrorene Referenz. Die Erklärung auf
-dieser Seite wird separat fortgeschrieben; ihre gebundene Prüfsumme bezeichnet
-den jeweils zugehörigen Dokumentstand. `full_replay_result_sha256` bezeichnet
-die vorhandene vollständige Referenzausgabe einschließlich der
-Zusatzberechnungen. Quellenkennung, Ergebnisprüfsumme und gespeicherte
-Referenzwerte behalten bei einer Überarbeitung der Erklärung ihren Bezug zur
-ursprünglichen Berechnung.
+Recorderexport. `candidate_files_sha256` bindet Programm, Parametersatz und
+Dokument jeweils mit einer eigenen Prüfsumme. Bei einer Überarbeitung dieser
+Erklärung wird ausschließlich ihre Dokumentprüfsumme aktualisiert.
+`full_replay_result_sha256` bindet die vollständige Referenzausgabe einschließlich
+der Zusatzberechnungen; Quellenkennung, Ergebnisprüfsumme und gespeicherte
+Referenzwerte bleiben auf die ursprüngliche Berechnung bezogen.
 
 Der im Ergebnis enthaltene Eingabedateiname gehört zum byteweisen Vergleich; die optionale
 Reproduktionsprüfung gleicht ihn an `source_archive` an. Die gespeicherten

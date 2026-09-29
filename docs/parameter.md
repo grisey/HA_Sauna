@@ -1,7 +1,5 @@
 # Parameter und Entitätsrollen
 
-Diese Referenz beschreibt die gespeicherten Einstellungen und ihre
-Standardwerte. Die Bedienhandlungen stehen in der [Bedienungsanleitung](bedienung.md).
 Gespeicherte Werte Ihrer Anlage haben Vorrang vor den Standards. Fehlende
 Einstellungen werden beim Laden mit dem zentralen Standard ergänzt.
 
@@ -32,7 +30,8 @@ eine entsprechend übernommene Untergrenze erhalten bleiben.
 Die Sauna gilt ab Erreichen der Solltemperatur als bereit. Die Temperaturreserve
 bestimmt die höhere Regeltemperatur des Ofens. Ausschalten, technische
 Schutzabschaltungen und Ofenkühlung haben Vorrang vor der Mindestheizzeit.
-Die vollständige Regelpriorität steht unter [Betrieb](betrieb.md).
+
+[Heizpriorität](praesenz-ofen-phasen.md#heizpriorität)
 
 ## Temperaturprogramme
 
@@ -79,14 +78,15 @@ konstante Temperatur, standardmäßig 80 °C.
 Die Ofenkühlung berechnet ihre Dauer beim tatsächlichen Kühlbeginn. Ihre Uhr
 zählt bestätigte Schütz-AUS-Zeit; die einmal berechnete Dauer bleibt für diese
 Kühlung fest. Das eingestellte Maximum muss mindestens der Mindestdauer
-entsprechen. Der fachliche Ablauf und die Gewichtung stehen unter
-[Ofenkühlung](ofenkuehlung.md).
+entsprechen.
+
+[Kühlablauf und Gewichtung](ofenkuehlung.md)
 
 Die Betriebsart **Manuell** bleibt bis zu einem Betriebsartwechsel gewählt.
 Die Höchstdauer in der Tabelle gilt für vorübergehende Übersteuerungen des
-Automatikbetriebs. Der [Betriebsablauf](betrieb.md#bedienhandlungen-und-betriebsart)
-erklärt Start- und Endgesten des Saunatasters sowie den Lichtnachlauf nach
-bestätigtem Loslassen.
+Automatikbetriebs.
+
+[Tastergesten und Lichtnachlauf](betrieb.md#bedienhandlungen-und-betriebsart)
 
 ## Licht
 
@@ -158,14 +158,15 @@ Die Aufheizschätzung verwendet einen geeigneten archivierten Aufheizverlauf und
 den aktuellen Temperaturtrend. Sie unterstützt die Planung und erscheint in
 Fünf-Minuten-Stufen. Farben und Messbogenskalen werden gesondert unter
 **Darstellung** gespeichert. Die Vorgaben der Skalen sind 40–110 °C für
-Temperatur und 0–60 % für relative Luftfeuchte. Ihre Bedeutung beschreibt
-[Darstellung](darstellung.md).
+Temperatur und 0–60 % für relative Luftfeuchte.
+
+[Darstellung](darstellung.md)
 
 ## Erkennungsparameter
 
 Unter **Experteneinstellungen zur Erkennung** stehen die Werte nach ihrem
-Zweck geordnet. Die Tabellen nennen die aktuellen Standards. Feuchteänderungen
-sind in Prozentpunkten angegeben; der Wasserverlust beim Lüften ist ein
+Zweck geordnet. Feuchteänderungen sind in Prozentpunkten angegeben; der
+Wasserverlust beim Lüften ist ein
 relativer Anteil des absoluten Wassergehalts.
 
 | Messbasis | Standard |
@@ -208,12 +209,12 @@ relativer Anteil des absoluten Wassergehalts.
 | Luftfeuchteanstieg bei einem Aufguss | 2 Prozentpunkte |
 | Bestätigungsdauer des Aufgusssignals | 3 s |
 
-Die Bedingungen wirken gemeinsam im jeweiligen Erkennungsweg. Die
-[Erkennungsbeschreibung](erkennung.md) erläutert die Zusammenhänge und den
-Betrieb mit einer oder zwei Messpositionen. Die **Erkennungskontrolle** zeigt
-die gespeicherten Merkmale mit den zur Sitzung gehörenden Einstellungen.
+Die **Erkennungskontrolle** zeigt die gespeicherten Merkmale mit den zur Sitzung
+gehörenden Einstellungen.
 Die Zeitfenster für deutliche und schwache Personensignale müssen ganzzahlige
 Vielfache des Zeitabstands der Personenprüfung sein.
+
+[Erkennung mit einer oder zwei Messpositionen](erkennung.md)
 
 ## Entitätsrollen
 

@@ -1,10 +1,7 @@
 # Darstellungsreferenz
 
-Diese Seite beschreibt den Aufbau und die Gestaltung des Panels. Die
-[Bedienungsanleitung](bedienung.md) erklärt die täglichen Bedienfolgen. Der
-[Betriebsablauf](betrieb.md) liefert die fachliche Bedeutung der angezeigten
-Zustände; der [Daten- und Zeichenvertrag](livekurve.md) beschreibt ihre technische
-Darstellung im Verlauf.
+[Bedienungsanleitung](bedienung.md) · [Betriebsablauf](betrieb.md) ·
+[Daten- und Zeichenvertrag](livekurve.md)
 
 ## Ansichten und Aktualisierung
 
@@ -71,9 +68,9 @@ Heizzustand.
 | Lichtnachlauf | Verbleibende Zeit der aktuellen Lichtfrist |
 
 Die Aufheizprognose verbindet einen geeigneten Verlauf der letzten Sitzung mit
-dem zunehmend belastbaren aktuellen Temperaturtrend. Sie dient der zeitlichen
-Orientierung. Technische Fristen und der geschätzte mechanische Ofentimer stehen
-in den Details; dessen Status erklärt, wann seine Zählung läuft oder pausiert.
+dem zunehmend belastbaren aktuellen Temperaturtrend. Technische Fristen und
+der geschätzte mechanische Ofentimer stehen in den Details; dessen Status
+erklärt, wann seine Zählung läuft oder pausiert.
 
 ## Farbrollen und Lesbarkeit
 
@@ -97,8 +94,7 @@ abgeleitet; dabei fließen auch Tönungen und ausgewählte Ereigniszeilen ein.
 
 Temperaturbogen und Temperaturkurve teilen eine Messfarbe, ebenso
 Feuchtebogen und Feuchtekurve. Die Linienart kennzeichnet zusätzlich die
-Messposition. Damit bleiben Messgröße, Position und Bedienzustand jeweils
-erkennbar zugeordnet.
+Messposition.
 
 ## Darstellungsentwurf und Skalen
 
@@ -114,8 +110,7 @@ Die Temperaturanzeige umfasst standardmäßig 40–110 °C, die Feuchteanzeige
 zwischen 0 und 100 %. Ein Messwert außerhalb der Skala bleibt als Zahl sichtbar.
 Der Bogen endet am Skalenrand und erhält einen Überschreitungshinweis.
 
-Diese Skalen legen den sichtbaren Bereich der Messbögen fest. Die
-Verlaufsachsen werden aus den Verlaufsdaten berechnet, die zulässigen
+Die Verlaufsachsen werden aus den Verlaufsdaten berechnet, die zulässigen
 Solltemperaturen aus der Parameterdefinition. Eine Darstellungsänderung wird in
 die bestehende laufende Ansicht übernommen. Beim allgemeinen
 **Standardwerte wiederherstellen** bleiben die gespeicherte Darstellung und
@@ -141,9 +136,9 @@ den Vergleich beider Positionen.
 
 Die Übersichtskurve zeigt das Verhältnis des sichtbaren Ausschnitts zur
 gesamten Sitzung. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne. Der
-Tooltip greift auf den empfangenen Originalpunkt zurück. Die technischen
-Einzelheiten von Kurvenaufbereitung und Ausschnittbedienung stehen im
-[Daten- und Zeichenvertrag](livekurve.md).
+Tooltip greift auf den empfangenen Originalpunkt zurück.
+
+[Kurvenaufbereitung und Ausschnittbedienung](livekurve.md)
 
 Die Erkennungskontrolle stellt gespeicherte Detektormerkmale mit den
 Schwellen der ausgewählten Sitzung dar. Ein vorhandener Signal- und
@@ -160,6 +155,4 @@ Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Übersicht. Fokus und
 Auswahl bleiben visuell unterscheidbar. Ereignissprünge führen zum zugehörigen
 Marker bzw. Listeneintrag.
 
-Verlaufstabellen und Beschriftungen bleiben als DOM-Inhalt zugänglich. Die
-[Prüfanleitung](abnahme.md) beschreibt, wie die erzeugte Darstellung und ihre
-Bedienpfade untersucht werden.
+Verlaufstabellen und Beschriftungen bleiben als DOM-Inhalt zugänglich.
