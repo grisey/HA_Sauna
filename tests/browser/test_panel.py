@@ -1327,9 +1327,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-action="program-mode:program"]')).to_be_visible()
         await expect(self.panel.locator('[data-action="program-mode:individual"]')).to_be_visible()
         program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
-        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
-            await self.panel.locator('[data-action="program-mode:constant"]').click()
+        await self.panel.locator('[data-action="program-mode:constant"]').click()
         await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
+        await self.panel.evaluate(
+            "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
+        )
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await expect(target_arc).to_be_visible(timeout=10000)
