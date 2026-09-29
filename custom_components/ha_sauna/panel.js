@@ -3368,13 +3368,13 @@ class SaunaPanel extends HTMLElement {
           ...this.progressionDraft,
           [e.target.id]: e.target.value,
         };
-        this.markProgramEdited();
+        this.programSaveState = null;
       }
       if (e.target.matches("[data-free-step]")) {
         this.freeProgramStepsDraft = [
           ...this.shadowRoot.querySelectorAll("[data-free-step]"),
         ].map((input) => Number(input.value));
-        this.markProgramEdited();
+        this.programSaveState = null;
       }
       if (e.target.matches("[data-program-field],[data-program-step]"))
         this.updateProgramEditorField(e.target);
@@ -3402,12 +3402,13 @@ class SaunaPanel extends HTMLElement {
         this.renderProgramLibrary();
       }
       if (
-        !this.state.session &&
         e.target.matches(
           "#progression-start,#progression-end,#progression-gangs,[data-free-step],[data-free-step-count]",
         )
-      )
-        this.runPanelAction(() => this.applyProgram());
+      ) {
+        if (this.state.session) this.markProgramEdited();
+        else this.runPanelAction(() => this.applyProgram());
+      }
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
       if (!this.state) return;
