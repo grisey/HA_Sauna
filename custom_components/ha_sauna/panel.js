@@ -4500,6 +4500,7 @@ class SaunaPanel extends HTMLElement {
       if (this.programSelectionDraft?.mode === "constant")
         this.programSelectionDraft = null;
       if (this.progressionDraft === draft) this.progressionDraft = null;
+      this.programChoiceOpen = false;
       await this.refresh(true);
       return saved?.parameters;
     })();
