@@ -2,30 +2,29 @@
 
 HA Sauna begleitet eine **Saunasitzung**, die mehrere **Saunagänge** enthalten
 kann. Ein erkannter Gang ist zunächst vorläufig; ein Aufguss bestätigt ihn.
-Auf **Steuerung** bedienen Sie die Sauna. **Verlauf** zeigt die Messungen und
-Ereignisse einer Sitzung. Administratoren finden die technischen Zustände
-unter **Details**.
+**Steuerung** enthält die Betriebs-, Temperatur- und Lichtwahl. **Verlauf**
+zeigt Messungen und Ereignisse einer Sitzung. Die technischen Zustände sind
+für Administratoren unter **Details** sichtbar.
 
-## Einschalten und Temperatur wählen
+## Betriebsstart und Temperaturwahl
 
-Öffnen Sie **Steuerung** und wählen Sie **Einschalten**. Die Anzeige nennt die
-aktuelle Phase und zeigt die Messwerte. **Ofen an**, **Ofen aus** oder
+**Einschalten** auf **Steuerung** startet den Saunabetrieb. Die Anzeige nennt
+die aktuelle Phase und zeigt die Messwerte. **Ofen an**, **Ofen aus** oder
 **Ofen unbekannt** bezeichnet die tatsächliche Rückmeldung. Eine Meldung
 erläutert die Voraussetzungen für den Start, falls noch Angaben oder gültige
 Messwerte erforderlich sind.
 
 Eine Temperaturtaste oder die direkte Wahl am Anzeigebogen legt eine
-**konstante Solltemperatur** fest. Am Bogen können Sie klicken, ziehen oder
-die Pfeiltasten verwenden. Die gewählte Temperatur gilt sofort und bleibt auch
-nach weiteren Saunagängen erhalten.
+**konstante Solltemperatur** fest. Der Anzeigebogen unterstützt Klicks,
+Ziehbewegungen und Pfeiltasten. Die gewählte Temperatur gilt sofort und bleibt
+auch nach weiteren Saunagängen erhalten.
 
-Für eine Temperaturfolge wählen Sie unter **Temperaturwahl** ein
-**Programm** oder **Individuell**. Ein eigenes Programm lässt sich auf zwei
-Arten anlegen:
+Unter **Temperaturwahl** stehen **Programm** und **Individuell** für eine
+Temperaturfolge zur Verfügung. Eigene Programme haben zwei Eingabeformen:
 
-- **Gleichmäßig:** Sie geben Start, Ende und Verteilung an. Das Infosymbol
-  bei **Verteilung** zeigt die daraus entstehenden Stufen.
-- **Einzelne Stufen:** Sie wählen die Anzahl und tragen jede Temperatur ein.
+- **Gleichmäßig:** Start, Ende und Verteilung bestimmen die Stufen. Das
+  Infosymbol bei **Verteilung** zeigt die daraus entstehenden Temperaturen.
+- **Einzelne Stufen:** Die Stufenzahl und jede Temperatur sind einzeln einstellbar.
 
 Nach jedem beendeten, durch Aufguss bestätigten Gang gilt die nächste Stufe.
 Nach der letzten Stufe bleibt deren Temperatur für weitere Gänge erhalten.
@@ -33,10 +32,10 @@ Die Untergrenze beträgt standardmäßig 60 °C und ist einstellbar; die
 Obergrenze beträgt 100 °C.
 
 Nach Ende einer Sitzung werden benannte und konstante Wahlen direkt
-übernommen. Ein individuelles Programm bestätigen Sie mit **Übernehmen**.
-Während einer bestehenden Sitzung öffnen Sie die Auswahl mit **Programm
-ändern**. Ihre Änderung bleibt als Entwurf sichtbar, bis Sie **Programm
-übernehmen** wählen. **Abbrechen** erhält die bisherige Wahl. Der Entwurf
+übernommen. **Übernehmen** bestätigt ein individuelles Programm.
+Während einer bestehenden Sitzung öffnet **Programm ändern** die Auswahl.
+Eine Änderung bleibt bis zur Bestätigung mit **Programm übernehmen** als
+Entwurf sichtbar. **Abbrechen** erhält die bisherige Wahl. Der Entwurf
 bleibt während der laufenden Messwertaktualisierung geöffnet.
 
 Während der Übertragung erscheint **Wird übernommen …**, anschließend
@@ -44,7 +43,7 @@ Während der Übertragung erscheint **Wird übernommen …**, anschließend
 **Konstant** oder **Individuell** neben **Programm ändern**. Laufende Gänge
 und ihre Zeiten bleiben bei einer Temperaturänderung erhalten.
 
-## Den Sitzungsverlauf verstehen
+## Phasen und Zeitangaben
 
 Beim Aufheizen steht neben **Heizen** die geschätzte Zeit bis zur
 Bereitschaft. Die Schätzung nutzt einen geeigneten früheren Aufheizverlauf und
@@ -65,14 +64,13 @@ letzte vollständig beendete Kühlung.
 
 [Ofenkühlung](ofenkuehlung.md)
 
-Der mechanische Ofentimer unterstützt als Anzeige und Erinnerung. Er zählt
-bei eingeschaltetem Saunabetrieb und bestätigtem Schütz-EIN. Stellen Sie den
-tatsächlichen Drehschalter weiterhin selbst ein. Administratoren finden
-die Timeranzeige unter **Details → Betrieb & Fristen**.
+Die Timeranzeige unter **Details → Betrieb & Fristen** ist für Administratoren
+sichtbar. Sie schätzt die Restlaufzeit des Ofentimers anhand der gezählten Zeit
+bei eingeschaltetem Saunabetrieb und bestätigtem Schütz-EIN.
 
 ## Ausschalten und Fortsetzen
 
-Mit **Ausschalten** schalten Sie den Ofen aus und beginnen die Sitzungspause.
+**Ausschalten** schaltet den Ofen aus und beginnt die Sitzungspause.
 Das Licht folgt seinem Nachlauf. Innerhalb der **Wiederaufnahmezeit** setzt
 **Fortsetzen** dieselbe Sitzung fort. Diese Frist beträgt standardmäßig
 15 Minuten und bestimmt zugleich die Dauer des Lichtnachlaufs.
@@ -81,7 +79,7 @@ Das Licht folgt seinem Nachlauf. Innerhalb der **Wiederaufnahmezeit** setzt
 aus. Auch mit Ablauf der Wiederaufnahmezeit endet die Sitzung und das Licht
 geht aus. Beim nächsten Einschalten beginnt eine neue Sitzung.
 
-## Licht bedienen
+## Licht
 
 Im Automatikbetrieb stehen **Aus**, **Automatik** und **Hell** zur Verfügung.
 **Automatik** folgt der Temperatur und der aktuellen Phase. **Hell** verwendet
@@ -111,9 +109,9 @@ Die Ofenkühlung behält dabei Vorrang.
 Bei eingeschaltetem Betrieb in **Manuell** wechselt ein kurzer Druck die
 Ofenvorgabe zwischen EIN und AUS.
 
-Bei laufendem Betrieb drücken und halten Sie den Saunataster erneut, um die
-Sitzung abzuschließen. Nach Erkennen des langen Enddrucks bleibt das Licht
-während des Haltens aus. Beim Loslassen beginnt der Lichtnachlauf mit der
+Ein erneuter langer Druck auf den Saunataster schließt die laufende Sitzung
+ab. Nach Erkennen dieses Enddrucks bleibt das Licht während des Haltens aus.
+Beim Loslassen beginnt der Lichtnachlauf mit der
 eingestellten Helligkeit und der Dauer der Wiederaufnahmezeit.
 Die mit dem langen Druck abgeschlossene Sitzung bleibt
 beendet.
@@ -130,16 +128,16 @@ Rückkehrregel wie eine Wahl im Panel.
 
 ## Betriebsart Manuell und Übersteuerung
 
-Nach Ende einer Sitzung können Sie auf **Steuerung** zwischen **Automatik**
-und **Manuell** wechseln. Dafür genügen die normalen Home-Assistant-Bedienrechte.
+Nach Ende einer Sitzung ist auf **Steuerung** die Betriebsart **Automatik**
+oder **Manuell** wählbar. Dafür genügen normale Home-Assistant-Bedienrechte.
 Die Wiederaufnahmezeit gehört zur bestehenden Sitzung.
 
-In **Manuell** schalten Sie den Ofen mit **EIN** und **AUS**. Für das Licht
-stehen **Aus**, **Gedimmt** und **Hell** bereit. Diese Betriebsart bleibt bis
+In **Manuell** schalten **EIN** und **AUS** den Ofen. Für das Licht stehen
+**Aus**, **Gedimmt** und **Hell** bereit. Diese Betriebsart bleibt bis
 zum nächsten Betriebsartwechsel gewählt. Gültige Regeltemperatur und
 freigegebene technische Überwachung sind Voraussetzungen für das Heizen.
-Messung und Archivierung laufen weiter. Zur Temperaturregelung wechseln Sie
-nach Sitzungsende zurück zu **Automatik**.
+Messung und Archivierung laufen weiter. Nach Sitzungsende steht mit
+**Automatik** wieder die Temperaturregelung zur Verfügung.
 
 Für einen zeitweiligen Eingriff während des Automatikbetriebs verwenden
 Administratoren die Übersteuerungen auf **Steuerung**. **Automatik** gibt die
@@ -148,30 +146,29 @@ Ablauf der Höchstdauer führt ebenfalls zurück zur Automatik. Schutzabschaltun
 und Ofenkühlung haben Vorrang. Die markierte Taste zeigt die gewählte
 Steuerungsart; die Ofenrückmeldung zeigt den tatsächlichen Zustand.
 
-## Programme und Tastervorgabe bearbeiten
+## Programme und Tastervorgabe
 
-Unter **Einstellungen → Programme** verwalten Sie die benannten Programme.
+**Einstellungen → Programme** enthält den Katalog benannter Programme.
 Dafür genügen normale Home-Assistant-Bedienrechte. Die Bearbeitung ist nach
 Ende einer Sitzung verfügbar.
 
 **Bearbeiten** öffnet das gewählte Programm. **Fertig** übernimmt es in den
-Katalogentwurf; **Abbrechen** erhält den bisherigen Eintrag. Die Reihenfolge
-ändern Sie durch Ziehen am Griff oder mit den Pfeiltasten bei fokussiertem
-Griff. **Programme speichern** übernimmt den gesamten Entwurf dauerhaft.
+Katalogentwurf; **Abbrechen** erhält den bisherigen Eintrag. Ziehen am Griff
+oder Pfeiltasten bei fokussiertem Griff ändern die Reihenfolge.
+**Programme speichern** übernimmt den gesamten Entwurf dauerhaft.
 **Änderungen verwerfen** stellt den gespeicherten Katalog wieder her.
 
-Unter **Einstellungen → Saunataster** wählen Sie ein benanntes Programm oder
-eine eigene konstante Temperatur als Startvorgabe. Diese Vorgabe bleibt
+Unter **Einstellungen → Saunataster** steht ein benanntes Programm oder eine
+eigene konstante Temperatur als Startvorgabe zur Wahl. Diese Vorgabe bleibt
 gesondert von der aktuellen Temperaturwahl gespeichert.
 
 ## Verlauf und technische Details
 
-Öffnen Sie **Verlauf** und wählen Sie die laufende, letzte oder eine frühere
-Sitzung. Mit **Messhöhen vergleichen** blenden Sie die Messpositionen ein.
-Die Zoomtasten, eine Vergrößerungsgeste oder Strg/Cmd mit dem Mausrad verändern
-den sichtbaren Ausschnitt. Normales Scrollen bewegt die Seite. In der schmalen
-Übersicht können Sie das Zeitfenster verschieben; **Gesamt** zeigt die ganze
-Sitzung.
+**Verlauf** enthält die laufende, letzte oder eine frühere Sitzung zur Auswahl.
+**Messhöhen vergleichen** blendet die Messpositionen ein. Die Zoomtasten, eine
+Vergrößerungsgeste oder Strg/Cmd mit dem Mausrad verändern den sichtbaren
+Ausschnitt. Normales Scrollen bewegt die Seite. In der schmalen Übersicht ist
+das Zeitfenster verschiebbar; **Gesamt** zeigt die ganze Sitzung.
 
 Administratoren finden unter **Details → Betrieb & Fristen** die technischen
 Zustände und unter **Detailverlauf** die Messungen beider Positionen. Die
@@ -179,7 +176,7 @@ Zustände und unter **Detailverlauf** die Messungen beider Positionen. Die
 Unter **Einstellungen** lädt **Archiv als ZIP herunterladen** das Sitzungsarchiv
 herunter.
 
-[Archivinhalt](speicherung.md#export-herunterladen)
+[Archivinhalt](speicherung.md#archivexport)
 
 ## Darstellung und persönliche Startseite
 
@@ -197,15 +194,15 @@ gemeinsamen Bereich von Anzeigeskala und zulässigen Solltemperaturen.
 
 Ganz unten unter **Einstellungen** macht **Als Startseite festlegen** die
 Saunaübersicht zur persönlichen Home-Assistant-Startseite. Diese Auswahl gilt
-für das angemeldete Benutzerprofil. Eine andere Startseite wählen Sie im
-Home-Assistant-Profil.
+für das angemeldete Benutzerprofil. Eine andere Startseite ist im
+Home-Assistant-Profil wählbar.
 
 ## Technische Einstellungen und Rücksetzen
 
 Administratoren bearbeiten die **Grundeinstellungen** und Gerätezuordnungen
 nach Ende einer Sitzung. Während einer Sitzung bleiben die aktuelle
-Temperaturwahl, die Protokollstufe und die Darstellung anpassbar. Änderungen
-an den Grundeinstellungen bestätigen Sie mit **Einstellungen speichern**.
+Temperaturwahl, die Protokollstufe und die Darstellung anpassbar.
+**Einstellungen speichern** übernimmt geänderte Grundeinstellungen.
 
 **Standardwerte wiederherstellen** stellt nach Sitzungsende die zentrale
 Standardkonfiguration wieder her. Dazu gehören die Betriebsparameter und die

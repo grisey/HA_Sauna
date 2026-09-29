@@ -51,7 +51,7 @@ Hauptphase. `complete` und `corrections` kennzeichnen Vollständigkeit und
 Korrekturhinweise. Die gespeicherte Schützspur bleibt die maßgebliche Beobachtung;
 die Projektion ordnet ihr eine fachliche Ansicht zu.
 
-## Einstellungen übernehmen
+## Übernahme von Einstellungen
 
 Die Programmauswahl führt Bedienmodus und benannte Programmkennung getrennt.
 Im Panel enthält eine benannte Auswahl den Bedienmodus `program` und ihre

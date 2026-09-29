@@ -1589,7 +1589,7 @@ class HADevice:
             if phase and key not in self.notified:
                 self.notified.add(key)
                 message = (
-                    "Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen. Bitte den Drehschalter erneut einstellen."
+                    "Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen."
                     if phase == "expired"
                     else "Der mechanische Ofentimer erreicht voraussichtlich bald sein Ende."
                 )

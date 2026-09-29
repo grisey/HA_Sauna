@@ -1,6 +1,6 @@
 # Parameter und Entitätsrollen
 
-Gespeicherte Werte Ihrer Anlage haben Vorrang vor den Standards. Fehlende
+Gespeicherte Werte der Anlage haben Vorrang vor den Standards. Fehlende
 Einstellungen werden beim Laden mit dem zentralen Standard ergänzt.
 
 Die Konfiguration einer Sauna ist die gemeinsame Quelle für Einrichtungsdialog,
@@ -138,7 +138,7 @@ Position ermöglicht den weiteren Betrieb.
 
 Der mechanische Timer folgt der bestätigten Schützstellung. Nach einer
 beendeten Sitzung mit gezählten Gängen beginnt seine Anzeige beim nächsten
-Start neu. Er unterstützt das Einstellen des tatsächlichen Drehschalters.
+Start neu.
 
 Ein zugeordneter Leistungssensor liefert die gemessene Grundlage der
 Verbrauchsberechnung. Als Ersatz verwendet die Schätzung Nennleistung und
@@ -155,8 +155,8 @@ Abschnitte und kennzeichnet Lücken.
 | Zeitfenster der Aufheizschätzung | 5 min | Beobachtungszeit für Änderungen des Temperaturanstiegs |
 
 Die Aufheizschätzung verwendet einen geeigneten archivierten Aufheizverlauf und
-den aktuellen Temperaturtrend. Sie unterstützt die Planung und erscheint in
-Fünf-Minuten-Stufen. Farben und Messbogenskalen werden gesondert unter
+den aktuellen Temperaturtrend. Sie erscheint in Fünf-Minuten-Stufen. Farben und
+Messbogenskalen werden gesondert unter
 **Darstellung** gespeichert. Die Vorgaben der Skalen sind 40–110 °C für
 Temperatur und 0–60 % für relative Luftfeuchte.
 

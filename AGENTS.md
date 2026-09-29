@@ -2,9 +2,10 @@
 
 ## Arbeitsgrundlage
 
-Vor Änderungen den aktuellen Repository- und Dateistand lesen. Anforderungen,
-vorhandene Implementierung und tatsächlich erhobene Nachweise als solche
-kennzeichnen. Offene Entscheidungen mit ihrer konkreten Auswirkung benennen.
+Änderungen beruhen auf dem zuvor gelesenen Repository- und Dateistand.
+Anforderungen, bestehende Implementierung und erhobene Nachweise sind getrennt
+gekennzeichnet. Offene Entscheidungen sind mit ihrer konkreten Auswirkung
+beschrieben.
 
 ## Projektbestand und Arbeitsunterlagen
 
@@ -58,7 +59,11 @@ gebundene Dokumentprüfsummen werden dabei aktualisiert.
 Die Analyse verfolgt jede betroffene Anforderung vom ausführbaren Eingang über
 die Zustandsübergänge bis zu sämtlichen Verbrauchern der gemeinsamen Daten.
 
-Belege Fehler durch einen erreichbaren Eingang, seine Vorbedingungen, die verletzte Fachregel oder den bestehenden Schnittstellenvertrag und die beobachtete Wirkung. Synthetische Tests bilden diesen Weg mit den produktiven Methoden nach. Kennzeichne Robustheitsfälle und neue Funktionswünsche entsprechend.
+Ein Fehlernachweis enthält den erreichbaren Eingang, seine Vorbedingungen,
+die verletzte Fachregel oder den bestehenden Schnittstellenvertrag und die
+beobachtete Wirkung. Synthetische Tests bilden diesen Weg mit den produktiven
+Methoden nach. Robustheitsfälle und neue Funktionswünsche sind entsprechend
+gekennzeichnet.
 
 Tests verwenden vorhandene Fixtures.
 
@@ -78,7 +83,10 @@ Der Referenz-Replay verwendet ausdrücklich bereitgestellte Quelldaten.
 
 ## Dokumentationsstil
 
-Streiche Sätze ohne zusätzliche Information und vermeidbare Wiederholungen. Beschreibe Bedienhandlungen, Bedingungen und Wirkungen direkt. Verwende die sichtbaren Bedienbezeichnungen und erkläre technische Begriffe bei Bedarf. Nutze Aufzählungen für Schritte, Rangfolgen oder Vergleiche.
+Die Dokumentation verwendet neutrale Sachbeschreibungen ohne persönliche
+Ansprache oder Handlungsaufforderungen. Überflüssige Sätze und Dopplungen
+entfallen. Bedienbezeichnungen entsprechen der Oberfläche; technische Begriffe
+sind bei Bedarf erläutert. Aufzählungen dienen Abläufen, Rangfolgen oder Vergleichen.
 
 ## Datenschutz und Veröffentlichungen
 

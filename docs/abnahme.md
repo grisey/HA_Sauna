@@ -8,7 +8,7 @@ Abhängigkeiten und Zeitgrenzen stehen in der
 vom Repository-Hauptverzeichnis aus und jeweils als eigener Prozess ausgeführt.
 Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
-## Passende Prüfebene wählen
+## Prüfebenen
 
 | Ebene | Zweck | Dateien |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ HA_TEST_REQUIRED=1 python -m unittest discover -s tests/browser -v
 
 [Mess- und Interaktionsprogramme für den Sitzungsverlauf](livekurve.md#reproduzierbare-prüfmethode)
 
-## Nachweis festhalten
+## Prüfnachweis
 
 Ein Prüfprotokoll verbindet den Quellstand mit Umgebung, exaktem Kommando,
 Exitcode und den beobachteten Ergebnissen. Ausgeführte Fälle, übersprungene Fälle

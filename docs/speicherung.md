@@ -96,9 +96,8 @@ unabhängig von der aktuellen Datensatzseite.
 
 Administratoren erhalten die vollständigen Datensätze. Für andere
 leseberechtigte Benutzer stellt die API Messungen, Quellen-Schnappschüsse und
-Phasen mit Werten und Zeiten bereit. Ihre Sitzungsantwort beschreibt den
-Verlauf. Konkrete Quellen-IDs und der Konfigurationsblock sind ausschließlich
-für Administratoren freigegeben.
+Phasen mit Werten und Zeiten bereit. Konkrete Quellen-IDs und der
+Konfigurationsblock sind ausschließlich für Administratoren freigegeben.
 
 `after` bezeichnet die zuletzt gelesene Datensatz-ID. Gültige positive Werte
 reichen bis `2**63 - 1`; negative Werte werden auf null begrenzt. Eine ungültige
@@ -113,7 +112,7 @@ ihres Auftrags gebunden. Veraltete Antworten werden verworfen; bei fehlenden
 Administratorrechten werden bereits geladene Diagnosedaten und ihre abgeleiteten
 Ansichten entfernt.
 
-## Export herunterladen
+## Archivexport
 
 `GET /api/ha_sauna/{entry_id}/export` erfordert einen HA-Administrator. Der
 Download unter **Einstellungen** verwendet einen von Home Assistant signierten,

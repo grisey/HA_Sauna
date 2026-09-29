@@ -81,7 +81,7 @@
         "data_description": {
           "confirmation_minutes": "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
           "manual_override_minutes": "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
-          "mechanical_timer_warning_minutes": "So lange vor dem geschätzten Ablauf erscheint eine Erinnerung zum Einstellen des Drehschalters. Leer lassen, wenn keine Vorwarnung gewünscht ist.",
+          "mechanical_timer_warning_minutes": "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
           "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Fehlt an allen konfigurierten Messpositionen ein gültiger Temperaturwert, pausiert die Heizung bereits vorher. Der Ausfall nur einer von zwei Messpositionen wird als Störung angezeigt und sperrt den Betrieb mit der anderen nicht. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
           "median_seconds": "Zeitfenster für den Median. Es glättet einzelne Messausreißer vor der Erkennung.",
           "weak_temperature_upper": "Untergrenze des Temperaturtrends am oberen Sensor nach dem Durchlüften.",
@@ -338,7 +338,7 @@
         "data_description": {
           "confirmation_minutes": "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
           "manual_override_minutes": "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
-          "mechanical_timer_warning_minutes": "So lange vor dem geschätzten Ablauf erscheint eine Erinnerung zum Einstellen des Drehschalters. Leer lassen, wenn keine Vorwarnung gewünscht ist.",
+          "mechanical_timer_warning_minutes": "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
           "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Fehlt an allen konfigurierten Messpositionen ein gültiger Temperaturwert, pausiert die Heizung bereits vorher. Der Ausfall nur einer von zwei Messpositionen wird als Störung angezeigt und sperrt den Betrieb mit der anderen nicht. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
           "median_seconds": "Zeitfenster für den Median. Es glättet einzelne Messausreißer vor der Erkennung.",
           "weak_temperature_upper": "Untergrenze des Temperaturtrends am oberen Sensor nach dem Durchlüften.",

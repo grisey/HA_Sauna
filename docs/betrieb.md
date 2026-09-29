@@ -46,10 +46,9 @@ ursprünglichen Beginn. Die Heizpriorität ordnet diese Mindestzeit in die
 fordert im Automatikbetrieb ab seiner vorläufigen Erkennung durchgehend Heizen
 an, solange die übergeordneten Freigaben gelten.
 
-Die Phasenanzeige beschreibt den aktuellen Betriebsabschnitt. Beim Aufheizen
-steht daneben eine Prognose aus einem geeigneten früheren Aufheizverlauf und
-dem zunehmend belastbaren aktuellen Temperaturtrend. Sie dient der Anzeige
-und erscheint in Fünf-Minuten-Stufen.
+Beim Aufheizen steht neben der Phase eine Prognose aus einem geeigneten
+früheren Aufheizverlauf und dem zunehmend belastbaren aktuellen Temperaturtrend.
+Sie erscheint in Fünf-Minuten-Stufen.
 
 [Aufheizprognose](darstellung.md#zustand-und-zeit)
 
@@ -68,7 +67,7 @@ Endtemperatur das nächste Ziel; die verbleibenden Steigerungen verteilen sich
 bis zum neuen Endwert. Eine neue Starttemperatur beginnt eine neue Verteilung.
 Gangzählung und laufende Zeitabläufe bleiben erhalten.
 
-[Programme auswählen und bearbeiten](bedienung.md#einschalten-und-temperatur-wählen)
+[Programme auswählen und bearbeiten](bedienung.md#betriebsstart-und-temperaturwahl)
 
 ## Heizzeit, Timer und Energie
 
@@ -84,9 +83,8 @@ Sie zählt standardmäßig von 240 Minuten herunter, solange Betrieb und bestät
 Schützstellung EIN sind. Bei Schütz-AUS oder unbekannter Rückmeldung bleibt der
 zuletzt berechnete Rest erhalten. Nach einer abgeschlossenen Sitzung mit gezählten
 Gängen beginnt die Anzeige beim nächsten Start mit der vollen Dauer. Bei einer
-Gangzahl von null übernimmt die nächste Sitzung den bisherigen Timerrest. Der
-mechanische Drehschalter wird am Ofen bedient; die Timerberechnung dient
-ausschließlich der Anzeige.
+Gangzahl von null übernimmt die nächste Sitzung den bisherigen Timerrest.
+Die Timerberechnung dient ausschließlich der Anzeige.
 
 Die Verbrauchsschätzung ergibt sich aus gezählter Heizzeit und eingestellter
 Ofenleistung, standardmäßig 4,5 kW. Eine gültige Leistungsmessung übernimmt die

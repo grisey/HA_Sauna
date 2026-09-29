@@ -2,26 +2,25 @@
 
 Die Einrichtung erfordert Home-Assistant-Administratorrechte und
 Home Assistant ab **2026.9.0**. Die Zuordnung erfolgt über die bereits in
-Home Assistant vorhandenen Entitäten Ihrer Anlage.
+Home Assistant vorhandenen Entitäten der Anlage.
 
-## Integration installieren
+## Installation
 
-1. Fügen Sie in HACS `https://github.com/grisey/HA_Sauna` als
-   benutzerdefiniertes Repository vom Typ **Integration** hinzu und laden Sie
-   HA Sauna herunter.
-2. Starten Sie Home Assistant neu.
-3. Öffnen Sie **Einstellungen → Geräte & Dienste → Integration hinzufügen**
-   und wählen Sie **HA Sauna**.
+In HACS wird `https://github.com/grisey/HA_Sauna` als benutzerdefiniertes
+Repository vom Typ **Integration** hinterlegt. Nach dem Herunterladen von
+HA Sauna und einem Neustart von Home Assistant steht die Integration unter
+**Einstellungen → Geräte & Dienste → Integration hinzufügen → HA Sauna**
+zur Einrichtung bereit.
 
-Für eine Vorabversion aktivieren Sie den HACS-Schalter für Vorabversionen von
-HA Sauna. Gegebenenfalls aktivieren Sie zuvor dessen Entität. Wählen Sie bei
-einem Update die gewünschte Version in HACS und starten Sie Home Assistant
-anschließend neu. Gespeicherte Einstellungen und Gerätezuordnungen werden
-übernommen.
+Vorabversionen sind bei aktiviertem HACS-Schalter für Vorabversionen von
+HA Sauna verfügbar. Dazu gehört gegebenenfalls die Aktivierung der zugehörigen
+Entität. Updates erfolgen durch Versionswahl in HACS und anschließenden Neustart
+von Home Assistant. Gespeicherte Einstellungen und Gerätezuordnungen bleiben
+erhalten.
 
-## Anlage zuordnen
+## Entitätszuordnung
 
-Ordnen Sie die vorhandenen Entitäten ihren Aufgaben zu:
+Die vorhandenen Entitäten werden folgenden Aufgaben zugeordnet:
 
 | Aufgabe | Benötigte Zuordnung |
 | --- | --- |
@@ -45,24 +44,25 @@ kann die Anlage ergänzen.
 
 [Entitätsrollen und Einheiten](parameter.md#entitätsrollen)
 
-## Bedieneingang einrichten
+## Bedieneingang
 
-Wählen Sie den **Taster oder Betriebsschalter** und den **Schalter des
-Heizschützes** als getrennte Rollen. Der Taster bedient die Saunasitzung;
-HA Sauna steuert den Heizschütz.
+**Taster oder Betriebsschalter** und **Schalter des Heizschützes** sind
+getrennte Zuordnungen. Der Taster bedient die Saunasitzung; HA Sauna steuert
+den Heizschütz.
 
-Bei einem Ereignistaster wählen Sie den passenden Ereignistyp. Ein binärer
-Taster meldet Drücken und Loslassen; die eingestellte **Langdruckdauer des
-Saunatasters** bestimmt den langen Druck. Ein Betriebsschalter überträgt seine
-Ein-/Ausstellung auf den Saunabetrieb. Die entkoppelten Lichttaster bleiben
-unmittelbar bedienbar.
+Die Konfiguration eines Ereignistasters enthält den zugehörigen Ereignistyp.
+Ein binärer Taster meldet Drücken und Loslassen; die eingestellte
+**Langdruckdauer des Saunatasters** bestimmt den langen Druck. Ein
+Betriebsschalter überträgt seine Ein-/Ausstellung auf den Saunabetrieb. Die
+entkoppelten Lichttaster bleiben unmittelbar bedienbar.
 
-## Einstellungen an die Anlage anpassen
+## Anlageneinstellungen
 
-Öffnen Sie im Saunapanel **Einstellungen → Grundeinstellungen**. Prüfen Sie
-zuerst, ob das **Höchstalter eines Messwerts** die üblichen Meldeabstände Ihrer
-Sensoren abdeckt. Kontrollieren Sie anschließend die Schützrückmeldung und die
-**Helligkeitsskala des Lichtgeräts** anhand der Gerätekonfiguration.
+Im Saunapanel enthält **Einstellungen → Grundeinstellungen** die
+Betriebsparameter. Voraussetzung für gültige Messwerte ist ein zu den üblichen
+Meldeabständen der Sensoren passendes **Höchstalter eines Messwerts**. Die
+Zuordnung der Schützrückmeldung und die **Helligkeitsskala des Lichtgeräts**
+entsprechen der Gerätekonfiguration.
 
 [Parameterreferenz](parameter.md)
 
@@ -71,13 +71,13 @@ Die Untergrenze für Solltemperaturen beträgt bei einer neuen Einrichtung
 Gespeicherte Temperaturvorgaben bleiben bei einem Update erhalten; eine bereits
 ausdrücklich eingestellte Untergrenze wird übernommen.
 
-Unter **Einstellungen → Programme** passen Sie die Temperaturprogramme an.
-Unter **Einstellungen → Saunataster** wählen Sie das Programm oder die konstante
+Unter **Einstellungen → Programme** sind die Temperaturprogramme bearbeitbar.
+**Einstellungen → Saunataster** enthält das Programm oder die konstante
 Temperatur für den Start mit dem Taster.
 
-Deaktivieren Sie vor dem ersten Betrieb die bisherigen Sauna-Automationen,
-die denselben Ofen oder dasselbe Licht steuern. Damit führt HA Sauna den
-automatischen Ablauf; die vorhandenen Lichttaster bleiben Teil der Bedienung.
+Der Betrieb mit HA Sauna setzt voraus, dass bisherige Automationen zur Steuerung
+desselben Ofens oder Lichts deaktiviert sind. Die vorhandenen Lichttaster
+bleiben Teil der Bedienung.
 
 Gerätezuordnungen und technische Grundeinstellungen lassen sich nach Ende einer
 Sitzung über **Einstellungen** erneut bearbeiten.

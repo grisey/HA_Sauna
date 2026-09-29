@@ -178,7 +178,7 @@ PARAMETER_TEXT = {
     ),
     "mechanical_timer_warning_minutes": (
         "Erinnerung vor Ablauf des Ofentimers",
-        "So lange vor dem geschätzten Ablauf erscheint eine Erinnerung zum Einstellen des Drehschalters. Leer lassen, wenn keine Vorwarnung gewünscht ist.",
+        "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
         "timer",
     ),
     "nominal_power_kw": (

@@ -12,7 +12,7 @@ passenden Ursprung. Konfiguration, Archiv und Schutzgründe besitzen eine davon
 getrennte Lebensdauer. Eine neue Sitzung erhält ihre eigenen Ablaufobjekte;
 vorhandene Historie und weiter wirksame Schutzbedingungen behalten ihre Bedeutung.
 
-## Quellen, fachliche Zuordnung und Ausgabe trennen
+## Trennung von Quellen, Zuordnung und Ausgabe
 
 Quellmeldungen behalten ihre Messrolle, Herkunft und Zeitangaben. Die Erkennung
 verarbeitet bereits verfügbare Messungen. Der Ablaufkern ordnet die Ergebnisse
@@ -46,7 +46,7 @@ Einstellungspfad. Das Archiv speichert die zur Sitzung gehörenden
 Konfigurationsrevisionen als historische Snapshots. Der eingefrorene
 Replay-Parametersatz dient der Reproduktion eines definierten Vergleichsfalls.
 
-## Originaldaten erhalten und Ansichten daraus ableiten
+## Originaldaten und abgeleitete Ansichten
 
 Das Archiv bewahrt Messungen in voller empfangener Auflösung und ergänzt neue
 Zuordnungen durch weitere Revisionen. Dadurch bleiben ursprünglicher Beleg und

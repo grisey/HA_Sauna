@@ -3880,7 +3880,7 @@ class SaunaPanel extends HTMLElement {
         : {
             idle: "Noch nicht gestartet",
             running: "Geschätzte Restzeit bei eingeschaltetem Schütz",
-            expired: "Drehschalter neu einstellen",
+            expired: "Geschätzte Laufzeit abgelaufen",
           }[timer.state];
     const timerText = timer.state === "idle" ? "–" : duration(timer.remaining_seconds);
     const energyLabel = {
