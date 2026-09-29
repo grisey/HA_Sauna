@@ -103,8 +103,8 @@ Auslösung, Berechnungsregel und ausdrückliches vorzeitiges Ende beschreibt
 ## Licht
 
 Die automatische Helligkeit folgt dem Betriebsabschnitt und der Temperatur.
-Der Temperaturverlauf reicht von 5 % bei 30 °C bis zur Normalhelligkeit an der
-oberen Regeltemperatur. Die Normalhelligkeit beträgt tagsüber 40 % und nachts
+Die Lichtkurve reicht von 5 % bei 30 °C bis zur Normalhelligkeit an der aktuellen
+Solltemperatur. Die Normalhelligkeit beträgt tagsüber 40 % und nachts
 25 %; während der bürgerlichen Dämmerung geht sie gleitend zwischen beiden
 Werten über. Während eines Saunagangs bleibt die Normalhelligkeit erhalten.
 Die Ausgabe erfolgt in ganzen Prozentwerten.

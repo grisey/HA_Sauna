@@ -679,6 +679,44 @@ class DeviceFeedbackTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_light_completion_window_without_archive_is_finite_and_context_specific(self):
+        from homeassistant.core import Context
+
+        async def exercise(delay, own_context):
+            runtime, adapter, _ = self.device(feedback_timeout_seconds=.2)
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
+            contexts = []
+
+            async def complete(service, data, *, context):
+                contexts.append(context)
+                clock[0] = T0 + timedelta(seconds=1)
+
+            adapter.light_call = complete
+            self.assertIsNone(runtime.archive)
+            self.assertTrue(await adapter._send_light_command(
+                T0, key=("heat", "turn_on", 80), phase="aufheizen",
+                service="turn_on", brightness=80, session_id=None,
+            ))
+            self.assertEqual(adapter._expected_light_changes[0]["sent_at"], T0)
+            self.assertEqual(
+                adapter._expected_light_changes[0]["completed_at"], clock[0]
+            )
+            new = state("on", 204)
+            new.context = contexts[0] if own_context else Context()
+            event = SimpleNamespace(event_type="state_changed", data={
+                "entity_id": BINDINGS.values["light"],
+                "old_state": state("on", 180), "new_state": new,
+            })
+            return adapter.external_light_selection(
+                event, clock[0] + timedelta(seconds=delay)
+            )
+
+        for delay, own_context, expected in ((.199, True, None), (.2, True, 80),
+                                             (.199, False, 80)):
+            with self.subTest(delay=delay, own_context=own_context):
+                self.assertEqual(asyncio.run(exercise(delay, own_context)), expected)
+
     def test_large_brightness_integer_is_a_controlled_input_error(self):
         _, adapter, _ = self.device()
         adapter.set_light_override(37, at=T0)
@@ -1077,23 +1115,28 @@ class DeviceFeedbackTests(unittest.TestCase):
     def test_session_light_off_waits_for_feedback_then_retries(self):
         async def exercise():
             runtime, adapter, light = self.device(feedback_timeout_seconds=2)
+            clock = [T0]
+            runtime._clock = lambda: clock[0]
             phase = SimpleNamespace(session_id="ended", started_at=T0, ends_at=T0)
             runtime.controller.light_after_run = phase
             adapter.light_call = AsyncMock()
             self.assertFalse(await adapter._finish_expired_session_light(T0))
             self.assertNotIn("session_light", adapter.faults)
+            clock[0] = T0 + timedelta(seconds=1)
             self.assertFalse(
-                await adapter._finish_expired_session_light(T0 + timedelta(seconds=1))
+                await adapter._finish_expired_session_light(clock[0])
             )
             self.assertEqual(adapter.light_call.await_count, 1)
+            clock[0] = T0 + timedelta(seconds=2)
             self.assertFalse(
-                await adapter._finish_expired_session_light(T0 + timedelta(seconds=2))
+                await adapter._finish_expired_session_light(clock[0])
             )
             self.assertEqual(adapter.light_call.await_count, 2)
             self.assertEqual(adapter.faults["session_light"], "feedback_missing")
             light[0] = state("off")
+            clock[0] = T0 + timedelta(seconds=3)
             self.assertTrue(
-                await adapter._finish_expired_session_light(T0 + timedelta(seconds=3))
+                await adapter._finish_expired_session_light(clock[0])
             )
             self.assertNotIn("session_light", adapter.faults)
 

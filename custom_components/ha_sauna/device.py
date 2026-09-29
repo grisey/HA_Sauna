@@ -911,44 +911,75 @@ class HADevice:
         light_after_run = self.runtime.controller.light_after_run
         if light_after_run is None or now < light_after_run.ends_at:
             return True
-        key = ("session_light", light_after_run.session_id, light_after_run.started_at)
-        if key in (
-            self._light_session_off_completed_key,
-            self._light_session_off_superseded_key,
-        ):
-            return True
-        if not self._light_service_is_pending() and self._light_state_signature(
-            self.hass.states.get(self.bindings["light"])
-        ) == ("off", None):
-            self._light_session_off_completed_key = key
-            self.faults.pop("session_light", None)
-            return True
-        command_key = (key, "turn_off", None)
-        if (
-            self._light_last_command_key == command_key
-            and self._light_change_is_pending(now, "turn_off", None)
-        ):
+        async with self._light_output_lock:
+            if self.runtime.closed or not self._light_owned:
+                return False
+            light_after_run = self.runtime.controller.light_after_run
+            if light_after_run is None or now < light_after_run.ends_at:
+                return True
+            key = ("session_light", light_after_run.session_id, light_after_run.started_at)
+            if key in (
+                self._light_session_off_completed_key,
+                self._light_session_off_superseded_key,
+            ):
+                return True
+            task = self._light_service_task
+            completed = await self._wait_light_service()
+            if self.runtime.closed or not self._light_owned:
+                return False
+            # The previous actual output can fulfil the deadline while this
+            # caller waits. Read its result, feedback and current phase before
+            # deciding whether another OFF is still needed.
+            light_after_run = self.runtime.controller.light_after_run
+            checked_at = self.runtime._clock()
+            if light_after_run is None or checked_at < light_after_run.ends_at:
+                return True
+            if not completed:
+                self.faults["session_light"] = "service_unavailable"
+                return False
+            key = ("session_light", light_after_run.session_id, light_after_run.started_at)
+            if key in (
+                self._light_session_off_completed_key,
+                self._light_session_off_superseded_key,
+            ):
+                return True
+            failed = task is not None and (task.cancelled() or task.exception() is not None)
+            if not failed and self._light_state_signature(
+                self.hass.states.get(self.bindings["light"])
+            ) == ("off", None):
+                self._light_session_off_completed_key = key
+                self.faults.pop("session_light", None)
+                return True
+            command_key = (key, "turn_off", None)
+            if (
+                self._light_last_command_key == command_key
+                and self._light_change_is_pending(checked_at, "turn_off", None)
+            ):
+                return False
+            unconfirmed = self._light_last_command_key == command_key
+            if not await self._execute_light_command(
+                now,
+                key=command_key,
+                phase="session_light",
+                service="turn_off",
+                brightness=None,
+                session_id=light_after_run.session_id,
+                ends_at=light_after_run.ends_at,
+            ):
+                return False
+            if self.runtime.closed or not self._light_owned:
+                return False
+            if self.runtime.controller.light_after_run is not light_after_run:
+                return True
+            if self._light_state_signature(
+                self.hass.states.get(self.bindings["light"])
+            ) == ("off", None):
+                self._light_session_off_completed_key = key
+                self.faults.pop("session_light", None)
+                return True
+            if unconfirmed:
+                self.faults["session_light"] = "feedback_missing"
             return False
-        unconfirmed = self._light_last_command_key == command_key
-        if not await self._send_light_command(
-            now,
-            key=command_key,
-            phase="session_light",
-            service="turn_off",
-            brightness=None,
-            session_id=light_after_run.session_id,
-            ends_at=light_after_run.ends_at,
-        ):
-            return False
-        if self._light_state_signature(
-            self.hass.states.get(self.bindings["light"])
-        ) == ("off", None):
-            self._light_session_off_completed_key = key
-            self.faults.pop("session_light", None)
-            return True
-        if unconfirmed:
-            self.faults["session_light"] = "feedback_missing"
-        return False
 
     def _light_session_id(self):
         session = self.runtime.controller.session
@@ -1108,15 +1139,11 @@ class HADevice:
         task = self._light_service_task
         return task is not None and not task.done()
 
-    def _light_service_finished(self, task, expectation):
+    def _light_service_finished(self, task):
         # Timed-out or cancelled callers still leave an owned transport task.
         # Retrieve its eventual exception even if no later output is requested.
         if not task.cancelled():
-            error = task.exception()
-            if error is not None and expectation in self._expected_light_changes:
-                self._expected_light_changes.remove(expectation)
-        if expectation is not None:
-            expectation["completed_at"] = self.runtime._clock()
+            task.exception()
 
     async def _run_light_service(
         self, service, data, context, expectation, archive, key, payload, session_id
@@ -1153,8 +1180,15 @@ class HADevice:
                     payload["phase"], payload["brightness_pct"],
                 )
         finally:
+            completed_at = self.runtime._clock()
+            if expectation is not None:
+                if error is None:
+                    # Publish the successful echo window before the task can
+                    # become done and wake another output or queued input.
+                    expectation["completed_at"] = completed_at
+                elif expectation in self._expected_light_changes:
+                    self._expected_light_changes.remove(expectation)
             if archive is not None:
-                completed_at = self.runtime._clock()
                 try:
                     archive.append(
                         "light_command", completed_at,
@@ -1226,9 +1260,7 @@ class HADevice:
                     session_id,
                 )
             )
-            task.add_done_callback(
-                lambda completed: self._light_service_finished(completed, expectation)
-            )
+            task.add_done_callback(self._light_service_finished)
             if expectation is not None:
                 expectation["service_task"] = task
             if not await self._wait_light_service():
@@ -1237,7 +1269,7 @@ class HADevice:
         except Exception as exc:
             if (
                 expectation is not None
-                and (task is None or task.done())
+                and task is None
                 and expectation in self._expected_light_changes
             ):
                 self._expected_light_changes.remove(expectation)
@@ -1276,7 +1308,7 @@ class HADevice:
         return ("on", value) if value else ("off", None)
 
     def _discard_expired_light_expectations(self, now):
-        """Keep the send-time window and bounded context of unfinished calls."""
+        """Keep the send window and context until shortly after actual completion."""
         timeout = self.values.get("feedback_timeout_seconds")
         if timeout is None:
             self._expected_light_changes.clear()

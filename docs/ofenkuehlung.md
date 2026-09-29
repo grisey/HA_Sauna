@@ -38,10 +38,11 @@ für die erste Kühlung der Sitzung gilt der Sitzungsbeginn.
 
 ## Berechnung der Dauer
 
-Die Basisdauer `after_run_minutes` beträgt standardmäßig **5 Minuten**. Das
-Maximum `oven_cooling_max_minutes` beträgt **15 Minuten**. Bei einem gespeicherten
-Basiswert oberhalb des eingestellten Maximums gilt dieser Basiswert zugleich
-als wirksames Minimum und Maximum.
+Die Basisdauer `after_run_minutes` beträgt standardmäßig **5 Minuten**. Die
+Höchstdauer `oven_cooling_max_minutes` beträgt **15 Minuten**. Bei der Übernahme
+älterer Konfigurationen ohne gespeicherte Höchstdauer wird eine Basisdauer
+oberhalb dieses Standardmaximums zugleich als Höchstdauer übernommen. Eine
+ausdrücklich eingestellte Höchstdauer muss mindestens der Basisdauer entsprechen.
 
 Die Berechnung gewichtet jüngere Zeiten stärker als ältere. Das Gewicht eines
 Zeitpunkts hängt von seinem Alter in Minuten zum Kühlbeginn ab:

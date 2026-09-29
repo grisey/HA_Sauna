@@ -547,6 +547,210 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def test_earlier_manual_expiry_resumes_session_light_then_keeps_real_light_off(self):
         await self._assert_session_light_expiry_stays_off(.5)
 
+    async def _prepare_pending_session_light_expiry(self):
+        from custom_components.ha_sauna.settings import async_set_parameters
+
+        await async_set_parameters(self.hass, self.entry, {
+            "session_gap_minutes": 1, "manual_override_minutes": 1,
+            "feedback_timeout_seconds": .05, "sensor_timeout_seconds": 180,
+            "light_transition_seconds": 0,
+        }, partial=True)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = self.runtime._clock()
+        self.runtime._clock = lambda: self.now
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.now = self.base + timedelta(seconds=1)
+        await self.runtime.set_operation(False)
+        await self.runtime.set_light_override(80)
+        await self.hass.async_block_till_done()
+        phase = self.runtime.controller.light_after_run
+        self.assertEqual(phase.ends_at, self.base + timedelta(seconds=61))
+        self.assertEqual(self.hass.states.get(self.light.entity_id).state, "on")
+        self.light.calls.clear()
+        return phase
+
+    async def _assert_pending_due_off_completion(
+        self, caller, *, early_feedback=False, fails=False, finishes_before_tick=False,
+    ):
+        import json
+        import zipfile
+
+        phase = await self._prepare_pending_session_light_expiry()
+        adapter = self.runtime.device
+        original_off, original_wait = self.light.async_turn_off, adapter._wait_light_service
+        entered, release, waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        service, following = None, None
+        held_runtime_lock = False
+        following_at = self.base + timedelta(seconds=62)
+
+        async def paused_off(**kwargs):
+            if not entered.is_set():
+                entered.set()
+                if early_feedback:
+                    await original_off(**kwargs)
+                await release.wait()
+                if fails:
+                    from homeassistant.exceptions import HomeAssistantError
+                    raise HomeAssistantError("Synthetic completion failure after OFF feedback")
+                if early_feedback:
+                    return
+            await original_off(**kwargs)
+
+        async def observe_wait():
+            if self.now == following_at and adapter._light_service_task is service:
+                self.assertFalse(service.done())
+                waiting.set()
+            return await original_wait()
+
+        self.now = planned_at = phase.ends_at
+        with (
+            patch.object(self.light, "async_turn_off", side_effect=paused_off),
+            patch.object(adapter, "_wait_light_service", side_effect=observe_wait),
+        ):
+            first = asyncio.create_task(self.runtime.tick())
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                service = adapter._light_service_task
+                if caller == "cancel":
+                    first.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await first
+                else:
+                    await first
+                    self.assertEqual(adapter.faults["session_light"], "service_unavailable")
+                self.assertFalse(service.done())
+                if finishes_before_tick:
+                    # Queued HA feedback cycles may also request OFF. Keep
+                    # them behind the runtime lock until the actual service
+                    # has finished, so every following cycle sees done=True.
+                    await self.runtime._lock.acquire()
+                    held_runtime_lock = True
+                else:
+                    self.now = following_at
+                    following = asyncio.create_task(self.runtime.tick())
+                    await asyncio.wait_for(waiting.wait(), 3)
+                    self.assertFalse(following.done())
+                self.assertIsNone(adapter._light_session_off_completed_key)
+                self.now = completed_at = self.base + timedelta(seconds=63)
+                release.set()
+                if fails:
+                    from homeassistant.exceptions import HomeAssistantError
+                    with self.assertRaises(HomeAssistantError):
+                        await service
+                else:
+                    await service
+                if finishes_before_tick:
+                    self.assertTrue(service.done())
+                    held_runtime_lock = False
+                    self.runtime._lock.release()
+                    following = asyncio.create_task(self.runtime.tick())
+                await following
+                await self.hass.async_block_till_done()
+            finally:
+                release.set()
+                if held_runtime_lock:
+                    held_runtime_lock = False
+                    self.runtime._lock.release()
+                await asyncio.gather(
+                    *(task for task in (first, service, following) if task is not None),
+                    return_exceptions=True,
+                )
+        expected_count = 2 if fails else 1
+        self.assertEqual([kind for kind, _kwargs in self.light.calls], ["off"] * expected_count)
+        self.assertEqual(self.hass.states.get(self.light.entity_id).state, "off")
+        self.assertIsNone(adapter.light_output.manual_brightness)
+        self.assertEqual(adapter.light_output.last_automatic_brightness, 0)
+        self.assertEqual(adapter._light_session_off_completed_key, (
+            "session_light", phase.session_id, phase.started_at,
+        ))
+        self.assertNotIn("session_light", adapter.faults)
+        for second in (65, 90, 121):
+            await self.time(second)
+        self.assertEqual(len(self.light.calls), expected_count)
+        await self.runtime.archive.flush()
+        commands = [record for record in self.runtime.archive.read(phase.session_id)["records"]
+                    if record["kind"] == "light_command"
+                    and record["payload"]["phase"] == "session_light"
+                    and record["payload"]["service"] == "turn_off"]
+        self.assertEqual(len(commands), expected_count)
+        command = commands[0]
+        self.assertEqual(command["session_id"], phase.session_id)
+        self.assertEqual(command["payload"], {
+            "planned_at": planned_at.isoformat(), "purpose": "session_end",
+            "phase": "session_light", "service": "turn_off", "brightness_pct": None,
+            "ends_at": phase.ends_at.isoformat(), "sent_at": planned_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "service_error": "HomeAssistantError" if fails else None,
+        })
+        self.assertEqual(command["received_at"], completed_at.isoformat())
+        if fails:
+            self.assertEqual(commands[1]["payload"], {
+                **command["payload"],
+                "planned_at": (completed_at if finishes_before_tick else following_at).isoformat(),
+                "sent_at": completed_at.isoformat(), "service_error": None,
+            })
+            self.assertEqual(commands[1]["received_at"], completed_at.isoformat())
+        path = await self.runtime.archive.export()
+        try:
+            with zipfile.ZipFile(path) as archive:
+                exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+            ids = {record["id"] for record in commands}
+            self.assertEqual([record for record in exported if record["id"] in ids], commands)
+        finally:
+            path.unlink()
+
+    async def test_cancelled_pending_due_off_is_consumed_after_wait(self):
+        await self._assert_pending_due_off_completion("cancel")
+
+    async def test_timed_out_pending_due_off_is_consumed_after_wait(self):
+        await self._assert_pending_due_off_completion("timeout")
+
+    async def test_pending_due_off_with_early_feedback_is_consumed_after_wait(self):
+        await self._assert_pending_due_off_completion("cancel", early_feedback=True)
+
+    async def test_pending_due_off_failure_after_feedback_still_requires_retry(self):
+        await self._assert_pending_due_off_completion("cancel", early_feedback=True, fails=True)
+
+    async def test_completed_due_off_failure_after_feedback_still_requires_retry(self):
+        await self._assert_pending_due_off_completion(
+            "cancel", early_feedback=True, fails=True, finishes_before_tick=True,
+        )
+
+    async def test_unconfirmed_due_off_waits_for_feedback_window_then_retries(self):
+        phase = await self._prepare_pending_session_light_expiry()
+        original_off = self.light.async_turn_off
+        ignored = False
+
+        async def ignored_first_off(**kwargs):
+            nonlocal ignored
+            if not ignored:
+                ignored = True
+                self.light.calls.append(("off", kwargs))
+                return
+            await original_off(**kwargs)
+
+        with patch.object(self.light, "async_turn_off", side_effect=ignored_first_off):
+            for second, state, count in ((61, "on", 1), (61.01, "on", 1), (61.06, "off", 2)):
+                await self.time(second)
+                self.assertEqual(self.hass.states.get(self.light.entity_id).state, state)
+                self.assertEqual([kind for kind, _kwargs in self.light.calls], ["off"] * count)
+        await self.time(62)
+        self.assertEqual(len(self.light.calls), 2)
+        await self.runtime.archive.flush()
+        commands = [record["payload"]
+                    for record in self.runtime.archive.read(phase.session_id)["records"]
+                    if record["kind"] == "light_command"
+                    and record["payload"]["phase"] == "session_light"
+                    and record["payload"]["service"] == "turn_off"]
+        self.assertEqual(len(commands), 2)
+        self.assertEqual([command["sent_at"] for command in commands], [
+            phase.ends_at.isoformat(), (self.base + timedelta(seconds=61.06)).isoformat(),
+        ])
+        self.assertTrue(all(command["ends_at"] == phase.ends_at.isoformat()
+                            and command["service_error"] is None for command in commands))
+
     async def test_manual_session_finish_ends_the_gap_light_in_both_modes(self):
         from dataclasses import replace
 
@@ -1697,13 +1901,28 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         session_id = self.runtime.session.session_id
         entered, release = asyncio.Event(), asyncio.Event()
         original_on = self.light.async_turn_on
+        adapter = self.runtime.device
+        original_finished = adapter._light_service_finished
+        failed_expectations_before_callback = []
+        service = None
 
         async def paused_on(**kwargs):
             entered.set()
             await release.wait()
             await original_on(**kwargs)
 
-        with patch.object(self.light, "async_turn_on", side_effect=paused_on):
+        def finished(task, *args):
+            if fails and task is service:
+                failed_expectations_before_callback.append([
+                    expected for expected in adapter._expected_light_changes
+                    if expected.get("service_task") is task
+                ])
+            original_finished(task, *args)
+
+        with (
+            patch.object(self.light, "async_turn_on", side_effect=paused_on),
+            patch.object(adapter, "_light_service_finished", side_effect=finished),
+        ):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
                 await asyncio.wait_for(entered.wait(), 3)
@@ -1730,6 +1949,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 await service
             self.light.fail_commands = False
             await self.hass.async_block_till_done()
+        if fails:
+            self.assertEqual(failed_expectations_before_callback, [[]])
         await self.runtime.archive.flush()
         commands = [
             record for record in self.runtime.archive.read(session_id)["records"]
@@ -1764,6 +1985,66 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_light_failure_keeps_one_original_session_record(self):
         await self._assert_cancelled_light_completion_is_archived(fails=True)
+
+    async def test_cancelled_actual_light_service_removes_echo_before_callback_and_archives(self):
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        session_id = self.runtime.session.session_id
+        adapter = self.runtime.device
+        original_finished = adapter._light_service_finished
+        entered = asyncio.Event()
+        expectations_before_callback = []
+        service = None
+
+        async def paused_call(*args, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+
+        def finished(task, *args):
+            if task is service:
+                expectations_before_callback.append([
+                    expected for expected in adapter._expected_light_changes
+                    if expected.get("service_task") is task
+                ])
+            original_finished(task, *args)
+
+        self.light.calls.clear()
+        with (
+            patch.object(adapter, "light_call", side_effect=paused_call),
+            patch.object(adapter, "_light_service_finished", side_effect=finished),
+        ):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                service = adapter._light_service_task
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                self.assertTrue(any(expected.get("service_task") is service
+                                    for expected in adapter._expected_light_changes))
+                self.now += timedelta(seconds=3)
+                service.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await service
+                await self.hass.async_block_till_done()
+            finally:
+                for task in (selecting, service):
+                    if task is not None and not task.done():
+                        task.cancel()
+                await asyncio.gather(*(task for task in (selecting, service) if task is not None),
+                                     return_exceptions=True)
+        self.assertEqual(expectations_before_callback, [[]])
+        self.assertEqual(self.light.calls, [])
+        self.assertEqual(adapter.faults["operation_light"], "service_unavailable")
+        await self.runtime.archive.flush()
+        commands = [record for record in self.runtime.archive.read(session_id)["records"]
+                    if record["kind"] == "light_command"
+                    and record["payload"]["brightness_pct"] == 80]
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0]["session_id"], session_id)
+        self.assertEqual(commands[0]["payload"]["service_error"], "CancelledError")
+        self.assertEqual(commands[0]["payload"]["completed_at"], self.now.isoformat())
+        self.assertEqual(commands[0]["received_at"], self.now.isoformat())
 
     async def _assert_session_light_deadline_is_archived(self, caller):
         import json
@@ -2180,6 +2461,148 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_light_externally(True, 204)
         self.assertAlmostEqual(adapter.light_output.manual_brightness, 80)
 
+    async def test_completed_old_light_echo_before_callback_keeps_new_session_automatic(self):
+        from custom_components.ha_sauna.settings import async_set_parameters
+
+        await async_set_parameters(self.hass, self.entry, {
+            "session_gap_minutes": 1, "feedback_timeout_seconds": .025,
+            "light_transition_seconds": 0,
+        }, partial=True)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = self.runtime._clock()
+        self.runtime._clock = lambda: self.now
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_temperature", 70)
+            await self.set_source(f"{position}_humidity", 30)
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        old_session = self.runtime.session.session_id
+        self.now = self.base + timedelta(seconds=1)
+        await self.runtime.set_operation(False)
+        await self.hass.async_block_till_done()
+        original_ends_at = self.runtime.controller.light_after_run.ends_at
+        self.assertEqual(original_ends_at, self.base + timedelta(seconds=61))
+
+        adapter = self.runtime.device
+        original_call = adapter.light_call
+        original_finished = adapter._light_service_finished
+        original_discard = adapter._discard_expired_light_expectations
+        entered, release = asyncio.Event(), asyncio.Event()
+        old_service, waiting_tick = None, None
+        callback_seen, release_runtime_lock = False, False
+        completion_before_callback = []
+
+        async def paused_call(service, data, **kwargs):
+            nonlocal release_runtime_lock
+            old_output = service == "turn_on" and data.get("brightness_pct") == 80
+            if old_output:
+                entered.set()
+                await release.wait()
+            await original_call(service, data, **kwargs)
+            if old_output and release_runtime_lock:
+                # Wake an already waiting original cycle before this transport
+                # task returns and schedules its done callback. HA still owns
+                # the actual service, entity feedback and context propagation.
+                release_runtime_lock = False
+                self.runtime._lock.release()
+
+        def finished(task, *args):
+            nonlocal callback_seen
+            if task is old_service:
+                callback_seen = True
+            original_finished(task, *args)
+
+        def discard(now):
+            if old_service is not None and old_service.done() and not callback_seen:
+                completion_before_callback.extend(
+                    expected["completed_at"]
+                    for expected in adapter._expected_light_changes
+                    if expected.get("service_task") is old_service
+                )
+            original_discard(now)
+
+        self.light.calls.clear()
+        self.now = planned_at = self.base + timedelta(seconds=2)
+        with (
+            patch.object(adapter, "light_call", side_effect=paused_call),
+            patch.object(adapter, "_light_service_finished", side_effect=finished),
+            patch.object(adapter, "_discard_expired_light_expectations", side_effect=discard),
+        ):
+            selecting = asyncio.create_task(self.runtime.set_light_override(80))
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                old_service = adapter._light_service_task
+                selecting.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await selecting
+                self.assertFalse(old_service.done())
+                self.now = self.base + timedelta(seconds=3)
+                token = next(deadline.token for deadline in self.runtime.session.deadlines
+                             if deadline.purpose == "session_gap")
+                await self.runtime.finish_session_gap(token)
+                self.assertIsNone(self.runtime.session)
+                self.now = self.base + timedelta(seconds=4)
+                await self.runtime.set_operation(True)
+                new_session = self.runtime.session.session_id
+                self.assertNotEqual(new_session, old_session)
+                self.assertIsNone(self.runtime.controller.light_after_run)
+                await self.hass.async_block_till_done()
+
+                self.now = completed_at = self.base + timedelta(seconds=7)
+                await self.runtime._lock.acquire()
+                release_runtime_lock = True
+                waiting_tick = asyncio.create_task(self.runtime.tick())
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                self.assertFalse(waiting_tick.done())
+                release.set()
+                await old_service
+                await waiting_tick
+                await self.hass.async_block_till_done()
+            finally:
+                release.set()
+                if release_runtime_lock:
+                    release_runtime_lock = False
+                    self.runtime._lock.release()
+                await asyncio.gather(
+                    *(task for task in (selecting, old_service, waiting_tick) if task is not None),
+                    return_exceptions=True,
+                )
+
+        self.assertTrue(callback_seen)
+        # These values are observed at real task.done/callback-pending edges;
+        # no task state, completion timestamp or callback result is replaced.
+        self.assertIn(completed_at, completion_before_callback)
+        self.assertIsNone(adapter.light_output.manual_brightness)
+        self.assertEqual(self.runtime.session.session_id, new_session)
+        self.assertEqual(
+            [(kind, kwargs.get("brightness")) for kind, kwargs in self.light.calls],
+            [("on", 204), ("on", 54)],
+        )
+        self.assertEqual(self.light.brightness, 54)
+        await self.runtime.archive.flush()
+        old_commands = [record for record in self.runtime.archive.read(old_session)["records"]
+                        if record["kind"] == "light_command"
+                        and record["payload"]["brightness_pct"] == 80]
+        self.assertEqual(len(old_commands), 1)
+        command = old_commands[0]
+        self.assertEqual(command["session_id"], old_session)
+        self.assertEqual(command["payload"], {
+            "planned_at": planned_at.isoformat(), "purpose": "session_end",
+            "phase": "session_light", "service": "turn_on", "brightness_pct": 80,
+            "ends_at": original_ends_at.isoformat(), "sent_at": planned_at.isoformat(),
+            "completed_at": completed_at.isoformat(), "service_error": None,
+        })
+        self.assertEqual(command["received_at"], completed_at.isoformat())
+        new_commands = [record["payload"]
+                        for record in self.runtime.archive.read(new_session)["records"]
+                        if record["kind"] == "light_command"]
+        self.assertEqual([command["brightness_pct"] for command in new_commands], [21])
+        self.now = self.base + timedelta(seconds=9)
+        await self.set_light_externally(True, 204)
+        self.assertEqual(adapter.light_output.manual_brightness, 80)
+
     async def test_pending_on_cannot_complete_due_off_from_current_off_feedback(self):
         from types import SimpleNamespace
 
@@ -2192,6 +2615,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             await original_on(**kwargs)
 
+        self.light.calls.clear()
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
@@ -2213,6 +2637,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 release.set()
             self.assertTrue(await finishing)
             await self.hass.async_block_till_done()
+        self.assertEqual([kind for kind, _kwargs in self.light.calls], ["on", "off"])
         self.assertFalse(self.light.is_on)
 
     async def test_binary_hold_gap_and_manual_choice_release_to_configured_afterrun(self):
