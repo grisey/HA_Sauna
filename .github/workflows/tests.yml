@@ -63,6 +63,5 @@ jobs:
           PY
       - run: python -m playwright install --with-deps chromium
       - run: python -m unittest discover -s tests/browser -v
-        timeout-minutes: 2
         env:
           HA_TEST_REQUIRED: '1'

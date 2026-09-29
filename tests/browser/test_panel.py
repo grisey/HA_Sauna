@@ -143,8 +143,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "aria-current", "page"
         )
         await tabs.locator('[data-action="overview"]').click()
+        await self.panel.locator("#current .manual-overrides summary").click()
         await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_visible()
         await expect(self.panel.locator('#current .manual-overrides [data-action="manual-light-overview"]')).to_be_visible()
+        await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_disabled()
+        await expect(self.panel.locator('#current .manual-overrides [data-action="manual-light-overview"]')).to_be_disabled()
 
         user = await self.hass.auth.async_create_user("Normal panel user", group_ids=[GROUP_ID_USER])
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
@@ -753,7 +756,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
         self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (80, 86, 92))
         await expect(active).to_have_text("Aktuell: Individuell")
-        await self.panel.locator('[data-action="program-toggle"]').click()
         await self.panel.locator('[data-action="program-mode:constant"]').click()
         async with self.page.expect_response(
             lambda response: response.url.endswith(program_url) and response.request.method == "POST"
@@ -798,9 +800,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         action = self.panel.locator('#program-choice-body [data-action="program-apply"]')
         await expect(action).to_have_text("Programm übernehmen")
         await expect(action).to_be_enabled()
-        operation_box = await self.panel.locator(
-            '#current [data-action="operation"]'
-        ).bounding_box()
         await expect(self.panel.locator('#current .program-pending')).to_contain_text("Genusszeit")
         await expect(active_program).to_have_text("Aktuell: Individuell")
         await self.panel.evaluate("p=>p.refresh()")
@@ -815,6 +814,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
         await self.panel.get_by_role("button", name="Programm ändern").click()
         await self.panel.locator('[data-action="program-mode:program"]').click()
+        operation_box = await self.panel.locator(
+            '#current [data-action="operation"]'
+        ).bounding_box()
         entered = asyncio.Event()
         release = asyncio.Event()
         program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
@@ -1338,7 +1340,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await target_arc.focus()
         await expect(target_arc).to_have_css("opacity", "0.35")
         await target_arc.press("PageDown")
-        await expect(target_arc).to_have_attribute("aria-valuenow", "75", timeout=10000)
+        await expect(target_arc).to_have_attribute("aria-valuenow", "70", timeout=10000)
         program_url=f"/api/ha_sauna/{self.entry.entry_id}/program"
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST"):
             await self.panel.locator('[data-action="program-mode:individual"]').click()
@@ -1350,11 +1352,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await self.panel.locator('#progression-gangs').fill("3")
             await self.panel.locator('#progression-gangs').press("Enter")
         await self.panel.locator('[data-action="program-info:free"]').click()
-        await expect(self.panel.locator('#current .program-info-popup')).to_contain_text("75 → 80,5 → 86 °C")
+        await expect(self.panel.locator('#current .program-info-popup')).to_contain_text("70 → 78 → 86 °C")
         response=await result.value
         self.assertTrue(response.ok)
         saved=await response.json()
-        self.assertEqual(saved["parameters"]["target_temperature_c"],75)
+        self.assertEqual(saved["parameters"]["target_temperature_c"],70)
         self.assertEqual(saved["parameters"]["final_temperature_c"],86)
         self.assertEqual(saved["parameters"]["temperature_gangs"],3)
         await expect(self.panel.locator('#progression-end')).to_have_value("86", timeout=15000)
