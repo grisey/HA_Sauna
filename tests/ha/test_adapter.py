@@ -107,6 +107,23 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             [program.as_dict() for program in DEFAULT_PROGRAMS],
         )
 
+    async def test_setup_override_limit_is_field_specific_and_keeps_fractions(self):
+        await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
+        for value in (10.000000000000002, 20):
+            with self.subTest(value=value):
+                form = await self.flow.async_step_parameters({
+                    **self.values, "manual_override_minutes": value,
+                })
+                self.assertEqual(form["errors"], {"manual_override_minutes": "too_large"})
+                self.assertEqual(self.entries, [])
+        for value in (10, 0.5):
+            with self.subTest(value=value):
+                result = await self.flow.async_step_parameters({
+                    **self.values, "manual_override_minutes": value,
+                })
+                self.assertEqual(result["type"], "create_entry")
+                self.assertEqual(result["options"]["parameters"]["manual_override_minutes"], value)
+
     async def test_either_single_measurement_pair_can_be_configured(self):
         for position in ("upper", "lower"):
             with self.subTest(position=position):
@@ -297,6 +314,54 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(targets, [80, (80 + end) / 2, end])
                     await restored.close()
                     await self.entry.runtime_data.close()
+
+    async def test_loaded_and_closed_options_adopt_only_saved_override_values(self):
+        from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+
+        for loaded in (True, False):
+            with self.subTest(loaded=loaded):
+                self.entry.options = {
+                    "bindings": self.inputs,
+                    "parameters": {**self.expected_values, "manual_override_minutes": 20},
+                    "button_program": "genusszeit",
+                    "selected_program_id": "genusszeit",
+                }
+                configuration = Configuration.from_options(self.entry.options)
+                runtime = self.entry.runtime_data = SaunaRuntime(configuration)
+                if not loaded:
+                    await runtime.close()
+                before = dict(self.entry.options)
+                flow = self.module.SaunaOptionsFlow()
+                flow.hass = self.hass
+                flow.handler = self.entry.entry_id
+                flow.context = {"source": "options"}
+                with patch.object(
+                    type(flow), "config_entry", new_callable=PropertyMock,
+                    return_value=self.entry,
+                ):
+                    form = await flow.async_step_parameters()
+                    field = next(key for key in form["data_schema"].schema
+                                 if str(key) == "manual_override_minutes")
+                    self.assertEqual(field.description["suggested_value"], 10)
+                    selector = form["data_schema"].schema[field]
+                    self.assertEqual(selector.config["max"], 10)
+                    self.assertEqual(selector.config["step"], "any")
+                    for value in (10.000000000000002, 20):
+                        rejected = await flow.async_step_parameters({
+                            **self.values, "manual_override_minutes": value,
+                        })
+                        self.assertEqual(rejected["errors"], {"manual_override_minutes": "too_large"})
+                        self.assertEqual(self.entry.options, before)
+                        self.assertIs(runtime.configuration, configuration)
+                        self.assertFalse(runtime.reconfiguring)
+                    result = await flow.async_step_parameters(self.values)
+                self.assertEqual(result["type"], "create_entry")
+                saved = Configuration.from_options(result["data"])
+                self.assertEqual(saved.parameters.values["manual_override_minutes"], 10)
+                self.assertEqual(saved.bindings, configuration.bindings)
+                self.assertEqual(saved.button_program, "genusszeit")
+                self.assertEqual(saved.selected_program_id, "genusszeit")
+                await runtime.close()
 
     async def test_setup_unload_without_device_transport_never_starts_session(self):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry

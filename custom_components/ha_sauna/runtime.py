@@ -146,6 +146,16 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
+        override_key = "manual_override_minutes"
+        if override_key in values:
+            # Gespeicherte Werte hatten bisher die allgemeine Obergrenze von
+            # 1.000.000 Minuten. Nur damals gültige Altwerte werden übernommen;
+            # neue Eingaben bleiben in Parameters auf zehn Minuten begrenzt.
+            override_definition = BY_KEY[override_key]
+            previous_value = replace(
+                override_definition, maximum=1_000_000
+            ).validate(values[override_key])
+            values[override_key] = min(previous_value, override_definition.maximum)
         # Diese frühere, getrennte Lichtdauer ist durch die Sitzungspause
         # ersetzt. Sie wird nur bei alten gespeicherten Optionen verworfen;
         # andere unbekannte Werte bleiben weiterhin ungültig.

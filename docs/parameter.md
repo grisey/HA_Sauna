@@ -66,13 +66,13 @@ konstante Temperatur, standardmäßig 80 °C.
 | Einstellung | Standard | Bedeutung |
 | --- | --- | --- |
 | Wiederaufnahmezeit | 15 min | Dauer der Sitzungspause und des Lichtnachlaufs; erneutes Einschalten innerhalb dieser Zeit setzt die Sitzung fort. |
-| Zeit für die Aufgussbestätigung | 12 min | Frist ab dem zugeordneten Beginn eines vorläufigen Gangs |
+| Zeit für die Aufgussbestätigung | 12 min | Proxyfrist ab dem zugeordneten Beginn eines vorläufigen Gangs |
 | Ofen-Auszeit zum Zurücksetzen der Heizzeit | 10 min | Zusammenhängende Auszeit, nach der der lokale Heizzeitzähler wieder bei null beginnt; Sitzung und Energieverbrauch bleiben erhalten. |
 | Mindestdauer der Ofenkühlung | 5 min | Basis der berechneten Kühlzeit |
 | Höchstdauer der Ofenkühlung | 15 min | Obergrenze der gezählten Kühlzeit mit bestätigtem Schütz-AUS |
 | Halbwertszeit der Ofenkühlung | 15 min | Alter, nach dem sich das Gewicht eines Heiz- oder Bereitschaftsabschnitts halbiert |
 | Heizminuten je Bereitschaftsminute | 2 | Eine gewichtete Bereitschaftsminute gleicht zwei gewichtete Heizminuten aus. |
-| Höchstdauer manueller Übersteuerungen | 10 min | Spätester Rückkehrpunkt an die Automatik; ein passender Phasen- oder Schaltwechsel kann früher führen. |
+| Höchstdauer manueller Übersteuerungen | 10 min | Dauer vorübergehender Ofen- und Lichtübersteuerungen in Automatik; feste Obergrenze 10 min. Ein passender Programm-, Phasen- oder Schaltwechsel kann sie früher beenden. |
 | Langdruckdauer des Saunatasters | 2 s | Dauer, nach der ein bei laufendem Betrieb begonnener Binärtasterdruck die Sitzung beendet |
 
 Die Ofenkühlung berechnet ihre Dauer beim tatsächlichen Kühlbeginn. Ihre Uhr
@@ -84,9 +84,30 @@ entsprechen.
 
 Die Betriebsart **Manuell** bleibt bis zu einem Betriebsartwechsel gewählt.
 Die Höchstdauer in der Tabelle gilt für vorübergehende Übersteuerungen des
-Automatikbetriebs.
+Automatikbetriebs; Ofen- und Lichtwahl in Manuell bleiben unbefristet.
 
-[Tastergesten und Lichtnachlauf](betrieb.md#bedienhandlungen-und-betriebsart)
+Für `manual_override_minutes` sind positive Werte bis einschließlich 10 Minuten
+zulässig, auch Bruchteile. Neue Eingaben über Einrichtung, Optionsformular oder
+Parameter-API oberhalb der festen Grenze werden feldbezogen abgewiesen, bevor
+Optionen oder Laufzeitzustand geändert werden.
+
+Beim Laden älterer gespeicherter Optionen wird ausschließlich ein bisher
+zulässiger Wert über 10 Minuten auf 10 begrenzt. Gültige Werte bis einschließlich
+10 bleiben erhalten; ein fehlender Wert erhält den Standard 10. Ungültige Datentypen,
+nicht endliche und bereits zuvor unzulässige Werte unterliegen weiterhin der
+Fehlerprüfung. Die Übernahme erfolgt vor der Parameterkonstruktion in
+`Configuration.from_options()`, auch beim Optionsformular einer geschlossenen
+Laufzeit. Wirksame Konfiguration, Parameteranzeige und Serialisierung über
+`as_options()` führen den übernommenen Wert; die übrigen Einstellungen bleiben
+erhalten.
+
+Die zwölfminütige Aufgussbestätigungsfrist gehört ausschließlich zum
+Proxyverfahren. Eine später eingerichtete direkte Präsenzführung benötigt
+diese Proxyfrist nicht.
+
+[Tastergesten und Lichtnachlauf](betrieb.md#bedienhandlungen-und-betriebsart) ·
+[Gangbestätigung](gangmodell.md#beginn-und-bestätigung) ·
+[Direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
 
 ## Licht
 
@@ -104,7 +125,7 @@ Automatikbetriebs.
 Beim Aufheizen steigt das Licht vom Kaltpunkt zur Normalhelligkeit. Während der
 Ofenkühlung steigt es vom eingestellten Ausgangswert wieder auf das
 temperaturabhängige Niveau. Die Wiederaufnahmezeit bestimmt die Dauer des
-Lichtnachlaufs. Für manuelle Lichtwahlen gilt die Rückkehrregel der
+Lichtnachlaufs. Für manuelle Lichtwahlen in Automatik gilt die Rückkehrregel der
 Übersteuerung.
 
 Die Helligkeitsskala entspricht dem tatsächlich konfigurierten Maximalwert des

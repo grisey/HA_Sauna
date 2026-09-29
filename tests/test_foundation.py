@@ -86,6 +86,20 @@ class ParameterTests(unittest.TestCase):
         with self.assertRaises(ParameterError):
             Parameters({**parameters().as_dict(), "unknown": 3})
 
+    def test_automatic_override_has_a_strict_ten_minute_maximum(self):
+        definition = next(d for d in DEFINITIONS if d.key == "manual_override_minutes")
+        for value in (10, 0.5):
+            with self.subTest(value=value):
+                checked = Parameters({"manual_override_minutes": value})
+                self.assertEqual(checked.values[definition.key], value)
+                self.assertEqual(checked.seconds(definition.key), value * 60)
+        for value in (10.000000000000002, 20):
+            with self.subTest(value=value), self.assertRaises(ParameterError) as raised:
+                Parameters({"manual_override_minutes": value})
+            self.assertEqual((raised.exception.key, raised.exception.code),
+                             ("manual_override_minutes", "too_large"))
+        self.assertEqual((definition.default, definition.maximum), (10, 10))
+
     def test_invalid_numbers_fail_with_field_context(self):
         for value in (True, "2", None, float("nan"), float("inf"), -1, 10**400):
             with self.subTest(value=type(value)), self.assertRaises(ParameterError) as raised:

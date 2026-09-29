@@ -89,7 +89,7 @@ die zur Tageszeit passende Normalhelligkeit.
 
 Eine manuelle Lichtwahl gilt bis zum passenden Phasenwechsel, längstens für
 die eingestellte Übersteuerungsdauer. Danach folgt das Licht wieder der
-Automatik. Die Standarddauer beträgt zehn Minuten.
+Automatik. Standardwert und feste Obergrenze betragen zehn Minuten.
 
 Die automatische Lichtkurve steigt beim Aufheizen bis zur Normalhelligkeit.
 Zu Beginn der Ofenkühlung verwendet sie standardmäßig 15 % und steigt zum
@@ -100,25 +100,22 @@ und Übergangszeiten stehen in der [Parameterreferenz](parameter.md#licht).
 
 ## Saunataster und Lichttaster
 
-Ein Druck auf den Saunataster startet die ausgeschaltete Sauna im
+Ein kurzer Druck auf den Saunataster startet die ausgeschaltete Sauna im
 Automatikbetrieb mit der hinterlegten Tastervorgabe. Die Startgeste wird dabei
-einmal verbraucht. Im laufenden Betrieb der Betriebsart **Automatik** übersteuert
+einmal ausgeführt. Bloßes Drücken und ein langer Druck aus AUS starten nicht.
+Im laufenden Betrieb der Betriebsart **Automatik** übersteuert
 ein kurzer Druck den Ofen vorübergehend; der nächste kurze Druck gibt ihn wieder
 an die Automatik zurück.
 Die Ofenkühlung behält dabei Vorrang.
 Bei eingeschaltetem Betrieb in **Manuell** wechselt ein kurzer Druck die
 Ofenvorgabe zwischen EIN und AUS.
 
-Ein erneuter langer Druck auf den Saunataster schließt die laufende Sitzung
+Ein langer Druck auf den Saunataster schließt die laufende Sitzung
 ab. Nach Erkennen dieses Enddrucks bleibt das Licht während des Haltens aus.
 Beim Loslassen beginnt der Lichtnachlauf mit der
 eingestellten Helligkeit und der Dauer der Wiederaufnahmezeit.
 Die mit dem langen Druck abgeschlossene Sitzung bleibt
 beendet.
-
-Auch eine Quelle, die ausschließlich fertige Tasterereignisse meldet, kann die
-Sauna bedienen: Eine neue Langmeldung startet bei AUS; die nächste eigenständige
-Langmeldung beendet die laufende Sitzung.
 
 [Gestenzuordnung und Lichtabschluss](betrieb.md#bedienhandlungen-und-betriebsart)
 
@@ -134,7 +131,8 @@ Die Wiederaufnahmezeit gehört zur bestehenden Sitzung.
 
 In **Manuell** schalten **EIN** und **AUS** den Ofen. Für das Licht stehen
 **Aus**, **Gedimmt** und **Hell** bereit. Diese Betriebsart bleibt bis
-zum nächsten Betriebsartwechsel gewählt. Gültige Regeltemperatur und
+zum nächsten Betriebsartwechsel gewählt. Ofen- und Lichtwahl haben hier keine
+Übersteuerungsfrist. Gültige Regeltemperatur und
 freigegebene technische Überwachung sind Voraussetzungen für das Heizen.
 Messung und Archivierung laufen weiter. Nach Sitzungsende steht mit
 **Automatik** wieder die Temperaturregelung zur Verfügung.
@@ -142,8 +140,9 @@ Messung und Archivierung laufen weiter. Nach Sitzungsende steht mit
 Für einen zeitweiligen Eingriff während des Automatikbetriebs verwenden
 Administratoren die Übersteuerungen auf **Steuerung**. **Automatik** gibt die
 Ofenregelung wieder frei. Ein passender Phasen- oder Schaltwechsel oder der
-Ablauf der Höchstdauer führt ebenfalls zurück zur Automatik. Schutzabschaltungen
-und Ofenkühlung haben Vorrang. Die markierte Taste zeigt die gewählte
+Ablauf der eingestellten Dauer führt ebenfalls zurück zur aktuellen Automatik.
+Standardwert und feste Obergrenze dieser Dauer betragen zehn Minuten.
+Schutzabschaltungen und Ofenkühlung haben Vorrang. Die markierte Taste zeigt die gewählte
 Steuerungsart; die Ofenrückmeldung zeigt den tatsächlichen Zustand.
 
 ## Programme und Tastervorgabe

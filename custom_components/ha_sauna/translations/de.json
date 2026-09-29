@@ -79,8 +79,8 @@
       },
       "parameters": {
         "data_description": {
-          "confirmation_minutes": "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
-          "manual_override_minutes": "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
+          "confirmation_minutes": "Bestätigungsfrist der Proxyerkennung ab dem zugeordneten Gangbeginn; Standard zwölf Minuten. Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Bei späterer direkter Präsenzführung wird diese Proxyfrist nicht benötigt.",
+          "manual_override_minutes": "Vorübergehende Ofen- und Lichtübersteuerungen in Automatik gelten höchstens zehn Minuten. Ein passender Programm-, Phasen- oder Schaltwechsel beendet sie früher. Die eigenständige Betriebsart Manuell bleibt bis zum Betriebsartwechsel gewählt.",
           "mechanical_timer_warning_minutes": "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
           "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Fehlt an allen konfigurierten Messpositionen ein gültiger Temperaturwert, pausiert die Heizung bereits vorher. Der Ausfall nur einer von zwei Messpositionen wird als Störung angezeigt und sperrt den Betrieb mit der anderen nicht. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
           "median_seconds": "Zeitfenster für den Median. Es glättet einzelne Messausreißer vor der Erkennung.",
@@ -336,8 +336,8 @@
       },
       "parameters": {
         "data_description": {
-          "confirmation_minutes": "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
-          "manual_override_minutes": "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
+          "confirmation_minutes": "Bestätigungsfrist der Proxyerkennung ab dem zugeordneten Gangbeginn; Standard zwölf Minuten. Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Bei späterer direkter Präsenzführung wird diese Proxyfrist nicht benötigt.",
+          "manual_override_minutes": "Vorübergehende Ofen- und Lichtübersteuerungen in Automatik gelten höchstens zehn Minuten. Ein passender Programm-, Phasen- oder Schaltwechsel beendet sie früher. Die eigenständige Betriebsart Manuell bleibt bis zum Betriebsartwechsel gewählt.",
           "mechanical_timer_warning_minutes": "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
           "fault_confirmation_seconds": "Ein zentraler technischer Fehler muss so lange durchgehend bestehen, bevor die Schutzabschaltung verriegelt. Fehlt an allen konfigurierten Messpositionen ein gültiger Temperaturwert, pausiert die Heizung bereits vorher. Der Ausfall nur einer von zwei Messpositionen wird als Störung angezeigt und sperrt den Betrieb mit der anderen nicht. Solange keine Verriegelung vorliegt, kann die Heizung mit Rückkehr eines gültigen Werts normal weiterarbeiten.",
           "median_seconds": "Zeitfenster für den Median. Es glättet einzelne Messausreißer vor der Erkennung.",

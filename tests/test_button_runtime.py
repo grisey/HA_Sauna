@@ -123,10 +123,18 @@ class ButtonRuntimeTests(unittest.TestCase):
 
     def test_press_release_single_starts_once_and_short_toggles_override(self):
         self._event("press")
-        session_id = self.runtime.session.session_id
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
         self._event("release")
+        self.assertIsNone(self.runtime.session)
         self._event("short")
+        session_id = self.runtime.session.session_id
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self._event("short")
+        self._event("long")
+        self._event("release")
         self.assertEqual(self.runtime.session.session_id, session_id)
+        self.assertIsNone(self.runtime.controller.heater_override)
         self.runtime.controller.set_temperature(80, self.now)
         self._event("press")
         self._event("release")
@@ -137,16 +145,25 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("short")
         self.assertIsNone(self.runtime.controller.heater_override)
 
-    def test_native_double_after_start_only_toggles_the_second_press(self):
-        self._event("press")
-        session_id = self.runtime.session.session_id
+    def test_native_double_starts_at_summary_then_toggles_the_second_press(self):
         self.runtime.controller.set_temperature(80, self.now)
+        self._event("press")
+        self.assertIsNone(self.runtime.session)
         self._event("release")
         self._event("press")
         self._event("release")
+        self.assertIsNone(self.runtime.session)
         self._event("double")
+        session_id = self.runtime.session.session_id
+        self.assertTrue(self.runtime.controller.heater_override)
+        self._event("double")
+        self._event("short")
+        self._event("long")
+        self._event("release")
         self.assertEqual(self.runtime.session.session_id, session_id)
         self.assertTrue(self.runtime.controller.heater_override)
+        self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
+        self.assertIsNone(self.runtime.controller.light_after_run)
 
     def test_event_only_triple_applies_each_short_press(self):
         self._event("short")
@@ -154,6 +171,24 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("triple")
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertTrue(self.runtime.controller.heater_override)
+
+    def test_native_short_in_running_manual_mode_keeps_direct_heater_selection(self):
+        self.runtime = SaunaRuntime(
+            Configuration(Bindings(bindings()), Parameters({}), control_mode="manual"),
+            lambda: self.now,
+        )
+        self.runtime.controller.set_temperature(70, self.now)
+        asyncio.run(self.runtime.set_operation(True))
+        session_id = self.runtime.session.session_id
+        for selection in (True, False):
+            self._event("press", 1)
+            self._event("release")
+            self._event("short")
+            self.assertEqual(self.runtime.controller.heater_override, selection)
+            self.assertEqual(self.runtime.controller.last_decision.heat, selection)
+            self.assertEqual(self.runtime.controller.control_mode, "manual")
+            self.assertEqual(self.runtime.session.session_id, session_id)
+            self.runtime.controller.report_contactor(selection, self.now)
 
     def test_long_release_finishes_once_and_starts_light_after_run_on_release(self):
         self._event("short")
@@ -167,10 +202,29 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("release")
         self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
 
-    def test_sparse_long_start_then_end_releases_the_actual_heating_request(self):
+    def test_native_off_long_never_starts_and_next_short_starts(self):
+        self.runtime.controller.set_temperature(70, self.now)
+        for event, seconds in (("press", 0), ("long", 2), ("release", 1), ("short", 0)):
+            self._event(event, seconds)
+            self.assertIsNone(self.runtime.session)
+            self.assertFalse(self.runtime.controller.last_decision.heat)
+            self.assertIsNone(self.runtime.controller.heater_override)
+            self.assertIsNone(self.runtime.controller.light_after_run)
+            self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
+        self._event("press", 1)
+        self._event("release")
+        self._event("short")
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertTrue(self.runtime.controller.last_decision.heat)
+        self.assertIsNone(self.runtime.controller.heater_override)
+
+    def test_sparse_off_long_never_starts_but_running_long_releases_heating(self):
         button = self.runtime._button
         self.runtime.controller.set_temperature(70, self.now)
         self._event("long")
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+        self._event("short", 1)
         session_id = self.runtime.session.session_id
         self.assertTrue(self.runtime.controller.last_decision.heat)
 
@@ -183,6 +237,28 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.assertIsNone(self.runtime.controller.light_after_run)
         self._event("release", 1)
         self.assertEqual(self.runtime.controller.light_after_run.session_id, session_id)
+
+    def test_binary_off_start_requires_short_received_duration(self):
+        async def gesture(duration):
+            action_at = self.now + timedelta(seconds=10)
+            await self.runtime._handle_button_event("on", action_at, received_at=self.now)
+            self.assertIsNone(self.runtime.session)
+            self.assertFalse(self.runtime.controller.last_decision.heat)
+            await self.runtime._handle_button_event(
+                "off", action_at, received_at=self.now + timedelta(seconds=duration)
+            )
+            self.now = action_at
+            await self.runtime._cycle()
+
+        for duration in (1, 2, 3):
+            with self.subTest(duration=duration):
+                self.setUp()
+                self.runtime.controller.set_temperature(70, self.now)
+                asyncio.run(gesture(duration))
+                self.assertEqual(self.runtime.session is not None, duration == 1)
+                self.assertEqual(self.runtime.controller.last_decision.heat, duration == 1)
+                self.assertIsNone(self.runtime.controller.heater_override)
+                self.assertIsNone(self.runtime.controller.light_after_run)
 
     def test_delayed_binary_release_finishes_and_starts_light_after_run(self):
         self._event("short")

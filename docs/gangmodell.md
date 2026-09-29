@@ -3,6 +3,8 @@
 Der Ablaufkern ordnet Erkennungssignale einem Saunagang zu und führt dessen
 Bestätigung, Ende und Zählung. Die [Erkennung](erkennung.md) liefert dafür
 Ereignisse aus dem Messverlauf. Der Controller führt den verbindlichen Gangzustand.
+Das aktuelle Programm führt die Gangzuordnung aus der Proxyerkennung.
+Direkte Präsenzmeldungen bleiben beobachtend.
 
 ## Beginn und Bestätigung
 
@@ -26,15 +28,21 @@ mit zunehmendem absolutem Wassergehalt kann in dieser Zeit einen vorläufigen
 Gang auslösen. Eine weitere Türöffnung beginnt einen neuen Türbezug. Diese
 Zuordnung setzt eine neue Feuchteentwicklung nach der Öffnung voraus.
 
-Die Bestätigungsfrist endet standardmäßig 12 Minuten nach dem Gangbeginn.
+Die Aufgussbestätigungsfrist des Proxyverfahrens endet standardmäßig 12 Minuten
+nach dem Gangbeginn.
 Ein rechtzeitig zugeordneter Aufguss bestätigt den Gang bis einschließlich dieses
 Endzeitpunkts. Nach einer Rücknahme kann ein neuer gültiger Aufguss einen eigenen
 bestätigten Gang beginnen. Die Anzeige nennt die seit Gangbeginn verstrichene
 Zeit.
 
 Eine kurze Türöffnung mit anschließender Schließung erhält den aktiven Gang.
+Die Lüftungsbestätigung schützt den laufenden Gang bei kurzem Austritt einzelner
+Personen, während mindestens eine Person bleibt. Die spätere Kopplung dieser
+Bestätigung an direkte Präsenz bleibt bis zur Prüfung von Sensorposition und
+realem Verhalten unkonkretisiert.
 
-[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md)
+[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md) ·
+[Erweiterungsvertrag für direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
 
 ## Zählung und Folge
 

@@ -5,23 +5,31 @@ Oberfläche verwendet die lokale Zeitzone des Browsers.
 
 ## Laufzeiten und Fristen
 
-Die angegebenen Dauern sind einstellbare Standardwerte.
+Die angegebenen Dauern sind einstellbare Standardwerte. Vorübergehende
+Übersteuerungen in Automatik haben zusätzlich eine feste Obergrenze von 10 Minuten.
 
 | Vorgang | Beginn und Zeitbezug |
 | --- | --- |
 | Gangbeginn | Passende Türschließung derselben Sitzung und Türöffnung; ersatzweise Buchungszeit des zulässigen Personensignals oder Aufgusses. |
-| Aufgussbestätigung | Frist bis Gangbeginn + 12 Minuten. Der erste zugeordnete Aufguss bestätigt den bestehenden Gang. |
+| Aufgussbestätigung im Proxyverfahren | Frist bis Gangbeginn + standardmäßig 12 Minuten. Der erste zugeordnete Aufguss bestätigt den bestehenden Gang. |
 | Wiederaufnahme und Lichtnachlauf | Betrieb-AUS + 15 Minuten, mit gemeinsamem Endzeitpunkt. Wiedereinschalten beendet den Lichtnachlauf. Nach einem langen Enddruck beginnt der Lichtnachlauf mit dem bestätigten Loslassen; die Sitzung ist bereits abgeschlossen. Die [Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart) unterscheidet Start- und Enddruck. |
 | Ofenkühlung | Bestätigtes Schütz-AUS startet Berechnung und Laufzeit. Ausschließlich bestätigte AUS-Zeit zählt zur gespeicherten Dauer gemäß [Ofenkühlung](ofenkuehlung.md). |
 | Mindestheizzeit | Tatsächlich bestätigter Beginn eines Heizintervalls + 10 Minuten. Ein laufendes Intervall behält seinen Beginn. |
 | Thermostatpause | Reguläre Temperaturabschaltung + 5 Minuten. |
 | Lichtübergang | Standardmäßig 30 Sekunden; bei Kühlbeginn höchstens die Hälfte der verbleibenden Kühlzeit. Der Lichtnachlauf endet durch unmittelbares Ausschalten. |
-| Vorübergehende Ofen- oder Lichtwahl | Wahl + höchstens 10 Minuten. Frühere Rückkehrpunkte richten sich nach der jeweiligen [Bedienhandlung](betrieb.md). |
+| Vorübergehende Ofen- oder Lichtwahl in Automatik | Wahl + eingestellte Dauer, standardmäßig und höchstens 10 Minuten. Danach gilt die aktuelle Automatik. Frühere Rückkehrpunkte richten sich nach der jeweiligen [Bedienhandlung](betrieb.md#bedienhandlungen-und-betriebsart). |
 | Mechanischer Timer | Zählt maximal 240 Minuten bei Betrieb-EIN und bestätigtem Schütz-EIN. |
 
 Jede Frist gehört zu einer Sitzung und einem bestimmten Vorgang. Ausschließlich
 die aktuelle Frist dieses Vorgangs ist wirksam. Wiederholte Ereignisse behalten
 dieselbe einmalige Wirkung.
+
+Ofen- und Lichtwahl in der eigenständigen Betriebsart Manuell haben keine
+Übersteuerungsfrist. Die Aufgussbestätigungsfrist gehört ausschließlich zum
+Proxyverfahren; eine spätere direkte Präsenzführung benötigt sie nicht.
+
+[Betriebsarten](betrieb.md#bedienhandlungen-und-betriebsart) ·
+[Präsenzquellen](praesenz-ofen-phasen.md#präsenzquellen-im-aktuellen-programm)
 
 ## Fachlicher Zeitpunkt und Verarbeitung
 

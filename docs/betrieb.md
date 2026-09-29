@@ -103,7 +103,7 @@ AUS-Laufzeit zu zählen. Die Standarddauer liegt zwischen 5 und 15 Minuten.
 ## Licht
 
 Die automatische Helligkeit folgt dem Betriebsabschnitt und der Temperatur.
-Die Lichtkurve reicht von 5 % bei 30 °C bis zur Normalhelligkeit an der aktuellen
+Die Lichtkurve steigt linear von 5 % bei 30 °C bis zur Normalhelligkeit an der aktuellen
 Solltemperatur. Die Normalhelligkeit beträgt tagsüber 40 % und nachts
 25 %; während der bürgerlichen Dämmerung geht sie gleitend zwischen beiden
 Werten über. Während eines Saunagangs bleibt die Normalhelligkeit erhalten.
@@ -119,8 +119,10 @@ Wiederaufnahmefrist durch Ausschalten des Lichts. Beim langen Enddruck einer
 neuen Saunatastergeste bleibt das Licht während des Haltens aus; bestätigtes
 Loslassen beginnt den Lichtnachlauf mit derselben eingestellten Dauer.
 
-Eine manuelle Lichtwahl gilt bis zum nächsten Phasenwechsel oder längstens
-10 Minuten. Ausschalten und Dimmen am Lichttaster zählen als manuelle Wahl.
+Eine manuelle Lichtwahl in Automatik gilt bis zum nächsten passenden Phasenwechsel
+oder längstens für die eingestellte Übersteuerungsdauer. Deren Standardwert und
+feste Obergrenze betragen 10 Minuten. Ausschalten und Dimmen am Lichttaster zählen
+als manuelle Wahl.
 Rückmeldungen eigener Lichtbefehle ordnet die Integration dem automatischen
 Verlauf zu.
 
@@ -131,26 +133,33 @@ der beendeten Lichtphase 0 %.
 
 ## Bedienhandlungen und Betriebsart
 
-Ein Druck auf den Saunataster bei Betrieb-AUS startet den
-Automatikbetrieb mit der gespeicherten Tastervorgabe: einem benannten Programm
-oder einer eigenen konstanten Temperatur. Bei gemeldetem Drücken erfolgt der
-Start unmittelbar; eine reine Kurz- oder Langklassifikation startet ebenfalls.
-Die Startgeste bleibt verbraucht, einschließlich ihrer nachfolgenden Lang- und
-Loslassmeldungen. Bei eingeschaltetem Automatikbetrieb
+Ein kurzer Tastendruck bei Betrieb-AUS startet den Automatikbetrieb mit der
+gespeicherten Tastervorgabe: einem benannten Programm oder einer eigenen
+konstanten Temperatur. Bei nativen Ereignisquellen startet ausschließlich die
+Kurzklassifikation, auch ohne vorherige Druckmeldung. Drücken und Loslassen
+allein starten den Betrieb nicht. Beim Binärtaster bestätigt das Loslassen
+vor Erreichen der eingestellten Langdruckdauer den kurzen Druck.
+
+Ein langer Druck aus Betrieb-AUS startet die Sauna nicht. Zugehöriges Loslassen
+und nachlaufende Meldungen derselben Langgeste erzeugen keinen Kurzstart.
+Die nächste eigenständige Kurzbetätigung kann regulär starten. Die Kurzstartgeste
+wird einmal ausgeführt; zugehörige Folgemeldungen erzeugen keine zusätzliche
+Ofenübersteuerung. Bei eingeschaltetem Automatikbetrieb
 schaltet ein kurzer Druck die vorübergehende Ofenwahl um beziehungsweise gibt
 an die Automatik zurück. Bei eingeschaltetem Betrieb in Manuell wechselt ein
 kurzer Druck die Ofenvorgabe zwischen EIN und AUS.
 
-Eine neue lange Geste bei laufendem Betrieb beendet den Betrieb und schließt die
-Sitzung ab. Bei einer reinen Ereignisquelle ist jede neue Langklassifikation eine
-eigenständige Geste mit dem aktuellen Betriebskontext: Die erste startet bei AUS,
-die nächste beendet die laufende Sitzung. Tatsächliches Halten und bestätigtes
-Loslassen bestimmen den oben beschriebenen Lichtabschluss.
+Ein langer Druck bei laufendem Betrieb beendet den Betrieb und schließt die
+Sitzung ab. Das Licht bleibt während des Haltens AUS. Erst das bestätigte
+Loslassen startet den Lichtnachlauf. Das gilt auch für eine eigenständige
+Langklassifikation im laufenden Betrieb; sie liefert den Langdrucknachweis.
 
 [Tastermeldungen und einmalige Verarbeitung](schnittstellen.md#tasterereignisse)
 
 Die vorübergehende Ofenwahl in Automatik gilt bis zur Rückgabe, einem Wechsel
-der Phase oder der automatischen EIN-/AUS-Anforderung, längstens 10 Minuten.
+der Phase oder der automatischen EIN-/AUS-Anforderung, längstens für die
+eingestellte Übersteuerungsdauer. Deren Standardwert und feste Obergrenze
+betragen 10 Minuten. Beim Fristende gilt wieder die aktuelle Automatik.
 Ausdrücklich gewähltes Ofen-AUS wirkt auch während eines aktiven Gangs.
 Ofen-EIN setzt die gültige Heizfreigabe einschließlich einer gültigen
 Regeltemperatur voraus. Schutz, Betrieb-AUS und Ofenkühlung haben Vorrang.
@@ -162,8 +171,9 @@ Beginn erhalten. Ausdrücklich gewähltes Ofen-AUS beendet diese Anforderung.
 [Bedienrechte und Übersteuerung](bedienung.md#betriebsart-manuell-und-übersteuerung)
 
 Die Betriebsart Manuell wird nach Sitzungsende gewählt und bleibt bis zur
-nächsten ausdrücklichen Betriebsartwahl bestehen. Dort steuern
-Nutzer Ofen und Licht direkt. Messung und Archivierung begleiten den Betrieb;
+nächsten ausdrücklichen Betriebsartwahl bestehen. Ofen- und Lichtwahl sind dort
+direkt und unbefristet; die Übersteuerungsfrist der Automatik gilt hier nicht.
+Messung und Archivierung begleiten den Betrieb;
 technische Schutzgründe und Betrieb-AUS behalten Vorrang.
 
 ## Rückmeldungen und Schutz

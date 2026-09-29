@@ -56,6 +56,8 @@ Ein binärer Taster meldet Drücken und Loslassen; die eingestellte
 Betriebsschalter überträgt seine Ein-/Ausstellung auf den Saunabetrieb. Die
 entkoppelten Lichttaster bleiben unmittelbar bedienbar.
 
+[Tasterbedienung und Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart)
+
 ## Anlageneinstellungen
 
 Im Saunapanel enthält **Einstellungen → Grundeinstellungen** die

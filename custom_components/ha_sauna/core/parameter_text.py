@@ -93,7 +93,7 @@ PARAMETER_TEXT = {
     ),
     "confirmation_minutes": (
         "Zeit für die Aufgussbestätigung",
-        "Zeit ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben.",
+        "Bestätigungsfrist der Proxyerkennung ab dem zugeordneten Gangbeginn; Standard zwölf Minuten. Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Bei späterer direkter Präsenzführung wird diese Proxyfrist nicht benötigt.",
         "operation",
     ),
     "heat_reset_minutes": (
@@ -193,7 +193,7 @@ PARAMETER_TEXT = {
     ),
     "manual_override_minutes": (
         "Höchstdauer manueller Übersteuerungen",
-        "Spätestens nach dieser Zeit folgen Ofen und Licht wieder der Automatik. Der vereinbarte Phasen- oder Schaltwechsel kann die Übersteuerung früher beenden. Im Betriebsmodus Manuell gilt keine Frist.",
+        "Vorübergehende Ofen- und Lichtübersteuerungen in Automatik gelten höchstens zehn Minuten. Ein passender Programm-, Phasen- oder Schaltwechsel beendet sie früher. Die eigenständige Betriebsart Manuell bleibt bis zum Betriebsartwechsel gewählt.",
         "operation",
     ),
     "button_hold_seconds": (

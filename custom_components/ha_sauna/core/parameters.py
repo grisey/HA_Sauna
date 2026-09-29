@@ -149,7 +149,7 @@ DEFINITIONS = (
     definition("sensor_timeout_seconds", "s", default=180),
     definition("feedback_timeout_seconds", "s", default=10),
     definition("power_heating_threshold_w", "W", True, default=50),
-    definition("manual_override_minutes", "min", default=10),
+    definition("manual_override_minutes", "min", default=10, maximum=10),
     definition("nominal_power_kw", "kW", default=4.5),
     definition("button_hold_seconds", "s", True, default=2),
     definition("light_reference_temperature_c", "°C", default=30, maximum=100),

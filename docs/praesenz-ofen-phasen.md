@@ -80,7 +80,17 @@ Audioziel als vorbereitete Bindung für eine spätere Ausgabe.
 
 ### Erweiterungsvertrag für direkte Präsenzführung
 
-Die Erweiterung zur direkten Präsenzführung setzt gemeinsam festgelegte Regeln
-für Beginn, Unterbrechung, Ende und Quellausfall voraus. Bei einer solchen
-Aktivierung führt die direkte Quelle die Gangzuordnung allein und ersetzt die
-Türhilfe vollständig. Der Controller bleibt für Aktorbefehle zuständig.
+Die konkrete Gangführung aus direkter Präsenz entsteht erst nach Prüfung der
+Sensorposition und des realen Sensorverhaltens. Eine einzelne Erkennung löst
+nicht unmittelbar einen Saunagang aus. Beginn, Unterbrechung, Ende und
+Quellausfall sind für eine spätere Aktivierung gemeinsam festzulegen;
+der heutige Pfad bleibt beobachtend.
+
+Die spätere direkte Quelle soll die Gangzuordnung allein führen und die Türhilfe
+vollständig ersetzen. Das ist ein Erweiterungsziel; die konkrete Start- und
+Endauswertung ist noch offen. Die zwölfminütige Aufgussbestätigungsfrist gehört
+zum aktuellen Proxyverfahren und wird bei direkter Präsenzführung nicht benötigt.
+Die spätere Präsenzkopplung der Lüftungsbestätigung bleibt bis zu den Sensortests
+unkonkretisiert. Der Controller bleibt für Aktorbefehle zuständig.
+
+[Gangführung und Lüftungsbestätigung](gangmodell.md#beginn-und-bestätigung)

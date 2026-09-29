@@ -92,17 +92,25 @@ Der Geräteadapter normalisiert Tasterereignisse für `core/button.py`.
 Ein gültiger neuer Ereigniszeitstempel kennzeichnet eine neue Meldung.
 Der Adapter verarbeitet denselben Zeitstempel einmal und filtert ältere
 Zustellungen.
-Native Druck- und Loslassmeldungen sowie die Langklassifikation gehören zu
-derselben Geste. Binärtaster melden ihre Druck- und Loslassflanken; die Runtime
+Native Druck-, Kurz-, Lang- und Loslassmeldungen werden derselben Geste zugeordnet.
+Binärtaster melden ihre Druck- und Loslassflanken; die Runtime
 prüft die Haltezeit mit dem Empfangszeitbezug.
 
 Eine reine `short`- oder `long`-Klassifikation wird auch ohne vorherige Druckflanke
-verarbeitet. Jede neue eigenständige Langklassifikation erhält den aktuellen
-Betriebskontext. Ein Start bei AUS verbraucht seine eigene Geste. Erst eine neue
-lange Geste bei laufendem Betrieb erzeugt den Sitzungsabschluss `END_HOLD` und
-fordert Licht-AUS an. Eine reine Langklassifikation liefert für sich den
-Langdrucknachweis. Der bestätigte Loslassnachweis erzeugt `END_RELEASE` und
-startet den Lichtnachlauf.
+verarbeitet. Bei Betrieb-AUS erzeugt ausschließlich die native Kurzklassifikation
+oder das bestätigte kurze Loslassen eines Binärtasters `START_STANDARD_PROGRAM`.
+Native Druck- und Loslassmeldungen allein erzeugen keinen Start. Beim Binärtaster
+zählt die gesamte Druckdauer auch bei erst zum Loslassen ausgeführter Haltezeitprüfung.
+
+Gestenbeginn und bereits ausgeführte Aktionen bestimmen die Zuordnung von
+Folgemeldungen. Nach einem Kurzstart lösen sie keine Ofenübersteuerung aus;
+nach einer langen AUS-Geste lösen sie keinen Kurzstart aus. Zusammenfassungen
+mehrerer kurzer Betätigungen erhalten diese einmalige Aktionszuordnung.
+
+Ein langer Druck bei laufendem Betrieb erzeugt den Sitzungsabschluss `END_HOLD`
+und fordert während des Haltens Licht-AUS an. Eine reine Langklassifikation
+liefert für sich den Langdrucknachweis. Der bestätigte Loslassnachweis erzeugt
+`END_RELEASE` und startet den Lichtnachlauf.
 
 [Tasterbedienung](betrieb.md#bedienhandlungen-und-betriebsart)
 
