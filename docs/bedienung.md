@@ -16,8 +16,8 @@ Messwerte erforderlich sind.
 
 Eine Temperaturtaste oder die direkte Wahl am Anzeigebogen legt eine
 **konstante Solltemperatur** fest. Der Anzeigebogen unterstützt Klicks,
-Ziehbewegungen und Pfeiltasten. Die gewählte Temperatur gilt sofort und bleibt
-auch nach weiteren Saunagängen erhalten.
+Ziehbewegungen und Pfeiltasten in ganzen Celsiusgraden. Die gewählte Temperatur
+gilt sofort und bleibt auch nach weiteren Saunagängen erhalten.
 
 Unter **Temperaturwahl** stehen **Programm** und **Individuell** für eine
 Temperaturfolge zur Verfügung. Eigene Programme haben zwei Eingabeformen:
@@ -31,8 +31,10 @@ Nach der letzten Stufe bleibt deren Temperatur für weitere Gänge erhalten.
 Die Untergrenze beträgt standardmäßig 60 °C und ist einstellbar; die
 Obergrenze beträgt 100 °C.
 
-Nach Ende einer Sitzung werden benannte und konstante Wahlen direkt
-übernommen. **Übernehmen** bestätigt ein individuelles Programm.
+Ohne bestehende Sitzung werden benannte, konstante und individuelle Wahlen
+direkt übernommen. Bei individuellen Programmen löst ein abgeschlossener,
+gültiger Eingabevorgang die Übernahme aus; angefangene oder ungültige Eingaben
+bleiben zur Bearbeitung stehen.
 Während einer bestehenden Sitzung öffnet **Programm ändern** die Auswahl.
 Eine Änderung bleibt bis zur Bestätigung mit **Programm übernehmen** als
 Entwurf sichtbar. **Abbrechen** erhält die bisherige Wahl. Der Entwurf
@@ -137,9 +139,12 @@ freigegebene technische Überwachung sind Voraussetzungen für das Heizen.
 Messung und Archivierung laufen weiter. Nach Sitzungsende steht mit
 **Automatik** wieder die Temperaturregelung zur Verfügung.
 
-Für einen zeitweiligen Eingriff während des Automatikbetriebs verwenden
-Administratoren die Übersteuerungen auf **Steuerung**. **Automatik** gibt die
-Ofenregelung wieder frei. Ein passender Phasen- oder Schaltwechsel oder der
+Für einen zeitweiligen Eingriff während des laufenden Automatikbetriebs
+verwenden Administratoren den zunächst eingeklappten Bereich **Manuelle
+Übersteuerung** auf **Steuerung**. Sein Offen-Zustand bleibt bei
+Statusaktualisierungen erhalten. Ohne eingeschalteten Betrieb sind diese
+Bedienelemente gesperrt. **Automatik** gibt die Ofenregelung wieder frei. Ein
+passender Phasen- oder Schaltwechsel oder der
 Ablauf der eingestellten Dauer führt ebenfalls zurück zur aktuellen Automatik.
 Standardwert und feste Obergrenze dieser Dauer betragen zehn Minuten.
 Schutzabschaltungen und Ofenkühlung haben Vorrang. Die markierte Taste zeigt die gewählte

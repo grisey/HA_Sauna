@@ -110,6 +110,19 @@ Ansichten. Statusänderungen aktualisieren die Bedienanzeige und die zugehörige
 Annotationen. Ein Archivnachtrag übernimmt Messdaten und den nachzuführenden
 Zeitausschnitt gemeinsam.
 
+Statusdaten werden während eines laufenden Betriebs, einer bestehenden Sitzung
+oder eines Lichtnachlaufs im Zwei-Sekunden-Takt abgeglichen. Im ruhenden Betrieb
+beträgt der Abstand zehn Sekunden. Bei verborgenem oder getrenntem Panel ruht
+dieser Ablauf; beim erneuten Anzeigen folgt sofort ein Abgleich.
+
+Sitzungsliste und Datenseiten werden getrennt vom Status geladen. Eine laufende
+Sitzung ergänzt Seiten über ihren Cursor, ohne zuvor wiederholt die Liste zu
+laden. Eine bestätigte leere Liste und ein vollständig synchronisiertes Archiv
+bleiben gültig, bis ein Sitzungsstart, Sitzungsabschluss, Instanzwechsel oder
+eine neue Auswahl einen konkreten Abgleich erfordert. Regelmäßige Aktualisierungen
+fügen oberhalb vorhandener Diagramme keinen Ladehinweis ein und ersetzen deren
+Zeichenflächen nicht.
+
 Bei festem Ausschnitt und unveränderten Skalen bleiben Messkurven über reine
 Uhr- und Phasenänderungen hinweg verwendbar. Die Zeigerbewegung aktualisiert
 Cursor und Tooltip. Ein fortschreitender Gesamtverlauf benötigt eine neue

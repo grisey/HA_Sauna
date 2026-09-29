@@ -12,7 +12,7 @@ const color = (role) => catalog.colors.find((item) => item.id === role);
 
 test("active selection is orange, actions inherit neutral HA colors and danger is muted red", () => {
   assert.equal(color("ui_accent").default, "#E58A55");
-  assert.equal(color("ui_command").default, null);
+  assert.equal(color("ui_command").default, "#216551");
   assert.equal(color("ui_danger").default, "#A34029");
   assert.match(source, /button\[aria-current="page"\][\s\S]*?\{[^}]*var\(--accent\)/);
   assert.match(source, /button\.primary,\s*button\.confirm\s*\{[^}]*var\(--confirm\)/);

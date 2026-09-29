@@ -1201,6 +1201,18 @@ class SaunaPanel extends HTMLElement {
     this.historyDatasetRevision = 0;
     this.historyWindowRevision = 0;
     this.historyTimelineRevision = 0;
+    this.historyListStale = true;
+    this.historyPendingFinalId = null;
+    this.historyOptionsSignature = null;
+    this.manualOverridesOpen = false;
+    this.visibilityHandler = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        clearTimeout(this.timer);
+        this.timer = null;
+        return;
+      }
+      if (this.isConnected && this._hass) this.start();
+    };
   }
   set hass(value) {
     this._hass = value;
@@ -1211,10 +1223,14 @@ class SaunaPanel extends HTMLElement {
   }
   connectedCallback() {
     if (!this.$("main")) this.shell();
+    if (typeof document !== "undefined")
+      document.addEventListener("visibilitychange", this.visibilityHandler);
     if (this._hass) this.start();
   }
   disconnectedCallback() {
-    clearInterval(this.timer);
+    clearTimeout(this.timer);
+    if (typeof document !== "undefined")
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
     clearTimeout(this.programSavedTimer);
     this.programSavedTimer = null;
     this.programRequest = null;
@@ -1241,8 +1257,32 @@ class SaunaPanel extends HTMLElement {
     this.historyInputMode = null;
   }
   start() {
-    this.refresh();
-    this.timer = setInterval(() => this.refresh(), 2000);
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (typeof document !== "undefined" && document.hidden) return;
+    void this.refresh(true);
+  }
+  statusPollInterval() {
+    const state = this.state,
+      now = stamp(state?.now),
+      lightAfterRun = stamp(state?.light_after_run?.ends_at);
+    return state?.operation_enabled || state?.session || lightAfterRun > now
+      ? 2000
+      : 10000;
+  }
+  scheduleRefresh() {
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (
+      !this.isConnected ||
+      !this._hass ||
+      (typeof document !== "undefined" && document.hidden)
+    )
+      return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.refresh();
+    }, this.statusPollInterval());
   }
   $(selector) {
     return this.shadowRoot.querySelector(selector);
@@ -1283,7 +1323,11 @@ class SaunaPanel extends HTMLElement {
       return current;
     }
     const focused = this.shadowRoot.activeElement === current;
-    if (focused && ["INPUT", "SELECT", "TEXTAREA"].includes(current.nodeName)) {
+    if (focused && current.nodeName === "SELECT") {
+      this.patchAttributes(current, next);
+      return current;
+    }
+    if (focused && ["INPUT", "TEXTAREA"].includes(current.nodeName)) {
       const value = current.value,
         checked = current.checked;
       this.patchAttributes(current, next);
@@ -1519,14 +1563,28 @@ class SaunaPanel extends HTMLElement {
       if (readableAccent) style.setProperty("--sauna-accent-readable", readableAccent);
     }
     const command = this.appearanceColor("ui_command");
-    if (command) style.setProperty("--sauna-command-ink", appearanceContrast(command));
-    else style.removeProperty?.("--sauna-command-ink");
+    if (command) {
+      style.setProperty("--sauna-command-ink", appearanceContrast(command));
+      style.setProperty(
+        "--sauna-command-focus",
+        readable(proposedFocus, command, 3),
+      );
+    } else {
+      style.removeProperty?.("--sauna-command-ink");
+      style.removeProperty?.("--sauna-command-focus");
+    }
     const danger = this.appearanceColor("ui_danger");
     if (danger) {
       style.setProperty("--sauna-danger-ink", appearanceContrast(danger));
       const readableDanger = readable(danger, surfaces.card, 4.5);
       if (readableDanger) style.setProperty("--sauna-danger-text", readableDanger);
+      style.setProperty(
+        "--sauna-danger-focus",
+        readable(proposedFocus, danger, 3),
+      );
     }
+    if (accent)
+      style.setProperty("--sauna-accent-focus", readable(proposedFocus, accent, 3));
     const warning = this.appearanceColor("status_warning");
     if (warning)
       style.setProperty("--sauna-status-warning-ink", appearanceContrast(warning));
@@ -1900,9 +1958,12 @@ class SaunaPanel extends HTMLElement {
       }
       button {
         cursor: pointer;
+        --sauna-button-hover: var(--sauna-card-focus, var(--sauna-focus-current));
       }
       button:hover:not(:disabled) {
-        text-decoration: underline;
+        text-decoration: none;
+        outline: 2px solid var(--sauna-button-hover);
+        outline-offset: -2px;
       }
       button:focus-visible,
       select:focus-visible,
@@ -1919,11 +1980,13 @@ class SaunaPanel extends HTMLElement {
         background: var(--confirm);
         color: var(--sauna-command-ink, var(--sauna-card-text, inherit));
         border-color: var(--sauna-color-ui-command, var(--sauna-color-border, var(--divider-color)));
+        --sauna-button-hover: var(--sauna-command-focus, var(--sauna-card-focus));
       }
       button.stop {
         background: var(--danger);
         color: var(--sauna-danger-ink);
         border-color: var(--danger);
+        --sauna-button-hover: var(--sauna-danger-focus, var(--sauna-card-focus));
       }
       button[aria-current="page"],
       button[data-action^="control-mode:"][aria-pressed="true"] {
@@ -1931,6 +1994,7 @@ class SaunaPanel extends HTMLElement {
         color: var(--accent-ink);
         border-color: var(--accent);
         font-weight: 700;
+        --sauna-button-hover: var(--sauna-accent-focus, var(--sauna-card-focus));
       }
       a {
         color: var(--sauna-card-text, inherit);
@@ -2379,9 +2443,6 @@ class SaunaPanel extends HTMLElement {
         min-height: 62px;
         font-weight: 700;
       }
-      .program-action-layout .operation-control .tile {
-        max-width: 280px;
-      }
       .session-status {
         display: block;
         margin-top: 7px;
@@ -2629,8 +2690,12 @@ class SaunaPanel extends HTMLElement {
       .target-temperature-handle[data-inert-target] { cursor: default; }
       .target-temperature-track:focus {
         outline: none;
-        stroke: var(--sauna-card-focus, var(--accent));
-        opacity: 1;
+        stroke: var(--accent);
+        opacity: 0.35;
+      }
+      .target-temperature-track:focus + .target-temperature-handle {
+        stroke: var(--sauna-card-focus, var(--sauna-focus-current));
+        stroke-width: 6;
       }
       .manual-section + .manual-section {
         border-top: 1px solid var(--sauna-color-border, var(--divider-color));
@@ -2933,6 +2998,7 @@ class SaunaPanel extends HTMLElement {
         color: var(--accent-ink);
         border-color: var(--accent);
         font-weight: 700;
+        --sauna-button-hover: var(--sauna-accent-focus, var(--sauna-card-focus));
       }
       button[aria-current="page"]:disabled,
       button[aria-pressed="true"]:disabled {
@@ -2960,6 +3026,15 @@ class SaunaPanel extends HTMLElement {
       }
       .manual-overrides {
         margin-top: 16px;
+      }
+      .manual-overrides > summary {
+        cursor: pointer;
+        font-size: 19px;
+        font-weight: 600;
+      }
+      .manual-overrides > .override-limit {
+        display: block;
+        margin-top: 8px;
       }
       .manual-controls {
         margin-top: 16px;
@@ -3194,13 +3269,21 @@ class SaunaPanel extends HTMLElement {
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="row"><h2 class="grow">Sitzungsverlauf</h2><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div>
-        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><p id="history-loading" class="muted" role="status" hidden></p><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
       const b = e.target.closest("[data-action]");
       if (b) this.runPanelAction(() => this.action(b.dataset.action));
     });
+    this.shadowRoot.addEventListener(
+      "toggle",
+      (e) => {
+        if (e.target.id === "manual-overrides")
+          this.manualOverridesOpen = e.target.open;
+      },
+      true,
+    );
     this.shadowRoot.addEventListener("change", (e) => {
       if (e.target.id !== "instance" && !this.state) return;
       if (e.target.id === "instance") {
@@ -3213,6 +3296,9 @@ class SaunaPanel extends HTMLElement {
         this.generation++;
         this.selected = "live";
         this.sessions = null;
+        this.historyListStale = true;
+        this.historyPendingFinalId = null;
+        this.historyOptionsSignature = null;
         this.cache.clear();
         this.historyLoad = null;
         this.shown = null;
@@ -3221,6 +3307,7 @@ class SaunaPanel extends HTMLElement {
         this.settingsEntry = null;
         this.programSelectionDraft = null;
         this.programChoiceOpen = false;
+        this.manualOverridesOpen = false;
         this.controlSessionKey = null;
         clearTimeout(this.programSavedTimer);
         this.programRequest = null;
@@ -3314,6 +3401,13 @@ class SaunaPanel extends HTMLElement {
         this.programLibraryNeedsRender = true;
         this.renderProgramLibrary();
       }
+      if (
+        !this.state.session &&
+        e.target.matches(
+          "#progression-start,#progression-end,#progression-gangs,[data-free-step],[data-free-step-count]",
+        )
+      )
+        this.runPanelAction(() => this.applyProgram());
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
       if (!this.state) return;
@@ -3364,17 +3458,27 @@ class SaunaPanel extends HTMLElement {
       }
       if (e.target.closest("[data-target-arc]"))
         this.runPanelAction(() => this.keyTemperatureTarget(e));
+      if (
+        e.key === "Enter" &&
+        !this.state.session &&
+        e.target.matches(
+          "#progression-start,#progression-end,#progression-gangs,[data-free-step],[data-free-step-count]",
+        )
+      ) {
+        e.preventDefault();
+        this.runPanelAction(() => this.applyProgram());
+      }
     });
     this.shadowRoot.addEventListener("pointerdown", (e) => this.beginProgramDrag(e));
     this.shadowRoot.addEventListener("pointermove", (e) => this.updateProgramDrag(e));
     this.shadowRoot.addEventListener("pointerup", (e) => this.finishProgramDrag(e));
     this.shadowRoot.addEventListener("pointercancel", () => this.cancelProgramDrag());
     this.shadowRoot.addEventListener("pointerdown", (e) => {
-      const overview = e.target.closest("#history-overview svg");
+      const overview = this.eventElement(e, "#history-overview svg");
       if (overview) return this.beginHistoryGesture(e, overview);
-      const target = e.target.closest("[data-target-arc]");
+      const target = this.eventElement(e, "[data-target-arc]");
       if (target) return this.beginTemperatureDrag(e, target.closest("svg"), target);
-      const svg = e.target.closest("svg.session-chart");
+      const svg = this.eventElement(e, "svg.session-chart");
       if (svg && e.pointerType !== "mouse") this.beginChartPointer(e, svg);
     });
     this.shadowRoot.addEventListener("pointerup", (e) => {
@@ -3398,7 +3502,7 @@ class SaunaPanel extends HTMLElement {
         return this.updateTemperatureDrag(e);
       if (this.historyGesture?.pointerId === e.pointerId)
         return this.updateHistoryGesture(e);
-      const svg = e.target.closest("svg.session-chart");
+      const svg = this.eventElement(e, "svg.session-chart");
       if (!svg) return;
       if (this.chartPointers.has(e.pointerId))
         this.chartPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -3412,7 +3516,7 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("pointerout", (e) => {
       if (
-        e.target.closest("svg.session-chart") &&
+        this.eventElement(e, "svg.session-chart") &&
         !e.relatedTarget?.closest?.("svg.session-chart")
       ) {
         this.pendingHover = null;
@@ -3423,7 +3527,7 @@ class SaunaPanel extends HTMLElement {
     this.shadowRoot.addEventListener(
       "wheel",
       (e) => {
-        const svg = e.target.closest("svg.session-chart");
+        const svg = this.eventElement(e, "svg.session-chart");
         if (!svg || !(e.ctrlKey || e.metaKey)) return;
         this.wheelHistoryGesture(e, svg);
       },
@@ -3462,6 +3566,15 @@ class SaunaPanel extends HTMLElement {
       report(error);
     }
   }
+  eventElement(event, selector) {
+    return (
+      event
+        .composedPath?.()
+        .find((node) => node?.matches?.(selector)) ||
+      event.target?.closest?.(selector) ||
+      null
+    );
+  }
   message(error, source = "action") {
     this.messages ??= {};
     this.messages[source] = error;
@@ -3479,11 +3592,6 @@ class SaunaPanel extends HTMLElement {
     if (session) {
       session.innerHTML = '<option value="live">Letzte Sitzung</option>';
       session.disabled = true;
-    }
-    const history = this.$("#history-loading");
-    if (history) {
-      history.hidden = false;
-      history.textContent = "Lade Saunadaten …";
     }
   }
   async refresh(requested = false) {
@@ -3520,12 +3628,19 @@ class SaunaPanel extends HTMLElement {
         appearanceRevision !== (this.appearanceRevision || 0)
       )
         return;
-      const wasLoading = !this.state;
+      const previousSessionId =
+        this.state?.session?.timeline?.session_id || null;
       this.state = state;
+      const currentSessionId = state.session?.timeline?.session_id || null;
+      if (previousSessionId !== currentSessionId) {
+        this.historyListStale = true;
+        if (previousSessionId && !currentSessionId)
+          this.historyPendingFinalId = previousSessionId;
+        else if (currentSessionId) this.historyPendingFinalId = null;
+      }
       this.syncHistoryProjection();
       const sessionSelect = this.$("#session");
       if (sessionSelect) sessionSelect.disabled = false;
-      if (wasLoading) this.renderHistoryLoading(null);
       const sessionKey = state.session?.timeline?.session_started_at || null;
       if (sessionKey !== this.controlSessionKey) {
         this.programChoiceOpen = false;
@@ -3534,8 +3649,8 @@ class SaunaPanel extends HTMLElement {
       this.appearanceStale = false;
       this.applyAppearance();
       this.syncNavigation();
-      // The status cards remain live every two seconds.  Archive list/pages
-      // are only useful while the history section is actually on screen.
+      // Status polling adapts to the visible operating state. Archive
+      // list/pages are only useful while history is actually on screen.
       const historyVisible = !this.$("#history")?.hidden;
       if (!this.temperatureInteraction) {
         const restoreTargetFocus = this.shadowRoot.activeElement?.matches?.(
@@ -3563,12 +3678,14 @@ class SaunaPanel extends HTMLElement {
       if (this.refreshPending) {
         this.refreshPending = false;
         void this.refresh(true);
-      }
+      } else this.scheduleRefresh();
     }
   }
   historySelectionId() {
     return this.selected === "live"
-      ? this.state?.session?.timeline.session_id || this.sessions?.[0]?.session_id
+      ? this.state?.session?.timeline.session_id ||
+          this.historyPendingFinalId ||
+          this.sessions?.[0]?.session_id
       : this.selected;
   }
   historyProjection() {
@@ -3584,6 +3701,9 @@ class SaunaPanel extends HTMLElement {
     // projection. The generation also rejects responses from an earlier stream.
     this.historyProjectionGeneration = (this.historyProjectionGeneration || 0) + 1;
     this.cache.clear();
+    this.sessions = null;
+    this.historyListStale = true;
+    this.historyOptionsSignature = null;
     this.historyLoad = null;
     this.shown = null;
     this.chartDataIndex = null;
@@ -3603,7 +3723,6 @@ class SaunaPanel extends HTMLElement {
     if (focused?.closest?.("#event-list, #detection-plots")) focused.blur?.();
     for (const selector of ["#gangs", "#event-list", "#detection-plots"])
       this.updateMarkup(selector, "");
-    this.renderHistoryLoading(null);
   }
   historyCache(id) {
     const accessProjection = this.historyProjection();
@@ -3694,14 +3813,6 @@ class SaunaPanel extends HTMLElement {
         }
       : null;
   }
-  renderHistoryLoading(load) {
-    const node = this.$("#history-loading");
-    if (!node) return;
-    node.hidden = !load;
-    node.textContent = load
-      ? `Verlauf wird geladen · ${load.count || 0} Mess- und Ereignispunkte verfügbar`
-      : "";
-  }
   syncHistorySessions() {
     const select = this.$("#session");
     if (!select || !this.sessions || !this.state) return;
@@ -3720,10 +3831,11 @@ class SaunaPanel extends HTMLElement {
               `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at, timeZone))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
           )
           .join("");
-    if (select.innerHTML !== options) {
-      this.updateMarkup("#session", options);
-      select.value = this.selected;
+    if (this.historyOptionsSignature !== options) {
+      select.innerHTML = options;
+      this.historyOptionsSignature = options;
     }
+    if (select.value !== this.selected) select.value = this.selected;
   }
   startHistoryLoad() {
     if (!this.state) return;
@@ -3736,6 +3848,12 @@ class SaunaPanel extends HTMLElement {
       liveId = this.state?.session?.timeline.session_id,
       selectionGeneration = this.historySelectionGeneration || 0,
       key = `${generation}:${projectionGeneration}:${projection}:${selectionGeneration}:${entry}:${selected}:${liveId || ""}`;
+    const listNeeded = this.sessions == null || this.historyListStale,
+      initialId = this.historySelectionId(),
+      pageNeeded = initialId
+        ? this.historyCacheNeedsFetch(this.historyCache(initialId))
+        : false;
+    if (!listNeeded && !pageNeeded) return;
     if (this.historyLoad?.key === key) return this.historyLoad.promise;
     const load = { key, count: 0 };
     this.historyLoad = load;
@@ -3757,13 +3875,15 @@ class SaunaPanel extends HTMLElement {
       const nowLiveId = this.state?.session?.timeline.session_id;
       return nowLiveId === liveId || (liveId && !nowLiveId && id === liveId);
     };
-    this.renderHistoryLoading(load);
     load.promise = (async () => {
       try {
-        const list = await this.api(`/${entry}/archive`);
-        if (!current()) return;
-        this.sessions = list;
-        this.syncHistorySessions();
+        if (listNeeded) {
+          const list = await this.api(`/${entry}/archive`);
+          if (!current()) return;
+          this.sessions = list;
+          this.historyListStale = false;
+          this.syncHistorySessions();
+        }
         const id = this.historySelectionId();
         if (!id) {
           this.showHistoryCache();
@@ -3807,7 +3927,6 @@ class SaunaPanel extends HTMLElement {
             load.count = cache.records.length;
             this.showHistoryCache();
             if (!this.$("#history")?.hidden) this.drawHistory("archive");
-            this.renderHistoryLoading(more ? load : null);
             // Let input, paint and the independent status poll run between pages.
             if (more) await new Promise((resolve) => setTimeout(resolve, 0));
           } while (more && current());
@@ -3819,10 +3938,7 @@ class SaunaPanel extends HTMLElement {
       } catch (error) {
         if (current()) this.message(error, "history");
       } finally {
-        if (this.historyLoad === load) {
-          this.historyLoad = null;
-          this.renderHistoryLoading(null);
-        }
+        if (this.historyLoad === load) this.historyLoad = null;
       }
     })();
     return load.promise;
@@ -3832,7 +3948,6 @@ class SaunaPanel extends HTMLElement {
       this.renderStateLoading();
       return;
     }
-    const progressionOpen = this.$("#current details")?.open;
     const s = this.state,
       session = s.session,
       p = s.configuration.parameters,
@@ -3862,10 +3977,6 @@ class SaunaPanel extends HTMLElement {
     const measurementPosition =
       s.regulation_temperature_position || s.measurement_positions?.[0] || "upper";
     const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
-    const measurementLabel =
-      measurementPosition === "lower" && s.measurement_positions?.includes("upper")
-        ? "Ersatzmessung unten"
-        : `Messung ${measurementHeight}`;
     const formatValue = (position, quantity, unit) =>
       `${num(value(position, quantity), 1)} ${unit}`;
     const timer = s.mechanical_timer;
@@ -4001,7 +4112,7 @@ class SaunaPanel extends HTMLElement {
       control = "",
       minimum = 0,
     ) =>
-      `<svg class="dial ${control ? "dial-temperature" : ""}" viewBox="0 0 300 260" role="${control ? "group" : "img"}" aria-label="${esc(control ? "Temperatur und Solltemperatur" : caption)}"><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="16" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, (((reading ?? minimum) - minimum) / (maximum - minimum || 1)) * 100))} 100"/>${this.temperatureTickMarks({ minimum, maximum })}<text class="reading" x="150" y="119" text-anchor="middle">${num(reading, 1)} ${unit}</text>${control}${caption ? `<text class="caption" x="150" y="240" text-anchor="middle">${esc(caption)}</text>` : ""}</svg>${reading != null && (reading < minimum || reading > maximum) ? `<p class="scale-hint">Messwert außerhalb der Anzeigeskala</p>` : ""}`;
+      `<svg class="dial ${control ? "dial-temperature" : ""}" viewBox="0 0 300 260" role="${control ? "group" : "img"}" aria-label="${esc(control ? "Temperatur und Solltemperatur" : caption)}"><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="16" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, (((reading ?? minimum) - minimum) / (maximum - minimum || 1)) * 100))} 100"/>${this.temperatureTickMarks({ minimum, maximum })}<text class="reading" x="150" y="119" text-anchor="middle">${num(reading, 1)} ${unit}</text>${control}</svg>${reading != null && (reading < minimum || reading > maximum) ? `<p class="scale-hint">Messwert außerhalb der Anzeigeskala</p>` : ""}`;
     const deadlineLabels = { confirmation: "Aufgussbestätigung" };
     const phaseRemaining = (phase) =>
       Math.max(
@@ -4092,10 +4203,16 @@ class SaunaPanel extends HTMLElement {
       programBusy = !!this.programRequest;
     const draftLabel = (draft) =>
       draft ? '<small class="program-draft-label">Vorgemerkt</small>' : "";
-    const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen"><button type="button" data-action="program-mode:program" aria-pressed="${activeMode === "program"}" class="${programMode === "program" && activeMode !== "program" ? "program-draft" : ""}" ${permissions.program && programs.length && !programBusy ? "" : "disabled"}>Programm${draftLabel(programMode === "program" && activeMode !== "program")}</button><button type="button" data-action="program-mode:individual" aria-pressed="${activeMode === "individual"}" class="${programMode === "individual" && activeMode !== "individual" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Individuell${draftLabel(programMode === "individual" && activeMode !== "individual")}</button><button type="button" data-action="program-mode:constant" aria-pressed="${activeMode === "constant"}" class="${programMode === "constant" && activeMode !== "constant" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Konstant${draftLabel(programMode === "constant" && activeMode !== "constant")}</button></div>`;
+    const programFeedback = (choice) =>
+      !session &&
+      this.programChoiceMatches(choice, programChoice) &&
+      this.programSaveState
+        ? `<small class="program-save-label">${this.programSaveState === "saving" ? "Wird übernommen …" : "✓ Übernommen"}</small>`
+        : "";
+    const programTypes = `<div class="program-types" role="group" aria-label="Temperaturprogramm auswählen"><button type="button" data-action="program-mode:program" aria-pressed="${activeMode === "program"}" class="${programMode === "program" && activeMode !== "program" ? "program-draft" : ""}" ${permissions.program && programs.length && !programBusy ? "" : "disabled"}>Programm${draftLabel(programMode === "program" && activeMode !== "program")}</button><button type="button" data-action="program-mode:individual" aria-pressed="${activeMode === "individual"}" class="${programMode === "individual" && activeMode !== "individual" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Individuell${draftLabel(programMode === "individual" && activeMode !== "individual")}${programFeedback({ mode: "individual" })}</button><button type="button" data-action="program-mode:constant" aria-pressed="${activeMode === "constant"}" class="${programMode === "constant" && activeMode !== "constant" ? "program-draft" : ""}" ${permissions.program && !programBusy ? "" : "disabled"}>Konstant${draftLabel(programMode === "constant" && activeMode !== "constant")}${programFeedback({ mode: "constant" })}</button></div>`;
     const namedPrograms =
       programMode === "program"
-        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice ${program.id === programChoice.id && program.id !== activeChoice.id ? "program-draft" : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice.id}" ${permissions.program && !programBusy ? "" : "disabled"}><span>${esc(program.name)}${draftLabel(program.id === programChoice.id && program.id !== activeChoice.id)}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
+        ? `<div class="program-named-list">${programs.map((program) => `<button type="button" class="program-named-choice ${program.id === programChoice.id && program.id !== activeChoice.id ? "program-draft" : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === activeChoice.id}" ${permissions.program && !programBusy ? "" : "disabled"}><span>${esc(program.name)}${draftLabel(program.id === programChoice.id && program.id !== activeChoice.id)}${programFeedback({ mode: "program", id: program.id })}</span><small>${esc(this.programSteps(program))}</small></button>`).join("")}</div>`
         : "";
     const light = s.manual_controls?.light || {};
     const roundedLight = (value) =>
@@ -4118,7 +4235,7 @@ class SaunaPanel extends HTMLElement {
                 ? "bright"
                 : null;
     const lightPresetButtons = (canControl, includeDimmed = manualMode) =>
-      `<button data-action="light:false" aria-pressed="${lightPreset === "off"}" ${canControl ? "" : "disabled"}>Aus</button>${manualMode ? "" : `<button data-action="light:auto" aria-pressed="${lightPreset === "auto"}" ${canControl ? "" : "disabled"}>Automatik</button>`}${includeDimmed && !sameLightPresets ? `<button data-action="light:normal" aria-pressed="${lightPreset === "normal"}" ${canControl ? "" : "disabled"}>Gedimmt <small>${num(light.normal, 0)} %</small></button>` : ""}<button data-action="light:true" aria-pressed="${lightPreset === "bright"}" ${canControl ? "" : "disabled"}>${includeDimmed && sameLightPresets ? "Gedimmt / Hell" : "Hell"} <small>${num(p.session_light_brightness_percent, 0)} %</small></button>`;
+      `${manualMode ? "" : `<button data-action="light:auto" aria-pressed="${lightPreset === "auto"}" ${canControl ? "" : "disabled"}>Automatik</button>`}<button data-action="light:false" aria-pressed="${lightPreset === "off"}" ${canControl ? "" : "disabled"}>Aus</button>${includeDimmed && !sameLightPresets ? `<button data-action="light:normal" aria-pressed="${lightPreset === "normal"}" ${canControl ? "" : "disabled"}>Gedimmt <small>${num(light.normal, 0)} %</small></button>` : ""}<button data-action="light:true" aria-pressed="${lightPreset === "bright"}" ${canControl ? "" : "disabled"}>${includeDimmed && sameLightPresets ? "Gedimmt / Hell" : "Hell"} <small>${num(p.session_light_brightness_percent, 0)} %</small></button>`;
     const heater = s.manual_controls?.heater || {};
     const overrideRemaining = (endsAt) =>
       endsAt && stamp(endsAt) > now
@@ -4148,17 +4265,19 @@ class SaunaPanel extends HTMLElement {
     const manualLightValue =
       this.manualLightDraft ?? light.manual ?? light.automatic ?? 0;
     const isAdmin = !!permissions.admin;
-    const canManualHeater = permissions.heater;
-    const canManualLight = isAdmin && permissions.light;
+    const automaticOverrideAllowed = !!session && !!s.operation_enabled,
+      canManualHeater =
+        permissions.heater && (manualMode || (isAdmin && automaticOverrideAllowed)),
+      canManualLight =
+        permissions.light && (manualMode || (isAdmin && automaticOverrideAllowed));
     const modeControls = `<div class="row"><small>Betriebsmodus</small><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button>${modeLocked ? '<small class="muted">Während der Sitzung gesperrt.</small>' : ""}</div>`;
     const heaterControls =
       isAdmin || manualMode
-        ? `<section class="manual-section manual-heater"><div class="row"><h3>Ofen</h3><span class="manual-status ${heaterMode}" data-heater-status="${heaterMode}">${heaterStatus}</span></div><div class="row"><button data-action="heater:true" aria-pressed="${heater.manual === true}" ${canManualHeater ? "" : "disabled"}>EIN</button><button data-action="heater:false" aria-pressed="${heater.manual === false}" ${canManualHeater ? "" : "disabled"}>AUS</button>${manualMode ? "" : `<button data-action="heater:auto" aria-pressed="${heater.manual == null}" ${canManualHeater ? "" : "disabled"}>Automatik</button>`}</div>${!s.operation_enabled ? '<small class="muted">EIN startet zuerst den Saunabetrieb.</small>' : ""}</section>`
+        ? `<section class="manual-section manual-heater"><div class="row"><h3>Ofen</h3><span class="manual-status ${heaterMode}" data-heater-status="${heaterMode}">${heaterStatus}</span></div><div class="row">${manualMode ? "" : `<button data-action="heater:auto" aria-pressed="${heater.manual == null}" ${canManualHeater ? "" : "disabled"}>Automatik</button>`}<button data-action="heater:false" aria-pressed="${heater.manual === false}" ${canManualHeater ? "" : "disabled"}>AUS</button><button data-action="heater:true" aria-pressed="${heater.manual === true}" ${canManualHeater ? "" : "disabled"}>EIN</button></div>${manualMode && !s.operation_enabled ? '<small class="muted">EIN startet zuerst den Saunabetrieb.</small>' : ""}</section>`
         : "";
     const lightControls = (includeDimmed) => {
-      const fallback = `Vorübergehende Übersteuerungen folgen spätestens nach ${duration(p.manual_override_minutes * 60)} wieder der Automatik.`;
       const brightnessInput = isAdmin
-        ? `<div class="row"><label for="manual-light-value-overview">Freie Helligkeit</label><input id="manual-light-value-overview" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="manual-light-overview" class="confirm" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div><small class="muted">${manualMode ? "Die Lichtwahl bleibt im manuellen Betrieb erhalten." : fallback}</small>`
+        ? `<div class="row"><label for="manual-light-value-overview">Freie Helligkeit</label><input id="manual-light-value-overview" data-manual-light-value class="manual-light-value" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(manualLightValue)}" ${canManualLight ? "" : "disabled"}><span>%</span><button data-action="manual-light-overview" class="confirm" ${canManualLight ? "" : "disabled"}>Übernehmen</button></div>${manualMode ? '<small class="muted">Die Lichtwahl bleibt im manuellen Betrieb erhalten.</small>' : ""}`
         : "";
       return `<section class="manual-section manual-light"><div class="row"><h3>Licht</h3><span class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</span></div><div class="row">${lightPresetButtons(permissions.light, includeDimmed)}</div>${brightnessInput}</section>`;
     };
@@ -4169,10 +4288,8 @@ class SaunaPanel extends HTMLElement {
     const programBounds = this.programBounds();
     // Temperaturautomatik stays the internal CSS/API term; the control uses the shorter label.
     const temperatureAutomation = !manualMode
-      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && (session || this.programSelectionDraft != null) ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session ? "</div>" : ""}</section>`
+      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && session ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session && (this.programDirty() || this.programSaveState) ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}${session ? "</div>" : ""}</section>`
       : "";
-    const overviewQuality = (position, quantity) =>
-      `<p class="muted">${measurementLabel}${quality(position, quantity) === "current" ? "" : ` · ${qualityText(position, quantity)}`}</p>`;
     this.updateMarkup(
       "#current",
       this.renderControlView({
@@ -4180,18 +4297,11 @@ class SaunaPanel extends HTMLElement {
         stateLine: controlStateLine,
         overviewLightTimer,
         operation,
-        programAction:
-          !manualMode &&
-          ((session && (this.programDirty() || this.programSaveState)) ||
-            (!session &&
-              programMode !== "individual" &&
-              (this.programSelectionDraft != null || this.programSaveState)))
-            ? this.programApplyButton(permissions)
-            : "",
         temperatureAutomation,
         manualMode,
         heaterControls,
-        lightControls: lightControls(manualMode || isAdmin),
+        lightControls: manualMode || isAdmin ? lightControls(true) : "",
+        overrideLimitMinutes: num(p.manual_override_minutes, 0),
         heaterOverrideRemaining: overrideRemaining(heater.override_ends_at),
         lightOverrideRemaining: overrideRemaining(light.override_ends_at),
         finishPhase,
@@ -4206,7 +4316,6 @@ class SaunaPanel extends HTMLElement {
           targetControl,
           temperatureScale?.minimum ?? 0,
         ),
-        temperatureQuality: overviewQuality(measurementPosition, "temperature"),
         humidityGauge: dial(
           humidity,
           "%",
@@ -4217,7 +4326,6 @@ class SaunaPanel extends HTMLElement {
           "",
           humidityScale.minimum,
         ),
-        humidityQuality: overviewQuality(measurementPosition, "humidity"),
       }),
     );
     const temperatureProgram =
@@ -4272,7 +4380,6 @@ class SaunaPanel extends HTMLElement {
         detectionText: esc(detectionText),
       }),
     );
-    if (progressionOpen) this.$("#current details").open = true;
   }
   renderControlView(view) {
     const {
@@ -4280,26 +4387,24 @@ class SaunaPanel extends HTMLElement {
       stateLine,
       overviewLightTimer,
       operation,
-      programAction,
       temperatureAutomation,
       manualMode,
       heaterControls,
       lightControls,
+      overrideLimitMinutes,
       heaterOverrideRemaining,
       lightOverrideRemaining,
       finishPhase,
       alert,
       temperatureGauge,
-      temperatureQuality,
       humidityGauge,
-      humidityQuality,
     } = view;
     const controls = manualMode
       ? `<div class="manual-controls">${heaterControls}${lightControls}</div>`
       : heaterControls
-        ? `<div class="manual-overrides"><h2>Manuelle Übersteuerung</h2>${heaterControls}<small>Ofen: ${heaterOverrideRemaining}</small>${lightControls}<small>Licht: ${lightOverrideRemaining}</small>${finishPhase}</div>`
+        ? `<details id="manual-overrides" class="manual-overrides" ${this.manualOverridesOpen ? "open" : ""}><summary>Manuelle Übersteuerung</summary><small class="override-limit muted">Übersteuerung: höchstens ${overrideLimitMinutes} Minuten.</small>${heaterControls}<small>Ofen: ${heaterOverrideRemaining}</small>${lightControls}<small>Licht: ${lightOverrideRemaining}</small></details>${finishPhase}`
         : lightControls;
-    return `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles ${programAction ? "program-action-layout" : ""}">${programAction}${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="environment"><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${temperatureGauge}${temperatureQuality}</div><div><h2>Luftfeuchte</h2>${humidityGauge}${humidityQuality}</div></div></div></div></div>`;
+    return `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="environment"><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${temperatureGauge}</div><div><h2>Luftfeuchte</h2>${humidityGauge}</div></div></div></div></div>`;
   }
   renderDetailView(view) {
     const {
@@ -4418,9 +4523,15 @@ class SaunaPanel extends HTMLElement {
     const target = this.temperatureBounds(),
       display = this.appearanceScale("temperature");
     if (!target || !display) return null;
-    const minimum = Math.max(target.minimum, display.minimum),
-      maximum = Math.min(target.maximum, display.maximum);
+    const minimum = Math.ceil(Math.max(target.minimum, display.minimum)),
+      maximum = Math.floor(Math.min(target.maximum, display.maximum));
     return maximum >= minimum ? { minimum, maximum } : null;
+  }
+  clampArcTemperature(value, bounds = this.targetArcBounds()) {
+    if (!bounds) return null;
+    const number = Number(value),
+      rounded = Math.round(Number.isFinite(number) ? number : bounds.minimum);
+    return Math.max(bounds.minimum, Math.min(bounds.maximum, rounded));
   }
   temperatureStep() {
     return this.temperatureDefinition()?.integer ? 1 : 0.5;
@@ -4489,6 +4600,9 @@ class SaunaPanel extends HTMLElement {
         ? "Konstant"
         : "Individuell";
   }
+  programChoiceMatches(left, right) {
+    return left?.mode === right?.mode && left?.id === right?.id;
+  }
   selectProgramMode(mode, programs = []) {
     if (mode === "program") {
       if (!programs.length) return;
@@ -4542,7 +4656,8 @@ class SaunaPanel extends HTMLElement {
       configuration = this.state.configuration,
       choice = this.programChoice(configuration.temperature_programs || []),
       previousTarget = this.temperatureChange,
-      draft = this.progressionDraft;
+      draft = this.progressionDraft,
+      sessionAtStart = !!this.state.session;
     let path = "program",
       body;
     if (choice.mode !== "individual")
@@ -4590,6 +4705,13 @@ class SaunaPanel extends HTMLElement {
         this.generation !== generation
       )
         return;
+      if (!sessionAtStart && this.state.session) {
+        this.programRequest = null;
+        this.programSaveState = null;
+        this.programChoiceOpen = true;
+        this.drawCurrent();
+        return;
+      }
       if (body.target_temperature_c === null) {
         body.target_temperature_c = Number(
           targetParameters?.target_temperature_c ??
@@ -4635,7 +4757,6 @@ class SaunaPanel extends HTMLElement {
       if (this.progressionDraft === draft) this.progressionDraft = null;
       this.programRequest = null;
       this.programSaveState = "saved";
-      this.programChoiceOpen = false;
       this.drawCurrent();
       this.programSavedTimer = setTimeout(() => {
         if (
@@ -4804,7 +4925,7 @@ class SaunaPanel extends HTMLElement {
           )
           .join("")}</div>`
       : `<div class="row"><label class="field" for="progression-start">Start<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}></label><label class="field" for="progression-end">Ende<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
-    return `<div class="program-form">${kindButtons}${fields}${this.state?.session ? "" : `<div class="program-actions">${this.programApplyButton(permissions)}</div>`}</div>`;
+    return `<div class="program-form">${kindButtons}${fields}</div>`;
   }
   distributionInfo(id, steps) {
     const text = steps?.length
@@ -4961,7 +5082,7 @@ class SaunaPanel extends HTMLElement {
     const bounds = this.appearanceScale("temperature");
     const allowed = this.targetArcBounds();
     if (!bounds || !allowed) return null;
-    return this.clampTemperature(
+    return this.clampArcTemperature(
       bounds.minimum +
         ((onArc - temperatureDial.startAngle) /
           (temperatureDial.endAngle - temperatureDial.startAngle)) *
@@ -4992,10 +5113,6 @@ class SaunaPanel extends HTMLElement {
     )
       return;
     event.preventDefault();
-    (target?.getAttribute("role") === "slider"
-      ? target
-      : this.$('[data-target-arc][role="slider"]')
-    )?.focus?.();
     this.temperatureInteraction = {
       pointerId: event.pointerId,
       value: this.temperatureValueAt(svg, event.clientX, event.clientY),
@@ -5034,7 +5151,6 @@ class SaunaPanel extends HTMLElement {
       if (this.temperatureInteraction === interaction) {
         this.temperatureInteraction = null;
         this.drawCurrent();
-        this.$('[data-target-arc][role="slider"]')?.focus?.();
       }
     }
   }
@@ -5047,8 +5163,8 @@ class SaunaPanel extends HTMLElement {
       return;
     const bounds = this.targetArcBounds();
     if (!bounds) return;
-    const current = this.clampTemperature(this.state.target_temperature, bounds),
-      step = this.temperatureStep();
+    const current = this.clampArcTemperature(this.state.target_temperature, bounds),
+      step = 1;
     const next = {
       ArrowLeft: current - step,
       ArrowDown: current - step,
@@ -5061,7 +5177,7 @@ class SaunaPanel extends HTMLElement {
     }[event.key];
     if (next === undefined) return;
     event.preventDefault();
-    const value = this.clampTemperature(next, bounds);
+    const value = this.clampArcTemperature(next, bounds);
     const interaction = { value, committing: true };
     this.temperatureInteraction = interaction;
     this.renderTemperatureTarget(value);
@@ -6055,7 +6171,7 @@ class SaunaPanel extends HTMLElement {
     this.pinchDistance = distance;
   }
   beginWebkitGesture(event) {
-    const svg = event.target.closest?.("svg.session-chart");
+    const svg = this.eventElement(event, "svg.session-chart");
     if (!svg) return;
     if (this.historyInputMode && this.historyInputMode !== "webkit") {
       event.preventDefault();
@@ -7050,6 +7166,16 @@ class SaunaPanel extends HTMLElement {
     if (!this.state && action !== "menu") return;
     this.message(null);
     const permissions = this.state?.permissions || {};
+    const automaticOverrideAction =
+      this.state?.configuration?.control_mode !== "manual" &&
+      (action.startsWith("heater:") ||
+        action.startsWith("light:") ||
+        action === "manual-light-overview");
+    if (
+      automaticOverrideAction &&
+      (!this.state?.session || !this.state?.operation_enabled)
+    )
+      return;
     if (
       ((action === "operation" || action.startsWith("finish-session:")) &&
         !permissions.control) ||
@@ -7177,12 +7303,7 @@ class SaunaPanel extends HTMLElement {
         action.slice(13),
         this.state.configuration.temperature_programs || [],
       );
-      if (
-        !this.state.session &&
-        this.programMode(this.state.configuration.temperature_programs || []) !==
-          "individual"
-      )
-        await this.applyProgram();
+      if (!this.state.session) await this.applyProgram();
       return;
     }
     if (action.startsWith("program-select:")) {

@@ -86,6 +86,17 @@ assert.equal(
   60.2,
   "rounding cannot escape a fractional minimum",
 );
+assert.equal(
+  panel.clampArcTemperature(60.2, { minimum: 61, maximum: 100 }),
+  61,
+  "the dial exposes only whole degrees even when program values allow halves",
+);
+assert.equal(panel.clampArcTemperature(80.6, { minimum: 60, maximum: 100 }), 81);
+assert.match(
+  source,
+  /\.target-temperature-track:focus\s*\{[^}]*opacity:\s*0\.35/s,
+  "keyboard focus no longer turns the complete target arc opaque",
+);
 
 {
   const inputs = {

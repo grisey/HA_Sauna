@@ -185,6 +185,40 @@ test("pointer-owned pinch suppresses duplicate Safari gesture zoom", () => {
   assert.ok(prevented >= 3);
 });
 
+test("a retargeted WebKit gesture resolves its chart through the composed path", () => {
+  const p = panel();
+  const svg = {
+    matches: (selector) => selector === "svg.session-chart",
+    getBoundingClientRect: () => ({ left: 10, width: 800 }),
+  };
+  const factors = [];
+  let prevented = 0;
+  p.historyChart = {
+    interaction: {
+      invalidateGeometry: () => {},
+      readGeometry: () => ({ rects: { surface: { left: 10, width: 800 } } }),
+    },
+  };
+  p.zoomAt = (...args) => factors.push(args);
+  const event = {
+    target: { closest: () => null },
+    composedPath: () => [{}, svg, {}],
+    preventDefault: () => prevented++,
+    scale: 1,
+    clientX: 210,
+  };
+  p.beginWebkitGesture(event);
+  event.scale = 2;
+  p.updateWebkitGesture(event);
+  p.endWebkitGesture(event);
+  assert.equal(factors.length, 1);
+  assert.equal(factors[0][0], 2);
+  assert.equal(factors[0][1], 210);
+  assert.equal(factors[0][2], svg);
+  assert.equal(p.historyInputMode, null);
+  assert.equal(prevented, 3);
+});
+
 test("explicit navigation during a periodic refresh queues one fresh read", async () => {
   let releaseFirst;
   let stateReads = 0;
@@ -202,6 +236,7 @@ test("explicit navigation during a periodic refresh queues one fresh read", asyn
     $: (selector) => (selector === "#history" ? { hidden: true } : null),
     drawCurrent: () => {},
     drawSettings: () => {},
+    scheduleRefresh: () => {},
     message: () => {},
   });
   const periodic = p.refresh();

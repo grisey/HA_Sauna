@@ -37,7 +37,6 @@ function makePanel(api) {
   const nodes = {
     "#history": { hidden: false },
     "#session": { innerHTML: "" },
-    "#history-loading": {},
   };
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "e",

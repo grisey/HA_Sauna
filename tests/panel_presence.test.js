@@ -130,7 +130,6 @@ console.log("presence and phase projection panel tests passed");
   let rendered;
   const nodes = {
     "#history": { hidden: false },
-    "#history-loading": {},
     "#session": { innerHTML: "", value: "" },
   };
   const refreshing = Object.assign(Object.create(Panel.prototype), panel, {

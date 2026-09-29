@@ -39,7 +39,7 @@ assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,\s*0\)\} %<\/small>/
 assert.doesNotMatch(source, /Normallicht/);
 assert.doesNotMatch(source, /Raumlicht/);
 assert.doesNotMatch(source, /Zwangskühlung pausiert/);
-assert.ok(source.includes("Übersteuerungen folgen spätestens nach"));
+assert.ok(source.includes("Übersteuerung: höchstens"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
 assert.match(source, /s\.configuration\.program_mode\s*===\s*"progressive"/);
 assert.doesNotMatch(
@@ -52,7 +52,11 @@ const makePanel = (permissions, lightValue = "42") => {
   const calls = [];
   const panel = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
-    state: { permissions },
+    state: {
+      permissions,
+      configuration: { control_mode: "manual" },
+      operation_enabled: true,
+    },
     api: async (...args) => calls.push(args),
     refresh: async () => {},
     message: () => {},
@@ -74,6 +78,7 @@ const renderCurrent = (
   session = null,
   startErrors = [],
   program = {},
+  operationEnabled = false,
 ) => {
   const permissions = {
     admin: true,
@@ -128,7 +133,7 @@ const renderCurrent = (
       configuration_locked: locked,
       issues: [],
       start_errors: startErrors,
-      operation_enabled: false,
+      operation_enabled: operationEnabled,
       heating_feedback: heatingFeedback,
       heating_observation: { source: "unknown" },
       phase: "manuell",
@@ -169,6 +174,26 @@ const renderCurrent = (
   await panel.action("heater:true");
   await panel.action("manual-light-overview");
   assert.equal(calls.length, 0, "non-admin controls must not route API calls");
+
+  ({ panel, calls } = makePanel(enabled));
+  panel.state.configuration.control_mode = "automatic";
+  panel.state.operation_enabled = false;
+  panel.state.session = { timeline: {} };
+  await panel.action("heater:true");
+  await panel.action("light:true");
+  await panel.action("manual-light-overview");
+  assert.equal(
+    calls.length,
+    0,
+    "automatic overrides cannot resume or start an inactive operation",
+  );
+  panel.state.operation_enabled = true;
+  await panel.action("heater:true");
+  await panel.action("light:true");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ["/entry-1/heater", "POST", { value: true }],
+    ["/entry-1/light", "POST", { value: true }],
+  ]);
 
   ({ panel, calls } = makePanel({
     admin: true,
@@ -284,6 +309,11 @@ const renderCurrent = (
   assert.match(automatic, /temperature-presets/);
   assert.doesNotMatch(automatic, /program-named-list|program-form/);
   assert.match(automatic, /Manuelle Übersteuerung/);
+  assert.match(automatic, /id="manual-overrides" class="manual-overrides" >/);
+  assert.match(automatic, /Übersteuerung: höchstens 10 Minuten\./);
+  assert.equal((automatic.match(/Übersteuerung: höchstens/g) || []).length, 1);
+  assert.match(automatic, /data-action="heater:auto"[^>]*disabled/);
+  assert.doesNotMatch(automatic, /EIN startet zuerst den Saunabetrieb/);
   assert.match(automatic, /Gedimmt <small>25 %<\/small>/);
   assert.match(manual, /class="manual-controls"/);
   assert.doesNotMatch(manual, /Manuelle Übersteuerung/);
@@ -337,9 +367,11 @@ const renderCurrent = (
     userAutomatic,
     /data-action="control-mode:manual" aria-pressed="false" >Manuell/,
   );
-  assert.match(userAutomatic, /data-action="light:auto"/);
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Übersteuerung/);
-  assert.doesNotMatch(userAutomatic, /data-action="heater:|manual-light-value/);
+  assert.doesNotMatch(
+    userAutomatic,
+    /data-action="(?:heater:|light:)|manual-light-value/,
+  );
   const userManual = renderCurrent("manual", {}, false, "#current", { admin: false });
   assert.match(
     userManual,
@@ -605,6 +637,42 @@ const renderCurrent = (
   assert.doesNotMatch(automaticHeater, /data-action="heater:true" class="primary"/);
   const automaticLight = renderCurrent("automatic", { light: { manual: null } });
   assert.match(automaticLight, /data-action="light:auto" aria-pressed="true"/);
+
+  const liveSession = {
+    timeline: {
+      active: null,
+      completed: [],
+      session_started_at: "2026-09-20T11:00:00Z",
+    },
+    heating: { elapsed_seconds: 0 },
+    deadlines: [],
+  };
+  const liveAutomatic = renderCurrent(
+    "automatic",
+    { heater: { manual: null }, light: { manual: null } },
+    true,
+    "#current",
+    {},
+    false,
+    liveSession,
+    [],
+    {},
+    true,
+  );
+  assert.doesNotMatch(liveAutomatic, /data-action="heater:auto"[^>]*disabled/);
+  assert.doesNotMatch(liveAutomatic, /data-action="light:auto"[^>]*disabled/);
+  assert.ok(
+    liveAutomatic.indexOf('data-action="heater:auto"') <
+      liveAutomatic.indexOf('data-action="heater:false"'),
+  );
+  assert.ok(
+    liveAutomatic.indexOf('data-action="heater:false"') <
+      liveAutomatic.indexOf('data-action="heater:true"'),
+  );
+  assert.ok(
+    liveAutomatic.indexOf('data-action="light:auto"') <
+      liveAutomatic.indexOf('data-action="light:false"'),
+  );
 
   const lightOff = renderCurrent("manual", {
     heater: { manual: true },

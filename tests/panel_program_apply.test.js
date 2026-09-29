@@ -108,6 +108,35 @@ test("off-session named choice applies directly and reflects authoritative respo
   assert.equal(p.programSaveState, null);
 });
 
+test("off-session individual choice applies its valid existing values directly", async () => {
+  const { p, calls } = panel(configuration(), null, async () => ({
+    parameters: {
+      target_temperature_c: 80,
+      final_temperature_c: 92,
+      temperature_gangs: 4,
+    },
+    program_mode: "progressive",
+    selected_program_id: null,
+    temperature_steps: null,
+  }));
+  p.progressionValues = () => ({ start: 80, end: 92, gangs: 4 });
+  await p.action("program-mode:individual");
+  assert.deepEqual(plain(calls), [
+    [
+      "/entry/program",
+      "POST",
+      {
+        target_temperature_c: 80,
+        final_temperature_c: 92,
+        temperature_gangs: 4,
+      },
+    ],
+  ]);
+  assert.equal(p.state.configuration.program_mode, "progressive");
+  assert.equal(p.programSelectionDraft, null);
+  assert.equal(p.programSaveState, "saved");
+});
+
 test("opaque named IDs retain their mode through request, saved selection and drafts", async () => {
   const catalog = ["individual", "other", "custom:one", "custom:one:two"].map((id) => ({
     id,
@@ -284,7 +313,23 @@ test("a pending direct target completes before program submit; failure keeps the
   assert.equal(p.state.configuration.parameters.target_temperature_c, 75);
 });
 
-test("gap control shows one main apply before the operation and distinguishes draft from active", () => {
+test("an off-session automatic save becomes a staged choice if a session starts", async () => {
+  let release;
+  const target = new Promise((resolve) => (release = resolve));
+  const { p, calls } = panel(configuration(), null);
+  p.programSelectionDraft = { mode: "program", id: "quiet" };
+  p.temperatureChange = target;
+  const saving = p.applyProgram();
+  p.state.session = { timeline: {} };
+  release({ target_temperature_c: 80 });
+  await saving;
+  assert.equal(calls.length, 0);
+  assert.deepEqual(plain(p.programSelectionDraft), { mode: "program", id: "quiet" });
+  assert.equal(p.programChoiceOpen, true);
+  assert.equal(p.programSaveState, null);
+});
+
+test("gap control keeps its apply action inside the open program editor", () => {
   const gap = {
     timeline: { active: null, completed: [], door: "closed" },
     heating: { elapsed_seconds: 0 },
@@ -331,7 +376,7 @@ test("gap control shows one main apply before the operation and distinguishes dr
   const control = nodes.get("#current").innerHTML;
   assert.equal((control.match(/data-action="program-apply"/g) || []).length, 1);
   assert.ok(
-    control.indexOf('data-action="program-apply"') <
+    control.indexOf('data-action="program-apply"') >
       control.indexOf('data-action="finish-session:gap"'),
   );
   assert.match(
@@ -363,9 +408,10 @@ test("gap control shows one main apply before the operation and distinguishes dr
   assert.equal(
     (nodes.get("#current").innerHTML.match(/data-action="program-apply"/g) || [])
       .length,
-    1,
-    "off-session confirmation stays visible once",
+    0,
+    "off-session confirmation reuses the selected program control",
   );
+  assert.match(nodes.get("#current").innerHTML, /✓ Übernommen/);
   p.programSaveState = null;
   p.state.configuration.control_mode = "manual";
   p.state.session = gap;

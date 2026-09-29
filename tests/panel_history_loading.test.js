@@ -40,7 +40,6 @@ function panel(api) {
   const nodes = {
     "#history": { hidden: false },
     "#session": { innerHTML: "" },
-    "#history-loading": {},
     "#gangs": { innerHTML: "" },
     "#event-list": { innerHTML: "" },
     "#detection-plots": { innerHTML: "" },
@@ -69,12 +68,22 @@ function panel(api) {
       this.statusDraws++;
     },
     drawSettings() {},
+    scheduleRefresh() {},
     message(error, source) {
       this.errors[source] = error;
     },
   });
   return { p, nodes };
 }
+
+test("status polling is live during operation and sparse while idle", () => {
+  const { p } = panel(async () => ({}));
+  assert.equal(p.statusPollInterval(), 2000);
+  p.state = { ...state(), session: null, operation_enabled: false };
+  assert.equal(p.statusPollInterval(), 10000);
+  p.state.light_after_run = { ends_at: "2032-01-01T12:01:00Z" };
+  assert.equal(p.statusPollInterval(), 2000);
+});
 
 test("slow archive pages do not hold status refresh and partial pages are visible", async () => {
   const first = deferred(),
@@ -104,7 +113,6 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
   first.resolve(page([1, 2], 2));
   await turn();
   assert.equal(p.shown.records.length, 2);
-  assert.match(nodes["#history-loading"].textContent, /2 Mess-/);
   assert.equal(p.cache.get("live").pageRunLoaded, false);
   await p.refresh();
   assert.equal(p.statusDraws, 3, "state keeps updating while a later page waits");
@@ -114,7 +122,6 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
     Array.from(p.shown.records, (item) => item.id),
     [1, 2, 3],
   );
-  assert.equal(nodes["#history-loading"].hidden, true);
 });
 
 test("failed later page retries committed cursor without duplicating overlap", async () => {
@@ -235,9 +242,11 @@ test("redacted empty pages advance the server cursor and retry later failures", 
 });
 
 test("last-session fallback reuses its final cache without polling record pages", async () => {
-  let pages = 0;
+  let pages = 0,
+    lists = 0;
   const { p } = panel(async (request) => {
-    if (request.endsWith("/archive"))
+    if (request.endsWith("/archive")) {
+      lists++;
       return [
         {
           session_id: "old",
@@ -245,6 +254,7 @@ test("last-session fallback reuses its final cache without polling record pages"
           ended_at: "2032-01-01T12:10:00Z",
         },
       ];
+    }
     pages++;
     return page([1], null, "old", true);
   });
@@ -252,7 +262,45 @@ test("last-session fallback reuses its final cache without polling record pages"
   await p.startHistoryLoad();
   await p.startHistoryLoad();
   assert.equal(pages, 1);
+  assert.equal(lists, 1);
   assert.equal(p.historySessionId, "old");
+});
+
+test("a confirmed empty archive list remains loaded across status cycles", async () => {
+  let lists = 0;
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/state")) return { ...state(), session: null };
+    lists++;
+    return [];
+  });
+  p.state.session = null;
+  await p.refresh();
+  await p.refresh();
+  await p.refresh();
+  assert.equal(lists, 1);
+  assert.deepEqual(p.sessions, []);
+});
+
+test("live page polling advances without reloading the archive list", async () => {
+  let lists = 0,
+    pages = 0;
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive")) {
+      lists++;
+      return [];
+    }
+    pages++;
+    return page([pages], null, "live", false);
+  });
+  await p.startHistoryLoad();
+  await p.startHistoryLoad();
+  await p.startHistoryLoad();
+  assert.equal(lists, 1);
+  assert.equal(pages, 3);
+  assert.deepEqual(
+    Array.from(p.historyCache("live").records, (item) => item.id),
+    [1, 2, 3],
+  );
 });
 
 test("fixed user and admin panels load their finalized archive records", async () => {
