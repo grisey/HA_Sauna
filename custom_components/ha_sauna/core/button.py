@@ -96,10 +96,9 @@ class ButtonGestures:
             self._native_started_while_off if native else not operation_enabled
         )
         if started_while_off:
-            actions = (
-                (() if operation_enabled else (START_STANDARD_PROGRAM,))
-                + (HEATER_TOGGLE_OVERRIDE,) * (clicks - 1)
-            )
+            actions = (() if operation_enabled else (START_STANDARD_PROGRAM,)) + (
+                HEATER_TOGGLE_OVERRIDE,
+            ) * (clicks - 1)
         elif operation_enabled:
             actions = (HEATER_TOGGLE_OVERRIDE,) * clicks
         else:

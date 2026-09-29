@@ -96,8 +96,10 @@ class ParameterTests(unittest.TestCase):
         for value in (10.000000000000002, 20):
             with self.subTest(value=value), self.assertRaises(ParameterError) as raised:
                 Parameters({"manual_override_minutes": value})
-            self.assertEqual((raised.exception.key, raised.exception.code),
-                             ("manual_override_minutes", "too_large"))
+            self.assertEqual(
+                (raised.exception.key, raised.exception.code),
+                ("manual_override_minutes", "too_large"),
+            )
         self.assertEqual((definition.default, definition.maximum), (10, 10))
 
     def test_invalid_numbers_fail_with_field_context(self):

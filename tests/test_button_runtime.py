@@ -241,7 +241,9 @@ class ButtonRuntimeTests(unittest.TestCase):
     def test_binary_off_start_requires_short_received_duration(self):
         async def gesture(duration):
             action_at = self.now + timedelta(seconds=10)
-            await self.runtime._handle_button_event("on", action_at, received_at=self.now)
+            await self.runtime._handle_button_event(
+                "on", action_at, received_at=self.now
+            )
             self.assertIsNone(self.runtime.session)
             self.assertFalse(self.runtime.controller.last_decision.heat)
             await self.runtime._handle_button_event(
@@ -256,7 +258,9 @@ class ButtonRuntimeTests(unittest.TestCase):
                 self.runtime.controller.set_temperature(70, self.now)
                 asyncio.run(gesture(duration))
                 self.assertEqual(self.runtime.session is not None, duration == 1)
-                self.assertEqual(self.runtime.controller.last_decision.heat, duration == 1)
+                self.assertEqual(
+                    self.runtime.controller.last_decision.heat, duration == 1
+                )
                 self.assertIsNone(self.runtime.controller.heater_override)
                 self.assertIsNone(self.runtime.controller.light_after_run)
 

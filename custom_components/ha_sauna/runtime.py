@@ -152,9 +152,9 @@ class Configuration:
             # 1.000.000 Minuten. Nur damals gültige Altwerte werden übernommen;
             # neue Eingaben bleiben in Parameters auf zehn Minuten begrenzt.
             override_definition = BY_KEY[override_key]
-            previous_value = replace(
-                override_definition, maximum=1_000_000
-            ).validate(values[override_key])
+            previous_value = replace(override_definition, maximum=1_000_000).validate(
+                values[override_key]
+            )
             values[override_key] = min(previous_value, override_definition.maximum)
         # Diese frühere, getrennte Lichtdauer ist durch die Sitzungspause
         # ersetzt. Sie wird nur bei alten gespeicherten Optionen verworfen;

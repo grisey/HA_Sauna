@@ -111,18 +111,28 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
         for value in (10.000000000000002, 20):
             with self.subTest(value=value):
-                form = await self.flow.async_step_parameters({
-                    **self.values, "manual_override_minutes": value,
-                })
-                self.assertEqual(form["errors"], {"manual_override_minutes": "too_large"})
+                form = await self.flow.async_step_parameters(
+                    {
+                        **self.values,
+                        "manual_override_minutes": value,
+                    }
+                )
+                self.assertEqual(
+                    form["errors"], {"manual_override_minutes": "too_large"}
+                )
                 self.assertEqual(self.entries, [])
         for value in (10, 0.5):
             with self.subTest(value=value):
-                result = await self.flow.async_step_parameters({
-                    **self.values, "manual_override_minutes": value,
-                })
+                result = await self.flow.async_step_parameters(
+                    {
+                        **self.values,
+                        "manual_override_minutes": value,
+                    }
+                )
                 self.assertEqual(result["type"], "create_entry")
-                self.assertEqual(result["options"]["parameters"]["manual_override_minutes"], value)
+                self.assertEqual(
+                    result["options"]["parameters"]["manual_override_minutes"], value
+                )
 
     async def test_either_single_measurement_pair_can_be_configured(self):
         for position in ("upper", "lower"):
@@ -322,7 +332,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(loaded=loaded):
                 self.entry.options = {
                     "bindings": self.inputs,
-                    "parameters": {**self.expected_values, "manual_override_minutes": 20},
+                    "parameters": {
+                        **self.expected_values,
+                        "manual_override_minutes": 20,
+                    },
                     "button_program": "genusszeit",
                     "selected_program_id": "genusszeit",
                 }
@@ -336,21 +349,31 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 flow.handler = self.entry.entry_id
                 flow.context = {"source": "options"}
                 with patch.object(
-                    type(flow), "config_entry", new_callable=PropertyMock,
+                    type(flow),
+                    "config_entry",
+                    new_callable=PropertyMock,
                     return_value=self.entry,
                 ):
                     form = await flow.async_step_parameters()
-                    field = next(key for key in form["data_schema"].schema
-                                 if str(key) == "manual_override_minutes")
+                    field = next(
+                        key
+                        for key in form["data_schema"].schema
+                        if str(key) == "manual_override_minutes"
+                    )
                     self.assertEqual(field.description["suggested_value"], 10)
                     selector = form["data_schema"].schema[field]
                     self.assertEqual(selector.config["max"], 10)
                     self.assertEqual(selector.config["step"], "any")
                     for value in (10.000000000000002, 20):
-                        rejected = await flow.async_step_parameters({
-                            **self.values, "manual_override_minutes": value,
-                        })
-                        self.assertEqual(rejected["errors"], {"manual_override_minutes": "too_large"})
+                        rejected = await flow.async_step_parameters(
+                            {
+                                **self.values,
+                                "manual_override_minutes": value,
+                            }
+                        )
+                        self.assertEqual(
+                            rejected["errors"], {"manual_override_minutes": "too_large"}
+                        )
                         self.assertEqual(self.entry.options, before)
                         self.assertIs(runtime.configuration, configuration)
                         self.assertFalse(runtime.reconfiguring)

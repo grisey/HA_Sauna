@@ -58,19 +58,28 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         async with ClientSession(headers=self.headers) as client:
             async with client.get(url + "/state") as response:
                 state = await response.json()
-                field = next(item for item in state["parameters"]
-                             if item["key"] == "manual_override_minutes")
-                self.assertEqual((field["default"], field["maximum"], field["integer"]),
-                                 (10, 10, False))
+                field = next(
+                    item
+                    for item in state["parameters"]
+                    if item["key"] == "manual_override_minutes"
+                )
+                self.assertEqual(
+                    (field["default"], field["maximum"], field["integer"]),
+                    (10, 10, False),
+                )
             for value in (10.000000000000002, 20):
                 before = dict(self.entry.options)
                 runtime = self.entry.runtime_data
                 configuration = runtime.configuration
                 decision = runtime.controller.last_decision
                 command = runtime.device.command
-                async with client.post(url + "/parameters", json={
-                    **before["parameters"], "manual_override_minutes": value,
-                }) as response:
+                async with client.post(
+                    url + "/parameters",
+                    json={
+                        **before["parameters"],
+                        "manual_override_minutes": value,
+                    },
+                ) as response:
                     self.assertEqual(response.status, 400, await response.text())
                 await self.hass.async_block_till_done()
                 self.assertEqual(dict(self.entry.options), before)
@@ -79,14 +88,24 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(runtime.device.command, command)
                 self.assertFalse(runtime.reconfiguring)
             for value in (10, 0.5):
-                async with client.post(url + "/parameters", json={
-                    **self.entry.options["parameters"], "manual_override_minutes": value,
-                }) as response:
+                async with client.post(
+                    url + "/parameters",
+                    json={
+                        **self.entry.options["parameters"],
+                        "manual_override_minutes": value,
+                    },
+                ) as response:
                     self.assertEqual(response.status, 200, await response.text())
                 await self.hass.async_block_till_done()
-                self.assertEqual(self.entry.options["parameters"]["manual_override_minutes"], value)
-                self.assertEqual(self.entry.runtime_data.configuration.parameters.values[
-                    "manual_override_minutes"], value)
+                self.assertEqual(
+                    self.entry.options["parameters"]["manual_override_minutes"], value
+                )
+                self.assertEqual(
+                    self.entry.runtime_data.configuration.parameters.values[
+                        "manual_override_minutes"
+                    ],
+                    value,
+                )
 
     async def test_loaded_override_controls_real_heater_and_light_deadlines(self):
         from datetime import UTC, datetime, timedelta
@@ -99,7 +118,14 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await self.hass.data["switch"].async_add_entities([heater])
         await self.hass.data["light"].async_add_entities([light])
         self.hass.states.async_set("binary_sensor.actual_heating", "off")
-        baseline = dict(self.entry.options)
+        baseline = {
+            **self.entry.options,
+            "bindings": {
+                **self.entry.options["bindings"],
+                "heater": heater.entity_id,
+                "light": light.entity_id,
+            },
+        }
         url = self.base + "/" + self.entry.entry_id
         async with ClientSession(headers=self.headers) as client:
             for stored, mode, seconds, effective in (
@@ -110,53 +136,96 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(stored=stored, mode=mode):
                     for role in ("upper_temperature", "lower_temperature"):
                         entity = baseline["bindings"][role]
-                        self.hass.states.async_set(entity, "25", self.hass.states.get(entity).attributes)
-                    self.hass.config_entries.async_update_entry(self.entry, options={
-                        **baseline, "control_mode": mode,
-                        "bindings": {**baseline["bindings"],
-                                     "heater_feedback": "binary_sensor.actual_heating"},
-                        "parameters": {**baseline["parameters"],
-                                       "manual_override_minutes": stored,
-                                       "minimum_heating_minutes": 0,
-                                       "thermostat_cooldown_minutes": 0,
-                                       "sensor_timeout_seconds": 1800,
-                                       "feedback_timeout_seconds": 60,
-                                       "light_transition_seconds": 0},
-                    })
+                        self.hass.states.async_set(
+                            entity, "25", self.hass.states.get(entity).attributes
+                        )
+                    self.hass.config_entries.async_update_entry(
+                        self.entry,
+                        options={
+                            **baseline,
+                            "control_mode": mode,
+                            "bindings": {
+                                **baseline["bindings"],
+                                "heater_feedback": "binary_sensor.actual_heating",
+                            },
+                            "parameters": {
+                                **baseline["parameters"],
+                                "manual_override_minutes": stored,
+                                "minimum_heating_minutes": 0,
+                                "thermostat_cooldown_minutes": 0,
+                                "sensor_timeout_seconds": 1800,
+                                "feedback_timeout_seconds": 60,
+                                "light_transition_seconds": 0,
+                            },
+                        },
+                    )
                     await self.hass.async_block_till_done()
                     runtime = self.entry.runtime_data
                     start = datetime.now(UTC)
                     clock = [start]
                     runtime._clock = lambda: clock[0]
-                    self.assertEqual(runtime.configuration.parameters.values[
-                        "manual_override_minutes"], effective)
+                    self.assertEqual(
+                        runtime.configuration.parameters.values[
+                            "manual_override_minutes"
+                        ],
+                        effective,
+                    )
+                    self.assertEqual(
+                        runtime.configuration.parameters.values[
+                            "light_brightness_scale"
+                        ],
+                        255,
+                    )
                     async with client.get(url + "/state") as response:
                         state = await response.json()
-                        self.assertEqual(state["configuration"]["parameters"][
-                            "manual_override_minutes"], effective)
+                        self.assertEqual(
+                            state["configuration"]["parameters"][
+                                "manual_override_minutes"
+                            ],
+                            effective,
+                        )
                     await runtime.set_operation(True)
                     await runtime.set_heater_override(mode == "manual")
                     await runtime.set_light_override(80)
                     await self.hass.async_block_till_done()
-                    ends_at = start + timedelta(seconds=seconds) if mode == "automatic" else None
-                    self.assertEqual(runtime.controller.heater_override_ends_at, ends_at)
-                    self.assertEqual(runtime.device.light_output.manual_ends_at, ends_at)
+                    ends_at = (
+                        start + timedelta(seconds=seconds)
+                        if mode == "automatic"
+                        else None
+                    )
+                    self.assertEqual(
+                        runtime.controller.heater_override_ends_at, ends_at
+                    )
+                    self.assertEqual(
+                        runtime.device.light_output.manual_ends_at, ends_at
+                    )
                     self.assertEqual(heater.is_on, mode == "manual")
-                    self.assertAlmostEqual(light.brightness, 255 * .8, delta=1)
+                    self.assertEqual(light.brightness, 204)
+                    self.assertEqual(light.calls[-1][1]["brightness"], 204)
                     before = dict(self.entry.options)
                     calls = (list(heater.calls), list(light.calls))
                     for value in (10.000000000000002, 20):
-                        async with client.post(url + "/parameters", json={
-                            **before["parameters"], "manual_override_minutes": value,
-                        }) as response:
-                            self.assertEqual(response.status, 400, await response.text())
+                        async with client.post(
+                            url + "/parameters",
+                            json={
+                                **before["parameters"],
+                                "manual_override_minutes": value,
+                            },
+                        ) as response:
+                            self.assertEqual(
+                                response.status, 400, await response.text()
+                            )
                     self.assertEqual(dict(self.entry.options), before)
                     self.assertEqual((heater.calls, light.calls), calls)
                     clock[0] = start + timedelta(seconds=seconds - 1)
                     await runtime.tick()
                     await self.hass.async_block_till_done()
-                    self.assertEqual(runtime.controller.heater_override, mode == "manual")
+                    self.assertEqual(
+                        runtime.controller.heater_override, mode == "manual"
+                    )
                     self.assertEqual(runtime.device.light_output.manual_brightness, 80)
+                    self.assertEqual(heater.is_on, mode == "manual")
+                    self.assertEqual(light.brightness, 204)
                     clock[0] = start + timedelta(seconds=seconds)
                     await runtime.tick()
                     await self.hass.async_block_till_done()
@@ -168,31 +237,47 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(runtime.controller.phase, "aufheizen")
                         self.assertTrue(heater.is_on)
                         self.assertTrue(heater.calls[-1])
-                        automatic = runtime.device.light_output.last_automatic_brightness
-                        self.assertAlmostEqual(light.brightness, 255 * automatic / 100, delta=1)
+                        self.assertEqual(
+                            runtime.device.light_output.last_automatic_brightness, 5
+                        )
+                        self.assertEqual(light.brightness, 13)
                         self.assertEqual(light.calls[-1][0], "on")
+                        self.assertEqual(light.calls[-1][1]["brightness"], 13)
                     else:
                         self.assertTrue(runtime.controller.heater_override)
                         self.assertTrue(heater.is_on)
-                        self.assertEqual(runtime.device.light_output.manual_brightness, 80)
-                        self.assertAlmostEqual(light.brightness, 255 * .8, delta=1)
+                        self.assertEqual(
+                            runtime.device.light_output.manual_brightness, 80
+                        )
+                        self.assertEqual(light.brightness, 204)
                         self.assertEqual(runtime.configuration.control_mode, "manual")
                     if stored == 20 and mode == "automatic":
                         await runtime.set_heater_override(False)
                         await runtime.set_light_override(80)
                         for role in ("upper_temperature", "lower_temperature"):
                             entity = baseline["bindings"][role]
-                            self.hass.states.async_set(entity, "85", self.hass.states.get(entity).attributes)
+                            self.hass.states.async_set(
+                                entity, "85", self.hass.states.get(entity).attributes
+                            )
                         await self.hass.async_block_till_done()
                         self.assertEqual(runtime.controller.phase, "bereit")
                         self.assertIsNone(runtime.controller.heater_override)
                         self.assertIsNone(runtime.device.light_output.manual_brightness)
                         self.assertFalse(heater.is_on)
-                    await runtime.set_operation(False)
-                    token = next(deadline.token for deadline in runtime.session.deadlines
-                                 if deadline.purpose == "session_gap")
-                    await runtime.finish_session_gap(token)
-                    await self.hass.async_block_till_done()
+                # subTest consumes assertion failures before this cleanup, so
+                # a failed case cannot leave a session locking the next reload.
+                runtime = self.entry.runtime_data
+                if not runtime.closed and runtime.session is not None:
+                    if runtime.session.operation_enabled:
+                        await runtime.set_operation(False)
+                    if runtime.session is not None:
+                        token = next(
+                            deadline.token
+                            for deadline in runtime.session.deadlines
+                            if deadline.purpose == "session_gap"
+                        )
+                        await runtime.finish_session_gap(token)
+                await self.hass.async_block_till_done()
 
     async def test_unauthenticated_and_non_admin_writes_are_rejected(self):
         url = self.base + "/" + self.entry.entry_id

@@ -46,12 +46,22 @@ def options(parameters=None, **configuration):
 class ProgramConfigurationTests(unittest.TestCase):
     def test_saved_override_is_adopted_before_validation_and_roundtrips(self):
         initial = Configuration(
-            Bindings(bindings()), Parameters({"nominal_power_kw": 7}),
-            program_mode="progressive", button_program="genusszeit",
-            selected_program_id="genusszeit", temperature_steps=(80, 85, 95),
-            log_level="DEBUG", control_input_mode="button",
+            Bindings(bindings()),
+            Parameters({"nominal_power_kw": 7}),
+            program_mode="progressive",
+            button_program="genusszeit",
+            selected_program_id="genusszeit",
+            temperature_steps=(80, 85, 95),
+            log_level="DEBUG",
+            control_input_mode="button",
         )
-        for old, expected in ((20, 10), (1_000_000, 10), (0.5, 0.5), (10, 10), (None, 10)):
+        for old, expected in (
+            (20, 10),
+            (1_000_000, 10),
+            (0.5, 0.5),
+            (10, 10),
+            (None, 10),
+        ):
             with self.subTest(old=old):
                 saved = initial.as_options()
                 if old is None:
@@ -60,30 +70,52 @@ class ProgramConfigurationTests(unittest.TestCase):
                     saved[CONF_PARAMETERS]["manual_override_minutes"] = old
                 loaded = Configuration.from_options(saved)
                 effective = loaded.as_options()
-                self.assertEqual(loaded.parameters.values["manual_override_minutes"], expected)
-                self.assertEqual(effective[CONF_PARAMETERS]["manual_override_minutes"], expected)
+                self.assertEqual(
+                    loaded.parameters.values["manual_override_minutes"], expected
+                )
+                self.assertEqual(
+                    effective[CONF_PARAMETERS]["manual_override_minutes"], expected
+                )
                 self.assertEqual(Configuration.from_options(effective), loaded)
                 self.assertEqual(
-                    {key: value for key, value in effective.items() if key != CONF_PARAMETERS},
-                    {key: value for key, value in initial.as_options().items() if key != CONF_PARAMETERS},
+                    {
+                        key: value
+                        for key, value in effective.items()
+                        if key != CONF_PARAMETERS
+                    },
+                    {
+                        key: value
+                        for key, value in initial.as_options().items()
+                        if key != CONF_PARAMETERS
+                    },
                 )
                 self.assertEqual(loaded.parameters.values["nominal_power_kw"], 7)
                 if old is not None:
-                    self.assertEqual(saved[CONF_PARAMETERS]["manual_override_minutes"], old)
+                    self.assertEqual(
+                        saved[CONF_PARAMETERS]["manual_override_minutes"], old
+                    )
 
     def test_saved_override_adoption_does_not_heal_previously_invalid_values(self):
         cases = (
-            (True, "invalid_number"), ("20", "invalid_number"),
-            (None, "invalid_number"), ([], "invalid_number"),
-            (float("nan"), "invalid_number"), (float("inf"), "invalid_number"),
-            (float("-inf"), "invalid_number"), (10**400, "invalid_number"),
-            (0, "positive"), (-1, "positive"), (1_000_001, "too_large"),
+            (True, "invalid_number"),
+            ("20", "invalid_number"),
+            (None, "invalid_number"),
+            ([], "invalid_number"),
+            (float("nan"), "invalid_number"),
+            (float("inf"), "invalid_number"),
+            (float("-inf"), "invalid_number"),
+            (10**400, "invalid_number"),
+            (0, "positive"),
+            (-1, "positive"),
+            (1_000_001, "too_large"),
         )
         for value, code in cases:
             with self.subTest(value=value), self.assertRaises(ParameterError) as raised:
                 Configuration.from_options(options({"manual_override_minutes": value}))
-            self.assertEqual((raised.exception.key, raised.exception.code),
-                             ("manual_override_minutes", code))
+            self.assertEqual(
+                (raised.exception.key, raised.exception.code),
+                ("manual_override_minutes", code),
+            )
 
     def test_common_temperature_minimum_validates_live_targets_and_ui_metadata(self):
         for key in ("preset_start_c", "target_temperature_c", "final_temperature_c"):

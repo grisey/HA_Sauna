@@ -22,9 +22,9 @@ class ButtonGestureTests(unittest.TestCase):
     def test_native_off_press_waits_for_short_classification(self):
         button = ButtonGestures(THRESHOLD)
         self.assertIsNone(button.handle("press", False, at(0)))
-        self.assertIsNone(button.handle("release", False, at(.2)))
-        self.assertEqual(button.handle("short", False, at(.3)), START_STANDARD_PROGRAM)
-        self.assertIsNone(button.handle("short", True, at(.4)))
+        self.assertIsNone(button.handle("release", False, at(0.2)))
+        self.assertEqual(button.handle("short", False, at(0.3)), START_STANDARD_PROGRAM)
+        self.assertIsNone(button.handle("short", True, at(0.4)))
         self.assertIsNone(button.handle("long", True, at(2)))
         self.assertIsNone(button.handle("release", True, at(3)))
 
@@ -42,9 +42,9 @@ class ButtonGestureTests(unittest.TestCase):
     def test_short_before_release_consumes_native_followup_classifications(self):
         button = ButtonGestures(THRESHOLD)
         self.assertIsNone(button.handle("press", False, at(0)))
-        self.assertEqual(button.handle("short", False, at(.2)), START_STANDARD_PROGRAM)
-        self.assertIsNone(button.handle("release", True, at(.3)))
-        self.assertIsNone(button.handle("short", True, at(.4)))
+        self.assertEqual(button.handle("short", False, at(0.2)), START_STANDARD_PROGRAM)
+        self.assertIsNone(button.handle("release", True, at(0.3)))
+        self.assertIsNone(button.handle("short", True, at(0.4)))
         self.assertIsNone(button.handle("long", True, at(2)))
 
     def test_short_after_release_toggles_heater_during_session(self):
@@ -121,16 +121,16 @@ class ButtonGestureTests(unittest.TestCase):
     def test_native_summary_after_completed_single_cannot_repeat_its_action(self):
         button = ButtonGestures(THRESHOLD)
         button.handle("press", False, at(0))
-        self.assertEqual(button.handle("short", False, at(.2)), START_STANDARD_PROGRAM)
-        button.handle("release", True, at(.3))
-        self.assertEqual(button.handle_actions("double", True, at(.4)), ())
-        self.assertEqual(button.handle_actions("triple", True, at(.5)), ())
+        self.assertEqual(button.handle("short", False, at(0.2)), START_STANDARD_PROGRAM)
+        button.handle("release", True, at(0.3))
+        self.assertEqual(button.handle_actions("double", True, at(0.4)), ())
+        self.assertEqual(button.handle_actions("triple", True, at(0.5)), ())
 
     def test_native_summary_excludes_an_older_independent_single(self):
         button = ButtonGestures(THRESHOLD)
         button.handle("press", False, at(0))
-        button.handle("release", False, at(.2))
-        self.assertEqual(button.handle("short", False, at(.3)), START_STANDARD_PROGRAM)
+        button.handle("release", False, at(0.2))
+        self.assertEqual(button.handle("short", False, at(0.3)), START_STANDARD_PROGRAM)
         # One of the new group's edge pairs was lost; its summary is complete.
         button.handle("press", True, at(1))
         button.handle("release", True, at(1.2))
@@ -179,7 +179,7 @@ class ButtonGestureTests(unittest.TestCase):
     def test_binary_off_short_starts_only_on_release(self):
         button = ButtonGestures(THRESHOLD)
         self.assertIsNone(button.handle("on", False, at(0)))
-        self.assertEqual(button.handle("off", False, at(.5)), START_STANDARD_PROGRAM)
+        self.assertEqual(button.handle("off", False, at(0.5)), START_STANDARD_PROGRAM)
         self.assertIsNone(button.handle("off", True, at(1)))
         self.assertIsNone(button.advance(at(2), True))
 
@@ -203,7 +203,7 @@ class ButtonGestureTests(unittest.TestCase):
             with self.subTest(enabled=enabled):
                 button = ButtonGestures(THRESHOLD)
                 self.assertIsNone(button.handle("on", enabled, at(0)))
-                self.assertIsNone(button.handle("unavailable", enabled, at(.2)))
+                self.assertIsNone(button.handle("unavailable", enabled, at(0.2)))
                 self.assertIsNone(button.advance(at(2), enabled))
                 self.assertIsNone(button.handle("off", enabled, at(3)))
                 self.assertIsNone(button.handle("on", enabled, at(4)))
