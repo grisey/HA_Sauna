@@ -98,7 +98,7 @@ test("changing individual steps to even saves without a session and stages withi
     // This fixture reads the production renderer's values; it does not derive
     // the expected distribution or reproduce the program conversion.
     p.drawCurrent = () => {
-      const form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+      const form = p.freeProgramForm(p.programBounds());
       fields.clear();
       for (const [, id, value] of form.matchAll(
         /<input id="([^"]+)"[^>]*value="([^"]*)"/g,
@@ -138,7 +138,7 @@ test("changing individual steps to even saves without a session and stages withi
         await assert.rejects(() => p.applyProgram(), /Stufenzahl/);
         assert.equal(p.progressionDraft["free-step-count"], value);
         assert.match(
-          p.freeProgramForm(p.programBounds(), p.state.permissions),
+          p.freeProgramForm(p.programBounds()),
           new RegExp(`id="free-step-count"[^>]*value="${value}"`),
         );
       }
@@ -175,7 +175,7 @@ test("completed fields serialize while a newer unfinished input survives both re
   const saving = p.applyProgram();
   await Promise.resolve();
   assert.doesNotMatch(
-    p.freeProgramForm(p.programBounds(), p.state.permissions),
+    p.freeProgramForm(p.programBounds()),
     /<input[^>]*disabled/,
     "saving one field leaves the following fields operable",
   );
@@ -247,7 +247,7 @@ test("returning to the saved input kind clears its completed draft", async () =>
         : [],
   };
   p.drawCurrent = () => {
-    const form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+    const form = p.freeProgramForm(p.programBounds());
     fields.clear();
     for (const [, id, value] of form.matchAll(
       /<input id="([^"]+)"[^>]*value="([^"]*)"/g,
@@ -270,9 +270,117 @@ test("returning to the saved input kind clears its completed draft", async () =>
   p.state.configuration.parameters.final_temperature_c = 95;
   p.drawCurrent();
   assert.match(
-    p.freeProgramForm(p.programBounds(), p.state.permissions),
+    p.freeProgramForm(p.programBounds()),
     /id="progression-end"[^>]*value="95"/,
   );
+  fields.get("#progression-end").value = "96";
+  p.progressionDraft = { "progression-end": "96" };
+  const second = p.applyProgram();
+  await Promise.resolve();
+  await p.action("program-kind:steps");
+  await p.action("program-kind:even");
+  p.progressionDraft = { ...p.progressionDraft, "progression-end": "" };
+  p.drawCurrent();
+  release();
+  await second;
+  assert.equal(p.progressionDraft["progression-end"], "");
+  assert.equal(p.programSaveState, null);
+  assert.match(
+    p.freeProgramForm(p.programBounds()),
+    /id="progression-end"[^>]*value=""/,
+  );
+});
+
+test("a named response cannot change the visible individual form of a queued choice", async () => {
+  const releases = [];
+  const { p, calls } = panel(
+    configuration(),
+    null,
+    () => new Promise((resolve) => releases.push(resolve)),
+  );
+  p.drawCurrent = () => {
+    p.form =
+      p.programMode(p.state.configuration.temperature_programs) === "individual"
+        ? p.freeProgramForm(p.programBounds())
+        : "";
+  };
+  p.$ = (selector) => {
+    const id = selector.slice(1),
+      value = p.form.match(new RegExp(`<input id="${id}"[^>]*value="([^"]*)"`));
+    return value ? { value: value[1] } : null;
+  };
+  p.shadowRoot = { querySelectorAll: () => [] };
+  const first = p.action("program-select:quiet");
+  await Promise.resolve();
+  await p.action("program-mode:individual");
+  assert.match(p.form, /id="progression-end"[^>]*value="90"/);
+  releases[0]({
+    parameters: {
+      target_temperature_c: 80,
+      final_temperature_c: 100,
+      temperature_gangs: 3,
+    },
+    program_mode: "progressive",
+    selected_program_id: "quiet",
+    temperature_steps: [80, 90, 100],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(p.form, /id="progression-end"[^>]*value="90"/);
+  assert.match(p.form, /data-action="program-kind:even" aria-pressed="true"/);
+  assert.deepEqual(plain(calls), [
+    ["/entry/program", "POST", { profile: "quiet" }],
+    [
+      "/entry/program",
+      "POST",
+      {
+        target_temperature_c: 80,
+        final_temperature_c: 90,
+        temperature_gangs: 3,
+      },
+    ],
+  ]);
+  releases[1]({
+    parameters: {
+      target_temperature_c: 80,
+      final_temperature_c: 90,
+      temperature_gangs: 3,
+    },
+    program_mode: "progressive",
+    selected_program_id: null,
+    temperature_steps: null,
+  });
+  await first;
+});
+
+test("returning to the request's named choice needs no duplicate save or leftover draft", async () => {
+  let release;
+  const { p, calls } = panel(
+    {
+      ...configuration(),
+      temperature_programs: [
+        ...programs,
+        { id: "active", name: "Aktiv", start_c: 80, end_c: 95, distribution_gangs: 3 },
+      ],
+    },
+    null,
+    () => new Promise((resolve) => (release = resolve)),
+  );
+  const first = p.action("program-select:quiet");
+  await Promise.resolve();
+  await p.action("program-select:active");
+  await p.action("program-select:quiet");
+  release({ selected_program_id: "quiet", program_mode: "progressive" });
+  await first;
+  assert.deepEqual(plain(calls), [["/entry/program", "POST", { profile: "quiet" }]]);
+  assert.equal(p.programSelectionDraft, null);
+  assert.equal(p.programDirty(), false);
+  await p.action("program-mode:program");
+  await p.action("program-select:quiet");
+  assert.equal(calls.length, 1);
+  assert.equal(p.programSelectionDraft, null);
+  p.state.configuration.selected_program_id = null;
+  p.state.configuration.program_mode = "constant";
+  assert.equal(p.programMode(p.state.configuration.temperature_programs), "constant");
 });
 
 test("a failed initial or queued field save keeps the latest draft and stops automatic writes", async () => {
@@ -310,6 +418,9 @@ test("a failed initial or queued field save keeps the latest draft and stops aut
     await p.refresh(true);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(calls.length, failAt, "errors do not retry a waiting draft");
+    await p.action("program-kind:even");
+    assert.equal(calls.length, failAt + 1, "same input kind retries the draft");
+    assert.equal(p.programDirty(), false);
   }
 });
 
@@ -355,12 +466,12 @@ test("the individual distribution explains the current validated field draft", (
   const { p } = panel(configuration("progressive"));
   p.programInfoOpen = "free";
   p.progressionDraft = { "progression-end": "100" };
-  let form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+  let form = p.freeProgramForm(p.programBounds());
   assert.match(form, /id="progression-end"[^>]*value="100"/);
   assert.match(form, /80 → 90 → 100 °C/);
   assert.doesNotMatch(form, /80 → 85 → 90 °C/);
   p.progressionDraft = { "progression-end": "" };
-  form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+  form = p.freeProgramForm(p.programBounds());
   assert.match(form, /id="progression-end"[^>]*value=""/);
   assert.match(form, /Start, Ende und Verteilung innerhalb der zulässigen Grenzen/);
   assert.doesNotMatch(form, /80 → 85 → 90 °C/);

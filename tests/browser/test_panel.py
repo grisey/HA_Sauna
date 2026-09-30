@@ -1005,6 +1005,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         self.assertTrue(await last_step.evaluate("el => el === el.getRootNode().activeElement"))
                         self.assertNotIn("✓ Übernommen", await mode.inner_text())
                         self.assertEqual(len(writes), 2)
+                        program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
+                        async with self.page.expect_response(
+                            lambda response: response.url.endswith(program_url) and response.request.method == "POST"
+                        ) as response_wait:
+                            await last_step.press("Tab")
+                        response = await response_wait.value
+                        self.assertEqual(response.status, 200)
+                        await self.panel.evaluate(
+                            "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                        )
+                        self.assertEqual(writes, [
+                            ("temperature", {"final_temperature_c": 91}),
+                            ("program", {"temperature_steps": [70, 80.5, 91]}),
+                            ("program", {"temperature_steps": [70, 80.5, 92]}),
+                        ])
+                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 80.5, 92))
                 finally:
                     await self.page.unroute("**" + temperature_url, delay_field_save)
                     self.page.remove_listener("request", record_write)

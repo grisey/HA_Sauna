@@ -36,12 +36,12 @@ direkt übernommen. Bei individuellen Programmen löst ein abgeschlossener,
 gültiger Eingabevorgang die Übernahme aus; angefangene oder ungültige Eingaben
 bleiben zur Bearbeitung stehen. Das gilt auch für den Wechsel zwischen
 **Gleichmäßig** und **Einzelne Stufen**. Während der Übertragung bleiben die
-Eingabefelder und die Wahl der Eingabeart bedienbar. Der zuletzt abgeschlossene
-gültige Stand folgt nach dem laufenden Speicherauftrag; eine danach angefangene
-Eingabe bleibt im
-Entwurf. Ein Speicherfehler erhält den Entwurf und stoppt weitere automatische
-Übernahmen. Beginnt zwischenzeitlich eine Sitzung, benötigen wartende
-Änderungen die Bestätigung.
+Eingabefelder, die Eingabeart sowie die Wahl zwischen **Programm**,
+**Individuell** und **Konstant** bedienbar. Der zuletzt abgeschlossene gültige
+Stand folgt nach dem laufenden Speicherauftrag; eine danach angefangene Eingabe
+bleibt im Entwurf. Ein Speicherfehler erhält den Entwurf und stoppt weitere
+automatische Übernahmen. Beginnt zwischenzeitlich eine Sitzung, benötigen
+wartende Änderungen die Bestätigung.
 Während einer bestehenden Sitzung öffnet **Programm ändern** die Auswahl.
 Eine Änderung bleibt bis zur Bestätigung mit **Programm übernehmen** als
 Entwurf sichtbar. **Abbrechen** erhält die bisherige Wahl. Der Entwurf
