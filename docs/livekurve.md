@@ -110,6 +110,25 @@ Ansichten. Statusänderungen aktualisieren die Bedienanzeige und die zugehörige
 Annotationen. Ein Archivnachtrag übernimmt Messdaten und den nachzuführenden
 Zeitausschnitt gemeinsam.
 
+Statusdaten werden während eines laufenden Betriebs, einer bestehenden Sitzung
+oder eines Lichtnachlaufs im Zwei-Sekunden-Takt abgeglichen. Im ruhenden Betrieb
+beträgt der Abstand zehn Sekunden. Bei verborgenem oder getrenntem Panel ruht
+dieser Ablauf; beim erneuten Anzeigen folgt sofort ein Abgleich.
+Allgemeine Home-Assistant-Zustandsweitergaben verkürzen den geplanten Abstand
+nicht; gezielte Bedienhandlungen lösen bei Bedarf sofort einen Abgleich aus.
+
+Sitzungsliste und Datenseiten werden getrennt vom Status geladen. Eine laufende
+Sitzung ergänzt Seiten über ihren Cursor, ohne zuvor wiederholt die Liste zu
+laden. Die Liste wird bei einem Sitzungsstart, Sitzungsabschluss oder einer
+geänderten zuletzt beendeten Sitzung erneuert. Nach einer Unterbrechung des
+Panels erfolgt einmalig ein Listenabgleich, sobald der Verlauf sichtbar ist.
+Das erfasst auch eine Sitzung, die vollständig im Hintergrund stattgefunden hat.
+Danach bleibt auch eine bestätigte leere Liste ohne weitere Listenabrufe gültig.
+Vollständige Archivcaches und eine ausdrücklich ausgewählte ältere Sitzung
+bleiben dabei erhalten. Die automatische Auswahl „Letzte Sitzung“ folgt dem
+neuesten Eintrag. Regelmäßige Aktualisierungen fügen oberhalb vorhandener
+Diagramme keinen Ladehinweis ein und ersetzen deren Zeichenflächen nicht.
+
 Bei festem Ausschnitt und unveränderten Skalen bleiben Messkurven über reine
 Uhr- und Phasenänderungen hinweg verwendbar. Die Zeigerbewegung aktualisiert
 Cursor und Tooltip. Ein fortschreitender Gesamtverlauf benötigt eine neue

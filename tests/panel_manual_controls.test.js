@@ -39,7 +39,7 @@ assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,\s*0\)\} %<\/small>/
 assert.doesNotMatch(source, /Normallicht/);
 assert.doesNotMatch(source, /Raumlicht/);
 assert.doesNotMatch(source, /Zwangskühlung pausiert/);
-assert.ok(source.includes("Übersteuerungen folgen spätestens nach"));
+assert.ok(source.includes("Übersteuerung: höchstens"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
 assert.match(source, /s\.configuration\.program_mode\s*===\s*"progressive"/);
 assert.doesNotMatch(
@@ -52,7 +52,11 @@ const makePanel = (permissions, lightValue = "42") => {
   const calls = [];
   const panel = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
-    state: { permissions },
+    state: {
+      permissions,
+      configuration: { control_mode: "manual" },
+      operation_enabled: true,
+    },
     api: async (...args) => calls.push(args),
     refresh: async () => {},
     message: () => {},
@@ -74,6 +78,7 @@ const renderCurrent = (
   session = null,
   startErrors = [],
   program = {},
+  operationEnabled = false,
 ) => {
   const permissions = {
     admin: true,
@@ -128,7 +133,7 @@ const renderCurrent = (
       configuration_locked: locked,
       issues: [],
       start_errors: startErrors,
-      operation_enabled: false,
+      operation_enabled: operationEnabled,
       heating_feedback: heatingFeedback,
       heating_observation: { source: "unknown" },
       phase: "manuell",
@@ -169,6 +174,26 @@ const renderCurrent = (
   await panel.action("heater:true");
   await panel.action("manual-light-overview");
   assert.equal(calls.length, 0, "non-admin controls must not route API calls");
+
+  ({ panel, calls } = makePanel(enabled));
+  panel.state.configuration.control_mode = "automatic";
+  panel.state.operation_enabled = false;
+  panel.state.session = { timeline: {} };
+  await panel.action("heater:true");
+  await panel.action("light:true");
+  await panel.action("manual-light-overview");
+  assert.equal(
+    calls.length,
+    0,
+    "automatic overrides cannot resume or start an inactive operation",
+  );
+  panel.state.operation_enabled = true;
+  await panel.action("heater:true");
+  await panel.action("light:true");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ["/entry-1/heater", "POST", { value: true }],
+    ["/entry-1/light", "POST", { value: true }],
+  ]);
 
   ({ panel, calls } = makePanel({
     admin: true,
@@ -284,6 +309,11 @@ const renderCurrent = (
   assert.match(automatic, /temperature-presets/);
   assert.doesNotMatch(automatic, /program-named-list|program-form/);
   assert.match(automatic, /Manuelle Übersteuerung/);
+  assert.match(automatic, /id="manual-overrides" class="manual-overrides" >/);
+  assert.match(automatic, /Übersteuerung: höchstens 10 Minuten\./);
+  assert.equal((automatic.match(/Übersteuerung: höchstens/g) || []).length, 1);
+  assert.match(automatic, /data-action="heater:auto"[^>]*disabled/);
+  assert.doesNotMatch(automatic, /EIN startet zuerst den Saunabetrieb/);
   assert.match(automatic, /Gedimmt <small>25 %<\/small>/);
   assert.match(manual, /class="manual-controls"/);
   assert.doesNotMatch(manual, /Manuelle Übersteuerung/);
@@ -337,9 +367,13 @@ const renderCurrent = (
     userAutomatic,
     /data-action="control-mode:manual" aria-pressed="false" >Manuell/,
   );
-  assert.match(userAutomatic, /data-action="light:auto"/);
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Übersteuerung/);
   assert.doesNotMatch(userAutomatic, /data-action="heater:|manual-light-value/);
+  for (const preset of ["auto", "false", "true"])
+    assert.match(
+      userAutomatic,
+      new RegExp(`data-action="light:${preset}"[^>]*disabled`),
+    );
   const userManual = renderCurrent("manual", {}, false, "#current", { admin: false });
   assert.match(
     userManual,
@@ -389,6 +423,107 @@ const renderCurrent = (
       { purpose: "session_gap", token: "gap-current", due_at: "2026-09-20T12:10:00Z" },
     ],
   };
+  const controlCases = [
+    { mode: "automatic", session: null, operating: false, allowed: false },
+    { mode: "automatic", session: pausedSession, operating: false, allowed: false },
+    { mode: "automatic", session: pausedSession, operating: true, allowed: true },
+    { mode: "manual", session: null, operating: false, allowed: true },
+    { mode: "manual", session: pausedSession, operating: false, allowed: true },
+    { mode: "manual", session: pausedSession, operating: true, allowed: true },
+  ];
+  for (const admin of [false, true]) {
+    for (const light of [false, true]) {
+      for (const scenario of controlCases) {
+        const context = JSON.stringify({ admin, light, ...scenario }),
+          html = renderCurrent(
+            scenario.mode,
+            {},
+            false,
+            "#current",
+            { admin, light },
+            false,
+            scenario.session,
+            [],
+            {},
+            scenario.operating,
+          ),
+          presets = Array.from(
+            html.matchAll(/<button\b[^>]*data-action="light:([^"]+)"[^>]*>/g),
+          );
+        assert.deepEqual(
+          presets.map((match) => match[1]),
+          scenario.mode === "manual"
+            ? ["false", "normal", "true"]
+            : admin
+              ? ["auto", "false", "normal", "true"]
+              : ["auto", "false", "true"],
+          context,
+        );
+        for (const [tag, preset] of presets) {
+          assert.equal(/\bdisabled\b/.test(tag), !(light && scenario.allowed), context);
+          const invocation = makePanel({ admin, light, heater: true });
+          Object.assign(invocation.panel.state, {
+            configuration: { control_mode: scenario.mode },
+            session: scenario.session,
+            operation_enabled: scenario.operating,
+          });
+          await invocation.panel.action(`light:${preset}`);
+          assert.deepEqual(
+            JSON.parse(JSON.stringify(invocation.calls)),
+            light && scenario.allowed
+              ? [
+                  [
+                    "/entry-1/light",
+                    "POST",
+                    {
+                      value: { auto: null, false: false, normal: "normal", true: true }[
+                        preset
+                      ],
+                    },
+                  ],
+                ]
+              : [],
+            context,
+          );
+        }
+        const invocation = makePanel({ admin, light, heater: true });
+        Object.assign(invocation.panel.state, {
+          configuration: { control_mode: scenario.mode },
+          session: scenario.session,
+          operation_enabled: scenario.operating,
+        });
+        await invocation.panel.action("manual-light-overview");
+        assert.equal(
+          invocation.calls.length,
+          Number(admin && light && scenario.allowed),
+          context,
+        );
+        if (admin) {
+          assert.match(html, /data-action="manual-light-overview"/);
+          const input = html.match(
+              /<input\b[^>]*id="manual-light-value-overview"[^>]*>/,
+            )[0],
+            apply = html.match(
+              /<button\b[^>]*data-action="manual-light-overview"[^>]*>/,
+            )[0];
+          for (const tag of [input, apply])
+            assert.equal(
+              /\bdisabled\b/.test(tag),
+              !(light && scenario.allowed),
+              context,
+            );
+        } else {
+          assert.doesNotMatch(html, /manual-light-value|Freie Helligkeit/);
+          if (scenario.mode === "automatic") {
+            assert.doesNotMatch(html, /data-action="heater:/);
+            invocation.calls.length = 0;
+            await invocation.panel.action("heater:true");
+            assert.equal(invocation.calls.length, 0, context);
+          }
+        }
+      }
+    }
+  }
   const namedPrograms = [
     { id: "p1", name: "Mild", start_c: 75, end_c: 80, distribution_gangs: 2 },
     {
@@ -605,6 +740,42 @@ const renderCurrent = (
   assert.doesNotMatch(automaticHeater, /data-action="heater:true" class="primary"/);
   const automaticLight = renderCurrent("automatic", { light: { manual: null } });
   assert.match(automaticLight, /data-action="light:auto" aria-pressed="true"/);
+
+  const liveSession = {
+    timeline: {
+      active: null,
+      completed: [],
+      session_started_at: "2026-09-20T11:00:00Z",
+    },
+    heating: { elapsed_seconds: 0 },
+    deadlines: [],
+  };
+  const liveAutomatic = renderCurrent(
+    "automatic",
+    { heater: { manual: null }, light: { manual: null } },
+    true,
+    "#current",
+    {},
+    false,
+    liveSession,
+    [],
+    {},
+    true,
+  );
+  assert.doesNotMatch(liveAutomatic, /data-action="heater:auto"[^>]*disabled/);
+  assert.doesNotMatch(liveAutomatic, /data-action="light:auto"[^>]*disabled/);
+  assert.ok(
+    liveAutomatic.indexOf('data-action="heater:auto"') <
+      liveAutomatic.indexOf('data-action="heater:false"'),
+  );
+  assert.ok(
+    liveAutomatic.indexOf('data-action="heater:false"') <
+      liveAutomatic.indexOf('data-action="heater:true"'),
+  );
+  assert.ok(
+    liveAutomatic.indexOf('data-action="light:auto"') <
+      liveAutomatic.indexOf('data-action="light:false"'),
+  );
 
   const lightOff = renderCurrent("manual", {
     heater: { manual: true },

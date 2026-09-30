@@ -180,11 +180,11 @@ test("details render includes the reachable presence and rule card", () => {
   value.drawCurrent();
   assert.match(nodes["#current"].innerHTML, /67 °C/);
   assert.match(nodes["#current"].innerHTML, /38 %/);
-  assert.match(nodes["#current"].innerHTML, /Messung unten/);
+  assert.doesNotMatch(nodes["#current"].innerHTML, /Messung unten/);
 
   state.measurement_positions = ["upper", "lower"];
   state.issues = [{ message: "Temperatur oben ausgefallen" }];
   value.drawCurrent();
-  assert.match(nodes["#current"].innerHTML, /Ersatzmessung unten/);
+  assert.doesNotMatch(nodes["#current"].innerHTML, /Ersatzmessung unten/);
   assert.match(nodes["#current"].innerHTML, /Temperatur oben ausgefallen/);
 });

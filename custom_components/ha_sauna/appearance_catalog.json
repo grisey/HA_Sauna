@@ -46,7 +46,7 @@
       "id": "ui_command",
       "label": "Aktion",
       "group": "Bedienung",
-      "default": null
+      "default": "#216551"
     },
     {
       "id": "ui_danger",

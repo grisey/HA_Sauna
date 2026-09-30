@@ -34,10 +34,10 @@ standardmäßig 60 °C, und endet bei der festen Obergrenze von 100 °C. Eine di
 Wahl setzt eine konstante Solltemperatur. Das tatsächliche Heizen folgt den
 Regel- und Schutzbedingungen des Betriebsablaufs.
 
-Der Sollschieber verwendet den gemeinsamen Bereich aus Anzeigeskala und
-zulässiger Solltemperatur. Für Zeiger- und Tastatureingaben müssen ein solcher
-Bereich und passende Bedienrechte vorliegen. Die Schnellwahl hebt den aktuell
-bestätigten Wert hervor.
+Der Sollschieber verwendet die ganzen Celsiusgrade im gemeinsamen Bereich aus
+Anzeigeskala und zulässiger Solltemperatur. Für Zeiger- und Tastatureingaben
+müssen ein solcher Bereich und passende Bedienrechte vorliegen. Die Schnellwahl
+hebt den aktuell bestätigten Wert hervor.
 Benannte Programme zeigen ihren Namen und ihre Temperaturfolge. Die Hilfe zur
 gleichmäßigen Verteilung verwendet denselben gültigen Entwurf wie die
 Eingabefelder.
@@ -81,10 +81,13 @@ Sauna. Rollen mit einem Home-Assistant-Standard übernehmen die entsprechende
 Themenfarbe.
 
 Die Auswahlfarbe kennzeichnet wirksame Optionen und die aktuelle Navigation.
-Befehle verwenden die Aktionsfarbe, Ausschalten und Beenden die Stoppfarbe.
+Befehle verwenden standardmäßig die Aktionsfarbe `#216551`, Ausschalten und
+Beenden die Stoppfarbe `#A34029`.
 Nebenaktionen liegen auf neutralen Flächen mit dezenter Kontur. Beschriftung,
 Markierung und Farbe vermitteln den jeweiligen Zustand gemeinsam. Der
-Tastaturfokus erhält eine deutlich sichtbare Umrandung.
+Tastaturfokus erhält eine deutlich sichtbare Umrandung. Beim Überfahren eines
+bedienbaren Buttons erscheint ebenfalls eine kontrastierende Umrandung ohne
+Layoutverschiebung; der Text wird dabei nicht unterstrichen.
 
 Die große Bedienkachel erhält bei einem aktuellen automatischen Phasenstatus
 eine Tönung mit 8 % der Phasenfarbe auf dem Kartenhintergrund. Aus, Manuell und
