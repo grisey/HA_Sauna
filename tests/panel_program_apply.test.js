@@ -206,6 +206,28 @@ test("completed fields serialize while a newer unfinished input survives both re
   );
 });
 
+test("clicking the already selected input kind during autosave leaves one request", async () => {
+  let release;
+  const { p, calls } = panel(
+    configuration("progressive"),
+    null,
+    (_path, _method, body) =>
+      new Promise((resolve) => (release = () => resolve({ parameters: body }))),
+  );
+  const edit = individualFields(p);
+  edit("end", "91");
+  const saving = p.applyProgram();
+  await Promise.resolve();
+  const draft = p.progressionDraft;
+  await p.action("program-kind:even");
+  assert.equal(p.progressionDraft, draft);
+  release();
+  await saving;
+  assert.deepEqual(plain(calls), [
+    ["/entry/temperature", "POST", { final_temperature_c: 91 }],
+  ]);
+});
+
 test("a failed initial or queued field save keeps the latest draft and stops automatic writes", async () => {
   for (const failAt of [1, 2]) {
     let release;
@@ -613,6 +635,18 @@ test("gap control keeps its apply action inside the open program editor", () => 
   assert.match(control, /data-action="program-cancel-draft"/);
   assert.match(control, /data-action="operation"[^>]*>Fortsetzen/);
   assert.doesNotMatch(nodes.get("#details").innerHTML, /data-action=|<button/);
+  p.programSelectionDraft = null;
+  p.programSaveState = "saved";
+  p.drawCurrent();
+  assert.match(
+    nodes.get("#current").innerHTML,
+    /class="program-pending" aria-hidden="true" inert/,
+    "the status row keeps its space during confirmation without a hidden action",
+  );
+  assert.doesNotMatch(
+    nodes.get("#current").innerHTML,
+    /program-draft-label">Vorgemerkt/,
+  );
   p.state.configuration.program_mode = "progressive";
   nodes.set("#progression-start", { value: "80" });
   nodes.set("#progression-end", { value: "95" });

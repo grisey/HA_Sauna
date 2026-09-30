@@ -114,6 +114,8 @@ Statusdaten werden während eines laufenden Betriebs, einer bestehenden Sitzung
 oder eines Lichtnachlaufs im Zwei-Sekunden-Takt abgeglichen. Im ruhenden Betrieb
 beträgt der Abstand zehn Sekunden. Bei verborgenem oder getrenntem Panel ruht
 dieser Ablauf; beim erneuten Anzeigen folgt sofort ein Abgleich.
+Allgemeine Home-Assistant-Zustandsweitergaben verkürzen den geplanten Abstand
+nicht; gezielte Bedienhandlungen lösen bei Bedarf sofort einen Abgleich aus.
 
 Sitzungsliste und Datenseiten werden getrennt vom Status geladen. Eine laufende
 Sitzung ergänzt Seiten über ihren Cursor, ohne zuvor wiederholt die Liste zu

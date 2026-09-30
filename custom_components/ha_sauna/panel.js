@@ -1218,7 +1218,7 @@ class SaunaPanel extends HTMLElement {
   }
   set hass(value) {
     this._hass = value;
-    if (this.isConnected && !this.timer) this.start();
+    if (this.isConnected && this._hass && !this.timer && !this.busy) this.start();
   }
   get hass() {
     return this._hass;
@@ -2030,8 +2030,8 @@ class SaunaPanel extends HTMLElement {
       .control-main .muted { color: var(--sauna-main-muted-text, var(--sauna-card-muted-text, inherit)); }
       .control-main button small { color: inherit; }
       .oven-feedback { margin: 4px 0 10px; }
-      [data-action="program-toggle"] { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; max-width: 100%; white-space: normal; text-align: left; }
-      .program-active-label { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
+      [data-action="program-toggle"] { display: flex; align-items: baseline; gap: 10px; width: 100%; max-width: 100%; text-align: left; }
+      .program-active-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
       .program-disclosure { margin-top: 12px; }
       .scale-hint { fill: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); color: var(--sauna-ink-status-warning, var(--sauna-card-text, inherit)); font-size: 11px; margin: 2px 0 0; }
       .control-main .scale-hint { fill: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); color: var(--sauna-main-ink-status-warning, var(--sauna-ink-status-warning, inherit)); }
@@ -3126,6 +3126,7 @@ class SaunaPanel extends HTMLElement {
         padding-top: 14px;
         border-top: 1px solid var(--sauna-color-border, var(--divider-color));
       }
+      .program-actions > button { flex: 1 1 100%; min-width: 0; }
       .program-saved,
       .program-saving {
         color: var(--sauna-command-ink, var(--sauna-card-text, inherit));
@@ -3141,6 +3142,7 @@ class SaunaPanel extends HTMLElement {
         font-size: 12px;
         font-weight: 400;
       }
+      .program-draft-label:empty::before { content: "Vorgemerkt"; visibility: hidden; }
       .program-pending {
         display: flex;
         align-items: center;
@@ -3152,6 +3154,7 @@ class SaunaPanel extends HTMLElement {
         color: var(--sauna-pending-text, var(--sauna-main-text, var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)))));
         --sauna-focus-current: var(--sauna-pending-focus, var(--sauna-main-focus, var(--sauna-card-focus, var(--accent))));
       }
+      .program-pending[aria-hidden="true"] { visibility: hidden; }
       .program-kind {
         display: flex;
         gap: 6px;
@@ -4246,7 +4249,9 @@ class SaunaPanel extends HTMLElement {
       activeProgramLabel = this.programChoiceLabel(activeChoice, programs),
       programBusy = !!this.programRequest;
     const draftLabel = (draft) =>
-      session && draft ? '<small class="program-draft-label">Vorgemerkt</small>' : "";
+      session
+        ? `<small class="program-draft-label"${draft ? "" : ' aria-hidden="true"'}>${draft ? "Vorgemerkt" : ""}</small>`
+        : "";
     const programFeedback = (choice) =>
       !session &&
       this.programChoiceMatches(choice, programChoice) &&
@@ -4351,7 +4356,7 @@ class SaunaPanel extends HTMLElement {
     const programBounds = this.programBounds();
     // Temperaturautomatik stays the internal CSS/API term; the control uses the shorter label.
     const temperatureAutomation = !manualMode
-      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${this.programDirty() && session ? `<div class="program-pending"><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session && (this.programDirty() || this.programSaveState) ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}${session ? "</div>" : ""}</section>`
+      ? `<section class="control-section temperature-automation"><h3>Temperaturwahl</h3>${session ? `<button type="button" data-action="program-toggle" aria-expanded="${!!this.programChoiceOpen || this.programDirty() || !!this.programRequest}" aria-controls="program-choice-body" title="Aktuell: ${esc(activeProgramLabel)}"><span>Programm ändern</span><small class="program-active-label">Aktuell: ${esc(activeProgramLabel)}</small></button><div id="program-choice-body" ${this.programChoiceOpen || this.programDirty() || this.programRequest ? "" : "hidden"}>` : ""}${programTypes}${namedPrograms}${programMode === "individual" ? this.freeProgramForm(programBounds, permissions) : ""}${programMode === "constant" ? `<div class="temperature-presets">${presets.map((v) => `<button type="button" class="tile" data-action="preset:${v}" aria-pressed="${Math.abs(v - s.target_temperature) < 0.01}" ${permissions.temperature && !programBusy ? "" : "disabled"}>${num(v, 1)} °C</button>`).join("")}</div>` : ""}${session && (this.programDirty() || this.programSaveState) ? `<div class="program-pending"${this.programDirty() ? "" : ' aria-hidden="true" inert'}><span>Noch nicht übernommen: ${esc(this.programChoiceLabel(programChoice, programs))}</span><button type="button" data-action="program-cancel-draft" ${programBusy ? "disabled" : ""}>Abbrechen</button></div>` : ""}${session && (this.programDirty() || this.programSaveState) ? `<div class="program-actions">${this.programApplyButton(permissions)}</div>` : ""}${session ? "</div>" : ""}</section>`
       : "";
     this.updateMarkup(
       "#current",
@@ -5035,8 +5040,7 @@ class SaunaPanel extends HTMLElement {
         permissions.program &&
         (!this.programRequest || this.programRequest.submission?.automatic)
           ? ""
-          : "disabled",
-      kindDisabled = permissions.program && !this.programRequest ? "" : "disabled";
+          : "disabled";
     const manual = kind === "steps",
       count = Math.max(1, Math.min(bounds.gangMaximum, steps.length));
     const values = {
@@ -5053,7 +5057,7 @@ class SaunaPanel extends HTMLElement {
         // Keep incomplete fields visible without explaining an older draft.
       }
     }
-    const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${kindDisabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${kindDisabled}>Einzelne Stufen</button></div>`;
+    const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
     const fields = manual
       ? `<div class="row"><label class="field" for="free-step-count"><span>Stufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${esc(this.progressionDraft?.["free-step-count"] ?? count)}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
           steps,
@@ -5075,6 +5079,10 @@ class SaunaPanel extends HTMLElement {
   }
   setFreeProgramKind(kind) {
     if (!["even", "steps"].includes(kind)) throw Error("Ungültige Eingabeart");
+    const current =
+      this.freeProgramKind ||
+      (Array.isArray(this.state?.configuration?.temperature_steps) ? "steps" : "even");
+    if (kind === current) return false;
     const inputs = [...this.shadowRoot.querySelectorAll("[data-free-step]")];
     if (inputs.length) this.freeProgramStepsDraft = inputs.map((input) => input.value);
     else if (this.$("#progression-start")) {
@@ -5084,6 +5092,7 @@ class SaunaPanel extends HTMLElement {
     this.progressionDraft = null;
     this.freeProgramKind = kind;
     this.markProgramEdited();
+    return true;
   }
   freeProgramValues() {
     const bounds = this.programBounds(),
@@ -7478,8 +7487,8 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action.startsWith("program-kind:")) {
-      if (this.programRequest) return;
-      this.setFreeProgramKind(action.slice(13));
+      if (this.programRequest && !this.programRequest.submission?.automatic) return;
+      if (!this.setFreeProgramKind(action.slice(13))) return;
       if (!this.state.session) await this.applyProgram();
       return;
     }
