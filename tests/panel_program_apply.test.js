@@ -228,6 +228,53 @@ test("clicking the already selected input kind during autosave leaves one reques
   ]);
 });
 
+test("returning to the saved input kind clears its completed draft", async () => {
+  let release;
+  const { p, calls } = panel(
+    configuration("progressive"),
+    null,
+    (_path, _method, body) =>
+      new Promise((resolve) => (release = () => resolve({ parameters: body }))),
+  );
+  const fields = new Map();
+  p.$ = (selector) => fields.get(selector) || null;
+  p.shadowRoot = {
+    querySelectorAll: (selector) =>
+      selector === "[data-free-step]"
+        ? [...fields]
+            .filter(([key]) => /^#free-step-\d+$/.test(key))
+            .map(([, input]) => input)
+        : [],
+  };
+  p.drawCurrent = () => {
+    const form = p.freeProgramForm(p.programBounds(), p.state.permissions);
+    fields.clear();
+    for (const [, id, value] of form.matchAll(
+      /<input id="([^"]+)"[^>]*value="([^"]*)"/g,
+    ))
+      fields.set(`#${id}`, { value });
+  };
+  p.drawCurrent();
+  fields.get("#progression-end").value = "91";
+  p.progressionDraft = { "progression-end": "91" };
+  const saving = p.applyProgram();
+  await Promise.resolve();
+  await p.action("program-kind:steps");
+  await p.action("program-kind:even");
+  release();
+  await saving;
+  assert.deepEqual(plain(calls), [
+    ["/entry/temperature", "POST", { final_temperature_c: 91 }],
+  ]);
+  assert.equal(p.progressionDraft, null);
+  p.state.configuration.parameters.final_temperature_c = 95;
+  p.drawCurrent();
+  assert.match(
+    p.freeProgramForm(p.programBounds(), p.state.permissions),
+    /id="progression-end"[^>]*value="95"/,
+  );
+});
+
 test("a failed initial or queued field save keeps the latest draft and stops automatic writes", async () => {
   for (const failAt of [1, 2]) {
     let release;

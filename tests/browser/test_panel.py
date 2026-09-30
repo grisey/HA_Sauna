@@ -935,45 +935,80 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_completed_field_then_kind_click_saves_both_choices_in_order(self):
-        await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
-          {target_temperature_c: 70, final_temperature_c: 90, temperature_gangs: 3})''')
-        await self.page.reload()
-        await expect(self.panel.locator("#progression-end")).to_have_value("90", timeout=60000)
         temperature_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
-        writes = []
-
-        def record_write(request):
-            if request.method == "POST" and request.url.endswith(("/temperature", "/program")):
-                writes.append((request.url.rsplit("/", 1)[-1], request.post_data_json))
-
         async def delay_field_save(route):
             response = await route.fetch()
             await asyncio.sleep(0.5)
             await route.fulfill(response=response)
 
-        self.page.on("request", record_write)
-        await self.page.route("**" + temperature_url, delay_field_save)
-        try:
-            await self.panel.locator("#progression-end").fill("91")
-            # One physical click closes the changed field and chooses the kind.
-            await self.panel.locator('[data-action="program-kind:steps"]').click()
-            await expect(self.panel.locator('[data-action="program-kind:steps"]')).to_have_attribute("aria-pressed", "true")
-            await self.panel.evaluate(
-                "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
-            )
-            self.assertEqual(writes, [
-                ("temperature", {"final_temperature_c": 91}),
-                ("program", {"temperature_steps": [70, 80.5, 91]}),
-            ])
-            self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
-            self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 80.5, 91))
-            await expect(self.panel.locator("[data-free-step]").nth(2)).to_have_value("91")
-            await self.panel.evaluate("p => p.refresh()")
-            await expect(self.panel.locator('[data-action="program-kind:steps"]')).to_have_attribute("aria-pressed", "true")
-            self.assertEqual(len(writes), 2)
-        finally:
-            await self.page.unroute("**" + temperature_url, delay_field_save)
-            self.page.remove_listener("request", record_write)
+        choices = (
+            ("program-kind:steps", {"temperature_steps": [70, 80.5, 91]}),
+            ("program-mode:constant", {"profile": "constant"}),
+            ("program-mode:program", {"profile": "genusszeit"}),
+        )
+        for action, program_write in choices:
+            with self.subTest(action=action):
+                await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
+                  {target_temperature_c: 70, final_temperature_c: 90, temperature_gangs: 3})''')
+                await self.page.reload()
+                await expect(self.panel.locator("#progression-end")).to_have_value("90", timeout=60000)
+                self.assertIsNone(self.runtime.session)
+                writes = []
+                order = []
+
+                def record_write(request):
+                    if request.method == "POST" and request.url.endswith(("/temperature", "/program")):
+                        kind = request.url.rsplit("/", 1)[-1]
+                        writes.append((kind, request.post_data_json))
+                        order.append(kind + " request")
+
+                def record_response(response):
+                    if response.request.method == "POST" and response.url.endswith("/temperature"):
+                        order.append("temperature response")
+
+                self.page.on("request", record_write)
+                self.page.on("response", record_response)
+                await self.page.route("**" + temperature_url, delay_field_save)
+                try:
+                    await self.panel.locator("#progression-end").fill("91")
+                    # One physical click closes the changed field and chooses the kind or mode.
+                    await self.panel.locator(f'[data-action="{action}"]').click()
+                    await self.panel.evaluate(
+                        "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+                    )
+                    self.assertEqual(writes, [
+                        ("temperature", {"final_temperature_c": 91}),
+                        ("program", program_write),
+                    ])
+                    self.assertEqual(order, [
+                        "temperature request", "temperature response", "program request",
+                    ])
+                    await self.panel.evaluate("p => p.refresh()")
+                    if action == "program-kind:steps":
+                        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
+                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 80.5, 91))
+                        await expect(self.panel.locator("[data-free-step]").nth(2)).to_have_value("91")
+                    elif action == "program-mode:constant":
+                        self.assertEqual(self.entry.runtime_data.configuration.program_mode, "constant")
+                        self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
+                    else:
+                        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
+                        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 90)
+                        await expect(self.panel.locator('[data-action="program-select:genusszeit"]')).to_have_attribute("aria-pressed", "true")
+                    await expect(self.panel.locator(f'[data-action="{action}"]')).to_have_attribute("aria-pressed", "true")
+                    self.assertEqual(len(writes), 2)
+                    if action == "program-kind:steps":
+                        mode = self.panel.locator('[data-action="program-mode:individual"]')
+                        await expect(mode).to_contain_text("✓ Übernommen")
+                        last_step = self.panel.locator("[data-free-step]").nth(2)
+                        await last_step.fill("92")
+                        self.assertTrue(await last_step.evaluate("el => el === el.getRootNode().activeElement"))
+                        self.assertNotIn("✓ Übernommen", await mode.inner_text())
+                        self.assertEqual(len(writes), 2)
+                finally:
+                    await self.page.unroute("**" + temperature_url, delay_field_save)
+                    self.page.remove_listener("request", record_write)
+                    self.page.remove_listener("response", record_response)
         self.assertEqual(self.errors, [])
 
     async def test_unrelated_hass_updates_do_not_restart_an_inflight_idle_poll(self):
