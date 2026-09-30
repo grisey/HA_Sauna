@@ -90,6 +90,39 @@ test("status polling is live during operation and sparse while idle", () => {
   assert.equal(p.statusPollInterval(), 2000);
 });
 
+test("unrelated hass updates do not restart an in-flight status poll", async () => {
+  const response = deferred();
+  const idle = { ...state(), session: null, operation_enabled: false };
+  let reads = 0;
+  const { p, nodes } = panel(async (request) => {
+    if (request !== "/e/state") throw Error(request);
+    reads++;
+    return response.promise;
+  });
+  nodes["#history"].hidden = true;
+  p.state = idle;
+  p.scheduleRefresh = Panel.prototype.scheduleRefresh;
+  try {
+    p.hass = { states: {} };
+    await Promise.resolve();
+    assert.equal(reads, 1, "initial hass assignment starts status polling");
+    p.hass = { states: { "sensor.unrelated": { state: "changed" } } };
+    response.resolve(idle);
+    await turn();
+    assert.equal(reads, 1, "a hass update during the request queues no read");
+    assert.ok(p.timer, "the normal sparse status timer is scheduled");
+    const timer = p.timer;
+    p.hass = { states: { "sensor.unrelated": { state: "changed-again" } } };
+    assert.equal(p.timer, timer, "a hass update leaves the scheduled poll intact");
+    assert.equal(reads, 1);
+  } finally {
+    response.resolve(idle);
+    await turn();
+    clearTimeout(p.timer);
+    p.timer = null;
+  }
+});
+
 test("slow archive pages do not hold status refresh and partial pages are visible", async () => {
   const first = deferred(),
     second = deferred();

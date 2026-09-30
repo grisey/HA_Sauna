@@ -872,6 +872,164 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await operation_geometry(), operation_box)
         self.assertEqual(self.errors, [])
 
+    async def test_running_editor_confirmation_keeps_its_open_geometry(self):
+        for width in (1440, 390):
+            with self.subTest(width=width):
+                await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
+                  {target_temperature_c: 70, final_temperature_c: 90, temperature_gangs: 3})''')
+                if self.runtime.session is None:
+                    await self.runtime.set_operation(True)
+                await self.page.set_viewport_size({"width": width, "height": 2400})
+                await self.page.reload()
+                await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible(timeout=60000)
+                await self.panel.locator('[data-action="program-toggle"]').click()
+                await self.panel.locator("#progression-end").fill("91")
+                await self.panel.locator("#progression-end").press("Tab")
+                action = self.panel.locator('[data-action="program-apply"]')
+                await expect(action).to_have_text("Programm übernehmen")
+                await self.page.evaluate("window.scrollTo(0, 0)")
+                geometry = lambda: self.panel.evaluate('''p => ({
+                  scrollY: window.scrollY,
+                  boxes: ['.program-form', '.program-actions', '[data-action="program-apply"]',
+                    '.manual-overrides', '.gauges', '[data-action="operation"]'].map(selector => {
+                      const r = p.$('#current ' + selector).getBoundingClientRect();
+                      return {selector, x: r.x, y: r.y, width: r.width, height: r.height};
+                    })
+                })''')
+                before = await geometry()
+                self.assertEqual(before["scrollY"], 0)
+                entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+                temperature_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
+
+                async def delay_confirmation(route):
+                    response = await route.fetch()
+                    entered.set()
+                    await asyncio.sleep(0.5)
+                    await release.wait()
+                    try:
+                        await route.fulfill(response=response)
+                    finally:
+                        finished.set()
+
+                await self.page.route("**" + temperature_url, delay_confirmation)
+                try:
+                    await action.click()
+                    await asyncio.wait_for(entered.wait(), 10)
+                    await expect(action).to_have_text("Wird übernommen …")
+                    await expect(self.panel.locator("#program-choice-body")).to_be_visible()
+                    during = await geometry()
+                    release.set()
+                    await expect(action).to_have_text("✓ Übernommen")
+                    await expect(self.panel.locator("#program-choice-body")).to_be_visible()
+                    saved = await geometry()
+                    self.assertEqual(during, before)
+                    self.assertEqual(saved, before)
+                    self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
+                    # The scheduled collapse after feedback is a separate action;
+                    # only the still-open editor is compared here.
+                finally:
+                    release.set()
+                    if entered.is_set():
+                        await asyncio.wait_for(finished.wait(), 10)
+                    await self.page.unroute("**" + temperature_url, delay_confirmation)
+        self.assertEqual(self.errors, [])
+
+    async def test_completed_field_then_kind_click_saves_both_choices_in_order(self):
+        await self.panel.evaluate('''p => p.api(`/${p.entry}/program`, "POST",
+          {target_temperature_c: 70, final_temperature_c: 90, temperature_gangs: 3})''')
+        await self.page.reload()
+        await expect(self.panel.locator("#progression-end")).to_have_value("90", timeout=60000)
+        temperature_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
+        writes = []
+
+        def record_write(request):
+            if request.method == "POST" and request.url.endswith(("/temperature", "/program")):
+                writes.append((request.url.rsplit("/", 1)[-1], request.post_data_json))
+
+        async def delay_field_save(route):
+            response = await route.fetch()
+            await asyncio.sleep(0.5)
+            await route.fulfill(response=response)
+
+        self.page.on("request", record_write)
+        await self.page.route("**" + temperature_url, delay_field_save)
+        try:
+            await self.panel.locator("#progression-end").fill("91")
+            # One physical click closes the changed field and chooses the kind.
+            await self.panel.locator('[data-action="program-kind:steps"]').click()
+            await expect(self.panel.locator('[data-action="program-kind:steps"]')).to_have_attribute("aria-pressed", "true")
+            await self.panel.evaluate(
+                "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, 10)); }"
+            )
+            self.assertEqual(writes, [
+                ("temperature", {"final_temperature_c": 91}),
+                ("program", {"temperature_steps": [70, 80.5, 91]}),
+            ])
+            self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
+            self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 80.5, 91))
+            await expect(self.panel.locator("[data-free-step]").nth(2)).to_have_value("91")
+            await self.panel.evaluate("p => p.refresh()")
+            await expect(self.panel.locator('[data-action="program-kind:steps"]')).to_have_attribute("aria-pressed", "true")
+            self.assertEqual(len(writes), 2)
+        finally:
+            await self.page.unroute("**" + temperature_url, delay_field_save)
+            self.page.remove_listener("request", record_write)
+        self.assertEqual(self.errors, [])
+
+    async def test_unrelated_hass_updates_do_not_restart_an_inflight_idle_poll(self):
+        state_url = f"/api/ha_sauna/{self.entry.entry_id}/state"
+        await self.panel.evaluate(
+            "async p => { while (p.busy) await new Promise(r => setTimeout(r, 10)); }"
+        )
+        self.assertIsNone(self.runtime.session)
+        self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), 10000)
+        previous_hass = await self.panel.evaluate_handle("p => p.hass")
+        entered, release = asyncio.Event(), asyncio.Event()
+        starts = []
+
+        async def delay_state(route):
+            starts.append(time.monotonic())
+            first = len(starts) == 1
+            response = await route.fetch()
+            if first:
+                entered.set()
+            await asyncio.sleep(0.25)
+            if first:
+                await release.wait()
+            await route.fulfill(response=response)
+
+        await self.page.route("**" + state_url, delay_state)
+        try:
+            # The original start/timer/setter paths stay active. A real unrelated
+            # HA entity reaches the panel through the actual frontend websocket.
+            await self.panel.evaluate("p => p.start()")
+            await asyncio.wait_for(entered.wait(), 10)
+            self.hass.states.async_set("sensor.unrelated_panel_probe", "1")
+            await self.hass.async_block_till_done()
+            reached_setter = await self.panel.evaluate('''async p => {
+              const deadline = performance.now() + 5000;
+              while (p.hass.states['sensor.unrelated_panel_probe']?.state !== '1' && performance.now() < deadline)
+                await new Promise(resolve => setTimeout(resolve, 10));
+              return p.hass.states['sensor.unrelated_panel_probe']?.state === '1' && p.busy;
+            }''')
+            self.assertTrue(reached_setter, "the original hass setter receives the foreign update during the request")
+            self.assertTrue(await self.panel.evaluate("(p, old) => p.hass !== old", previous_hass))
+            release.set()
+            for value in range(2, 11):
+                self.hass.states.async_set("sensor.unrelated_panel_probe", str(value))
+                await self.hass.async_block_till_done()
+                await asyncio.sleep(0.1)
+            await self.page.wait_for_timeout(400)
+            self.assertEqual(await self.panel.evaluate("p => p.hass.states['sensor.unrelated_panel_probe'].state"), "10")
+            self.assertEqual(len(starts), 1, [round(at - starts[0], 3) for at in starts])
+            self.assertLess(time.monotonic() - starts[0], 10)
+            self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), 10000)
+        finally:
+            release.set()
+            await self.page.unroute("**" + state_url, delay_state)
+            await previous_hass.dispose()
+        self.assertEqual(self.errors, [])
+
     async def test_individual_feedback_preserves_the_entire_open_editor_geometry(self):
         program_url = f"/api/ha_sauna/{self.entry.entry_id}/program"
         for width in (1440, 390):
