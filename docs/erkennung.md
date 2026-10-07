@@ -17,6 +17,20 @@ verfügbaren vollständigen Messpositionen. Eine Position genügt für den volle
 Betrieb; bei zwei gültigen Positionen belegen beide den Abfall. Diese Regeln
 gelten auch in der heißen Sauna.
 
+Beide Öffnungswege benötigen zusätzlich einen geglätteten Temperaturverlust
+von standardmäßig **1 °C** an jeder beteiligten Messposition. Die Referenz ist
+der höchste Wert derselben Temperaturquelle im Trendfenster vor dem ersten
+Hinweis und im anschließenden Öffnungskandidaten. Erst mit diesem Mindestverlust
+beginnt die Bestätigungsdauer. Ein kurzzeitig steiler Trend mit geringer
+Gesamtänderung genügt damit nicht. Sehr kurze reale Öffnungen unterhalb des
+Mindestverlusts bleiben ebenfalls unbestätigt. Der Parameter
+`door_open_drop_c` bestimmt diese Grenze.
+Ein gemeinsam belegter Temperatur- und Feuchteabfall bleibt während eines
+fortgesetzten Temperaturabfalls derselben Quellen als Öffnungskandidat gültig.
+Die Feuchte muss daher nicht bis zum Erreichen des Mindestverlusts weiter fallen.
+Endet der belegte Temperaturabfall oder wechselt eine Quelle, verfällt dieser
+Nachweis.
+
 Eine Schließprüfung setzt eine erkannte Öffnung voraus. Sie folgt der
 Temperaturerholung an den verfügbaren Messpositionen. Gültige Temperaturwerte
 können die Schließung auch während einer Feuchtestörung belegen. Fehler
@@ -47,6 +61,9 @@ Beim ersten Öffnungshinweis speichert die Erkennung eine vollständige Messung
 aus der Zeit davor als Lüftungsreferenz. Anschließend vergleicht sie damit den
 Temperaturverlust und den relativen Verlust an absolutem Wassergehalt. Die beim
 Beginn verwendete Quellenzuordnung gilt für den gesamten Lüftungsnachweis.
+Der begrenzte Arbeitspuffer hält den gesamten Lüftungsrückblick vor dem längeren
+Türmerkmalfenster einschließlich seines Randpunkts vor. Die übrigen Trend- und
+Glättungsfenster bestimmen den Speicherbedarf, soweit sie länger sind.
 
 Bei zwei anfangs gültigen Messpositionen ist das Durchlüften mit dem beidseitigen
 Erreichen der Verlustschwellen bestätigt: standardmäßig **3 °C** Temperaturverlust

@@ -4,6 +4,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+const frontendDefaults = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).frontend;
+
 let Panel;
 const sandbox = {
   HTMLElement: class {},
@@ -27,8 +31,8 @@ const sandbox = {
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
-);
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).appearance;
 vm.runInNewContext(source, sandbox);
 
 assert.match(source, /data-target-arc/);
@@ -37,6 +41,7 @@ assert.doesNotMatch(source, /foreignObject[^`]*id="target"/);
 assert.match(source, /Temperaturautomatik/);
 
 const state = {
+  frontend_defaults: frontendDefaults,
   appearance_catalog: appearanceCatalog,
   permissions: { temperature: true },
   target_temperature: 80,

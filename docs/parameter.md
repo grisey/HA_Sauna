@@ -3,6 +3,29 @@
 Gespeicherte Werte der Anlage haben Vorrang vor den Standards. Fehlende
 Einstellungen werden beim Laden mit dem zentralen Standard ergänzt.
 
+Die führende Datei [defaults.json](../custom_components/ha_sauna/defaults.json)
+enthält die aktiven Parameter mit Grenzen, Eingabeschritten und Fachgruppen,
+die Programmvorlagen, Instanzvorgaben, Darstellung sowie technische Cachebudgets.
+`core/defaults.py` prüft den vollständigen Katalog beim Laden; ungültige Angaben
+führen zu einem Konfigurationsfehler ohne Ersatzwerte im Programmcode.
+Änderungen an dieser Datei werden nach einem Neustart von Home Assistant
+eingelesen; ein Neuladen der Integration genügt dafür nicht. Sie wirken dann
+auf neue Instanzen, fehlende Werte und eine ausdrücklich ausgelöste
+Standardrücksetzung. Gespeicherte Nutzerwerte bleiben maßgeblich.
+
+`instance` führt die allgemeinen Vorgaben. `setup` benennt abweichende Vorgaben
+für eine neue Einrichtung: Tasterbedienung und progressive Temperaturfolge.
+Eine Standardrücksetzung verwendet die allgemeinen Instanzvorgaben. Die
+historische Interpretation alter Optionen ist davon getrennt: Ohne gespeicherten
+Programmmodus bleibt eine alte Konfiguration ohne Endtemperatur konstant.
+`legacy_parameters` enthält eingefrorene Metadaten alter Schlüssel ausschließlich
+für Lesekompatibilität und den Referenzadapter; sie sind keine aktuellen
+Bedienparameter. Die historischen Vergleichswerte der Programmmigration und
+`candidate/` bleiben von Änderungen heutiger Standards unabhängig.
+
+Mathematische Umrechnungen, Prozent- und Geräteprotokollkonventionen sind keine
+Einstellwerte und bleiben im jeweiligen Fachmodul.
+
 Die Konfiguration einer Sauna ist die gemeinsame Quelle für Einrichtungsdialog,
 Home-Assistant-Entitäten und Saunapanel. Eingaben werden vor dem Speichern auf
 ihre zulässigen Werte und Zusammenhänge geprüft. Während einer Sitzung bleibt
@@ -120,6 +143,7 @@ diese Proxyfrist nicht.
 | Lichthelligkeit zu Beginn der Ofenkühlung | 15 % | Ausgangswert der Lichtkurve während der Ofenkühlung |
 | Helligkeit für „Hell“ und Lichtnachlauf | 50 % | Vorgabe für die Stufe **Hell** und den Lichtnachlauf beim Ausschalten |
 | Dauer des Lichtübergangs | 30 s | Dauer eines automatischen Helligkeitswechsels; 0 bewirkt einen unmittelbaren Wechsel. |
+| Schaltabstand der Lichtausgabe | 0,1 Prozentpunkte | Zusätzlicher Abstand hinter der halben Prozentgrenze für automatische Stellwertwechsel; 0 deaktiviert das Band. |
 | Helligkeitsskala des Lichtgeräts | 255 | Technische Auflösung für die Zuordnung eigener Rückmeldungen |
 
 Beim Aufheizen steigt das Licht vom Kaltpunkt zur Normalhelligkeit. Während der

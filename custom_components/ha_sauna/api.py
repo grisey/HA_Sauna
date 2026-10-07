@@ -11,7 +11,7 @@ from homeassistant.helpers import entity_registry as er
 from .appearance import APPEARANCE_CATALOG
 from .archive import plain
 from .const import DOMAIN
-from .core.detection_parameters import SPECS
+from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .log import LEVELS
@@ -116,7 +116,7 @@ def can_control_heater(request, entry_id, runtime):
 
 
 def manual_controls(runtime):
-    """Expose the selected and automatic plans without exposing device ids."""
+    """Expose selected plans and explicit observation without device ids."""
     light = runtime.device.light_output if runtime.device else None
     return {
         "heater": {
@@ -127,6 +127,8 @@ def manual_controls(runtime):
             else None,
         },
         "light": {
+            "observation": runtime.device.light_observation if runtime.device
+            else {"available": False, "brightness_percent": None},
             "manual": light.manual_brightness if light else None,
             "override_ends_at": plain(light.manual_ends_at) if light else None,
             "automatic": light.last_automatic_brightness if light else None,
@@ -180,7 +182,6 @@ class StateView(HomeAssistantView):
             )
             now = runtime._clock()
             active = session.timeline.active if session else None
-            experts = {s[0] for s in SPECS}
             regulation_measurement = (
                 device.regulation_measurement(now) if device else None
             )
@@ -198,16 +199,18 @@ class StateView(HomeAssistantView):
                         ],
                         "appearance": runtime.configuration.appearance,
                         "appearance_catalog": APPEARANCE_CATALOG,
-                        "last_session": controller.completed_sessions[-1]
-                        if controller.completed_sessions
-                        else None,
+                        "frontend_defaults": section("frontend"),
+                        "last_session": next((
+                            item for item in reversed(controller.completed_sessions)
+                            if item.timeline.gang_count
+                        ), None),
+                        "archive_revision": runtime.archive.revision if runtime.archive else 0,
                         "parameters": [
                             {
                                 **asdict(d),
                                 "minimum": runtime.configuration.parameters.minimum_for(
                                     d.key
                                 ),
-                                "expert": d.key in experts,
                                 "live_editable": d.key in LIVE_TEMPERATURE_KEYS,
                             }
                             for d in EDITABLE_DEFINITIONS
@@ -730,7 +733,21 @@ class ArchiveView(HomeAssistantView):
                 raise ValueError("Archivcursor außerhalb des gültigen Bereichs")
         except ValueError as error:
             raise web.HTTPBadRequest() from error
-        result = await asyncio.to_thread(runtime.archive.read, session_id, after=after)
+        projection = request.query.get("projection")
+        if projection not in (None, "history"):
+            raise web.HTTPBadRequest(text="Unbekannte Archivansicht")
+        read_options = {"after": after}
+        if projection == "history":
+            read_options.update(
+                limit=5000,
+                kinds=(
+                    "measurement", "source_snapshot", "phase", "diagnostic",
+                    "detector_trace", "detection",
+                ) if request["hass_user"].is_admin else (
+                    "measurement", "source_snapshot", "phase",
+                ),
+            )
+        result = await asyncio.to_thread(runtime.archive.read, session_id, **read_options)
         if result is None:
             raise web.HTTPNotFound()
         if session_id:
@@ -758,6 +775,32 @@ class ArchiveView(HomeAssistantView):
                     if record["kind"] in {"measurement", "source_snapshot", "phase"}
                 ]
         return self.json(result)
+
+
+class EraseArchiveView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/archive/erase"
+    name = "api:ha_sauna:archive:erase"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        body = await json_body(request)
+        if not isinstance(body, dict) or not (
+            (set(body) == {"reset"} and body["reset"] is True)
+            or (set(body) == {"session_id"} and isinstance(body["session_id"], str)
+                and bool(body["session_id"]))
+        ):
+            raise web.HTTPBadRequest(text="Eine Sitzungs-ID oder reset=true ist erforderlich.")
+        runtime = runtime_for(request.app[KEY_HASS], entry_id)
+        try:
+            count = await runtime.erase_archive(body.get("session_id"), reset=body.get("reset", False))
+        except KeyError as error:
+            raise web.HTTPNotFound() from error
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True, "deleted_sessions": count,
+                          "archive_revision": runtime.archive.revision})
 
 
 class ExportView(HomeAssistantView):
@@ -803,6 +846,7 @@ def register(hass):
     if data.get("api_registered"):
         return
     hass.http.register_view(ArchiveView)
+    hass.http.register_view(EraseArchiveView)
     hass.http.register_view(ExportView)
     hass.http.register_view(InstancesView)
     hass.http.register_view(StateView)

@@ -36,6 +36,12 @@ class PendingCoolingAPITests(unittest.IsolatedAsyncioTestCase):
         base = datetime.now(UTC)
         now = [base]
         runtime._clock = lambda: now[0]
+        temperature_entity = self.entry.options["bindings"]["upper_temperature"]
+        temperature_state = self.hass.states.get(temperature_entity)
+        self.hass.states.async_set(
+            temperature_entity, "70", temperature_state.attributes, force_update=True
+        )
+        await self.hass.async_block_till_done()
         heater = self.entry.options["bindings"]["heater"]
         state = self.hass.states.get(heater)
         self.hass.states.async_set(heater, "on", state.attributes, force_update=True)

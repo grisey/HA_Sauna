@@ -8,6 +8,52 @@ from harness import create_sauna, start_hass
 
 
 class PanelAPITests(unittest.IsolatedAsyncioTestCase):
+    async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
+        from harness import retain_session
+
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id + "/archive/erase"
+        user = await self.hass.auth.async_create_user("Archive reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with (
+            ClientSession(headers=headers) as client,
+            client.post(url, json={"reset": True}) as response,
+        ):
+            self.assertEqual(response.status, 403)
+        identities = []
+        async with ClientSession(headers=self.headers) as client:
+            for _ in range(2):
+                await runtime.set_operation(True)
+                identities.append(runtime.session.session_id)
+                retain_session(runtime)
+                async with client.post(url, json={"reset": True}) as response:
+                    self.assertEqual(response.status, 409)
+                await runtime.set_operation(False)
+                token = next(d.token for d in runtime.session.deadlines if d.purpose == "session_gap")
+                await runtime.finish_session_gap(token)
+            await runtime.archive.flush()
+            for body in ({}, {"reset": False}, {"reset": True, "session_id": "x"}):
+                async with client.post(url, json=body) as response:
+                    self.assertEqual(response.status, 400)
+            async with client.post(url, json={"session_id": "missing"}) as response:
+                self.assertEqual(response.status, 404)
+            async with client.post(url, json={"session_id": identities[-1]}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                revision = (await response.json())["archive_revision"]
+            self.assertIsNone(runtime.archive.read(identities[-1]))
+            self.assertIsNotNone(runtime.archive.read(identities[0]))
+            self.assertEqual([s.session_id for s in runtime.controller.completed_sessions], identities[:1])
+            options = dict(self.entry.options)
+            async with client.post(url, json={"reset": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertGreater((await response.json())["archive_revision"], revision)
+            runtime.persist()
+            await runtime.archive.flush()
+            self.assertEqual(runtime.archive.read(), [])
+            self.assertEqual(runtime.controller.completed_sessions, ())
+            self.assertEqual(dict(self.entry.options), options)
+
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
         self.entry = await create_sauna(self.hass, parameter_overrides={"sensor_timeout_seconds": 60})
@@ -358,6 +404,25 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url + "/archive", params={"session_id": session_id, "after": hidden_page["next_after"]}) as response:
                 resumed = await response.json()
                 self.assertEqual(resumed["records"][0]["payload"]["value"], 73)
+            async with client.get(url + "/archive", params={"session_id": session_id, "after": after, "projection": "history"}) as response:
+                self.assertEqual(response.status, 200)
+                projected = await response.json()
+                self.assertEqual(projected["records"], resumed["records"])
+                self.assertNotIn("configuration", projected["session"])
+                self.assertIsNone(projected["next_after"])
+
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url + "/archive", params={"session_id": session_id, "projection": "history"}) as response:
+                self.assertEqual(response.status, 200)
+                projected = await response.json()
+                kinds = {record["kind"] for record in projected["records"]}
+                self.assertIn("measurement", kinds)
+                self.assertIn("detector_trace", kinds)
+                self.assertNotIn("session", kinds)
+                self.assertNotIn("source_state", kinds)
+                self.assertIn("configuration", projected["session"])
+            async with client.get(url + "/archive", params={"session_id": session_id, "projection": "invalid"}) as response:
+                self.assertEqual(response.status, 400)
 
     async def test_malformed_json_is_a_client_error_across_write_endpoints(self):
         url = self.base + "/" + self.entry.entry_id
@@ -393,6 +458,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(tuple(self.entry.options["temperature_steps"]), (80, 86, 90))
                 self.assertEqual(self.entry.runtime_data.configuration.program_mode, "progressive")
             runtime = self.entry.runtime_data
+            temperature_entity = self.entry.options["bindings"]["upper_temperature"]
+            temperature_state = self.hass.states.get(temperature_entity)
+            self.hass.states.async_set(temperature_entity, "70", temperature_state.attributes, force_update=True)
+            await self.hass.async_block_till_done()
             await runtime.set_operation(True)
             start = runtime._clock()
             current = [start]
@@ -702,6 +771,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         runtime = self.entry.runtime_data
         base = now = datetime.now(UTC)
         runtime._clock = lambda: now
+        temperature_entity = self.entry.options["bindings"]["upper_temperature"]
+        temperature_state = self.hass.states.get(temperature_entity)
+        self.hass.states.async_set(temperature_entity, "70", temperature_state.attributes, force_update=True)
+        await self.hass.async_block_till_done()
         await runtime.set_operation(True)
         identity = runtime.session.session_id
         self.assertEqual(runtime.session.timeline.door, "closed")
@@ -736,6 +809,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         runtime = self.entry.runtime_data
         base = now = datetime.now(UTC)
         runtime._clock = lambda: now
+        temperature_entity = self.entry.options["bindings"]["upper_temperature"]
+        temperature_state = self.hass.states.get(temperature_entity)
+        self.hass.states.async_set(temperature_entity, "70", temperature_state.attributes, force_update=True)
+        await self.hass.async_block_till_done()
         await runtime.set_operation(True)
         identity = runtime.session.session_id
         runtime.controller.report_heating(True, now)

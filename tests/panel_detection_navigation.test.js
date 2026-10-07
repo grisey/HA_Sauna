@@ -274,8 +274,8 @@ const parameters = {
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
   p.drawDiagnostics();
-  assert.match(plots.innerHTML, /Lüftungserkennung · Temperaturverlust · °C/);
-  assert.match(plots.innerHTML, /Lüftungserkennung · Absoluter Feuchteverlust · %/);
+  assert.match(plots.innerHTML.replace(/<[^>]*>/g, ""), /Lüftungserkennung · Temperaturverlust · °C/);
+  assert.match(plots.innerHTML.replace(/<[^>]*>/g, ""), /Lüftungserkennung · Absoluter Feuchteverlust · %/);
   assert.match(
     plots.innerHTML,
     /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62 L[\d.]+,28\.78 "/,

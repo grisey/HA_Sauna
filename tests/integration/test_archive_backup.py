@@ -15,7 +15,7 @@ from homeassistant.components.backup import async_get_manager
 from homeassistant.components.backup.manager import CoreBackupReaderWriter
 from homeassistant.backup_restore import restore_backup
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
-from harness import create_sauna, credentials, start_hass
+from harness import create_sauna, credentials, start_hass, retain_session
 from custom_components.ha_sauna import backup
 from custom_components.ha_sauna.const import DOMAIN
 
@@ -28,6 +28,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         self.session_id = self.runtime.session.session_id
         for n in range(20):
             m = Measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 100,

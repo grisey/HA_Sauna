@@ -157,7 +157,6 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
         configuration: { parameters: {} },
       },
       shown: { session, records },
-      chartDataIndex: { records, indexedCount: records.length },
       historyChart: { identity: "entry:session", render() {} },
       historyDetail: true,
       historyTimelineRevision: 1,
@@ -171,8 +170,9 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
       ensureHistoryWindow() {},
       updateHistoryTimelineRevision() {},
       revealEventTarget() {},
-      historyRecords: (kind) => records.filter((record) => record.kind === kind),
     });
+    // Build the complete productive record index, including trace/event links.
+    panel.historyIndex(records);
     panel.renderHistory(new Set(["status"]));
     panel.syncHistorySessions();
     for (const selector of ["#gangs", "#event-list", "#session"])

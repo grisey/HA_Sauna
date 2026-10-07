@@ -88,7 +88,10 @@ test("projection supplies the gang rectangle without a duplicate fallback gang",
 
 test("details render includes the reachable presence and rule card", () => {
   const nodes = {};
+  const defaults = JSON.parse(fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"));
   const state = {
+    frontend_defaults: defaults.frontend,
+    appearance_catalog: defaults.appearance,
     now: end,
     phase: "bereit",
     operation_enabled: true,

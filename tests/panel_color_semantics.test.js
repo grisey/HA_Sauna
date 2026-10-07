@@ -6,8 +6,8 @@ const test = require("node:test");
 
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
-);
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).appearance;
 const color = (role) => catalog.colors.find((item) => item.id === role);
 
 test("active selection is orange, actions inherit neutral HA colors and danger is muted red", () => {

@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from math import isfinite
-from typing import Callable
 from uuid import uuid4
 
 from . import energy, heating, thermostat
 from .consumer_events import gang_changes
-from .mechanical_timer import MechanicalTimer
 from .contracts import BasePhaseMark, ContactorMark, ControlInputs
-from .oven_cooling import calculate_oven_cooling
-from .temporary_door_heat import TemporaryDoorHeatState, advance as advance_door_heat
+from .defaults import instance_default
+from .mechanical_timer import MechanicalTimer
 from .models import Deadline, Energy, LightAfterRun, Session, TimedPhase
+from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
+from .temporary_door_heat import TemporaryDoorHeatState
+from .temporary_door_heat import advance as advance_door_heat
 from .timeline import Event, Kind, apply, utc
 
 GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
@@ -40,8 +42,8 @@ class Controller:
         self,
         parameters: Parameters,
         *,
-        program_mode: str = "constant",
-        control_mode: str = "automatic",
+        program_mode: str = instance_default("program_mode"),
+        control_mode: str = instance_default("control_mode"),
         temperature_steps: tuple[float, ...] | None = None,
         decision_clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -60,6 +62,8 @@ class Controller:
         self._last_at: datetime | None = None
         # Reale Messlage und Schutz bleiben außerhalb der Session-Rücksetzung.
         self.temperature: float | None = None
+        self._temperature_valid_until: datetime | None = None
+        self._recognition_temperature_raster = None
         self.feedback: bool | None = None
         self.contactor: bool | None = None
         self.power_w: float | None = None
@@ -85,6 +89,7 @@ class Controller:
         self.phase_since = None
         self._phase_key = (None, "aus")
         self._recognition_gates = []
+        self._gang_temperature_gates = []
         self._confirmation_batches = 0
         self._delivery_received_at = None
 
@@ -147,6 +152,10 @@ class Controller:
                 if gate[0] <= at]
         if past:
             self._recognition_gates = self._recognition_gates[past[-1]:]
+        past = [index for index, gate in enumerate(self._gang_temperature_gates)
+                if gate[0] <= at]
+        if past:
+            self._gang_temperature_gates = self._gang_temperature_gates[past[-1]:]
 
     def _recognition_context_current(self, at):
         """A later OFF/cooling boundary retires an earlier recognition stretch."""
@@ -160,6 +169,8 @@ class Controller:
         return (
             self._recognition_context_current(at)
             and self.recognition_context_at(at)[1] is None
+            and (self._session.timeline.active is not None
+                 or self._gang_temperature_blocked_at(at) is None)
             and self.recognition_allowed(kind)
         )
 
@@ -414,6 +425,9 @@ class Controller:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
         self._recognition_gates = []
+        self._gang_temperature_gates = [
+            (at, self._gang_temperature_blocked(at), self._gang_temperature_input()[1])
+        ]
         self.light_after_run = None
         self.door_request = TemporaryDoorHeatState()
         self._door_request_pending = False
@@ -526,9 +540,42 @@ class Controller:
             )
         return self.last_decision
 
-    def set_temperature(self, value: float | None, at: datetime):
+    @contextmanager
+    def recognition_temperature_raster(self, value, valid_until):
+        """Use one received raster for admission while control edges keep FIFO."""
+        previous = self._recognition_temperature_raster
+        self._recognition_temperature_raster = (value, valid_until)
+        try:
+            yield
+        finally:
+            self._recognition_temperature_raster = previous
+
+    def set_temperature(
+        self, value: float | None, at: datetime, *, valid_until: datetime | None = None,
+    ):
         self.advance(at, evaluate=False)
         self.temperature = value
+        self._temperature_valid_until = utc(valid_until) if valid_until is not None else None
+        at = utc(at)
+        blocked = self._gang_temperature_blocked(at)
+        gate_valid_until = self._gang_temperature_input()[1]
+        if (not self._gang_temperature_gates
+                or self._gang_temperature_gates[-1][1] != blocked
+                or (self._gang_temperature_gates[-1][2] is not None
+                    and at > self._gang_temperature_gates[-1][2])):
+            self._gang_temperature_gates.append((at, blocked, gate_valid_until))
+        else:
+            # Repeated fresh inputs extend one contiguous admission interval;
+            # a gap creates a new interval and cannot revive an expired anchor.
+            since = self._gang_temperature_gates[-1][0]
+            self._gang_temperature_gates[-1] = (since, blocked, gate_valid_until)
+        if (self._session is not None and self._session.timeline.active is None
+                and self._session.timeline.anchor is not None
+                and not self._gang_anchor_allowed_at(self._session.timeline.anchor.effective_at)):
+            self._session = replace(
+                self._session,
+                timeline=replace(self._session.timeline, anchor=None, preparation=None),
+            )
         self._latch_readiness(utc(at))
         self._evaluate(utc(at))
 
@@ -730,10 +777,13 @@ class Controller:
             if transition.request and self.feedback is not True:
                 self._door_request_pending = True
         blocked = (
-            self._gang_phase_blocked(previous)
+            self._gang_start_blocked(previous)
             if event.kind in GANG_SIGNALS and previous.timeline.active is None
             else None
         )
+        if (blocked is None and event.kind in GANG_SIGNALS
+                and previous.timeline.active is None and recognition_at is not None):
+            blocked = self._gang_temperature_blocked_at(recognition_at)
         if event.kind in GANG_SIGNALS and observed_blocked is not None:
             blocked = observed_blocked
         elif event.kind in GANG_SIGNALS and not context_current:
@@ -765,6 +815,11 @@ class Controller:
             self._evaluate(event.booking_at)
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
+        if (event.kind == Kind.DOOR_CLOSE
+                and not self._gang_anchor_allowed_at(event.effective_at)):
+            # Preserve the observed closure, but a cold/invalid closure cannot
+            # later lend its time to a warm gang or weak-person opportunity.
+            timeline = replace(timeline, anchor=None, preparation=None)
         if (observed_blocked is not None or not context_current) and event.kind in (
             Kind.DOOR_CLOSE, Kind.VENTILATION
         ):
@@ -844,7 +899,39 @@ class Controller:
                 return False
         elif kind != Kind.INFUSION:
             return False
-        return active is not None or self._gang_phase_blocked(session) is None
+        return active is not None or self._gang_start_blocked(session) is None
+
+    def _gang_temperature_input(self):
+        if self._recognition_temperature_raster is not None:
+            return self._recognition_temperature_raster
+        return self.temperature, self._temperature_valid_until
+
+    def _gang_temperature_blocked(self, at=None):
+        """The device supplies the current, valid selected temperature or None."""
+        at = at or (self._received_at(self._last_at) if self._last_at else None)
+        temperature, valid_until = self._gang_temperature_input()
+        if (isinstance(temperature, bool)
+                or not isinstance(temperature, (int, float))
+                or not isfinite(temperature)
+                or (at is not None and valid_until is not None and at > valid_until)):
+            return "temperature_unavailable"
+        if temperature < self.parameters.values["sauna_min_temperature_c"]:
+            return "temperature_below_minimum"
+        return None
+
+    def _gang_temperature_blocked_at(self, at):
+        for gate_at, blocked, valid_until in reversed(self._gang_temperature_gates):
+            if gate_at <= at:
+                return ("temperature_unavailable" if valid_until is not None
+                        and at > valid_until else blocked)
+        return "temperature_unavailable"
+
+    def _gang_anchor_allowed_at(self, at):
+        return (self._gang_temperature_blocked_at(at) is None
+                and at >= self._gang_temperature_gates[-1][0])
+
+    def _gang_start_blocked(self, session):
+        return self._gang_phase_blocked(session) or self._gang_temperature_blocked()
 
     def _gang_phase_blocked(self, session) -> str | None:
         """One phase admission rule for detector polling and stored signals."""
@@ -1306,8 +1393,7 @@ class Controller:
         if session is None:
             return None
         self.completed_sessions += (replace(session, ended_at=at, deadlines=()),)
-        if session.timeline.gang_count:
-            self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
+        self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
         self._session = None
         self._record_recognition_gate(at)
         self._clear_heater_override()

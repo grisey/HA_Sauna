@@ -1,6 +1,8 @@
+import asyncio
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
@@ -71,6 +73,29 @@ def legacy_read(archive, session_id, *, after=0, limit=1000):
 
 
 class ArchiveProjectionReadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_filtered_pages_skip_revisions_without_losing_original_points(self):
+        stored = session("filtered", base_phases=[
+            {"at": T0.isoformat(), "phase": "bereit", "operation_enabled": True}
+        ])
+        await self.write("session", 0, stored, "filtered")
+        for number in range(6):
+            self.archive.append("session", T0, stored, "filtered")
+            self.archive.append("measurement", T0, {"value": number}, "filtered")
+        await self.archive.flush()
+        expected = self.archive.read("filtered")
+        first = self.archive.read("filtered", kinds=("measurement",), limit=3)
+        second = self.archive.read("filtered", kinds=("measurement",), limit=3,
+                                   after=first["next_after"])
+        last = self.archive.read("filtered", kinds=("measurement",), limit=3,
+                                 after=second["next_after"])
+        self.assertEqual(first["records"] + second["records"], [
+            record for record in expected["records"] if record["kind"] == "measurement"
+        ])
+        self.assertEqual(first["phase_projection"], expected["phase_projection"])
+        self.assertEqual(last["session"], stored)
+        self.assertEqual(last["records"], [])
+        self.assertIsNone(last["next_after"])
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.archive = Archive(Path(self.temp.name) / "archive.sqlite", "entry")
@@ -179,20 +204,19 @@ class ArchiveProjectionReadTests(unittest.IsolatedAsyncioTestCase):
                 await self.write("session", 35, stored, session_id)
 
                 cursor = 0
-                for _ in range(2):
+                for page_number in range(2):
                     expected = legacy_read(
                         self.archive, session_id, after=cursor, limit=1
                     )
-                    actual, _, queries = self.traced_read(
+                    actual, loads, queries = self.traced_read(
                         session_id, after=cursor, limit=1
                     )
                     self.assertEqual(actual, expected)
-                    self.assertEqual(len(queries), 3)
-                    self.assertTrue(
-                        any(
-                            "kind IN ('phase','source_state','session')" in query
-                            for query in queries
-                        )
+                    self.assertEqual(loads, 6 if page_number == 0 else 2)
+                    self.assertEqual(
+                        sum(query.startswith("SELECT kind,received_at,payload")
+                            for query in queries),
+                        1 if page_number == 0 else 0,
                     )
                     phases = [
                         item["phase"]
@@ -201,3 +225,153 @@ class ArchiveProjectionReadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("aufheizen", phases)
                     self.assertIn("zwangskühlung", phases)
                     cursor = actual["next_after"]
+
+    async def test_cached_projection_tracks_new_evidence_and_snapshot_at_same_time(self):
+        identity = "changing"
+        stored = session(identity, ended_at=T0 + timedelta(seconds=40))
+        await self.write("phase", 0, {"phase": "aufheizen"}, identity)
+        await self.write("session", 40, stored, identity)
+        initial = self.archive.read(identity, after=2**63 - 1)
+        await self.write("measurement", 20, {"value": 78.123456789}, identity)
+        actual, loads, queries = self.traced_read(identity, after=2**63 - 1)
+        self.assertEqual(actual, initial)
+        self.assertEqual(loads, 1)
+        self.assertFalse(any(query.startswith("SELECT kind,received_at,payload")
+                             for query in queries))
+
+        await self.write("phase", 10, {"phase": "bereit"}, identity)
+        await self.write("source_state", 15, {"role": "heater", "state": "off"}, identity)
+        updated = self.archive.read(identity, after=2**63 - 1)
+        self.assertEqual(updated, legacy_read(self.archive, identity, after=2**63 - 1))
+        self.assertNotEqual(updated["phase_projection"], initial["phase_projection"])
+        stored["timeline"]["completed"] = [
+            {"gang_id": "g", "started_at": (T0 + timedelta(seconds=20)).isoformat(),
+             "ended_at": (T0 + timedelta(seconds=30)).isoformat()}
+        ]
+        await self.write("session", 40, stored, identity)
+        self.assertEqual(self.archive.read(identity), legacy_read(self.archive, identity))
+        self.assertIn("g", [p["source_id"] for p in self.archive.read(identity)["phase_projection"]["intervals"]])
+
+    async def test_old_reader_cannot_leave_a_reusable_stale_projection(self):
+        identity = "race"
+        await self.write("phase", 0, {"phase": "aufheizen"}, identity)
+        await self.write("session", 40, session(identity), identity)
+        # WAL permits a real old read snapshot to outlive a committed writer.
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.row_factory = sqlite3.Row
+            generation = self.archive._projection_generation
+            db.execute("BEGIN")
+            row = db.execute("SELECT payload,updated_at FROM sessions WHERE session_id=?",
+                             (identity,)).fetchone()
+            await self.write("phase", 10, {"phase": "bereit"}, identity)
+            old = self.archive._legacy_projection(
+                db, identity, json.loads(row["payload"]), row, generation=generation
+            )
+            self.assertEqual([p.phase for p in old.intervals], ["aufheizen"])
+            self.assertNotIn(identity, self.archive._projection_cache)
+        current = self.archive.read(identity)
+        self.assertEqual(current, legacy_read(self.archive, identity))
+        self.assertEqual([p["phase"] for p in current["phase_projection"]["intervals"]],
+                         ["aufheizen", "bereit"])
+
+    async def assert_inflight_read_cannot_restore_invalidated_cache(self, change):
+        identity = "inflight"
+        await self.write("phase", 0, {"phase": "aufheizen"}, identity)
+        await self.write("session", 40, session(identity), identity)
+        before = self.archive.read(identity)
+        with closing(sqlite3.connect(self.archive.path)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+        ready, resume = threading.Event(), threading.Event()
+        project = self.archive._legacy_projection
+
+        def gate(*args, **kwargs):
+            if not ready.is_set():
+                ready.set()
+                if not resume.wait(5):
+                    raise TimeoutError("projection test gate")
+            return project(*args, **kwargs)
+
+        with patch.object(self.archive, "_legacy_projection", side_effect=gate):
+            reading = asyncio.create_task(asyncio.to_thread(self.archive.read, identity))
+            try:
+                self.assertTrue(await asyncio.to_thread(ready.wait, 5))
+                if change == "append":
+                    await self.write("phase", 10, {"phase": "bereit"}, identity)
+                else:
+                    await self.archive.erase(identity, reset=change == "reset")
+                self.assertNotIn(identity, self.archive._projection_cache)
+                if change == "reinsert":
+                    # A new writer can receive the same imported ID. Its
+                    # lifecycle is independent of the old writer's tombstones.
+                    writer = Archive(self.archive.path, self.archive.entry_id)
+                    for kind, second, value in (
+                        ("phase", 0, {"phase": "bereit"}),
+                        ("session", 40, session(identity)),
+                    ):
+                        writer._write((kind, (T0 + timedelta(seconds=second)).isoformat(),
+                                       archive_module.encoded(value), identity))
+                current = self.archive.read(identity)
+                if change in {"erase", "reset"}:
+                    self.assertIsNone(current)
+                else:
+                    self.assertEqual(current, legacy_read(self.archive, identity))
+                    self.assertNotEqual(current["phase_projection"], before["phase_projection"])
+                cached = dict(self.archive._projection_cache)
+                resume.set()
+                self.assertEqual(await reading, before)
+                self.assertEqual(dict(self.archive._projection_cache), cached)
+            finally:
+                resume.set()
+                await reading
+        if current is None:
+            self.assertIsNone(self.archive.read(identity))
+            self.assertFalse(self.archive._projection_cache)
+        else:
+            actual, loads, _ = self.traced_read(identity, after=2**63 - 1)
+            self.assertEqual(actual["phase_projection"], current["phase_projection"])
+            self.assertEqual(loads, 1)
+
+    async def test_inflight_read_cannot_restore_cache_after_erase(self):
+        await self.assert_inflight_read_cannot_restore_invalidated_cache("erase")
+
+    async def test_inflight_read_cannot_restore_cache_after_reset(self):
+        await self.assert_inflight_read_cannot_restore_invalidated_cache("reset")
+
+    async def test_inflight_read_cannot_replace_cache_for_reinserted_id(self):
+        await self.assert_inflight_read_cannot_restore_invalidated_cache("reinsert")
+
+    async def test_inflight_read_cannot_replace_cache_after_append(self):
+        await self.assert_inflight_read_cannot_restore_invalidated_cache("append")
+
+    async def test_cached_projection_is_private_and_deletion_reset_evict_it(self):
+        for identity in ("first", "second"):
+            await self.write("phase", 0, {"phase": "bereit"}, identity)
+            await self.write("session", 40, session(identity), identity)
+            actual = self.archive.read(identity)
+            actual["phase_projection"]["intervals"][0]["phase"] = "changed by caller"
+            self.assertEqual(self.archive.read(identity), legacy_read(self.archive, identity))
+        self.assertEqual(set(self.archive._projection_cache), {"first", "second"})
+        await self.archive.erase("first")
+        self.assertIsNone(self.archive.read("first"))
+        self.assertNotIn("first", self.archive._projection_cache)
+        self.archive.read("second")
+        await self.archive.erase(reset=True)
+        self.assertEqual(self.archive.read(), [])
+        self.assertFalse(self.archive._projection_cache)
+
+    async def test_legacy_cache_evicts_least_recent_session_at_configured_capacity(self):
+        count = self.archive._projection_cache_entries
+        for number in range(count):
+            identity = f"session-{number}"
+            await self.write("session", 40, session(identity), identity)
+            self.archive.read(identity, after=2**63 - 1)
+        self.archive.read("session-0", after=2**63 - 1)
+        await self.write("session", 40, session("new"), "new")
+        self.archive.read("new", after=2**63 - 1)
+        self.assertEqual(len(self.archive._projection_cache), count)
+        self.assertIn("session-0", self.archive._projection_cache)
+        self.assertNotIn("session-1", self.archive._projection_cache)
+        actual, loads, _ = self.traced_read("session-1", after=2**63 - 1)
+        self.assertEqual(loads, 2)
+        self.assertEqual(actual, legacy_read(self.archive, "session-1", after=2**63 - 1))

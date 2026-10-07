@@ -1,21 +1,27 @@
 """Synthetische Zeitreihen prüfen Kausalität, Ausfall und Quellenwechsel."""
-from datetime import timedelta
 import asyncio
 import json
+import unittest
+from collections import Counter
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
+
+from test_foundation import T0, event, parameters
 
 from custom_components.ha_sauna.bindings import Bindings
-from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.core.controller import Controller
-from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.detection_parameters import candidate_values
+from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
-from custom_components.ha_sauna.core.moisture import absolute_humidity, saturation_vapor_pressure, WATER_VAPOR_GAS_CONSTANT
+from custom_components.ha_sauna.core.moisture import (
+    WATER_VAPOR_GAS_CONSTANT,
+    absolute_humidity,
+    saturation_vapor_pressure,
+)
 from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
-from custom_components.ha_sauna.core.timeline import Kind
-from test_foundation import T0, parameters
+from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
 def detection_parameters(**values):
@@ -49,6 +55,111 @@ def trace(second):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_complete_additive_ventilation_lookback_ends_confirmed_gang(self):
+        p = detection_parameters(median_seconds=1, door_humidity_seconds=60,
+                                 vent_baseline_seconds=120)
+        d = Detector(p, T0)
+        c = Controller(p)
+        c.set_temperature(80, T0)
+        c.begin_session("s", T0)
+        c.process(event("close", Kind.DOOR_CLOSE, 0))
+        c.process(event("water", Kind.INFUSION, 0))
+        d.report_heating(True, T0)
+        found = []
+
+        def received(detection):
+            found.append(detection)
+            c.process(Event(f"detected:{detection.kind}:{detection.trace_at}", "s",
+                            detection.kind, detection.effective_at,
+                            detection.detected_at, detection.trace_at))
+
+        for second in range(320):
+            now = T0 + timedelta(seconds=second)
+            humidity = 40 if second <= 40 else None if second <= 180 else 20
+            temperature = 80 - min(10, max(0, second - 200) * .2)
+            c.set_temperature(temperature, now)
+            for position in d.positions:
+                d.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
+                d.accept(measurement(position, Quantity.HUMIDITY, humidity, second))
+            d.advance(now, enabled=True, allowed=c.recognition_allowed,
+                      on_detection=received, recognition_context=c.recognition_context_at)
+
+        self.assertEqual(d.capacity, 181)
+        ventilation = [e for e in found if e.kind == Kind.VENTILATION]
+        self.assertEqual([e.trace_at for e in ventilation], [T0 + timedelta(seconds=215)])
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        self.assertFalse(c.regulation_inputs.gang_heat_demand)
+        self.assertIn("gang_ended", [e.kind for e in c.consumer_events])
+
+    def test_same_route_features_are_calculated_once_per_sample(self):
+        d = Detector(detection_parameters(), T0)
+        calls = Counter()
+        slope, absolute = d._slope, d._absolute_humidity_difference
+
+        def measured(method, name, args):
+            calls[d.index, name, args] += 1
+            return method(*args)
+
+        d._slope = lambda *args: measured(slope, "slope", args)
+        d._absolute_humidity_difference = lambda *args: measured(absolute, "absolute", args)
+        found = []
+        for second in range(401):
+            found += sample(d, second, *trace(second))
+        self.assertIn(Kind.DOOR_CLOSE, [e.kind for e in found])
+        self.assertIn(Kind.PERSON_STRONG, [e.kind for e in found])
+        self.assertTrue(calls)
+        self.assertEqual(max(calls.values()), 1)
+
+    def test_opening_loss_can_follow_short_humidity_signal_during_continuous_cooling(self):
+        detector = Detector(detection_parameters(), T0)
+        events = []
+        for second in range(280):
+            fall = max(0, second - 70)
+            events += sample(detector, second, 80 - .04 * fall,
+                             30 - min(.6, .12 * fall))
+        self.assertEqual([e.kind for e in events].count(Kind.DOOR_OPEN), 1)
+        opening = next(e for e in events if e.kind == Kind.DOOR_OPEN)
+        self.assertGreaterEqual((opening.detected_at - T0).total_seconds(), 95)
+
+    def test_small_closed_door_fluctuations_do_not_open_either_route(self):
+        for thermal in (False, True):
+            for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
+                with self.subTest(thermal=thermal, positions=positions):
+                    detector = Detector(detection_parameters(), T0, positions)
+                    events = []
+                    for second in range(130):
+                        detector.report_heating(thermal, T0 + timedelta(seconds=second))
+                        # Fast enough to satisfy both old trend/hold rules,
+                        # but only 0.8 °C of mixing before full recovery.
+                        fall = max(0, min(second - 30, 70 - second, 20))
+                        events += sample(
+                            detector, second, 80 - .04 * fall,
+                            30 if thermal else 30 - .08 * fall, positions,
+                        )
+                    self.assertNotIn(Kind.DOOR_OPEN, [e.kind for e in events])
+                    # A subsequent substantial loss must still open normally.
+                    for second in range(130, 180):
+                        detector.report_heating(thermal, T0 + timedelta(seconds=second))
+                        fall = min(20, second - 130)
+                        events += sample(detector, second, 80 - .15 * fall,
+                                         30 if thermal else 30 - .1 * fall, positions)
+                    self.assertEqual([e.kind for e in events].count(Kind.DOOR_OPEN), 1)
+
+    def test_minimum_opening_loss_requires_both_original_positions(self):
+        detector = Detector(detection_parameters(), T0)
+        events = []
+        for second in range(90):
+            detector.report_heating(True, T0 + timedelta(seconds=second))
+            fall = min(20, max(0, second - 30))
+            for position, rate in ((Position.UPPER, .12), (Position.LOWER, .03)):
+                detector.accept(measurement(position, Quantity.TEMPERATURE,
+                                            80 - rate * fall, second))
+                detector.accept(measurement(position, Quantity.HUMIDITY,
+                                            30 - .08 * fall, second))
+            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        self.assertNotIn(Kind.DOOR_OPEN, [e.kind for e in events])
+
     def test_finite_temperature_outlier_keeps_archived_cycle_and_output_alive(self):
         async def exercise(path):
             now = [T0]
@@ -568,9 +679,9 @@ class DetectorTests(unittest.TestCase):
         events = []
         for i in range(80):
             detector.report_heating(True, T0 + timedelta(seconds=i))
-            # Synthetische kurze Öffnung: beidseitig 1,2 °C/min, zunächst
+            # Synthetische kurze Öffnung: beidseitig 4,8 °C/min, zunächst
             # sogar steigende Feuchte. Die bisherige UND-Regel reicht nicht.
-            temperature = 50 if i < 20 else 50-.02*min(20,i-20)+max(0,i-40)*.03
+            temperature = 50 if i < 20 else 50-.08*min(20,i-20)+max(0,i-40)*.03
             events += sample(detector, i, temperature, 30+i*.002)
         self.assertEqual([e.kind for e in events], [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
         self.assertGreaterEqual((events[0].detected_at-T0).total_seconds(), 25)
@@ -584,7 +695,7 @@ class DetectorTests(unittest.TestCase):
                         "door_heating_hold_seconds": hold,
                     }), T0, (Position.UPPER,))
                     events = []
-                    for second in range(hold + 40):
+                    for second in range(hold + 60):
                         detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
                         fall = max(0, second - 20)
                         events += sample(detector, second, 90 - .04 * fall,
@@ -669,7 +780,7 @@ class DetectorTests(unittest.TestCase):
         detector = Detector(detection_parameters(), T0, (Position.UPPER,))
         for second in range(61):
             detector.accept(measurement(
-                Position.UPPER, Quantity.TEMPERATURE, 50 - .03 * second, second
+                Position.UPPER, Quantity.TEMPERATURE, 50 - .06 * second, second
             ))
             detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
         events = detector.advance(

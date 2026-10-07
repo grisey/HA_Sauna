@@ -12,6 +12,7 @@ from datetime import datetime
 from math import exp, expm1, isfinite, log
 
 from .contracts import ContactorMark, ReadinessPause
+from .parameters import BY_KEY
 from .timeline import utc
 
 
@@ -39,10 +40,10 @@ def calculate_oven_cooling(
     at: datetime,
     window_started_at: datetime | None = None,
     readiness_complete: bool = True,
-    after_run_minutes: float = 5,
-    oven_cooling_max_minutes: float = 15,
-    oven_cooling_half_life_minutes: float = 15,
-    oven_cooling_heat_idle_ratio: float = 2,
+    after_run_minutes: float = BY_KEY["after_run_minutes"].default,
+    oven_cooling_max_minutes: float = BY_KEY["oven_cooling_max_minutes"].default,
+    oven_cooling_half_life_minutes: float = BY_KEY["oven_cooling_half_life_minutes"].default,
+    oven_cooling_heat_idle_ratio: float = BY_KEY["oven_cooling_heat_idle_ratio"].default,
 ) -> OvenCoolingResult:
     """Calculate an exponentially weighted cooling duration.
 

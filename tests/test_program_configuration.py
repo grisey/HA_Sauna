@@ -1,5 +1,6 @@
 """Konfiguration der Temperaturprogramme ohne Laufzeitkopplung."""
 import asyncio
+from datetime import timedelta
 import unittest
 from types import SimpleNamespace
 
@@ -463,6 +464,9 @@ class ProgramConfigurationTests(unittest.TestCase):
             self.assertIsNone(runtime.controller.temperature_steps)
             if not active:
                 runtime._set_operation(True)
+            runtime.controller.set_temperature(
+                80, T0, valid_until=T0 + timedelta(seconds=60)
+            )
             for second, kind in enumerate(
                 (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 10
             ):

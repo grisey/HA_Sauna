@@ -95,14 +95,17 @@ class LightOutputTests(unittest.TestCase):
         self.assertTrue(self.light.expire_manual(10))
         self.assertEqual(self.light.manual_brightness, None)
         self.assertEqual(self.light.manual_ends_at, None)
-        self.assertEqual(self.update(10, "heat", target=20).brightness_percent, 40)
+        self.assertEqual(self.update(10, "heat", target=20, actual=73).brightness_percent, 73)
+        self.assertEqual(self.update(40, "heat", target=20).brightness_percent, 20)
 
-    def test_return_to_automatic_starts_from_last_automatic_value(self):
+    def test_return_to_automatic_starts_from_observed_not_requested_value(self):
         self.update(0, target=40)
         self.light.set_manual(70)
         self.update(1, target=40)
         self.light.return_to_automatic()
-        self.assertEqual(self.update(2, target=20).brightness_percent, 40)
+        # Rückmeldung kann von der manuellen Vorgabe abweichen.
+        self.assertEqual(self.update(2, target=20, actual=68).brightness_percent, 68)
+        self.assertEqual(self.update(17, target=20, actual=68).brightness_percent, 44)
         self.assertEqual(self.update(32, target=20).brightness_percent, 20)
 
     def test_return_to_automatic_keeps_following_a_changed_target(self):
@@ -110,10 +113,10 @@ class LightOutputTests(unittest.TestCase):
         self.light.set_manual(70)
         self.update(1, target=40)
         self.light.return_to_automatic()
-        self.assertEqual(self.update(2, target=20).brightness_percent, 40)
+        self.assertEqual(self.update(2, target=20, actual=70).brightness_percent, 70)
         # Eine spätere Dämmerungs- oder Temperaturänderung darf die Rückkehr
         # nicht an das Ziel beim ersten Tick binden.
-        self.assertEqual(self.update(17, target=30).brightness_percent, 35)
+        self.assertEqual(self.update(17, target=30).brightness_percent, 50)
         self.assertEqual(self.update(32, target=30).brightness_percent, 30)
 
     def test_return_to_automatic_keeps_live_session_light(self):
@@ -126,11 +129,11 @@ class LightOutputTests(unittest.TestCase):
             80,
         )
         self.light.return_to_automatic()
-        for second, expected in ((32, 50), (119, 50), (120, 0)):
+        for second, expected in ((32, 80), (47, 65), (62, 50), (119, 50), (120, 0)):
             with self.subTest(second=second):
                 self.assertEqual(
                     self.update(
-                        second, "session", "session_light", 0, 50, 120
+                        second, "session", "session_light", 0, 80, 120
                     ).brightness_percent,
                     expected,
                 )
@@ -148,9 +151,39 @@ class LightOutputTests(unittest.TestCase):
         self.update(60, "cooling", "nachlauf", 40, 80, 120)
         self.assertTrue(self.light.expire_manual(61))
         resumed = self.update(61, "cooling", "nachlauf", 40, 80, 120)
-        expected = control.update(61, "cooling", "nachlauf", 40, 15, 120)
-        self.assertAlmostEqual(resumed.brightness_percent, expected.brightness_percent)
-        self.assertLess(resumed.brightness_percent, 40)
+        self.assertEqual(resumed.brightness_percent, 80)
+        for second in (76, 91, 120):
+            expected = control.update(second, "cooling", "nachlauf", 40, 15, 120)
+            resumed = self.update(second, "cooling", "nachlauf", 40, 80, 120)
+            if second == 76:
+                self.assertAlmostEqual(
+                    resumed.brightness_percent, (80 + expected.brightness_percent) / 2
+                )
+            else:
+                self.assertAlmostEqual(resumed.brightness_percent, expected.brightness_percent)
+
+    def test_return_transition_is_bounded_by_the_existing_cooling_deadline(self):
+        self.update(0, "cooling", "nachlauf", 40, 40, 120)
+        self.light.set_manual(80, phase_key="cooling")
+        self.light.return_to_automatic()
+        self.assertEqual(self.update(110, "cooling", "nachlauf", 40, 80, 120).brightness_percent, 80)
+        self.assertEqual(self.update(120, "cooling", "nachlauf", 40, 80, 120).brightness_percent, 40)
+
+    def test_due_off_interrupts_return_transition(self):
+        self.update(0, "session", "session_light", 0, 50, 120)
+        self.light.set_manual(80, phase_key="session")
+        self.light.return_to_automatic()
+        self.assertEqual(self.update(110, "session", "session_light", 0, 80, 120).brightness_percent, 80)
+        self.assertEqual(self.update(115, "session", "session_light", 0, 80, 120).brightness_percent, 65)
+        self.assertEqual(self.update(120, "session", "session_light", 0, 80, 120).brightness_percent, 0)
+
+    def test_new_manual_selection_interrupts_return_immediately(self):
+        self.update(0)
+        self.light.set_manual(80)
+        self.light.return_to_automatic()
+        self.update(10, actual=80)
+        self.light.set_manual(19)
+        self.assertEqual(self.update(11, actual=80).brightness_percent, 19)
 
     def test_normal_phase_change_fades_from_the_observed_manual_value(self):
         self.update(0, "heat", target=40)

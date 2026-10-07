@@ -7,9 +7,12 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.helpers.entity import EntityCategory
 
+from .core.defaults import section
 from .core.models import Position
 from .core.moisture import current_absolute_humidity
 from .entity import SaunaEntity
+
+DISPLAY_PRECISION = section("appearance")["precision"]
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -31,7 +34,7 @@ class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):
     _attr_native_unit_of_measurement = "g/m³"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_suggested_display_precision = 2
+    _attr_suggested_display_precision = DISPLAY_PRECISION["absolute_humidity"]
 
     def __init__(self, entry, position: Position):
         if not isinstance(position, Position):
@@ -55,7 +58,7 @@ class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):
             self.runtime._clock(),
             self.runtime.configuration.parameters.values.get("sensor_timeout_seconds"),
         )
-        return round(value, 2) if value is not None else None
+        return round(value, self._attr_suggested_display_precision) if value is not None else None
 
     @property
     def extra_state_attributes(self):
@@ -77,7 +80,7 @@ class SaunaEnergy(SaunaEntity, SensorEntity):
     @property
     def native_value(self):
         session = self.runtime.session
-        return round(session.energy.total_kwh, 4) if session else None
+        return round(session.energy.total_kwh, DISPLAY_PRECISION["energy"]) if session else None
 
     @property
     def extra_state_attributes(self):

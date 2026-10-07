@@ -117,6 +117,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         ])
 
     async def test_full_resolution_references_and_earlier_assignments_survive(self):
+        self.c.set_temperature(80, T0)
         for n in range(30):
             self.record(n)
         self.c.process(event("close", Kind.DOOR_CLOSE, 1))

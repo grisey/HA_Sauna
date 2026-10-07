@@ -266,6 +266,34 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("upper_status", result["data"]["bindings"])
             self.assertEqual(result["data"]["parameters"], self.values)
 
+    async def test_offline_legacy_constant_survives_technical_options_save(self):
+        from custom_components.ha_sauna.runtime import Configuration
+
+        self.entry.options = {
+            "bindings": self.inputs,
+            "parameters": {
+                "target_temperature_c": 80,
+                "session_gap_minutes": 15,
+                "night_brightness_percent": 37,
+            },
+        }
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        flow.handler = self.entry.entry_id
+        flow.context = {"source": "options"}
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            form = await flow.async_step_parameters()
+            marker = next(key for key in form["data_schema"].schema if str(key) == "program_mode")
+            self.assertEqual(marker.default(), "constant")
+            self.assertEqual(marker.description["suggested_value"], "constant")
+            submitted = form["data_schema"]({"session_gap_minutes": 16})
+            result = await flow.async_step_parameters(submitted)
+        loaded = Configuration.from_options(result["data"])
+        self.assertEqual(loaded.program_mode, "constant")
+        self.assertEqual(loaded.parameters.values["target_temperature_c"], 80)
+        self.assertEqual(loaded.parameters.values["session_gap_minutes"], 16)
+        self.assertEqual(loaded.parameters.values["night_brightness_percent"], 37)
+
     async def test_loaded_and_closed_options_share_effective_program_edit(self):
         from datetime import UTC, datetime, timedelta
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -305,6 +333,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     now = datetime(2030, 1, 1, tzinfo=UTC)
                     restored = SaunaRuntime(saved, clock=lambda: now)
                     await restored.set_operation(True)
+                    restored.controller.set_temperature(
+                        80, now, valid_until=now + timedelta(seconds=60)
+                    )
                     await restored.receive(Event(
                         "closed", restored.session.session_id,
                         Kind.DOOR_CLOSE, now, now,
@@ -392,8 +423,17 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch("custom_components.ha_sauna.device.HADevice.start", new_callable=AsyncMock), patch("homeassistant.helpers.event.async_track_time_interval", return_value=lambda: None):
             self.assertTrue(await async_setup_entry(self.hass, self.entry))
         self.assertIsNone(self.entry.runtime_data.session)
-        with patch("custom_components.ha_sauna.device.HADevice.close", new_callable=AsyncMock):
+        with (
+            patch("custom_components.ha_sauna.device.HADevice.close", new_callable=AsyncMock),
+            patch("custom_components.ha_sauna.device.HADevice.apply", new_callable=AsyncMock),
+            patch(
+                "custom_components.ha_sauna.device.HADevice.prepare_heater_handoff",
+                new_callable=AsyncMock, return_value=True,
+            ) as handoff,
+        ):
             self.assertTrue(await async_unload_entry(self.hass, self.entry))
+            handoff.assert_awaited_once()
+        self.assertIsNone(self.entry.runtime_data.session)
         self.assertTrue(self.entry.runtime_data.closed)
         self.assertEqual(self.hass.services.mock_calls, [])
 

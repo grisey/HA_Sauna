@@ -93,9 +93,16 @@ def project_session(session, now) -> PhaseProjection:
     points.update(at for left, right, *_ in overlays for at in (left, right) if start < at < end)
     intervals, pauses = [], []
     ordered = sorted(points)
+    mark_index = contact_index = 0
+    base_phase, enabled, contact = "unknown", None, None
     for left, right in zip(ordered, ordered[1:]):
-        prior = [m for m in marks if m[0] <= left]
-        phase, enabled = prior[-1][1:] if prior else ("unknown", None)
+        while mark_index < len(marks) and marks[mark_index][0] <= left:
+            _, base_phase, enabled = marks[mark_index]
+            mark_index += 1
+        while contact_index < len(contacts) and contacts[contact_index][0] <= left:
+            _, contact = contacts[contact_index]
+            contact_index += 1
+        phase = base_phase
         source, complete = None, phase != "unknown"
         if enabled is False:
             phase = "aus"
@@ -106,8 +113,7 @@ def project_session(session, now) -> PhaseProjection:
             if active:
                 _, _, phase, source, complete = active[-1]
         _merge(intervals, PhaseInterval(left, right, phase, source, complete))
-        known = [m for m in contacts if m[0] <= left]
-        if phase == "bereit" and enabled is True and known and known[-1][1] is False:
+        if phase == "bereit" and enabled is True and contact is False:
             _merge(pauses, ReadinessPause(left, right))
     incomplete = any(n.endswith("incomplete") for n in notes) or any(not p.complete for p in intervals)
     return PhaseProjection(tuple(intervals), tuple(pauses), tuple(dict.fromkeys(notes)), not incomplete)

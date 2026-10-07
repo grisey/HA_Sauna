@@ -8,7 +8,7 @@ from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from custom_components.ha_sauna.core.timeline import Door
-from harness import create_sauna, start_hass
+from harness import create_sauna, start_hass, retain_session, with_confirmed_round
 
 
 class TestHeater(SwitchEntity):
@@ -257,7 +257,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             "phase", self.base, {"phase": "bereit"}, completed.session_id
         )
         self.runtime.archive.save_session(
-            replace(completed, ended_at=self.base),
+            replace(with_confirmed_round(completed), ended_at=self.base),
             self.base,
             self.runtime.configuration.as_options(),
         )
@@ -459,6 +459,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_light_defaults_reach_real_light_service_and_switch_off(self):
         from custom_components.ha_sauna.core.display import phase_timer
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         session_id = self.runtime.session.session_id
         await self.runtime.set_operation(False)
         await self.hass.async_block_till_done()
@@ -514,7 +515,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.time(second)
             if manual_minutes == .5 and second >= 40:
                 self.assertIsNone(self.runtime.device.light_output.manual_brightness)
-                self.assertAlmostEqual(self.light.brightness, 255 * .5, delta=1)
+                # Rückgabe beginnt beim Ist (80 %) am ersten Tick nach Ablauf
+                # und erreicht die Phasenkurve innerhalb der vorhandenen Frist.
+                expected = 80 - 30 * (second - 40) / (61 - 40)
+                self.assertAlmostEqual(
+                    self.light.brightness, 255 * round(expected) / 100, delta=1
+                )
         before = len(self.light.calls)
         for second in (61, 62, 65, 75, 90, 121):
             await self.time(second)
@@ -560,6 +566,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.base = self.now = self.runtime._clock()
         self.runtime._clock = lambda: self.now
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         await self.hass.async_block_till_done()
         self.now = self.base + timedelta(seconds=1)
         await self.runtime.set_operation(False)
@@ -579,8 +586,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
         phase = await self._prepare_pending_session_light_expiry()
         adapter = self.runtime.device
-        original_off, original_wait = self.light.async_turn_off, adapter._wait_light_service
-        entered, release, waiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original_off = self.light.async_turn_off
+        entered, release = asyncio.Event(), asyncio.Event()
         service, following = None, None
         held_runtime_lock = False
         following_at = self.base + timedelta(seconds=62)
@@ -598,17 +605,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                     return
             await original_off(**kwargs)
 
-        async def observe_wait():
-            if self.now == following_at and adapter._light_service_task is service:
-                self.assertFalse(service.done())
-                waiting.set()
-            return await original_wait()
-
         self.now = planned_at = phase.ends_at
-        with (
-            patch.object(self.light, "async_turn_off", side_effect=paused_off),
-            patch.object(adapter, "_wait_light_service", side_effect=observe_wait),
-        ):
+        with patch.object(self.light, "async_turn_off", side_effect=paused_off):
             first = asyncio.create_task(self.runtime.tick())
             try:
                 await asyncio.wait_for(entered.wait(), 3)
@@ -630,8 +628,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.now = following_at
                     following = asyncio.create_task(self.runtime.tick())
-                    await asyncio.wait_for(waiting.wait(), 3)
-                    self.assertFalse(following.done())
+                    await asyncio.wait_for(following, .5)
+                    self.assertFalse(service.done())
                 self.assertIsNone(adapter._light_session_off_completed_key)
                 self.now = completed_at = self.base + timedelta(seconds=63)
                 release.set()
@@ -645,7 +643,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(service.done())
                     held_runtime_lock = False
                     self.runtime._lock.release()
-                    following = asyncio.create_task(self.runtime.tick())
+                following = asyncio.create_task(self.runtime.tick())
                 await following
                 await self.hass.async_block_till_done()
             finally:
@@ -688,7 +686,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         if fails:
             self.assertEqual(commands[1]["payload"], {
                 **command["payload"],
-                "planned_at": (completed_at if finishes_before_tick else following_at).isoformat(),
+                "planned_at": completed_at.isoformat(),
                 "sent_at": completed_at.isoformat(), "service_error": None,
             })
             self.assertEqual(commands[1]["received_at"], completed_at.isoformat())
@@ -828,6 +826,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_session_light_commands_are_archived_and_retried(self):
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         await self.time(30)
         self.assertTrue(self.light.is_on)
         self.light.fail_commands = True
@@ -1105,7 +1104,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         for second in range(70):
             self.now=self.base+timedelta(seconds=second)
-            temperature=50 if second<20 else 50-.02*min(20,second-20)+max(0,second-40)*.03
+            temperature=50 if second<20 else 50-.08*min(20,second-20)+max(0,second-40)*.03
             for position in ("upper","lower"):
                 await self.set_source(f"{position}_temperature",temperature)
                 await self.set_source(f"{position}_humidity",30)
@@ -1118,6 +1117,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.heater.is_on)
 
     async def test_temperature_entities_cannot_override_running_cooling(self):
+        await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -1483,6 +1483,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
+        await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -1500,7 +1501,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_expiry_returns_to_running_after_run_curve(self):
         self.hass.config_entries.async_update_entry(self.entry, options={
             **self.entry.options,
-            "parameters": {**self.entry.options["parameters"], "manual_override_minutes": .1},
+            "parameters": {**self.entry.options["parameters"], "manual_override_minutes": .1,
+                "light_transition_seconds": 5},
         })
         await self.hass.async_block_till_done()
         await self.prepare_gang_after_run()
@@ -1524,8 +1526,17 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.controller.phase, "nachlauf")
         self.assertTrue(self.light.is_on)
         self.assertEqual(self.hass.states.get(self.light.entity_id).state, "on")
+        # Expiry starts the return at the observed manual value. The original
+        # cooling curve keeps running underneath this short transition.
+        self.assertAlmostEqual(self.light.brightness, 255 * .8, delta=1)
+        await self.time(80)
+        returning = self.light.brightness
+        self.assertLess(returning, 255 * .8)
+        self.assertGreater(returning, before)
+        await self.time(83)
         self.assertGreaterEqual(self.light.brightness, round(255 * dim_percent / 100))
-        self.assertLess(self.light.brightness, before)
+        self.assertGreater(self.light.brightness, before)
+        self.assertLess(self.light.brightness, returning)
         self.assertLess(self.light.brightness, 255 * self.runtime.device.normal_light_brightness() / 100)
         resumed = self.light.brightness
         # Cooling duration comes from the Controller's factual calculation;
@@ -1887,6 +1898,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.light.brightness, 255 * .35, delta=1)
 
     async def test_reassignment_waits_for_running_on_before_final_off(self):
+        from custom_components.ha_sauna.runtime import SaunaRuntime
+
         old_runtime = self.runtime
         adapter = old_runtime.device
         entered, release, handing_off = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -1910,6 +1923,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.light, "async_turn_on", side_effect=paused_on),
             patch.object(adapter, "finish_session_light", side_effect=finish),
+            patch(
+                "custom_components.ha_sauna.runtime.SaunaRuntime",
+                side_effect=lambda configuration: SaunaRuntime(configuration, clock=lambda: self.now),
+            ),
         ):
             selecting = asyncio.create_task(old_runtime.set_light_override(80))
             try:
@@ -1972,6 +1989,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         import zipfile
 
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         session_id = self.runtime.session.session_id
         entered, release = asyncio.Event(), asyncio.Event()
         original_on = self.light.async_turn_on
@@ -2125,6 +2143,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         import zipfile
 
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         await self.hass.async_block_till_done()
         session_id = self.runtime.session.session_id
         self.now = self.base + timedelta(seconds=1)
@@ -2446,6 +2465,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_close_wait_failure_keeps_archive_open_and_heater_off_then_retries(self):
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         self.assertTrue(self.heater.is_on)
         session_id = self.runtime.session.session_id
         entered, release = asyncio.Event(), asyncio.Event()
@@ -2532,6 +2552,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await active_service
             await self.hass.async_block_till_done()
         self.assertIsNone(adapter.light_output.manual_brightness)
+        # The softened return starts at the observed 80 %. Advance it before
+        # selecting 80 % externally, so this is a real brightness edge.
+        await self.time(4)
         await self.set_light_externally(True, 204)
         self.assertAlmostEqual(adapter.light_output.manual_brightness, 80)
 
@@ -2550,6 +2573,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source(f"{position}_temperature", 70)
             await self.set_source(f"{position}_humidity", 30)
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         await self.hass.async_block_till_done()
         old_session = self.runtime.session.session_id
         self.now = self.base + timedelta(seconds=1)
@@ -2704,12 +2728,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         session_id="ended", started_at=self.now, ends_at=self.now
                     )
                 finishing = asyncio.create_task(adapter._finish_expired_session_light(self.now))
-                await asyncio.sleep(0)
+                self.assertFalse(await asyncio.wait_for(finishing, .5))
                 self.assertIsNone(adapter._light_session_off_completed_key)
-                self.assertFalse(finishing.done())
             finally:
                 release.set()
-            self.assertTrue(await finishing)
+            await adapter._light_service_task
+            self.assertTrue(await adapter._finish_expired_session_light(self.now))
             await self.hass.async_block_till_done()
         self.assertEqual([kind for kind, _kwargs in self.light.calls], ["on", "off"])
         self.assertFalse(self.light.is_on)
@@ -2723,6 +2747,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.runtime.configuration, control_input_mode="button"
         )
         await self.runtime.set_operation(True)
+        retain_session(self.runtime)
         identity = self.runtime.session.session_id
         self.now = self.base + timedelta(seconds=1)
         await self.set_source("control_input", "on")

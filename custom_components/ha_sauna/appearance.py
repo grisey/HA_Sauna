@@ -1,16 +1,14 @@
 """Validated, instance-specific panel appearance preferences and their catalog."""
 
-import json
 import math
 import re
-from pathlib import Path
 from collections.abc import Mapping
 
 
-# JSON is the single catalog source shared with the standalone panel tests.
-APPEARANCE_CATALOG = json.loads(
-    Path(__file__).with_name("appearance_catalog.json").read_text(encoding="utf-8")
-)
+from .core.defaults import section
+
+
+APPEARANCE_CATALOG = section("appearance")
 COLOR_DEFINITIONS = APPEARANCE_CATALOG["colors"]
 COLOR_ROLES = frozenset(definition["id"] for definition in COLOR_DEFINITIONS)
 SCALE_DEFAULTS = {
@@ -70,7 +68,10 @@ def validate_appearance(value):
             or not math.isfinite(finite_bounds[1] - finite_bounds[0])
         ):
             raise ValueError("Diagrammminimum muss kleiner als Maximum sein")
-        if name == "humidity" and (minimum < 0 or maximum > 100):
-            raise ValueError("Feuchteskala muss zwischen 0 und 100 liegen")
+        if (
+            minimum < APPEARANCE_CATALOG["scales"][name].get("minimum", minimum)
+            or maximum > APPEARANCE_CATALOG["scales"][name].get("maximum", maximum)
+        ):
+            raise ValueError("Diagrammskala liegt außerhalb des zulässigen Bereichs")
         validated_scales[name] = {"minimum": minimum, "maximum": maximum}
     return {"colors": validated_colors, "scales": validated_scales}

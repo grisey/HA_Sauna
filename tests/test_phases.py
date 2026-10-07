@@ -57,6 +57,42 @@ class PhaseTests(unittest.TestCase):
         projected = project_session(state, at(20))
         self.assertEqual([p.duration_seconds for p in projected.readiness_pauses], [2, 2])
 
+    def test_unsorted_simultaneous_marks_and_overlays_preserve_order_and_ids(self):
+        state = session()
+        state["base_phases"] = [
+            {"at": at(10), "phase": "bereit", "operation_enabled": True},
+            {"at": at(-1), "phase": "aufheizen", "operation_enabled": True},
+            {"at": at(10), "phase": "manuell", "operation_enabled": True},
+            {"at": at(20), "phase": "bereit", "operation_enabled": True},
+            {"at": at(20), "phase": "bereit", "operation_enabled": False},
+            {"at": at(25), "phase": "bereit", "operation_enabled": True},
+        ]
+        state["contactor_history"] = [
+            {"at": at(25), "state": True}, {"at": at(-1), "state": False},
+            {"at": at(25), "state": False},
+        ]
+        state["timeline"]["completed"] = [
+            {"gang_id": "first", "started_at": at(5), "ended_at": at(15)},
+            {"gang_id": "last", "started_at": at(5), "ended_at": at(15)},
+        ]
+        state["after_run_history"] = [
+            {"phase_id": "after", "active_intervals": [(at(12), at(30))]},
+        ]
+        state["cooling_history"] = [
+            {"cycle_id": "forced", "started_at": at(12),
+             "active_intervals": [(at(12), at(18))]},
+        ]
+        projected = project_session(state, at(35))
+        self.assertEqual(
+            [(p.phase, p.source_id, p.started_at, p.ended_at) for p in projected.intervals],
+            [("aufheizen", None, at(0), at(5)), ("saunagang", "last", at(5), at(12)),
+             ("zwangskühlung", "forced", at(12), at(18)),
+             ("nachlauf", "after", at(18), at(20)), ("aus", None, at(20), at(25)),
+             ("nachlauf", "after", at(25), at(30)), ("bereit", None, at(30), at(35))],
+        )
+        self.assertEqual([(p.started_at, p.ended_at) for p in projected.readiness_pauses],
+                         [(at(30), at(35))])
+
     def test_ended_session_is_bounded_and_missing_evidence_explicit(self):
         state = {"timeline": {"session_started_at": T0}, "ended_at": at(30)}
         projected = project_session(state, at(50))

@@ -5,8 +5,19 @@ Jede Instanz besitzt ein SQLite-Archiv unter
 im privaten Home-Assistant-Konfigurationsbereich. Zugriff und Download erfolgen
 über die berechtigten Schnittstellen der Integration.
 
-Originalmessungen bleiben altersunabhängig in voller empfangener Auflösung
-erhalten. Ein Messdatensatz enthält Rohwert, Messrolle, Quelle und Empfangszeit.
+Sitzungen mit mindestens einem durch Aufguss bestätigten Gang bleiben mit ihren
+Originalmessungen altersunabhängig in voller empfangener Auflösung erhalten.
+Während einer laufenden Sitzung werden die Daten zunächst vollständig gesammelt.
+Beim Abschluss ohne bestätigten Gang werden Sitzung und zugehörige Records
+verworfen. Beim Start der Integration gilt dieselbe Bereinigung für ältere
+Sitzungen und unterbrochene Versuche. Ein bereits bestätigter aktiver Gang bleibt
+auch bei einem Neustart erhalten. Messungen außerhalb einer Sitzung werden nicht
+archiviert; ältere solche Records werden beim Start entfernt.
+Ein unterbrochener bestätigter Snapshot behält seinen ursprünglichen offenen
+Endwert. Daraus entsteht nach dem Neustart keine laufende Sitzung und kein
+nachträglich angenommener Endzeitpunkt.
+
+Ein Messdatensatz enthält Rohwert, Messrolle, Quelle und Empfangszeit.
 Ein Messzeitstempel wird übernommen, wenn die Quelle ihn tatsächlich liefert.
 ISO-8601-Zeitangaben erhalten Zeitzone und vorhandene Sekundenbruchteile.
 Quellen-Schnappschüsse und abgeleitete Rasterwerte besitzen eigene Datensatzarten.
@@ -21,6 +32,7 @@ prüft diese Versionskennung; eine andere Kennung führt zu einem Versionsfehler
 | `metadata` | Schlüssel und Werte für die Archivversion. |
 | `records` | Fortlaufende Datensätze mit `id`, `entry_id`, optionaler `session_id`, `kind`, `received_at` und JSON-`payload`. Neue Revisionen werden angehängt. |
 | `sessions` | Neuester Stand jeder Sitzung mit Instanz, Beginn, Aktualisierungszeit, optionalem Ende und vollständigem JSON-Snapshot. |
+| `consumer_receipts` | Ausschließlich Zustellidentitäten sitzungsloser Verbraucherereignisse zur Vermeidung doppelter Zustellung nach Neustart; keine Messdaten oder Ereignispayloads. |
 
 Die Aufzeichnung verbindet Mess- und Quellenmeldungen mit Erkennungen,
 Entscheidungen und Geräteaufträgen. Jede gespeicherte Sitzungsrevision enthält
@@ -86,6 +98,26 @@ Saunabetrieb beginnt mit einem erneuten Einschaltauftrag.
 
 ## Archivzugriff
 
+### Löschen und Zurücksetzen
+
+`POST /api/ha_sauna/{entry_id}/archive/erase` ist Administratoren vorbehalten.
+`{"session_id":"…"}` löscht genau eine abgeschlossene oder durch Neustart unterbrochene Sitzung samt ihren
+Records. `{"reset":true}` leert alle Sitzungen, Records und Zustellidentitäten
+der Instanz. Laufende Sitzungen einschließlich der Wiederaufnahmepause sperren
+beide Vorgänge mit HTTP 409. Eine unbekannte Sitzungs-ID erhält HTTP 404.
+Die Runtime entscheidet unter ihrer Laufzeitsperre über die tatsächliche
+Aktivität. Der Archivschreiber verwendet einen fehlenden gespeicherten Endwert
+nicht als Löschsperre.
+
+Löschaufträge laufen geordnet über denselben Schreiber wie Archivierungen und
+warten auf eine laufende Backupsperre. Eine Transaktion entfernt die Daten;
+verspätete Records gelöschter Sitzungen werden verworfen. Die in `metadata`
+geführte Archivrevision erneuert die Verlaufscaches auch in anderen geöffneten
+Panels. Der Runtime-Verlauf und die historische Aufheizreferenz werden ebenfalls
+invalidiert. Einstellungen und Gerätezuordnungen bleiben erhalten.
+
+### Lesen
+
 `GET /api/ha_sauna/{entry_id}/archive` setzt eine HA-Anmeldung und die
 Leseberechtigung für die Betriebsentität dieser Instanz voraus. Die Grundabfrage
 liefert eine Sitzungsliste. Mit `session_id` enthält
@@ -93,6 +125,30 @@ sie den Sitzungssnapshot, die Phasenprojektion und eine Seite von Archivrecords.
 Diese Teile stammen aus derselben SQLite-Lesetransaktion. Für ältere Snapshots
 wird die Projektion aus den vollständigen zugehörigen Belegen berechnet,
 unabhängig von der aktuellen Datensatzseite.
+Die kompakte abgeleitete Projektion wird für weitere Seiten desselben Stands
+wiederverwendet. Ihre Identität umfasst Sitzungssnapshot, Aktualisierungszeit,
+letzte relevante Beleg-ID und Archivrevision aus derselben Lesetransaktion.
+Neue Sitzungs-, Phasen- oder Quellenbelege invalidieren sie; Löschung und Reset
+leeren den Cache. Auch ein später fertiggestellter alter Leser kann deshalb
+keine veraltete Projektion für einen neuen Stand wiederverwendbar machen.
+Jeder Leser erfasst vor Beginn seiner Lesetransaktion die Cachegeneration.
+Nach einer Invalidierung liefert ein älterer Leser weiterhin sein eigenes
+Snapshotresultat, legt es aber nicht mehr im gemeinsamen Cache ab. Gelöschte
+Snapshots bleiben so auch nach dem Abschluss älterer Leser aus dem Cache entfernt.
+Der begrenzte Cache hält keine Originalbelege; Aufbewahrung und Export bleiben
+vollständig. Die Kapazität steht in der zentralen Standarddatei unter
+`runtime.archive_projection_cache_entries`.
+
+Zustellidentitäten aus Sitzungsrecords werden über einen partiellen Index nur
+für `consumer_event` gelesen. Der Abruf durchsucht dadurch nicht das gesamte
+Messarchiv.
+
+Mit `projection=history` liefert die API ausschließlich die im Panel verwendeten
+Recordarten, bis zu 5000 pro Seite: Messungen, Quellen-Schnappschüsse und Phasen
+sowie für Administratoren Diagnosen, Detektorprüfpunkte und Erkennungen.
+Die Auswahl erfolgt vor der Seiteneinteilung. Sitzungssnapshot und
+Phasenprojektion behalten denselben Vertrag; die vollständige Archivabfrage
+und der Export enthalten weiterhin alle Originalrecords.
 
 Administratoren erhalten die vollständigen Datensätze. Für andere
 leseberechtigte Benutzer stellt die API Messungen, Quellen-Schnappschüsse und
@@ -111,6 +167,15 @@ Rechteprojektion. Jede Antwort bleibt an die Projektion und Abrufgeneration
 ihres Auftrags gebunden. Veraltete Antworten werden verworfen; bei fehlenden
 Administratorrechten werden bereits geladene Diagnosedaten und ihre abgeleiteten
 Ansichten entfernt.
+
+Das Panel hält geladene Sitzungen auch über einen erneuten Verbindungsaufbau
+hinweg bereit. Das Recordbudget `frontend.history_cache_records` aus
+`defaults.json` begrenzt diesen Cache: Bei Überschreitung entfallen die am
+längsten nicht ausgewählten Einträge zuerst. Die ausgewählte Sitzung, die
+laufende Sitzung und der aktive Ladeauftrag bleiben erhalten und dürfen das
+Budget gemeinsam überschreiten. Ein entfernter Eintrag wird bei erneuter
+Auswahl vollständig ab `after=0` geladen. Eine Archivbereinigung gibt auch die
+Recordindizes und vorbereiteten Ereigniszuordnungen frei.
 
 ## Archivexport
 

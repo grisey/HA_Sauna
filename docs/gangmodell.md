@@ -18,7 +18,21 @@ Direkte Präsenzmeldungen bleiben beobachtend.
 | Bestätigtes Durchlüften nach einem Aufguss | Beendet den bestätigten Gang zum Buchungszeitpunkt der Lüftungsbestätigung. |
 | Betrieb-AUS | Beendet den offenen Gang. |
 
-Als Beginn dient die passende Türschließung derselben Sitzung und Türöffnung.
+Ein neuer Gang setzt Betrieb-EIN, fehlende Ofenkühlung und eine aktuelle gültige
+führende Regeltemperatur mindestens in Höhe von `sauna_min_temperature_c` voraus.
+Die bestehende Quellenauswahl bevorzugt die obere gültige Temperatur und weicht
+bei Bedarf auf die untere aus. Diese gemeinsame Freigabe gilt für starke und
+schwache Proxy-Personensignale sowie unmittelbar startende Aufgüsse in beiden
+Betriebsarten. Fehlende oder veraltete Regeltemperaturen erlauben keinen Start.
+Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Bestätigung,
+weitere Aufgüsse und Lüftungsende bleiben möglich.
+
+Als Beginn dient die passende Türschließung derselben Sitzung und Türöffnung,
+wenn ihre effektive Zeit bereits eine gültige Temperaturfreigabe hatte.
+Eine kalte oder ungültige Türschließung bleibt beobachtet, liefert aber keinen
+Ganganker und keine empfindlichere Personenprüfung.
+Ein ungenutzter Anker verfällt auch bei einer Unterbrechung dieser
+Temperaturfreigabe oder beim Ablauf der führenden Messung.
 Ersatzweise gilt der Buchungszeitpunkt des zulässigen Personensignals oder
 Aufgusses. Die tatsächliche Erkennungszeit wird gesondert festgehalten.
 

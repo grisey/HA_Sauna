@@ -75,7 +75,8 @@ erklärt, wann seine Zählung läuft oder pausiert.
 ## Farbrollen und Lesbarkeit
 
 Der zentrale
-[Darstellungskatalog](../custom_components/ha_sauna/appearance_catalog.json)
+[Darstellungskatalog](../custom_components/ha_sauna/defaults.json)
+im Abschnitt `appearance`
 definiert die Farbrollen und Standardwerte. Gespeicherte Anpassungen gelten je
 Sauna. Rollen mit einem Home-Assistant-Standard übernehmen die entsprechende
 Themenfarbe.
@@ -97,9 +98,19 @@ abgeleitet; dabei fließen auch Tönungen und ausgewählte Ereigniszeilen ein.
 
 Temperaturbogen und Temperaturkurve teilen eine Messfarbe, ebenso
 Feuchtebogen und Feuchtekurve. Die Linienart kennzeichnet zusätzlich die
-Messposition.
+Messposition: oben durchgezogen, unten gestrichelt. Dies gilt ebenso für
+Temperatur- und Feuchtemerkmale der Erkennungskontrolle. Achsenzahlen, Titel und
+Einheiten verwenden die Farbe der zugehörigen Messgröße; die Zeitachse bleibt
+neutral. Die Messwerte und Skalenbeschriftungen der Bögen folgen derselben
+Zuordnung. Gespeicherte frühere Messhöhenfarben bleiben kompatibel erhalten,
+werden aber nicht mehr als unwirksame Farbfelder angeboten.
 
 ## Darstellungsentwurf und Skalen
+
+Unter **Einstellungen → Darstellung** stehen die beiden Messgrößenfarben und
+Anzeigeskalen zuerst. **Erweiterte Farben** enthält die übrigen Farbrollen.
+Alle Farbfelder verwenden dieselbe Komponente aus Farbauswahl, Hexeingabe und
+Rücksetzen auf den jeweiligen Standard.
 
 Farbfeld und Hexeingabe bearbeiten denselben Darstellungsentwurf. Eine gültige
 Änderung erscheint unmittelbar als Vorschau in der aktuellen Ansicht. Speichern
@@ -137,8 +148,9 @@ den Vergleich beider Positionen.
 | Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
 | Bestätigte Heizaktivität | Schmaler Streifen unter dem Verlauf |
 
-Die Übersichtskurve zeigt das Verhältnis des sichtbaren Ausschnitts zur
-gesamten Sitzung. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne. Der
+Die Übersichtskurve zeigt die Temperatur der führenden Messposition in derselben
+Messfarbe; ihre Auswahlmarkierung ordnet den sichtbaren Ausschnitt in die
+gesamte Sitzung ein. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne. Der
 Tooltip greift auf den empfangenen Originalpunkt zurück.
 
 [Kurvenaufbereitung und Ausschnittbedienung](livekurve.md)

@@ -5,6 +5,9 @@ const vm = require("node:vm");
 
 const panelPath = process.env.PANEL_PATH || "custom_components/ha_sauna/panel.js";
 const document = { hidden: false };
+const frontendDefaults = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).frontend;
 let Panel;
 vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   HTMLElement: class {
@@ -28,6 +31,7 @@ const state = (id = "live", ended = false) => ({
   now: "2032-01-01T12:00:00Z",
   operation_enabled: true,
   permissions: { admin: true },
+  frontend_defaults: frontendDefaults,
   session: {
     timeline: { session_id: id },
     ...(ended ? { ended_at: "2032-01-01T12:10:00Z" } : {}),

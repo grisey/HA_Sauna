@@ -8,6 +8,24 @@ from custom_components.ha_sauna.core.timeline import Kind
 
 
 class MechanicalTimerTests(unittest.TestCase):
+    def test_expired_timer_resets_for_new_session_without_recognized_round(self):
+        c = controller(mechanical_timer_minutes=1)
+        c.report_contactor(True, at(0))
+        c.advance(at(60))
+        self.assertEqual(c.mechanical_timer_status["state"], "expired")
+        c.set_operation(False, at(61))
+        c.report_contactor(False, at(61))
+        c.set_operation(True, at(62))
+        self.assertEqual(c.mechanical_timer_status["state"], "expired")
+        c.finish_session(at(63))
+        self.assertTrue(c.mechanical_timer_status["reset_pending"])
+        c.set_operation(True, at(64))
+        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 60)
+        self.assertFalse(c.mechanical_timer_status["reset_pending"])
+        c.report_contactor(True, at(65))
+        c.advance(at(75))
+        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 50)
+
     def test_start_waits_for_contactor_feedback_not_command_or_heating_measurement(self):
         c = controller()
         self.assertTrue(c.last_decision.heat)

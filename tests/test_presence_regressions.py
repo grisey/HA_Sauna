@@ -179,11 +179,14 @@ class PresenceRegressionTests(unittest.TestCase):
         async def exercise(path, seconds):
             clock = [START]
             runtime = SaunaRuntime(
-                Configuration(BINDINGS, Parameters({"session_gap_minutes": 1})),
+                Configuration(BINDINGS, Parameters({"session_gap_minutes": 1, "target_temperature_c": 80})),
                 clock=lambda: clock[0],
             )
             await runtime.start_archive(path, "entry")
             runtime.controller.begin_session("shutdown-gap", START)
+            runtime.controller.set_temperature(80, START)
+            for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+                runtime.controller.process(Event(kind.value, "shutdown-gap", kind, START, START))
             clock[0] = START + timedelta(seconds=1)
             runtime.controller.set_operation(False, clock[0])
             runtime.notify()

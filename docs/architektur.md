@@ -14,9 +14,12 @@ Gerätebefehle und verarbeitet deren Rückmeldungen.
 `bindings.py` beschreibt die Rollen externer Entitäten. `config_flow.py` ordnet
 ihnen konkrete Quellen und Geräte zu und prüft ihre Metadaten. `Configuration`
 in `runtime.py` fasst diese Zuordnung mit den Einstellungen zusammen;
-`core/parameters.py` definiert Standardwert, Einheit und zulässigen Bereich der
-Parameter und bildet ihren unveränderlichen Stand.
-`core/program_catalog.py` beschreibt benannte Temperaturprogramme.
+`defaults.json` führt die einstellbaren Vorgaben und Metadaten für Parameter,
+Programme, Instanzen und Darstellung. `core/defaults.py` validiert den Katalog;
+`core/parameters.py` bildet daraus den unveränderlichen Parameterstand.
+`core/program_catalog.py` validiert benannte Temperaturprogramme.
+Die historischen Altformatadapter bleiben von den aktuellen Vorgaben getrennt.
+API, Formulare und HA-Entitäten konsumieren die aufgelösten Werte und Metadaten.
 
 `settings.py` ist der gemeinsame Schreibweg für Einstellungen. Er prüft den
 vollständigen Änderungskandidaten und übernimmt gültige Live-Temperaturänderungen
@@ -82,6 +85,30 @@ Entladen werden Sitzung und Archiv abgeschlossen; ein eigenständiger
 Ofen-AUS-Versuch gehört auch bei einem Archivfehler zum Abschluss. Ein erneuter
 Start von Home Assistant stellt die archivierte Historie bereit. Der Saunabetrieb
 beginnt mit einem erneuten Einschaltauftrag.
+
+Der Geräteadapter behält tatsächlich laufende Ofen- und Lichtdienste auch nach
+Ablauf ihrer Wartefrist oder Abbruch des aufrufenden Befehls. Ein noch laufendes
+Ofen-EIN wird nicht wiederholt; angefordertes AUS folgt nach dessen tatsächlichem
+Abschluss. Entladen und Gerätewechsel benötigen den erfolgreichen Abschluss des
+abschließenden Ofen-AUS. Andernfalls bleiben Laufzeit, Archiv und Listener für
+die ausstehende Ausgabe und einen erneuten Abschluss erhalten.
+Auch ein abgelehntes Entladen lässt den Saunabetrieb ausgeschaltet.
+
+Eine wegen eines laufenden Lichtdiensts übersprungene Ausgabe erhält nach dessen
+tatsächlichem Abschluss genau einen Folgezyklus. Ein zuvor gemeldetes Licht-AUS
+ersetzt keinen abschließenden AUS-Dienst nach einem eigenen neueren EIN-Auftrag.
+Die Lichtübergabe unterscheidet einen noch offenen oder fehlgeschlagenen Dienst
+von einem erfolgreich abgeschlossenen AUS mit fehlender Rückmeldung.
+
+Periodische Aufrufe werden vor der Laufzeitsperre zusammengefasst; höchstens ein
+Timerzyklus läuft oder wartet. Folgezyklen prüfen bekannte laufende Lichtdienste
+ohne erneute Wartefrist. Die eigenen HA-Entitäten schreiben nur geänderte Zustände,
+Attribute oder Verfügbarkeit; zeitabhängige Attribute bleiben darin enthalten.
+
+Geräteereignisse bleiben vollständig in Empfangsreihenfolge gepuffert. Ein
+einziger laufender oder wartender Aufruf verarbeitet diese Eingänge. Während
+eines Geräteaufrufs neu eingegangene Ereignisse erhalten anschließend einen
+neuen Eintritt in die Laufzeitsperre hinter bereits wartenden Bedienhandlungen.
 
 `archive.py` schreibt Originaldaten und Zustandsrevisionen nach SQLite.
 `backup.py` koordiniert die Schreibpause für das Home-Assistant-Backup.

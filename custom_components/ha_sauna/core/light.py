@@ -73,15 +73,6 @@ def phase_target(
     """Leitet nur aus der fuehrenden Phase den Zielwert ab, ohne eigenen Zustand."""
     if phase == "saunagang":
         return normal_brightness
-    temperature, readiness_target = _number(temperature), _number(readiness_target)
-    hysteresis = parameters.values["readiness_hysteresis_c"]
-    if (
-        phase == "bereit"
-        and temperature is not None
-        and readiness_target is not None
-        and temperature >= readiness_target - hysteresis
-    ):
-        return normal_brightness
     return temperature_brightness(
         temperature, readiness_target, parameters, normal_brightness
     )

@@ -6,8 +6,12 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
-);
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).appearance;
+const frontendDefaults = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).frontend;
+
 let Panel;
 const sandbox = {
   HTMLElement: class {},
@@ -32,6 +36,7 @@ const makePanel = (appearance = { colors: {}, scales: {} }) => {
   const variables = new Map();
   const panel = Object.assign(Object.create(Panel.prototype), {
     state: {
+      frontend_defaults: frontendDefaults,
       appearance_catalog: catalog,
       appearance,
       operation_enabled: true,
@@ -177,7 +182,14 @@ test("tinted text uses the same painted surface as its background", () => {
     scales: {},
   });
   panel.applyAppearance();
-  for (const name of ["info", "warning", "error", "unknown", "heater-on", "heater-off"]) {
+  for (const name of [
+    "info",
+    "warning",
+    "error",
+    "unknown",
+    "heater-on",
+    "heater-off",
+  ]) {
     assert.ok(
       appearanceContrastRatio(
         variables.get(`--sauna-tint-${name}-text`),
@@ -190,7 +202,9 @@ test("tinted text uses the same painted surface as its background", () => {
     ["--sauna-main-text", "--sauna-main-background"],
     ["--sauna-pending-text", "--sauna-pending-background"],
   ]) {
-    assert.ok(appearanceContrastRatio(variables.get(ink), variables.get(background)) >= 4.5);
+    assert.ok(
+      appearanceContrastRatio(variables.get(ink), variables.get(background)) >= 4.5,
+    );
   }
 });
 
@@ -211,12 +225,24 @@ test("popup, plot controls, selected event and empty card use their painted surf
   const css = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
   assert.match(css, /\.program-info-popup\s*\{[^}]*color: var\(--sauna-card-text/);
   assert.match(css, /header\s*\{[^}]*color: var\(--sauna-page-text/);
-  assert.ok(appearanceContrastRatio(variables.get("--sauna-card-text"), "#000000") >= 4.5);
+  assert.ok(
+    appearanceContrastRatio(variables.get("--sauna-card-text"), "#000000") >= 4.5,
+  );
   assert.match(css, /\.empty\s*\{[^}]*color: var\(--sauna-card-muted-text/);
-  assert.ok(appearanceContrastRatio(variables.get("--sauna-card-muted-text"), "#000000") >= 4.5);
-  assert.match(css, /\.plot-panel\s*\{[^}]*--sauna-focus-current: var\(--sauna-chart-focus/);
-  assert.ok(appearanceContrastRatio(variables.get("--sauna-chart-focus"), "#000000") >= 3);
-  assert.match(css, /\.event-row\[data-selected="true"\]\s*\{[^}]*outline: 3px solid var\(--sauna-tint-warning-focus/);
+  assert.ok(
+    appearanceContrastRatio(variables.get("--sauna-card-muted-text"), "#000000") >= 4.5,
+  );
+  assert.match(
+    css,
+    /\.plot-panel\s*\{[^}]*--sauna-focus-current: var\(--sauna-chart-focus/,
+  );
+  assert.ok(
+    appearanceContrastRatio(variables.get("--sauna-chart-focus"), "#000000") >= 3,
+  );
+  assert.match(
+    css,
+    /\.event-row\[data-selected="true"\]\s*\{[^}]*outline: 3px solid var\(--sauna-tint-warning-focus/,
+  );
   assert.ok(
     appearanceContrastRatio(
       variables.get("--sauna-tint-warning-focus"),

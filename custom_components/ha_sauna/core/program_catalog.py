@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
 
+from .defaults import section
 from .parameters import BY_KEY
 from .temperature_program import TemperatureProgram, temperature_steps
 
@@ -117,13 +118,8 @@ class NamedTemperatureProgram:
         return {"id": self.id, "name": self.name}
 
 
-DEFAULT_PROGRAMS = (
-    NamedTemperatureProgram("genusszeit", "Genusszeit", 80, 90, 3),
-    NamedTemperatureProgram("gipfelstuermer", "Gipfelstürmer", 84, 100, 3),
-    NamedTemperatureProgram("ewigkeit", "Ewigkeit", 80, 96, 5),
-    NamedTemperatureProgram("liegewiese", "Liegewiese", 75, 85, 3),
-    NamedTemperatureProgram("hoehenwanderung", "Höhenwanderung", 90, 100, 3),
-    NamedTemperatureProgram("schnellstarter", "Schnellstarter", 70, 90, 2),
+DEFAULT_PROGRAMS = tuple(
+    NamedTemperatureProgram(**spec) for spec in section("programs")
 )
 
 RESERVED_PROGRAM_IDS = frozenset(("current", "constant", "progressive"))

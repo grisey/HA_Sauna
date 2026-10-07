@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+const defaults = JSON.parse(fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"));
+
 let Panel;
 const sandbox = {
   HTMLElement: class {},
@@ -19,6 +21,8 @@ const parameters = {
   target_temperature_c: 80, final_temperature_c: 90, temperature_gangs: 3,
 };
 const baseState = () => ({
+  frontend_defaults: defaults.frontend,
+  appearance_catalog: defaults.appearance,
   now: "2026-09-20T10:00:00Z", phase: "bereit", operation_enabled: true,
   session: {timeline: {active: null, door: "closed", completed: []}, heating: {elapsed_seconds: 0}, deadlines: []},
   configuration: {parameters}, last_session: null, measurements: [], measurement_status: {},
@@ -48,6 +52,7 @@ const render = state => {
 
 {
   const state = baseState();
+  state.appearance = {scales: {temperature: {minimum: 60, maximum: 100}}};
   state.measurements = [{position: "upper", quantity: "temperature", value: 80}];
   state.measurement_status = {upper_temperature: {state: "current"}};
   const instrument = render(state).match(/<svg class="dial dial-temperature"[\s\S]*?<\/svg>/)[0];
@@ -84,7 +89,7 @@ assert.match(render(state), /noch 5 Minuten bis bereit/, "an estimate above five
 
 state = baseState();
 state.start_availability = {until_ready_seconds: null, message: "Startzeit noch nicht abschätzbar."};
-assert.match(render(state), /Startzeit noch nicht abschätzbar\./, "an unavailable estimate remains visible");
+assert.doesNotMatch(render(state), /Startzeit noch nicht abschätzbar\.|availability-line/, "an unavailable estimate leaves no empty-information notice");
 
 state = baseState();
 state.phase = "saunagang";
@@ -157,3 +162,20 @@ assert.match(overview, /Lichtnachlauf noch 1:30 Minuten/, "only the compact end-
 assert.doesNotMatch(overview, /availability-line/, "operation off has no empty availability information area");
 
 console.log("panel overview time regressions passed");
+
+
+state = baseState();
+state.heating_feedback = true;
+state.heating_observation = { source: "contactor", estimated: true };
+assert.match(
+  render(state),
+  /Heizfreigabe EIN/,
+  "a contactor cannot prove actual heat behind an internal thermostat",
+);
+assert.doesNotMatch(
+  render(state),
+  /Ofen an/,
+  "estimated heating is not presented as measured heat",
+);
+state.heating_observation = { source: "power", estimated: false };
+assert.match(render(state), /Ofen an/, "measured power still describes actual heating");

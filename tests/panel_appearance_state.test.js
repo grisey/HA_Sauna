@@ -13,8 +13,8 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   clearInterval,
 });
 const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
-);
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).appearance;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const appearance = (color = "#123456") => ({
   colors: { series_temperature: color },

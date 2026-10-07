@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
-from contextlib import closing
 import csv
-from dataclasses import fields, is_dataclass
-from datetime import datetime
-from enum import Enum
 import io
 import json
 import logging
-from pathlib import Path
 import sqlite3
 import tempfile
 import threading
 import zipfile
+from collections import OrderedDict, deque
 from collections.abc import Mapping
+from contextlib import closing
+from dataclasses import fields, is_dataclass
+from datetime import datetime
+from enum import Enum
 from math import isfinite
+from pathlib import Path
 
+from .core.defaults import section
 from .core.phases import project_archive, project_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,9 +43,23 @@ def plain(value):
 
 
 def encoded(value):
+    return encoded_plain(plain(value))
+
+
+def encoded_plain(value):
+    """Encode an already converted value with the archive's exact JSON contract."""
     return json.dumps(
-        plain(value), ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
+
+
+def session_has_gangs(session):
+    """Count the same confirmed rounds as the timeline, including interruption."""
+    timeline = session.get("timeline", {})
+    gangs = list(timeline.get("completed", ()))
+    if timeline.get("active"):
+        gangs.append(timeline["active"])
+    return any(gang.get("infusion_events") for gang in gangs)
 
 
 class _ExportWork:
@@ -81,7 +96,7 @@ class _ExportWork:
 
 
 class Archive:
-    def __init__(self, path, entry_id):
+    def __init__(self, path, entry_id, *, sessions_only=False):
         self.path = Path(path)
         self.entry_id = entry_id
         self.queue = asyncio.Queue()
@@ -92,6 +107,13 @@ class Archive:
         self.failed_records = deque()
         self.closed = False
         self._close_task = None
+        self.sessions_only = sessions_only
+        self._discarded_sessions = set()
+        self._projection_cache = OrderedDict()
+        self._projection_lock = threading.Lock()
+        self._projection_generation = 0
+        self._projection_cache_entries = section("runtime")["archive_projection_cache_entries"]
+        self.revision = 0
 
     async def start(self):
         await asyncio.to_thread(self._initialize)
@@ -110,10 +132,15 @@ class Archive:
                     id INTEGER PRIMARY KEY, entry_id TEXT NOT NULL, session_id TEXT,
                     kind TEXT NOT NULL, received_at TEXT NOT NULL, payload TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS records_session ON records(entry_id, session_id, id);
+                CREATE INDEX IF NOT EXISTS records_consumer_events ON records(entry_id)
+                    WHERE kind='consumer_event';
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL,
                     started_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     ended_at TEXT, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS consumer_receipts (
+                    entry_id TEXT NOT NULL, event_id TEXT NOT NULL,
+                    PRIMARY KEY(entry_id,event_id));
             """)
             if (
                 db.execute("SELECT value FROM metadata WHERE key='schema'").fetchone()[
@@ -122,19 +149,58 @@ class Archive:
                 != "1"
             ):
                 raise ValueError("Nicht unterstützte Archivversion")
+            row = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
+            self.revision = int(row[0]) if row else 0
+            before_cleanup = db.total_changes
+            if self.sessions_only:
+                for (payload,) in db.execute(
+                    "SELECT payload FROM records WHERE entry_id=? AND session_id IS NULL AND kind='consumer_event'",
+                    (self.entry_id,),
+                ).fetchall():
+                    event_id = json.loads(payload).get("event_id")
+                    if event_id:
+                        db.execute("INSERT OR IGNORE INTO consumer_receipts VALUES(?,?)",
+                                   (self.entry_id, event_id))
+                # Startup has no resumed live session. Retire old empty and
+                # interrupted attempts as well as observations outside sessions.
+                for row in db.execute(
+                    "SELECT session_id,payload FROM sessions WHERE entry_id=?",
+                    (self.entry_id,),
+                ).fetchall():
+                    if not session_has_gangs(json.loads(row[1])):
+                        self._delete_session(db, row[0])
+                db.execute(
+                    "DELETE FROM records WHERE entry_id=? AND (session_id IS NULL OR "
+                    "session_id NOT IN (SELECT session_id FROM sessions WHERE entry_id=?))",
+                    (self.entry_id, self.entry_id),
+                )
+                if db.total_changes > before_cleanup:
+                    self.revision = self._bump_revision(db)
 
     def append(self, kind, at, payload, session_id=None):
         if self.closed:
             raise RuntimeError("Archiv ist geschlossen")
+        if self.sessions_only and session_id is None and kind != "consumer_event":
+            return
+        self._append_plain(kind, at, plain(payload), session_id)
+
+    def _append_plain(self, kind, at, payload, session_id=None):
+        if self.closed:
+            raise RuntimeError("Archiv ist geschlossen")
+        if self.sessions_only and session_id is None:
+            if kind != "consumer_event":
+                return
+            # Delivery identity only, without measurements or a session log.
+            kind, payload = "consumer_receipt", {"event_id": payload["event_id"]}
         # Sofort kopieren: spätere Zustandsänderungen verändern keinen Auftrag.
         self.queue.put_nowait(
-            ("record", (kind, at.isoformat(), encoded(payload), session_id))
+            ("record", (kind, at.isoformat(), encoded_plain(payload), session_id))
         )
 
     def save_session(self, session, at, configuration):
         payload = plain(session)
         payload["configuration"] = plain(configuration)
-        self.append("session", at, payload, session.session_id)
+        self._append_plain("session", at, payload, session.session_id)
 
     async def _run(self):
         while True:
@@ -142,7 +208,8 @@ class Archive:
             try:
                 if kind == "stop":
                     return
-                if kind in {"fence", "pause"} and payload.cancelled():
+                future = payload[2] if kind == "erase" else payload
+                if kind in {"fence", "pause", "erase"} and future.cancelled():
                     continue
                 # A long-lived SQLite reader can make each attempt block for
                 # seconds.  While records already form one queue burst, keep
@@ -153,13 +220,17 @@ class Archive:
                 if not await self._drain_failed_records():
                     if kind == "record":
                         self.failed_records.append(payload)
-                    elif kind in {"fence", "pause"} and not payload.cancelled():
-                        payload.set_exception(self.failure)
+                    elif kind in {"fence", "pause", "erase"} and not future.cancelled():
+                        future.set_exception(self.failure)
                     continue
                 if kind in {"fence", "pause"} and payload.cancelled():
                     continue
                 if kind == "record":
                     await asyncio.to_thread(self._write, payload)
+                elif kind == "erase":
+                    result = await asyncio.to_thread(self._erase, payload[0], payload[1])
+                    if not future.cancelled():
+                        future.set_result(result)
                 self.failure = None
                 if kind == "fence":
                     payload.set_result(None)
@@ -167,11 +238,12 @@ class Archive:
                     payload.set_result(None)
                     await self.resume.wait()
             except Exception as error:
-                self.failure = error
+                if kind != "erase" or not isinstance(error, (KeyError, ValueError)):
+                    self.failure = error
                 if kind == "record":
                     self.failed_records.append(payload)
-                elif kind in {"fence", "pause"} and not payload.cancelled():
-                    payload.set_exception(error)
+                elif kind in {"fence", "pause", "erase"} and not future.cancelled():
+                    future.set_exception(error)
             finally:
                 self.queue.task_done()
 
@@ -193,7 +265,23 @@ class Archive:
 
     def _write(self, record):
         kind, at, payload, session_id = record
+        if session_id in self._discarded_sessions:
+            return
         with closing(sqlite3.connect(self.path)) as db, db:
+            if kind == "consumer_receipt":
+                db.execute("INSERT OR IGNORE INTO consumer_receipts VALUES(?,?)",
+                           (self.entry_id, json.loads(payload)["event_id"]))
+                return
+            if kind == "session" and self.sessions_only:
+                data = json.loads(payload)
+                if data.get("ended_at") and not session_has_gangs(data):
+                    self._delete_session(db, session_id)
+                    revision = self._bump_revision(db)
+                    db.commit()
+                    self.revision = revision
+                    self._discarded_sessions.add(session_id)
+                    self._invalidate_projection(session_id)
+                    return
             db.execute(
                 "INSERT INTO records(entry_id,session_id,kind,received_at,payload) VALUES(?,?,?,?,?)",
                 (self.entry_id, session_id, kind, at, payload),
@@ -213,6 +301,65 @@ class Archive:
                         payload,
                     ),
                 )
+        if kind in {"phase", "source_state", "session"}:
+            self._invalidate_projection(session_id)
+
+    def _invalidate_projection(self, session_id=None):
+        with self._projection_lock:
+            self._projection_generation += 1
+            if session_id is None:
+                self._projection_cache.clear()
+            else:
+                self._projection_cache.pop(session_id, None)
+
+    def _delete_session(self, db, session_id):
+        db.execute("DELETE FROM records WHERE entry_id=? AND session_id=?",
+                   (self.entry_id, session_id))
+        db.execute("DELETE FROM sessions WHERE entry_id=? AND session_id=?",
+                   (self.entry_id, session_id))
+
+    def _bump_revision(self, db):
+        revision = self.revision + 1
+        db.execute("INSERT OR REPLACE INTO metadata VALUES ('revision', ?)",
+                   (str(revision),))
+        return revision
+
+    def _erase(self, session_id, reset):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            if reset:
+                ids = [row[0] for row in db.execute(
+                    "SELECT session_id FROM sessions WHERE entry_id=?", (self.entry_id,)
+                )]
+                db.execute("DELETE FROM records WHERE entry_id=?", (self.entry_id,))
+                db.execute("DELETE FROM sessions WHERE entry_id=?", (self.entry_id,))
+                db.execute("DELETE FROM consumer_receipts WHERE entry_id=?", (self.entry_id,))
+            else:
+                row = db.execute(
+                    "SELECT 1 FROM sessions WHERE entry_id=? AND session_id=?",
+                    (self.entry_id, session_id),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(session_id)
+                ids = [session_id]
+                self._delete_session(db, session_id)
+            revision = self._bump_revision(db)
+            db.commit()
+            self.revision = revision
+            self._discarded_sessions.update(ids)
+        self._invalidate_projection()
+        return len(ids)
+
+    async def erase(self, session_id=None, *, reset=False):
+        """Delete in writer order; the runtime guards actual activity under its lock.
+
+        An absent stored end is not an activity signal after restart. Originals
+        remain unchanged until deletion, and late writes cannot recreate them.
+        """
+        if self.closed:
+            raise RuntimeError("Archiv ist geschlossen")
+        future = asyncio.get_running_loop().create_future()
+        self.queue.put_nowait(("erase", (session_id, reset, future)))
+        return await asyncio.shield(future)
 
     async def _barrier(self, kind):
         future = asyncio.get_running_loop().create_future()
@@ -265,7 +412,11 @@ class Archive:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
-    def read(self, session_id=None, *, after=0, limit=1000):
+    def read(self, session_id=None, *, after=0, limit=1000, kinds=None):
+        # Capture before establishing the SQLite snapshot. An in-flight reader
+        # may finish after invalidation, but must not restore its old cache data.
+        with self._projection_lock:
+            generation = self._projection_generation
         with closing(sqlite3.connect(self.path)) as db:
             db.row_factory = sqlite3.Row
             db.execute("BEGIN")
@@ -281,28 +432,22 @@ class Archive:
             ).fetchone()
             if row is None:
                 return None
+            kind_filter = (
+                " AND kind IN (" + ",".join("?" for _ in kinds) + ")"
+                if kinds is not None else ""
+            )
             records = db.execute(
-                "SELECT * FROM records WHERE entry_id=? AND session_id=? AND id>? ORDER BY id LIMIT ?",
-                (self.entry_id, session_id, after, limit),
+                "SELECT * FROM records WHERE entry_id=? AND session_id=? AND id>?"
+                + kind_filter + " ORDER BY id LIMIT ?",
+                (self.entry_id, session_id, after, *(kinds or ()), limit),
             ).fetchall()
             session = json.loads(row["payload"])
             if session.get("base_phases"):
                 projection = project_session(session, row["updated_at"])
             else:
-                # Legacy snapshots need the complete evidence stream,
-                # independent of pagination. Original records stay unchanged.
-                evidence = [
-                    {
-                        "kind": r["kind"],
-                        "received_at": r["received_at"],
-                        "payload": json.loads(r["payload"]),
-                    }
-                    for r in db.execute(
-                        "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
-                        (self.entry_id, session_id),
-                    )
-                ]
-                projection = project_archive(session, evidence, row["updated_at"])
+                projection = self._legacy_projection(
+                    db, session_id, session, row, generation=generation
+                )
             return {
                 "session": session,
                 "phase_projection": plain(projection),
@@ -311,6 +456,45 @@ class Archive:
                 ],
                 "next_after": records[-1]["id"] if len(records) == limit else None,
             }
+
+    def _legacy_projection(self, db, session_id, session, row, *, generation):
+        # Read cache identity and evidence in the caller's SQLite snapshot. In
+        # particular, a concurrent old reader cannot publish a reusable stale
+        # result after a write/delete has invalidated the in-memory entry.
+        last_evidence = db.execute(
+            "SELECT MAX(id) FROM records WHERE entry_id=? AND session_id=? "
+            "AND kind IN ('phase','source_state','session')",
+            (self.entry_id, session_id),
+        ).fetchone()[0]
+        revision = db.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()
+        identity = (row["payload"], row["updated_at"], last_evidence,
+                    revision[0] if revision else None)
+        with self._projection_lock:
+            current = generation == self._projection_generation
+            cached = self._projection_cache.get(session_id) if current else None
+            if cached is not None and cached[0] == identity:
+                self._projection_cache.move_to_end(session_id)
+                return cached[1]
+            # Legacy snapshots need the complete evidence stream once per
+            # saved state, independently of pagination. Originals stay intact.
+            evidence = (
+                {
+                    "kind": r["kind"],
+                    "received_at": r["received_at"],
+                    "payload": json.loads(r["payload"]),
+                }
+                for r in db.execute(
+                    "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
+                    (self.entry_id, session_id),
+                )
+            )
+            projection = project_archive(session, evidence, row["updated_at"])
+            if current:
+                self._projection_cache[session_id] = (identity, projection)
+                self._projection_cache.move_to_end(session_id)
+                while len(self._projection_cache) > self._projection_cache_entries:
+                    self._projection_cache.popitem(last=False)
+            return projection
 
     def consumer_event_ids(self):
         """Stable delivered identities for reload deduplication, read only."""
@@ -322,6 +506,10 @@ class Archive:
                     (self.entry_id,),
                 )
                 if isinstance((event_id := json.loads(payload).get("event_id")), str)
+            } | {
+                row[0] for row in db.execute(
+                    "SELECT event_id FROM consumer_receipts WHERE entry_id=?", (self.entry_id,)
+                )
             }
 
     def latest_completed_warmup(self, source, maximum_gap_seconds):

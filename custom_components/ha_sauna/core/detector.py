@@ -57,19 +57,18 @@ class Detector:
         self.last_received = None
         self.capacity = int(
             max(
-                self.p[k]
-                for k in (
+                self.p["median_seconds"],
+                self.p["vent_baseline_seconds"]
+                + max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
+                + 1,
+                *(self.p[k] + 1 for k in (
                     "door_window_seconds",
                     "door_humidity_seconds",
-                    "vent_baseline_seconds",
                     "strong_window_seconds",
                     "weak_window_seconds",
                     "infusion_window_seconds",
-                )
+                )),
             )
-            + self.p["median_seconds"]
-            + self.p["person_step_seconds"]
-            + 1
         )
         self.frames = {p: deque(maxlen=self.capacity) for p in self.positions}
         self.open = False  # Anfangsannahme des Referenzkandidaten; kein Türereignis.
@@ -223,23 +222,10 @@ class Detector:
         change = values[-1] - values[0]
         return 0.0 if isclose(change, 0.0, abs_tol=1e-9) else change
 
-    def _moisture_rise(self, route, channels):
+    def _moisture_rise(self, route, features):
         """RH-Schwelle und AH-Ausgleich beschreiben denselben Feuchteweg."""
         condition = True
-        for position in channels:
-            if len(self.frames[position]) < int(self.p[f"{route}_window_seconds"]) + 1:
-                return None
-            humidity_slope = self._slope(
-                position,
-                "Hm",
-                self.p[f"{route}_window_seconds"],
-                self.p["person_step_seconds"],
-            )
-            absolute_change = self._absolute_humidity_difference(
-                position,
-                self.p[f"{route}_window_seconds"],
-                self.p["person_step_seconds"],
-            )
+        for position, (humidity_slope, absolute_change) in features.items():
             if humidity_slope is None or absolute_change is None:
                 return None
             condition &= (
@@ -303,6 +289,16 @@ class Detector:
                 for position in channels
             },
             "hints": {position: {} for position in channels},
+            "mixed_qualified": False,
+            "temperatures": {
+                position: max((
+                    frame["Tm"]
+                    for frame in list(self.frames[position])[-int(self.p["door_window_seconds"]) - 1:]
+                    if frame["Tm"] is not None
+                    and frame.get("Ts") == self.frames[position][-1].get("Ts")
+                ), default=None)
+                for position in channels
+            },
             "invalid": set(),
         }
         self.ventilation_positions = tuple(channels)
@@ -624,9 +620,10 @@ class Detector:
             if on_detection:
                 on_detection(detection)
 
-        hints = {}
+        hints, door_slopes = {}, {}
         for c in channels:
             trend = self._slope(c, "Tm", p["door_window_seconds"])
+            door_slopes[c] = trend
             dh = (
                 self._difference(c, "Hm", p["door_humidity_seconds"])
                 if not self.open
@@ -668,6 +665,11 @@ class Detector:
                 frame = self._episode_frame(position, channels)
                 if frame is None or position not in hints:
                     continue
+                if not self.open and frame["Tm"] is not None:
+                    reference = episode["temperatures"][position]
+                    episode["temperatures"][position] = (
+                        frame["Tm"] if reference is None else max(reference, frame["Tm"])
+                    )
                 for name in ("temperature", "humidity", "thermal"):
                     self._remember_door_hint(position, name, hints[position][name], now)
 
@@ -677,12 +679,21 @@ class Detector:
             mixed_opening = self._episode_route(
                 "temperature", now
             ) and self._episode_route("humidity", now)
+            # Humidity can settle before a real, sustained temperature fall
+            # reaches the minimum loss. Keep the jointly proven route only
+            # while the same sources still prove continuous cooling.
+            if not self._episode_route("temperature", now):
+                episode["mixed_qualified"] = False
+            if mixed_opening:
+                episode["mixed_qualified"] = True
+            mixed_opening = mixed_opening or episode["mixed_qualified"]
             # Eine verfügbare T/RH-Höhe genügt; bei zweien müssen beide die
             # eingefrorene Episode gemeinsam belegen.
             thermal_opening = self._episode_route("thermal", now)
         if episode and self.open:
             closing_slopes = {
-                position: self._slope(position, "Tm", p["door_window_seconds"])
+                position: (door_slopes[position] if position in door_slopes else
+                           self._slope(position, "Tm", p["door_window_seconds"]))
                 for position in episode["positions"]
             }
             closing_positions = tuple(
@@ -699,14 +710,23 @@ class Detector:
                 closing_slopes[position] > p["door_close_slope"]
                 for position in closing_positions
             )
+        opening_loss = bool(episode and complete_episode) and all(
+            episode["temperatures"][position] is not None
+            and self.frames[position][-1]["Tm"] is not None
+            and episode["temperatures"][position] - self.frames[position][-1]["Tm"]
+            >= p["door_open_drop_c"]
+            for position in episode["positions"]
+        )
+        if not self.open:
+            trace["conditions"]["door_open_loss"] = opening_loss
         mixed_toggle = (
-            self._sustain("door", mixed_opening, p["door_open_hold_seconds"])
+            self._sustain("door", mixed_opening and opening_loss, p["door_open_hold_seconds"])
             if mixed_opening is not None and not self.open
             else False
         )
         thermal_toggle = (
             self._sustain(
-                "door_heating", thermal_opening, p["door_heating_hold_seconds"]
+                "door_heating", thermal_opening and opening_loss, p["door_heating_hold_seconds"]
             )
             if thermal_opening is not None and not self.open
             else False
@@ -835,11 +855,18 @@ class Detector:
                 # der Kontext ihre Ausgabe gerade sperrt. Starke Signale und
                 # deren Diagnose werden nur für tatsächlich prüfbare Routen
                 # berechnet.
-                moisture_rise = (
-                    self._moisture_rise(route, channels)
-                    if checking or route == "weak"
-                    else None
-                )
+                moisture_features = {
+                    c: (
+                        self._slope(c, "Hm", p[f"{route}_window_seconds"],
+                                    p["person_step_seconds"]),
+                        self._absolute_humidity_difference(
+                            c, p[f"{route}_window_seconds"], p["person_step_seconds"]
+                        ),
+                    )
+                    for c in channels
+                } if checking or route == "weak" else {}
+                moisture_rise = (self._moisture_rise(route, moisture_features)
+                                 if moisture_features else None)
                 moisture_state = (
                     self._update_moisture_state(moisture_rise, now)
                     if route == "weak"
@@ -847,23 +874,15 @@ class Detector:
                 )
                 if checking:
                     for c in channels:
-                        for key, quantity in (
-                            ("Tm", "temperature"),
-                            ("Hm", "humidity"),
-                        ):
-                            trace["metrics"][c.value][f"{route}_{quantity}_slope"] = (
-                                self._slope(
-                                    c,
-                                    key,
-                                    p[f"{route}_window_seconds"],
-                                    p["person_step_seconds"],
-                                )
-                            )
-                        trace["metrics"][c.value][
-                            f"{route}_absolute_humidity_delta"
-                        ] = self._absolute_humidity_difference(
-                            c, p[f"{route}_window_seconds"], p["person_step_seconds"]
-                        )
+                        humidity_slope, absolute_change = moisture_features[c]
+                        trace["metrics"][c.value].update({
+                            f"{route}_temperature_slope": self._slope(
+                                c, "Tm", p[f"{route}_window_seconds"],
+                                p["person_step_seconds"],
+                            ),
+                            f"{route}_humidity_slope": humidity_slope,
+                            f"{route}_absolute_humidity_delta": absolute_change,
+                        })
                 fresh_weak = route != "weak" or (
                     moisture_state["onset_at"] is not None
                     and self.opened_at is not None

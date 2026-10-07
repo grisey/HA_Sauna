@@ -11,6 +11,7 @@ from homeassistant.helpers import selector
 
 from .bindings import ROLES, BindingError, Bindings, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
+from .core.defaults import instance_default
 from .core.parameters import (
     BY_KEY,
     EDITABLE_DEFINITIONS,
@@ -33,15 +34,24 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
             entity_filter["device_class"] = role.device_class
         marker = vol.Optional if role.optional else vol.Required
         fields[marker(role.key)] = selector.EntitySelector({"filter": entity_filter})
-    fields[vol.Required("control_input_mode", default="button")] = (
+    fields[
+        vol.Required(
+            "control_input_mode",
+            default=instance_default("control_input_mode", setup=include_name),
+        )
+    ] = (
         selector.SelectSelector(
             {"options": ["button", "switch"], "translation_key": "control_input_mode"}
         )
     )
-    fields[vol.Required("presence_source", default="proxy")] = selector.SelectSelector(
+    fields[
+        vol.Required("presence_source", default=instance_default("presence_source"))
+    ] = selector.SelectSelector(
         {"options": ["proxy", "ha_presence"], "translation_key": "presence_source"}
     )
-    fields[vol.Optional("button_event_type", default="")] = selector.TextSelector()
+    fields[
+        vol.Optional("button_event_type", default=instance_default("button_event_type"))
+    ] = selector.TextSelector()
     return vol.Schema(fields)
 
 
@@ -52,19 +62,18 @@ def parameter_schema(
     include_button_choices=False,
     program_options=(),
     parameters=None,
+    program_mode=None,
 ) -> vol.Schema:
     limits = parameters or Parameters({})
     fields = {
         (vol.Optional if definition.optional else vol.Required)(
             definition.key,
-            default=definition.default
-            if definition.default is not None
-            else vol.UNDEFINED,
+            default=limits.values.get(definition.key, vol.UNDEFINED),
         ): selector.NumberSelector(
             {
                 "min": limits.minimum_for(definition.key),
                 "max": definition.maximum,
-                "step": 1 if definition.integer else "any",
+                "step": definition.step,
                 "mode": selector.NumberSelectorMode.BOX,
                 "unit_of_measurement": definition.unit,
             }
@@ -73,7 +82,11 @@ def parameter_schema(
         if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
     }
     if include_program_choices:
-        fields[vol.Required("program_mode", default="progressive")] = (
+        fields[vol.Required(
+            "program_mode",
+            default=instance_default("program_mode", setup=True)
+            if program_mode is None else program_mode,
+        )] = (
             selector.SelectSelector(
                 {
                     "options": ["constant", "progressive"],
@@ -82,7 +95,7 @@ def parameter_schema(
             )
         )
     if include_button_choices:
-        fields[vol.Required("button_program", default="constant")] = (
+        fields[vol.Required("button_program", default=instance_default("button_program"))] = (
             selector.SelectSelector(
                 {
                     "options": [
@@ -96,13 +109,15 @@ def parameter_schema(
         fields[
             vol.Required(
                 "button_temperature_c",
-                default=limits.values["target_temperature_c"],
+                default=instance_default("button_temperature_c")
+                if instance_default("button_temperature_c") is not None
+                else limits.values["target_temperature_c"],
             )
         ] = selector.NumberSelector(
             {
                 "min": limits.minimum_for("target_temperature_c"),
                 "max": BY_KEY["target_temperature_c"].maximum,
-                "step": "any",
+                "step": BY_KEY["target_temperature_c"].step,
                 "mode": selector.NumberSelectorMode.BOX,
                 "unit_of_measurement": "°C",
             }
@@ -111,7 +126,7 @@ def parameter_schema(
 
 
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
-    if user_input.get("presence_source", "proxy") not in ("proxy", "ha_presence"):
+    if user_input.get("presence_source", instance_default("presence_source")) not in ("proxy", "ha_presence"):
         raise BindingError("presence_source", "invalid_presence_source")
     bindings = Bindings(
         {
@@ -165,12 +180,12 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                     raise BindingError("heater", "heater_already_used")
                 self._bindings = bindings
                 self._input_options = {
-                    "presence_source": user_input.get("presence_source", "proxy"),
+                    "presence_source": user_input.get("presence_source", instance_default("presence_source")),
                     "control_input_mode": user_input.get(
-                        "control_input_mode", "button"
+                        "control_input_mode", instance_default("control_input_mode", setup=True)
                     ),
                     "button_event_type": user_input.get(
-                        "button_event_type", ""
+                        "button_event_type", instance_default("button_event_type")
                     ).strip(),
                 }
             except BindingError as error:
@@ -192,8 +207,8 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 values = dict(user_input)
-                program_mode = values.pop("program_mode", "progressive")
-                button_program = values.pop("button_program", "constant")
+                program_mode = values.pop("program_mode", instance_default("program_mode", setup=True))
+                button_program = values.pop("button_program", instance_default("button_program"))
                 if program_mode not in ("constant", "progressive"):
                     raise ParameterError("program_mode", "invalid_program_mode")
                 if button_program not in {
@@ -201,7 +216,9 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                     *(program.id for program in DEFAULT_PROGRAMS),
                 }:
                     raise ParameterError("button_program", "invalid_button_program")
-                button_temperature_c = values.pop("button_temperature_c", None)
+                button_temperature_c = values.pop(
+                    "button_temperature_c", instance_default("button_temperature_c")
+                )
                 parameters = Parameters(values)
                 button_temperature_c = Parameters(
                     {
@@ -301,7 +318,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 {
                     vol.Required(
                         "log_level",
-                        default=self.config_entry.options.get("log_level", "INFO"),
+                        default=self.config_entry.options.get("log_level", instance_default("log_level")),
                     ): selector.SelectSelector(
                         {"options": list(LEVELS), "translation_key": "log_level"}
                     ),
@@ -331,15 +348,15 @@ class SaunaOptionsFlow(OptionsFlow):
                     data={
                         **self.config_entry.options,
                         CONF_BINDINGS: bindings.as_dict(),
-                        "presence_source": user_input.get("presence_source", self.config_entry.options.get("presence_source", "proxy")),
+                        "presence_source": user_input.get("presence_source", self.config_entry.options.get("presence_source", instance_default("presence_source"))),
                         "control_input_mode": user_input.get(
                             "control_input_mode",
                             self.config_entry.options.get(
-                                "control_input_mode", "switch"
+                                "control_input_mode", instance_default("control_input_mode")
                             ),
                         ),
                         "button_event_type": user_input.get(
-                            "button_event_type", ""
+                            "button_event_type", instance_default("button_event_type")
                         ).strip(),
                     },
                 )
@@ -351,12 +368,12 @@ class SaunaOptionsFlow(OptionsFlow):
                 if user_input is not None
                 else {
                     **self.config_entry.options[CONF_BINDINGS],
-                    "presence_source": self.config_entry.options.get("presence_source", "proxy"),
+                    "presence_source": self.config_entry.options.get("presence_source", instance_default("presence_source")),
                     "control_input_mode": self.config_entry.options.get(
-                        "control_input_mode", "switch"
+                        "control_input_mode", instance_default("control_input_mode")
                     ),
                     "button_event_type": self.config_entry.options.get(
-                        "button_event_type", ""
+                        "button_event_type", instance_default("button_event_type")
                     ),
                 },
             ),
@@ -388,7 +405,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 if runtime and not runtime.closed:
                     program_mode = values.pop(
                         "program_mode",
-                        self.config_entry.options.get("program_mode", "progressive"),
+                        configuration.program_mode,
                     )
                     if program_mode not in ("constant", "progressive"):
                         raise ParameterError("program_mode", "invalid_program_mode")
@@ -416,7 +433,7 @@ class SaunaOptionsFlow(OptionsFlow):
                         program_mode=program_mode,
                         new_program=target_changed
                         or program_mode
-                        != self.config_entry.options.get("program_mode", "progressive"),
+                        != configuration.program_mode,
                     )
                     # The shared writer has persisted its complete candidate,
                     # including program identity and any cleared free stages.
@@ -426,7 +443,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 else:
                     program_mode = values.pop(
                         "program_mode",
-                        self.config_entry.options.get("program_mode", "progressive"),
+                        configuration.program_mode,
                     )
                     if program_mode not in ("constant", "progressive"):
                         raise ParameterError("program_mode", "invalid_program_mode")
@@ -470,9 +487,7 @@ class SaunaOptionsFlow(OptionsFlow):
             for definition in EDITABLE_DEFINITIONS
             if definition.key in configuration.parameters.values
         }
-        suggested["program_mode"] = self.config_entry.options.get(
-            "program_mode", "progressive"
-        )
+        suggested["program_mode"] = configuration.program_mode
         if live_only:
             suggested["target_temperature_c"] = runtime.controller.target_temperature
         return self.async_show_form(
@@ -482,6 +497,7 @@ class SaunaOptionsFlow(OptionsFlow):
                     live_only=live_only,
                     include_program_choices=True,
                     parameters=configuration.parameters,
+                    program_mode=configuration.program_mode,
                 ),
                 user_input if user_input is not None else suggested,
             ),

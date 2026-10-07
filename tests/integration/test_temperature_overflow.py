@@ -122,6 +122,12 @@ class TemperatureOverflowIntegrationTests(unittest.IsolatedAsyncioTestCase):
         runtime = self.entry.runtime_data
         now = datetime.now(UTC)
         runtime._clock = lambda: now
+        temperature_entity = self.entry.options["bindings"]["upper_temperature"]
+        temperature_state = self.hass.states.get(temperature_entity)
+        self.hass.states.async_set(
+            temperature_entity, "70", temperature_state.attributes, force_update=True
+        )
+        await self.hass.async_block_till_done()
         await runtime.set_operation(True)
         sid = runtime.session.session_id
         self.assertEqual(runtime.session.timeline.door, "closed")

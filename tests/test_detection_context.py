@@ -216,6 +216,7 @@ class DetectionContextTests(unittest.TestCase):
     def test_direct_infusion_suppresses_later_person_signals_even_in_one_catchup_batch(self):
         p = detection_parameters()
         c = Controller(p)
+        c.set_temperature(70, T0)
         c.begin_session("s",T0)
         c.process(event("close",Kind.DOOR_CLOSE,0))
         controlled, raw = Detector(p,T0), Detector(p,T0)

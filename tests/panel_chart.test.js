@@ -3,8 +3,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
-);
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
 const curveStyles = {

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
-from .archive import encoded, plain
+from .archive import encoded, encoded_plain, plain
 from .appearance import default_appearance, validate_appearance
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
@@ -22,6 +22,7 @@ from .core.button import (
     ButtonGestures,
 )
 from .core.controller import Controller, Result
+from .core.defaults import instance_default
 from .core.detector import Detector
 from .core.models import Position, Session
 from .core.contracts import ConsumerEvent, PresenceReport
@@ -50,17 +51,19 @@ from .settings import program_parameters
 class Configuration:
     bindings: Bindings
     parameters: Parameters
-    log_level: str = "INFO"
-    control_input_mode: str = "switch"
-    button_event_type: str = ""
-    program_mode: str = "constant"
-    button_program: str = "constant"
+    log_level: str = instance_default("log_level")
+    control_input_mode: str = instance_default("control_input_mode")
+    button_event_type: str = instance_default("button_event_type")
+    program_mode: str = instance_default("program_mode")
+    button_program: str = instance_default("button_program")
     temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
-    selected_program_id: str | None = None
-    control_mode: str = "automatic"
-    presence_source: str = "proxy"
-    temperature_steps: tuple[float, ...] | None = None
-    button_temperature_c: float | None = None
+    selected_program_id: str | None = instance_default("selected_program_id")
+    control_mode: str = instance_default("control_mode")
+    presence_source: str = instance_default("presence_source")
+    temperature_steps: tuple[float, ...] | None = field(
+        default_factory=lambda: instance_default("temperature_steps")
+    )
+    button_temperature_c: float | None = instance_default("button_temperature_c")
     appearance: dict = field(default_factory=default_appearance)
 
     def __post_init__(self) -> None:
@@ -138,11 +141,11 @@ class Configuration:
             raise ValueError(
                 "Vollständige Entitäts- und Parameterkonfiguration erforderlich"
             )
-        level = options.get("log_level", "INFO")
+        level = options.get("log_level", instance_default("log_level"))
         if level not in LEVELS:
             raise ValueError("Ungültige Protokollstufe")
-        mode = options.get("control_input_mode", "switch")
-        event_type = options.get("button_event_type", "")
+        mode = options.get("control_input_mode", instance_default("control_input_mode"))
+        event_type = options.get("button_event_type", instance_default("button_event_type"))
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
@@ -207,10 +210,12 @@ class Configuration:
                 maximum_c=maximum_c,
                 maximum_gangs=maximum_gangs,
             )
-        button_program = options.get("button_program", "constant")
-        selected_program_id = options.get("selected_program_id")
-        control_mode = options.get("control_mode", "automatic")
-        steps = options.get("temperature_steps")
+        button_program = options.get("button_program", instance_default("button_program"))
+        selected_program_id = options.get(
+            "selected_program_id", instance_default("selected_program_id")
+        )
+        control_mode = options.get("control_mode", instance_default("control_mode"))
+        steps = options.get("temperature_steps", instance_default("temperature_steps"))
         program_ids = {program.id for program in programs}
         if button_program == "current":
             button_program = (
@@ -219,7 +224,7 @@ class Configuration:
                 else "constant"
             )
         button_temperature_c = options.get(
-            "button_temperature_c", parameters.values["target_temperature_c"]
+            "button_temperature_c", instance_default("button_temperature_c")
         )
         if (
             program_mode not in ("constant", "progressive")
@@ -242,7 +247,7 @@ class Configuration:
             programs,
             selected_program_id,
             control_mode,
-            options.get("presence_source", "proxy"),
+            options.get("presence_source", instance_default("presence_source")),
             steps,
             button_temperature_c,
             options.get("appearance", default_appearance()),
@@ -289,7 +294,9 @@ class SaunaRuntime:
             decision_clock=lambda: self._clock(),
         )
         self._lock = asyncio.Lock()
+        self._tick_pending = False
         self._pending_device_inputs = deque()
+        self._device_input_pending = False
         self._button = ButtonGestures(
             timedelta(seconds=configuration.parameters.values["button_hold_seconds"])
         )
@@ -528,20 +535,31 @@ class SaunaRuntime:
             ))
 
     async def device_input(self, event):
+        if self.closed:
+            return
         received_at = self._clock()
         self._pending_device_inputs.append((received_at, event))
-        # Callbacks dispatched together form one received packet, including
-        # temperature and humidity roles sharing a detector/confirmation time.
-        await asyncio.sleep(0)
-        async with self._lock:
-            if self.closed:
-                self._pending_device_inputs.clear()
-                return
-            if not self._pending_device_inputs:
-                return
-            with self.controller.confirmation_batch(self._clock):
-                await self._drain_device_inputs()
-                await self._cycle()
+        if self._device_input_pending:
+            return
+        self._device_input_pending = True
+        try:
+            while self._pending_device_inputs and not self.closed:
+                # One worker owns the complete FIFO. New inputs received
+                # during output join its next lock entry, behind commands
+                # already waiting, instead of creating an old callback queue.
+                # Dispatched channels still share their received packet.
+                await asyncio.sleep(0)
+                async with self._lock:
+                    if self.closed:
+                        self._pending_device_inputs.clear()
+                        return
+                    if not self._pending_device_inputs:
+                        return
+                    with self.controller.confirmation_batch(self._clock):
+                        await self._drain_device_inputs()
+                        await self._cycle()
+        finally:
+            self._device_input_pending = False
 
     async def _drain_device_inputs(self):
         """Consume received edges in order, before any advance to wall time.
@@ -573,48 +591,55 @@ class SaunaRuntime:
                 # A transport snapshot preserves each input's selected value,
                 # including repeated roles at one time. The detector still gets
                 # all same-time channels before any control edge is booked.
-                item[2] = regulation.value if regulation is not None else None
-            for event, originals, temperature in packet:
-                self._sync_detector()
-                # Original provenance follows the received FIFO, including a
-                # session start/end between same-time measurements. Each value
-                # is archived once, even when a role occurs repeatedly here.
-                if self.archive and self.session:
-                    for measurement in originals:
-                        self.archive.append(
-                            "measurement", received_at, measurement, self.session.session_id,
-                        )
-                action_at = max(received_at, self.controller._last_at or received_at)
-                # Book only the received regulation input here. Protection
-                # monitoring and actuator output remain in the wall-time cycle.
-                self.controller.set_temperature(temperature, action_at)
-                entity_id = event.data["entity_id"]
-                for role, source in self.configuration.bindings.values.items():
-                    if source == entity_id and role not in measurement_roles:
-                        self.device.ingest(role, event.data.get("new_state"), received_at)
-                        if role in {"heater", "heater_power", "heater_feedback"}:
-                            self.device.report_received_feedback(received_at)
-                action_at = max(received_at, self.controller._last_at or received_at)
-                light_selection = self.device.external_light_selection(event, received_at)
-                if light_selection is not None:
-                    self._set_light_override(light_selection, action_at)
-                action = self.device.physical_action(event)
-                if action is not None:
-                    self._deliver_detection(action_at)
-                if self.configuration.control_input_mode == "button" and action is not None:
-                    try:
-                        await self._handle_button_event(
-                            action, action_at, received_at=received_at, refresh_device=False,
-                        )
-                    except ValueError as error:
-                        self.device.faults["start_rejected"] = str(error)
-                elif action is not None:
-                    try:
-                        self._prepare_operation(action, physical=True, at=action_at)
-                        self._set_operation(action, at=action_at, refresh_device=False)
-                    except ValueError as error:
-                        self.device.faults["start_rejected"] = str(error)
-                self._sync_detector()
+                item[2] = (
+                    regulation.value if regulation is not None else None,
+                    self.device.regulation_valid_until(regulation),
+                )
+            # Recognition consumes the same final received raster as the
+            # detector. Thermostat/readiness and control edges retain FIFO.
+            with self.controller.recognition_temperature_raster(*packet[-1][2]):
+                for event, originals, regulation_input in packet:
+                    self._sync_detector()
+                    # Original provenance follows the received FIFO, including a
+                    # session start/end between same-time measurements. Each value
+                    # is archived once, even when a role occurs repeatedly here.
+                    if self.archive and self.session:
+                        for measurement in originals:
+                            self.archive.append(
+                                "measurement", received_at, measurement, self.session.session_id,
+                            )
+                    action_at = max(received_at, self.controller._last_at or received_at)
+                    # Book only the received regulation input here. Protection
+                    # monitoring and actuator output remain in the wall-time cycle.
+                    temperature, valid_until = regulation_input
+                    self.controller.set_temperature(temperature, action_at, valid_until=valid_until)
+                    entity_id = event.data["entity_id"]
+                    for role, source in self.configuration.bindings.values.items():
+                        if source == entity_id and role not in measurement_roles:
+                            self.device.ingest(role, event.data.get("new_state"), received_at)
+                            if role in {"heater", "heater_power", "heater_feedback"}:
+                                self.device.report_received_feedback(received_at)
+                    action_at = max(received_at, self.controller._last_at or received_at)
+                    light_selection = self.device.external_light_selection(event, received_at)
+                    if light_selection is not None:
+                        self._set_light_override(light_selection, action_at)
+                    action = self.device.physical_action(event)
+                    if action is not None:
+                        self._deliver_detection(action_at)
+                    if self.configuration.control_input_mode == "button" and action is not None:
+                        try:
+                            await self._handle_button_event(
+                                action, action_at, received_at=received_at, refresh_device=False,
+                            )
+                        except ValueError as error:
+                            self.device.faults["start_rejected"] = str(error)
+                    elif action is not None:
+                        try:
+                            self._prepare_operation(action, physical=True, at=action_at)
+                            self._set_operation(action, at=action_at, refresh_device=False)
+                        except ValueError as error:
+                            self.device.faults["start_rejected"] = str(error)
+                    self._sync_detector()
 
     @asynccontextmanager
     async def serialized(self, *, semantic_event=False):
@@ -669,7 +694,7 @@ class SaunaRuntime:
     async def start_archive(self, path, entry_id):
         from .archive import Archive
 
-        self.archive = Archive(path, entry_id)
+        self.archive = Archive(path, entry_id, sessions_only=True)
         await self.archive.start()
         self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
         self.archive.append("presence_source", self._clock(), {
@@ -796,6 +821,38 @@ class SaunaRuntime:
         if completed and self.device:
             self.device.invalidate_historical_warmup()
 
+    async def erase_archive(self, session_id=None, *, reset=False):
+        task = asyncio.create_task(self._erase_archive(session_id, reset=reset))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    async def _erase_archive(self, session_id=None, *, reset=False):
+        async with self.serialized():
+            self._require_open()
+            if self.session is not None:
+                raise ValueError("Archivdaten können erst nach Abschluss der Sitzung gelöscht werden.")
+            if self.archive is None:
+                raise ValueError("Kein Sitzungsarchiv verfügbar.")
+            self.persist()
+            count = await self.archive.erase(session_id, reset=reset)
+            self.controller.completed_sessions = tuple(
+                session for session in self.controller.completed_sessions
+                if not reset and session.session_id != session_id
+            )
+            self._archived_completed = len(self.controller.completed_sessions)
+            self.consumer_events = [
+                event for event in self.consumer_events
+                if not reset and event.session_id != session_id
+            ]
+            self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
+            if self.device:
+                self.device.invalidate_historical_warmup()
+            self.notify()
+            return count
+
     def persist(self):
         self._publish_controller_events()
         if self.archive is None:
@@ -821,7 +878,7 @@ class SaunaRuntime:
             signature["heating"].pop("accounted_at")
             signature["heating"].pop("elapsed_seconds")
             signature.pop("energy")  # Counters do not create a revision every second.
-            signature = encoded(signature)
+            signature = encoded_plain(signature)
             if signature != self._archive_signature:
                 self.archive.save_session(
                     self.session, now, self.configuration.as_options()
@@ -1203,18 +1260,26 @@ class SaunaRuntime:
             await self._cycle()
 
     async def tick(self, _at=None):
-        async with self.serialized():
-            if self.closed:
-                return
-            if self.configuration.control_input_mode == "button":
-                now = self._clock()
-                await self._apply_button_action(
-                    self._button.advance(
-                        now, bool(self.session and self.session.operation_enabled)
-                    ),
-                    now,
-                )
-            await self._cycle()
+        # HA schedules each interval independently. Keep at most one current
+        # tick waiting/running; it reads the current clock after taking the lock.
+        if self.closed or self._tick_pending:
+            return
+        self._tick_pending = True
+        try:
+            async with self.serialized():
+                if self.closed:
+                    return
+                if self.configuration.control_input_mode == "button":
+                    now = self._clock()
+                    await self._apply_button_action(
+                        self._button.advance(
+                            now, bool(self.session and self.session.operation_enabled)
+                        ),
+                        now,
+                    )
+                await self._cycle()
+        finally:
+            self._tick_pending = False
 
     async def begin_session(self, session_id: str) -> Session:
         async with self.serialized():
@@ -1275,20 +1340,24 @@ class SaunaRuntime:
                 try:
                     # A pending light service must never defer the heater OFF.
                     await self.device.close()
+                    heater_handoff = True
                 except Exception as error:
                     failures.append(error)
+                    heater_handoff = False
                 try:
                     light_handoff = await self.device.prepare_light_handoff()
                 except Exception as error:
                     failures.append(error)
                     light_handoff = False
-                if not light_handoff:
+                if not light_handoff or not heater_handoff:
+                    self.device.restore_light_ownership()
+                    self.device.restore_heater_ownership()
                     try:
                         self.persist()
                     except Exception as error:
                         failures.append(error)
                     error = RuntimeError(
-                        "Lichtausgabe läuft noch; Sauna-Laufzeit bleibt für einen erneuten Abschluss offen"
+                        "Geräteausgabe nicht abgeschlossen; Sauna-Laufzeit bleibt für einen erneuten Abschluss offen"
                     )
                     if failures:
                         raise error from ExceptionGroup(

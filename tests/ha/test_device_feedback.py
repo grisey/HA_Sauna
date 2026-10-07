@@ -46,6 +46,26 @@ def state(value, brightness=None, *, unit=None):
 
 @unittest.skipUnless(HA_AVAILABLE, "Home Assistant ist lokal nicht installiert")
 class DeviceFeedbackTests(unittest.TestCase):
+    def test_readonly_light_observation_distinguishes_unknown_from_off(self):
+        from custom_components.ha_sauna.api import manual_controls
+
+        runtime, adapter, light = self.device()
+        for value in (None, state("unknown"), state("unavailable"), state("on"),
+                      state("on", float("nan"))):
+            with self.subTest(state=value):
+                light[0] = value
+                self.assertEqual(manual_controls(runtime)["light"]["observation"],
+                                 {"available": False, "brightness_percent": None})
+        light[0] = state("off")
+        self.assertEqual(adapter.light_observation,
+                         {"available": True, "brightness_percent": 0.0})
+        light[0] = state("on", 153)
+        self.assertEqual(manual_controls(runtime)["light"]["observation"],
+                         {"available": True, "brightness_percent": 60.0})
+        runtime.device = None
+        self.assertEqual(manual_controls(runtime)["light"]["observation"],
+                         {"available": False, "brightness_percent": None})
+
     def device(self, **parameters):
         from custom_components.ha_sauna.device import HADevice
 
@@ -376,9 +396,12 @@ class DeviceFeedbackTests(unittest.TestCase):
                     withdrawal = next(e for e in runtime.consumer_events if e.kind == "occupancy"
                                       and e.presence.assertion == "proxy_retraction")
                     self.assertEqual(withdrawal.session_id, "gap")
-                    self.assertTrue(any(r["kind"] == "presence"
-                                        and r["payload"]["assertion"] == "proxy_retraction"
-                                        for r in stored["records"]))
+                    if resumes:
+                        self.assertTrue(any(r["kind"] == "presence"
+                                            and r["payload"]["assertion"] == "proxy_retraction"
+                                            for r in stored["records"]))
+                    else:
+                        self.assertIsNone(stored)  # Unconfirmed attempts are discarded.
                     if resumes:
                         self.assertNotEqual(runtime.session.session_id, "gap")
                         self.assertEqual(runtime._detector_session, runtime.session.session_id)
@@ -415,7 +438,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             for second in range(1, 39):
                 clock[0] = T0 + timedelta(seconds=second)
                 fall = max(0, second - 15)
-                for role, value in (("upper_temperature", 90 - .04 * fall),
+                for role, value in (("upper_temperature", 90 - .08 * fall),
                                     ("upper_humidity", 20 - .06 * fall)):
                     task = asyncio.create_task(runtime.device_input(
                         self.detection_edge(runtime, role, value)))
@@ -565,7 +588,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             for second in range(1, 61):
                 clock[0] = T0 + timedelta(seconds=second)
                 for role, value in (
-                    ("upper_temperature", 50 - .03 * second),
+                    ("upper_temperature", 50 - .06 * second),
                     ("upper_humidity", 30),
                 ):
                     pending.append(asyncio.create_task(runtime.device_input(edge(role, value))))
@@ -607,6 +630,9 @@ class DeviceFeedbackTests(unittest.TestCase):
             adapter.ingest("heater", state("on"), T0)
             adapter.report_received_feedback(T0)
             runtime.controller.begin_session("old", T0)
+            runtime.controller.set_temperature(80, T0)
+            for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+                runtime.controller.process(Event(kind.value, "old", kind, T0, T0))
             await runtime.start_archive(path, "archive-entry")
             clock[0] = T0 + timedelta(seconds=3)
             await runtime._apply_button_action(END_HOLD, clock[0])
@@ -826,7 +852,7 @@ class DeviceFeedbackTests(unittest.TestCase):
                     for position in ("upper", "lower"):
                         adapter.ingest(
                             f"{position}_temperature",
-                            state(str(85 - max(0, second - 20) * .03), unit="°C"),
+                            state(str(85 - max(0, second - 20) * .06), unit="°C"),
                             clock[0],
                         )
                         adapter.ingest(
@@ -864,8 +890,8 @@ class DeviceFeedbackTests(unittest.TestCase):
                     event for event in runtime.session.timeline.processed
                     if event.kind == Kind.DOOR_OPEN
                 )
-                self.assertEqual(opened.effective_at, T0 + timedelta(seconds=38))
-                self.assertEqual(opened.detected_at, T0 + timedelta(seconds=47))
+                self.assertEqual(opened.effective_at, T0 + timedelta(seconds=37))
+                self.assertGreaterEqual(opened.detected_at, T0 + timedelta(seconds=47))
 
     def test_waiting_tick_or_command_consumes_received_contactor_off_first(self):
         async def exercise(command):

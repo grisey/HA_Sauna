@@ -40,6 +40,35 @@ class LightPlan:
     manual_override: bool
 
 
+class LightQuantizer:
+    """Ganze Stellwerte mit Hysterese, getrennt von Kurve und Ist-Rohwerten."""
+
+    def __init__(self) -> None:
+        self._previous: int | None = None
+
+    def reset(self) -> None:
+        self._previous = None
+
+    def quantize(self, plan: LightPlan, hysteresis_percent: float) -> int:
+        value = _percent(plan.brightness_percent)
+        previous = self._previous
+        brightness = round(value)
+        if plan.automatic and value == 0:
+            # Das fällige AUS beendet auch die Erinnerung an die vorige Stufe.
+            self.reset()
+            return 0
+        if (
+            plan.automatic
+            and previous is not None
+            and hysteresis_percent > 0
+            and 0 < value < 100
+            and abs(value - previous) <= 0.5 + hysteresis_percent
+        ):
+            brightness = previous
+        self._previous = brightness
+        return brightness
+
+
 @dataclass
 class _Motion:
     kind: str
@@ -48,6 +77,13 @@ class _Motion:
     low_percent: float
     fade_seconds: float
     fixed_percent: float | None = None
+
+
+@dataclass
+class _ReturnTransition:
+    started_at: object
+    start_percent: float
+    duration_seconds: float
 
 
 class LightOutput:
@@ -69,6 +105,7 @@ class LightOutput:
         self._manual_ends_at = None
         self._last_automatic: float = 0.0
         self._resume_pending = False
+        self._return_transition: _ReturnTransition | None = None
         self._phase_paused = False
         self._paused_automatic: float | None = None
         self._phase_ends_at = None
@@ -84,9 +121,10 @@ class LightOutput:
         self._manual_phase_key = self._phase_key if phase_key is None else phase_key
         self._manual_ends_at = ends_at
         self._resume_pending = False
+        self._return_transition = None
 
     def return_to_automatic(self) -> None:
-        """Beendet den Override; die nächste Planung beginnt beim letzten Auto-Wert."""
+        """Beendet den Override; die nächste Planung beginnt beim beobachteten Ist."""
         if self._manual is not None:
             self._manual = None
             self._manual_phase_key = None
@@ -120,6 +158,7 @@ class LightOutput:
         self._last_automatic = 0.0
         self._motion = None
         self._resume_pending = False
+        self._return_transition = None
         self._phase_paused = False
         self._paused_automatic = None
 
@@ -175,6 +214,9 @@ class LightOutput:
             self._phase_paused = False
             self._paused_automatic = None
             self._phase_ends_at = phase_ends_at
+            # Der neue Phasenübergang startet selbst bereits beim Istwert.
+            self._return_transition = None
+            self._resume_pending = False
         if phase == "aus":
             # Das automatische Ende besitzt keinen Rückkehrübergang. Auch
             # bei gleichzeitigem Override-Ende darf der vorige Phasenwert
@@ -199,7 +241,9 @@ class LightOutput:
                 self._phase_paused = True
             if self._manual is not None:
                 return LightPlan(self._manual, False, True)
-            automatic = self._paused_automatic
+            automatic = self._return_from_manual(
+                now, self._paused_automatic, actual, phase_ends_at
+            )
             self._last_automatic = automatic
             return LightPlan(automatic, True, False)
         if self._manual is not None:
@@ -213,25 +257,28 @@ class LightOutput:
             self._paused_automatic = None
         self._phase_ends_at = phase_ends_at
         automatic = self._automatic(now, phase, target, phase_ends_at)
-        if self._resume_pending and phase not in (
-            self._DIM_PHASES | self._SESSION_PHASES
-        ):
-            self._motion = _Motion(
-                "resume",
-                now,
-                self._last_automatic,
-                0.0,
-                self.parameters.values["light_transition_seconds"],
-                target,
-            )
-            self._resume_pending = False
-            automatic = self._last_automatic
-        elif self._resume_pending:
-            # A live phase owns its curve and deadline. A manual choice does
-            # not replace either with the ordinary temperature return.
-            self._resume_pending = False
+        automatic = self._return_from_manual(now, automatic, actual, phase_ends_at)
         self._last_automatic = automatic
         return LightPlan(automatic, True, False)
+
+    def _return_from_manual(self, now, automatic, actual, ends_at) -> float:
+        """Blendet zum laufenden Phasenplan, ohne dessen Bewegung neu zu starten."""
+        if self._resume_pending:
+            self._return_transition = _ReturnTransition(
+                now, actual, self.parameters.values["light_transition_seconds"]
+            )
+            self._resume_pending = False
+        transition = self._return_transition
+        if transition is None:
+            return automatic
+        elapsed = max(0.0, _seconds(now - transition.started_at))
+        remaining = _remaining(now, ends_at)
+        duration = transition.duration_seconds
+        if remaining is not None:
+            duration = min(duration, elapsed + remaining)
+        if elapsed >= duration:
+            self._return_transition = None
+        return linear(transition.start_percent, automatic, elapsed, duration)
 
     def _start_motion(
         self,
@@ -274,7 +321,7 @@ class LightOutput:
         if motion is None:
             return target
         elapsed = max(0.0, _seconds(now - motion.started_at))
-        if motion.kind in ("resume", "normal"):
+        if motion.kind == "normal":
             # Das Ziel bleibt eine Live-Eingabe: Während der Rückkehr darf eine
             # neue Temperatur- oder Dämmerungslage nicht am alten Ziel hängen.
             return linear(motion.start_percent, target, elapsed, motion.fade_seconds)

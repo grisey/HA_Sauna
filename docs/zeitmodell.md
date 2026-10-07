@@ -70,6 +70,16 @@ den gültigen oberen Wert und bei dessen Ausfall den gültigen unteren Wert.
 Ein zwischenzeitliches Erreichen der Solltemperatur setzt die Bereitschaft
 im selben Controllerzustand wie bei fortlaufender Verarbeitung.
 
+Für die Gangerkennung bilden alle bereits gemeinsam aufgenommenen Messungen
+mit gleichem Empfangszeitpunkt ein Raster. Dessen Gangfreigabe verwendet die
+abschließende führende Temperatur samt Gültigkeitsfrist aus derselben
+Geräteauswahl wie die Heizregelung. Eine dazwischen zugestellte Betriebskante
+ändert dieses Raster nicht. Betriebskanten, Thermostat und Bereitschaft werden
+weiter in Eingangsreihenfolge gebucht: Ein erst später eingegangener
+Temperaturwert verändert nicht rückwirkend den Zustand beim Einschalten.
+Die gemeinsame Temperaturfreigabe gilt ausschließlich während der Buchung
+dieser Empfangsgruppe; zeitlich frühere und folgende Gruppen bleiben getrennt.
+
 Heizentscheidungen führen ihre logische Buchungszeit in `Decision.at` und
 ihre tatsächliche Erzeugungszeit im Controller in `Decision.created_at`.
 Der Archivrecord übernimmt `created_at` als `received_at`. Diese Herkunft

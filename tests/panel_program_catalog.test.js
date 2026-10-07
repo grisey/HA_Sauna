@@ -2,6 +2,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+const frontendDefaults = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).frontend;
+
 let Panel;
 const sandbox = {
   HTMLElement: class {},
@@ -43,6 +47,7 @@ const programs = [
 {
   const p = Object.assign(Object.create(Panel.prototype), {
     state: {
+      frontend_defaults: frontendDefaults,
       parameters: [
         { key: "target_temperature_c", minimum: 60, maximum: 100 },
         { key: "temperature_gangs", minimum: 1, maximum: 8 },
@@ -86,13 +91,11 @@ assert.match(
 // Catalog saves send the stable IDs and all exact backend fields in one body.
 {
   const calls = [],
-    acknowledged = [
-      { ...programs[1], name: "Server bestätigt" },
-      programs[0],
-    ];
+    acknowledged = [{ ...programs[1], name: "Server bestätigt" }, programs[0]];
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { program: true },
       configuration_locked: false,
       configuration: { temperature_programs: programs },
@@ -137,6 +140,7 @@ assert.match(
   const calls = [];
   const p = Object.assign(Object.create(Panel.prototype), {
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { program: true },
       configuration: {
         program_mode: "progressive",
@@ -200,6 +204,7 @@ assert.match(
     refresh: async () => {},
     $: (selector) => inputs[selector],
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { program: true, temperature: true },
       parameters: [
         { key: "target_temperature_c", minimum: 60, maximum: 100 },
@@ -248,6 +253,7 @@ assert.match(
     freeProgramKind: "steps",
     freeProgramValues: () => [80, 86, 90],
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { program: true },
       configuration: {
         program_mode: "progressive",
@@ -289,6 +295,7 @@ for (const selected of [null, "quiet"]) {
     $: (selector) => inputs[selector],
     programSelectionDraft: { mode: "individual" },
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { program: true, temperature: true },
       parameters: [
         { key: "target_temperature_c", minimum: 60, maximum: 100 },
@@ -335,6 +342,7 @@ for (const selected of [null, "quiet"]) {
     programDraft: [{ ...programs[0], name: "Nach Fehler" }, programs[1]],
     programLibraryNeedsRender: false,
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { program: true },
       configuration_locked: false,
       configuration: { temperature_programs: programs, button_program: "current" },
@@ -389,6 +397,7 @@ for (const selected of [null, "quiet"]) {
     message: () => {},
     refresh: async () => {},
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { admin: false, program: true },
       configuration_locked: false,
       configuration: {
@@ -459,6 +468,7 @@ for (const selected of [null, "quiet"]) {
     hass: { user: { is_admin: false } },
     entry: "entry-1",
     state: {
+      frontend_defaults: frontendDefaults,
       permissions: { admin: false, program: true },
       configuration_locked: false,
       configuration: {
@@ -481,7 +491,7 @@ for (const selected of [null, "quiet"]) {
       })[selector] || null,
   });
   p.drawSettings();
-  assert.match(settings.innerHTML, /Saunataster[\s\S]*Programme/);
+  assert.match(settings.innerHTML, /Programme[\s\S]*Saunataster/);
   assert.doesNotMatch(
     settings.innerHTML,
     /Grundeinstellungen|Protokollierung|Sitzungsarchiv|Sensoren und Geräte zuordnen/,

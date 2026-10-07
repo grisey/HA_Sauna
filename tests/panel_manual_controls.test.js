@@ -3,6 +3,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
+const frontendDefaults = JSON.parse(
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).frontend;
+
 let Panel;
 const sandbox = {
   HTMLElement: class {},
@@ -24,8 +28,8 @@ const sandbox = {
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/appearance_catalog.json", "utf8"),
-);
+  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+).appearance;
 vm.runInNewContext(source, sandbox);
 
 assert.match(source, /manual-section manual-heater/);
@@ -53,6 +57,7 @@ const makePanel = (permissions, lightValue = "42") => {
   const panel = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
     state: {
+      frontend_defaults: frontendDefaults,
       permissions,
       configuration: { control_mode: "manual" },
       operation_enabled: true,
@@ -101,6 +106,7 @@ const renderCurrent = (
     programSelectionDraft: program.selectionDraft ?? null,
     manualLightDraft: null,
     state: {
+      frontend_defaults: frontendDefaults,
       now: "2026-09-20T12:00:00Z",
       session,
       last_session: null,
@@ -240,7 +246,10 @@ const renderCurrent = (
     startButton = { disabled: false, textContent: "Als Startseite festlegen" },
     startStatus = { textContent: "" };
   const startPage = Object.assign(Object.create(Panel.prototype), {
-    state: { permissions: { admin: false } },
+    state: {
+      frontend_defaults: frontendDefaults,
+      permissions: { admin: false },
+    },
     message: () => {},
     api: async () => {
       throw Error("Sauna API must not be called");
@@ -277,7 +286,10 @@ const renderCurrent = (
   const failedButton = { disabled: false },
     failedStatus = { textContent: "vorher" };
   const failedStartPage = Object.assign(Object.create(Panel.prototype), {
-    state: { permissions: { admin: false } },
+    state: {
+      frontend_defaults: frontendDefaults,
+      permissions: { admin: false },
+    },
     message: () => {},
     hass: {
       callWS: async () => {
@@ -343,7 +355,7 @@ const renderCurrent = (
   );
   assert.match(
     renderCurrent("automatic", {}, null),
-    /class="oven-feedback"[^>]*><strong[^>]*>Ofen unbekannt<\/strong>/,
+    /class="oven-feedback"[^>]*><strong[^>]*>Ofenzustand unbekannt<\/strong>/,
   );
   assert.doesNotMatch(automatic, /data-door-status|environment-status/);
   assert.doesNotMatch(manual, /Temperaturwahl|program-types|temperature-presets/);
@@ -806,6 +818,7 @@ const renderCurrent = (
     progressionDraft: null,
     manualLightDraft: null,
     state: {
+      frontend_defaults: frontendDefaults,
       now: "2026-09-20T12:00:00Z",
       phase: "nachlauf",
       operation_enabled: true,
@@ -913,7 +926,10 @@ const renderCurrent = (
     },
   ];
   const navigation = Object.assign(Object.create(Panel.prototype), {
-    state: { permissions: { admin: true } },
+    state: {
+      frontend_defaults: frontendDefaults,
+      permissions: { admin: true },
+    },
     message: () => {},
     $: (selector) => nodes[selector],
     drawHistory: () => {},

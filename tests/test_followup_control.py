@@ -162,6 +162,7 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_proxy_path_preserves_events_and_retraction_is_not_absence(self):
         now = at(0)
         runtime = SaunaRuntime(Configuration(bindings(), Parameters({"confirmation_minutes": 1})), clock=lambda: now)
+        runtime.controller.set_temperature(90, now)
         await runtime.begin_session("s")
         runtime._sync_detector()
         # A valid proxy person signal needs an available original T/RH pair.
@@ -185,6 +186,8 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_proxy_measurements_report_unknown_without_erasing_person_record(self):
         now = at(0)
         runtime = SaunaRuntime(Configuration(bindings(), Parameters({})), clock=lambda: now)
+        # Die führende Regeltemperatur ist gültig; dem Proxy fehlt das T/RH-Paar.
+        runtime.controller.set_temperature(90, now)
         await runtime.begin_session("s")
         now = at(1)
         await runtime.receive(ev(Kind.DOOR_CLOSE, 1))

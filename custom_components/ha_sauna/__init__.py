@@ -164,6 +164,7 @@ async def async_options_updated(hass, entry):
                     runtime.set_log_level(current.log_level)
                 if runtime.device:
                     runtime.device.restore_light_ownership()
+                    runtime.device.restore_heater_ownership()
                 runtime.reconfiguring = False
             return
         from .core.parameters import LIVE_TEMPERATURE_KEYS
@@ -241,6 +242,7 @@ async def async_options_updated(hass, entry):
                     )
                 if runtime.device:
                     runtime.device.restore_light_ownership()
+                    runtime.device.restore_heater_ownership()
                 runtime.reconfiguring = False
             return
         if runtime.session:
@@ -265,6 +267,12 @@ async def async_options_updated(hass, entry):
     )
     try:
         if runtime and not runtime.closed and runtime.device:
+            heater_finished = await runtime.device.prepare_heater_handoff(
+                restore_on_failure=False
+            )
+            if not heater_finished:
+                await _restore_failed_options(hass, entry, runtime, requested_options)
+                return
             light_changed = (
                 runtime.configuration.bindings.values["light"]
                 != updated.bindings.values["light"]
@@ -339,6 +347,7 @@ async def _restore_failed_options(hass, entry, runtime, requested_options):
         runtime.reconfiguring = False
         if runtime.device:
             runtime.device.restore_light_ownership()
+            runtime.device.restore_heater_ownership()
         runtime.log.error(
             "configuration_reload_failed",
             "Einstellungen konnten nicht neu geladen werden; "
@@ -351,9 +360,21 @@ async def async_unload_entry(
 ) -> bool:
     """Beim Entladen Ofen ausschalten, Listener lösen und Archiv abschließen."""
     runtime = entry.runtime_data
-    if runtime.device and not await runtime.device.prepare_light_handoff():
-        return False
     try:
+        if runtime.device and not runtime.closed:
+            # A rejected unload keeps the output owner alive, but must not
+            # let a later tick resume heating after its final OFF completes.
+            try:
+                await runtime.set_operation(False)
+            finally:
+                # Archive/input processing failures must not skip the
+                # independent final OFF attempt of the existing output owner.
+                heater_finished = await runtime.device.prepare_heater_handoff()
+            if not heater_finished:
+                return False
+            if not await runtime.device.prepare_light_handoff():
+                runtime.device.restore_heater_ownership()
+                return False
         unloaded = await hass.config_entries.async_unload_platforms(
             entry, ["number", "sensor", "switch", "climate", "button"]
         )
@@ -363,6 +384,7 @@ async def async_unload_entry(
             and not runtime.closed and runtime.device
         ):
             runtime.device.restore_light_ownership()
+            runtime.device.restore_heater_ownership()
         raise
     if not unloaded:
         if (
@@ -370,6 +392,7 @@ async def async_unload_entry(
             and not runtime.closed and runtime.device
         ):
             runtime.device.restore_light_ownership()
+            runtime.device.restore_heater_ownership()
         return False
     await runtime.close()
     return True

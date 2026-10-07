@@ -99,6 +99,16 @@ Phase. **Hell** verwendet die dafür eingestellte Helligkeit, standardmäßig
 50 %. Administratoren können zusätzlich **Gedimmt** und eine freie Helligkeit
 wählen. **Gedimmt** verwendet die zur Tageszeit passende Normalhelligkeit.
 
+Der Helligkeitsstatus steht bei Ofenzustand und Gangzahl. **Licht … % · gemeldet**
+bezeichnet die verfügbare Geräterückmeldung. Ohne verwertbare Rückmeldung steht
+die bestätigte **Lichtvorgabe** mit diesem Hinweis; fehlen beide Werte, bleibt der
+Status unbekannt. Ein gemeldetes ausgeschaltetes Licht entspricht 0 %.
+
+Im Automatikmodus öffnet **Freie Helligkeit einstellen** den Eingabeeditor.
+**Übernehmen** setzt die Vorgabe in ganzen Prozent. Ein Eingabeentwurf verändert
+den Status nicht. Im manuellen Betriebsmodus ist die freie Eingabe unmittelbar
+sichtbar. Die verbleibende Übersteuerungsdauer steht weiter bei den Bedienelementen.
+
 Eine manuelle Lichtwahl gilt bis zum passenden Phasenwechsel, längstens für
 die eingestellte Übersteuerungsdauer. Danach folgt das Licht wieder der
 Automatik. Standardwert und feste Obergrenze betragen zehn Minuten.
@@ -162,7 +172,7 @@ Steuerungsart; die Ofenrückmeldung zeigt den tatsächlichen Zustand.
 
 ## Programme und Tastervorgabe
 
-**Einstellungen → Programme** enthält den Katalog benannter Programme.
+**Einstellungen → Programme und Start → Programme** enthält den Katalog benannter Programme.
 Dafür genügen normale Home-Assistant-Bedienrechte. Die Bearbeitung ist nach
 Ende einer Sitzung verfügbar.
 
@@ -172,7 +182,7 @@ oder Pfeiltasten bei fokussiertem Griff ändern die Reihenfolge.
 **Programme speichern** übernimmt den gesamten Entwurf dauerhaft.
 **Änderungen verwerfen** stellt den gespeicherten Katalog wieder her.
 
-Unter **Einstellungen → Saunataster** steht ein benanntes Programm oder eine
+Unter **Einstellungen → Programme und Start → Saunataster** steht ein benanntes Programm oder eine
 eigene konstante Temperatur als Startvorgabe zur Wahl. Diese Vorgabe bleibt
 gesondert von der aktuellen Temperaturwahl gespeichert.
 
@@ -187,8 +197,15 @@ das Zeitfenster verschiebbar; **Gesamt** zeigt die ganze Sitzung.
 Administratoren finden unter **Details → Betrieb & Fristen** die technischen
 Zustände und unter **Detailverlauf** die Messungen beider Positionen. Die
 **Erkennungskontrolle** verbindet Ereigniszeilen mit den zugehörigen Markern.
-Unter **Einstellungen** lädt **Archiv als ZIP herunterladen** das Sitzungsarchiv
+Unter **Einstellungen → Daten und Wartung** lädt **Archiv als ZIP herunterladen** das Sitzungsarchiv
 herunter.
+
+**Sitzungen verwalten** zeigt die gespeicherten Sitzungen mit einer eigenen
+Löschfunktion. **Datenbank zurücksetzen** entfernt sämtliche Archivdaten der
+Sauna. Beide Aktionen benötigen eine Bestätigung und sind nur nach Abschluss
+der laufenden Sitzung verfügbar. Einstellungen und Gerätezuordnungen bleiben
+erhalten. Abgeschlossene Versuche ohne bestätigten Gang werden automatisch
+verworfen; beim Laden der Integration gilt dies auch für ältere Versuche.
 
 [Archivinhalt](speicherung.md#archivexport)
 
@@ -206,12 +223,21 @@ gemeinsamen Bereich von Anzeigeskala und zulässigen Solltemperaturen.
 
 [Darstellungsreferenz](darstellung.md)
 
-Ganz unten unter **Einstellungen** macht **Als Startseite festlegen** die
+Unter **Einstellungen → Persönlich** macht **Als Startseite festlegen** die
 Saunaübersicht zur persönlichen Home-Assistant-Startseite. Diese Auswahl gilt
 für das angemeldete Benutzerprofil. Eine andere Startseite ist im
 Home-Assistant-Profil wählbar.
 
 ## Technische Einstellungen und Rücksetzen
+
+Die Bereichsnavigation gliedert die Einstellungen in **Programme und Start**,
+**Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**, **Darstellung**,
+**Daten und Wartung** sowie **Persönlich**. Mobil übernimmt ein Abschnittswähler
+die Navigation. Nicht administrative Profile sehen Programme und persönliche
+Einstellungen. Sensorzuordnung und Erkennungsparameter stehen zusammen;
+Expertenparameter sind nach Signalverarbeitung, Tür, Lüften, Präsenz und Aufguss
+geordnet. Protokollierung, Archiv und das getrennte Rücksetzen der
+Grundeinstellungen stehen unter **Daten und Wartung**.
 
 Administratoren bearbeiten die **Grundeinstellungen** und Gerätezuordnungen
 nach Ende einer Sitzung. Während einer Sitzung bleiben die aktuelle

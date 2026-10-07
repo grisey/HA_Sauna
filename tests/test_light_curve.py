@@ -2,7 +2,10 @@
 import unittest
 
 from custom_components.ha_sauna.core.light import (
-    linear, normal_brightness, phase_target, temperature_brightness,
+    linear,
+    normal_brightness,
+    phase_target,
+    temperature_brightness,
 )
 from custom_components.ha_sauna.core.parameters import Parameters
 
@@ -38,8 +41,20 @@ class LightCurveTests(unittest.TestCase):
         self.assertEqual(temperature_brightness(0, 85, self.parameters, 40), 5)
         self.assertEqual(temperature_brightness(100, 85, self.parameters, 40), 40)
 
-    def test_readiness_band_and_gang_hold_normal_brightness(self):
-        self.assertEqual(phase_target("bereit", 82, 85, self.parameters, 40), 40)
+    def test_readiness_keeps_the_continuous_temperature_curve(self):
+        for temperature in (76.9, 77.1, 79.9, 80):
+            with self.subTest(temperature=temperature):
+                self.assertEqual(
+                    phase_target("bereit", temperature, 80, self.parameters, 40),
+                    phase_target("aufheizen", temperature, 80, self.parameters, 40),
+                )
+        self.assertAlmostEqual(
+            phase_target("bereit", 77.1, 80, self.parameters, 40)
+            - phase_target("bereit", 76.9, 80, self.parameters, 40),
+            0.14,
+        )
+
+    def test_gang_holds_normal_brightness(self):
         self.assertEqual(phase_target("saunagang", None, 85, self.parameters, 40), 40)
 
     def test_linear_transition_handles_zero_and_negative_time(self):

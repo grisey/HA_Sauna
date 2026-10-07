@@ -8,6 +8,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import UnitOfTemperature
 
+from .core.defaults import section
 from .core.parameters import BY_KEY
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
@@ -27,7 +28,7 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_OFF
     )
     _attr_max_temp = BY_KEY["target_temperature_c"].maximum
-    _attr_target_temperature_step = 0.1
+    _attr_target_temperature_step = section("frontend")["climate_temperature_step_c"]
 
     def __init__(self, entry):
         super().__init__(entry, "thermostat")

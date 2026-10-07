@@ -1,8 +1,8 @@
 """Echter HA-Kern, ConfigEntry-Manager und Entitätsplattformen; isolierter Pfad."""
-from pathlib import Path
-import tempfile
 import shutil
 import socket
+import tempfile
+from pathlib import Path
 
 from homeassistant import bootstrap, config_entries, loader
 from homeassistant.core import HomeAssistant
@@ -95,3 +95,26 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()
     return result["result"]
+
+
+def with_confirmed_round(session):
+    """A retained archive fixture, independent of the device command under test."""
+    from dataclasses import replace
+
+    from custom_components.ha_sauna.core.timeline import Event, Kind, Timeline, apply
+
+    at = session.timeline.session_started_at
+    timeline = Timeline(session.session_id, at)
+    for kind in (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.OPERATION_OFF):
+        timeline = apply(timeline, Event(
+            f"fixture:{session.session_id}:{kind.value}", session.session_id,
+            kind, at, at,
+        ))
+    return replace(session, timeline=replace(
+        session.timeline, completed=session.timeline.completed + timeline.completed,
+    ))
+
+
+def retain_session(runtime):
+    runtime.controller._session = with_confirmed_round(runtime.session)
+    runtime.persist()

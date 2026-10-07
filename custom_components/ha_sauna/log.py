@@ -2,11 +2,14 @@
 
 import logging
 
+from .core.defaults import instance_default
+
 LEVELS = ("ERROR", "INFO", "DEBUG")
+DEFAULT_LOG_LEVEL = instance_default("log_level")
 
 
 class SaunaLog:
-    def __init__(self, identity, level="INFO"):
+    def __init__(self, identity, level=DEFAULT_LOG_LEVEL):
         self.logger = logging.getLogger(
             f"custom_components.ha_sauna.instance.{identity}"
         )

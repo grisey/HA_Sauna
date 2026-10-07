@@ -81,10 +81,16 @@ standardmäßig 10 Minuten setzt die lokale Heizsumme zurück.
 Die Timeranzeige schätzt die verbleibende Laufzeit des mechanischen Ofentimers.
 Sie zählt standardmäßig von 240 Minuten herunter, solange Betrieb und bestätigte
 Schützstellung EIN sind. Bei Schütz-AUS oder unbekannter Rückmeldung bleibt der
-zuletzt berechnete Rest erhalten. Nach einer abgeschlossenen Sitzung mit gezählten
-Gängen beginnt die Anzeige beim nächsten Start mit der vollen Dauer. Bei einer
-Gangzahl von null übernimmt die nächste Sitzung den bisherigen Timerrest.
+zuletzt berechnete Rest erhalten. Nach jeder abgeschlossenen Sitzung beginnt
+die Anzeige beim nächsten Sitzungsstart mit der vollen Dauer, unabhängig von
+der erkannten Gangzahl. Fortsetzen innerhalb derselben Sitzung erhält die
+Restzeit. Die Anzeige stellt den mechanischen Timer am Gerät nicht zurück.
 Die Timerberechnung dient ausschließlich der Anzeige.
+
+Bei alleiniger Schützrückmeldung zeigt das Panel **Heizfreigabe EIN/AUS**.
+Die tatsächliche Heizleistung hinter einem internen Ofenthermostat ist daraus
+nicht bekannt. Eine gültige Leistungsmessung oder unabhängige Heizrückmeldung
+ermöglicht die Anzeige **Ofen an/aus**.
 
 Die Verbrauchsschätzung ergibt sich aus gezählter Heizzeit und eingestellter
 Ofenleistung, standardmäßig 4,5 kW. Eine gültige Leistungsmessung übernimmt die
@@ -106,13 +112,21 @@ Die automatische Helligkeit folgt dem Betriebsabschnitt und der Temperatur.
 Die Lichtkurve steigt linear von 5 % bei 30 °C bis zur Normalhelligkeit an der aktuellen
 Solltemperatur. Die Normalhelligkeit beträgt tagsüber 40 % und nachts
 25 %; während der bürgerlichen Dämmerung geht sie gleitend zwischen beiden
-Werten über. Während eines Saunagangs bleibt die Normalhelligkeit erhalten.
-Die Ausgabe erfolgt in ganzen Prozentwerten.
+Werten über. Aufheizen und Bereitschaft verwenden dieselbe stetige Lichtkurve;
+die Bereitschaftshysterese verändert das Lichtziel nicht. Während eines
+Saunagangs bleibt die Normalhelligkeit erhalten.
+Die Ausgabe erfolgt in ganzen Prozentwerten. Automatische Stellwerte wechseln
+erst, wenn die Kurve die halbe Prozentgrenze um zusätzlich 0,1 Prozentpunkte
+überschreitet. Dieses einstellbare Hystereseband beruhigt kleine Schwankungen
+an Rundungsgrenzen. Manuelle Wahlen und fälliges AUS gelten unmittelbar.
+Die internen Kurven und gemessenen Helligkeitswerte behalten ihre Genauigkeit.
 
 Zu Beginn der Ofenkühlung geht das Licht auf 15 % zurück. Anschließend steigt es
 über die verbleibende Kühlzeit linear zur temperaturabhängigen Helligkeit an.
 Automatische Übergänge dauern standardmäßig 30 Sekunden; die Kühlphase begrenzt
 den ersten Übergang auf höchstens die Hälfte ihrer verbleibenden Dauer.
+Das Ganzzahlraster begrenzt die Änderung nicht auf einen Prozentpunkt pro Sekunde;
+die eingestellten Übergangszeiten und Phasenfristen bleiben maßgeblich.
 
 Betrieb-AUS startet den Lichtnachlauf bei 50 %. Er endet mit der gemeinsamen
 Wiederaufnahmefrist durch Ausschalten des Lichts. Beim langen Enddruck einer
@@ -124,7 +138,10 @@ oder längstens für die eingestellte Übersteuerungsdauer. Deren Standardwert u
 feste Obergrenze betragen 10 Minuten. Ausschalten und Dimmen am Lichttaster zählen
 als manuelle Wahl.
 Rückmeldungen eigener Lichtbefehle ordnet die Integration dem automatischen
-Verlauf zu.
+Verlauf zu. Bei der Rückkehr zur Automatik beginnt der Übergang an der zuletzt
+beobachteten Helligkeit und blendet zum aktuellen automatischen Verlauf über.
+Eine laufende Kühl- oder Lichtnachlauffrist begrenzt diesen Übergang; sie beginnt
+dadurch nicht neu. Das fällige Ausschalten beendet auch einen laufenden Übergang.
 
 Enden Lichtnachlauf und manuelle Lichtwahl gleichzeitig, bleibt die automatische
 Endphase AUS. Eine anschließend ausdrücklich gesetzte Raumlichtwahl gilt als

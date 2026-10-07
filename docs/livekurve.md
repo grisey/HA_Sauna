@@ -26,6 +26,14 @@ späteren Auswählen dieser Sitzung. Laufende Abrufe gehören zur Instanz,
 Auswahlgeneration und Sitzungsidentität ihres Auftrags. Antworten werden
 übernommen, solange dieser Bezug zur aktuellen Auswahl passt.
 
+Die Panelabfrage verwendet `projection=history` und bis zu 5000 Records pro
+Seite. Sie überträgt Messungen, Quellen-Schnappschüsse, Phasen und für
+Administratoren zusätzlich Erkennungen und Diagnosen. Frühere vollständige
+Sitzungsrevisionen und übrige interne Records bleiben im Archiv und Export;
+für den Verlauf genügt der aktuelle Sitzungssnapshot jeder Antwort. Die
+Filterung erfolgt vor der Seiteneinteilung. Alle zugehörigen Originalmesspunkte
+bleiben unverändert erhalten.
+
 Die Record-ID bestimmt die Deduplizierung. Verschiedene Records mit gleichem
 Quellzeitpunkt behalten ihre eigene Identität. Der chronologische Index führt
 Temperatur und Feuchte für jede Messposition als eigene Reihe und gruppiert

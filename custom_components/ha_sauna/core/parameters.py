@@ -7,13 +7,7 @@ from dataclasses import dataclass
 from math import isfinite
 from types import MappingProxyType
 
-from .detection_parameters import SPECS
-from .parameter_text import PARAMETER_TEXT
-
-# The target-temperature definition is the source for every sauna setpoint
-# ceiling.  Keep this named value close to that definition so other consumers
-# do not grow independent 100 °C limits.
-SAUNA_TEMPERATURE_MAXIMUM_C = 100
+from .defaults import section
 
 
 class ParameterError(ValueError):
@@ -29,14 +23,20 @@ class ParameterDefinition:
     key: str
     label: str
     unit: str
-    allow_zero: bool = False
-    optional: bool = False
-    maximum: float = 1000000
-    default: float | None = None
-    minimum: float | None = None
-    integer: bool = False
-    description: str = ""
-    group: str = ""
+    allow_zero: bool
+    optional: bool
+    maximum: float
+    default: float | None
+    minimum: float | None
+    integer: bool
+    description: str
+    group: str
+    expert: bool
+    step: float | str
+    number_step: float
+    settings_group: str
+    settings_subgroup: str | None
+    order: int
 
     def validate(self, value: object) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -61,19 +61,6 @@ class ParameterDefinition:
         return int(number) if self.integer else number
 
 
-def definition(key, unit, allow_zero=False, **kwargs):
-    label, description, group = PARAMETER_TEXT[key]
-    return ParameterDefinition(
-        key,
-        label,
-        unit,
-        allow_zero=allow_zero,
-        description=description,
-        group=group,
-        **kwargs,
-    )
-
-
 # Einstellbare Standardwerte; bereits gespeicherte Werte haben Vorrang.
 LIVE_TEMPERATURE_KEYS = frozenset(
     {"target_temperature_c", "final_temperature_c", "temperature_gangs"}
@@ -94,109 +81,15 @@ LEGACY_PARAMETER_KEYS = frozenset(
         "safety_temperature_c",
     }
 )
-DEFINITIONS = (
-    definition("session_gap_minutes", "min", default=15),
-    definition("confirmation_minutes", "min", default=12),
-    definition("heat_reset_minutes", "min", default=10),
-    definition("thermostat_cooldown_minutes", "min", True, default=5),
-    definition("minimum_heating_minutes", "min", True, default=10),
-    definition("mechanical_timer_minutes", "min", default=240),
-    definition("mechanical_timer_warning_minutes", "min", optional=True),
-    definition("after_run_minutes", "min", default=5),
-    definition("oven_cooling_max_minutes", "min", default=15),
-    definition("oven_cooling_half_life_minutes", "min", default=15, maximum=240),
-    definition("oven_cooling_heat_idle_ratio", "Verhältnis", default=2, maximum=20),
-    definition("readiness_offset_c", "°C", True, default=5),
-    definition("readiness_hysteresis_c", "°C", default=3),
-    definition("warmup_estimation_minutes", "min", default=5),
-    definition(
-        "sauna_min_temperature_c", "°C", default=60, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition("preset_start_c", "°C", default=70, maximum=SAUNA_TEMPERATURE_MAXIMUM_C),
-    definition("preset_step_c", "°C", default=5),
-    definition(
-        "preset_count", "Anzahl", default=6, minimum=1, maximum=20, integer=True
-    ),
-    definition(
-        "target_temperature_c", "°C", default=80, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition("temperature_increase_c", "°C", default=5),
-    definition(
-        "final_temperature_c", "°C", default=95, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition(
-        "temperature_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True
-    ),
-    definition(
-        "program_1_start_c", "°C", default=80, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition(
-        "program_1_end_c", "°C", default=95, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition(
-        "program_1_gangs", "Anzahl", default=4, minimum=1, maximum=20, integer=True
-    ),
-    definition(
-        "program_2_start_c", "°C", default=70, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition(
-        "program_2_end_c", "°C", default=90, maximum=SAUNA_TEMPERATURE_MAXIMUM_C
-    ),
-    definition(
-        "program_2_gangs", "Anzahl", default=3, minimum=1, maximum=20, integer=True
-    ),
-    definition("fault_confirmation_seconds", "s", default=60),
-    definition("sensor_timeout_seconds", "s", default=180),
-    definition("feedback_timeout_seconds", "s", default=10),
-    definition("power_heating_threshold_w", "W", True, default=50),
-    definition("manual_override_minutes", "min", default=10, maximum=10),
-    definition("nominal_power_kw", "kW", default=4.5),
-    definition("button_hold_seconds", "s", True, default=2),
-    definition("light_reference_temperature_c", "°C", default=30, maximum=100),
-    definition("light_transition_seconds", "s", True, default=30),
-    definition(
-        "light_brightness_scale", "Stufen", default=255,
-        minimum=1, maximum=65535, integer=True,
-    ),
-    definition("night_brightness_percent", "%", default=25, maximum=100),
-    definition("operation_brightness_percent", "%", default=40, maximum=100),
-    definition("after_run_brightness_percent", "%", default=15, maximum=100),
-    definition("cooling_brightness_percent", "%", default=5, maximum=100),
-    definition("session_light_brightness_percent", "%", True, default=50, maximum=100),
-) + tuple(
-    definition(
-        key,
-        unit,
-        allow_zero=minimum <= 0,
-        default=default,
-        minimum=minimum,
-        maximum=maximum,
-        integer=integer,
-    )
-    for key, label, unit, default, minimum, maximum, integer in SPECS
+# Current settings and read-compatibility metadata are deliberately separate.
+EDITABLE_DEFINITIONS = tuple(
+    ParameterDefinition(**spec) for spec in section("parameters")
+)
+DEFINITIONS = EDITABLE_DEFINITIONS + tuple(
+    ParameterDefinition(**spec) for spec in section("legacy_parameters")
 )
 BY_KEY = MappingProxyType({definition.key: definition for definition in DEFINITIONS})
-# Alte Optionen bleiben beim Laden erhalten, sind aber keine bedienbaren Werte mehr.
-EDITABLE_DEFINITIONS = tuple(
-    definition
-    for definition in DEFINITIONS
-    if definition.key
-    not in {
-        "temperature_increase_c",
-        "door_heating_max_temperature_c",
-        "strong_temperature_upper",
-        "strong_temperature_lower",
-        "weak_temperature_upper",
-        "weak_temperature_lower",
-        "infusion_temperature",
-        "program_1_start_c",
-        "program_1_end_c",
-        "program_1_gangs",
-        "program_2_start_c",
-        "program_2_end_c",
-        "program_2_gangs",
-    }
-)
+SAUNA_TEMPERATURE_MAXIMUM_C = BY_KEY["target_temperature_c"].maximum
 
 
 @dataclass(frozen=True)

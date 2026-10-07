@@ -16,6 +16,7 @@ class OperationTests(unittest.TestCase):
     def setUp(self):
         self.controller = Controller(Parameters({**parameters().as_dict(),
             "session_gap_minutes": 2, "confirmation_minutes": 1}))
+        self.controller.set_temperature(70, T0)
         self.controller.set_operation(True, T0, session_id="s")
 
     def send(self, key, kind, second):
