@@ -2228,10 +2228,31 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(error_notice).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
         compare = self.panel.locator('[data-action="reset-zoom"]')
-        await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
+        # Zoom belongs to the chart surface. Check rendered contrast rather
+        # than imposing the foreground color of the surrounding cards.
+        zoom_contrast = """button => {
+          const style = getComputedStyle(button);
+          const surface = getComputedStyle(button.closest('.history-plot-frame')).backgroundColor;
+          const light = color => color.match(/[\\d.]+/g).slice(0, 3).map(Number)
+            .reduce((sum, value, index) => {
+              const x = value / 255;
+              return sum + [0.2126, 0.7152, 0.0722][index] *
+                (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+            }, 0);
+          const ratio = color => {
+            const a = light(color), b = light(surface);
+            return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+          };
+          return {text: ratio(style.color), outline: ratio(style.outlineColor)};
+        }"""
+        await expect(compare).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+        self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["text"], 4.5)
         await compare.hover()
         await expect(compare).to_have_css("filter", "none")
-        await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
+        await expect(compare).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+        self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["text"], 4.5)
+        await expect(compare).to_have_css("outline-style", "solid")
+        self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["outline"], 3)
         await expect(compare).to_have_css("text-decoration-line", "none")
         await compare.focus()
         await compare.press("Tab")
@@ -2239,6 +2260,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(compare).to_be_focused()
         await expect(compare).to_have_css("outline-style", "solid")
         await expect(compare).to_have_css("outline-width", "2px")
+        self.assertGreaterEqual((await compare.evaluate(zoom_contrast))["outline"], 3)
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await editor.locator('[data-action="appearance-discard"]').click()
         await self.panel.locator('.main-tabs [data-action="history"]').click()

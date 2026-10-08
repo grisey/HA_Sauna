@@ -82,11 +82,11 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await backup.async_pre_backup(self.hass)
             archive = self.runtime.archive
             try:
-                before = await asyncio.to_thread(archive.read, self.session_id)
+                before = await asyncio.to_thread(archive.read, self.session_id, now=self.now)
                 release.set()
                 await asyncio.wait_for(device_done.wait(), 5)
                 self.assertFalse(closing.done())
-                self.assertEqual(await asyncio.to_thread(archive.read, self.session_id), before)
+                self.assertEqual(await asyncio.to_thread(archive.read, self.session_id, now=self.now), before)
             finally:
                 release.set()
                 await backup.async_post_backup(self.hass)
@@ -125,7 +125,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ha_sauna", manager.platforms)
         # Flush real ConfigEntry storage through HA's Store API before taking the backup.
         await self.hass.config_entries._store.async_save(self.hass.config_entries._data_to_save())
-        expected = await asyncio.to_thread(self.runtime.archive.read, self.session_id)
+        expected = await asyncio.to_thread(self.runtime.archive.read, self.session_id, now=self.now)
         writer = CoreBackupReaderWriter(self.hass)
         _, task = await writer.async_create_backup(agent_ids=[], backup_name="Sauna integration test",
             extra_metadata={}, include_addons=None, include_all_addons=False,
@@ -158,7 +158,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(await restored_hass.config_entries.async_setup(entry.entry_id))
                 await restored_hass.async_block_till_done()
                 self.assertIsNone(entry.runtime_data.session)
-                actual = await asyncio.to_thread(entry.runtime_data.archive.read, self.session_id)
+                actual = await asyncio.to_thread(entry.runtime_data.archive.read, self.session_id, now=self.now)
                 self.assertEqual(actual, expected)
             finally:
                 await restored_hass.async_stop(force=True)

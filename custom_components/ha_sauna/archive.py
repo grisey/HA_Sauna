@@ -136,7 +136,9 @@ class Archive:
                     id INTEGER PRIMARY KEY, entry_id TEXT NOT NULL, session_id TEXT,
                     kind TEXT NOT NULL, received_at TEXT NOT NULL, payload TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS records_session ON records(entry_id, session_id, id);
-                CREATE INDEX IF NOT EXISTS records_measurement_clock ON records(entry_id, kind, julianday(received_at));
+                DROP INDEX IF EXISTS records_measurement_clock;
+                CREATE INDEX IF NOT EXISTS records_measurement_context ON records(entry_id, julianday(received_at))
+                    WHERE kind='measurement';
                 CREATE INDEX IF NOT EXISTS records_consumer_events ON records(entry_id)
                     WHERE kind='consumer_event';
                 CREATE TABLE IF NOT EXISTS sessions (

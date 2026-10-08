@@ -3339,6 +3339,7 @@ class SaunaPanel extends HTMLElement {
       .history-plot-frame .history-stack { border: 0; border-radius: 0; box-shadow: none; }
       .history-background [data-history-annotations] rect { stroke: none; }
       #history-navigation {
+        --sauna-focus-current: var(--sauna-chart-focus, var(--sauna-chart-ink));
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto;
         gap: 2px 8px;
@@ -3382,7 +3383,10 @@ class SaunaPanel extends HTMLElement {
         color: inherit;
         font: inherit;
       }
-      #history-navigation button:hover { background: var(--sauna-surface-control); }
+      #history-navigation button:hover:not(:disabled):not(:focus-visible) {
+        outline: 1px solid var(--sauna-focus-current);
+        outline-offset: -1px;
+      }
       .history-overview {
         grid-column: 1/-1;
         width: 100%;

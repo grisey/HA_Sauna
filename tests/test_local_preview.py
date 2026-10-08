@@ -139,7 +139,19 @@ class LocalPreviewTests(unittest.TestCase):
                 self.preview.action("/simulate", {"action":action})
         self.preview.action("/preview/control", {"enabled":True})
         self.assertNotEqual(self.preview.c.session.session_id, session_id)
-        self.assertEqual(self.preview.archive(session_id), completed)
+        continued = self.preview.archive(session_id)
+        self.assertEqual(continued["session"], completed["session"])
+        self.assertEqual(continued["phase_projection"], completed["phase_projection"])
+        self.assertEqual(continued["records"][:len(completed["records"])], completed["records"])
+        self.assertTrue(all(record["kind"] == "measurement"
+                            for record in continued["records"][len(completed["records"]):]))
+        self.assertFalse(continued["measurement_window"]["complete"])
+        from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
+        self.preview.step(HISTORY_CONTEXT_SECONDS)
+        final = self.preview.archive(session_id)
+        self.assertTrue(final["measurement_window"]["complete"])
+        self.preview.step(60)
+        self.assertEqual(self.preview.archive(session_id), final)
         self.assertEqual(len(self.preview.archive()), 2)
         self.preview.admin = False
         public = self.preview.archive(session_id)
