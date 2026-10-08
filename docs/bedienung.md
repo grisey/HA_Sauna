@@ -218,8 +218,8 @@ Der Verlauf zeigt die führende Messposition. Die Zoomtasten, eine
 Vergrößerungsgeste oder Strg/Cmd mit dem Mausrad verändern den sichtbaren
 Ausschnitt. Normales Scrollen bewegt die Inhalte; die Menüs bleiben sichtbar.
 In der schmalen Übersicht ist das Zeitfenster verschiebbar. Der Zoomfaktor
-zwischen Minus und Plus setzt den Ausschnitt auf die ganze Sitzung zurück.
-Wertanzeige und Ausschnittbedienung stehen gemeinsam unter der Kurve.
+unter der Zeitübersicht setzt den Ausschnitt auf die ganze Sitzung zurück.
+Die Ausschnittbedienung schließt direkt an die Zeitachse an; darunter steht die Wertanzeige.
 
 Administratoren finden unter **Details → Betrieb & Fristen** die technischen
 Zustände und unter **Detailverlauf** den Vergleich beider Messpositionen. Die

@@ -160,9 +160,9 @@ class HADevice:
             elif role == "lower_temperature" and value is not None:
                 self.last_valid_lower_temperature = m
             session = self.runtime.session
-            if self.runtime.archive and session and not initial and not defer_archive:
+            if self.runtime.archive and not initial and not defer_archive:
                 self.runtime.archive.append(
-                    "measurement", received_at, m, session.session_id
+                    "measurement", received_at, m, session.session_id if session else None
                 )
             if self.runtime.detector and not initial:
                 self.runtime.detector.accept(m)

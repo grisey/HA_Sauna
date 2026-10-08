@@ -2892,17 +2892,16 @@ class SaunaPanel extends HTMLElement {
       `,
         )
         .join("")}
-      .history-inspection .toolbar { margin: 0; }
       .history-readout > #tooltip { min-block-size: 100%; align-content: start; }
       #tooltip[hidden] { display: none; }
       .history-tooltip-time { color: var(--sauna-card-muted-text); font-weight: 500; font-size: 12px; font-variant-numeric: tabular-nums; }
-      .history-tooltip-values { display: flex; flex-wrap: wrap; gap: 6px 24px; }
-      .history-tooltip-values > div { display: flex; flex: 1 0 auto; align-items: baseline; justify-content: space-between; gap: 12px; }
+      .history-tooltip-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 6px 24px; }
+      .history-tooltip-values > div { display: grid; grid-template-columns: minmax(0, 1fr) max-content; min-width: 0; align-items: baseline; gap: 12px; }
       .history-tooltip-values > div[hidden] { display: none; }
       .history-tooltip-values [data-quantity] { display: inline-flex; align-items: center; gap: 7px; }
       .history-tooltip-values [data-quantity]::before { content: ""; width: 22px; height: 3px; flex: 0 0 auto; background: var(--sauna-color-series-temperature); }
       .history-tooltip-values [data-quantity="humidity"]::before { background: var(--sauna-color-series-humidity); }
-      .history-tooltip-values > div > span:last-child { font-weight: 650; font-size: 16px; font-variant-numeric: tabular-nums; }
+      .history-tooltip-values > div > span:last-child { font-weight: 650; font-size: 16px; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .history-tooltip-status { grid-column: 2; font-weight: 600; }
       .history-tooltip-events { grid-column: 2; color: var(--sauna-card-text); }
       .history-tooltip-event { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 3px 0; align-items: baseline; }
@@ -3336,43 +3335,54 @@ class SaunaPanel extends HTMLElement {
         margin-top: 8px;
         margin-bottom: 0;
       }
-      .toolbar {
+      .history-plot-frame { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); overflow: hidden; }
+      .history-plot-frame .history-stack { border: 0; border-radius: 0; box-shadow: none; }
+      .history-background [data-history-annotations] rect { stroke: none; }
+      #history-navigation {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
-        gap: 8px;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 2px 8px;
         align-items: center;
-        margin: 10px 0 6px;
+        margin: 0;
+        padding: 0 14px 8px;
+        color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
-      .history-zoom {
-        display: flex;
-        gap: 0;
-        padding: 2px;
-        border: 1px solid var(--sauna-color-border);
-        border-radius: var(--sauna-control-radius);
-        background: var(--sauna-surface-recessed);
-        align-self: start;
-      }
-      .history-zoom button {
+      #history-navigation > button {
+        grid-row: 1;
         min-width: 32px;
         min-height: 32px;
-        height: 32px;
-        padding: 3px 6px;
-        line-height: 1;
-        font-size: 14px;
-        font-weight: 500;
+        padding: 4px;
         border: 0;
         background: transparent;
         box-shadow: none;
-        border-radius: calc(var(--sauna-control-radius) - 3px);
+        font-size: 18px;
+        line-height: 1;
+        color: inherit;
       }
-      .history-zoom [data-action="reset-zoom"] { min-width: 42px; font-variant-numeric: tabular-nums; }
-      .history-zoom button:hover { background: var(--sauna-surface-control); }
-      .history-window {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 2px 10px;
-        min-width: 0;
+      #history-navigation [data-action="zoom-out"] { grid-column: 1; }
+      #history-navigation [data-action="zoom-in"] { grid-column: 3; }
+      #history-navigation .history-overview { grid-column: 2; grid-row: 1; }
+      .history-window-caption {
+        grid-column: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: inherit;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
       }
+      .history-window-caption button {
+        min-height: 24px;
+        min-width: 32px;
+        padding: 0 4px;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        color: inherit;
+        font: inherit;
+      }
+      #history-navigation button:hover { background: var(--sauna-surface-control); }
       .history-overview {
         grid-column: 1/-1;
         width: 100%;
@@ -3538,15 +3548,6 @@ class SaunaPanel extends HTMLElement {
         .state-line,
         .state-summary {
           align-items: flex-start;
-        }
-        .toolbar {
-          gap: 6px;
-        }
-        .history-window {
-          gap: 2px 6px;
-        }
-        .history-zoom button {
-          padding-inline: 6px;
         }
       }
       button[aria-pressed="true"] {
@@ -3964,8 +3965,8 @@ class SaunaPanel extends HTMLElement {
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Menü öffnen" aria-expanded="false" aria-controls="main-navigation" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
-      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div id="plots"></div>
-        <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="row toolbar" id="history-navigation"><div class="history-zoom"><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button><button data-action="zoom-in" aria-label="Vergrößern">＋</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><span id="range"></span><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
+        <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
@@ -4552,7 +4553,10 @@ class SaunaPanel extends HTMLElement {
     // `loaded` used to mean both "this page run ended" and "this session is
     // final".  Keep it as an alias while callers move to the explicit state.
     cache.pageRunLoaded ??= !!cache.loaded;
-    cache.finalSynced ??= !!cache.pageRunLoaded && !!cache.session?.ended_at;
+    cache.finalSynced ??=
+      !!cache.pageRunLoaded &&
+      !!cache.session?.ended_at &&
+      (cache.measurement_window?.complete ?? true);
     cache.loaded = cache.pageRunLoaded;
     cache.recordIds ??= new Set(
       cache.records
@@ -4583,6 +4587,12 @@ class SaunaPanel extends HTMLElement {
     }
   }
   updateHistoryCacheMetadata(cache, page) {
+    const measurementWindowSignature = JSON.stringify(page.measurement_window || null);
+    if (cache.measurementWindowSignature !== measurementWindowSignature) {
+      cache.measurement_window = page.measurement_window;
+      cache.measurementWindowSignature = measurementWindowSignature;
+      cache.metadataRevision = (cache.metadataRevision || 0) + 1;
+    }
     const session = page.session,
       projection = page.phase_projection,
       sessionSignature = JSON.stringify(session || null),
@@ -4624,7 +4634,11 @@ class SaunaPanel extends HTMLElement {
     return { additions, cursorRecords };
   }
   historyCacheNeedsFetch(cache) {
-    return !cache.pageRunLoaded || !cache.finalSynced;
+    return (
+      !cache.pageRunLoaded ||
+      !cache.finalSynced ||
+      cache.measurement_window?.complete === false
+    );
   }
   showHistoryCache() {
     const id = this.historySelectionId();
@@ -4641,6 +4655,7 @@ class SaunaPanel extends HTMLElement {
       ? {
           session,
           records: cache?.records || (this.emptyHistoryRecords ??= []),
+          measurement_window: cache?.measurement_window,
           phase_projection: live
             ? this.state.phase_projection
             : cache?.phase_projection,
@@ -4772,7 +4787,10 @@ class SaunaPanel extends HTMLElement {
             cache.loaded = cache.pageRunLoaded;
             // A page run can be complete for an open snapshot.  Only a
             // closed final snapshot plus its last page settles the session.
-            cache.finalSynced = !!cache.pageRunLoaded && !!cache.session?.ended_at;
+            cache.finalSynced =
+              !!cache.pageRunLoaded &&
+              !!cache.session?.ended_at &&
+              (cache.measurement_window?.complete ?? true);
             load.count = cache.records.length;
             this.showHistoryCache();
             if (!this.$("#history")?.hidden) this.drawHistory("archive");
@@ -7283,18 +7301,21 @@ class SaunaPanel extends HTMLElement {
       archive =
         !session &&
         this.sessions?.find((item) => item.session_id === this.historySelectionId()),
-      started = stamp(session?.timeline.session_started_at || archive?.started_at);
-    const start =
-      (Number.isFinite(started) ? started : stamp(this.state?.now) || Date.now()) -
-      15 * 60000;
-    return [
-      start,
-      Math.max(
-        start + 1000,
-        stamp(session?.ended_at || archive?.ended_at || this.state?.now) || start,
-      ) +
-        15 * 60000,
-    ];
+      measurementWindow = this.shown?.measurement_window || archive?.measurement_window,
+      started = stamp(
+        measurementWindow?.started_at ||
+          session?.timeline.session_started_at ||
+          archive?.started_at,
+      ),
+      now = stamp(this.state?.now) || Date.now(),
+      start = Number.isFinite(started) ? started : now,
+      ended = stamp(
+        measurementWindow?.ended_at || session?.ended_at || archive?.ended_at,
+      ),
+      end = Number.isFinite(ended) ? ended : now,
+      complete =
+        measurementWindow?.complete ?? !!(session?.ended_at || archive?.ended_at);
+    return [start, Math.max(start + 1000, complete ? end : Math.min(end, now))];
   }
   ensureHistoryWindow() {
     const [start, end] = this.historyDomain(),
@@ -8857,6 +8878,7 @@ class SaunaPanel extends HTMLElement {
       ["#settings", view !== "settings"],
       ["#control-history", !(main === "details" && detail === "detail-history")],
       ["#history-inspection", main === "details" && detail === "detail-history"],
+      [".history-plot-frame", main === "details" && detail === "detail-history"],
       [".history-readout", main === "details"],
       ["#history-legends", main === "details"],
       [

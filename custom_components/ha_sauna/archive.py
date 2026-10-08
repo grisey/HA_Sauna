@@ -15,12 +15,13 @@ from collections import OrderedDict, deque
 from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import fields, is_dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from math import isfinite
 from pathlib import Path
 
 from .core.defaults import section
+from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from .core.phases import project_archive, project_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ class Archive:
         self._projection_generation = 0
         self._projection_cache_entries = section("runtime")["archive_projection_cache_entries"]
         self.revision = 0
+        self._context_pruned_before = None
 
     async def start(self):
         await asyncio.to_thread(self._initialize)
@@ -122,7 +124,8 @@ class Archive:
             self._run(), name=f"ha_sauna_archive_{self.entry_id}"
         )
 
-    def _initialize(self):
+    def _initialize(self, now=None):
+        now = now or datetime.now(UTC)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as db, db:
             db.executescript("""
@@ -133,6 +136,7 @@ class Archive:
                     id INTEGER PRIMARY KEY, entry_id TEXT NOT NULL, session_id TEXT,
                     kind TEXT NOT NULL, received_at TEXT NOT NULL, payload TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS records_session ON records(entry_id, session_id, id);
+                CREATE INDEX IF NOT EXISTS records_measurement_clock ON records(entry_id, kind, julianday(received_at));
                 CREATE INDEX IF NOT EXISTS records_consumer_events ON records(entry_id)
                     WHERE kind='consumer_event';
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -163,7 +167,7 @@ class Archive:
                         db.execute("INSERT OR IGNORE INTO consumer_receipts VALUES(?,?)",
                                    (self.entry_id, event_id))
                 # Startup has no resumed live session. Retire old empty and
-                # interrupted attempts as well as observations outside sessions.
+                # interrupted attempts; retain bounded measurement context.
                 for row in db.execute(
                     "SELECT session_id,payload FROM sessions WHERE entry_id=?",
                     (self.entry_id,),
@@ -171,24 +175,26 @@ class Archive:
                     if not session_has_gangs(json.loads(row[1])):
                         self._delete_session(db, row[0])
                 db.execute(
-                    "DELETE FROM records WHERE entry_id=? AND (session_id IS NULL OR "
+                    "DELETE FROM records WHERE entry_id=? AND "
+                    "((session_id IS NULL AND kind!='measurement') OR "
                     "session_id NOT IN (SELECT session_id FROM sessions WHERE entry_id=?))",
                     (self.entry_id, self.entry_id),
                 )
+                self._prune_context(db, now)
                 if db.total_changes > before_cleanup:
                     self.revision = self._bump_revision(db)
 
     def append(self, kind, at, payload, session_id=None):
         if self.closed:
             raise RuntimeError("Archiv ist geschlossen")
-        if self.sessions_only and session_id is None and kind != "consumer_event":
+        if self.sessions_only and session_id is None and kind not in {"consumer_event", "measurement"}:
             return
         self._append_plain(kind, at, plain(payload), session_id)
 
     def _append_plain(self, kind, at, payload, session_id=None):
         if self.closed:
             raise RuntimeError("Archiv ist geschlossen")
-        if self.sessions_only and session_id is None:
+        if self.sessions_only and session_id is None and kind != "measurement":
             if kind != "consumer_event":
                 return
             # Delivery identity only, without measurements or a session log.
@@ -277,6 +283,7 @@ class Archive:
                 data = json.loads(payload)
                 if data.get("ended_at") and not session_has_gangs(data):
                     self._delete_session(db, session_id)
+                    self._prune_context(db, datetime.fromisoformat(at))
                     revision = self._bump_revision(db)
                     db.commit()
                     self.revision = revision
@@ -302,6 +309,8 @@ class Archive:
                         payload,
                     ),
                 )
+            if self.sessions_only and kind in {"measurement", "session"}:
+                self._prune_context(db, datetime.fromisoformat(at), incremental=True)
         if kind in {"phase", "source_state", "session"}:
             self._invalidate_projection(session_id)
 
@@ -314,10 +323,44 @@ class Archive:
                 self._projection_cache.pop(session_id, None)
 
     def _delete_session(self, db, session_id):
+        # A measurement may still provide context for another retained session.
+        db.execute(
+            "UPDATE records SET session_id=NULL WHERE entry_id=? AND session_id=? AND kind='measurement'",
+            (self.entry_id, session_id),
+        )
         db.execute("DELETE FROM records WHERE entry_id=? AND session_id=?",
                    (self.entry_id, session_id))
         db.execute("DELETE FROM sessions WHERE entry_id=? AND session_id=?",
                    (self.entry_id, session_id))
+
+    def _prune_context(self, db, now, *, incremental=False):
+        """Revisit newly expired buffer points; full scans only at lifecycle changes."""
+        cutoff = now - timedelta(seconds=HISTORY_CONTEXT_SECONDS)
+        previous = self._context_pruned_before if incremental else None
+        if previous is not None and cutoff <= previous:
+            return
+        lower_bound = " AND julianday(received_at)>=julianday(?)" if previous else ""
+        db.execute(
+            """DELETE FROM records WHERE entry_id=? AND session_id IS NULL
+            AND kind='measurement' AND julianday(received_at)<julianday(?)"""
+            + lower_bound + """
+            AND NOT EXISTS (
+                SELECT 1 FROM sessions s WHERE s.entry_id=records.entry_id
+                AND julianday(records.received_at)>=julianday(s.started_at)-?/86400.0
+                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+?/86400.0
+                AND (julianday(records.received_at)<=julianday(s.started_at)
+                    OR julianday(records.received_at)>=julianday(COALESCE(s.ended_at, s.updated_at)))
+                AND json_extract(records.payload,'$.position') IN ('upper','lower')
+                AND json_extract(records.payload,'$.quantity') IN ('temperature','humidity')
+                AND json_extract(s.payload,'$.configuration.bindings.' ||
+                    json_extract(records.payload,'$.position') || '_' ||
+                    json_extract(records.payload,'$.quantity'))=json_extract(records.payload,'$.source')
+            )""",
+            (self.entry_id, cutoff.isoformat(),
+             *((previous.isoformat(),) if previous else ()),
+             HISTORY_CONTEXT_SECONDS, HISTORY_CONTEXT_SECONDS),
+        )
+        self._context_pruned_before = cutoff if incremental else None
 
     def _bump_revision(self, db):
         revision = self.revision + 1
@@ -325,7 +368,8 @@ class Archive:
                    (str(revision),))
         return revision
 
-    def _erase(self, session_id, reset):
+    def _erase(self, session_id, reset, now=None):
+        now = now or datetime.now(UTC)
         with closing(sqlite3.connect(self.path)) as db, db:
             if reset:
                 ids = [row[0] for row in db.execute(
@@ -334,6 +378,7 @@ class Archive:
                 db.execute("DELETE FROM records WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM sessions WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM consumer_receipts WHERE entry_id=?", (self.entry_id,))
+                self._context_pruned_before = None
             else:
                 row = db.execute(
                     "SELECT 1 FROM sessions WHERE entry_id=? AND session_id=?",
@@ -343,6 +388,7 @@ class Archive:
                     raise KeyError(session_id)
                 ids = [session_id]
                 self._delete_session(db, session_id)
+                self._prune_context(db, now)
             revision = self._bump_revision(db)
             db.commit()
             self.revision = revision
@@ -413,7 +459,7 @@ class Archive:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
-    def read(self, session_id=None, *, after=0, limit=1000, kinds=None):
+    def read(self, session_id=None, *, after=0, limit=1000, kinds=None, now=None):
         # Capture before establishing the SQLite snapshot. An in-flight reader
         # may finish after invalidation, but must not restore its old cache data.
         with self._projection_lock:
@@ -437,12 +483,37 @@ class Archive:
                 " AND kind IN (" + ",".join("?" for _ in kinds) + ")"
                 if kinds is not None else ""
             )
-            records = db.execute(
-                "SELECT * FROM records WHERE entry_id=? AND session_id=? AND id>?"
-                + kind_filter + " ORDER BY id LIMIT ?",
-                (self.entry_id, session_id, after, *(kinds or ()), limit),
-            ).fetchall()
             session = json.loads(row["payload"])
+            current = now or datetime.now(UTC)
+            started = datetime.fromisoformat(session["timeline"]["session_started_at"])
+            ended = datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None
+            window = measurement_window(started, ended, current)
+            bindings = session.get("configuration", {}).get("bindings", {})
+            sources = tuple(
+                (bindings[key], *key.split("_", 1)) for key in (
+                    "upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"
+                ) if key in bindings
+            )
+            context_filter = ""
+            context_args = ()
+            if sources:
+                context_filter = (
+                    " OR (kind='measurement' AND ("
+                    + " OR ".join(
+                        "(json_extract(payload,'$.source')=? AND json_extract(payload,'$.position')=? "
+                        "AND json_extract(payload,'$.quantity')=?)" for _ in sources
+                    ) + ")"
+                    " AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
+                    " AND (julianday(received_at)<=julianday(?) OR julianday(received_at)>=julianday(?)))"
+                )
+                context_args = (*(value for source in sources for value in source),
+                                window["started_at"], window["ended_at"],
+                                started.isoformat(), (ended or current).isoformat())
+            records = db.execute(
+                "SELECT * FROM records WHERE entry_id=? AND (session_id=?"
+                + context_filter + ") AND id>?" + kind_filter + " ORDER BY id LIMIT ?",
+                (self.entry_id, session_id, *context_args, after, *(kinds or ()), limit),
+            ).fetchall()
             if session.get("base_phases"):
                 projection = project_session(session, row["updated_at"])
             else:
@@ -451,6 +522,7 @@ class Archive:
                 )
             return {
                 "session": session,
+                "measurement_window": window,
                 "phase_projection": plain(projection),
                 "records": [
                     {**dict(r), "payload": json.loads(r["payload"])} for r in records

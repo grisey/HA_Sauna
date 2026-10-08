@@ -158,7 +158,8 @@ Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technis
 Die Übersichtskurve zeigt die Temperatur der führenden Messposition in derselben
 Messfarbe; ihre Auswahlmarkierung ordnet den sichtbaren Ausschnitt in die
 gesamte Sitzung ein. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne.
-Die Wertanzeige bildet mit der Ausschnittbedienung einen Bereich unter der Kurve.
+Die Ausschnittbedienung schließt direkt an die Zeitachse an. Die Wertanzeige
+steht in einem eigenen Bereich darunter.
 Sie greift auf den empfangenen Originalpunkt zurück; ihr Hintergrund verwendet
 die gespeicherte Farbe der Phase am ausgewählten Zeitpunkt. Die Sitzungsauswahl
 steht anstelle einer zusätzlichen Verlaufsüberschrift.

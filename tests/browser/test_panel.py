@@ -2046,7 +2046,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.now = self.base + timedelta(seconds=second)
             for pos in ("upper", "lower"):
                 await self.set_source(pos + "_temperature", (72 if pos=="upper" else 62)+second/5)
-                await self.set_source(pos + "_humidity", 15+second/10)
+                await self.set_source(pos + "_humidity", 15)
             await self.runtime.tick()
         # Browser verifies historical backassignment. The separate HA device-path
         # test proves the detector itself produces these signals from HA inputs.
@@ -2103,9 +2103,41 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator("#tooltip")).to_contain_text("Temperatur:")
         curve_box = await chart.bounding_box()
         readout_box = await self.panel.locator("#tooltip").bounding_box()
+        frame = self.panel.locator(".history-plot-frame")
+        await expect(frame.locator("#plots")).to_have_count(1)
+        await expect(frame.locator("#history-navigation")).to_have_count(1)
+        await expect(frame.locator("#history-inspection")).to_have_count(0)
+        navigation_box = await frame.locator("#history-navigation").bounding_box()
+        inspection_box = await self.panel.locator("#history-inspection").bounding_box()
+        self.assertGreaterEqual(navigation_box["y"], curve_box["y"] + curve_box["height"] - 1)
+        self.assertLessEqual(navigation_box["y"] + navigation_box["height"], inspection_box["y"] + 1)
+        areas = self.panel.locator(".history-background [data-history-annotations] rect")
+        self.assertGreater(await areas.count(), 0)
+        for area in await areas.all():
+            await expect(area).to_have_css("stroke", "none")
+        infusion = self.panel.locator(".history-background [data-history-annotations] line.infusion")
+        await expect(infusion).to_have_count(1)
+        await expect(infusion).not_to_have_css("stroke", "none")
         self.assertGreaterEqual(readout_box["y"], curve_box["y"] + curve_box["height"])
         self.assertGreaterEqual(readout_box["x"], curve_box["x"])
         self.assertLessEqual(readout_box["x"] + readout_box["width"], curve_box["x"] + curve_box["width"] + 1)
+        # Real archived samples differ only in temperature text width. The
+        # neighbouring humidity label and value must not move between hovers.
+        readout = self.panel.locator("#tooltip .history-tooltip-values > div:not([hidden])")
+        temperature = readout.get_by_text("Temperatur:", exact=True).locator("..").locator("span").nth(1)
+        humidity_label = readout.get_by_text("Luftfeuchte:", exact=True)
+        humidity = humidity_label.locator("..").locator("span").nth(1)
+        humidity_positions = []
+        for second, temperature_text in ((5, "73 °C"), (7, "73,4 °C")):
+            at = (self.base + timedelta(seconds=second)).timestamp() * 1000
+            x = await self.panel.evaluate("(p,t)=>{const [a,b]=p.window;return (65+(t-a)/(b-a)*1070)/1200*p.shadowRoot.querySelector('svg.session-chart').getBoundingClientRect().width;}", at)
+            await chart.hover(position={"x": x, "y": 200})
+            await expect(temperature).to_have_text(temperature_text)
+            await expect(humidity).to_have_text("15 %")
+            humidity_positions.append((await humidity_label.bounding_box(), await humidity.bounding_box()))
+        for before, after in zip(*humidity_positions):
+            for coordinate in ("x", "y"):
+                self.assertAlmostEqual(before[coordinate], after[coordinate], delta=0.1)
         await self.panel.locator("#session").hover()
         await expect(self.panel.locator("#tooltip")).to_be_hidden()
         legend_hidden = await self.panel.locator("#history-legends").bounding_box()

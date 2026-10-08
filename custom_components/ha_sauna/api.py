@@ -703,6 +703,9 @@ class ArchiveView(HomeAssistantView):
         if projection not in (None, "history"):
             raise web.HTTPBadRequest(text="Unbekannte Archivansicht")
         read_options = {"after": after}
+        clock = getattr(runtime, "_clock", None)
+        if callable(clock):
+            read_options["now"] = clock()
         if projection == "history":
             read_options.update(
                 limit=5000,

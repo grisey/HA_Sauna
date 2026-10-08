@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import closing
+from functools import partial
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from unittest.mock import patch
 from custom_components.ha_sauna import archive as archive_module
 from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.core.phases import project_archive
+from custom_components.ha_sauna.core.history import measurement_window
 
 T0 = datetime(2030, 1, 1, tzinfo=UTC)
 
@@ -61,6 +63,11 @@ def legacy_read(archive, session_id, *, after=0, limit=1000):
         ]
     return {
         "session": stored_session,
+        "measurement_window": measurement_window(
+            datetime.fromisoformat(stored_session["timeline"]["session_started_at"]),
+            datetime.fromisoformat(stored_session["ended_at"]) if stored_session.get("ended_at") else None,
+            T0,
+        ),
         "phase_projection": plain(
             project_archive(stored_session, evidence, row["updated_at"])
         ),
@@ -100,6 +107,8 @@ class ArchiveProjectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.archive = Archive(Path(self.temp.name) / "archive.sqlite", "entry")
         await self.archive.start()
+        # Projection comparisons share an explicit clock for the live window.
+        self.archive.read = partial(self.archive.read, now=T0)
 
     async def asyncTearDown(self):
         await self.archive.close()

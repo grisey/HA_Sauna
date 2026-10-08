@@ -50,7 +50,8 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
         await self.archive.flush()
         self.assertIsNone(self.archive.read("empty"))
         with closing(sqlite3.connect(self.archive.path)) as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records").fetchone()[0], 0)
+            records = db.execute("SELECT kind,session_id FROM records").fetchall()
+            self.assertEqual(records, [("measurement", None), ("measurement", None)])
         self.assertEqual(self.archive.revision, 1)
 
     async def test_single_delete_reset_and_backup_order_keep_other_sessions(self):

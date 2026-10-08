@@ -24,6 +24,7 @@ from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
+from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from custom_components.ha_sauna.core.parameters import (
     EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, Parameters,
 )
@@ -72,14 +73,17 @@ class Preview:
             async_update_entry=self.save_options,
         ))
         self.c = self.runtime.controller
-        self.c.set_temperature(62, self.now)
+        self.now -= timedelta(seconds=HISTORY_CONTEXT_SECONDS)
+        self.c.set_temperature(58, self.now)
+        self.sample()
+        self.step(HISTORY_CONTEXT_SECONDS, temperature=62)
         self.c.set_operation(True, self.now, session_id="lokale-vorschau")
         self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":"binary_sensor.demo_fp300"})
         self.presence("off")
         self.sample()
-        if scenario in ("bereit", "gang", "verlauf", "ausfall"):
+        if scenario in ("bereit", "gang", "verlauf", "archiv", "ausfall"):
             self.step(600, temperature=80)
-        if scenario in ("gang", "verlauf", "ausfall"):
+        if scenario in ("gang", "verlauf", "archiv", "ausfall"):
             self.step(120)
             self.door(Kind.DOOR_OPEN)
             self.step(3)
@@ -87,7 +91,7 @@ class Preview:
             self.step(4)
             self.door(Kind.DOOR_CLOSE)
             self.step(240, temperature=82)
-        if scenario == "verlauf":
+        if scenario in ("verlauf", "archiv"):
             self.door(Kind.INFUSION)
             self.humidity = 39
             self.step(180, temperature=83)
@@ -97,6 +101,10 @@ class Preview:
             self.step(6)
             self.door(Kind.DOOR_CLOSE)
             self.step(160, temperature=79)
+        if scenario == "archiv":
+            self.c.finish_session(self.now)
+            self.sample()
+            self.step(HISTORY_CONTEXT_SECONDS, temperature=65)
         if scenario == "ausfall":
             self.presence("unavailable")
         self.sample()
@@ -151,8 +159,18 @@ class Preview:
             return None
         session = dict(stored["session"])
         projection = stored["phase_projection"]
+        window = measurement_window(
+            datetime.fromisoformat(session["timeline"]["session_started_at"]),
+            datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None,
+            self.now,
+        )
         records = [r for r in self.records
-                   if r["session_id"] == session_id and r["id"] > after]
+                   if r["id"] > after and (
+                       r["session_id"] == session_id or (
+                           r["kind"] == "measurement"
+                           and window["started_at"] <= r["received_at"] <= window["ended_at"]
+                       )
+                   )]
         if not self.admin:
             session = public_session(session)
             projection = public_phase_projection(projection)
@@ -160,7 +178,7 @@ class Preview:
                 {**r, "payload": public_measurement(r["payload"])}
                 for r in records if r["kind"] in ("measurement", "source_snapshot", "phase")
             ]
-        return {"session": session, "phase_projection": projection,
+        return {"session": session, "phase_projection": projection, "measurement_window": window,
                 "records": records, "next_after": None}
 
     def sample(self):

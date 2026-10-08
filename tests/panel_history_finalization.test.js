@@ -33,6 +33,40 @@ const page = (records, session, projection = { intervals: [] }, next_after = nul
 });
 const record = (id, kind = "measurement") => ({ id, kind, payload: { value: id } });
 
+test("closed sessions continue cursor loading until their measurement window is complete", async () => {
+  let calls = 0;
+  const window = {
+    started_at: "2032-01-01T11:45:00Z",
+    ended_at: "2032-01-01T12:25:00Z",
+    complete: false,
+  };
+  const { p } = makePanel(async (request) => {
+    if (request.endsWith("/archive")) return [];
+    calls++;
+    return {
+      ...page([record(calls)], closedSession()),
+      measurement_window: { ...window },
+    };
+  });
+  await p.startHistoryLoad();
+  const cache = p.cache.get("live");
+  assert.equal(cache.pageRunLoaded, true);
+  assert.equal(cache.finalSynced, false);
+  await p.startHistoryLoad();
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    Array.from(cache.records, (item) => item.id),
+    [1, 2],
+  );
+  window.complete = true;
+  await p.startHistoryLoad();
+  assert.equal(cache.finalSynced, true);
+  assert.equal(cache.measurement_window.complete, true);
+  assert.equal(p.shown.measurement_window, cache.measurement_window);
+  await p.startHistoryLoad();
+  assert.equal(calls, 3);
+});
+
 function makePanel(api) {
   const nodes = {
     "#history": { hidden: false },

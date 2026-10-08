@@ -612,10 +612,11 @@ class SaunaRuntime:
                     # Original provenance follows the received FIFO, including a
                     # session start/end between same-time measurements. Each value
                     # is archived once, even when a role occurs repeatedly here.
-                    if self.archive and self.session:
+                    if self.archive:
                         for measurement in originals:
                             self.archive.append(
-                                "measurement", received_at, measurement, self.session.session_id,
+                                "measurement", received_at, measurement,
+                                self.session.session_id if self.session else None,
                             )
                     action_at = max(received_at, self.controller._last_at or received_at)
                     # Book only the received regulation input here. Protection
