@@ -389,6 +389,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             "operation_brightness_percent": 40,
             "after_run_brightness_percent": 15,
         }, partial=True, explicit_target=True, program_mode="constant")
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = self.runtime._clock()
+        self.runtime._clock = lambda: self.now
         self.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 10})
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)

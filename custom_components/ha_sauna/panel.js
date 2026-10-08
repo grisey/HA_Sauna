@@ -8459,7 +8459,7 @@ class SaunaPanel extends HTMLElement {
       this.historyDetail = true;
       this.positions = new Set(["upper", "lower"]);
       this.pendingEventFocus = { kind: "row", eventId };
-      this.setPanelView("detail-history", true);
+      this.setPanelView("history", true);
       this.focusEvent(eventId, true);
       return;
     }

@@ -495,7 +495,7 @@ const parameters = {
   p.action("event-marker:infusion-8");
   p.action("event-row:door-7");
   assert.deepEqual(calls, [
-    ["view", "detail-history"],
+    ["view", "history"],
     ["focus", "infusion-8", true],
     ["view", "diagnostics"],
     ["focus", "door-7", false],

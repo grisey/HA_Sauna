@@ -1962,7 +1962,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="diagnostics"]').click()
         await expect(self.panel.locator('[data-series="detector_door_temperature_slope_upper"]')).to_be_attached()
         self.assertFalse(await self.panel.locator("#plots").is_visible())
-        await self.panel.locator('.detail-tabs [data-action="detail-history"]').click()
+        # The main history owns the event list; detail history shows the
+        # controller tracks instead of duplicating those events.
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(self.panel.locator('#event-list')).to_be_visible()
         await self.panel.locator('#event-list details').first.locator('summary').click()
         event_link = self.panel.locator('#event-list [data-action^="event-row:"]').first
         await expect(event_link).to_be_visible()
@@ -1988,7 +1991,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
         await expect(marker).to_be_focused()
         await marker.press('Enter')
-        await expect(self.panel.locator('.detail-tabs [data-action="detail-history"]')).to_have_attribute('aria-current', 'page')
+        await expect(self.panel.locator('.main-tabs [data-action="history"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#event-list')).to_be_visible()
         selected_link = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
         await expect(selected_link).to_be_focused()
@@ -2011,8 +2014,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await editor.locator("summary").filter(has_text="Messungen und Ereignisse").click()
         await temperature_color.fill("#42A5FF")
         await editor.locator('[data-appearance-color="series_humidity"]').fill("#FF6B4A")
-        await self.panel.locator('.main-tabs [data-action="details"]').click()
-        await self.panel.locator('.detail-tabs [data-action="detail-history"]').click()
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(self.panel.locator('#event-list')).to_be_visible()
         event_row = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
         if not await event_row.is_visible():
             await event_row.locator('xpath=ancestor::details').locator('summary').click()
@@ -2248,7 +2251,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#details .compact-times')).to_contain_text("Mechanischer Ofentimer")
         await expect(self.panel.locator('#details')).to_contain_text("60 %")
         paused=self.panel.locator('#details .compact-times')
-        await expect(paused).to_contain_text("Angehalten · Schütz aus")
+        await expect(paused).to_contain_text("Angehalten · Schütz Aus")
         self.now+=timedelta(seconds=5)
         await self.runtime.tick()
         self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14380)
@@ -2259,7 +2262,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('#current [data-action="operation"]').click()
         await self.panel.locator('[data-action="details"]').click()
         timer=self.panel.locator('#details [data-mechanical-timer]')
-        await expect(timer).to_contain_text("Angehalten · Saunabetrieb aus")
+        await expect(timer).to_contain_text("Angehalten · Saunabetrieb Aus")
         frozen=await timer.inner_text()
         self.now+=timedelta(seconds=50)
         await self.runtime.tick()
