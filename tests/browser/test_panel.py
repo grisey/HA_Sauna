@@ -233,7 +233,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await panel.locator('.main-tabs [data-action="settings"]').tap()
             select = panel.locator("#settings-section")
             await select.tap()
-            menu = panel.locator('.sauna-select-menu[role="listbox"]')
+            menu = panel.get_by_role("listbox", name="Einstellungsbereich", exact=True)
             await expect(menu).to_be_visible()
             box = await menu.bounding_box()
             self.assertGreaterEqual(box["x"], 0)
@@ -2126,12 +2126,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await chart.hover(position={"x": sample_x, "y": 200})
         # Returning through the main History tab selects the single-height
         # overview, whose label intentionally omits the height suffix.
-        label = self.panel.locator("#tooltip").get_by_text("Temperatur:", exact=True)
+        # Persistent readout nodes retain the hidden second measurement height.
+        visible_values = self.panel.locator("#tooltip .history-tooltip-values > div:not([hidden])")
+        label = visible_values.get_by_text("Temperatur:", exact=True)
+        await expect(label).to_have_count(1)
         await expect(label).to_be_visible()
         await expect(self.panel.locator("#tooltip .history-tooltip-time")).to_have_text(re.compile(r"^\d{2}:\d{2}$"))
         await expect(self.panel.locator("#tooltip .history-tooltip-status")).to_have_text("Saunastatus · Aufheizen")
         temperature_value = label.locator("..").locator("span").nth(1)
-        humidity_value = self.panel.locator("#tooltip").get_by_text("Luftfeuchte:", exact=True).locator("..").locator("span").nth(1)
+        humidity_value = visible_values.get_by_text("Luftfeuchte:", exact=True).locator("..").locator("span").nth(1)
         await expect(temperature_value).to_have_text(re.compile(r"^\d+(?:,\d)? °C$"))
         await expect(humidity_value).to_have_text(re.compile(r"^\d+(?:,\d)? %$"))
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
@@ -2374,7 +2377,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ws_errors, [])
 
     async def test_content_scroll_keeps_navigation_visible(self):
-        for width in (1440, 390):
+        for width in (1440, 538, 390):
             with self.subTest(width=width):
                 await self.page.set_viewport_size({"width": width, "height": 720})
                 await self.panel.locator('.main-tabs [data-action="settings"]').click()
@@ -2390,6 +2393,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 navigation = self.panel.locator(".settings-navigation" if width > 700 else ".settings-mobile-navigation")
                 await expect(navigation).to_be_in_viewport(ratio=1)
                 await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_be_in_viewport(ratio=1)
+                if width <= 600:
+                    tabs = self.panel.locator('.main-tabs')
+                    for tab in await tabs.locator('button:visible').all():
+                        await expect(tab).to_be_in_viewport(ratio=1)
+                    unused_width = await tabs.evaluate("""nav => {
+                      const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden);
+                      const rect = nav.getBoundingClientRect(), style = getComputedStyle(nav);
+                      return rect.right - buttons.at(-1).getBoundingClientRect().right
+                        - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+                    }""")
+                    self.assertAlmostEqual(unused_width, 0, delta=1)
                 self.assertLessEqual(await content.evaluate("node => node.scrollWidth"), await content.evaluate("node => node.clientWidth"))
                 self.assertEqual(await self.panel.evaluate("p => p.scrollTop"), 0)
 

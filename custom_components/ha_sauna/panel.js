@@ -1347,11 +1347,13 @@ class SaunaSelectMenu {
     this.menu.className = "sauna-select-menu";
     this.menu.id = `sauna-select-menu-${++this.serial}`;
     this.menu.setAttribute("role", "listbox");
+    const label = select.labels?.[0]?.cloneNode(true);
+    label
+      ?.querySelectorAll("select, input, textarea, button")
+      .forEach((control) => control.remove());
     this.menu.setAttribute(
       "aria-label",
-      select.getAttribute("aria-label") ||
-        select.labels?.[0]?.textContent.trim() ||
-        "Auswahl",
+      select.getAttribute("aria-label") || label?.textContent.trim() || "Auswahl",
     );
     this.menu.setAttribute("popover", "manual");
     this.root.append(this.menu);
@@ -2873,7 +2875,8 @@ class SaunaPanel extends HTMLElement {
         padding: 0;
         font: 13px/1.5 system-ui;
       }
-      .history-readout { block-size: 6.5rem; overflow: auto; scrollbar-gutter: stable; }
+      .history-readout { block-size: 5rem; overflow: auto; scrollbar-gutter: stable; }
+      @container (max-width: 500px) { .history-readout { block-size: 6rem; } }
       .history-inspection { margin-top: 12px; padding: 14px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: color-mix(in srgb, var(--history-phase-color, var(--sauna-surface-section)) 20%, var(--sauna-surface-section)); box-shadow: var(--sauna-shadow-section); }
       ${Object.entries(phaseAppearance)
         .map(
@@ -3329,14 +3332,28 @@ class SaunaPanel extends HTMLElement {
       }
       .history-zoom {
         display: flex;
-        gap: 4px;
+        gap: 0;
+        padding: 2px;
+        border: 1px solid var(--sauna-color-border);
+        border-radius: var(--sauna-control-radius);
+        background: var(--sauna-surface-recessed);
+        align-self: start;
       }
       .history-zoom button {
         min-width: 32px;
+        min-height: 32px;
         height: 32px;
-        padding: 3px 7px;
+        padding: 3px 6px;
         line-height: 1;
+        font-size: 14px;
+        font-weight: 500;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        border-radius: calc(var(--sauna-control-radius) - 3px);
       }
+      .history-zoom [data-action="reset-zoom"] { min-width: 42px; font-variant-numeric: tabular-nums; }
+      .history-zoom button:hover { background: var(--sauna-surface-control); }
       .history-window {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
@@ -3356,7 +3373,7 @@ class SaunaPanel extends HTMLElement {
         cursor: grab;
       }
       .history-overview .overview-window {
-        fill: color-mix(in srgb, var(--sauna-color-chart-minimap-track) 20%, transparent);
+        fill: transparent;
         stroke: var(--sauna-color-chart-minimap-track);
         stroke-width: 1;
         cursor: grab;
@@ -3778,7 +3795,7 @@ class SaunaPanel extends HTMLElement {
       .manual-section .row {
         align-items: center;
       }
-      @media (max-width: 600px) {
+      @container (max-width: 600px) {
         header {
           grid-template-columns: 1fr auto;
           gap: 12px;
@@ -3791,6 +3808,7 @@ class SaunaPanel extends HTMLElement {
           justify-content: flex-start;
         }
         .main-tabs button {
+          flex: 1 1 auto;
           padding: 7px 10px;
         }
         .phase-time {
@@ -3886,15 +3904,15 @@ class SaunaPanel extends HTMLElement {
       .history-controls { margin: 0 0 16px; }
       .history-controls select { max-width: 100%; font-weight: 600; }
       .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); }
-      .history-overview { background: var(--sauna-surface-recessed); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
+      .history-overview { background: transparent; border-radius: var(--sauna-control-radius); }
       .control-history-inspection > div { padding: 16px; border-radius: var(--sauna-control-radius); border: 1px solid var(--sauna-color-border); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
       #control-history { margin-top: var(--sauna-surface-gap); }
       #plots { margin: 0; }
       .card, .plot-panel { isolation: isolate; }
-      @media (max-width: 450px) {
+      @container (max-width: 450px) {
         .main-tabs { min-width: 0; gap: 2px; }
         .program-types button, .main-tabs button, .segmented-mode button { padding-inline: 7px; font-size: 13px; }
-        .main-tabs button { padding-inline: 2px; white-space: nowrap; }
+        .main-tabs button { flex: 1 1 auto; padding-inline: 2px; white-space: nowrap; }
         .control-main .control-section, .control-main .manual-section { padding: 12px; }
       }
       .control-main [data-action="light-editor"] { margin-top: 8px; }
@@ -3940,7 +3958,7 @@ class SaunaPanel extends HTMLElement {
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div id="plots"></div>
-        <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="row toolbar" id="history-navigation"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+        <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="row toolbar" id="history-navigation"><div class="history-zoom"><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button><button data-action="zoom-in" aria-label="Vergrößern">＋</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
@@ -7386,7 +7404,9 @@ class SaunaPanel extends HTMLElement {
     );
     const range = this.$("#range");
     if (range)
-      range.textContent = `${clock(this.window[0])} – ${clock(this.window[1])} · ${num(this.zoom, 1)}×`;
+      range.textContent = `${clock(this.window[0])} – ${clock(this.window[1])}`;
+    const reset = this.$('[data-action="reset-zoom"]');
+    if (reset) reset.textContent = `${num(this.zoom, 1)}×`;
   }
   historyLegend(label, items) {
     if (!items.length) return "";
