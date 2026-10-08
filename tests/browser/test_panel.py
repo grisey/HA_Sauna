@@ -670,11 +670,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         # The rightmost point of the visible arc is 100 °C at 50–110 °C.
         # Send a real pointer event through the rendered SVG transform.
-        arc_point = await self.panel.locator('svg.dial-temperature').evaluate("""svg => {
+        dial = self.panel.locator('svg.dial-temperature')
+        await dial.scroll_into_view_if_needed()
+        await expect(dial).to_be_in_viewport(ratio=1)
+        arc_point = await dial.evaluate("""svg => {
             const point = svg.createSVGPoint(); point.x = 255; point.y = 130;
             const screen = point.matrixTransform(svg.getScreenCTM());
-            return {x: screen.x, y: screen.y};
+            const target = svg.getRootNode().elementFromPoint(screen.x, screen.y);
+            return {x: screen.x, y: screen.y,
+              hitsTargetArc: !!target?.closest('[data-target-arc]'),
+              hit: target?.outerHTML};
         }""")
+        self.assertTrue(arc_point["hitsTargetArc"], arc_point["hit"])
         target_url = f"/api/ha_sauna/{self.entry.entry_id}/temperature"
         async with self.page.expect_response(lambda response: response.url.endswith(target_url) and response.request.method == "POST") as target_wait:
             await self.page.mouse.click(arc_point["x"], arc_point["y"])
