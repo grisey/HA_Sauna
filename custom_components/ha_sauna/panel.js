@@ -938,6 +938,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         series.set(`${position}:${quantity}`, { row, label, value });
       }
     tooltip.replaceChildren(heading, rows, status, eventList);
+    tooltip.setAttribute("data-phase", "");
     tooltip.hidden = false;
     state.tooltip = { heading, series, status, eventList };
     return state.tooltip;
@@ -1000,6 +1001,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     setText(nodes.heading, dateLabel(time, timeZone));
     const phase = panel.historyPhaseAt?.(time);
     setText(nodes.status, `Saunastatus · ${phases[phase?.phase] || "Unbekannt"}`);
+    tooltip.setAttribute("data-phase", phase?.phase || "");
     // Match the cursor to event markers within six physical screen pixels.
     const eventTolerance =
       ((end - start) / (right - left)) *
@@ -1147,12 +1149,6 @@ class HistoryChart {
     const chromeKey = panel.historyTitle(session);
     const chromeChanged = this.chromeKey !== chromeKey;
     this.chromeKey = chromeKey;
-    const title = panel.historyTitle(session),
-      text = (selector, value) => {
-        const node = panel.$(selector);
-        if (node.textContent !== value) node.textContent = value;
-      };
-    text("#history-chart-title", title);
     this.surface.setAttribute(
       "aria-label",
       `Sitzungsverlauf: Temperatur und Luftfeuchte${panel.historyDetail ? " beider Messhöhen" : ""}`,
@@ -1951,7 +1947,7 @@ class SaunaPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>
       :host {
         display: block;
-        height: 100%;
+        height: calc(100dvh - var(--safe-area-inset-top, 0px) - var(--safe-area-inset-bottom, 0px));
         min-height: 0;
         container-type: inline-size;
         overflow: hidden;
@@ -1985,7 +1981,6 @@ class SaunaPanel extends HTMLElement {
       }
       main > header, main > .detail-tabs, main > #message { flex: 0 0 auto; }
       main > section { flex: 1 1 0; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 4px; }
-      .history-controls { position: sticky; top: 0; z-index: 4; }
       header {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -2212,12 +2207,10 @@ class SaunaPanel extends HTMLElement {
         flex-wrap: wrap;
         font-size: 13px;
       }
-      .history-legend { flex: 1 1 10rem; margin: 0; font-size: 12px; }
-      .history-legend > strong { display: block; margin-bottom: 8px; color: var(--sauna-card-muted-text); font-weight: 500; }
-      .history-legend .legend { justify-content: flex-start; gap: 8px 16px; margin: 0; }
+      .history-legend, .history-legend .legend { display: contents; }
       .history-legend .legend span { display: inline-flex; align-items: center; gap: 6px; }
-      .history-legend-groups { display: flex; flex-wrap: wrap; gap: 20px 28px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--sauna-color-border); }
-      .history-legend .legend-swatch { width: 28px; height: 14px; display: block; flex: 0 0 auto; background: transparent; }
+      .history-legend-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 14px; font-size: 12px; }
+      .history-legend .legend-swatch { width: 22px; height: 12px; display: block; flex: 0 0 auto; background: transparent; }
       .legend-swatch .temperature { stroke: var(--sauna-color-series-temperature); stroke-width: 3.5; }
       .legend-swatch .humidity { stroke: var(--sauna-color-series-humidity); stroke-width: 3.5; }
       .dot {
@@ -2527,12 +2520,20 @@ class SaunaPanel extends HTMLElement {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr);
         gap: 8px 20px;
-        background: var(--sauna-surface-section, var(--sauna-color-card-background));
+        background: transparent;
         color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
-        padding: 14px 4px 2px;
+        padding: 0;
         font: 13px/1.5 system-ui;
       }
       .history-readout { block-size: 6.5rem; overflow: auto; scrollbar-gutter: stable; }
+      .history-inspection { margin-top: 12px; padding: 14px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: color-mix(in srgb, var(--history-phase-color, var(--sauna-surface-section)) 20%, var(--sauna-surface-section)); box-shadow: var(--sauna-shadow-section); }
+      .history-inspection:has([data-phase="aufheizen"]) { --history-phase-color: var(--sauna-color-phase-warmup); }
+      .history-inspection:has([data-phase="bereit"]) { --history-phase-color: var(--sauna-color-phase-ready); }
+      .history-inspection:has([data-phase="saunagang"]) { --history-phase-color: var(--sauna-color-phase-session); }
+      .history-inspection:has([data-phase="nachlauf"]) { --history-phase-color: var(--sauna-color-phase-cooling); }
+      .history-inspection:has([data-phase="zwangskühlung"]) { --history-phase-color: var(--sauna-color-phase-forced-cooling); }
+      .history-inspection:has([data-phase="aus"]) { --history-phase-color: var(--sauna-color-phase-idle); }
+      .history-inspection .toolbar { margin: 0; }
       .history-readout > #tooltip { min-block-size: 100%; align-content: start; }
       #tooltip[hidden] { display: none; }
       .history-tooltip-time { color: var(--sauna-card-muted-text); font-weight: 500; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -3529,14 +3530,13 @@ class SaunaPanel extends HTMLElement {
       .program-named-choice { padding: 12px 14px; }
       .program-pending { background: transparent; padding: 12px 0 0; }
       .program-actions { margin-top: 12px; border-top: 0; padding-top: 0; }
-      .history-controls { margin-top: 0; }
-      .history-controls .toolbar { margin-bottom: 0; }
+      .history-controls { margin: 0 0 16px; }
+      .history-controls select { max-width: 100%; font-weight: 600; }
       .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); }
-      .history-plot-surface { padding: 12px; margin-top: 20px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      .history-plot-surface .history-stack { box-shadow: 0 1px 3px rgb(0 0 0 / .35); }
       .history-overview { background: var(--sauna-surface-recessed); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
       .control-history-inspection > div { padding: 16px; border-radius: var(--sauna-control-radius); border: 1px solid var(--sauna-color-border); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      #plots, #control-history { margin-top: var(--sauna-surface-gap); }
+      #control-history { margin-top: var(--sauna-surface-gap); }
+      #plots { margin: 0; }
       .card, .plot-panel { isolation: isolate; }
       @media (max-width: 450px) {
         .program-types button, .main-tabs button, .segmented-mode button { padding-inline: 7px; font-size: 13px; }
@@ -3584,8 +3584,8 @@ class SaunaPanel extends HTMLElement {
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Menü öffnen" aria-expanded="false" aria-controls="main-navigation" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
-      <section id="history" hidden><div class="card history-controls"><div class="row"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div>
-        <div class="row toolbar"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div></div><div id="control-history" hidden></div><div id="plots"></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
+      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div id="plots"></div>
+        <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div class="row toolbar" id="history-navigation"><div class="history-zoom"><button data-action="zoom-in" aria-label="Vergrößern">＋</button><button data-action="zoom-out" aria-label="Verkleinern">−</button><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung">Gesamt</button></div><div class="history-window"><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><span id="range" class="muted"></span></div></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
     this.shadowRoot.addEventListener("click", (e) => {
@@ -6047,6 +6047,12 @@ class SaunaPanel extends HTMLElement {
     this.historyChart = null;
     this.$("#history-overview").replaceChildren();
     this.$("#range").textContent = "";
+    const readout = this.$("#tooltip");
+    if (readout) {
+      readout.replaceChildren();
+      readout.hidden = true;
+      readout.setAttribute("data-phase", "");
+    }
     this.updateMarkup(
       "#plots",
       '<div class="card empty">Noch keine Sitzungsdaten. Wähle eine frühere Saunasitzung oder schalte den Betrieb ein.</div>',
@@ -7028,7 +7034,7 @@ class SaunaPanel extends HTMLElement {
       range.textContent = `${clock(this.window[0])} – ${clock(this.window[1])} · ${num(this.zoom, 1)}×`;
   }
   historyLegend(label, items) {
-    return `<div class="history-legend" aria-label="${esc(label)}"><strong>${esc(label)}</strong><div class="legend">${items
+    return `<div class="history-legend" aria-label="${esc(label)}"><div class="legend">${items
       .map(([kind, text]) => {
         const shape = ["temperature", "humidity", "infusion"].includes(kind)
           ? `<line class="${kind}" x1="2" x2="26" y1="7" y2="7"/>`
@@ -7037,15 +7043,14 @@ class SaunaPanel extends HTMLElement {
       })
       .join("")}</div></div>`;
   }
-  historyMarkup(session) {
-    const historyTitle = this.historyTitle(session);
-    return `<div class="plot-panel" aria-labelledby="history-chart-title"><h2 id="history-chart-title" class="plot-title">${esc(historyTitle)}</h2><div class="history-plot-surface"><div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 1200 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="65" y="18" width="1070" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 1200 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div></div><div class="history-legend-groups">${this.historyLegend(
-      "Messkurven",
-      [
-        ["temperature", "Temperatur"],
-        ["humidity", "Luftfeuchte"],
-      ],
-    )}${this.historyLegend("Phasen", [
+  historyMarkup() {
+    return `<div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 1200 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="65" y="18" width="1070" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 1200 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div>`;
+  }
+  historyLegendMarkup() {
+    return `<div class="history-legend-groups">${this.historyLegend("Messkurven", [
+      ["temperature", "Temperatur"],
+      ["humidity", "Luftfeuchte"],
+    ])}${this.historyLegend("Phasen", [
       ["heat", phases.aufheizen],
       ["ready", phases.bereit],
       ["after", phases.nachlauf],
@@ -7053,7 +7058,7 @@ class SaunaPanel extends HTMLElement {
     ])}${this.historyLegend("Ereignisse", [
       ["door", "Saunatür offen"],
       ["infusion", "Aufguss"],
-    ])}</div></div>`;
+    ])}</div>`;
   }
   historyPreparedSeries(position, quantity, start, end, ttl, pixels, cache) {
     const values = this.series(position, quantity),
@@ -8458,7 +8463,9 @@ class SaunaPanel extends HTMLElement {
       ["#history", !["history", "diagnostics"].includes(view)],
       ["#settings", view !== "settings"],
       ["#control-history", !(main === "details" && detail === "detail-history")],
-      ["#history > .toolbar", main === "details" && detail === "detail-history"],
+      ["#history-inspection", main === "details" && detail === "detail-history"],
+      [".history-readout", main === "details"],
+      ["#history-legends", main === "details"],
       [
         "#plots",
         view === "diagnostics" || (main === "details" && detail === "detail-history"),

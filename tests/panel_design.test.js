@@ -141,7 +141,7 @@ test("history legend groups matching curve, phase and event symbols without heig
   const p = panel();
   p.historyTitle = () => "Sitzung";
   p.historyDetail = true;
-  const markup = p.historyMarkup({});
+  const markup = p.historyMarkup({}) + p.historyLegendMarkup();
   assert.doesNotMatch(markup, /history-detail|position-upper|position-lower|Messhöhen/);
   for (const label of ["Messkurven", "Phasen", "Ereignisse"])
     assert.ok(markup.includes(`aria-label="${label}"`));

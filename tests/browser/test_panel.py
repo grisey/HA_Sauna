@@ -331,15 +331,21 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await panel.evaluate("p => p.state.permissions.admin"), admin
                 )
                 entered, release = asyncio.Event(), asyncio.Event()
+                pending_routes = set()
 
                 async def delay_archive_page(route):
-                    if route.request.url.endswith("after=0"):
-                        await route.continue_()
-                        return
-                    response = await route.fetch()
-                    entered.set()
-                    await release.wait()
-                    await route.fulfill(response=response)
+                    task = asyncio.current_task()
+                    pending_routes.add(task)
+                    try:
+                        if route.request.url.endswith("after=0"):
+                            await route.continue_()
+                            return
+                        response = await route.fetch()
+                        entered.set()
+                        await release.wait()
+                        await route.fulfill(response=response)
+                    finally:
+                        pending_routes.discard(task)
 
                 await page.route(archive_url, delay_archive_page)
                 try:
@@ -366,9 +372,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(await panel.evaluate("p => p.zoom"), 4)
                     await panel.locator("svg.session-chart").press("ArrowRight")
                     overview = panel.locator("#history-overview [data-history-window]")
+                    await overview.scroll_into_view_if_needed()
+                    await expect(overview).to_be_in_viewport(ratio=1)
                     box = await overview.bounding_box()
                     self.assertIsNotNone(box)
                     x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                    hit = await overview.evaluate("""(node, point) => {
+                      const target = node.getRootNode().elementFromPoint(point.x, point.y);
+                      return {matches: target === node, element: target?.outerHTML};
+                    }""", {"x": x, "y": y})
+                    self.assertTrue(hit["matches"], hit["element"])
                     before_drag = await panel.evaluate("p => [...p.window]")
                     await page.mouse.move(x, y)
                     await page.mouse.down()
@@ -401,6 +414,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     )
                 finally:
                     release.set()
+                    # Finish delayed fulfill calls before removing the route or
+                    # starting the next role's subtest with new events.
+                    if pending_routes:
+                        await asyncio.gather(*tuple(pending_routes))
                     await page.unroute(archive_url, delay_archive_page)
                 self.assertTrue(
                     await panel.evaluate(
@@ -672,6 +689,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         # Send a real pointer event through the rendered SVG transform.
         dial = self.panel.locator('svg.dial-temperature')
         await dial.scroll_into_view_if_needed()
+        print("BROWSER_ARC_LAYOUT", await dial.evaluate("""svg => {
+          const chain = [];
+          for (let node = svg; node; node = node.parentElement || node.getRootNode()?.host) {
+            const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
+            chain.push({tag: node.tagName, id: node.id, classes: node.getAttribute('class'),
+              rect: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
+              clientHeight: node.clientHeight, scrollHeight: node.scrollHeight,
+              scrollTop: node.scrollTop, height: style.height, minHeight: style.minHeight,
+              display: style.display, overflow: style.overflow, flex: style.flex});
+          }
+          return {viewport: {width: innerWidth, height: innerHeight}, chain};
+        }"""), flush=True)
         await expect(dial).to_be_in_viewport(ratio=1)
         arc_point = await dial.evaluate("""svg => {
             const point = svg.createSVGPoint(); point.x = 255; point.y = 130;
@@ -1955,10 +1984,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         # Hover over a recorded sample, not the empty lead-in before the session.
         sample_time = (self.base + timedelta(seconds=7)).timestamp() * 1000
         sample_x = await self.panel.evaluate("(p,t)=>{const [a,b]=p.window;return (65+(t-a)/(b-a)*1070)/1200*p.shadowRoot.querySelector('svg.session-chart').getBoundingClientRect().width;}", sample_time)
-        legend_before = await self.panel.locator(".history-legend-groups").bounding_box()
+        legend_before = await self.panel.locator("#history-legends").bounding_box()
         plot_before = await chart.bounding_box()
         await chart.hover(position={"x": sample_x, "y": 200})
-        legend_after = await self.panel.locator(".history-legend-groups").bounding_box()
+        legend_after = await self.panel.locator("#history-legends").bounding_box()
         plot_after = await chart.bounding_box()
         self.assertAlmostEqual(legend_before["y"] - plot_before["y"], legend_after["y"] - plot_after["y"], delta=1)
         await expect(self.panel.locator("#tooltip")).to_be_visible()
@@ -1968,7 +1997,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(readout_box["y"], curve_box["y"] + curve_box["height"])
         self.assertGreaterEqual(readout_box["x"], curve_box["x"])
         self.assertLessEqual(readout_box["x"] + readout_box["width"], curve_box["x"] + curve_box["width"] + 1)
-        await self.panel.locator("#history-chart-title").hover()
+        await self.panel.locator("#session").hover()
         await expect(self.panel.locator("#tooltip")).to_be_visible()
         # Valid but hostile palette: inspect rendered text consumers, not only
         # the palette variables. Curves must keep the chosen measurement color.
@@ -2013,7 +2042,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(temperature_value).to_have_text(re.compile(r"^\d+(?:,\d)? °C$"))
         await expect(humidity_value).to_have_text(re.compile(r"^\d+(?:,\d)? %$"))
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
-        await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(19, 19, 19)")
+        await expect(self.panel.locator("#tooltip")).to_have_attribute("data-phase", "aufheizen")
+        await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgba(0, 0, 0, 0)")
+        phase_colors = await self.panel.evaluate("""p => {
+          const inspection = p.$('#history-inspection'), tooltip = p.$('#tooltip');
+          const active = getComputedStyle(inspection);
+          const colors = {background: active.backgroundColor,
+            phase: active.getPropertyValue('--history-phase-color').trim(),
+            expected: getComputedStyle(p).getPropertyValue('--sauna-color-phase-warmup').trim()};
+          const phase = tooltip.dataset.phase;
+          tooltip.dataset.phase = '';
+          colors.neutral = getComputedStyle(inspection).backgroundColor;
+          tooltip.dataset.phase = phase;
+          return colors;
+        }""")
+        self.assertEqual(phase_colors["phase"], phase_colors["expected"])
+        self.assertNotEqual(phase_colors["background"], phase_colors["neutral"])
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#000000")
         await expect(self.panel.locator('[data-action="history-detail"]')).to_have_count(0)
         self.assertEqual(await self.panel.evaluate("p=>p.positions.size"), 1)

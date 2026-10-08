@@ -147,8 +147,8 @@ den Vergleich beider Positionen.
 | Aufguss | Zeitmarke in der Aufgussfarbe |
 | Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
 
-Die Legende gliedert sich in **Messkurven**, **Phasen** und **Ereignisse**.
-Alle Einträge stehen zusammen unter dem Diagramm und verwenden die gespeicherten Farben.
+Die kompakte Legende fasst Messkurven, Phasen und Ereignisse unter dem Diagramm zusammen.
+Ihre Einträge umbrechen gemeinsam und verwenden die gespeicherten Farben.
 Linien und Konturen sind im normalen Verlauf durchgezogen.
 Die Phasenflächen übernehmen die vom Ablaufkern gelieferten Zeitabschnitte.
 Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technischen Details.
@@ -156,8 +156,10 @@ Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technis
 Die Übersichtskurve zeigt die Temperatur der führenden Messposition in derselben
 Messfarbe; ihre Auswahlmarkierung ordnet den sichtbaren Ausschnitt in die
 gesamte Sitzung ein. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne.
-Die Wertanzeige ist unter der Kurve integriert und greift auf den
-empfangenen Originalpunkt zurück.
+Die Wertanzeige bildet mit der Ausschnittbedienung einen Bereich unter der Kurve.
+Sie greift auf den empfangenen Originalpunkt zurück; ihr Hintergrund verwendet
+die gespeicherte Farbe der Phase am ausgewählten Zeitpunkt. Die Sitzungsauswahl
+steht anstelle einer zusätzlichen Verlaufsüberschrift.
 
 [Kurvenaufbereitung und Ausschnittbedienung](livekurve.md)
 

@@ -264,6 +264,7 @@ test("hover uses the archived phase projection and matching effective event mark
     const original = JSON.stringify(panel.shown);
     interaction.hover({ clientX: 600, clientY: 100 });
     assert.match(tooltip.textContent, /Saunastatus · Saunagang/);
+    assert.equal(tooltip.attributes.get("data-phase"), "saunagang");
     assert.match(tooltip.textContent, /Aufguss/);
     assert.equal((tooltip.textContent.match(/Aufguss/g) || []).length, 2);
     assert.equal(tooltip.children[3].children.length, 2);
@@ -285,6 +286,7 @@ test("missing or uncovered historical phases never borrow the live status", () =
   panel.state.phase = "bereit";
   interaction.hover({ clientX: 600, clientY: 100 });
   assert.match(tooltip.textContent, /Saunastatus · Unbekannt/);
+  assert.equal(tooltip.attributes.get("data-phase"), "");
   const at = Date.parse(measurement().received_at);
   panel.shown.phase_projection = {
     intervals: [
@@ -297,6 +299,7 @@ test("missing or uncovered historical phases never borrow the live status", () =
   };
   interaction.hover({ clientX: 600, clientY: 100 });
   assert.match(tooltip.textContent, /Saunastatus · Unbekannt/);
+  assert.equal(tooltip.attributes.get("data-phase"), "");
 });
 
 test("persistent hover clock follows DST and the browser-local zone", () => {
