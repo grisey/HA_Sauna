@@ -299,8 +299,8 @@
       "description": "Solltemperatur der ersten Taste in der Übersicht.",
       "group": "display",
       "expert": false,
-      "step": "any",
-      "number_step": 0.01,
+      "step": 1,
+      "number_step": 1,
       "settings_group": "appearance",
       "order": 15,
       "settings_subgroup": null
@@ -356,8 +356,8 @@
       "description": "Gewünschte Temperatur während eines Saunagangs. Die direkte Auswahl einer Solltemperatur gilt sofort und bleibt anschließend konstant. Eine Steigerung wird separat als Programm gewählt.",
       "group": "temperature",
       "expert": false,
-      "step": "any",
-      "number_step": 0.01,
+      "step": 1,
+      "number_step": 1,
       "settings_group": "operation",
       "order": 18,
       "settings_subgroup": null
@@ -375,8 +375,8 @@
       "description": "Ziel der gleichmäßigen Temperatursteigerung. Danach gilt diese Temperatur für alle weiteren Saunagänge. Bei einer Änderung bleibt das nächste Ziel erhalten; die weitere Verteilung wird angepasst.",
       "group": "temperature_programs",
       "expert": false,
-      "step": "any",
-      "number_step": 0.01,
+      "step": 1,
+      "number_step": 1,
       "settings_group": "programs",
       "order": 20,
       "settings_subgroup": null
@@ -1284,17 +1284,10 @@
       "distribution_gangs": 3
     },
     {
-      "id": "gipfelstuermer",
-      "name": "Gipfelstürmer",
-      "start_c": 84.0,
-      "end_c": 100.0,
-      "distribution_gangs": 3
-    },
-    {
       "id": "ewigkeit",
       "name": "Ewigkeit",
       "start_c": 80.0,
-      "end_c": 96.0,
+      "end_c": 92.0,
       "distribution_gangs": 5
     },
     {
@@ -1305,18 +1298,25 @@
       "distribution_gangs": 3
     },
     {
-      "id": "hoehenwanderung",
-      "name": "Höhenwanderung",
-      "start_c": 90.0,
-      "end_c": 100.0,
-      "distribution_gangs": 3
-    },
-    {
       "id": "schnellstarter",
       "name": "Schnellstarter",
       "start_c": 70.0,
       "end_c": 90.0,
       "distribution_gangs": 2
+    },
+    {
+      "id": "gipfelstuermer",
+      "name": "Gipfelstürmer",
+      "start_c": 84.0,
+      "end_c": 100.0,
+      "distribution_gangs": 3
+    },
+    {
+      "id": "hoehenwanderung",
+      "name": "Höhenwanderung",
+      "start_c": 88.0,
+      "end_c": 98.0,
+      "distribution_gangs": 4
     }
   ],
   "instance": {
@@ -1327,9 +1327,7 @@
     "button_program": "constant",
     "control_mode": "automatic",
     "presence_source": "proxy",
-    "button_temperature_c": {
-      "parameter": "target_temperature_c"
-    }
+    "button_temperature_c": 90
   },
   "setup": {
     "control_input_mode": "button",
@@ -1594,8 +1592,8 @@
   },
   "frontend": {
     "history_cache_records": 100000,
-    "temperature_step_c": 0.5,
-    "climate_temperature_step_c": 0.1,
+    "temperature_step_c": 1,
+    "climate_temperature_step_c": 1,
     "brightness_step_percent": 1,
     "settings_groups": [
       {

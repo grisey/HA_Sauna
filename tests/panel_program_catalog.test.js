@@ -55,6 +55,13 @@ const programs = [
     },
   });
   assert.equal(p.programSteps(programs[0]), "80 → 85 → 90 °C");
+  assert.deepEqual(
+    Array.from(p.distributedSteps(82, 93, 4)),
+    [82, 86, 89, 93],
+    "the displayed program uses the same whole-degree stages as the controller",
+  );
+  assert.deepEqual(Array.from(p.distributedSteps(80, 85, 3)), [80, 83, 85]);
+  assert.deepEqual(Array.from(p.distributedSteps(80.5, 89.4, 3)), [81, 85, 89]);
   assert.equal(
     p.programSteps({ start_c: 82, end_c: 99, distribution_gangs: 1 }),
     "82 → 99 °C",

@@ -8,6 +8,7 @@ from math import isfinite
 from types import MappingProxyType
 
 from .defaults import section
+from .temperature_target import whole_temperature
 
 
 class ParameterError(ValueError):
@@ -146,6 +147,12 @@ class Parameters:
         ):
             if checked[key] < sauna_minimum:
                 raise ParameterError(key, "too_small")
+            # Check the original input before rounding: e.g. 59.9 must not
+            # enter a 60-degree minimum by rounding into the permitted range.
+            checked[key] = whole_temperature(checked[key])
+            if checked[key] < sauna_minimum:
+                raise ParameterError(key, "too_small")
+            BY_KEY[key].validate(checked[key])
         for route in ("strong", "weak"):
             if checked[f"{route}_window_seconds"] % checked["person_step_seconds"]:
                 raise ParameterError(f"{route}_window_seconds", "window_not_divisible")

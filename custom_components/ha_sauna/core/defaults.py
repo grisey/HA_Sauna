@@ -399,8 +399,15 @@ def validate_catalog(catalog):
     if not isinstance(instance["button_event_type"], str):
         raise ValueError("defaults.json: invalid button event type")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
     button_temperature = instance["button_temperature_c"]
-    if button_temperature != {"parameter": "target_temperature_c"}:
-        raise ValueError("defaults.json: invalid button temperature")
+    if isinstance(button_temperature, dict):
+        if button_temperature != {"parameter": "target_temperature_c"}:
+            raise ValueError("defaults.json: invalid button temperature")
+    elif not (
+        values["sauna_min_temperature_c"]
+        <= _number(button_temperature, "button_temperature_c")
+        <= definitions["target_temperature_c"]["maximum"]
+    ):
+        raise ValueError("defaults.json: button temperature outside temperature bounds")
     appearance = catalog["appearance"]
     _object(appearance, {"colors", "scales", "precision"}, "appearance")
     _object(appearance["precision"], {"absolute_humidity", "energy"}, "precision")

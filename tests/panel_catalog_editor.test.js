@@ -145,15 +145,51 @@ test("server catalog IDs retain colons through the rendered editor actions", asy
     const edit = library.innerHTML.match(/data-action="(program-edit:[^"]+)"/)[1];
     await panel.action(edit);
     assert.equal(panel.programEditor.id, id);
-    const steps = library.innerHTML.match(/data-action="(catalog-kind:steps:[^"]+)"/)[1];
+    const steps = library.innerHTML.match(
+      /data-action="(catalog-kind:steps:[^"]+)"/,
+    )[1];
     await panel.action(steps);
     assert.equal(panel.programEditor.kind, "steps");
-    assert.deepEqual(Array.from(panel.programEditor.values.temperature_steps), [75, 85]);
+    assert.deepEqual(
+      Array.from(panel.programEditor.values.temperature_steps),
+      [75, 85],
+    );
     const even = library.innerHTML.match(/data-action="(catalog-kind:even:[^"]+)"/)[1];
     await panel.action(even);
     panel.finishProgramEditor();
     assert.equal(panel.currentProgramDraft()[0].id, id);
   }
+});
+
+test("catalog commits and sends whole degrees for endpoints and explicit stages", async () => {
+  const { panel } = makePanel();
+  panel.openProgramEditor("c");
+  panel.programEditor.values.start_c = "80.5";
+  panel.programEditor.values.end_c = "90.4";
+  panel.programEditor.values.distribution_gangs = "4";
+  panel.finishProgramEditor();
+  assert.equal(panel.currentProgramDraft()[2].start_c, 81);
+  assert.equal(panel.currentProgramDraft()[2].end_c, 90);
+  assert.deepEqual(Array.from(panel.distributedSteps(81, 90, 4)), [81, 84, 87, 90]);
+  panel.openProgramEditor("c");
+  panel.programEditor.kind = "steps";
+  panel.programEditor.values.temperature_steps = ["80.4", "85.5", "90.6"];
+  panel.finishProgramEditor();
+  const requests = [];
+  panel.api = async (...args) => {
+    requests.push(args);
+    return { programs: args[2].programs };
+  };
+  await panel.savePrograms();
+  assert.equal(requests[0][0], "/sauna-1/programs");
+  assert.deepEqual(
+    Array.from(requests[0][2].programs[2].temperature_steps),
+    [80, 86, 91],
+  );
+  panel.openProgramEditor("c");
+  panel.programEditor.values.temperature_steps = ["59.9", "90"];
+  assert.throws(() => panel.finishProgramEditor(), /zwischen/);
+  assert.equal(panel.programEditor.values.temperature_steps[0], "59.9");
 });
 
 test("keyboard order and pointer insertion preserve IDs and can be discarded", () => {
@@ -260,7 +296,10 @@ test("a confirmed catalog save releases its draft for a newer server catalog", a
   const { panel } = makePanel();
   panel.moveProgram("c", -1);
   const saved = panel.currentProgramDraft();
-  const newer = [{ ...saved[0], name: "Von anderem Client geändert" }, ...saved.slice(1)];
+  const newer = [
+    { ...saved[0], name: "Von anderem Client geändert" },
+    ...saved.slice(1),
+  ];
   panel.api = async () => ({ programs: saved });
   panel.refresh = async () => {
     panel.state.configuration.temperature_programs = newer;

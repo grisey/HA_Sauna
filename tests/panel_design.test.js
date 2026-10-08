@@ -53,16 +53,19 @@ test("brightness reports distinguish feedback, a plan and unknown independently 
   assert.equal(p.lightFeedback(), "Licht 0 %");
 });
 
-test("all temperature interactions consume the editable frontend step metadata", () => {
+test("temperature controls retain whole degrees even with legacy fractional steps", () => {
   const p = panel();
   p.state.frontend_defaults = {
     ...defaults.frontend,
     temperature_step_c: 0.25,
     temperature_dial_step_c: 2,
   };
-  assert.equal(p.temperatureStep(), 0.25);
-  assert.equal(p.clampTemperature(80.3), 80.25);
+  assert.equal(p.temperatureStep(), 1);
+  assert.equal(p.clampTemperature(80.3), 80);
+  assert.equal(p.clampTemperature(80.5), 81);
   assert.equal(p.clampArcTemperature(83), 84);
+  p.state.frontend_defaults.temperature_dial_step_c = 0.1;
+  assert.equal(p.clampArcTemperature(80.5), 81);
   p.state.frontend_defaults = {};
   assert.equal(p.temperatureStep(), null);
   assert.equal(p.targetArcBounds(), null);
@@ -70,6 +73,40 @@ test("all temperature interactions consume the editable frontend step metadata",
   p.state.appearance_catalog = { colors: [], scales: {} };
   assert.equal(p.appearanceScale("temperature"), null);
   assert.equal(p.appearanceScale("humidity"), null);
+});
+
+test("settings round target temperatures without changing fractional control parameters", async () => {
+  const p = panel();
+  const calls = [];
+  p.entry = "entry";
+  p.generation = 0;
+  p.api = async (...args) => {
+    calls.push(args);
+    return { parameters: args[2] };
+  };
+  p.waitForConfiguration = async () => {};
+  p.refresh = async () => {};
+  p.shadowRoot = { querySelectorAll: () => [] };
+  await p.updateParameters({
+    target_temperature_c: 80.5,
+    final_temperature_c: 90.4,
+    preset_start_c: 70.5,
+    preset_step_c: 0.5,
+    readiness_hysteresis_c: 1.5,
+    heating_hysteresis_c: 2.5,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), [
+    "/entry/parameters",
+    "POST",
+    {
+      target_temperature_c: 81,
+      final_temperature_c: 90,
+      preset_start_c: 71,
+      preset_step_c: 0.5,
+      readiness_hysteresis_c: 1.5,
+      heating_hysteresis_c: 2.5,
+    },
+  ]);
 });
 
 test("featured quantity colors precede advanced colors and legacy height values stay saved", () => {

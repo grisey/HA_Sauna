@@ -3717,6 +3717,26 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("change", (e) => {
       if (!this.state) return;
+      if (
+        e.target.matches(
+          '#parameters input[name="target_temperature_c"],#parameters input[name="final_temperature_c"],#parameters input[name="preset_start_c"]',
+        ) &&
+        e.target.value.trim()
+      ) {
+        const definition = this.state.parameters?.find(
+          (item) => item.key === e.target.name,
+        );
+        try {
+          e.target.value = String(
+            this.roundTargetTemperature(
+              Number(e.target.value),
+              definition || this.temperatureBounds(),
+            ),
+          );
+        } catch (_error) {
+          // Keep invalid input for the form's existing native validation.
+        }
+      }
       if (e.target.id === "settings-section")
         this.selectSettingsSection(e.target.value);
       if (e.target.matches("[data-program-step-count]")) {
@@ -4459,10 +4479,20 @@ class SaunaPanel extends HTMLElement {
     const temperatureScale = this.appearanceScale("temperature");
     const humidityScale = this.appearanceScale("humidity");
     const arcBounds = this.targetArcBounds();
-    const presets = Array.from(
-      { length: p.preset_count },
-      (_, i) => p.preset_start_c + i * p.preset_step_c,
-    ).filter((value) => value <= (targetBounds?.maximum ?? Infinity));
+    const presets = [
+      ...new Set(
+        Array.from(
+          { length: p.preset_count },
+          (_, i) => p.preset_start_c + i * p.preset_step_c,
+        ).flatMap((value) => {
+          try {
+            return [this.roundTargetTemperature(value, targetBounds)];
+          } catch (_error) {
+            return [];
+          }
+        }),
+      ),
+    ];
     const availability = s.start_availability;
     const minuteEstimate = (seconds) => {
       const minutes = Math.max(0, Number(seconds) || 0) / 60;
@@ -4910,7 +4940,7 @@ class SaunaPanel extends HTMLElement {
   }
   async changeTarget(value) {
     if (!this.state?.permissions?.temperature) return;
-    if (!Number.isFinite(value)) throw Error("Gültige Solltemperatur eingeben");
+    value = this.roundTargetTemperature(value);
     if (this.programRequest) return;
     this.programSelectionDraft = { mode: "constant" };
     this.freeProgramKind = null;
@@ -4988,22 +5018,38 @@ class SaunaPanel extends HTMLElement {
     const target = this.temperatureBounds(),
       display = this.appearanceScale("temperature");
     if (!target || !display) return null;
-    const step = this.frontendStep("temperature_dial_step_c");
+    const step = this.temperatureStep("temperature_dial_step_c");
     if (!step) return null;
     const minimum = Math.ceil(Math.max(target.minimum, display.minimum) / step) * step,
       maximum = Math.floor(Math.min(target.maximum, display.maximum) / step) * step;
     return maximum >= minimum ? { minimum, maximum } : null;
   }
   clampArcTemperature(value, bounds = this.targetArcBounds()) {
-    const step = this.frontendStep("temperature_dial_step_c");
+    const step = this.temperatureStep("temperature_dial_step_c");
     if (!bounds || !step) return null;
+    const minimum = Math.ceil(bounds.minimum),
+      maximum = Math.floor(bounds.maximum);
+    if (maximum < minimum) return null;
     const number = Number(value),
       rounded =
         Math.round((Number.isFinite(number) ? number : bounds.minimum) / step) * step;
-    return Math.max(bounds.minimum, Math.min(bounds.maximum, rounded));
+    return Math.max(minimum, Math.min(maximum, rounded));
   }
-  temperatureStep() {
-    return this.frontendStep("temperature_step_c");
+  temperatureStep(key = "temperature_step_c") {
+    const step = this.frontendStep(key);
+    return step ? Math.max(1, Math.round(step)) : null;
+  }
+  roundTargetTemperature(value, bounds = this.temperatureBounds()) {
+    const rounded = Math.round(value);
+    if (
+      !Number.isFinite(value) ||
+      (bounds &&
+        [value, rounded].some(
+          (temperature) => temperature < bounds.minimum || temperature > bounds.maximum,
+        ))
+    )
+      throw Error("Solltemperatur innerhalb der zulässigen Grenzen eingeben");
+    return rounded;
   }
   programSteps(program) {
     if (Array.isArray(program?.temperature_steps))
@@ -5029,26 +5075,32 @@ class SaunaPanel extends HTMLElement {
   distributedSteps(start, end, gangs) {
     const maximum = Number(this.programBounds?.().gangMaximum),
       count = Number(gangs),
-      first = Number(start),
-      last = Number(end);
+      rawFirst = Number(start),
+      rawLast = Number(end);
     if (
       !Number.isFinite(maximum) ||
       (typeof start === "string" && !start.trim()) ||
       (typeof end === "string" && !end.trim()) ||
-      !Number.isFinite(first) ||
-      !Number.isFinite(last) ||
+      !Number.isFinite(rawFirst) ||
+      !Number.isFinite(rawLast) ||
       !Number.isInteger(count) ||
       count < 1 ||
       count > maximum
     )
       return [];
+    let first, last;
+    try {
+      first = this.roundTargetTemperature(rawFirst);
+      last = this.roundTargetTemperature(rawLast);
+    } catch (_error) {
+      return [];
+    }
     return count === 1
       ? first === last
         ? [first]
         : [first, last]
-      : Array.from(
-          { length: count },
-          (_, index) => first + ((last - first) * index) / (count - 1),
+      : Array.from({ length: count }, (_, index) =>
+          this.roundTargetTemperature(first + ((last - first) * index) / (count - 1)),
         );
   }
   programChoice(programs = []) {
@@ -5230,7 +5282,7 @@ class SaunaPanel extends HTMLElement {
       nextSubmission;
     if (choice.mode === "constant" && Number.isFinite(choice.temperature)) {
       path = "temperature";
-      body = { target_temperature_c: choice.temperature };
+      body = { target_temperature_c: this.roundTargetTemperature(choice.temperature) };
     } else if (choice.mode !== "individual")
       body = { profile: choice.mode === "program" ? choice.id : "constant" };
     else if (submission.kind === "steps")
@@ -5566,7 +5618,7 @@ class SaunaPanel extends HTMLElement {
       )
     )
       throw Error("Temperaturstufen innerhalb der zulässigen Grenzen eingeben");
-    return values;
+    return values.map((value) => this.roundTargetTemperature(value, bounds));
   }
   freeProgramStepCount(
     value = this.progressionDraft?.["free-step-count"] ??
@@ -5615,19 +5667,29 @@ class SaunaPanel extends HTMLElement {
       throw Error(
         "Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben",
       );
-    return { start, end, gangs };
+    return {
+      start: this.roundTargetTemperature(start, { minimum, maximum }),
+      end: this.roundTargetTemperature(end, { minimum, maximum }),
+      gangs,
+    };
   }
   clampTemperature(value, bounds = this.temperatureBounds()) {
     if (!bounds) return null;
+    const minimum = Math.ceil(bounds.minimum),
+      maximum = Math.floor(bounds.maximum);
+    if (maximum < minimum) return null;
     const number = Number(value),
       clamped = Math.max(
-        bounds.minimum,
-        Math.min(bounds.maximum, Number.isFinite(number) ? number : bounds.minimum),
+        minimum,
+        Math.min(maximum, Number.isFinite(number) ? number : minimum),
       );
     const step = this.temperatureStep();
     if (!step) return null;
     const rounded = Math.round(clamped / step) * step;
-    return Math.max(bounds.minimum, Math.min(bounds.maximum, rounded));
+    return this.roundTargetTemperature(Math.max(minimum, Math.min(maximum, rounded)), {
+      minimum,
+      maximum,
+    });
   }
   temperatureArcPoint(
     value,
@@ -5804,7 +5866,7 @@ class SaunaPanel extends HTMLElement {
     const bounds = this.targetArcBounds();
     if (!bounds) return;
     const current = this.clampArcTemperature(this.state.target_temperature, bounds),
-      step = this.frontendStep("temperature_dial_step_c");
+      step = this.temperatureStep("temperature_dial_step_c");
     const next = {
       ArrowLeft: current - step,
       ArrowDown: current - step,
@@ -5833,6 +5895,19 @@ class SaunaPanel extends HTMLElement {
   }
   async updateParameters(parameters, start = false, partial = false) {
     if (!this.state) return;
+    parameters = { ...parameters };
+    for (const key of [
+      "target_temperature_c",
+      "final_temperature_c",
+      "preset_start_c",
+    ]) {
+      if (!Object.hasOwn(parameters, key) || parameters[key] == null) continue;
+      const definition = this.state.parameters?.find((item) => item.key === key);
+      parameters[key] = this.roundTargetTemperature(
+        parameters[key],
+        definition || this.temperatureBounds(),
+      );
+    }
     const entry = this.entry,
       generation = this.generation,
       editRevision = this.settingsEditRevision || 0,
@@ -7830,7 +7905,7 @@ class SaunaPanel extends HTMLElement {
         const numeric = Number(value);
         if (numeric < minimum || numeric > maximum)
           throw Error(`${label} muss zwischen ${minimum} und ${maximum} °C liegen.`);
-        return numeric;
+        return this.roundTargetTemperature(numeric, { minimum, maximum });
       };
     if (!name) throw Error("Bitte einen Programmnamen eingeben.");
     let program;
@@ -8499,8 +8574,7 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action.startsWith("preset:")) {
-      const temperature = Number(action.slice(7));
-      if (!Number.isFinite(temperature)) throw Error("Gültige Solltemperatur eingeben");
+      const temperature = this.roundTargetTemperature(Number(action.slice(7)));
       if (!this.state.session) return this.changeTarget(temperature);
       if (!permissions.program || this.programRequest) return;
       this.programSelectionDraft = { mode: "constant", temperature };
@@ -8608,7 +8682,7 @@ class SaunaPanel extends HTMLElement {
           value > bounds.maximum
         )
           throw Error("Temperatur innerhalb der zulässigen Grenzen eingeben");
-        payload.temperature_c = value;
+        payload.temperature_c = this.roundTargetTemperature(value, bounds);
       }
       await this.api(`/${this.entry}/button-program`, "POST", payload);
       await this.refresh();

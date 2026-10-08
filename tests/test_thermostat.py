@@ -3,7 +3,7 @@ import unittest
 
 from custom_components.ha_sauna.core.contracts import ControlInputs
 from custom_components.ha_sauna.core.models import ThermostatState
-from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 from custom_components.ha_sauna.core.thermostat import evaluate
 from test_foundation import T0, parameters
 
@@ -50,7 +50,7 @@ class ThermostatTests(unittest.TestCase):
         values = self.parameters.as_dict()
         del values["target_temperature_c"]
         configured = Parameters(values)
-        self.assertEqual(configured.values["target_temperature_c"], 80)
+        self.assertEqual(configured.values["target_temperature_c"], BY_KEY["target_temperature_c"].default)
         _, decision = self.decide(parameters=configured)
         self.assertTrue(decision.heat)
         _, decision = self.decide(parameters=configured, temperature=None)

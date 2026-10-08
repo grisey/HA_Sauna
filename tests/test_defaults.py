@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 from custom_components.ha_sauna.core.defaults import (
     load_catalog,
@@ -119,14 +120,41 @@ class DefaultsTests(unittest.TestCase):
             BY_KEY["operation_brightness_percent"].description,
         )
 
-    def test_button_temperature_reference_uses_current_parameters(self):
-        self.assertEqual(
-            instance_default("button_temperature_c", parameters={"target_temperature_c": 87}),
-            87,
-        )
-        self.assertEqual(instance_default("button_temperature_c"), BY_KEY["target_temperature_c"].default)
+    def test_button_temperature_default_is_independent_of_current_parameters(self):
+        expected = section("instance")["button_temperature_c"]
+        for target in (72, 87):
+            self.assertEqual(
+                instance_default("button_temperature_c", parameters={"target_temperature_c": target}),
+                expected,
+            )
+        self.assertEqual(instance_default("button_temperature_c"), expected)
         self.assertNotIn("selected_program_id", section("instance"))
         self.assertNotIn("temperature_steps", section("instance"))
+
+    def test_explicit_catalog_parameter_reference_uses_current_parameters(self):
+        catalog = load_catalog()
+        catalog["instance"]["button_temperature_c"] = {"parameter": "target_temperature_c"}
+        validate_catalog(catalog)
+        with patch("custom_components.ha_sauna.core.defaults._CATALOG", catalog):
+            self.assertEqual(
+                instance_default("button_temperature_c", parameters={"target_temperature_c": 87}),
+                87,
+            )
+            self.assertEqual(instance_default("button_temperature_c"), BY_KEY["target_temperature_c"].default)
+
+    def test_button_temperature_catalog_default_obeys_parameter_bounds(self):
+        minimum = BY_KEY["sauna_min_temperature_c"].default
+        maximum = BY_KEY["target_temperature_c"].maximum
+        for value in (minimum, maximum):
+            catalog = load_catalog()
+            catalog["instance"]["button_temperature_c"] = value
+            self.assertIs(validate_catalog(catalog), catalog)
+        for value in (minimum - .1, maximum + .1, True, None, float("nan")):
+            with self.subTest(value=value):
+                catalog = load_catalog()
+                catalog["instance"]["button_temperature_c"] = value
+                with self.assertRaises(ValueError):
+                    validate_catalog(catalog)
 
     def test_saved_disabled_timer_warning_survives_new_factory_default(self):
         key = "mechanical_timer_warning_minutes"
@@ -170,14 +198,14 @@ assert loaded.temperature_programs[0].start_c == 82
 assert legacy.appearance["scales"]["temperature"]["minimum"] == 35
 assert loaded.appearance["scales"]["temperature"]["minimum"] == 42
 assert not any(program.id == "program_1" for program in legacy.temperature_programs)
-assert defaults.instance_default("program_mode", setup=True) == "progressive"
+assert defaults.instance_default("program_mode", setup=True) == catalog["setup"]["program_mode"]
 derived = Configuration.from_options({"bindings": bindings, "parameters": {"target_temperature_c": 87}})
-assert derived.button_temperature_c == 87
+assert derived.button_temperature_c == defaults.instance_default("button_temperature_c")
 explicit = derived.as_options()
 explicit["button_temperature_c"] = 83
 assert Configuration.from_options(explicit).button_temperature_c == 83
 explicit["button_temperature_c"] = None
-assert Configuration.from_options(explicit).button_temperature_c == 87
+assert Configuration.from_options(explicit).button_temperature_c == defaults.instance_default("button_temperature_c")
 assert derived.selected_program_id is None and derived.temperature_steps is None
 print(json.dumps({"new_gap": 21, "saved_gap": 17, "legacy_mode": loaded.program_mode}))
 """

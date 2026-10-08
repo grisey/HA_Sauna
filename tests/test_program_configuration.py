@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.const import CONF_BINDINGS, CONF_PARAMETERS
+from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.parameters import (
+    BY_KEY,
     EDITABLE_DEFINITIONS,
     LIVE_TEMPERATURE_KEYS,
     ParameterError,
@@ -45,6 +47,54 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_control_targets_round_and_other_parameters_and_measurements_do_not(self):
+        parameters = Parameters({
+            "target_temperature_c": 80.5, "final_temperature_c": 89.5,
+            "preset_start_c": 70.5, "readiness_hysteresis_c": .25,
+        })
+        self.assertEqual(parameters.values["target_temperature_c"], 81)
+        self.assertEqual(parameters.values["final_temperature_c"], 90)
+        self.assertEqual(parameters.values["preset_start_c"], 71)
+        self.assertEqual(parameters.values["readiness_hysteresis_c"], .25)
+        configuration = Configuration(
+            Bindings(bindings()), parameters, button_temperature_c=82.5,
+            temperature_steps=(80.5, 81.49, 89.5),
+        )
+        self.assertEqual(configuration.button_temperature_c, 83)
+        self.assertEqual(configuration.temperature_steps, (81, 81, 90))
+        self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
+        runtime = SaunaRuntime(configuration, clock=lambda: T0)
+        runtime.controller.set_temperature(74.375, T0)
+        self.assertEqual(runtime.controller.temperature, 74.375)
+
+    def test_live_temperature_step_and_button_inputs_persist_whole_targets(self):
+        runtime = SaunaRuntime(Configuration(Bindings(bindings()), Parameters({})))
+        entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+        hass = _FakeHass()
+        asyncio.run(async_set_parameters(hass, entry, {"target_temperature_c": 80.5}, partial=True))
+        self.assertEqual(runtime.controller.target_temperature, 81)
+        self.assertEqual(entry.options["parameters"]["target_temperature_c"], 81)
+        asyncio.run(async_set_button_program(hass, entry, "constant", 82.5))
+        self.assertEqual(entry.options["button_temperature_c"], 83)
+        asyncio.run(async_set_temperature_steps(hass, entry, [80.5, 82.5, 89.49]))
+        self.assertEqual(runtime.configuration.temperature_steps, (81, 83, 89))
+        self.assertEqual(entry.options["temperature_steps"], (81, 83, 89))
+        for value in (59.9, 100.1):
+            before = dict(entry.options)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                asyncio.run(async_set_temperature_steps(hass, entry, [80, value]))
+            self.assertEqual(entry.options, before)
+
+    def test_target_bounds_apply_before_and_after_rounding(self):
+        for value in (59.9, 100.1):
+            for key in ("target_temperature_c", "final_temperature_c", "preset_start_c"):
+                with self.subTest(value=value, key=key), self.assertRaises(ParameterError):
+                    Parameters({key: value})
+            with self.assertRaises(ParameterError):
+                Configuration(Bindings(bindings()), Parameters({}), button_temperature_c=value)
+        with self.assertRaises(ParameterError):
+            Parameters({"sauna_min_temperature_c": 60.2, "target_temperature_c": 60.3})
+
     def test_saved_timer_warning_adopts_legacy_disabled_state_and_roundtrips(self):
         key = "mechanical_timer_warning_minutes"
         for saved_parameters, expected in (
@@ -145,14 +195,15 @@ class ProgramConfigurationTests(unittest.TestCase):
             )
 
     def test_common_temperature_minimum_validates_live_targets_and_ui_metadata(self):
+        minimum = BY_KEY["sauna_min_temperature_c"].default
         for key in ("preset_start_c", "target_temperature_c", "final_temperature_c"):
-            with self.subTest(key=key, value=59):
+            maximum = BY_KEY[key].maximum
+            with self.subTest(key=key, value=minimum - 1):
                 with self.assertRaisesRegex(ParameterError, f"{key}: too_small"):
-                    Parameters({key: 59})
-            with self.subTest(key=key, value=60):
-                self.assertEqual(Parameters({key: 60}).values[key], 60)
-            with self.subTest(key=key, value=100):
-                self.assertEqual(Parameters({key: 100}).values[key], 100)
+                    Parameters({key: minimum - 1})
+            for value in (minimum, maximum):
+                with self.subTest(key=key, value=value):
+                    self.assertEqual(Parameters({key: value}).values[key], value)
 
         parameters = Parameters({"sauna_min_temperature_c": 65})
         self.assertEqual(parameters.minimum_for("target_temperature_c"), 65)
@@ -188,11 +239,12 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_legacy_without_final_temperature_is_constant(self):
         configuration = Configuration.from_options(options())
         self.assertEqual(configuration.program_mode, "constant")
-        self.assertEqual(configuration.parameters.values["final_temperature_c"], 95)
+        self.assertEqual(configuration.parameters.values["final_temperature_c"], BY_KEY["final_temperature_c"].default)
 
     def test_button_constant_temperature_is_frozen_and_legacy_current_is_normalized(self):
+        default = instance_default("button_temperature_c")
         configuration = Configuration.from_options(options({"target_temperature_c": 83}))
-        self.assertEqual((configuration.button_program, configuration.button_temperature_c), ("constant", 83))
+        self.assertEqual((configuration.button_program, configuration.button_temperature_c), ("constant", default))
         current = Configuration.from_options(
             options(
                 {"target_temperature_c": 83},
@@ -205,8 +257,13 @@ class ProgramConfigurationTests(unittest.TestCase):
             options({"target_temperature_c": 83}, button_program="current")
         )
         self.assertEqual(
-            (fallback.button_program, fallback.button_temperature_c), ("constant", 83)
+            (fallback.button_program, fallback.button_temperature_c), ("constant", default)
         )
+        explicit = Configuration.from_options(options(
+            {"target_temperature_c": 83}, button_temperature_c=74,
+        ))
+        self.assertEqual(explicit.button_temperature_c, 74)
+        self.assertEqual(Configuration.from_options(explicit.as_options()), explicit)
 
     def test_button_constant_temperature_is_independent_of_live_ui_target(self):
         configuration = Configuration(
@@ -337,7 +394,7 @@ class ProgramConfigurationTests(unittest.TestCase):
 
     def test_legacy_defaults_keep_new_minimum(self):
         configuration = Configuration.from_options(options())
-        self.assertEqual(configuration.parameters.values["sauna_min_temperature_c"], 60)
+        self.assertEqual(configuration.parameters.values["sauna_min_temperature_c"], BY_KEY["sauna_min_temperature_c"].default)
 
     def test_roundtrip_preserves_program_choices(self):
         configuration = Configuration(
@@ -374,12 +431,14 @@ class ProgramConfigurationTests(unittest.TestCase):
 
     def test_program_defaults_and_live_gang_count(self):
         values = Parameters({}).values
-        self.assertEqual(values["temperature_gangs"], 4)
-        self.assertEqual((values["program_1_start_c"], values["program_1_end_c"], values["program_1_gangs"]), (80, 95, 4))
-        self.assertEqual((values["program_2_start_c"], values["program_2_end_c"], values["program_2_gangs"]), (70, 90, 3))
+        for key in (
+            "temperature_gangs", "program_1_start_c", "program_1_end_c",
+            "program_1_gangs", "program_2_start_c", "program_2_end_c", "program_2_gangs",
+        ):
+            self.assertEqual(values[key], BY_KEY[key].default)
         self.assertIn("temperature_gangs", LIVE_TEMPERATURE_KEYS)
         with self.assertRaises(ParameterError):
-            Parameters({"program_2_gangs": 21})
+            Parameters({"program_2_gangs": BY_KEY["program_2_gangs"].maximum + 1})
 
     def test_explicit_program_profiles_supply_start_end_and_distribution(self):
         parameters = Parameters({
@@ -395,9 +454,10 @@ class ProgramConfigurationTests(unittest.TestCase):
 
     def test_catalog_program_supplies_existing_controller_values(self):
         configuration = Configuration.from_options(options())
+        program = configuration.temperature_programs[-1]
         selected, mode = program_parameters(
             configuration.parameters,
-            "gipfelstuermer",
+            program.id,
             catalog=configuration.temperature_programs,
         )
         self.assertEqual(mode, "progressive")
@@ -406,7 +466,7 @@ class ProgramConfigurationTests(unittest.TestCase):
                 selected.values[key]
                 for key in ("target_temperature_c", "final_temperature_c", "temperature_gangs")
             ),
-            (84, 100, 3),
+            (program.start_c, program.end_c, program.distribution_gangs),
         )
 
     def test_catalog_and_selected_name_roundtrip(self):

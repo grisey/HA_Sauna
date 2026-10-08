@@ -5,13 +5,15 @@ und Selektorklassen stammen aus dem tatsächlich installierten Home Assistant.
 """
 import importlib.util
 import os
+from math import floor, inf, nextafter
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.program_catalog import DEFAULT_PROGRAMS
 from custom_components.ha_sauna.bindings import ROLES
 
@@ -31,8 +33,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             for r in ROLES
             if not r.optional or r.device_class in {"temperature", "humidity"}
         }
-        self.values = {d.key: d.default if d.default is not None else 2.5
-                       for d in EDITABLE_DEFINITIONS}
+        self.values = {d.key: d.default for d in EDITABLE_DEFINITIONS}
         self.values.update(session_gap_minutes=2.5)
         self.expected_values = Parameters(self.values).as_dict()
         self.states = {
@@ -96,7 +97,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["data"], {})
         self.assertEqual(result["options"]["parameters"], self.expected_values)
         self.assertEqual(result["options"]["bindings"], self.inputs)
-        self.assertEqual(result["options"]["program_mode"], "progressive")
+        self.assertEqual(result["options"]["program_mode"], instance_default("program_mode", setup=True))
         self.assertEqual(result["options"]["button_program"], "gipfelstuermer")
         self.assertEqual(
             result["options"]["button_temperature_c"],
@@ -109,7 +110,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_setup_override_limit_is_field_specific_and_keeps_fractions(self):
         await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
-        for value in (10.000000000000002, 20):
+        maximum = BY_KEY["manual_override_minutes"].maximum
+        for value in (nextafter(maximum, inf), maximum * 2):
             with self.subTest(value=value):
                 form = await self.flow.async_step_parameters(
                     {
@@ -121,7 +123,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     form["errors"], {"manual_override_minutes": "too_large"}
                 )
                 self.assertEqual(self.entries, [])
-        for value in (10, 0.5):
+        for value in (maximum, 0.5):
             with self.subTest(value=value):
                 result = await self.flow.async_step_parameters(
                     {
@@ -171,10 +173,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 form = await self.flow.async_step_user({"name": "Testsauna", **inputs})
                 self.assertEqual(form["errors"], error)
 
-    async def test_initial_button_default_is_constant(self):
+    async def test_initial_button_uses_catalog_defaults(self):
         form = await self.flow.async_step_user({"name": "Testsauna", **self.inputs})
         values = form["data_schema"](self.values)
-        self.assertEqual(values["button_program"], "constant")
+        self.assertEqual(values["button_program"], instance_default("button_program", setup=True))
+        self.assertEqual(values["button_temperature_c"], instance_default("button_temperature_c"))
 
     async def test_duplicate_sensor_stays_in_form(self):
         inputs = {**self.inputs, "lower_temperature": self.inputs["upper_temperature"]}
@@ -352,20 +355,22 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                         now += timedelta(seconds=1)
                         await restored.set_operation(True)
                         targets.append(restored.controller.target_temperature)
-                    self.assertEqual(targets, [80, (80 + end) / 2, end])
+                    self.assertEqual(targets, [80, floor((80 + end) / 2 + .5), end])
                     await restored.close()
                     await self.entry.runtime_data.close()
 
     async def test_loaded_and_closed_options_adopt_only_saved_override_values(self):
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
+        definition = BY_KEY["manual_override_minutes"]
+        maximum = definition.maximum
         for loaded in (True, False):
             with self.subTest(loaded=loaded):
                 self.entry.options = {
                     "bindings": self.inputs,
                     "parameters": {
                         **self.expected_values,
-                        "manual_override_minutes": 20,
+                        "manual_override_minutes": maximum * 2,
                     },
                     "button_program": "genusszeit",
                     "selected_program_id": "genusszeit",
@@ -391,11 +396,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                         for key in form["data_schema"].schema
                         if str(key) == "manual_override_minutes"
                     )
-                    self.assertEqual(field.description["suggested_value"], 10)
+                    self.assertEqual(field.description["suggested_value"], maximum)
                     selector = form["data_schema"].schema[field]
-                    self.assertEqual(selector.config["max"], 10)
-                    self.assertEqual(selector.config["step"], "any")
-                    for value in (10.000000000000002, 20):
+                    self.assertEqual(selector.config["max"], maximum)
+                    self.assertEqual(selector.config["step"], definition.step)
+                    for value in (nextafter(maximum, inf), maximum * 2):
                         rejected = await flow.async_step_parameters(
                             {
                                 **self.values,
@@ -411,7 +416,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     result = await flow.async_step_parameters(self.values)
                 self.assertEqual(result["type"], "create_entry")
                 saved = Configuration.from_options(result["data"])
-                self.assertEqual(saved.parameters.values["manual_override_minutes"], 10)
+                self.assertEqual(saved.parameters.values["manual_override_minutes"], self.values["manual_override_minutes"])
                 self.assertEqual(saved.bindings, configuration.bindings)
                 self.assertEqual(saved.button_program, "genusszeit")
                 self.assertEqual(saved.selected_program_id, "genusszeit")

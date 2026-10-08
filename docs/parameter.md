@@ -72,22 +72,25 @@ gilt anschließend für weitere Gänge.
 Bei **Einzelne Stufen** erhält jede Stufe eine eigene Temperatur. Die Folge
 kann dabei steigen oder fallen. Ihre Länge bestimmt die Stufenzahl;
 erster und letzter Wert ergeben Start und Ende. Zulässig sind 1 bis 20 Stufen.
+Solltemperaturen und berechnete Zwischenstufen werden auf ganze Grad gerundet;
+ab einem halben Grad wird aufgerundet. Die Steuerung verwendet diese gerundeten
+Werte.
 
 Die Programmbibliothek enthält diese anpassbaren Vorlagen:
 
 | Programm | Temperaturfolge |
 | --- | --- |
 | Genusszeit | 80 → 85 → 90 °C |
-| Gipfelstürmer | 84 → 92 → 100 °C |
-| Ewigkeit | 80 → 84 → 88 → 92 → 96 °C |
+| Ewigkeit | 80 → 83 → 86 → 89 → 92 °C |
 | Liegewiese | 75 → 80 → 85 °C |
-| Höhenwanderung | 90 → 95 → 100 °C |
 | Schnellstarter | 70 → 90 °C |
+| Gipfelstürmer | 84 → 92 → 100 °C |
+| Höhenwanderung | 88 → 91 → 95 → 98 °C |
 
 Gespeicherte Programme besitzen eine feste Kennung. Umbenennen und Sortieren
 erhalten die Zuordnung einer gewählten Programm- oder Tastervorgabe. Die
 Tastervorgabe verwendet ein benanntes Programm oder eine gesondert gespeicherte
-konstante Temperatur, standardmäßig 80 °C.
+konstante Temperatur, standardmäßig 90 °C.
 
 ## Betrieb und Kühlung
 

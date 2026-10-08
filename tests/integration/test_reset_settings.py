@@ -3,6 +3,7 @@ import unittest
 
 from aiohttp import ClientSession
 
+from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.parameters import Parameters
 from harness import create_sauna, credentials, start_hass
 
@@ -45,9 +46,8 @@ class ResetSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["bindings"], original_bindings)
         self.assertEqual(self.entry.options["control_input_mode"], "button")
         self.assertEqual(self.entry.options["button_event_type"], "custom_press")
-        self.assertEqual(self.entry.options["program_mode"], "constant")
-        self.assertEqual(self.entry.options["button_program"], "constant")
-        self.assertEqual(self.entry.options["log_level"], "INFO")
+        for key in ("program_mode", "button_program", "log_level"):
+            self.assertEqual(self.entry.options[key], instance_default(key))
 
     async def test_active_or_stopped_session_rejects_reset_without_changes(self):
         async with ClientSession(headers=self.headers) as client:

@@ -116,6 +116,47 @@ function individualFields(p, values = { start: "80", end: "90", gangs: "3" }) {
   };
 }
 
+test("fractional quick-preset spacing exposes unique whole-degree commands", async () => {
+  const config = configuration();
+  Object.assign(config.parameters, {
+    preset_start_c: 80,
+    preset_step_c: 0.5,
+    preset_count: 6,
+  });
+  const { p, calls } = panel(config);
+  const current = renderControls(p);
+  assert.deepEqual(
+    Array.from(current().matchAll(/data-action="preset:([^\"]+)"/g), (match) =>
+      Number(match[1]),
+    ),
+    [80, 81, 82, 83],
+  );
+  await p.action("preset:81");
+  assert.deepEqual(plain(calls[0]), [
+    "/entry/temperature",
+    "POST",
+    { target_temperature_c: 81 },
+  ]);
+});
+
+test("free explicit stages send and retain whole-degree commands", async () => {
+  const { p, calls } = panel(configuration("progressive"), {
+    timeline: { session_id: "running" },
+  });
+  p.freeProgramKind = "steps";
+  p.freeProgramStepsDraft = ["80.4", "85.5", "90.6"];
+  p.shadowRoot = {
+    querySelectorAll: () => p.freeProgramStepsDraft.map((value) => ({ value })),
+  };
+  await p.applyProgram();
+  assert.deepEqual(plain(calls[0]), [
+    "/entry/program",
+    "POST",
+    { temperature_steps: [80, 86, 91] },
+  ]);
+  assert.deepEqual(plain(p.state.configuration.temperature_steps), [80, 86, 91]);
+});
+
 test("temperature choice returns to direct selection after finally ending a session", async () => {
   const session = {
     timeline: {

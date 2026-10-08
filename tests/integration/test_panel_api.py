@@ -5,6 +5,8 @@ from unittest.mock import patch
 from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from harness import create_sauna, start_hass
+from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.parameters import Parameters
 
 
 class PanelAPITests(unittest.IsolatedAsyncioTestCase):
@@ -284,11 +286,15 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         self.assertTrue(heater.is_on)
                         self.assertTrue(heater.calls[-1])
                         self.assertEqual(
-                            runtime.device.light_output.last_automatic_brightness, 5
+                            runtime.device.light_output.last_automatic_brightness,
+                            runtime.configuration.parameters.values["cooling_brightness_percent"]
                         )
-                        self.assertEqual(light.brightness, 13)
+                        cold_brightness = round(255 * runtime.configuration.parameters.values[
+                            "cooling_brightness_percent"
+                        ] / 100)
+                        self.assertEqual(light.brightness, cold_brightness)
                         self.assertEqual(light.calls[-1][0], "on")
-                        self.assertEqual(light.calls[-1][1]["brightness"], 13)
+                        self.assertEqual(light.calls[-1][1]["brightness"], cold_brightness)
                     else:
                         self.assertTrue(runtime.controller.heater_override)
                         self.assertTrue(heater.is_on)
@@ -1041,7 +1047,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             values.pop(key)
         self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options,"parameters":values})
         await self.hass.async_block_till_done()
-        self.assertEqual(self.entry.options["parameters"]["sensor_timeout_seconds"],180)
+        self.assertEqual(self.entry.options["parameters"]["sensor_timeout_seconds"],
+                         Parameters({}).values["sensor_timeout_seconds"])
         self.assertEqual(self.entry.options["parameters"]["feedback_timeout_seconds"],10)
         self.assertEqual(self.entry.options["parameters"]["fault_confirmation_seconds"],60)
         async with ClientSession(headers=self.headers) as client:
@@ -1284,7 +1291,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url + "/state") as response:
                 state = await response.json()
                 self.assertEqual(state["appearance"]["scales"]["temperature"],
-                                 {"minimum": 40, "maximum": 110})
+                                 section("appearance")["scales"]["temperature"]["default"])
                 self.assertIn("phase_warmup", {item["id"] for item in
                                                state["appearance_catalog"]["colors"]})
             async with client.post(url + "/appearance", json=appearance) as response:
@@ -1335,9 +1342,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         legacy["appearance"] = {"scales": {"humidity": {"maximum": 90}}}
         restored = Configuration.from_options(legacy).appearance
         self.assertEqual(restored["scales"]["temperature"],
-                         {"minimum": 40, "maximum": 110})
+                         section("appearance")["scales"]["temperature"]["default"])
         self.assertEqual(restored["scales"]["humidity"],
-                         {"minimum": 0, "maximum": 90})
+                         {**section("appearance")["scales"]["humidity"]["default"], "maximum": 90})
         url = self.base + "/" + self.entry.entry_id + "/appearance"
         async with ClientSession() as client:
             async with client.post(url, json={}) as response:
@@ -1380,8 +1387,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 replaced = (await response.json())["appearance"]
             self.assertEqual(replaced["colors"], {"phase_warmup": "#010203"})
             self.assertEqual(replaced["scales"], {
-                "temperature": {"minimum": 40, "maximum": 110},
-                "humidity": {"minimum": 0, "maximum": 50},
+                key: specification["default"]
+                for key, specification in section("appearance")["scales"].items()
             })
             self.assertEqual(self.entry.runtime_data.configuration.appearance, replaced)
 

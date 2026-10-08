@@ -22,7 +22,19 @@ from homeassistant.setup import async_setup_component
 from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
+from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.timeline import Event, Kind
+
+
+DEFAULT_PROGRAMS = section("programs")
+DEFAULT_PARAMETERS = {item["key"]: item["default"] for item in section("parameters")}
+
+
+def default_css_color(role):
+    color = next(item["default"] for item in section("appearance")["colors"]
+                 if item["id"] == role)
+    return "rgb(" + ", ".join(str(int(color[index:index + 2], 16))
+                              for index in (1, 3, 5)) + ")"
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
@@ -605,9 +617,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         humidity = editor.locator('[data-appearance-color="series_humidity"]')
         warmup = editor.locator('[data-appearance-color="phase_warmup"]')
         minimum = editor.locator('[data-appearance-scale="temperature.minimum"]')
-        await expect(minimum).to_have_value("40")
-        await expect(editor.locator('[data-appearance-scale="temperature.maximum"]')).to_have_value("110")
-        await expect(editor.locator('[data-appearance-scale="humidity.maximum"]')).to_have_value("50")
+        scale_defaults = section("appearance")["scales"]
+        await expect(minimum).to_have_value(str(scale_defaults["temperature"]["default"]["minimum"]))
+        await expect(editor.locator('[data-appearance-scale="temperature.maximum"]')).to_have_value(str(scale_defaults["temperature"]["default"]["maximum"]))
+        await expect(editor.locator('[data-appearance-scale="humidity.maximum"]')).to_have_value(str(scale_defaults["humidity"]["default"]["maximum"]))
+        # The remaining geometry case intentionally uses its own 50–110 °C scale.
+        await editor.locator('[data-appearance-scale="temperature.maximum"]').fill("110")
         await temperature.fill("#19A6C8")
         await humidity.fill("#9A35C0")
         await warmup.fill("#123456")
@@ -648,7 +663,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(editor.locator('[data-appearance-color="series_temperature"]')).to_have_value("#19A6C8")
         await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
         await editor.locator('[data-action="appearance-default"]').click()
-        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("40")
+        await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value(str(scale_defaults["temperature"]["default"]["minimum"]))
         await editor.locator('[data-action="appearance-discard"]').click()
         await expect(editor.locator('[data-appearance-scale="temperature.minimum"]')).to_have_value("50")
         self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
@@ -826,7 +841,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator("#program-choice-body")).to_be_visible()
         self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
         await self.panel.locator('[data-action="program-mode:program"]').click()
-        choice = self.panel.locator('[data-action="program-select:genusszeit"]')
+        choice = self.panel.locator(f'[data-action="program-select:{DEFAULT_PROGRAMS[0]["id"]}"]')
         await expect(choice).to_be_visible()
         # The open editor marks its draft choice, while the active summary and
         # backend stay unchanged until the separate confirmation succeeds.
@@ -836,7 +851,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         action = self.panel.locator('#program-choice-body [data-action="program-apply"]')
         await expect(action).to_have_text("Programm übernehmen")
         await expect(action).to_be_enabled()
-        await expect(self.panel.locator('#current .program-pending')).to_contain_text("Genusszeit")
+        await expect(self.panel.locator('#current .program-pending')).to_contain_text(DEFAULT_PROGRAMS[0]["name"])
         await expect(active_program).to_have_text("Individuell")
         await self.panel.evaluate("p=>p.refresh()")
         await expect(self.panel.locator("#program-choice-body")).to_be_visible()
@@ -887,7 +902,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await click
             saved = await response_wait.value
             self.assertEqual(saved.status, 200)
-            self.assertEqual((await saved.json())["selected_program_id"], "genusszeit")
+            self.assertEqual((await saved.json())["selected_program_id"], DEFAULT_PROGRAMS[0]["id"])
             await expect(action).to_have_text("✓ Übernommen", timeout=15000)
             await expect(action).to_have_class("program-saved program-main")
             self.assertEqual(await operation_geometry(), operation_box)
@@ -896,13 +911,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             if entered.is_set():
                 await asyncio.wait_for(route_finished.wait(), 10)
             await self.page.unroute("**" + program_url, delay_program)
-        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
-        await expect(active_program).to_have_text("Genusszeit")
+        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, DEFAULT_PROGRAMS[0]["id"])
+        await expect(active_program).to_have_text(DEFAULT_PROGRAMS[0]["name"])
         await expect(choice).to_have_attribute("aria-pressed", "true")
         await expect(choice).not_to_contain_text("Vorgemerkt")
-        await expect(choice).to_have_css("background-color", "rgb(168, 108, 69)")
+        await expect(choice).to_have_css("background-color", default_css_color("ui_accent"))
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(active_program).to_have_text("Genusszeit")
+        await expect(active_program).to_have_text(DEFAULT_PROGRAMS[0]["name"])
         await expect(choice).to_have_attribute("aria-pressed", "true")
         await expect(action).to_have_count(0, timeout=5000)
         self.assertEqual(await operation_geometry(), operation_box)
@@ -978,9 +993,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await route.fulfill(response=response)
 
         choices = (
-            ("program-kind:steps", {"temperature_steps": [70, 80.5, 91]}),
+            ("program-kind:steps", {"temperature_steps": [70, 81, 91]}),
             ("program-mode:constant", {"profile": "constant"}),
-            ("program-mode:program", {"profile": "genusszeit"}),
+            ("program-mode:program", {"profile": DEFAULT_PROGRAMS[0]["id"]}),
         )
         for action, program_write in choices:
             with self.subTest(action=action):
@@ -1022,15 +1037,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await self.panel.evaluate("p => p.refresh()")
                     if action == "program-kind:steps":
                         self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 91)
-                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 80.5, 91))
+                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 81, 91))
                         await expect(self.panel.locator("[data-free-step]").nth(2)).to_have_value("91")
                     elif action == "program-mode:constant":
                         self.assertEqual(self.entry.runtime_data.configuration.program_mode, "constant")
                         self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
                     else:
-                        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
-                        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], 90)
-                        await expect(self.panel.locator('[data-action="program-select:genusszeit"]')).to_have_attribute("aria-pressed", "true")
+                        self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, DEFAULT_PROGRAMS[0]["id"])
+                        self.assertEqual(self.entry.options["parameters"]["final_temperature_c"], DEFAULT_PROGRAMS[0]["end_c"])
+                        await expect(self.panel.locator(f'[data-action="program-select:{DEFAULT_PROGRAMS[0]["id"]}"]')).to_have_attribute("aria-pressed", "true")
                     await expect(self.panel.locator(f'[data-action="{action}"]')).to_have_attribute("aria-pressed", "true")
                     self.assertEqual(len(writes), 2)
                     if action == "program-kind:steps":
@@ -1053,10 +1068,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         )
                         self.assertEqual(writes, [
                             ("temperature", {"final_temperature_c": 91}),
-                            ("program", {"temperature_steps": [70, 80.5, 91]}),
-                            ("program", {"temperature_steps": [70, 80.5, 92]}),
+                            ("program", {"temperature_steps": [70, 81, 91]}),
+                            ("program", {"temperature_steps": [70, 81, 92]}),
                         ])
-                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 80.5, 92))
+                        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (70, 81, 92))
                 finally:
                     await self.page.unroute("**" + temperature_url, delay_field_save)
                     self.page.remove_listener("request", record_write)
@@ -1651,15 +1666,64 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await old_cache.dispose()
         self.assertEqual(self.errors, [])
 
+    async def test_program_editor_saves_actual_whole_degree_targets(self):
+        program_id = self.entry.options["temperature_programs"][0]["id"]
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        row = self.panel.locator(f'#program-library [data-program-id="{program_id}"]')
+        await row.locator(f'[data-action="program-edit:{program_id}"]').click()
+        await row.locator('[data-program-field="start_c"]').fill("80.5")
+        await row.locator('[data-program-field="end_c"]').fill("90.4")
+        await row.locator('[data-program-field="distribution_gangs"]').fill("4")
+        await row.locator('[data-action="program-finish"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/programs")
+                                            and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="program-save"]').click()
+        response = await result.value
+        self.assertTrue(response.ok)
+        program = next(item for item in response.request.post_data_json["programs"]
+                       if item["id"] == program_id)
+        self.assertEqual((program["start_c"], program["end_c"], program["distribution_gangs"]), (81, 90, 4))
+        await self.hass.async_block_till_done()
+        self.assertEqual(next(item for item in self.entry.options["temperature_programs"]
+                              if item["id"] == program_id), program)
+
+        await row.locator(f'[data-action="program-edit:{program_id}"]').click()
+        await row.locator(f'[data-action="catalog-kind:steps:{program_id}"]').click()
+        steps = row.locator('[data-program-step]')
+        self.assertEqual(await steps.evaluate_all("inputs => inputs.map(input => Number(input.value))"), [81, 84, 87, 90])
+        for index, value in enumerate(("80.5", "84.4", "86.5", "90.4")):
+            await steps.nth(index).fill(value)
+        await row.locator('[data-action="program-finish"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/programs")
+                                            and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="program-save"]').click()
+        response = await result.value
+        self.assertTrue(response.ok)
+        program = next(item for item in response.request.post_data_json["programs"]
+                       if item["id"] == program_id)
+        self.assertEqual(program["temperature_steps"], [81, 84, 87, 90])
+        await self.hass.async_block_till_done()
+        self.assertEqual(next(item for item in self.entry.options["temperature_programs"]
+                              if item["id"] == program_id)["temperature_steps"], [81, 84, 87, 90])
+        await self.panel.locator('.main-tabs [data-action="overview"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/program")
+                                            and response.request.method == "POST") as result:
+            await self.panel.locator('[data-action="program-mode:program"]').click()
+        self.assertTrue((await result.value).ok)
+        await expect(self.panel.locator(f'[data-action="program-select:{program_id}"]')).to_contain_text("81 → 84 → 87 → 90 °C")
+        self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (81, 84, 87, 90))
+        self.assertEqual(self.entry.runtime_data.configuration.parameters.values["target_temperature_c"], 81)
+        self.assertEqual(self.errors, [])
+
     async def test_catalog_editor_sorting_and_persisted_program_ids(self):
         await self.panel.locator('[data-action="program-mode:program"]').click()
-        await expect(self.panel.locator('[data-action="program-select:genusszeit"]')).to_have_attribute(
+        await expect(self.panel.locator(f'[data-action="program-select:{DEFAULT_PROGRAMS[0]["id"]}"]')).to_have_attribute(
             "aria-pressed", "true", timeout=15000
         )
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        await self.panel.locator('#button-program').select_option('gipfelstuermer')
+        await self.panel.locator('#button-program').select_option(DEFAULT_PROGRAMS[-2]["id"])
         await self.hass.async_block_till_done()
-        self.assertEqual(self.entry.options['button_program'], 'gipfelstuermer')
+        self.assertEqual(self.entry.options['button_program'], DEFAULT_PROGRAMS[-2]["id"])
         rows = self.panel.locator('#program-library [data-program-id]')
 
         async def order():
@@ -1698,8 +1762,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.page.reload()
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         self.assertEqual(await order(), mouse_order)
-        self.assertEqual(self.entry.options['selected_program_id'], 'genusszeit')
-        self.assertEqual(self.entry.options['button_program'], 'gipfelstuermer')
+        self.assertEqual(self.entry.options['selected_program_id'], DEFAULT_PROGRAMS[0]["id"])
+        self.assertEqual(self.entry.options['button_program'], DEFAULT_PROGRAMS[-2]["id"])
 
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
         context = await self.browser.new_context(
@@ -1740,8 +1804,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await page.reload()
             await panel.locator('.main-tabs [data-action="settings"]').click()
             self.assertEqual(await mobile_rows.evaluate_all('elements => elements.map(row => row.dataset.programId)'), touch_order)
-            self.assertEqual(self.entry.options['selected_program_id'], 'genusszeit')
-            self.assertEqual(self.entry.options['button_program'], 'gipfelstuermer')
+            self.assertEqual(self.entry.options['selected_program_id'], DEFAULT_PROGRAMS[0]["id"])
+            self.assertEqual(self.entry.options['button_program'], DEFAULT_PROGRAMS[-2]["id"])
             self.assertLessEqual(await panel.evaluate("p => p.shadowRoot.querySelector('main').scrollWidth"), 390)
             self.assertEqual(errors, [])
         finally:
@@ -2138,7 +2202,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_overview_timers_stable_controls_german_settings_and_logging(self):
         await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_have_text("Steuerung")
         operation_button = self.panel.locator('#current [data-action="operation"]')
-        await expect(operation_button).to_have_css("background-color", "rgb(168, 108, 69)")
+        await expect(operation_button).to_have_css("background-color", default_css_color("ui_command"))
         operation_box = await operation_button.bounding_box()
         await operation_button.hover()
         self.assertEqual(await operation_button.bounding_box(), operation_box)
@@ -2162,7 +2226,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate(
             "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
         )
-        self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
+        self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), DEFAULT_PARAMETERS["preset_count"])
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await expect(target_arc).to_be_visible(timeout=10000)
         await expect(target_arc).to_have_attribute("aria-label", "Solltemperatur einstellen")
@@ -2279,7 +2343,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["program_mode"], "progressive")
         await self.panel.locator('#current [data-action="program-apply"]').click()
         await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
-        self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
+        self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), DEFAULT_PARAMETERS["preset_count"])
         await expect(self.panel.locator('#current [data-action^="preset:"]').first).to_be_enabled()
         await self.panel.locator('[data-action="details"]').click()
         await expect(self.panel.locator('[data-readiness]')).to_be_visible()

@@ -7,19 +7,23 @@ from dataclasses import dataclass
 from math import isfinite
 
 from .parameters import BY_KEY
+from .temperature_target import whole_temperature
 
 MAXIMUM_TEMPERATURE_C = BY_KEY["target_temperature_c"].maximum
 
 
-def _temperature(value: object, name: str) -> float:
+def _temperature(
+    value: object, name: str, minimum_c: float = 0,
+    maximum_c: float = MAXIMUM_TEMPERATURE_C,
+) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite temperature")
     try:
         number = float(value)
     except OverflowError:
         raise ValueError(f"{name} must be a finite temperature") from None
-    if not isfinite(number) or not 0 <= number <= MAXIMUM_TEMPERATURE_C:
-        raise ValueError(f"{name} must be between 0 and {MAXIMUM_TEMPERATURE_C}")
+    if not isfinite(number) or not minimum_c <= number <= maximum_c:
+        raise ValueError(f"{name} must be between {minimum_c} and {maximum_c}")
     return number
 
 
@@ -30,28 +34,35 @@ def _count(value: object, name: str) -> int:
 
 
 def temperature_steps(
-    value: object, name: str = "temperature_steps"
+    value: object, name: str = "temperature_steps", *,
+    minimum_c: float = 0, maximum_c: float = MAXIMUM_TEMPERATURE_C,
+    rounded: bool = True,
 ) -> tuple[float, ...]:
     """Validate explicit targets shared by free and named programs."""
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         raise ValueError(f"{name} must be a non-empty sequence of temperatures")
-    steps = tuple(_temperature(step, name) for step in value)
+    steps = tuple(_temperature(step, name, minimum_c, maximum_c) for step in value)
     if not steps:
         raise ValueError(f"{name} must not be empty")
-    return steps
+    if not rounded:
+        return steps
+    targets = tuple(whole_temperature(step) for step in steps)
+    for target in targets:
+        _temperature(target, name, minimum_c, maximum_c)
+    return targets
 
 
 def evenly_distributed(
     start_c: object, end_c: object, gangs: object
 ) -> tuple[float, ...]:
     """Start und Ende liegen auf dem ersten und letzten Verteilungspunkt."""
-    start = _temperature(start_c, "start_c")
-    end = _temperature(end_c, "end_c")
+    start = whole_temperature(_temperature(start_c, "start_c"))
+    end = whole_temperature(_temperature(end_c, "end_c"))
     count = _count(gangs, "gangs")
     if count == 1:
         return (start,)
     step = (end - start) / (count - 1)
-    return tuple(start + step * index for index in range(count))
+    return tuple(whole_temperature(start + step * index) for index in range(count))
 
 
 @dataclass(frozen=True)
@@ -64,8 +75,12 @@ class TemperatureProgram:
     steps: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "start_c", _temperature(self.start_c, "start_c"))
-        object.__setattr__(self, "end_c", _temperature(self.end_c, "end_c"))
+        object.__setattr__(
+            self, "start_c", whole_temperature(_temperature(self.start_c, "start_c"))
+        )
+        object.__setattr__(
+            self, "end_c", whole_temperature(_temperature(self.end_c, "end_c"))
+        )
         object.__setattr__(self, "gangs", _count(self.gangs, "gangs"))
         if self.steps is not None:
             object.__setattr__(self, "steps", temperature_steps(self.steps))

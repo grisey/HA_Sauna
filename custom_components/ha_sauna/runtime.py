@@ -69,13 +69,13 @@ class Configuration:
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
         object.__setattr__(self, "appearance", validate_appearance(self.appearance))
+        minimum = self.parameters.minimum_for("target_temperature_c")
+        maximum = BY_KEY["target_temperature_c"].maximum
         if self.temperature_steps is not None:
-            steps = validate_temperature_steps(self.temperature_steps)
-            minimum = self.parameters.minimum_for("target_temperature_c")
-            maximum = BY_KEY["target_temperature_c"].maximum
-            if len(steps) > BY_KEY["temperature_gangs"].maximum or any(
-                step < minimum or step > maximum for step in steps
-            ):
+            steps = validate_temperature_steps(
+                self.temperature_steps, minimum_c=minimum, maximum_c=maximum,
+            )
+            if len(steps) > BY_KEY["temperature_gangs"].maximum:
                 raise ValueError("Ungültige manuelle Temperaturstufen")
             object.__setattr__(self, "temperature_steps", steps)
         if self.button_temperature_c is None:
@@ -86,11 +86,15 @@ class Configuration:
                     "button_temperature_c", parameters=self.parameters.values
                 ),
             )
-        Parameters(
+        button_parameters = Parameters(
             {
                 **self.parameters.as_dict(),
                 "target_temperature_c": self.button_temperature_c,
             }
+        )
+        object.__setattr__(
+            self, "button_temperature_c",
+            button_parameters.values["target_temperature_c"],
         )
         if self.button_program not in {"program_1", "program_2"} or any(
             program.id == self.button_program for program in self.temperature_programs
