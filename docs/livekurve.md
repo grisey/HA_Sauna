@@ -98,18 +98,17 @@ Mausrad vergrößert am Zeiger, das gewöhnliche Mausrad bewegt die Seite.
 
 [Rechtefilterung und Antwortzuordnung](speicherung.md#archivzugriff)
 
-Der Tooltip sucht mit einer binären Suche in den Originalreihen nach dem
-passenden Messpunkt. `raw_value` liefert den empfangenen Originalwert,
-einschließlich des Werts `0`. Liegt ausschließlich der numerische Messwert vor,
-kennzeichnet der Tooltip dessen Quellenqualität. Empfangszeit und vorhandener
-Gerätezeitpunkt behalten ihre Sekundenbruchteile und erscheinen mit lokaler
-Zeitzonenangabe.
+Die Wertanzeige sucht mit einer binären Suche in den Originalreihen nach dem
+passenden Messpunkt. Messwerte erscheinen mit höchstens einer Nachkommastelle
+und Dezimalkomma, die lokale Uhrzeit mit Stunden und Minuten. Der gespeicherte
+Originalwert bleibt unverändert. Beim Verlassen des Diagramms verschwinden
+Werte und Cursor; der reservierte Platz hält die Legende an ihrer Position.
 
 Der Textcache gehört zum Originalpunkt und zur tatsächlich aufgelösten
 Zeitzone. Geänderte Originalwerte oder Zeitangaben erneuern ihn. Die gemeinsame
 Zeitformatierung versorgt Achsen, Tabellen und Annotationen. Dauerhafte
-Textknoten und eine Positionierung per CSS-Transformation tragen den Tooltip;
-die Eingabeverarbeitung verwendet dabei die zuvor gelesene Geometrie.
+Textknoten tragen die Wertanzeige unter der Kurve; die Eingabeverarbeitung
+verwendet dabei die zuvor gelesene Geometrie.
 
 ## Aktualisierung und Lebensdauer
 

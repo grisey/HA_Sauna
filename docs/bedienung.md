@@ -259,8 +259,9 @@ Home-Assistant-Profil wählbar.
 
 Die Bereichsnavigation gliedert die Einstellungen in **Programme und Start**,
 **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**, **Darstellung**,
-**Daten und Wartung** sowie **Persönlich**. Mobil übernimmt ein Abschnittswähler
-die Navigation. Nicht administrative Profile sehen Programme und persönliche
+**Daten und Wartung** sowie **Persönlich**. In schmalen Ansichten ist das
+Seitenmenü einklappbar, in breiten Ansichten dauerhaft sichtbar.
+Nicht administrative Profile sehen Programme und persönliche
 Einstellungen. Sensorzuordnung und Erkennungsparameter stehen zusammen;
 Expertenparameter sind nach Signalverarbeitung, Tür, Lüften, Präsenz und Aufguss
 geordnet. Protokollierung, Archiv und das getrennte Rücksetzen der
