@@ -621,7 +621,6 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(empty).to_have_css('background-color', 'rgb(5, 5, 5)')
         await expect(empty).to_have_css('color', 'rgb(255, 255, 255)')
         await expect(self.panel.locator('#history-overview')).to_be_empty()
-        await expect(self.panel.locator('#range')).to_be_empty()
 
     async def test_instance_switch_waits_for_its_own_status_before_exposing_controls(self):
         second_heater = device_tests.TestHeater()

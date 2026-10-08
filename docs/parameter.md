@@ -314,17 +314,14 @@ sie vorübergehend nicht verfügbar sind.
 | Absolute Außenfeuchte | `absolute_humidity`, g/m³ |
 | Luftdruck | `pressure`, hPa |
 | Windgeschwindigkeit | `wind_speed`, km/h |
-| Windrichtung | `wind_direction`, °; Himmelsrichtungen werden ohne Gradzeichen angezeigt. |
+| Windrichtung | `wind_direction`, ° |
 | Niederschlagsintensität | `precipitation_intensity`, mm/h |
 | Mess- und Vorhersagezeitpunkt | Je ein `timestamp`-Sensor |
 
-Umgebungsdaten dienen ausschließlich der Anzeige. Sie fließen weder in die
-Heizregelung noch in die Gangerkennung ein. Die absolute Feuchte wird aus der
-gewählten Quelle übernommen. Fehlende Werte erscheinen als nicht verfügbar.
-Messzeit, Vorhersagezeit und HA-Aktualisierung bleiben getrennt. Bei einer
-DWD-Quelle zeigt die Oberfläche die konfigurierte Datenbasis und eine aktive
-Interpolation an. Die Quelle bleibt für beide Benutzerrollen sichtbar;
-Zuordnungen sind nur mit Administratorrechten änderbar.
+Umgebungsdaten fließen weder in die Heizregelung noch in die Gangerkennung ein.
+Die absolute Feuchte wird aus der gewählten Quelle übernommen. Messzeit,
+Vorhersagezeit und HA-Aktualisierung bleiben getrennt. Zuordnungen sind nur mit
+Administratorrechten änderbar.
 
 ## Protokollierung
 

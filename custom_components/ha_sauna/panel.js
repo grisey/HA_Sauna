@@ -32,13 +32,6 @@ const timestampFormatOptions = Object.freeze({
     timeZoneName: "shortOffset",
   }),
   clock: Object.freeze({ hour: "2-digit", minute: "2-digit" }),
-  environment: Object.freeze({
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }),
 });
 const timestampFormatters = new Map();
 // Resolve once for a tooltip/axis batch. Zone names matter: two zones with the
@@ -2987,13 +2980,6 @@ class SaunaPanel extends HTMLElement {
       .dashboard .card {
         margin-top: 0;
       }
-      .environment {
-        display: grid;
-        gap: 16px;
-      }
-      .environment .card {
-        margin: 0;
-      }
       .gauge-card h2 {
         text-align: center;
       }
@@ -3367,8 +3353,7 @@ class SaunaPanel extends HTMLElement {
         grid-column: 2;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
+        justify-content: flex-end;
         color: inherit;
         font-size: 12px;
         font-variant-numeric: tabular-nums;
@@ -3411,11 +3396,6 @@ class SaunaPanel extends HTMLElement {
       }
       .history-overview svg:active {
         cursor: grabbing;
-      }
-      #range {
-        font-size: 12px;
-        line-height: 1.2;
-        text-align: right;
       }
       .diagnostic-grid .detector-chart {
         height: auto;
@@ -3969,7 +3949,7 @@ class SaunaPanel extends HTMLElement {
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Menü öffnen" aria-expanded="false" aria-controls="main-navigation" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
-      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><span id="range"></span><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
+      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
         <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
@@ -5288,57 +5268,6 @@ class SaunaPanel extends HTMLElement {
         readout.setAttribute(name, value);
     }
   }
-  renderEnvironment() {
-    const environment = this.state?.environment;
-    if (!environment?.configured) return "";
-    const source = {
-      mixed_data: "Messwerte und Vorhersage",
-      forecast_data: "Vorhersage",
-      report_data: "Messwerte",
-    }[environment.source?.mode];
-    const basis = [source, environment.source?.interpolated ? "interpoliert" : null]
-      .filter(Boolean)
-      .join(" · ");
-    const station = environment.station?.name || environment.station?.id;
-    const conditionKey = environment.condition
-      ? `component.weather.entity_component._.state.${environment.condition}`
-      : null;
-    const localizedCondition = conditionKey
-      ? this._hass?.localize?.(conditionKey)
-      : null;
-    const condition =
-      localizedCondition && localizedCondition !== conditionKey
-        ? localizedCondition
-        : null;
-    const values = (environment.values || [])
-      .map((item) => {
-        const available = item.available && item.value != null && item.value !== "";
-        const numeric = typeof item.value === "number";
-        const valid = available && (!numeric || Number.isFinite(item.value));
-        const value = valid ? (numeric ? num(item.value, 1) : item.value) : "—";
-        const unit =
-          valid && !(item.key === "wind_direction" && !numeric) ? item.unit : "";
-        return `<dt>${esc(item.label)}</dt><dd data-environment-value="${esc(item.key)}">${esc(value)}${unit ? ` ${esc(unit)}` : ""}</dd>`;
-      })
-      .join("");
-    const times = [
-      ["Messwerte", environment.measurement_time],
-      ["Vorhersage", environment.forecast_time],
-    ]
-      .filter(([, time]) => time)
-      .map(([label, time]) => {
-        const date = new Date(time);
-        const today = new Date(this.state.now || Date.now());
-        const text =
-          date.toDateString() === today.toDateString()
-            ? clock(time)
-            : Number.isFinite(date.getTime())
-              ? timestampFormatter("environment").format(date)
-              : "—";
-        return `${esc(label)}: <time datetime="${esc(time)}" title="${esc(time)}">${esc(text)}</time>`;
-      });
-    return `<section class="card" data-environment aria-label="Umgebung"><h2>Umgebung</h2>${station ? `<p>${esc(station)}</p>` : ""}${condition ? `<p>${esc(condition)}</p>` : ""}${basis ? `<p class="muted">${esc(basis)}</p>` : ""}<dl class="compact-times">${values}</dl>${times.length ? `<p class="muted">${times.join("<br>")}</p>` : ""}${this.state.permissions?.admin ? '<a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a>' : ""}</section>`;
-  }
   renderControlView(view) {
     const {
       modeControls,
@@ -5358,7 +5287,7 @@ class SaunaPanel extends HTMLElement {
       : heaterControls
         ? `${lightControls}<details id="manual-overrides" class="manual-overrides" ${this.manualOverridesOpen ? "open" : ""}><summary>Manuelle Ofenübersteuerung</summary>${heaterControls}</details>`
         : lightControls;
-    return `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="environment"><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${temperatureGauge}</div><div><h2>Luftfeuchte</h2>${humidityGauge}</div></div></div>${this.renderEnvironment()}</div></div>`;
+    return `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges"><div><h2>Temperatur</h2>${temperatureGauge}</div><div><h2>Luftfeuchte</h2>${humidityGauge}</div></div></div></div>`;
   }
   renderDetailView(view) {
     const {
@@ -6454,7 +6383,6 @@ class SaunaPanel extends HTMLElement {
     this.historyChart?.destroy();
     this.historyChart = null;
     this.$("#history-overview").replaceChildren();
-    this.$("#range").textContent = "";
     const readout = this.$("#tooltip");
     if (readout) {
       readout.replaceChildren();
@@ -7440,9 +7368,6 @@ class SaunaPanel extends HTMLElement {
       "aria-valuenow",
       String(Math.round(((this.window[0] - start) / width) * 100)),
     );
-    const range = this.$("#range");
-    if (range)
-      range.textContent = `${clock(this.window[0])} – ${clock(this.window[1])}`;
     const reset = this.$('[data-action="reset-zoom"]');
     if (reset) reset.textContent = `${num(this.zoom, 1)}×`;
   }

@@ -184,7 +184,6 @@ test("empty history clears the retained overview and every visible sink", () => 
   panel.clearHistoryDisplay();
   assert.equal(destroyed, 1);
   assert.equal(node("#history-overview").innerHTML, "");
-  assert.equal(node("#range").textContent, "");
   assert.equal(node("#tooltip").innerHTML, "");
   assert.equal(node("#tooltip").hidden, true);
   assert.equal(node("#tooltip").attributes.get("data-phase"), "");
@@ -205,7 +204,6 @@ test("an entry change withdraws all old controls until its matching state arrive
         this.innerHTML = "";
       },
     },
-    "#range": { textContent: "old time" },
   });
   panel.shadowRoot.addEventListener = (kind, callback) => {
     listeners.set(kind, [...(listeners.get(kind) || []), callback]);
