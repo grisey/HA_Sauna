@@ -32,5 +32,5 @@ test("measurements share semantic colors and control surface uses a soft phase t
     "event_infusion",
   ].map((role) => color(role).default);
   assert.equal(new Set(distinct).size, distinct.length);
-  assert.match(source, /"upper:humidity": \{ stroke: humidity, lineDash: \[4, 4\] \}/);
+  assert.match(source, /"upper:humidity": \{ stroke: humidity, lineDash: \[\] \}/);
 });

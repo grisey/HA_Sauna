@@ -7776,7 +7776,7 @@ class SaunaPanel extends HTMLElement {
         : "";
       this.$("#configuration-lock").hidden = !state.configuration_locked;
     }
-    this.$("#program-lock").hidden = !state.configuration_locked;
+    this.$("#program-lock").hidden = admin || !state.configuration_locked;
     this.$("#program-lock").textContent =
       "Programme und Tasterwahl sind nach Ende der Sitzung wieder änderbar.";
     this.renderProgramLibrary();
