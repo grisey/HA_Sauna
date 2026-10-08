@@ -43,7 +43,7 @@ assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,\s*0\)\} %<\/small>/
 assert.doesNotMatch(source, /Normallicht/);
 assert.doesNotMatch(source, /Raumlicht/);
 assert.doesNotMatch(source, /Zwangskühlung pausiert/);
-assert.ok(source.includes("Übersteuerung: höchstens"));
+assert.ok(!source.includes("Übersteuerung: höchstens"));
 assert.doesNotMatch(source, /bis zum nächsten Phasenwechsel aktiv/);
 assert.match(source, /s\.configuration\.program_mode\s*===\s*"progressive"/);
 assert.doesNotMatch(
@@ -315,20 +315,30 @@ const renderCurrent = (
   const automatic = renderCurrent("automatic"),
     manual = renderCurrent("manual");
   assert.match(automatic, /Temperaturwahl/);
+  assert.match(automatic, /id="program-choice-body" >/);
+  assert.doesNotMatch(automatic, /program-current|data-action="program-toggle"/);
+  assert.doesNotMatch(automatic, /Vorgemerkt|program-draft-label/);
   assert.match(automatic, /data-action="program-mode:program" aria-pressed="false"/);
   assert.match(automatic, /data-action="program-mode:individual" aria-pressed="false"/);
   assert.match(automatic, /data-action="program-mode:constant" aria-pressed="true"/);
   assert.match(automatic, /temperature-presets/);
   assert.doesNotMatch(automatic, /program-named-list|program-form/);
-  assert.match(automatic, /Manuelle Übersteuerung/);
+  assert.match(automatic, /Manuelle Ofenübersteuerung/);
   assert.match(automatic, /id="manual-overrides" class="manual-overrides" >/);
-  assert.match(automatic, /Übersteuerung: höchstens 10 Minuten\./);
-  assert.equal((automatic.match(/Übersteuerung: höchstens/g) || []).length, 1);
+  assert.doesNotMatch(
+    automatic,
+    /Übersteuerung: höchstens|Keine laufende Übersteuerung/,
+  );
+  assert.equal((automatic.match(/Übersteuerung: höchstens/g) || []).length, 0);
   assert.match(automatic, /data-action="heater:auto"[^>]*disabled/);
-  assert.doesNotMatch(automatic, /EIN startet zuerst den Saunabetrieb/);
-  assert.match(automatic, /Gedimmt <small>25 %<\/small>/);
+  assert.doesNotMatch(automatic, /Ein startet zuerst den Saunabetrieb/);
+  assert.doesNotMatch(automatic, /Gedimmt/);
+  assert.match(
+    automatic,
+    /class="manual-section manual-light"[\s\S]*<details id="manual-overrides"/,
+  );
   assert.match(manual, /class="manual-controls"/);
-  assert.doesNotMatch(manual, /Manuelle Übersteuerung/);
+  assert.doesNotMatch(manual, /Manuelle Ofenübersteuerung/);
   assert.match(automatic, /data-action="light:auto"[^>]*>Automatik<\/button>/);
   assert.match(automatic, /data-action="heater:auto"/);
   assert.match(automatic, /data-action="manual-light-overview"/);
@@ -346,12 +356,12 @@ const renderCurrent = (
   assert.match(deniedOverride, /data-action="manual-light-overview"[^>]*disabled/);
   assert.match(
     automatic,
-    /class="card control-main"[\s\S]*class="oven-feedback"[\s\S]*Ofen aus/,
+    /class="card control-main"[\s\S]*class="oven-feedback"[\s\S]*Ofen · Aus/,
   );
   assert.doesNotMatch(automatic, /tatsächlicher Zustand/);
   assert.match(
     renderCurrent("automatic", {}, true),
-    /class="oven-feedback"[^>]*><strong[^>]*>Ofen an<\/strong>/,
+    /class="oven-feedback"[^>]*><strong[^>]*>Ofen · Ein<\/strong>/,
   );
   assert.match(
     renderCurrent("automatic", {}, null),
@@ -362,7 +372,7 @@ const renderCurrent = (
   assert.match(manual, /data-action="manual-light-overview"/);
   assert.match(manual, /id="manual-light-value-overview"/);
   assert.match(manual, /Gedimmt <small>25 %<\/small>/);
-  assert.match(manual, /Hell <small>50 %<\/small>/);
+  assert.match(manual, /Hell<\/button>/);
   assert.doesNotMatch(
     manual,
     /environment-status|data-door-status/,
@@ -379,7 +389,7 @@ const renderCurrent = (
     userAutomatic,
     /data-action="control-mode:manual" aria-pressed="false" >Manuell/,
   );
-  assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Übersteuerung/);
+  assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Ofenübersteuerung/);
   assert.doesNotMatch(userAutomatic, /data-action="heater:|manual-light-value/);
   for (const preset of ["auto", "false", "true"])
     assert.match(
@@ -391,8 +401,8 @@ const renderCurrent = (
     userManual,
     /data-action="control-mode:automatic" aria-pressed="false" >Automatik/,
   );
-  assert.match(userManual, /data-action="heater:true" aria-pressed="false" >EIN/);
-  assert.match(userManual, /data-action="heater:false" aria-pressed="false" >AUS/);
+  assert.match(userManual, /data-action="heater:true" aria-pressed="false" >Ein/);
+  assert.match(userManual, /data-action="heater:false" aria-pressed="false" >Aus/);
   for (const preset of ["false", "normal", "true"])
     assert.ok(userManual.includes(`data-action="light:${preset}"`));
   assert.doesNotMatch(
@@ -466,9 +476,7 @@ const renderCurrent = (
           presets.map((match) => match[1]),
           scenario.mode === "manual"
             ? ["false", "normal", "true"]
-            : admin
-              ? ["auto", "false", "normal", "true"]
-              : ["auto", "false", "true"],
+            : ["auto", "false", "true"],
           context,
         );
         for (const [tag, preset] of presets) {
@@ -564,7 +572,7 @@ const renderCurrent = (
   );
   assert.match(
     namedOverview,
-    /data-action="program-toggle"[^>]*aria-expanded="false"[^>]*><span>Programm ändern<\/span><small class="program-active-label">Aktuell: Mild<\/small>/,
+    /class="program-active-label">Mild<\/strong>[\s\S]*data-action="program-toggle"[^>]*aria-expanded="false"[^>]*>Ändern<\/button>/,
   );
   assert.match(namedOverview, /id="program-choice-body" hidden/);
   const draftedOverview = renderCurrent(
@@ -578,8 +586,11 @@ const renderCurrent = (
     [],
     { configuration: programConfig, selectionDraft: { mode: "program", id: "p2" } },
   );
-  assert.match(draftedOverview, /class="program-active-label">Aktuell: Mild<\/small>/);
+  assert.match(draftedOverview, /class="program-active-label">Mild<\/strong>/);
   assert.match(draftedOverview, /Noch nicht übernommen: Sehr langes Abendprogramm/);
+  assert.match(draftedOverview, /data-action="program-select:p2" aria-pressed="true"/);
+  assert.match(draftedOverview, /data-action="program-select:p1" aria-pressed="false"/);
+  assert.doesNotMatch(draftedOverview, /Vorgemerkt|program-draft-label/);
   const confirmedOverview = renderCurrent(
     "automatic",
     {},
@@ -593,7 +604,7 @@ const renderCurrent = (
   );
   assert.match(
     confirmedOverview,
-    /class="program-active-label">Aktuell: Sehr langes Abendprogramm mit mehreren Temperaturstufen<\/small>/,
+    /class="program-active-label">Sehr langes Abendprogramm mit mehreren Temperaturstufen<\/strong>/,
   );
   const individualOverview = renderCurrent(
     "automatic",
@@ -608,7 +619,7 @@ const renderCurrent = (
   );
   assert.match(
     individualOverview,
-    /class="program-active-label">Aktuell: Individuell<\/small>/,
+    /class="program-active-label">Individuell<\/strong>/,
   );
   const constantOverview = renderCurrent(
     "automatic",
@@ -619,10 +630,7 @@ const renderCurrent = (
     false,
     pausedSession,
   );
-  assert.match(
-    constantOverview,
-    /class="program-active-label">Aktuell: Konstant<\/small>/,
-  );
+  assert.match(constantOverview, /class="program-active-label">Konstant<\/strong>/);
   const pausedOverview = renderCurrent(
     "automatic",
     {},
@@ -746,7 +754,7 @@ const renderCurrent = (
       true,
       "#details",
     ),
-    /Ofen an/,
+    /Ofen · Ein/,
     "physical feedback remains visible in details",
   );
   assert.doesNotMatch(automaticHeater, /data-action="heater:true" class="primary"/);
@@ -888,7 +896,7 @@ const renderCurrent = (
   });
   detailPanel.drawCurrent();
   const details = detailNodes.get("#details").innerHTML;
-  assert.match(details, /Ofenkühlung pausiert[\s\S]*3:00 min/);
+  assert.match(details, /Ofenkühlung pausiert[\s\S]*3 Minuten/);
   assert.doesNotMatch(details, /Zwangskühlung/);
   assert.match(details, /data-phase-timer="heating"/);
   assert.match(details, /Lichtnachlauf/);

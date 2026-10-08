@@ -139,6 +139,6 @@ test("default preview removes saved hex overrides instead of displaying stale sa
   p.appearanceDraft = { colors: {}, scales: clone(appearance().scales) };
   const html = p.appearanceSettingsMarkup();
   const temperature = html.match(/<input id="appearance-series_temperature"[^>]*>/)[0];
-  assert.match(temperature, /value="#FF6B4A"/);
+  assert.match(temperature, /value="#CD895F"/);
   assert.doesNotMatch(temperature, /#123456/);
 });

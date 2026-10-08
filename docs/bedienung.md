@@ -6,6 +6,16 @@ kann. Ein erkannter Gang ist zunächst vorläufig; ein Aufguss bestätigt ihn.
 zeigt Messungen und Ereignisse einer Sitzung. Die technischen Zustände sind
 für Administratoren unter **Details** sichtbar.
 
+## Navigation und Vollbild
+
+Die Ansichtsauswahl bleibt innerhalb von Home Assistant unmittelbar sichtbar.
+Das Symbol **Vollbild** zeigt ausschließlich das Saunapanel im nativen
+Browser-Vollbild; die Home-Assistant-Seitenleiste liegt außerhalb dieser Ansicht.
+Nur dort öffnet das dreistrichige Menüsymbol die Ansichtsauswahl. Eine Auswahl
+schließt das Menü. **Vollbild verlassen** oder die Vollbild-Beenden-Funktion des
+Browsers stellt die eingebettete Ansicht wieder her. Bietet der Browser diese
+Vollbildfunktion nicht an, erscheint das Vollbildsymbol nicht.
+
 ## Betriebsstart und Temperaturwahl
 
 **Einschalten** auf **Steuerung** startet den Saunabetrieb. Die Anzeige nennt
@@ -14,8 +24,9 @@ die aktuelle Phase und zeigt die Messwerte. **Ofen an**, **Ofen aus** oder
 erläutert die Voraussetzungen für den Start, falls noch Angaben oder gültige
 Messwerte erforderlich sind.
 
-Eine Temperaturtaste oder die direkte Wahl am Anzeigebogen legt eine
-**konstante Solltemperatur** fest. Der Anzeigebogen unterstützt Klicks,
+Eine Temperaturtaste legt eine **konstante Solltemperatur** fest. Während einer
+Sitzung wird diese Auswahl erst mit **Programm übernehmen** wirksam. Die direkte
+Wahl am Anzeigebogen gilt sofort. Der Anzeigebogen unterstützt Klicks,
 Ziehbewegungen und Pfeiltasten in ganzen Celsiusgraden. Die gewählte Temperatur
 gilt sofort und bleibt auch nach weiteren Saunagängen erhalten.
 
@@ -26,13 +37,14 @@ Temperaturfolge zur Verfügung. Eigene Programme haben zwei Eingabeformen:
   Infosymbol bei **Verteilung** zeigt die daraus entstehenden Temperaturen.
 - **Einzelne Stufen:** Die Stufenzahl und jede Temperatur sind einzeln einstellbar.
 
-Nach jedem beendeten, durch Aufguss bestätigten Gang gilt die nächste Stufe.
+Nach jedem beendeten, bestätigten Gang gilt die nächste Stufe. Die Bestätigung
+folgt der gewählten [Präsenzquelle](gangmodell.md).
 Nach der letzten Stufe bleibt deren Temperatur für weitere Gänge erhalten.
 Die Untergrenze beträgt standardmäßig 60 °C und ist einstellbar; die
 Obergrenze beträgt 100 °C.
 
-Ohne bestehende Sitzung werden benannte, konstante und individuelle Wahlen
-direkt übernommen. Bei individuellen Programmen löst ein abgeschlossener,
+Ohne bestehende Sitzung ist die Auswahl unter **Temperaturwahl** unmittelbar
+sichtbar. Benannte, konstante und individuelle Wahlen werden direkt übernommen. Bei individuellen Programmen löst ein abgeschlossener,
 gültiger Eingabevorgang die Übernahme aus; angefangene oder ungültige Eingaben
 bleiben zur Bearbeitung stehen. Das gilt auch für den Wechsel zwischen
 **Gleichmäßig** und **Einzelne Stufen**. Während der Übertragung bleiben die
@@ -42,19 +54,29 @@ Stand folgt nach dem laufenden Speicherauftrag; eine danach angefangene Eingabe
 bleibt im Entwurf. Ein Speicherfehler erhält den Entwurf und stoppt weitere
 automatische Übernahmen. Beginnt zwischenzeitlich eine Sitzung, benötigen
 wartende Änderungen die Bestätigung.
-Während einer bestehenden Sitzung öffnet **Programm ändern** die Auswahl.
+Während einer bestehenden Sitzung zeigt **Temperaturwahl** die bestätigte
+Auswahl mit ihren Temperaturen. **Ändern** öffnet die Auswahl. Die Markierung
+der Auswahlbuttons bezeichnet dort den Entwurf; die bestätigte Einstellung
+bleibt bis zur Übernahme erhalten.
 Eine Änderung bleibt bis zur Bestätigung mit **Programm übernehmen** als
 Entwurf sichtbar. **Abbrechen** erhält die bisherige Wahl. Der Entwurf
-bleibt während der laufenden Messwertaktualisierung geöffnet.
+bleibt während der laufenden Messwertaktualisierung geöffnet. Ein beim
+Sitzungsende noch vorhandener Entwurf bleibt ausdrücklich übernehmbar oder
+abbrechbar; das Sitzungsende übernimmt ihn nicht automatisch.
 
 Während der Übertragung erscheint **Wird übernommen …**, anschließend
 für zwei Sekunden **✓ Übernommen** innerhalb der vorhandenen Bedienfläche.
 Die Rückmeldung verändert deren Größe und die Anordnung nicht.
 Die bestätigte Auswahl steht als Programmname,
-**Konstant** oder **Individuell** neben **Programm ändern**. Laufende Gänge
+**Konstant** oder **Individuell** neben **Ändern**. Laufende Gänge
 und ihre Zeiten bleiben bei einer Temperaturänderung erhalten.
 
 ## Phasen und Zeitangaben
+
+Dauern erscheinen in ganzen Minuten ohne Sekundenanteil. Verstrichene Zeit wird
+abgerundet, verbleibende Zeit aufgerundet. Unter einer Minute lautet die Angabe
+**unter 1 Minute**, bei null **0 Minuten**. Fehlende Zeitwerte erscheinen als
+**–**. Ereigniszeitstempel behalten ihre Sekundenangabe.
 
 Beim Aufheizen steht neben **Heizen** die geschätzte Zeit bis zur
 Bereitschaft. Die Schätzung nutzt einen geeigneten früheren Aufheizverlauf und
@@ -68,9 +90,10 @@ erscheint als **Saunagang** mit seiner bisherigen Dauer.
 
 Die **Ofenkühlung** fordert Ofen-AUS an. Die Zeitzeile zeigt
 die verbleibende Kühlzeit oder den Stand der Vorbereitung. Die Kühlzeit zählt
-ab der bestätigten AUS-Rückmeldung des Heizschützes. Administratoren können
-die laufende Phase auf **Steuerung** mit **Ofenkühlung jetzt beenden** vorzeitig
-abschließen. Die Grundlage für die nächste Dauerberechnung bleibt dann die
+ab der bestätigten AUS-Rückmeldung des Heizschützes. Benutzer mit Bedienrechten
+können die laufende Phase auf **Steuerung** mit **Kühlung beenden** vorzeitig
+abschließen. Während der Kühlung teilt sich diese Schaltfläche den Betriebsbutton
+mit **Ausschalten**. Die Grundlage für die nächste Dauerberechnung bleibt dann die
 letzte vollständig beendete Kühlung.
 
 [Ofenkühlung](ofenkuehlung.md)
@@ -85,6 +108,8 @@ bei eingeschaltetem Saunabetrieb und bestätigtem Schütz-EIN.
 Das Licht folgt seinem Nachlauf. Innerhalb der **Wiederaufnahmezeit** setzt
 **Fortsetzen** dieselbe Sitzung fort. Diese Frist beträgt standardmäßig
 15 Minuten und bestimmt zugleich die Dauer des Lichtnachlaufs.
+Während dieser Frist stehen **Endgültig beenden** und **Fortsetzen** als
+geteilter Schalter an der Stelle des Betriebsbuttons.
 
 **Endgültig beenden** schließt die Sitzung ab und schaltet das Licht sofort
 aus. Auch mit Ablauf der Wiederaufnahmezeit endet die Sitzung und das Licht
@@ -96,8 +121,8 @@ Im laufenden Automatikbetrieb stehen berechtigten Benutzern **Automatik**,
 **Aus** und **Hell** zur Verfügung. Ohne eingeschalteten Betrieb sind diese
 Lichttasten gesperrt. **Automatik** folgt der Temperatur und der aktuellen
 Phase. **Hell** verwendet die dafür eingestellte Helligkeit, standardmäßig
-50 %. Administratoren können zusätzlich **Gedimmt** und eine freie Helligkeit
-wählen. **Gedimmt** verwendet die zur Tageszeit passende Normalhelligkeit.
+50 %. Die Lichttasten sind auch für Administratoren unmittelbar sichtbar.
+Sie können zusätzlich eine freie Helligkeit wählen.
 
 Der Helligkeitsstatus steht bei Ofenzustand und Gangzahl. **Licht … % · gemeldet**
 bezeichnet die verfügbare Geräterückmeldung. Ohne verwertbare Rückmeldung steht
@@ -107,7 +132,7 @@ Status unbekannt. Ein gemeldetes ausgeschaltetes Licht entspricht 0 %.
 Im Automatikmodus öffnet **Freie Helligkeit einstellen** den Eingabeeditor.
 **Übernehmen** setzt die Vorgabe in ganzen Prozent. Ein Eingabeentwurf verändert
 den Status nicht. Im manuellen Betriebsmodus ist die freie Eingabe unmittelbar
-sichtbar. Die verbleibende Übersteuerungsdauer steht weiter bei den Bedienelementen.
+sichtbar. Die verbleibende Übersteuerungsdauer steht unter **Details**.
 
 Eine manuelle Lichtwahl gilt bis zum passenden Phasenwechsel, längstens für
 die eingestellte Übersteuerungsdauer. Danach folgt das Licht wieder der
@@ -151,7 +176,7 @@ Nach Ende einer Sitzung ist auf **Steuerung** die Betriebsart **Automatik**
 oder **Manuell** wählbar. Dafür genügen normale Home-Assistant-Bedienrechte.
 Die Wiederaufnahmezeit gehört zur bestehenden Sitzung.
 
-In **Manuell** schalten **EIN** und **AUS** den Ofen. Für das Licht stehen
+In **Manuell** schalten **Ein** und **Aus** den Ofen. Für das Licht stehen
 **Aus**, **Gedimmt** und **Hell** bereit. Diese Betriebsart bleibt bis
 zum nächsten Betriebsartwechsel gewählt. Ofen- und Lichtwahl haben hier keine
 Übersteuerungsfrist. Gültige Regeltemperatur und
@@ -161,7 +186,7 @@ Messung und Archivierung laufen weiter. Nach Sitzungsende steht mit
 
 Für einen zeitweiligen Eingriff während des laufenden Automatikbetriebs
 verwenden Administratoren den zunächst eingeklappten Bereich **Manuelle
-Übersteuerung** auf **Steuerung**. Sein Offen-Zustand bleibt bei
+Ofenübersteuerung** auf **Steuerung**. Sein Offen-Zustand bleibt bei
 Statusaktualisierungen erhalten. Ohne eingeschalteten Betrieb sind diese
 Bedienelemente gesperrt. **Automatik** gibt die Ofenregelung wieder frei. Ein
 passender Phasen- oder Schaltwechsel oder der

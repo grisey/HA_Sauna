@@ -241,7 +241,17 @@ def migrate_legacy_programs(
     )
 
 
-_LEGACY_PROGRAMS = (
-    ("program_1", "Bisheriges Programm 1", (80, 95, 4)),
-    ("program_2", "Bisheriges Programm 2", (70, 90, 3)),
+_LEGACY_PROGRAMS = tuple(
+    (
+        identity,
+        name,
+        tuple(
+            BY_KEY[f"{identity}_{part}"].default
+            for part in ("start_c", "end_c", "gangs")
+        ),
+    )
+    for identity, name in (
+        ("program_1", "Bisheriges Programm 1"),
+        ("program_2", "Bisheriges Programm 2"),
+    )
 )

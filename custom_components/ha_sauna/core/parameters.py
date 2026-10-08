@@ -110,6 +110,11 @@ class Parameters:
         # normal configuration write persists that effective value.
         supplied = self.values
         values = dict(supplied)
+        warning_key = "mechanical_timer_warning_minutes"
+        if warning_key in values and values[warning_key] is None:
+            # Older saved configurations used null for an explicitly disabled
+            # warning. Missing settings still take the current factory value.
+            values[warning_key] = 0
         base = values.get("after_run_minutes")
         max_key = "oven_cooling_max_minutes"
         if (

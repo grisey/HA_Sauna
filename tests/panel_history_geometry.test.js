@@ -234,25 +234,18 @@ test("hover uses the shared transform and does not read layout after root writes
   );
   assert.equal(
     environment.tooltip.children.length,
-    2,
+    4,
     "tooltip content is created at construction",
   );
   const descendants = (node) => [node, ...node.children.flatMap(descendants)];
   const writes = descendants(environment.tooltip).flatMap((node) => node.writes);
+  assert.ok(writes.some(([kind, text]) => kind === "text" && text === "0 °C"));
   assert.ok(
-    writes.some(
-      ([kind, text]) => kind === "text" && text.includes("Originalwert 0 °C"),
-    ),
-  );
-  assert.ok(
-    writes.some(
+    writes.every(
       ([kind, text]) =>
-        kind === "text" &&
-        text.includes("Empfangen") &&
-        text.includes(".987654") &&
-        text.includes("Gemessen") &&
-        text.includes(".123456"),
+        kind !== "text" || !/Empfangen|Gemessen|\.987654|\.123456/.test(text),
     ),
+    "value rows do not repeat the source timestamps",
   );
   assert.match(environment.tooltip.style.transform, /^translate3d\(/);
   assert.equal(environment.surface.reads, 1, "hover reuses the constructor read phase");
@@ -269,7 +262,7 @@ test("hover uses the shared transform and does not read layout after root writes
   );
   assert.equal(
     environment.tooltip.children.length,
-    2,
+    4,
     "second hover keeps the same tooltip nodes",
   );
   assert.equal(

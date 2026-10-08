@@ -33,8 +33,8 @@ diese Bereitschaft; nach Gang und Ofenkühlung kann sie erneut entstehen. Eine
 vorläufige Personenerkennung bewahrt die bereits erreichte Bereitschaft.
 
 Die automatische Thermostatregelung heizt bis zur Solltemperatur zuzüglich
-Temperaturreserve, standardmäßig 5 °C. Nach einer regulären Temperaturabschaltung
-gilt eine Heizpause von 5 Minuten. Nach deren Ablauf fordert der Thermostat bei
+Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 5 °C. Nach einer
+regulären Temperaturabschaltung gilt eine Heizpause von 5 Minuten. Nach deren Ablauf fordert der Thermostat bei
 Erreichen oder Unterschreiten der oberen Regeltemperatur abzüglich 3 °C
 Hysterese wieder Heizen an. Innerhalb des Hysteresebands bleibt sein bisheriger
 Zustand erhalten.
@@ -188,7 +188,11 @@ Beginn erhalten. Ausdrücklich gewähltes Ofen-AUS beendet diese Anforderung.
 [Bedienrechte und Übersteuerung](bedienung.md#betriebsart-manuell-und-übersteuerung)
 
 Die Betriebsart Manuell wird nach Sitzungsende gewählt und bleibt bis zur
-nächsten ausdrücklichen Betriebsartwahl bestehen. Ofen- und Lichtwahl sind dort
+nächsten ausdrücklichen Betriebsartwahl bestehen. Beim Wechsel zu Manuell
+beginnen Ofen und Licht mit AUS; vorherige Übersteuerungen werden nicht
+übernommen. Das gilt auch beim Neustart mit gespeicherter Betriebsart Manuell.
+Die Rückkehr zur Automatik gibt beide manuellen Wahlen frei.
+Ofen- und Lichtwahl sind dort
 direkt und unbefristet; die Übersteuerungsfrist der Automatik gilt hier nicht.
 Messung und Archivierung begleiten den Betrieb;
 technische Schutzgründe und Betrieb-AUS behalten Vorrang.

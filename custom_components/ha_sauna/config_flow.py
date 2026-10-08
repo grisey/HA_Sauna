@@ -109,9 +109,9 @@ def parameter_schema(
         fields[
             vol.Required(
                 "button_temperature_c",
-                default=instance_default("button_temperature_c")
-                if instance_default("button_temperature_c") is not None
-                else limits.values["target_temperature_c"],
+                default=instance_default(
+                    "button_temperature_c", parameters=limits.values
+                ),
             )
         ] = selector.NumberSelector(
             {
@@ -217,7 +217,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                 }:
                     raise ParameterError("button_program", "invalid_button_program")
                 button_temperature_c = values.pop(
-                    "button_temperature_c", instance_default("button_temperature_c")
+                    "button_temperature_c", None
                 )
                 parameters = Parameters(values)
                 button_temperature_c = Parameters(
@@ -225,7 +225,9 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                         **parameters.as_dict(),
                         "target_temperature_c": button_temperature_c
                         if button_temperature_c is not None
-                        else parameters.values["target_temperature_c"],
+                        else instance_default(
+                            "button_temperature_c", parameters=parameters.values
+                        ),
                     }
                 ).values["target_temperature_c"]
                 try:

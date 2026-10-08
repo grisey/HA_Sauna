@@ -97,6 +97,80 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
   }
 });
 
+test("height comparison retains its note across normal and detailed chart renders", () => {
+  const context = loadContext("UTC"),
+    session = {
+      ended_at: "2032-01-01T10:20:00Z",
+      timeline: { session_started_at: "2032-01-01T10:10:00Z" },
+    },
+    model = { start: 0, end: 1000, low: 20, high: 100, humidityHigh: 80 };
+  const panel = Object.assign(Object.create(context.PanelForTest.prototype), {
+    selected: "live",
+    historyDetail: false,
+    positions: new Set(["upper"]),
+    state: { now: session.ended_at, session, operation_enabled: true },
+    shown: { session, phase_projection: null },
+    historyModel: () => model,
+    historyAxes: () => "axes",
+    historyRecords: () => [],
+    historyAnnotations: () => "annotations",
+    syncHistoryOverview() {},
+  });
+  const markup = panel.historyMarkup(session),
+    nodes = new Map();
+  // Only elements present in the productive markup can satisfy a selector.
+  // A missing optional node must remain null, as it would in the browser.
+  for (const match of markup.matchAll(/<([a-z][\w-]*)\b([^>]*)>/g)) {
+    const attributes = new Map(
+      [...match[2].matchAll(/([\w:-]+)(?:="([^"]*)")?/g)].map((attribute) => [
+        attribute[1],
+        attribute[2] || "",
+      ]),
+    );
+    const node = {
+      textContent: markup.slice(match.index + match[0].length).split("<")[0],
+      innerHTML: "",
+      hidden: attributes.has("hidden"),
+      setAttribute: (name, value) => attributes.set(name, value),
+    };
+    const selectors = [];
+    for (const [name, value] of attributes) {
+      selectors.push(`[${name}]`, `[${name}="${value}"]`);
+      if (name === "id") selectors.push(`#${value}`);
+      if (name === "class")
+        for (const token of value.split(/\s+/))
+          selectors.push(`.${token}`, `${match[1]}.${token}`);
+    }
+    for (const selector of selectors)
+      if (!nodes.has(selector)) nodes.set(selector, node);
+  }
+  panel.$ = (selector) => nodes.get(selector) || null;
+  const note = panel.$(".plot-note");
+  assert.ok(note, "the initial normal history must own the comparison note");
+  assert.equal(note.hidden, true);
+  const chart = Object.assign(Object.create(context.HistoryChartForTest.prototype), {
+    panel,
+    surface: panel.$("svg.session-chart"),
+    interaction: {
+      readGeometry: () => ({
+        dpr: 1,
+        canvas: { cssWidth: 1200, cssHeight: 480 },
+        overviewCanvas: { cssWidth: 1200, cssHeight: 46 },
+      }),
+      invalidateGeometry() {},
+    },
+    curves: { update() {} },
+  });
+  for (const detailed of [false, true, false]) {
+    panel.historyDetail = detailed;
+    assert.doesNotThrow(() => chart.render(new Set(["status"]), session, []));
+    assert.equal(panel.$(".plot-note"), note, "toggling retains the existing node");
+    assert.equal(note.hidden, !detailed);
+    assert.equal(note.textContent, "Durchgezogen: oben · gestrichelt: unten");
+    assert.equal(panel.$("[data-history-positions]").hidden, !detailed);
+  }
+});
+
 test("tables, diagnostics, annotations and session labels use each fixed local zone", () => {
   for (const [zone, clock] of [
     ["UTC", "10:10"],

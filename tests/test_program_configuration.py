@@ -45,6 +45,32 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_saved_timer_warning_adopts_legacy_disabled_state_and_roundtrips(self):
+        key = "mechanical_timer_warning_minutes"
+        for saved_parameters, expected in (
+            ({}, 0),
+            ({key: None}, 0),
+            ({key: 0}, 0),
+            ({key: 12}, 12),
+        ):
+            with self.subTest(saved_parameters=saved_parameters):
+                saved = options(saved_parameters)
+                original_parameters = dict(saved_parameters)
+                loaded = Configuration.from_options(saved)
+                self.assertEqual(loaded.parameters.values[key], expected)
+                self.assertEqual(loaded.as_options()[CONF_PARAMETERS][key], expected)
+                self.assertEqual(Configuration.from_options(loaded.as_options()), loaded)
+                self.assertEqual(saved[CONF_PARAMETERS], original_parameters)
+
+    def test_new_configuration_stores_factory_timer_warning_explicitly(self):
+        key = "mechanical_timer_warning_minutes"
+        new = Configuration(Bindings(bindings()), Parameters({}))
+        expected = Parameters({}).values[key]
+        self.assertGreater(expected, 0)
+        self.assertEqual(new.parameters.values[key], expected)
+        self.assertEqual(new.as_options()[CONF_PARAMETERS][key], expected)
+        self.assertEqual(Configuration.from_options(new.as_options()), new)
+
     def test_saved_override_is_adopted_before_validation_and_roundtrips(self):
         initial = Configuration(
             Bindings(bindings()),
@@ -531,7 +557,7 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_reset_restores_all_software_options_but_not_hardware_inputs(self):
         configuration = Configuration(
             Bindings(bindings()),
-            Parameters({"nominal_power_kw": 7}),
+            Parameters({"nominal_power_kw": 7, "mechanical_timer_warning_minutes": 0}),
             log_level="DEBUG",
             control_input_mode="button",
             button_event_type="press",
@@ -545,6 +571,10 @@ class ProgramConfigurationTests(unittest.TestCase):
         asyncio.run(async_reset_parameters(hass, entry))
         reset = Configuration.from_options(entry.options)
         self.assertEqual(reset.parameters.values["nominal_power_kw"], 4.5)
+        self.assertEqual(
+            reset.parameters.values["mechanical_timer_warning_minutes"],
+            Parameters({}).values["mechanical_timer_warning_minutes"],
+        )
         self.assertEqual(reset.log_level, "INFO")
         self.assertEqual(reset.button_program, "constant")
         self.assertEqual(reset.selected_program_id, None)

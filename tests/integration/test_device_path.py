@@ -946,6 +946,53 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(600)
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
 
+    async def test_mode_switch_initializes_manual_outputs_off_and_keeps_session_lock(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await self.runtime.set_light_override(80)
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.light.is_on)
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        await self.hass.async_block_till_done()
+        self.assertIs(self.runtime.controller.heater_override, False)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+        self.assertIsNone(self.runtime.device.light_output.manual_ends_at)
+        self.assertFalse(self.heater.is_on)
+        self.assertFalse(self.light.is_on)
+
+        await self.runtime.set_light_override(60)
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 60)
+        await self.runtime.set_operation(True)
+        self.assertFalse(self.heater.is_on)
+        await self.runtime.set_heater_override(True, manual_only=True)
+        for mode in ("manual", "automatic"):
+            with self.assertRaisesRegex(ValueError, "laufende Session"):
+                await async_set_control_mode(self.hass, self.entry, mode)
+            self.assertIs(self.runtime.controller.heater_override, True)
+            self.assertEqual(self.runtime.device.light_output.manual_brightness, 60)
+
+        await self.runtime.set_operation(False)
+        self.assertIs(self.runtime.controller.heater_override, False)
+        token = next(d.token for d in self.runtime.session.deadlines
+                     if d.purpose == "session_gap")
+        await self.runtime.finish_session_gap(token)
+        await async_set_control_mode(self.hass, self.entry, "automatic")
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        await self.runtime.set_light_override(70)
+        self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+        self.runtime = self.entry.runtime_data
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.configuration.control_mode, "manual")
+        self.assertIs(self.runtime.controller.heater_override, False)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+        self.assertFalse(self.heater.is_on)
+        self.assertFalse(self.light.is_on)
+
     async def test_delayed_automatic_echo_does_not_replace_external_dimmer_selection(self):
         self.light.defer_state_writes = True
         await self.runtime.set_operation(True)

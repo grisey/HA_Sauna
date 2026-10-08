@@ -164,7 +164,7 @@ test("details render includes the reachable presence and rule card", () => {
   });
   value.drawCurrent();
   assert.match(nodes["#details"].innerHTML, /Präsenz und Regelursache/);
-  assert.match(nodes["#details"].innerHTML, /Externe Präsenz \(vorbereitet\)/);
+  assert.match(nodes["#details"].innerHTML, /Präsenzsensor/);
   assert.match(
     nodes["#details"].innerHTML,
     /Proxy zurückgenommen; keine beobachtete Abwesenheit/,
@@ -181,8 +181,8 @@ test("details render includes the reachable presence and rule card", () => {
     lower_humidity: { state: "current" },
   };
   value.drawCurrent();
-  assert.match(nodes["#current"].innerHTML, /67 °C/);
-  assert.match(nodes["#current"].innerHTML, /38 %/);
+  assert.match(nodes["#current"].innerHTML, /67<\/tspan><tspan[^>]*>°C/);
+  assert.match(nodes["#current"].innerHTML, /38<\/tspan><tspan[^>]*>%/);
   assert.doesNotMatch(nodes["#current"].innerHTML, /Messung unten/);
 
   state.measurement_positions = ["upper", "lower"];

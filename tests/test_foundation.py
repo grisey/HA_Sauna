@@ -58,8 +58,8 @@ class ParameterTests(unittest.TestCase):
     def test_required_values_have_defaults_and_saved_values_take_precedence(self):
         defaults = Parameters({})
         self.assertTrue(all(d.optional or d.key in defaults.values for d in DEFINITIONS))
-        self.assertEqual(defaults.values["operation_brightness_percent"], 40)
-        self.assertEqual(defaults.values["after_run_brightness_percent"], 15)
+        self.assertEqual(defaults.values["operation_brightness_percent"], 45)
+        self.assertEqual(defaults.values["after_run_brightness_percent"], 10)
         self.assertEqual(defaults.values["cooling_brightness_percent"], 5)
         self.assertEqual(defaults.values["sensor_timeout_seconds"], 180)
         self.assertEqual(Parameters({"sensor_timeout_seconds": 7}).values["sensor_timeout_seconds"], 7)

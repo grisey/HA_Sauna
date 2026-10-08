@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="de">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  /><title>Sauna · Lokale Vorschau</title
+  ><style>
+    :root {
+      color-scheme: dark;
+      --primary-background-color: #171918;
+      --card-background-color: #202321;
+      --primary-text-color: #edece7;
+      --secondary-text-color: #a7aba4;
+      --divider-color: #383d37;
+      --primary-color: #a86c45;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font: 14px/1.5 system-ui;
+    }
+    aside {
+      padding: 12px 32px;
+      background: #282d28;
+      border-bottom: 1px solid #454c43;
+    }
+    aside .row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      max-width: 1216px;
+      margin: auto;
+    }
+    aside strong {
+      font-size: 13px;
+    }
+    aside small {
+      color: #b3b9af;
+    }
+    select,
+    button,
+    input {
+      font: inherit;
+      color: inherit;
+      background: #202321;
+      border: 1px solid #50584d;
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+    button {
+      cursor: pointer;
+    }
+    details {
+      max-width: 1216px;
+      margin: 8px auto 0;
+    }
+    details .row {
+      margin-top: 12px;
+    }
+    summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #b3b9af;
+    }
+    #preview-error {
+      color: #f1aaa0;
+    }
+    input[type="number"] {
+      width: 76px;
+    }
+    ha-sauna-panel {
+      height: calc(100vh - 100px);
+    }
+    @media (max-width: 600px) {
+      aside {
+        padding: 10px 16px;
+      }
+    }
+  </style>
+  <aside>
+    <div class="row">
+      <strong>Lokale Vorschau</strong
+      ><small>Simulierte Sensoren · echter Ablaufkern</small
+      ><select id="role" aria-label="Benutzerrolle">
+        <option value="admin">Administrator</option>
+        <option value="user">Normalbenutzer</option></select
+      ><select id="scenario" aria-label="Szenario">
+        <option value="verlauf">Sitzung mit Ein- und Austritt</option>
+        <option value="bereit">Bereit</option>
+        <option value="gang">Laufender Gang</option>
+        <option value="ausfall">Sensorausfall im Gang</option>
+        <option value="aufheizen">Aufheizen</option>
+        <option value="manuell">Manueller Betrieb</option></select
+      ><button id="reset">Zurücksetzen</button><small id="sim-time"></small>
+    </div>
+    <details>
+      <summary>Sensoren und Ablauf ausprobieren</summary>
+      <div class="row">
+        <span>Tür</span><button data-sim="door_open">Öffnen</button
+        ><button data-sim="door_close">Schließen</button><span>Präsenz</span
+        ><button data-sim="on">Anwesend</button><button data-sim="off">Abwesend</button
+        ><button data-sim="unavailable">Nicht verfügbar</button
+        ><button data-sim="infusion">Aufguss</button
+        ><button data-sim="step">+ 1 Minute</button>
+      </div>
+      <div class="row">
+        <label
+          >Temperatur <input id="sim-temperature" type="number" value="80" /> °C</label
+        ><button id="temperature">Übernehmen</button><span>Ofenschalter</span
+        ><button data-feedback="true">Ein</button
+        ><button data-feedback="false">Aus</button
+        ><button data-feedback="null">Unbekannt</button>
+      </div>
+      <p id="preview-error" role="alert"></p>
+    </details>
+  </aside>
+  <script src="/panel.js"></script>
+  <script src="/preview.js"></script>
+</html>

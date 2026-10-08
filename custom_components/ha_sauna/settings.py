@@ -623,7 +623,10 @@ async def async_set_control_mode(hass, entry, mode):
             )
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
+        previous_mode = runtime.controller.control_mode
         runtime.controller.set_control_mode(mode)
+        if previous_mode != mode and runtime.device:
+            runtime.device.set_light_override(0 if mode == "manual" else None)
         configuration = replace(runtime.configuration, control_mode=mode)
         runtime.configuration = configuration
         hass.config_entries.async_update_entry(

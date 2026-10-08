@@ -1,0 +1,396 @@
+"""Lokale Vorschau des echten Panels und Ablaufkerns mit synthetischen Eingängen.
+
+Start: python3 tools/local_preview.py. Keine HA-Verbindung, keine Geräteausgabe.
+"""
+# Imports follow the script-local repository path bootstrap.
+# ruff: noqa: E402
+from __future__ import annotations
+
+import asyncio
+from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG
+from custom_components.ha_sauna.archive import plain
+from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.display import phase_timer, start_availability
+from custom_components.ha_sauna.core.parameters import (
+    EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, Parameters,
+)
+from custom_components.ha_sauna.core.phases import project_session
+from custom_components.ha_sauna.core.presence import binary_presence
+from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.presentation import (
+    decision_message, public_measurement, public_phase_projection, public_session, public_state,
+    resolve_cooling_token,
+)
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+from custom_components.ha_sauna.settings import (
+    async_set_control_mode, async_set_parameters, async_set_program,
+    async_set_temperature_steps,
+)
+
+
+class Preview:
+    def __init__(self):
+        self.admin = True
+        self.reset("verlauf")
+
+    def reset(self, scenario):
+        self.scenario = scenario
+        self.now = datetime(2026, 10, 8, 16, 0, tzinfo=UTC)
+        self.records = []
+        self.sessions = {}
+        self.decision_cursor = self.consumer_cursor = 0
+        self.light = 0 if scenario == "manuell" else 35
+        self.light_manual = 0 if scenario == "manuell" else None
+        self.humidity = 24.5
+        self.follow_feedback = True
+        self.runtime = SaunaRuntime(Configuration(
+            Bindings({"upper_temperature": "sensor.demo_temperatur",
+                      "upper_humidity": "sensor.demo_feuchte",
+                      "heater": "switch.demo_ofen", "light": "light.demo_sauna",
+                      "control_input": "event.demo_taster",
+                      "presence": "binary_sensor.demo_fp300"}),
+            Parameters({"target_temperature_c": 80}), presence_source="ha_presence",
+            control_mode="manual" if scenario == "manuell" else "automatic",
+        ), clock=lambda: self.now)
+        self.entry = SimpleNamespace(
+            runtime_data=self.runtime, options=self.runtime.configuration.as_options(),
+        )
+        self.hass = SimpleNamespace(config_entries=SimpleNamespace(
+            async_update_entry=self.save_options,
+        ))
+        self.c = self.runtime.controller
+        self.c.set_temperature(62, self.now)
+        self.c.set_operation(True, self.now, session_id="lokale-vorschau")
+        self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":"binary_sensor.demo_fp300"})
+        self.presence("off")
+        self.sample()
+        if scenario in ("bereit", "gang", "verlauf", "ausfall"):
+            self.step(600, temperature=80)
+        if scenario in ("gang", "verlauf", "ausfall"):
+            self.step(120)
+            self.door(Kind.DOOR_OPEN)
+            self.step(3)
+            self.presence("on")
+            self.step(4)
+            self.door(Kind.DOOR_CLOSE)
+            self.step(240, temperature=82)
+        if scenario == "verlauf":
+            self.door(Kind.INFUSION)
+            self.humidity = 39
+            self.step(180, temperature=83)
+            self.door(Kind.DOOR_OPEN)
+            self.step(4)
+            self.presence("off")
+            self.step(6)
+            self.door(Kind.DOOR_CLOSE)
+            self.step(160, temperature=79)
+        if scenario == "ausfall":
+            self.presence("unavailable")
+        self.sample()
+
+    @staticmethod
+    def save_options(entry, *, options):
+        changed = entry.options != options
+        entry.options = options
+        return changed
+
+    def record(self, kind, payload):
+        payload = plain(payload)
+        session_id = payload.get("session_id") or (
+            self.c.session.session_id if self.c.session else None
+        )
+        self.records.append({"id": len(self.records)+1, "kind": kind,
+                             "session_id": session_id,
+                             "received_at": self.now.isoformat(), "payload": payload})
+
+    def save_sessions(self):
+        for session in self.c.completed_sessions:
+            previous = self.sessions.get(session.session_id)
+            if previous and previous["session"].get("ended_at"):
+                continue
+            configuration = (
+                previous["session"]["configuration"] if previous
+                else self.runtime.configuration.as_options()
+            )
+            self.save_session(session, configuration)
+        if self.c.session:
+            self.save_session(self.c.session, self.runtime.configuration.as_options())
+
+    def save_session(self, session, configuration):
+        saved = plain(session)
+        saved["configuration"] = configuration
+        saved["measurement_ttl_seconds"] = configuration["parameters"]["sensor_timeout_seconds"]
+        self.sessions[session.session_id] = {
+            "session": saved,
+            "phase_projection": plain(project_session(session, self.now)),
+        }
+
+    def archive(self, session_id=None, after=0):
+        if session_id is None:
+            return [
+                {"session_id": item["session"]["timeline"]["session_id"],
+                 "started_at": item["session"]["timeline"]["session_started_at"],
+                 "ended_at": item["session"].get("ended_at")}
+                for item in reversed(self.sessions.values())
+            ]
+        stored = self.sessions.get(session_id)
+        if stored is None:
+            return None
+        session = dict(stored["session"])
+        projection = stored["phase_projection"]
+        records = [r for r in self.records
+                   if r["session_id"] == session_id and r["id"] > after]
+        if not self.admin:
+            session = public_session(session)
+            projection = public_phase_projection(projection)
+            records = [
+                {**r, "payload": public_measurement(r["payload"])}
+                for r in records if r["kind"] in ("measurement", "source_snapshot", "phase")
+            ]
+        return {"session": session, "phase_projection": projection,
+                "records": records, "next_after": None}
+
+    def sample(self):
+        if self.follow_feedback:
+            demand = bool(self.c.last_decision and self.c.last_decision.heat)
+            self.c.report_contactor(demand, self.now)
+            self.c.report_heating(demand, self.now)
+        self.runtime.persist()
+        for d in self.c.decisions[self.decision_cursor:]:
+            self.record("decision", d)
+        self.decision_cursor = len(self.c.decisions)
+        for event in self.c.consumer_events[self.consumer_cursor:]:
+            self.record("consumer_event", event)
+        self.consumer_cursor = len(self.c.consumer_events)
+        for quantity, value in (("temperature", self.c.temperature), ("humidity", self.humidity)):
+            self.record("measurement", {"position":"upper", "quantity":quantity,
+                "value":value, "raw_value":str(value), "received_at":self.now,
+                "measured_at":self.now, "available":True})
+        self.save_sessions()
+
+    def step(self, seconds, temperature=None):
+        # Refresh synthetic samples along the simulated time axis.
+        end = self.now + timedelta(seconds=seconds)
+        initial = self.c.temperature
+        origin = self.now
+        while self.now < end:
+            self.now = min(end, self.now + timedelta(seconds=10))
+            value = initial if temperature is None else initial + (temperature-initial)*(self.now-origin).total_seconds()/seconds
+            self.c.set_temperature(value, self.now)
+            self.c.advance(self.now)
+            self.sample()
+
+    def door(self, kind):
+        if self.c.session is None:
+            raise ValueError("Ohne laufende Sitzung wird kein Tür- oder Aufgussereignis zugeordnet.")
+        self.runtime._process_event(Event(f"demo:{kind}:{self.now.isoformat()}",
+            self.c.session.session_id, kind, self.now, self.now))
+        self.sample()
+
+    def presence(self, value):
+        report = binary_presence("binary_sensor.demo_fp300", value, self.now, self.now)
+        asyncio.run(self.runtime.accept_presence(report))
+        self.record("presence", report)
+        self.sample()
+
+    def state(self):
+        c, session = self.c, self.c.session
+        configuration = self.runtime.configuration
+        active = session.timeline.active if session else None
+        measurements = [{"position":"upper", "quantity":q, "value":v,
+                         "received_at":self.now, "measured_at":self.now}
+                        for q,v in (("temperature", c.temperature), ("humidity",self.humidity))]
+        result = plain({
+            "now": self.now, "phase":c.phase, "session":session,
+            "presence":self.runtime.presence_status, "rule_inputs":c.regulation_inputs,
+            "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
+            "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
+            "frontend_defaults":section("frontend"),
+            "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
+            "archive_revision":0, "preview_scenario":self.scenario,
+            "measurement_ttl_seconds":configuration.parameters.values["sensor_timeout_seconds"],
+            "parameters":[{**asdict(d), "minimum":configuration.parameters.minimum_for(d.key),
+                           "live_editable":d.key in LIVE_TEMPERATURE_KEYS} for d in EDITABLE_DEFINITIONS],
+            "configuration_locked":session is not None,
+            "operation_enabled":bool(session and session.operation_enabled),
+            "heating_feedback":c.feedback, "heating_observation":{"source":"contactor"},
+            "energy_kwh":session.energy.total_kwh if session else 0,
+            "energy_source":session.energy.source if session else "estimated",
+            "thermostat_target":c.thermostat_target, "target_temperature":c.target_temperature,
+            "mechanical_timer":c.mechanical_timer_status, "phase_timer":phase_timer(c,self.now),
+            "start_availability":start_availability(c,self.now), "light_after_run":c.light_after_run,
+            "start_errors":[], "issues":[], "decision_text":decision_message(c.last_decision),
+            "measurement_status":{f"upper_{q}":{"state":"current"} for q in ("temperature","humidity")},
+            "regulation_temperature_position":"upper", "measurement_positions":["upper"],
+            "gang_count":session.timeline.gang_count if session else 0,
+            "gang_confirmation":active.confirmation if active else None,
+            "gang_duration_seconds":active.elapsed_seconds(self.now) if active else None,
+            "decision":c.last_decision, "measurements":measurements, "faults":{}, "protection":[],
+            "inhibits":[], "detection_channels":[], "detector_trace":None,
+            "manual_controls":{"heater":{"manual":c.heater_override,
+                "override_ends_at":c.heater_override_ends_at,
+                "automatic":c.automatic_decision.heat if c.automatic_decision else None},
+                "light":{"observation":{"available":True,"brightness_percent":self.light},
+                         "manual":self.light_manual, "automatic":35, "normal":35}},
+            "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
+        })
+        result["permissions"]["admin"] = self.admin
+        result["permissions"]["heater"] = self.admin or configuration.control_mode == "manual"
+        return result if self.admin else public_state(result)
+
+    def action(self, path, body):
+        if path == "/simulate":
+            action = body["action"]
+            if action == "role":
+                self.admin = body["value"] == "admin"
+                return {}
+            if action.startswith("scenario:"):
+                self.reset(action.split(":")[1])
+                return {}
+            if action != "step":
+                self.step(1)
+            if action in ("door_open", "door_close", "infusion"):
+                self.door(Kind(action))
+            elif action in ("on", "off", "unavailable"):
+                self.presence(action)
+            elif action == "step":
+                self.step(60)
+            elif action == "temperature":
+                self.c.set_temperature(float(body["value"]), self.now)
+            elif action == "feedback":
+                self.follow_feedback = False
+                self.c.report_contactor(body["value"], self.now)
+                self.c.report_heating(body["value"], self.now)
+            else:
+                raise ValueError("Unbekannter Simulationseingang")
+        elif path.endswith("/control"):
+            asyncio.run(self.runtime.set_operation(body["enabled"]))
+        elif path.endswith("/control-mode"):
+            previous_mode = self.c.control_mode
+            asyncio.run(async_set_control_mode(self.hass, self.entry, body["mode"]))
+            if previous_mode != self.c.control_mode:
+                self.light_manual = 0 if self.c.control_mode == "manual" else None
+                self.light = 0 if self.light_manual == 0 else 35
+            self.sample()
+            return {"configuration":self.runtime.configuration.as_options()}
+        elif path.endswith("/finish_phase"):
+            if (
+                not isinstance(body, dict)
+                or set(body) != {"purpose", "token"}
+                or body["purpose"] != "after_run"
+                or not isinstance(body["token"], str)
+                or not body["token"]
+            ):
+                raise ValueError("Bitte eine laufende Ofenkühlung auswählen.")
+            self.c.finish_phase(
+                body["purpose"], resolve_cooling_token(self.c.session, body["token"]),
+                self.now,
+            )
+        elif path.endswith("/finish-session"):
+            self.c.finish_session_gap(body["token"], self.now)
+        elif path.endswith("/heater"):
+            if not self.admin and self.runtime.configuration.control_mode != "manual":
+                raise ValueError("Ofenübersteuerung benötigt Administrationsrechte")
+            self.c.set_heater_override(body["value"], self.now)
+        elif path.endswith("/light"):
+            value = body["value"]
+            if value is None:
+                brightness = None
+            elif value is True:
+                brightness = self.c.parameters.values["session_light_brightness_percent"]
+            elif value is False:
+                brightness = 0
+            elif value == "normal":
+                brightness = 35
+            elif (self.admin and isinstance(value, (int, float))
+                  and value == int(value) and 0 <= value <= 100):
+                brightness = int(value)
+            else:
+                raise ValueError("Ungültiger Lichtwert oder fehlende Administrationsrechte")
+            self.light_manual = brightness
+            self.light = 35 if brightness is None else brightness
+        elif path.endswith("/temperature"):
+            if not body or set(body) - LIVE_TEMPERATURE_KEYS:
+                raise ValueError("Ungültige Temperatureinstellung")
+            asyncio.run(async_set_parameters(self.hass, self.entry, body, partial=True))
+        elif path.endswith("/program"):
+            if set(body) == {"profile"} and isinstance(body["profile"], str):
+                asyncio.run(async_set_program(self.hass, self.entry, body["profile"]))
+            elif set(body) == {"temperature_steps"}:
+                asyncio.run(async_set_temperature_steps(self.hass, self.entry, body["temperature_steps"]))
+            elif set(body) == {"target_temperature_c", "final_temperature_c", "temperature_gangs"}:
+                asyncio.run(async_set_parameters(
+                    self.hass, self.entry, body, partial=True, explicit_target=False,
+                    program_mode="progressive", new_program=True,
+                ))
+            else:
+                raise ValueError("Ungültiges Temperaturprogramm")
+        else:
+            raise ValueError("Diese Einstellungsänderung ist in der lokalen Vorschau nicht angebunden.")
+        self.sample()
+        return {"parameters":self.c.parameters.as_dict(),
+                "program_mode":self.runtime.configuration.program_mode,
+                "selected_program_id":self.runtime.configuration.selected_program_id,
+                "temperature_steps":self.runtime.configuration.temperature_steps}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        pass
+
+    def send(self, payload, content_type="application/json"):
+        data = json.dumps(plain(payload), ensure_ascii=False).encode() if content_type=="application/json" else payload
+        self.send_response(200)
+        self.send_header("Content-Type",content_type)
+        self.send_header("Cache-Control","no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path in ("/", "/panel.js", "/preview.js"):
+            file = ROOT / ("custom_components/ha_sauna/panel.js" if path=="/panel.js" else "tools/preview/"+("index.html" if path=="/" else "preview.js"))
+            self.send(file.read_bytes(), "text/html; charset=utf-8" if path=="/" else "text/javascript; charset=utf-8")
+        elif path.endswith("/state"):
+            self.send(preview.state())
+        elif path.endswith("/archive"):
+            query = parse_qs(parsed.query)
+            result = preview.archive(query.get("session_id", [None])[0],
+                                     int(query.get("after", [0])[0]))
+            if result is None:
+                self.send_error(404)
+                return
+            self.send(result)
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length",0))))
+            self.send(preview.action(urlparse(self.path).path,body))
+        except (ValueError, KeyError, TypeError) as error:
+            self.send_response(400)
+            self.send_header("Content-Type","application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error":str(error)}).encode())
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv)>1 else 8765
+    preview = Preview()
+    print(f"Lokale Vorschau: http://127.0.0.1:{port} · synthetische Daten", flush=True)
+    HTTPServer(("127.0.0.1",port), Handler).serve_forever()

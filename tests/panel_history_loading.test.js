@@ -52,6 +52,7 @@ function panel(api) {
     "#gangs": { innerHTML: "" },
     "#event-list": { innerHTML: "" },
     "#detection-plots": { innerHTML: "" },
+    "#control-history": { innerHTML: "" },
   };
   const p = Object.assign(new Panel(), {
     entry: "e",

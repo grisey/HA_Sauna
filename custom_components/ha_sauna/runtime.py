@@ -57,13 +57,11 @@ class Configuration:
     program_mode: str = instance_default("program_mode")
     button_program: str = instance_default("button_program")
     temperature_programs: tuple[NamedTemperatureProgram, ...] = DEFAULT_PROGRAMS
-    selected_program_id: str | None = instance_default("selected_program_id")
+    selected_program_id: str | None = None
     control_mode: str = instance_default("control_mode")
     presence_source: str = instance_default("presence_source")
-    temperature_steps: tuple[float, ...] | None = field(
-        default_factory=lambda: instance_default("temperature_steps")
-    )
-    button_temperature_c: float | None = instance_default("button_temperature_c")
+    temperature_steps: tuple[float, ...] | None = None
+    button_temperature_c: float | None = None
     appearance: dict = field(default_factory=default_appearance)
 
     def __post_init__(self) -> None:
@@ -84,7 +82,9 @@ class Configuration:
             object.__setattr__(
                 self,
                 "button_temperature_c",
-                self.parameters.values["target_temperature_c"],
+                instance_default(
+                    "button_temperature_c", parameters=self.parameters.values
+                ),
             )
         Parameters(
             {
@@ -149,6 +149,10 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
+        # Older configurations omitted the optional warning when disabled.
+        # Preserve that saved choice; new configurations and resets construct
+        # Parameters directly and retain the current factory warning value.
+        values.setdefault("mechanical_timer_warning_minutes", 0)
         override_key = "manual_override_minutes"
         if override_key in values:
             # Gespeicherte Werte hatten bisher die allgemeine Obergrenze von
@@ -211,11 +215,9 @@ class Configuration:
                 maximum_gangs=maximum_gangs,
             )
         button_program = options.get("button_program", instance_default("button_program"))
-        selected_program_id = options.get(
-            "selected_program_id", instance_default("selected_program_id")
-        )
+        selected_program_id = options.get("selected_program_id")
         control_mode = options.get("control_mode", instance_default("control_mode"))
-        steps = options.get("temperature_steps", instance_default("temperature_steps"))
+        steps = options.get("temperature_steps")
         program_ids = {program.id for program in programs}
         if button_program == "current":
             button_program = (
@@ -224,7 +226,8 @@ class Configuration:
                 else "constant"
             )
         button_temperature_c = options.get(
-            "button_temperature_c", instance_default("button_temperature_c")
+            "button_temperature_c",
+            instance_default("button_temperature_c", parameters=parameters.values),
         )
         if (
             program_mode not in ("constant", "progressive")
@@ -292,6 +295,8 @@ class SaunaRuntime:
             control_mode=configuration.control_mode,
             temperature_steps=configuration.temperature_steps,
             decision_clock=lambda: self._clock(),
+            presence_source=configuration.presence_source,
+            presence_entity=configuration.bindings.values.get("presence"),
         )
         self._lock = asyncio.Lock()
         self._tick_pending = False
@@ -348,7 +353,7 @@ class SaunaRuntime:
         if session_id and self.archive:
             self.archive.append("presence_source", self._clock(), {
                 "configured_source": self.configuration.presence_source,
-                "effective_source": "proxy",
+                "effective_source": self.configuration.presence_source,
                 "entity_id": self.configuration.bindings.values.get("presence"),
                 "external_snapshot": self.presence.external,
             }, session_id)
@@ -699,7 +704,7 @@ class SaunaRuntime:
         self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
         self.archive.append("presence_source", self._clock(), {
             "configured_source": self.configuration.presence_source,
-            "effective_source": "proxy",
+            "effective_source": self.configuration.presence_source,
             "entity_id": self.configuration.bindings.values.get("presence"),
             "reason": "configuration_loaded",
         })
@@ -726,11 +731,16 @@ class SaunaRuntime:
             self.archive.append("presence", report.received_at, report, event.session_id)
 
     async def accept_presence(self, report):
-        """Observe the configured external source without any actuator evaluation."""
+        """Serialize direct occupancy through the same controller and output cycle."""
         async with self._lock:
             if self.closed:
                 return
+            if self.configuration.presence_source == "ha_presence":
+                await self._drain_device_inputs()
+                self._deliver_detection(self._clock())
             self._record_presence(report)
+            if self.controller.observe_direct_presence(report, self._clock()):
+                await self._run_cycle()
             self.notify()
 
     def _process_event(self, event, *, defer_confirmation=False, recognition_at=None):
@@ -803,9 +813,11 @@ class SaunaRuntime:
     def presence_status(self):
         return {
             "configured_source": self.configuration.presence_source,
-            "effective_source": "proxy",
-            "external_activation": "pending_rules",
-            "current": self.presence.current,
+            "effective_source": self.configuration.presence_source,
+            "external_activation": "active" if self.configuration.presence_source == "ha_presence" else "observer",
+            "current": (self.controller.direct_presence
+                        if self.configuration.presence_source == "ha_presence"
+                        else self.presence.current),
             "external": self.presence.external,
         }
 

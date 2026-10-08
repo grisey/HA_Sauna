@@ -141,7 +141,10 @@ const parameters = {
       session: { ...session, timeline: { ...session.timeline, processed: [door] } },
       records: [
         ...traces.map((payload) => ({ kind: "detector_trace", payload })),
-        { kind: "detection", payload: { event: door, trace_at: iso(30), channels: ["upper"] } },
+        {
+          kind: "detection",
+          payload: { event: door, trace_at: iso(30), channels: ["upper"] },
+        },
       ],
     },
     state: { permissions: { admin: true }, configuration: { parameters } },
@@ -274,8 +277,14 @@ const parameters = {
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
   p.drawDiagnostics();
-  assert.match(plots.innerHTML.replace(/<[^>]*>/g, ""), /Lüftungserkennung · Temperaturverlust · °C/);
-  assert.match(plots.innerHTML.replace(/<[^>]*>/g, ""), /Lüftungserkennung · Absoluter Feuchteverlust · %/);
+  assert.match(
+    plots.innerHTML.replace(/<[^>]*>/g, ""),
+    /Lüftungserkennung · Temperaturverlust · °C/,
+  );
+  assert.match(
+    plots.innerHTML.replace(/<[^>]*>/g, ""),
+    /Lüftungserkennung · Absoluter Feuchteverlust · %/,
+  );
   assert.match(
     plots.innerHTML,
     /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62 L[\d.]+,28\.78 "/,
@@ -494,6 +503,84 @@ const parameters = {
   p.state.permissions.admin = false;
   p.action("event-row:door-7");
   assert.equal(calls.length, 4);
+}
+
+// The event list is a chronological sequence with stable ties. Grouping only
+// supplies a minute heading; every source event keeps its own navigation row.
+{
+  const events = [
+    { event_id: "late", kind: "infusion", effective_at: iso(60) },
+    { event_id: "tie-a", kind: "infusion", effective_at: iso(10) },
+    { event_id: "missing", kind: "door_open", effective_at: null },
+    { kind: "door_close", effective_at: iso(5) },
+    { event_id: "tie-b", kind: "infusion", effective_at: iso(10) },
+    { event_id: "early", kind: "presence_confirmed", effective_at: iso(1) },
+    { event_id: "invalid", kind: "<custom>", effective_at: "invalid" },
+  ];
+  const original = JSON.stringify(events);
+  for (const admin of [false, true]) {
+    const records = [];
+    const nodes = new Map();
+    const node = (selector) => {
+      if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: false });
+      return nodes.get(selector);
+    };
+    const p = Object.assign(Object.create(Panel.prototype), {
+      entry: "entry",
+      state: { now: iso(90), permissions: { admin }, configuration: { parameters } },
+      shown: {
+        records,
+        session: {
+          ended_at: iso(90),
+          timeline: {
+            session_id: "events",
+            session_started_at: iso(0),
+            completed: [],
+            processed: events,
+            retracted: [],
+          },
+        },
+      },
+      historyChart: { identity: "entry:events", render() {} },
+      historyDetail: true,
+      historyTimelineRevision: 1,
+      window: [Date.parse(iso(0)), Date.parse(iso(90))],
+      isConnected: true,
+      view: "history",
+      $: node,
+      shadowRoot: { querySelectorAll: () => [] },
+      updateHistoryTimelineRevision() {},
+      diagnosticData: () => ({ traces: [] }),
+      diagnosticTraceForEvent: (_traces, event) => event.event_id === "tie-a",
+      diagnosticsRenderKey: () => "events",
+      revealEventTarget() {},
+    });
+    p.historyIndex(records);
+    p.renderHistory(new Set(["status"]));
+    const html = node("#event-list").innerHTML;
+    assert.deepEqual(
+      [...html.matchAll(/class="event-row" data-event-id="([^"]+)"/g)].map(
+        (match) => match[1],
+      ),
+      ["early", "legacy-3", "tie-a", "tie-b", "late", "missing", "invalid"],
+    );
+    assert.equal((html.match(/class="history-event-group"/g) || []).length, 3);
+    assert.equal((html.match(/<span>Aufguss<\/span>/g) || []).length, 3);
+    assert.match(html, /class="history-event-groups"/);
+    assert.match(html, /class="history-event-time">Ohne Zeit/);
+    assert.match(html, /&lt;custom&gt;/);
+    assert.equal(html.includes('data-action="event-row:tie-a"'), admin);
+    assert.equal(html.includes('data-action="event-row:tie-b"'), false);
+    assert.deepEqual(
+      p.historyEventsAt(Date.parse(iso(10)), 10000).map((event) => event.event_id),
+      ["early", undefined, "tie-a", "tie-b"],
+    );
+    assert.equal(
+      JSON.stringify(events),
+      original,
+      "sort does not mutate source events",
+    );
+  }
 }
 
 console.log("panel detection navigation regressions passed");

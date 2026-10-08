@@ -36,7 +36,7 @@ test("brightness reports distinguish feedback, a plan and unknown independently 
       observation: { available: true, brightness_percent: 47 },
     },
   };
-  assert.equal(p.lightFeedback(), "Licht 47 % · gemeldet");
+  assert.equal(p.lightFeedback(), "Licht 47 %");
   p.state.manual_controls.light.observation = {
     available: false,
     brightness_percent: null,
@@ -50,7 +50,7 @@ test("brightness reports distinguish feedback, a plan and unknown independently 
     available: true,
     brightness_percent: 0,
   };
-  assert.equal(p.lightFeedback(), "Licht 0 % · gemeldet");
+  assert.equal(p.lightFeedback(), "Licht 0 %");
 });
 
 test("all temperature interactions consume the editable frontend step metadata", () => {

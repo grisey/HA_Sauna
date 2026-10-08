@@ -15,7 +15,11 @@ from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .log import LEVELS
-from .presentation import decision_message, fault_message, issues, parameter_error
+from .presentation import (
+    decision_message, fault_message, issues, parameter_error,
+    public_measurement, public_phase_projection, public_session, public_state,
+    resolve_cooling_token,
+)
 from .settings import (
     ConfigurationLocked,
     async_reset_parameters,
@@ -58,38 +62,9 @@ def require_read(request, entry_id):
         raise web.HTTPForbidden()
 
 
-def public_configuration(options):
-    """Only the choices and bounds used by normal control remain visible."""
-    parameters = options.get("parameters", {})
-    keys = (
-        "target_temperature_c",
-        "final_temperature_c",
-        "temperature_gangs",
-        "sauna_min_temperature_c",
-        "preset_count",
-        "preset_start_c",
-        "preset_step_c",
-        "session_light_brightness_percent",
-    )
-    return {
-        key: value
-        for key, value in options.items()
-        if key in {
-            "program_mode", "temperature_programs", "selected_program_id",
-            "control_mode", "temperature_steps", "appearance",
-            "button_program", "button_temperature_c",
-        }
-    } | {"parameters": {key: parameters[key] for key in keys if key in parameters}}
-
-
 def historical_measurement_ttl(session, fallback):
     parameters = session.get("configuration", {}).get("parameters", {})
     return parameters.get("sensor_timeout_seconds", fallback)
-
-
-def public_measurement(measurement):
-    """Keep chart values and timestamps without exposing entity bindings."""
-    return {key: value for key, value in measurement.items() if key != "source"}
 
 
 async def json_body(request):
@@ -289,21 +264,7 @@ class StateView(HomeAssistantView):
                     }
                 )
             if not request["hass_user"].is_admin:
-                result["configuration"] = public_configuration(result["configuration"])
-                result["parameters"] = [
-                    item for item in result["parameters"]
-                    if item["key"] in LIVE_TEMPERATURE_KEYS
-                ]
-                result["measurements"] = [
-                    public_measurement(item) for item in result["measurements"]
-                ]
-                for key in (
-                    "rule_inputs", "heating_observation",
-                    "decision", "faults", "protection",
-                    "inhibits", "archive_error", "detection_channels",
-                    "detector_trace", "presence",
-                ):
-                    result.pop(key, None)
+                result = public_state(result)
             return self.json(result)
 
 
@@ -335,8 +296,7 @@ class FinishPhaseView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request, entry_id):
-        if not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
+        require_control(request, entry_id)
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         body = await json_body(request)
         if (
@@ -354,7 +314,9 @@ class FinishPhaseView(HomeAssistantView):
                 status_code=400,
             )
         try:
-            await runtime.finish_phase(body["purpose"], body["token"])
+            await runtime.finish_phase(
+                body["purpose"], resolve_cooling_token(runtime.session, body["token"])
+            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True})
@@ -742,7 +704,8 @@ class ArchiveView(HomeAssistantView):
                 limit=5000,
                 kinds=(
                     "measurement", "source_snapshot", "phase", "diagnostic",
-                    "detector_trace", "detection",
+                    "detector_trace", "detection", "presence", "presence_source",
+                    "decision", "command", "light_command", "consumer_event",
                 ) if request["hass_user"].is_admin else (
                     "measurement", "source_snapshot", "phase",
                 ),
@@ -763,7 +726,8 @@ class ArchiveView(HomeAssistantView):
                             for k, v in record["payload"].get("faults", {}).items()
                         ]
             else:
-                session.pop("configuration", None)
+                result["session"] = public_session(session)
+                result["phase_projection"] = public_phase_projection(result["phase_projection"])
                 result["records"] = [
                     {
                         **record,

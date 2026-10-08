@@ -325,7 +325,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         await runtime.finish_session_gap(token)
                 await self.hass.async_block_till_done()
 
-    async def test_unauthenticated_and_non_admin_writes_are_rejected(self):
+    async def test_unauthenticated_and_unpermitted_writes_are_rejected(self):
         url = self.base + "/" + self.entry.entry_id
         async with ClientSession() as client:
             async with client.get(url + "/state") as response:
@@ -423,6 +423,116 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("configuration", projected["session"])
             async with client.get(url + "/archive", params={"session_id": session_id, "projection": "invalid"}) as response:
                 self.assertEqual(response.status, 400)
+
+    async def test_direct_presence_ids_are_private_in_live_and_archived_public_responses(self):
+        import json
+        from datetime import timedelta
+
+        from custom_components.ha_sauna.core.presence import binary_presence
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        entity_id = "binary_sensor.private_presence"
+        self.hass.states.async_set(entity_id, "off", {"device_class": "occupancy"})
+        options = dict(self.entry.options)
+        options["presence_source"] = "ha_presence"
+        options["bindings"] = {**options["bindings"], "presence": entity_id}
+        for role in ("upper_temperature", "lower_temperature"):
+            sensor = options["bindings"][role]
+            self.hass.states.async_set(sensor, "80", self.hass.states.get(sensor).attributes)
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        start = runtime._clock()
+        clock = [start]
+        runtime._clock = lambda: clock[0]
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+
+        async def door(name, kind, milliseconds):
+            clock[0] = start + timedelta(milliseconds=milliseconds)
+            await runtime.receive(Event(name, session_id, kind, clock[0], clock[0]))
+
+        async def presence(state, milliseconds):
+            clock[0] = start + timedelta(milliseconds=milliseconds)
+            await runtime.accept_presence(binary_presence(
+                entity_id, state, clock[0], clock[0],
+            ))
+
+        await door("entry-open", Kind.DOOR_OPEN, 10)
+        await presence("on", 20)
+        await door("entry-close", Kind.DOOR_CLOSE, 30)
+        user = await self.hass.auth.async_create_user("Public presence", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=headers) as public, ClientSession(headers=self.headers) as admin:
+            async with public.get(url + "/state") as response:
+                self.assertEqual(response.status, 200)
+                state = await response.json()
+            self.assertNotIn(entity_id, json.dumps(state))
+            active = state["session"]["timeline"]["active"]
+            recognition = next(item for item in state["session"]["timeline"]["processed"]
+                               if item["kind"] == "presence_confirmed")
+            self.assertEqual(active["recognition_event_id"], recognition["event_id"])
+            self.assertEqual(active["session_id"], session_id)
+            async with admin.get(url + "/state") as response:
+                administrative = await response.json()
+            raw_id = runtime.session.timeline.active.gang_id
+            self.assertIn(entity_id, raw_id)
+            self.assertEqual(administrative["session"]["timeline"]["active"]["gang_id"], raw_id)
+
+            await door("exit-open", Kind.DOOR_OPEN, 40)
+            await presence("off", 50)
+            await door("exit-close", Kind.DOOR_CLOSE, 60)
+            clock[0] = start + timedelta(milliseconds=70)
+            runtime.persist()
+            await runtime.archive.flush()
+            for query in ({"session_id": session_id},
+                          {"session_id": session_id, "projection": "history"}):
+                async with public.get(url + "/archive", params=query) as response:
+                    self.assertEqual(response.status, 200)
+                    archived = await response.json()
+                self.assertNotIn(entity_id, json.dumps(archived))
+                completed = archived["session"]["timeline"]["completed"][0]
+                self.assertEqual(completed["gang_id"], active["gang_id"])
+                self.assertEqual(completed["recognition_event_id"], recognition["event_id"])
+                self.assertEqual({item["source_id"] for item in archived["phase_projection"]["intervals"]
+                                  if item["source_id"]}, {active["gang_id"]})
+            async with admin.get(url + "/archive", params={"session_id": session_id}) as response:
+                administrative = await response.json()
+            self.assertEqual(administrative["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
+            self.assertEqual(runtime.archive.read(session_id)["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
+
+            async with public.get(url + "/state") as response:
+                self.assertEqual(response.status, 200)
+                state = await response.json()
+            self.assertNotIn(entity_id, json.dumps(state))
+            raw_phase_id = runtime.session.after_run.phase_id
+            public_token = state["session"]["after_run"]["phase_id"]
+            self.assertIn(entity_id, raw_phase_id)
+            self.assertNotEqual(public_token, raw_phase_id)
+            async with public.post(url + "/finish_phase", json={
+                "purpose": "after_run", "token": "public:" + "0" * 64,
+            }) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertEqual(runtime.session.after_run.phase_id, raw_phase_id)
+            async with public.post(url + "/finish_phase", json={
+                "purpose": "after_run", "token": public_token,
+            }) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertIsNone(runtime.session.after_run)
+            self.assertEqual(runtime.session.session_id, session_id)
+            self.assertTrue(runtime.session.operation_enabled)
+            async with public.post(url + "/finish_phase", json={
+                "purpose": "after_run", "token": public_token,
+            }) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertEqual(len(runtime.session.after_run_history), 1)
+            await runtime.archive.flush()
+            archived = await asyncio.to_thread(runtime.archive.read, session_id, limit=10000)
+            manual_ends = [row for row in archived["records"] if row["kind"] == "manual_phase_end"]
+            self.assertEqual(len(manual_ends), 1)
+            self.assertEqual(manual_ends[0]["payload"]["token"], raw_phase_id)
 
     async def test_malformed_json_is_a_client_error_across_write_endpoints(self):
         url = self.base + "/" + self.entry.entry_id
@@ -738,6 +848,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url + "/archive") as response:
                 self.assertEqual(response.status, 200, await response.text())
 
+            async with client.post(url + "/finish_phase", json={"purpose": "after_run", "token": "stale"}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertEqual(runtime.session.session_id, identity)
+            self.assertFalse(runtime.session.operation_enabled)
             session = runtime.session
 
             async def forbidden(request):
@@ -748,7 +862,6 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(runtime.session.operation_enabled)
 
             await forbidden(client.post(url + "/light", json={"value": 42}))
-            await forbidden(client.post(url + "/finish_phase", json={"purpose": "after_run", "token": "valid-token"}))
             await forbidden(client.post(url + "/parameters", json=dict(self.entry.options["parameters"])))
             await forbidden(client.post(url + "/logging", json={"level": "INFO"}))
             await forbidden(client.get(url + "/export"))
@@ -765,9 +878,20 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/heater", json={"value": False}) as response:
                 self.assertEqual(response.status, 403, await response.text())
 
-    async def test_manual_phase_end_checks_payload_identity_and_uses_real_runtime(self):
+    async def test_normal_user_phase_end_checks_permission_payload_and_replay(self):
         from datetime import datetime, UTC, timedelta
         from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        user = await self.hass.auth.async_create_user(
+            "Cooling control", group_ids=[GROUP_ID_USER]
+        )
+        refresh = await self.hass.auth.async_create_refresh_token(
+            user, client_id="http://localhost/"
+        )
+        headers = {
+            "Authorization": "Bearer "
+            + self.hass.auth.async_create_access_token(refresh)
+        }
         runtime = self.entry.runtime_data
         base = now = datetime.now(UTC)
         runtime._clock = lambda: now
@@ -782,10 +906,31 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             now = base + timedelta(seconds=second)
             await runtime.receive(Event(f"api-phase:{second}",identity,kind,now,now))
         token = runtime.session.after_run.phase_id
-        url = self.base + "/" + self.entry.entry_id + "/finish_phase"
-        async with ClientSession(headers=self.headers) as client:
+        base_url = self.base + "/" + self.entry.entry_id
+        url = base_url + "/finish_phase"
+        denied = await self.hass.auth.async_create_user("No cooling control", group_ids=[])
+        refresh = await self.hass.auth.async_create_refresh_token(
+            denied, client_id="http://localhost/"
+        )
+        denied_headers = {
+            "Authorization": "Bearer "
+            + self.hass.auth.async_create_access_token(refresh)
+        }
+        async with ClientSession(headers=denied_headers) as client:
+            async with client.post(url, json={"purpose":"after_run","token":token}) as response:
+                self.assertEqual(response.status, 403, await response.text())
+        self.assertEqual(runtime.session.after_run.phase_id, token)
+        async with ClientSession(headers=headers) as client:
+            async with client.get(base_url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                state = await response.json()
+                self.assertFalse(state["permissions"]["admin"])
+                self.assertTrue(state["permissions"]["control"])
+                self.assertEqual(state["session"]["after_run"]["phase_id"], token)
             for body in ([], {}, {"purpose":[],"token":token}, {"purpose":"session_gap","token":token},
-                         {"purpose":"after_run","token":[]}, {"purpose":"after_run","token":token,"extra":1}):
+                         {"purpose":"forced_cooling","token":token}, {"purpose":"confirmation","token":token},
+                         {"purpose":"after_run","token":[]}, {"purpose":"after_run","token":""},
+                         {"purpose":"after_run","token":token,"extra":1}):
                 async with client.post(url, json=body) as response:
                     self.assertEqual(response.status,400,await response.text())
             async with client.post(url, json={"purpose":"after_run","token":"stale"}) as response:
@@ -798,8 +943,20 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(runtime.session.after_run_history[-1].ends_at,now)
             self.assertEqual(runtime.session.timeline.gang_count,1)
             self.assertEqual(runtime.session.session_id,identity)
+            self.assertTrue(runtime.session.operation_enabled)
             async with client.post(url, json={"purpose":"after_run","token":token}) as response:
                 self.assertEqual(response.status,409)
+            self.assertEqual(len(runtime.session.after_run_history), 1)
+            async with client.post(base_url + "/control", json={"enabled":False}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url, json={"purpose":"after_run","token":token}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertFalse(runtime.session.operation_enabled)
+            await runtime.archive.flush()
+            archived = await asyncio.to_thread(runtime.archive.read, identity, limit=10000)
+            manual_ends = [row for row in archived["records"] if row["kind"] == "manual_phase_end"]
+            self.assertEqual(len(manual_ends), 1)
+            self.assertEqual(manual_ends[0]["payload"]["token"], token)
 
     async def test_manual_heating_does_not_pause_cooling_before_explicit_api_end(self):
         from datetime import datetime, UTC, timedelta

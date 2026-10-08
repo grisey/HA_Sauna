@@ -9,9 +9,9 @@ class LightParameterTests(unittest.TestCase):
         values = Parameters({}).values
         self.assertEqual(values["light_reference_temperature_c"], 30)
         self.assertEqual(values["light_transition_seconds"], 30)
-        self.assertEqual(values["night_brightness_percent"], 25)
-        self.assertEqual(values["operation_brightness_percent"], 40)
-        self.assertEqual(values["after_run_brightness_percent"], 15)
+        self.assertEqual(values["night_brightness_percent"], 30)
+        self.assertEqual(values["operation_brightness_percent"], 45)
+        self.assertEqual(values["after_run_brightness_percent"], 10)
         self.assertEqual(values["cooling_brightness_percent"], 5)
         self.assertEqual(values["session_light_brightness_percent"], 50)
 
@@ -22,7 +22,7 @@ class LightParameterTests(unittest.TestCase):
         }).values
         self.assertEqual(values["operation_brightness_percent"], 35)
         self.assertEqual(values["cooling_brightness_percent"], 7)
-        self.assertEqual(values["night_brightness_percent"], 25)
+        self.assertEqual(values["night_brightness_percent"], 30)
 
     def test_temperature_targets_accept_100_but_reject_values_above_it(self):
         for key in ("target_temperature_c", "final_temperature_c"):

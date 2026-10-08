@@ -107,7 +107,7 @@ test("finite display scales bound ticks and preserve backend target limits", () 
   );
   assert.deepEqual(
     JSON.parse(JSON.stringify(panel.appearanceScale("humidity"))),
-    { minimum: 0, maximum: 60 },
+    { minimum: 0, maximum: 50 },
     "invalid humidity draft falls back to display defaults",
   );
 });
@@ -123,7 +123,8 @@ test("shared phase and measurement colors flow to host and curve styles", () => 
     scales: {},
   });
   panel.applyAppearance();
-  assert.equal(variables.get("--sauna-main-background"), "#010407");
+  assert.equal(variables.get("--sauna-surface-raised"), "#050505");
+  assert.equal(variables.get("--sauna-main-background"), "#081018");
   assert.equal(panel.historyCurveStyles()["upper:temperature"].stroke, "#ABCDEF");
   assert.equal(panel.historyCurveStyles()["lower:humidity"].stroke, "#654321");
   panel.state.configuration.control_mode = "manual";
@@ -234,7 +235,7 @@ test("popup, plot controls, selected event and empty card use their painted surf
   );
   assert.match(
     css,
-    /\.plot-panel\s*\{[^}]*--sauna-focus-current: var\(--sauna-chart-focus/,
+    /\.plot-panel\s*\{[^}]*--sauna-focus-current: var\(--sauna-card-focus/,
   );
   assert.ok(
     appearanceContrastRatio(variables.get("--sauna-chart-focus"), "#000000") >= 3,

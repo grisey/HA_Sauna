@@ -125,3 +125,16 @@ Die Wirkung an einer realen Anlage wird in einer eigenen, ausdrücklich
 beauftragten Prüfung durch den Benutzer beobachtet. Ihr Nachweis benennt die
 verwendeten Geräte und Rückmeldungen. Die Softwareprüfungen beschreiben
 ihre jeweiligen Testquellen und simulierten Außenwirkungen.
+
+## Lokale Bedienvorschau
+
+`python3 tools/local_preview.py` stellt das produktive Panel unter
+`http://127.0.0.1:8765` bereit. Die Regelentscheidungen kommen aus dem produktiven
+Controller. Sensoren, Uhr und Ofenrückmeldung sind simuliert; es gibt keinen
+HA-Zugang und keine Aktorausgabe. Szenarien sind zurücksetzbar. Türbewegung,
+Präsenz und Ofenrückmeldung können getrennt eingegeben werden.
+
+Die Vorschau unterstützt Betrieb, Temperaturprogramme, Solltemperatur und manuelle
+Ofenwahl. Beendete Sitzungen bleiben bis zum Zurücksetzen des Szenarios im Verlauf.
+Lichtwerte sind simuliert. Nicht angebundene Einstellungsaktionen zeigen eine
+Fehlermeldung. Automatisierte Prüfungen laufen weiterhin ausschließlich unter Linux.

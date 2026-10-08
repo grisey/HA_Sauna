@@ -10,10 +10,11 @@ from pathlib import Path
 
 from custom_components.ha_sauna.core.defaults import (
     load_catalog,
+    instance_default,
     section,
     validate_catalog,
 )
-from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS
+from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
 
 
 class DefaultsTests(unittest.TestCase):
@@ -53,6 +54,14 @@ class DefaultsTests(unittest.TestCase):
             "missing_parameter": lambda data: data["parameters"].pop(0),
             "missing_color_role": lambda data: data["appearance"]["colors"].pop(0),
             "unsupported_setup": lambda data: data["setup"].update(log_level="ERROR"),
+            "null_parameter_default": lambda data: next(
+                spec for spec in data["parameters"]
+                if spec["key"] == "mechanical_timer_warning_minutes"
+            ).update(default=None),
+            "null_color_default": lambda data: data["appearance"]["colors"][0].update(default=None),
+            "invalid_parameter_reference": lambda data: data["instance"].update(
+                button_temperature_c={"parameter": "final_temperature_c"}
+            ),
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "defaults.json"
@@ -110,6 +119,23 @@ class DefaultsTests(unittest.TestCase):
             BY_KEY["operation_brightness_percent"].description,
         )
 
+    def test_button_temperature_reference_uses_current_parameters(self):
+        self.assertEqual(
+            instance_default("button_temperature_c", parameters={"target_temperature_c": 87}),
+            87,
+        )
+        self.assertEqual(instance_default("button_temperature_c"), BY_KEY["target_temperature_c"].default)
+        self.assertNotIn("selected_program_id", section("instance"))
+        self.assertNotIn("temperature_steps", section("instance"))
+
+    def test_saved_disabled_timer_warning_survives_new_factory_default(self):
+        key = "mechanical_timer_warning_minutes"
+        self.assertFalse(BY_KEY[key].optional)
+        self.assertEqual(Parameters({}).values[key], BY_KEY[key].default)
+        self.assertEqual(Parameters({key: None}).values[key], 0)
+        self.assertEqual(Parameters({key: 0}).values[key], 0)
+        self.assertEqual(Parameters({key: 12}).values[key], 12)
+
     def test_changed_factory_values_preserve_saved_choices_and_legacy_modes(self):
         # A fresh interpreter models the documented reload boundary and avoids
         # mutating definitions already imported by unrelated test modules.
@@ -145,6 +171,14 @@ assert legacy.appearance["scales"]["temperature"]["minimum"] == 35
 assert loaded.appearance["scales"]["temperature"]["minimum"] == 42
 assert not any(program.id == "program_1" for program in legacy.temperature_programs)
 assert defaults.instance_default("program_mode", setup=True) == "progressive"
+derived = Configuration.from_options({"bindings": bindings, "parameters": {"target_temperature_c": 87}})
+assert derived.button_temperature_c == 87
+explicit = derived.as_options()
+explicit["button_temperature_c"] = 83
+assert Configuration.from_options(explicit).button_temperature_c == 83
+explicit["button_temperature_c"] = None
+assert Configuration.from_options(explicit).button_temperature_c == 87
+assert derived.selected_program_id is None and derived.temperature_steps is None
 print(json.dumps({"new_gap": 21, "saved_gap": 17, "legacy_mode": loaded.program_mode}))
 """
         result = subprocess.run(

@@ -116,24 +116,35 @@ function render(admin, target = "#details") {
 const admin = render(true);
 assert.match(admin, /Ofenkühlung wartet auf Schütz-Aus/);
 assert.doesNotMatch(admin, /data-action=|<button|<input/);
-assert.doesNotMatch(admin, /noch 0:00 Minuten/);
-assert.match(render(true, "#current"), /data-action="end-phase:after_run:pending-token"/);
+assert.doesNotMatch(admin, /noch 0 Minuten/);
+assert.match(
+  render(true, "#current"),
+  /data-action="end-phase:after_run:pending-token"/,
+);
 
 const readOnly = render(false);
 assert.doesNotMatch(readOnly, /data-action=|<button|<input/);
-assert.doesNotMatch(render(false, "#current"), /data-action="end-phase:/);
+assert.match(
+  render(false, "#current"),
+  /class="operation-control split"[\s\S]*Ausschalten<\/button><button[^>]*data-action="end-phase:after_run:pending-token"[^>]*>Kühlung beenden/,
+);
 
 (async () => {
   const calls = [];
   const panel = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
-    state: { permissions: { admin: true } },
+    state: { permissions: { admin: false, control: true } },
     api: async (...args) => calls.push(args),
     refresh: async () => {},
     message: () => {},
   });
+  await panel.action("end-phase:confirmation:pending-token");
+  assert.equal(calls.length, 0);
   await panel.action("end-phase:after_run:pending-token");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["/entry-1/finish_phase", "POST", { purpose: "after_run", token: "pending-token" }],
   ]);
+  panel.state.permissions.control = false;
+  await panel.action("end-phase:after_run:pending-token");
+  assert.equal(calls.length, 1);
 })();

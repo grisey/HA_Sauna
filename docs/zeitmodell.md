@@ -26,7 +26,7 @@ dieselbe einmalige Wirkung.
 
 Ofen- und Lichtwahl in der eigenständigen Betriebsart Manuell haben keine
 Übersteuerungsfrist. Die Aufgussbestätigungsfrist gehört ausschließlich zum
-Proxyverfahren; eine spätere direkte Präsenzführung benötigt sie nicht.
+Proxyverfahren; bei direkter Präsenzführung gilt sie nicht.
 
 [Betriebsarten](betrieb.md#bedienhandlungen-und-betriebsart) ·
 [Präsenzquellen](praesenz-ofen-phasen.md#präsenzquellen-im-aktuellen-programm)

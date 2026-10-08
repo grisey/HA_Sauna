@@ -5,9 +5,10 @@ AUS-Laufzeit ausgeschaltet. Der technische Zustandsname lautet `after_run`.
 
 ## Auslösung
 
-Im Automatikbetrieb löst das bestätigte Durchlüften am Ende eines bestätigten
-Gangs die Ofenkühlung aus. Die Buchung setzt einen neu abgeschlossenen Gang mit
-zugeordnetem Aufguss voraus. Betrieb-AUS führt den eigenen Ausschaltablauf aus:
+Im Automatikbetrieb löst ein abgeschlossener, bestätigter Gang die Ofenkühlung
+aus. Mit direkter Präsenz beendet ein vollständiger Türvorgang mit zugehöriger
+Abwesenheitsmeldung den Gang. Im Proxyverfahren beendet bestätigtes Durchlüften
+einen durch Aufguss bestätigten Gang. Die Regeln stehen im [Gangmodell](gangmodell.md). Betrieb-AUS führt den eigenen Ausschaltablauf aus:
 Der Gang endet, die Steuerung fordert Ofen-AUS an und das Licht folgt dem
 [Ausschaltablauf](betrieb.md#licht).
 In der Betriebsart Manuell folgt die Heizanforderung der Bedienwahl und der
@@ -25,8 +26,9 @@ unbekannter Rückmeldung hält die Uhr ihren Rest; die Kühlanforderung fordert
 weiterhin Ofen-AUS. Die Heizfreigabe bleibt für die angeforderte und laufende
 Ofenkühlung gesperrt, auch bei Tür- oder Personensignalen und manueller Ofenwahl.
 
-Administratoren können die Ofenkühlung über die dafür vorgesehene
-[Bedienhandlung](bedienung.md) ausdrücklich vorzeitig beenden.
+Benutzer mit Home-Assistant-Bedienrechten für den Saunabetrieb können die
+Ofenkühlung über die dafür vorgesehene [Bedienhandlung](bedienung.md)
+ausdrücklich vorzeitig beenden.
 Eine solche Verkürzung und Betrieb-AUS bewahren den
 bisherigen Bemessungszeitraum. Ausschließlich eine vollständig durchlaufene
 Ofenkühlung setzt dessen Beginn auf ihren Abschluss.
