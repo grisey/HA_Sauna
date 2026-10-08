@@ -4,6 +4,7 @@ const esc = (v) =>
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
+const HISTORY_PLOT = Object.freeze({ width: 1200, left: 65, right: 1135 });
 const stamp = (v) => (v ? new Date(v).getTime() : null);
 const orderedHistoryEvents = (items = []) =>
   items
@@ -450,23 +451,14 @@ const historyStyleKey = (style) =>
   );
 
 class HistoryCurves {
-  constructor(
-    canvas,
-    overviewCanvas,
-    { Path2DClass = globalThis.Path2D, styles = {} } = {},
-  ) {
+  constructor(canvas, { Path2DClass = globalThis.Path2D, styles = {} } = {}) {
     if (!Path2DClass) throw Error("HistoryCurves requires Path2D");
     this.canvas = canvas;
-    this.overviewCanvas = overviewCanvas;
     this.Path2DClass = Path2DClass;
     this.styles = styles;
     this.mainPaths = new Map();
     this.mainPaintKey = null;
-    this.overviewPath = null;
-    this.overviewPathKey = null;
-    this.overviewPaintKey = null;
     this.canvasGeometry = null;
-    this.overviewGeometry = null;
   }
 
   curveStyle(position, quantity, supplied = {}) {
@@ -487,14 +479,14 @@ class HistoryCurves {
     };
   }
 
-  resizeCanvas(canvas, geometry, kind) {
+  resizeCanvas(canvas, geometry) {
     if (!canvas || !geometry) return false;
     const width = Math.max(1, Number(geometry.width)),
       height = Math.max(1, Number(geometry.height)),
       dpr = Math.max(1, Number(geometry.dpr) || 1),
       bitmapWidth = Math.round(width * dpr),
       bitmapHeight = Math.round(height * dpr),
-      previous = kind === "main" ? this.canvasGeometry : this.overviewGeometry,
+      previous = this.canvasGeometry,
       changed =
         !previous ||
         previous.width !== width ||
@@ -512,8 +504,7 @@ class HistoryCurves {
       if (canvas.width !== bitmapWidth) canvas.width = bitmapWidth;
       if (canvas.height !== bitmapHeight) canvas.height = bitmapHeight;
       const state = { width, height, dpr };
-      if (kind === "main") this.canvasGeometry = state;
-      else this.overviewGeometry = state;
+      this.canvasGeometry = state;
     }
     return changed;
   }
@@ -633,121 +624,9 @@ class HistoryCurves {
     context.globalAlpha = 1;
   }
 
-  overviewInput(snapshot) {
-    if (snapshot.overview) return snapshot.overview;
-    const series = snapshot.series.get(
-      `${snapshot.overviewPosition || "upper"}:temperature`,
-    );
-    return (
-      series && {
-        start: snapshot.start,
-        end: snapshot.end,
-        left: 20,
-        right: 1180,
-        top: 8,
-        bottom: 36,
-        low: snapshot.low,
-        high: snapshot.high,
-        ttl: snapshot.ttl,
-        values: series.values,
-        key: series.key ?? series.revision,
-      }
-    );
-  }
-
-  updateOverview(snapshot, geometry) {
-    const overview = this.overviewInput(snapshot);
-    if (!this.overviewCanvas || !overview || !geometry) return false;
-    const resized = this.resizeCanvas(this.overviewCanvas, geometry, "overview"),
-      style = {
-        stroke: this.styles.overview?.stroke,
-        lineWidth: 1.5,
-        globalAlpha: 1,
-        lineDash:
-          (overview.position || snapshot.overviewPosition) === "lower" ? [8, 5] : [],
-      },
-      source = overview.key ?? overview.revision ?? overview.values,
-      pathKey = [
-        source,
-        overview.position,
-        overview.revision,
-        overview.start,
-        overview.end,
-        overview.low,
-        overview.high,
-        overview.ttl,
-        overview.left,
-        overview.right,
-        overview.top,
-        overview.bottom,
-        overview.width,
-        overview.height,
-        historyStyleKey(style),
-      ],
-      paintKey = [
-        this.overviewPathKey,
-        geometry.width,
-        geometry.height,
-        geometry.dpr,
-        this.styles.overview?.track,
-      ];
-    if (!this.sameKey(this.overviewPathKey, pathKey)) {
-      const left = overview.left ?? 20,
-        right = overview.right ?? 1180,
-        top = overview.top ?? 8,
-        bottom = overview.bottom ?? 36,
-        x = (time) =>
-          left +
-          ((time - overview.start) / (overview.end - overview.start)) * (right - left),
-        y = (value) =>
-          bottom -
-          ((value - overview.low) / (overview.high - overview.low || 1)) *
-            (bottom - top),
-        path = new this.Path2DClass();
-      for (const segment of historySegments(
-        overview.values,
-        overview.start,
-        overview.end,
-        overview.ttl,
-      ))
-        monotoneHistoryCommands(reduceHistorySegment(segment, x), x, y, path);
-      this.overviewPath = path;
-      this.overviewPathKey = pathKey;
-    }
-    paintKey[0] = this.overviewPathKey;
-    if (!resized && this.sameKey(this.overviewPaintKey, paintKey)) return false;
-    this.overviewPaintKey = paintKey;
-    const context = this.overviewCanvas.getContext("2d");
-    context.setTransform(
-      geometry.dpr * (geometry.width / (overview.width ?? 1200)),
-      0,
-      0,
-      geometry.dpr * (geometry.height / (overview.height ?? 46)),
-      0,
-      0,
-    );
-    context.clearRect(0, 0, overview.width ?? 1200, overview.height ?? 46);
-    // The track precedes the curve; the separate SVG handles remain above both.
-    context.fillStyle = appearanceAlpha(this.styles.overview?.track, 0.05);
-    context.strokeStyle = appearanceAlpha(this.styles.overview?.track, 0.14);
-    context.lineWidth = 1;
-    context.beginPath();
-    context.roundRect(20, 4, 1160, 36, 5);
-    context.fill();
-    context.stroke();
-    context.strokeStyle = style.stroke;
-    context.lineWidth = style.lineWidth;
-    context.globalAlpha = style.globalAlpha;
-    context.setLineDash(style.lineDash);
-    context.stroke(this.overviewPath);
-    context.setLineDash([]);
-    context.globalAlpha = 1;
-    return true;
-  }
-
   update(snapshot, geometry) {
     const mainGeometry = geometry;
-    const resized = this.resizeCanvas(this.canvas, mainGeometry, "main");
+    const resized = this.resizeCanvas(this.canvas, mainGeometry);
     const { visible, pathsChanged } = this.updateMainPaths(snapshot);
     const mainKey = [
       ...visible.map((name) => this.mainPaths.get(name).key),
@@ -761,8 +640,7 @@ class HistoryCurves {
       this.paintMain(visible, mainGeometry, snapshot);
       this.mainPaintKey = mainKey;
     }
-    const minimapDrawn = this.updateOverview(snapshot, geometry.overview);
-    return { mainDrawn, minimapDrawn };
+    return { mainDrawn };
   }
 }
 
@@ -886,14 +764,6 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         cssWidth: surfaceRect.width,
         cssHeight: surfaceRect.height,
         css: { width: surfaceRect.width, height: surfaceRect.height },
-      },
-      overviewCanvas: {
-        width: Math.max(1, Math.round(overviewRect.width * dpr)),
-        height: Math.max(1, Math.round(overviewRect.height * dpr)),
-        dpr,
-        cssWidth: overviewRect.width,
-        cssHeight: overviewRect.height,
-        css: { width: overviewRect.width, height: overviewRect.height },
       },
     };
     state.dirty = false;
@@ -1121,18 +991,14 @@ class HistoryChart {
     this.panel = panel;
     this.identity = identity;
     this.prepared = new Map();
-    this.preparedOverview = new Map();
     this.domain = panel.historyDomain();
     panel.$("#plots").innerHTML = panel.historyMarkup(panel.shown.session);
     const overview = panel.$("#history-overview");
-    overview.innerHTML =
-      '<canvas aria-hidden="true"></canvas><svg viewBox="0 0 1200 46" preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Zeitausschnitt der Saunasitzung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><rect class="overview-window" data-history-window x="20" y="5" height="34" rx="4"/><rect class="overview-handle" data-history-handle="start" x="16" y="2" width="8" height="40" rx="3"/><rect class="overview-handle" data-history-handle="end" x="1176" y="2" width="8" height="40" rx="3"/></svg>';
+    overview.innerHTML = `<svg viewBox="0 0 ${HISTORY_PLOT.width} 46" preserveAspectRatio="none" role="slider" tabindex="0" aria-label="Zeitausschnitt der Saunasitzung" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><rect class="overview-window" data-history-window x="${HISTORY_PLOT.left}" y="5" height="34" rx="4"/><rect class="overview-handle" data-history-handle="start" x="${HISTORY_PLOT.left - 4}" y="2" width="8" height="40" rx="3"/><rect class="overview-handle" data-history-handle="end" x="${HISTORY_PLOT.right - 4}" y="2" width="8" height="40" rx="3"/></svg>`;
     this.surface = panel.$("svg.session-chart");
-    this.curves = new HistoryCurves(
-      panel.$("canvas.history-curves"),
-      overview.querySelector("canvas"),
-      { styles: panel.historyCurveStyles() },
-    );
+    this.curves = new HistoryCurves(panel.$("canvas.history-curves"), {
+      styles: panel.historyCurveStyles(),
+    });
     this.interaction = new HistoryInteraction(
       panel,
       this.surface,
@@ -1191,11 +1057,6 @@ class HistoryChart {
       width: geometry.canvas.cssWidth,
       height: geometry.canvas.cssHeight,
       dpr: geometry.dpr,
-      overview: {
-        width: geometry.overviewCanvas.cssWidth,
-        height: geometry.overviewCanvas.cssHeight,
-        dpr: geometry.dpr,
-      },
     });
     panel.syncHistoryOverview();
     if (
@@ -1211,7 +1072,6 @@ class HistoryChart {
     this.interaction.dispose();
     this.curves.dispose?.();
     this.prepared.clear();
-    this.preparedOverview.clear();
   }
 }
 
@@ -1852,10 +1712,6 @@ class SaunaPanel extends HTMLElement {
       "lower:temperature": { stroke: temperature, lineDash: [] },
       "upper:humidity": { stroke: humidity, lineDash: [] },
       "lower:humidity": { stroke: humidity, lineDash: [] },
-      overview: {
-        stroke: temperature,
-        track: this.appearanceColor("chart_minimap_track"),
-      },
     };
   }
   applyAppearance() {
@@ -2100,7 +1956,7 @@ class SaunaPanel extends HTMLElement {
         return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}<input type="number" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}"></label>`).join("")}</fieldset>`;
       })
       .join("");
-    return `<div class="card appearance-settings" id="appearance-settings"><h2>Farben und Skalen</h2><p class="muted">Änderungen werden als Vorschau angezeigt und gelten nach dem Speichern für alle Benutzer.</p><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details><div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button><button type="button" data-action="appearance-default">Standarddarstellung wiederherstellen</button></div><p id="appearance-status" role="status" class="muted"></p></div>`;
+    return `<div class="card appearance-settings" id="appearance-settings"><h2>Farben und Skalen</h2><p class="muted">Vorschau bis zum Speichern; danach gilt die Darstellung für alle Benutzer.</p><h3>Messgrößen</h3><div class="appearance-colors">${rows(true)}</div><h3>Anzeigeskalen</h3><div class="appearance-scales">${scaleFields}</div><details class="settings-group appearance-advanced"><summary>Erweiterte Farben</summary>${groups.map((group) => `<details class="expert-group"><summary>${esc(group)}</summary><div class="appearance-colors">${rows(false, group)}</div></details>`).join("")}</details><div class="row"><button type="button" class="confirm" data-action="appearance-save">Darstellung speichern</button><button type="button" data-action="appearance-discard">Änderungen verwerfen</button><button type="button" data-action="appearance-default">Standarddarstellung wiederherstellen</button></div><p id="appearance-status" role="status" class="muted"></p></div>`;
   }
   updateAppearanceField(input) {
     if (!this.state?.permissions?.admin || this.appearanceRequest) return;
@@ -2909,7 +2765,6 @@ class SaunaPanel extends HTMLElement {
       .history-stack > .history-curves { position: absolute; inset: 0; pointer-events: none; }
       .history-stack > .session-chart { position: relative; display: block; }
       .history-overview { position: relative; }
-      .history-overview canvas { position: absolute; inset: 0; width: 100%; height: 32px; pointer-events: none; }
       .history-overview svg { position: relative; }
       #tooltip { box-sizing: border-box;
         display: grid;
@@ -3373,15 +3228,15 @@ class SaunaPanel extends HTMLElement {
       #history-navigation {
         --sauna-focus-current: var(--sauna-chart-focus, var(--sauna-chart-ink));
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
         gap: 2px 8px;
         align-items: center;
         margin: 0;
-        padding: 0 14px 8px;
+        padding: 0 0 8px;
         color: var(--sauna-chart-ink, var(--sauna-color-chart-text));
       }
       #history-navigation > button {
-        grid-row: 1;
+        grid-row: 2;
         min-width: 32px;
         min-height: 32px;
         padding: 4px;
@@ -3392,11 +3247,12 @@ class SaunaPanel extends HTMLElement {
         line-height: 1;
         color: inherit;
       }
-      #history-navigation [data-action="zoom-out"] { grid-column: 1; }
-      #history-navigation [data-action="zoom-in"] { grid-column: 3; }
-      #history-navigation .history-overview { grid-column: 2; grid-row: 1; }
+      #history-navigation [data-action="zoom-out"] { grid-column: 2; }
+      #history-navigation [data-action="zoom-in"] { grid-column: 4; }
+      #history-navigation .history-overview { grid-column: 1 / -1; grid-row: 1; }
       .history-window-caption {
-        grid-column: 2;
+        grid-column: 3;
+        grid-row: 2;
         display: flex;
         align-items: center;
         justify-content: flex-end;
@@ -3425,7 +3281,7 @@ class SaunaPanel extends HTMLElement {
       }
       .history-overview svg {
         width: 100%;
-        height: 32px;
+        height: 24px;
         display: block;
         touch-action: none;
         cursor: grab;
@@ -4554,7 +4410,6 @@ class SaunaPanel extends HTMLElement {
     if (this.historyChart) {
       this.historyChart.model = null;
       this.historyChart.prepared.clear();
-      this.historyChart.preparedOverview.clear();
       this.historyChart.phaseKey = null;
     }
     const focused = this.shadowRoot.activeElement;
@@ -6024,7 +5879,7 @@ class SaunaPanel extends HTMLElement {
   }
   distributionInfo(id, steps) {
     const text = steps?.length
-      ? `${steps.length} Stufen von ${num(steps[0], 1)} bis ${num(steps.at(-1), 1)} °C: ${steps.map((value) => num(value, 1)).join(" → ")} °C`
+      ? `${steps.length} Temperaturstufen: ${steps.map((value) => num(value, 1)).join(" → ")} °C`
       : "Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben";
     return this.infoButton(id, "Verteilung erklären", text);
   }
@@ -7375,7 +7230,8 @@ class SaunaPanel extends HTMLElement {
   }
   overviewFraction(svg, clientX) {
     const point = this.svgCoordinates(svg, clientX),
-      fraction = (point.x - 20) / 1160;
+      fraction =
+        (point.x - HISTORY_PLOT.left) / (HISTORY_PLOT.right - HISTORY_PLOT.left);
     return Math.max(0, Math.min(1, fraction));
   }
   beginHistoryGesture(event, svg) {
@@ -7445,8 +7301,12 @@ class SaunaPanel extends HTMLElement {
     if (!svg || !this.window) return;
     const [start, end] = this.historyChart?.domain || this.historyDomain(),
       width = end - start,
-      left = 20 + ((this.window[0] - start) / width) * 1160,
-      right = 20 + ((this.window[1] - start) / width) * 1160;
+      left =
+        HISTORY_PLOT.left +
+        ((this.window[0] - start) / width) * (HISTORY_PLOT.right - HISTORY_PLOT.left),
+      right =
+        HISTORY_PLOT.left +
+        ((this.window[1] - start) / width) * (HISTORY_PLOT.right - HISTORY_PLOT.left);
     const selected = svg.querySelector("[data-history-window]"),
       first = svg.querySelector('[data-history-handle="start"]'),
       last = svg.querySelector('[data-history-handle="end"]');
@@ -7477,7 +7337,7 @@ class SaunaPanel extends HTMLElement {
       .join("")}</div></div>`;
   }
   historyMarkup() {
-    return `<div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 1200 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="65" y="18" width="1070" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 1200 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div>`;
+    return `<div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 ${HISTORY_PLOT.width} 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="${HISTORY_PLOT.left}" y="18" width="${HISTORY_PLOT.right - HISTORY_PLOT.left}" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 ${HISTORY_PLOT.width} 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div>`;
   }
   historyLegendMarkup() {
     const presentPhases = [
@@ -7536,8 +7396,8 @@ class SaunaPanel extends HTMLElement {
   }
   historyModel(chart, session) {
     const [start, end] = this.window,
-      left = 65,
-      right = 1135,
+      left = HISTORY_PLOT.left,
+      right = HISTORY_PLOT.right,
       top = 18,
       bottom = 435,
       ttl = historyMeasurementTtlSeconds(this, session) * 1000,
@@ -7568,35 +7428,8 @@ class SaunaPanel extends HTMLElement {
       humidityHigh = Math.max(60, Math.ceil((humidity + 2) / 20) * 20),
       x = (time) => left + ((time - start) / (end - start)) * (right - left),
       yT = (value) => bottom - ((value - low) / (high - low)) * (bottom - top),
-      yH = (value) => bottom - (value / humidityHigh) * (bottom - top),
-      [domainStart, domainEnd] = chart.domain,
-      overviewPosition = this.historyPrimaryPosition(session),
-      overviewEntry = this.historyPreparedSeries(
-        overviewPosition,
-        "temperature",
-        domainStart,
-        domainEnd,
-        ttl,
-        1160,
-        chart.preparedOverview,
-      ),
-      overview = {
-        position: overviewPosition,
-        revision: overviewEntry.revision,
-        start: domainStart,
-        end: domainEnd,
-        left: 20,
-        right: 1180,
-        top: 8,
-        bottom: 36,
-        width: 1200,
-        height: 46,
-        ttl,
-        values: overviewEntry.values,
-        key: overviewEntry.key,
-        low: Number.isFinite(overviewEntry.low) ? overviewEntry.low : 0,
-        high: Number.isFinite(overviewEntry.high) ? overviewEntry.high : 1,
-      };
+      yH = (value) => bottom - (value / humidityHigh) * (bottom - top);
+
     return {
       start,
       end,
@@ -7604,19 +7437,17 @@ class SaunaPanel extends HTMLElement {
       right,
       top,
       bottom,
-      width: 1200,
+      width: HISTORY_PLOT.width,
       height: 480,
       low,
       high,
       humidityHigh,
       ttl,
       positions,
-      overviewPosition,
       series,
       x,
       yT,
       yH,
-      overview,
     };
   }
   historyPhaseAt(time) {
@@ -8177,8 +8008,8 @@ class SaunaPanel extends HTMLElement {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
         sensors: `<div class="card"><h2>Messung und Geräte</h2><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a><p><a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a></p></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv ist unabhängig von der Protokollstufe.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Gespeichert werden Sitzungen mit mindestens einem bestätigten Saunagang. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten. Darstellung und Sitzungsarchiv bleiben ebenfalls erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
-        personal: `<div class="card"><h2>Persönliche Startseite</h2><p class="muted">Gilt nur für das eigene Home-Assistant-Profil.</p><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
+        maintenance: `<div class="card"><h2>Protokollierung</h2><p class="muted">Home-Assistant-Protokoll: custom_components.ha_sauna. Die Stufe ist jederzeit änderbar; das Sitzungsarchiv bleibt unabhängig davon.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Sitzungen mit bestätigtem Saunagang bleiben gespeichert. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf Standardwerte zurück. Sensor-, Geräte- und Tasterzuordnungen, Darstellung und Sitzungsarchiv bleiben erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
+        personal: `<div class="card"><h2>Persönliche Startseite</h2><p class="muted">Nur für das aktuelle Home-Assistant-Profil.</p><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
         `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${contents[group.id] || ""}${parameterGroup(group)}</section>`).join("")}</div></div>`;
@@ -8261,7 +8092,7 @@ class SaunaPanel extends HTMLElement {
       sessions = this.archiveAdminSessions;
     this.updateMarkup(
       "#archive-management",
-      `${this.state.session ? '<p class="muted">Löschen ist nach Abschluss der laufenden Sitzung möglich.</p>' : ""}<div class="row"><button data-action="archive-list" ${this.archiveAdminBusy ? "disabled" : ""}>Sitzungen verwalten</button><button class="stop" data-action="archive-reset" ${disabled}>Datenbank zurücksetzen</button></div>${sessions ? (sessions.length ? sessions.map((session) => `<div class="row"><span>Sitzung vom ${esc(when(session.started_at))}</span><button class="stop" data-action="archive-delete:${esc(encodeURIComponent(session.session_id))}" ${locked || !session.ended_at ? "disabled" : ""}>Sitzung löschen</button></div>`).join("") : "<p>Keine gespeicherten Sitzungen.</p>") : ""}${pending ? `<div class="notice" role="alert"><p>${pending.reset ? "Alle Sitzungen und Messdaten dieser Sauna endgültig löschen? Einstellungen und Gerätezuordnungen bleiben erhalten." : `Sitzung vom ${esc(when(pending.started_at))} und alle zugehörigen Messdaten endgültig löschen?`}</p><div class="row"><button class="stop" data-action="archive-confirm" ${disabled}>Endgültig löschen</button><button data-action="archive-cancel" ${this.archiveAdminBusy ? "disabled" : ""}>Abbrechen</button></div></div>` : ""}<p role="status">${esc(this.archiveAdminMessage || "")}</p>`,
+      `${this.state.session ? '<p class="muted">Löschen erst nach Ende der laufenden Sitzung.</p>' : ""}<div class="row"><button data-action="archive-list" ${this.archiveAdminBusy ? "disabled" : ""}>Sitzungen verwalten</button><button class="stop" data-action="archive-reset" ${disabled}>Datenbank zurücksetzen</button></div>${sessions ? (sessions.length ? sessions.map((session) => `<div class="row"><span>Sitzung vom ${esc(when(session.started_at))}</span><button class="stop" data-action="archive-delete:${esc(encodeURIComponent(session.session_id))}" ${locked || !session.ended_at ? "disabled" : ""}>Sitzung löschen</button></div>`).join("") : "<p>Keine gespeicherten Sitzungen.</p>") : ""}${pending ? `<div class="notice" role="alert"><p>${pending.reset ? "Alle Sitzungen und Messdaten dieser Sauna endgültig löschen? Einstellungen und Gerätezuordnungen bleiben erhalten." : `Sitzung vom ${esc(when(pending.started_at))} und alle zugehörigen Messdaten endgültig löschen?`}</p><div class="row"><button class="stop" data-action="archive-confirm" ${disabled}>Endgültig löschen</button><button data-action="archive-cancel" ${this.archiveAdminBusy ? "disabled" : ""}>Abbrechen</button></div></div>` : ""}<p role="status">${esc(this.archiveAdminMessage || "")}</p>`,
     );
   }
   async loadArchiveManagement() {
@@ -8340,7 +8171,7 @@ class SaunaPanel extends HTMLElement {
       });
       button.textContent = "Als Startseite festgelegt";
       status.textContent =
-        "Diese Übersicht ist als deine Home-Assistant-Startseite gespeichert. Ändern kannst du die Auswahl in deinem Profil.";
+        "Als Home-Assistant-Startseite gespeichert. Im Profil änderbar.";
     } catch (error) {
       button.disabled = false;
       throw error;
@@ -8542,7 +8373,7 @@ class SaunaPanel extends HTMLElement {
         `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
     this.updateMarkup(
       "#button-settings",
-      `<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Beim Einschalten über den zugeordneten Taster oder Betriebsschalter wird diese Temperaturwahl übernommen. Der Einschaltknopf in der Steuerungsansicht verwendet deren aktuelle Temperaturwahl. Änderungen an dieser Startvorgabe werden sofort gespeichert.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
+      `<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
     );
   }
   newProgramId() {

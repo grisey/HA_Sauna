@@ -12,7 +12,6 @@ const curveStyles = {
   "lower:temperature": { stroke: color("series_temperature") },
   "upper:humidity": { stroke: color("series_humidity") },
   "lower:humidity": { stroke: color("series_humidity") },
-  overview: { stroke: color("series_overview"), track: color("chart_minimap_track") },
 };
 const vm = require("node:vm");
 
@@ -104,7 +103,6 @@ const geometry = {
   width: 1200,
   height: 480,
   dpr: 1,
-  overview: { width: 1200, height: 46, dpr: 1 },
 };
 
 // A coarse level preserves both extrema while returning near-pixel work.
@@ -152,10 +150,9 @@ const geometry = {
   const p = panel(30, records);
   const chart = {
     prepared: new Map(),
-    preparedOverview: new Map(),
     domain: [base, base + 30_000],
   };
-  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+  const curves = new HistoryCurves(new FakeCanvas(), {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
@@ -235,10 +232,9 @@ const geometry = {
   p.historyIndex([]);
   const chart = {
     prepared: new Map(),
-    preparedOverview: new Map(),
     domain: [base, base + 20_000],
   };
-  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+  const curves = new HistoryCurves(new FakeCanvas(), {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
@@ -279,10 +275,9 @@ const geometry = {
   const p = panel(15_000, records);
   const chart = {
     prepared: new Map(),
-    preparedOverview: new Map(),
     domain: [base, base + 15_000_000],
   };
-  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+  const curves = new HistoryCurves(new FakeCanvas(), {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });

@@ -81,7 +81,6 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
         readGeometry: () => ({
           dpr: 1,
           canvas: { cssWidth: 1200, cssHeight: 480 },
-          overviewCanvas: { cssWidth: 1200, cssHeight: 46 },
         }),
         invalidateGeometry() {},
       },
@@ -97,7 +96,6 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     chart.interaction.readGeometry = () => ({
       dpr: 1,
       canvas: { cssWidth: 642, cssHeight: 420 },
-      overviewCanvas: { cssWidth: 642, cssHeight: 46 },
     });
     chart.render(new Set(["size"]), session, []);
     assert.equal(axes, 2, "viewport resize redraws labels at their CSS pixel size");
@@ -162,7 +160,6 @@ test("normal history never exposes height comparison controls or its note", () =
       readGeometry: () => ({
         dpr: 1,
         canvas: { cssWidth: 1200, cssHeight: 480 },
-        overviewCanvas: { cssWidth: 1200, cssHeight: 46 },
       }),
       invalidateGeometry() {},
     },

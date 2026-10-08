@@ -155,10 +155,10 @@ Linien und Konturen sind im normalen Verlauf durchgezogen.
 Die Phasenflächen übernehmen die vom Ablaufkern gelieferten Zeitabschnitte.
 Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technischen Details.
 
-Die Übersichtskurve zeigt die Temperatur der führenden Messposition in derselben
-Messfarbe; ihre Auswahlmarkierung ordnet den sichtbaren Ausschnitt in die
-gesamte Sitzung ein. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne.
-Die Ausschnittbedienung schließt direkt an die Zeitachse an. Die Wertanzeige
+Die Zeitfenstersteuerung ordnet den sichtbaren Ausschnitt in die gesamte Sitzung
+ein. Ihre Griffe verändern die Grenzen des Ausschnitts; Steuerung und
+Verlaufsdiagramm verwenden dieselbe Zeitdomäne. Die Zeitfenstersteuerung schließt
+direkt an die Zeitachse an. Die Wertanzeige
 steht in einem eigenen Bereich darunter.
 Sie greift auf den empfangenen Originalpunkt zurück; ihr Hintergrund verwendet
 die gespeicherte Farbe der Phase am ausgewählten Zeitpunkt. Die Sitzungsauswahl
@@ -177,7 +177,7 @@ Bestätigungswerte geben den jeweiligen Nachweis wieder.
 
 Die Navigation kennzeichnet die aktuelle Seite mit `aria-current`. Der
 Temperaturschieber und die Ausschnittgriffe erhalten numerische Werte und
-Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Übersicht. Fokus und
+Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Zeitfenstersteuerung. Fokus und
 Auswahl bleiben visuell unterscheidbar. Ereignissprünge führen zum zugehörigen
 Marker bzw. Listeneintrag.
 

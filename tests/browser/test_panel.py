@@ -2135,6 +2135,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         frame = self.panel.locator(".history-plot-frame")
         await expect(frame.locator("#plots")).to_have_count(1)
         await expect(frame.locator("#history-navigation")).to_have_count(1)
+        await expect(frame.locator("#history-overview canvas")).to_have_count(0)
+        alignment = await self.panel.evaluate("""p => {
+          const chart = p.historyChart, plot = chart.surface.getBoundingClientRect();
+          const selection = p.$('#history-overview [data-history-window]').getBoundingClientRect();
+          const [start, end] = chart.domain, model = chart.model;
+          const screenX = time => plot.left + (model.left + (time - start) / (end - start)
+            * (model.right - model.left)) / model.width * plot.width;
+          return {left: selection.left, right: selection.right,
+            expectedLeft: screenX(p.window[0]), expectedRight: screenX(p.window[1])};
+        }""")
+        self.assertAlmostEqual(alignment["left"], alignment["expectedLeft"], delta=1)
+        self.assertAlmostEqual(alignment["right"], alignment["expectedRight"], delta=1)
         await expect(frame.locator("#history-inspection")).to_have_count(0)
         navigation_box = await frame.locator("#history-navigation").bounding_box()
         inspection_box = await self.panel.locator("#history-inspection").bounding_box()

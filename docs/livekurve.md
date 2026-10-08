@@ -70,10 +70,9 @@ neue Zeicheninstanz.
 | Ebene | Technische Aufgabe |
 |---|---|
 | Canvas der Hauptansicht | Messkurven als numerisch aufgebaute `Path2D`-Objekte |
-| Canvas der Übersicht | Übersichtskurve über die gesamte Sitzungsdomäne |
 | SVG-Hintergrund | Phasen, Ereignisflächen und Raster unter den Kurven |
 | SVG-Vordergrund | Achsen, Zeiger und Interaktionsfläche |
-| DOM | Tooltiptexte, Tabellen, Beschriftungen und Ausschnittgriffe |
+| DOM | Tooltiptexte, Tabellen, Beschriftungen und Zeitfenstersteuerung mit Ausschnittgriffen |
 
 Die Phasenprojektion liefert die zeitlichen Abschnitte einschließlich
 nachträglicher Zuordnungskorrekturen. Darstellung und Archivansicht übernehmen
@@ -91,7 +90,8 @@ Resolution-Abfrage erkennt Änderungen der Pixeldichte.
 ## Ausschnitt, Zoom und Tooltip
 
 Das sichtbare Zeitfenster liegt innerhalb der gesamten Sitzungsdomäne. Die
-Übersicht ordnet es darin ein; ihre Griffe verändern die Fenstergrenzen.
+Zeitfenstersteuerung an der Zeitachse ordnet es darin ein; ihre Griffe verändern
+die Fenstergrenzen. Sie verwendet dieselbe Zeitdomäne wie das Verlaufsdiagramm.
 Maus, Berührung und Tastatur verwenden denselben begrenzten Fensterzustand.
 Zoomtasten und Vergrößerungsgesten ändern die Zeitabbildung. Strg/Cmd mit dem
 Mausrad vergrößert am Zeiger, das gewöhnliche Mausrad bewegt die Seite.
