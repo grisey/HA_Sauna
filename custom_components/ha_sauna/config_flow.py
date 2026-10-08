@@ -7,15 +7,15 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .bindings import ROLES, BindingError, Bindings, validate_metadata
+from .bindings import ROLES, BindingError, Bindings, metadata_error, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
 from .core.defaults import instance_default
 from .core.parameters import (
     BY_KEY,
     EDITABLE_DEFINITIONS,
-    LIVE_TEMPERATURE_KEYS,
     ParameterError,
     Parameters,
 )
@@ -24,8 +24,21 @@ from .log import LEVELS
 from .settings import ConfigurationLocked, async_set_parameters, parameter_change
 
 
-def binding_schema(*, include_name: bool = False) -> vol.Schema:
+def internal_control_source(hass: HomeAssistant, key: str, entity_id: str) -> bool:
+    """Logical sauna controls cannot serve as hardware actors or feedback."""
+    if key not in {
+        "heater", "light", "control_input", "presence", "heater_feedback",
+        "heater_power", "audio_output",
+    }:
+        return False
+    entry = er.async_get(hass).async_get(entity_id)
+    return entry is not None and entry.platform == DOMAIN
+
+
+def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=None) -> vol.Schema:
     fields: dict = {}
+    saved = saved or {}
+    states = hass.states.async_all()
     if include_name:
         fields[vol.Required("name")] = selector.TextSelector()
     for role in ROLES:
@@ -33,7 +46,16 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
         if role.device_class:
             entity_filter["device_class"] = role.device_class
         marker = vol.Optional if role.optional else vol.Required
-        fields[marker(role.key)] = selector.EntitySelector({"filter": entity_filter})
+        candidates = [state.entity_id for state in states
+                      if metadata_error(role, state.entity_id, state.attributes) is None
+                      and not internal_control_source(hass, role.key, state.entity_id)]
+        previous = saved.get(role.key)
+        previous_state = hass.states.get(previous) if previous else None
+        if previous and previous_state is None and not internal_control_source(hass, role.key, previous):
+            candidates.append(previous)
+        fields[marker(role.key)] = selector.EntitySelector({
+            "filter": entity_filter, "include_entities": sorted(set(candidates)),
+        })
     fields[
         vol.Required(
             "control_input_mode",
@@ -57,7 +79,7 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
 
 def parameter_schema(
     *,
-    live_only=False,
+    durable_only=False,
     include_program_choices=False,
     include_button_choices=False,
     program_options=(),
@@ -79,7 +101,7 @@ def parameter_schema(
             }
         )
         for definition in EDITABLE_DEFINITIONS
-        if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
+        if not durable_only or definition.settings_group != "programs"
     }
     if include_program_choices:
         fields[vol.Required(
@@ -125,7 +147,7 @@ def parameter_schema(
     return vol.Schema(fields)
 
 
-def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
+def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any], *, saved=None) -> Bindings:
     if user_input.get("presence_source", instance_default("presence_source")) not in ("proxy", "ha_presence"):
         raise BindingError("presence_source", "invalid_presence_source")
     bindings = Bindings(
@@ -135,11 +157,19 @@ def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Binding
             if k not in ("control_input_mode", "button_event_type", "presence_source")
         }
     )
+    for key, entity_id in bindings.values.items():
+        if internal_control_source(hass, key, entity_id):
+            raise BindingError(key, "internal_control_source")
     metadata = {
         entity_id: state.attributes if (state := hass.states.get(entity_id)) else None
         for entity_id in bindings.values.values()
     }
-    validate_metadata(bindings, metadata)
+    preserved = {
+        key for key, entity_id in bindings.values.items()
+        if (saved or {}).get(key) == entity_id
+        and hass.states.get(entity_id) is None
+    }
+    validate_metadata(bindings, metadata, preserved=preserved)
     return bindings
 
 
@@ -195,7 +225,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(include_name=True), user_input
+                binding_schema(self.hass, include_name=True), user_input
             ),
             errors=errors,
         )
@@ -335,7 +365,7 @@ class SaunaOptionsFlow(OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
-                bindings = checked_bindings(self.hass, user_input)
+                bindings = checked_bindings(self.hass, user_input, saved=self.config_entry.options[CONF_BINDINGS])
                 if heater_is_used(
                     self.hass.config_entries.async_entries(DOMAIN),
                     bindings,
@@ -365,7 +395,7 @@ class SaunaOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="bindings",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(),
+                binding_schema(self.hass, saved=self.config_entry.options[CONF_BINDINGS]),
                 user_input
                 if user_input is not None
                 else {
@@ -383,7 +413,8 @@ class SaunaOptionsFlow(OptionsFlow):
         )
 
     async def async_step_parameters(self, user_input: dict[str, Any] | None = None):
-        live_only = self._has_session()
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
         runtime = getattr(self.config_entry, "runtime_data", None)
         configuration = (
             runtime.configuration if runtime and not runtime.closed else None
@@ -392,74 +423,31 @@ class SaunaOptionsFlow(OptionsFlow):
             from .runtime import Configuration
 
             configuration = Configuration.from_options(self.config_entry.options)
+        durable_keys = {
+            definition.key for definition in EDITABLE_DEFINITIONS
+            if definition.settings_group != "programs"
+        }
         errors = {}
         if user_input is not None:
             try:
                 values = dict(user_input)
-                button_keys = {"button_program", "button_temperature_c"}
-                if live_only and button_keys & values.keys():
-                    raise ConfigurationLocked()
-                # The panel owns the external-button start choice.  The schema
-                # never contains these keys; discard direct callers as well so
-                # an ordinary technical settings save cannot replace them.
+                # The panel owns button and current program choices. Legacy
+                # callers may not change hidden session fields through options.
                 values.pop("button_program", None)
                 values.pop("button_temperature_c", None)
+                if set(values) - durable_keys:
+                    raise ParameterError("base", "unknown_parameter")
                 if runtime and not runtime.closed:
-                    program_mode = values.pop(
-                        "program_mode",
-                        configuration.program_mode,
-                    )
-                    if program_mode not in ("constant", "progressive"):
-                        raise ParameterError("program_mode", "invalid_program_mode")
-                    if live_only:
-                        if set(values) - LIVE_TEMPERATURE_KEYS:
-                            raise ConfigurationLocked()
-                        target_changed = (
-                            "target_temperature_c" in values
-                            and values["target_temperature_c"]
-                            != runtime.controller.target_temperature
-                        )
-                        if (
-                            not target_changed
-                            and program_mode == runtime.configuration.program_mode
-                        ):
-                            values.pop("target_temperature_c", None)
-                    else:
-                        target_changed = False
                     parameters = await async_set_parameters(
-                        self.hass,
-                        self.config_entry,
-                        values,
-                        partial=live_only,
-                        explicit_target=target_changed and program_mode == "constant",
-                        program_mode=program_mode,
-                        new_program=target_changed
-                        or program_mode
-                        != configuration.program_mode,
+                        self.hass, self.config_entry, values,
+                        partial=True, explicit_target=False,
                     )
-                    # The shared writer has persisted its complete candidate,
-                    # including program identity and any cleared free stages.
                     from .runtime import Configuration
 
                     configuration = Configuration.from_options(self.config_entry.options)
                 else:
-                    program_mode = values.pop(
-                        "program_mode",
-                        configuration.program_mode,
-                    )
-                    if program_mode not in ("constant", "progressive"):
-                        raise ParameterError("program_mode", "invalid_program_mode")
-                    values.setdefault(
-                        "temperature_increase_c",
-                        self.config_entry.options[CONF_PARAMETERS].get(
-                            "temperature_increase_c",
-                            BY_KEY["temperature_increase_c"].default,
-                        ),
-                    )
                     configuration = parameter_change(
-                        configuration, values, explicit_target=False,
-                        program_mode=program_mode,
-                        new_program=program_mode != configuration.program_mode,
+                        configuration, values, partial=True, explicit_target=False,
                     ).configuration
                     parameters = configuration.parameters.as_dict()
             except ParameterError as error:
@@ -475,7 +463,6 @@ class SaunaOptionsFlow(OptionsFlow):
                     **self.config_entry.options,
                     **configuration.as_options(),
                     CONF_PARAMETERS: parameters,
-                    "program_mode": program_mode,
                 }
                 return self.async_create_entry(
                     title="",
@@ -487,19 +474,15 @@ class SaunaOptionsFlow(OptionsFlow):
         suggested = {
             definition.key: configuration.parameters.values[definition.key]
             for definition in EDITABLE_DEFINITIONS
-            if definition.key in configuration.parameters.values
+            if definition.key in durable_keys
+            and definition.key in configuration.parameters.values
         }
-        suggested["program_mode"] = configuration.program_mode
-        if live_only:
-            suggested["target_temperature_c"] = runtime.controller.target_temperature
         return self.async_show_form(
             step_id="parameters",
             data_schema=self.add_suggested_values_to_schema(
                 parameter_schema(
-                    live_only=live_only,
-                    include_program_choices=True,
+                    durable_only=True,
                     parameters=configuration.parameters,
-                    program_mode=configuration.program_mode,
                 ),
                 user_input if user_input is not None else suggested,
             ),

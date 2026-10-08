@@ -41,6 +41,34 @@ const panel = () =>
     scheduleHistoryRender: () => {},
   });
 
+test("history domain consumes measurement bounds once and limits incomplete windows to now", () => {
+  const p = panel();
+  p.shown.measurement_window = {
+    started_at: iso(-300),
+    ended_at: iso(4500),
+    complete: false,
+  };
+  p.state.now = iso(3900);
+  assert.deepEqual(Array.from(p.historyDomain()), [
+    Date.parse(iso(-300)),
+    Date.parse(iso(3900)),
+  ]);
+  p.shown.measurement_window.complete = true;
+  assert.deepEqual(Array.from(p.historyDomain()), [
+    Date.parse(iso(-300)),
+    Date.parse(iso(4500)),
+  ]);
+  p.shown.session = { ...session, ended_at: null };
+  p.shown.measurement_window.complete = false;
+  p.shown.measurement_window.ended_at = iso(4800);
+  assert.equal(p.historyDomain()[1], Date.parse(p.state.now));
+  delete p.shown.measurement_window;
+  assert.deepEqual(Array.from(p.historyDomain()), [
+    Date.parse(iso(0)),
+    Date.parse(p.state.now),
+  ]);
+});
+
 test("overview handles remain bounded and synchronous zoom retains its anchor", () => {
   const p = panel();
   const [start, end] = p.historyDomain();

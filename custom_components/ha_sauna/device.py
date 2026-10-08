@@ -28,7 +28,11 @@ from .presentation import FAULTS, configuration_message
 class HADevice:
     def __init__(self, hass, runtime):
         self.hass, self.runtime = hass, runtime
-        self.bindings = runtime.configuration.bindings.values
+        self.bindings = {
+            role: entity_id
+            for role, entity_id in runtime.configuration.bindings.values.items()
+            if not role.startswith("environment_")
+        }
         self.values = runtime.configuration.parameters.values
         self.states = {}
         self.source_received_at = {}
@@ -156,9 +160,9 @@ class HADevice:
             elif role == "lower_temperature" and value is not None:
                 self.last_valid_lower_temperature = m
             session = self.runtime.session
-            if self.runtime.archive and session and not initial and not defer_archive:
+            if self.runtime.archive and not initial and not defer_archive:
                 self.runtime.archive.append(
-                    "measurement", received_at, m, session.session_id
+                    "measurement", received_at, m, session.session_id if session else None
                 )
             if self.runtime.detector and not initial:
                 self.runtime.detector.accept(m)

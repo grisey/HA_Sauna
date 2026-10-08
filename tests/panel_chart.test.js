@@ -12,7 +12,6 @@ const curveStyles = {
   "lower:temperature": { stroke: color("series_temperature") },
   "upper:humidity": { stroke: color("series_humidity") },
   "lower:humidity": { stroke: color("series_humidity") },
-  overview: { stroke: color("series_overview"), track: color("chart_minimap_track") },
 };
 const vm = require("node:vm");
 
@@ -115,15 +114,11 @@ const panel = (seconds, records, positions = ["upper"]) =>
   });
 const modelFor = (p, records, seconds, domain = [base, base + seconds * 1000]) => {
   p.historyIndex(records);
-  return p.historyModel(
-    { prepared: new Map(), preparedOverview: new Map(), domain },
-    session(seconds),
-  );
+  return p.historyModel({ prepared: new Map(), domain }, session(seconds));
 };
 const draw = (model) => {
-  const main = new FakeCanvas(),
-    overview = new FakeCanvas();
-  const curves = new HistoryCurves(main, overview, {
+  const main = new FakeCanvas();
+  const curves = new HistoryCurves(main, {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
@@ -131,9 +126,8 @@ const draw = (model) => {
     width: 1200,
     height: 480,
     dpr: 1,
-    overview: { width: 1200, height: 46, dpr: 1 },
   });
-  return { curves, main, overview };
+  return { curves, main };
 };
 
 // Dense readings collapse by pixels but retain one continuous numeric path.
@@ -202,7 +196,7 @@ const draw = (model) => {
   assert.equal(p.series("upper", "temperature").length, 2);
 }
 
-// A long ordinary series prepares and draws both the main path and minimap
+// A long ordinary series prepares and draws the main path
 // without an argument-spread reduction or a full SVG string.
 {
   const records = [];
@@ -211,7 +205,7 @@ const draw = (model) => {
   const p = panel(20_000, records);
   assert.doesNotThrow(() => {
     const rendered = draw(modelFor(p, records, 20_000));
-    assert.ok(rendered.curves.overviewPath);
+    assert.ok(rendered.curves.mainPaths.get("upper:temperature"));
   });
 }
 
@@ -222,18 +216,19 @@ const draw = (model) => {
   assert.ok(modelFor(p, records, 30).humidityHigh >= 60);
 }
 
-// A session recorded only at the lower height still has a default chart and
-// minimap; it must not depend on a non-existent upper series.
+// A session recorded only at the lower height still has a default chart; it must not depend on a non-existent upper series.
 {
-  const records = [record(1, 66, "temperature", "lower"), record(2, 67, "temperature", "lower")],
+  const records = [
+      record(1, 66, "temperature", "lower"),
+      record(2, 67, "temperature", "lower"),
+    ],
     p = panel(30, records);
   p.state.measurement_positions = ["lower"];
   p.historyIndex(records);
   p.positions = new Set([p.historyPrimaryPosition()]);
   const model = modelFor(p, records, 30);
   assert.equal(p.historyPrimaryPosition(), "lower");
-  assert.equal(model.overviewPosition, "lower");
-  assert.equal(model.overview.values.length, 2);
+  assert.equal(model.series.get("lower:temperature").values.length, 2);
   assert.ok(draw(model).curves.mainPaths.get("lower:temperature"));
 }
 
@@ -249,7 +244,6 @@ const draw = (model) => {
   p.state.regulation_temperature_position = "lower";
   p.historyIndex(records);
   assert.equal(p.historyPrimaryPosition(live), "lower");
-  assert.equal(p.historyModel({ prepared: new Map(), preparedOverview: new Map(), domain: [base, base + 30_000] }, live).overviewPosition, "lower");
 }
 
 // A later archive page can change the primary source without changing the window.
@@ -261,28 +255,27 @@ const draw = (model) => {
   const p = panel(30, records),
     chart = {
       prepared: new Map(),
-      preparedOverview: new Map(),
       domain: [base, base + 30_000],
     };
   p.historyIndex(records);
   const before = p.historyModel(chart, session(30));
-  const curves = new HistoryCurves(new FakeCanvas(), new FakeCanvas(), {
+  const curves = new HistoryCurves(new FakeCanvas(), {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
   const geometry = { width: 1200, height: 480, dpr: 1 };
-  assert.equal(before.overviewPosition, "lower");
-  curves.updateOverview(before, geometry);
-  const previousPath = curves.overviewPath;
+  assert.equal(p.historyPrimaryPosition(), "lower");
+  curves.update(before, geometry);
+  const previousPath = curves.mainPaths.get("upper:temperature").path;
   records.push(
     record(1, 85, "temperature", "upper"),
     record(2, 86, "temperature", "upper"),
   );
   p.historyIndex(records);
   const after = p.historyModel(chart, session(30));
-  assert.equal(after.overviewPosition, "upper");
-  curves.updateOverview(after, geometry);
-  assert.notEqual(curves.overviewPath, previousPath);
+  assert.equal(p.historyPrimaryPosition(), "upper");
+  curves.update(after, geometry);
+  assert.notEqual(curves.mainPaths.get("upper:temperature").path, previousPath);
 }
 
 // Edge neighbours survive preparation and become a cubic Canvas segment.
@@ -304,14 +297,12 @@ const draw = (model) => {
     p = panel(30, records);
   const chart = {
     prepared: new Map(),
-    preparedOverview: new Map(),
     domain: [base, base + 30_000],
   };
   p.historyIndex(records);
   const first = p.historyModel(chart, session(30));
-  const main = new FakeCanvas(),
-    overview = new FakeCanvas();
-  const curves = new HistoryCurves(main, overview, {
+  const main = new FakeCanvas();
+  const curves = new HistoryCurves(main, {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
@@ -319,7 +310,6 @@ const draw = (model) => {
     width: 1200,
     height: 480,
     dpr: 1,
-    overview: { width: 1200, height: 46, dpr: 1 },
   };
   assert.equal(curves.update(first, geometry).mainDrawn, true);
   const retainedPath = curves.mainPaths.get("upper:temperature").path;

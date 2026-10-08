@@ -31,9 +31,14 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await self.hass.config_entries.async_setup(entry.entry_id))
             await self.hass.async_block_till_done()
             self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(EDITABLE_DEFINITIONS) + 7)
+        from custom_components.ha_sauna.settings import async_set_temperature_steps
+        await async_set_temperature_steps(self.hass, entry, [78, 83, 92])
+        await self.hass.async_block_till_done()
+        preserved = entry.runtime_data.configuration.as_options()
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
-        editable_keys = {definition.key for definition in EDITABLE_DEFINITIONS}
+        editable_keys = {definition.key for definition in EDITABLE_DEFINITIONS
+                         if definition.settings_group != "programs"}
         values = {
             key: value
             for key, value in entry.options["parameters"].items()
@@ -43,6 +48,8 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.config_entries.options.async_configure(form["flow_id"], values)
         await self.hass.async_block_till_done()
         self.assertEqual(entry.runtime_data.configuration.parameters.values["session_gap_minutes"], 7)
+        preserved["parameters"]["session_gap_minutes"] = 7
+        self.assertEqual(entry.runtime_data.configuration.as_options(), preserved)
         number = next(e.entity_id for e in entities if e.unique_id.endswith("_session_gap_minutes"))
         await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
         await self.hass.async_block_till_done()
@@ -66,28 +73,10 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         self.assertEqual(flow["type"], "menu")
         flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
-        self.assertEqual(flow["type"], "form")
-        self.assertEqual({str(key) for key in flow["data_schema"].schema}, {
-            "target_temperature_c", "final_temperature_c", "temperature_gangs",
-            "program_mode",
-        })
-        from homeassistant.data_entry_flow import InvalidData
-        with self.assertRaises(InvalidData):
-            await self.hass.config_entries.options.async_configure(flow["flow_id"], {
-                "target_temperature_c": 80, "final_temperature_c": 95,
-                "temperature_gangs": 4, "program_mode": "progressive",
-                "button_program": "gipfelstuermer",
-            })
-        self.assertEqual(runtime.configuration.button_program, "constant")
-        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {
-            "target_temperature_c": 80, "final_temperature_c": 95,
-            "temperature_gangs": 4, "program_mode": "progressive",
-        })
-        await self.hass.async_block_till_done()
-        self.assertEqual(flow["type"], "create_entry")
-        self.assertIs(entry.runtime_data,runtime)
-        self.assertEqual(runtime.session.session_id,session_id)
-        self.assertEqual(runtime.controller.target_temperature,80)
+        self.assertEqual(flow["type"], "abort")
+        self.assertEqual(flow["reason"], "session_exists")
+        self.assertIs(entry.runtime_data, runtime)
+        self.assertEqual(runtime.session.session_id, session_id)
         with self.assertRaises(ValueError):
             await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
         self.assertEqual(entry.options["parameters"]["session_gap_minutes"], 2.5)

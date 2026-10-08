@@ -153,8 +153,9 @@ const tooltipFor = (
     cursor,
     overview,
   );
+  assert.equal(tooltip.hidden, true, "initial readout waits for a chart pointer");
   interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
-  return { tooltip, interaction, panel };
+  return { tooltip, interaction, panel, cursor, surface };
 };
 
 const trackingIntl = () => {
@@ -177,7 +178,12 @@ test("persistent hover rounds local values without changing original data", () =
   const before = JSON.stringify(original);
   const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(original));
   assert.equal(
-    tooltip.textContent,
+    tooltip.children[0].textContent +
+      tooltip.children[1].children
+        .filter((row) => !row.hidden)
+        .map((row) => row.textContent)
+        .join("") +
+      tooltip.children[2].textContent,
     "09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
   );
   assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);
@@ -259,6 +265,7 @@ test("hover uses the archived phase projection and matching effective event mark
     const original = JSON.stringify(panel.shown);
     interaction.hover({ clientX: 600, clientY: 100 });
     assert.match(tooltip.textContent, /Saunastatus · Saunagang/);
+    assert.equal(tooltip.attributes.get("data-phase"), "saunagang");
     assert.match(tooltip.textContent, /Aufguss/);
     assert.equal((tooltip.textContent.match(/Aufguss/g) || []).length, 2);
     assert.equal(tooltip.children[3].children.length, 2);
@@ -280,6 +287,7 @@ test("missing or uncovered historical phases never borrow the live status", () =
   panel.state.phase = "bereit";
   interaction.hover({ clientX: 600, clientY: 100 });
   assert.match(tooltip.textContent, /Saunastatus · Unbekannt/);
+  assert.equal(tooltip.attributes.get("data-phase"), "");
   const at = Date.parse(measurement().received_at);
   panel.shown.phase_projection = {
     intervals: [
@@ -292,6 +300,7 @@ test("missing or uncovered historical phases never borrow the live status", () =
   };
   interaction.hover({ clientX: 600, clientY: 100 });
   assert.match(tooltip.textContent, /Saunastatus · Unbekannt/);
+  assert.equal(tooltip.attributes.get("data-phase"), "");
 });
 
 test("persistent hover clock follows DST and the browser-local zone", () => {
@@ -404,4 +413,29 @@ test("formatter cache separates explicit zones with equal current offsets", () =
     });
     assert.equal(current.tooltipWhen(past, zone), expected);
   }
+});
+
+test("leaving plot bounds hides readout and cursor and clears phase", () => {
+  const { tooltip, interaction, cursor, surface } = tooltipFor(measurement());
+  for (const point of [
+    { clientX: 64, clientY: 100 },
+    { clientX: 1136, clientY: 100 },
+    { clientX: 600, clientY: 17 },
+    { clientX: 600, clientY: 436 },
+  ]) {
+    interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
+    tooltip.setAttribute("data-phase", "bereit");
+    assert.equal(tooltip.hidden, false);
+    interaction.hover({ svg: surface, ...point });
+    assert.equal(tooltip.hidden, true);
+    assert.equal(tooltip.attributes.get("data-phase"), "");
+    assert.equal(cursor.attributes.get("visibility"), "hidden");
+    interaction.readGeometry();
+    assert.equal(tooltip.hidden, true, "geometry refresh must not restore old values");
+  }
+  interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
+  assert.equal(tooltip.hidden, false, "a new pointer shows values again");
+  interaction.hide();
+  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.attributes.get("data-phase"), "");
 });

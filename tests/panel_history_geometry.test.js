@@ -247,7 +247,11 @@ test("hover uses the shared transform and does not read layout after root writes
     ),
     "value rows do not repeat the source timestamps",
   );
-  assert.match(environment.tooltip.style.transform, /^translate3d\(/);
+  assert.equal(
+    environment.tooltip.style.transform,
+    undefined,
+    "embedded values must not follow the pointer over the chart",
+  );
   assert.equal(environment.surface.reads, 1, "hover reuses the constructor read phase");
   assert.ok(
     environment.document.trace.indexOf("write") >

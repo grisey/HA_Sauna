@@ -82,6 +82,7 @@ function state(admin) {
     detection_channels: [],
     target_temperature: 80,
     thermostat_target: 80,
+    thermostat_restart_temperature: 77,
     heating_feedback: false,
     heating_observation: { source: "unknown" },
     energy_kwh: 0,

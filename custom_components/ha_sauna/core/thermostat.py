@@ -18,6 +18,18 @@ class Decision:
     created_at: datetime | None = None
 
 
+def temperature_limits(
+    target: float | None, parameters: Parameters
+) -> tuple[float | None, float | None]:
+    """Return restart and switch-off thresholds, both relative to the setpoint."""
+    if target is None:
+        return None, None
+    return (
+        target - parameters.values["readiness_hysteresis_c"],
+        target + parameters.values["readiness_offset_c"],
+    )
+
+
 def evaluate(
     state: ThermostatState,
     *,
@@ -82,8 +94,8 @@ def evaluate(
     ):
         return result(True, "minimum_heating")
 
-    readiness_target = target + values["readiness_offset_c"]
-    if temperature >= readiness_target:
+    restart_temperature, stop_temperature = temperature_limits(target, parameters)
+    if temperature >= stop_temperature:
         cooldown = (
             now + timedelta(seconds=parameters.seconds("thermostat_cooldown_minutes"))
             if state.demand
@@ -92,6 +104,6 @@ def evaluate(
         return result(False, "temperature_reached", cooldown)
     if state.cooldown_until and now < state.cooldown_until:
         return result(False, "thermostat_cooldown")
-    if temperature <= readiness_target - values["readiness_hysteresis_c"]:
+    if temperature <= restart_temperature:
         return result(True, "below_target", None)
     return result(state.demand, "hysteresis_band")

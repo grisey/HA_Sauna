@@ -64,6 +64,7 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
         values = self.runtime.configuration.parameters.values
         return {
             "thermostat_target": self.runtime.controller.thermostat_target,
+            "thermostat_restart_temperature": self.runtime.controller.thermostat_restart_temperature,
             "readiness_offset": values["readiness_offset_c"],
             "readiness_hysteresis": values["readiness_hysteresis_c"],
             "decision_reason": self.runtime.controller.last_decision.reason

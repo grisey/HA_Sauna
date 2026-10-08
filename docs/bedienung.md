@@ -207,20 +207,31 @@ oder Pfeiltasten bei fokussiertem Griff ändern die Reihenfolge.
 **Programme speichern** übernimmt den gesamten Entwurf dauerhaft.
 **Änderungen verwerfen** stellt den gespeicherten Katalog wieder her.
 
-Unter **Einstellungen → Programme und Start → Saunataster** steht ein benanntes Programm oder eine
-eigene konstante Temperatur als Startvorgabe zur Wahl. Diese Vorgabe bleibt
-gesondert von der aktuellen Temperaturwahl gespeichert.
+Unter **Einstellungen → Programme und Start → Start über Taster oder Betriebsschalter**
+steht ein gespeichertes Programm oder eine konstante Solltemperatur zur Wahl.
+Änderungen werden sofort gespeichert. Diese Vorgabe gilt für den externen Start;
+der Einschaltknopf in der Steuerungsansicht verwendet deren aktuelle Temperaturwahl.
+
+Die technischen Parametereinstellungen und der Home-Assistant-Optionsdialog
+enthalten Dauerparameter. Änderungen daran sind nach Ende der Sitzung möglich.
+Aktuelle Solltemperatur und Programmwahl gehören zur Steuerungsansicht;
+technische Änderungen erhalten diese Werte.
+
+Kleine Info-Schalter neben den Feldbezeichnungen öffnen die zugehörige Erklärung.
+Erneutes Betätigen, ein Klick außerhalb oder Escape schließt sie.
 
 ## Verlauf und technische Details
 
 **Verlauf** enthält die laufende, letzte oder eine frühere Sitzung zur Auswahl.
-**Messhöhen vergleichen** blendet die Messpositionen ein. Die Zoomtasten, eine
+Der Verlauf zeigt die führende Messposition. Die Zoomtasten, eine
 Vergrößerungsgeste oder Strg/Cmd mit dem Mausrad verändern den sichtbaren
-Ausschnitt. Normales Scrollen bewegt die Seite. In der schmalen Übersicht ist
-das Zeitfenster verschiebbar; **Gesamt** zeigt die ganze Sitzung.
+Ausschnitt. Normales Scrollen bewegt die Inhalte; die Menüs bleiben sichtbar.
+In der schmalen Übersicht ist das Zeitfenster verschiebbar. Der Zoomfaktor
+unter der Zeitübersicht setzt den Ausschnitt auf die ganze Sitzung zurück.
+Die Ausschnittbedienung schließt direkt an die Zeitachse an; darunter steht die Wertanzeige.
 
 Administratoren finden unter **Details → Betrieb & Fristen** die technischen
-Zustände und unter **Detailverlauf** die Messungen beider Positionen. Die
+Zustände und unter **Detailverlauf** den Vergleich beider Messpositionen. Die
 **Erkennungskontrolle** verbindet Ereigniszeilen mit den zugehörigen Markern.
 Unter **Einstellungen → Daten und Wartung** lädt **Archiv als ZIP herunterladen** das Sitzungsarchiv
 herunter.
@@ -257,8 +268,9 @@ Home-Assistant-Profil wählbar.
 
 Die Bereichsnavigation gliedert die Einstellungen in **Programme und Start**,
 **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**, **Darstellung**,
-**Daten und Wartung** sowie **Persönlich**. Mobil übernimmt ein Abschnittswähler
-die Navigation. Nicht administrative Profile sehen Programme und persönliche
+**Daten und Wartung** sowie **Persönlich**. In schmalen Ansichten ist das
+Seitenmenü einklappbar, in breiten Ansichten dauerhaft sichtbar.
+Nicht administrative Profile sehen Programme und persönliche
 Einstellungen. Sensorzuordnung und Erkennungsparameter stehen zusammen;
 Expertenparameter sind nach Signalverarbeitung, Tür, Lüften, Präsenz und Aufguss
 geordnet. Protokollierung, Archiv und das getrennte Rücksetzen der

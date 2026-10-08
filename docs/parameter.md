@@ -32,10 +32,11 @@ Einstellwerte und bleiben im jeweiligen Fachmodul.
 
 Die Konfiguration einer Sauna ist die gemeinsame Quelle für Einrichtungsdialog,
 Home-Assistant-Entitäten und Saunapanel. Eingaben werden vor dem Speichern auf
-ihre zulässigen Werte und Zusammenhänge geprüft. Während einer Sitzung bleibt
-die aktuelle Temperaturwahl anpassbar. Administratoren können außerdem
-Protokollstufe und Darstellung ändern. Die technische Konfiguration und der
-Programmkatalog werden nach Sitzungsende bearbeitet.
+ihre zulässigen Werte und Zusammenhänge geprüft. Die Einstellungen enthalten
+dauerhafte Vorgaben. Die Temperaturwahl für die Sitzung erfolgt in der
+Steuerungsansicht und bleibt dort während der Sitzung anpassbar. Administratoren
+können außerdem Protokollstufe und Darstellung ändern. Die technische
+Konfiguration und der Programmkatalog werden nach Sitzungsende bearbeitet.
 
 ## Temperatur und Ofen
 
@@ -49,8 +50,8 @@ eine entsprechend übernommene Untergrenze erhalten bleiben.
 | --- | --- | --- |
 | Mindesttemperatur der Sauna | 60 °C | Untergrenze für Sollwerte und Schnellauswahl |
 | Solltemperatur | 80 °C | Eine direkte Wahl legt eine konstante Solltemperatur fest. |
-| Temperaturaufschlag für die Heizungsabschaltung | 5 °C | Aufschlag auf die Solltemperatur zur regulären oberen Abschaltgrenze; bei 80 °C Soll ergibt sich 85 °C. |
-| Schaltabstand der Temperaturregelung | 1 °C | Abstand unter der oberen Regeltemperatur, ab dem erneutes Heizen zulässig ist |
+| Temperaturaufschlag für die Heizungsabschaltung | 1 °C | Aufschlag auf die Solltemperatur zur regulären oberen Abschaltgrenze; bei 80 °C Soll ergibt sich 81 °C. |
+| Temperaturabstand für das Wiedereinschalten | 1 °C | Abstand unter der Solltemperatur, ab dem erneutes Heizen zulässig ist; bei 80 °C Soll ergibt sich 79 °C. |
 | Heizpause nach Temperaturabschaltung | 5 min | Wartezeit nach einer regulären Abschaltung an der oberen Regeltemperatur; 0 ermöglicht den unmittelbaren weiteren Regelablauf. |
 | Mindestheizzeit nach dem Einschalten | 10 min | Mindestdauer eines tatsächlich begonnenen Heizintervalls im regulären Thermostatbetrieb; 0 gibt kurze Intervalle frei. |
 
@@ -62,9 +63,8 @@ Schutzabschaltungen und Ofenkühlung haben Vorrang vor der Mindestheizzeit.
 
 ## Temperaturprogramme
 
-Die Einstellung **Verteilung der Steigerung** bestimmt die Zahl der
-Temperaturstufen einer gleichmäßigen Folge. Die Standardvorgabe führt von
-80 auf 95 °C über vier Stufen: 80 → 85 → 90 → 95 °C. Nach jedem beendeten,
+Ein gleichmäßig verteiltes Programm berechnet seine Temperaturfolge aus
+Starttemperatur, Endtemperatur und der Verteilung auf Saunagänge. Nach jedem beendeten,
 bestätigten Gang folgt die nächste Stufe. Die Bestätigung richtet sich nach der
 gewählten Präsenzquelle gemäß [Gangmodell](gangmodell.md). Die letzte Temperatur
 gilt anschließend für weitere Gänge.
@@ -285,14 +285,43 @@ Vielfache des Zeitabstands der Personenprüfung sein.
 | Dimmbares Saunalicht | `light` mit Helligkeitssteuerung |
 | Unabhängiger binärer Heiznachweis (optional) | `switch` oder `binary_sensor` |
 | Leistungsmessung des Ofens (optional) | Leistungssensor in W oder kW |
-| Sensorstatus oben / unten | Optionaler `sensor` oder `binary_sensor` |
-| Präsenzentität (beobachtend) | Optionaler `binary_sensor` für die beobachtete Anwesenheit |
+| Sensorstatus oben / unten | Optionaler binärer Sensor oder klassen- und einheitenloser Statussensor |
+| Präsenzentität | Optionaler `binary_sensor` der Klasse `occupancy`, `presence` oder `motion` |
 | Audioziel (vorbereitet) | Optionale hinterlegte Zuordnung eines `media_player` |
+
+Die Auswahllisten berücksichtigen Domain, Geräteklasse, Einheit und erforderliche
+Fähigkeiten. Tasterereignisse benötigen die Klasse `button` und ausgewiesene
+Ereignistypen; das Saunalicht muss Helligkeit unterstützen. Dieselben Kriterien
+gelten beim Speichern. Eine unveränderte, vorübergehend fehlende Zuordnung bleibt
+erhalten und wird nicht automatisch durch eine andere Quelle ersetzt.
 
 Mindestens eine vollständige Temperatur-/Feuchteposition ermöglicht den
 gesamten Betrieb. Oben führt die Regelung, unten übernimmt bei fehlendem
 gültigem oberen Wert. Aus jedem frischen, gültigen Messpaar entsteht zudem
 der diagnostische absolute Wassergehalt der jeweiligen Position.
+
+### Umgebungsdaten
+
+Die optionale Wetterquelle verwendet eine vorhandene `weather`-Entität.
+Temperatur, relative Feuchte, Taupunkt, Luftdruck und Wind können aus deren
+Attributen stammen. Ausdrücklich gewählte Einzelquellen haben Vorrang, auch wenn
+sie vorübergehend nicht verfügbar sind.
+
+| Einzelquelle | Geräteklasse und Einheit |
+| --- | --- |
+| Außentemperatur und Taupunkt | `temperature`, °C |
+| Relative Außenfeuchte | `humidity`, % |
+| Absolute Außenfeuchte | `absolute_humidity`, g/m³ |
+| Luftdruck | `pressure`, hPa |
+| Windgeschwindigkeit | `wind_speed`, km/h |
+| Windrichtung | `wind_direction`, ° |
+| Niederschlagsintensität | `precipitation_intensity`, mm/h |
+| Mess- und Vorhersagezeitpunkt | Je ein `timestamp`-Sensor |
+
+Umgebungsdaten fließen weder in die Heizregelung noch in die Gangerkennung ein.
+Die absolute Feuchte wird aus der gewählten Quelle übernommen. Messzeit,
+Vorhersagezeit und HA-Aktualisierung bleiben getrennt. Zuordnungen sind nur mit
+Administratorrechten änderbar.
 
 ## Protokollierung
 

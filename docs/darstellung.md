@@ -97,9 +97,9 @@ Fokusfarben werden aus der tatsächlich dargestellten Hintergrundfläche
 abgeleitet; dabei fließen auch Tönungen und ausgewählte Ereigniszeilen ein.
 
 Temperaturbogen und Temperaturkurve teilen eine Messfarbe, ebenso
-Feuchtebogen und Feuchtekurve. Die Linienart kennzeichnet zusätzlich die
-Messposition: oben durchgezogen, unten gestrichelt. Dies gilt ebenso für
-Temperatur- und Feuchtemerkmale der Erkennungskontrolle. Achsenzahlen, Titel und
+Feuchtebogen und Feuchtekurve. Im normalen Verlauf sind beide Kurven durchgezogen. Im Detailverlauf und bei den
+Temperatur- und Feuchtemerkmalen der Erkennungskontrolle kennzeichnet die
+Linienart die Messposition: oben durchgezogen, unten gestrichelt. Achsenzahlen, Titel und
 Einheiten verwenden die Farbe der zugehörigen Messgröße; die Zeitachse bleibt
 neutral. Die Messwerte und Skalenbeschriftungen der Bögen folgen derselben
 Zuordnung. Gespeicherte frühere Messhöhenfarben bleiben kompatibel erhalten,
@@ -139,19 +139,30 @@ den Vergleich beider Positionen.
 
 | Element | Darstellung |
 |---|---|
-| Temperatur | Gemeinsame Messfarbe von Anzeige und Kurve, linke °C-Achse |
-| Relative Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, rechte Prozentachse |
-| Messposition | Oben durchgezogen, unten gestrichelt |
+| Temperatur | Gemeinsame Messfarbe von Anzeige und Kurve, linke °C-Achse; im normalen Verlauf durchgezogen |
+| Relative Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, rechte Prozentachse; im normalen Verlauf durchgezogen |
+| Messposition im Detailverlauf | Oben durchgezogen, unten gestrichelt |
 | Tür offen | Fläche in der Türfarbe |
-| Saunagang | Fläche in der Gangfarbe; vorläufiger Gang mit gestrichelter Umrandung |
+| Saunagang | Fläche in der Gangfarbe |
 | Aufguss | Zeitmarke in der Aufgussfarbe |
 | Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
-| Bestätigte Heizaktivität | Schmaler Streifen unter dem Verlauf |
 
-Die Übersichtskurve zeigt die Temperatur der führenden Messposition in derselben
-Messfarbe; ihre Auswahlmarkierung ordnet den sichtbaren Ausschnitt in die
-gesamte Sitzung ein. Hauptkurve und Übersicht verwenden dieselbe Zeitdomäne. Der
-Tooltip greift auf den empfangenen Originalpunkt zurück.
+Die Messfarben stehen direkt an den zugehörigen Werten unter dem Diagramm.
+Phasen und Ereignisse bilden dort zwei ausgerichtete Legendengruppen mit den
+gespeicherten Farben. Die Phasenlegende enthält die in der Sitzung vorhandenen
+Phasen und markiert die Phase am ausgewählten Zeitpunkt.
+Linien und Konturen sind im normalen Verlauf durchgezogen.
+Die Phasenflächen übernehmen die vom Ablaufkern gelieferten Zeitabschnitte.
+Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technischen Details.
+
+Die Zeitfenstersteuerung ordnet den sichtbaren Ausschnitt in die gesamte Sitzung
+ein. Ihre Griffe verändern die Grenzen des Ausschnitts; Steuerung und
+Verlaufsdiagramm verwenden dieselbe Zeitdomäne. Die Zeitfenstersteuerung schließt
+direkt an die Zeitachse an. Die Wertanzeige
+steht in einem eigenen Bereich darunter.
+Sie greift auf den empfangenen Originalpunkt zurück; ihr Hintergrund verwendet
+die gespeicherte Farbe der Phase am ausgewählten Zeitpunkt. Die Sitzungsauswahl
+steht anstelle einer zusätzlichen Verlaufsüberschrift.
 
 [Kurvenaufbereitung und Ausschnittbedienung](livekurve.md)
 
@@ -166,7 +177,7 @@ Bestätigungswerte geben den jeweiligen Nachweis wieder.
 
 Die Navigation kennzeichnet die aktuelle Seite mit `aria-current`. Der
 Temperaturschieber und die Ausschnittgriffe erhalten numerische Werte und
-Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Übersicht. Fokus und
+Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Zeitfenstersteuerung. Fokus und
 Auswahl bleiben visuell unterscheidbar. Ereignissprünge führen zum zugehörigen
 Marker bzw. Listeneintrag.
 

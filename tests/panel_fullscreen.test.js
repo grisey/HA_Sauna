@@ -49,6 +49,7 @@ function fullscreenPanel() {
       cancelProgramDrag() {},
       cancelTemperatureDrag() {},
       applyAppearance() {},
+      selectMenu: { connect() {}, disconnect() {} },
       requestCount: 0,
       exitCount: 0,
     });

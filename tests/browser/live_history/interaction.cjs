@@ -202,7 +202,6 @@ async function installInstrumentation(page) {
     wrap(chart?.curves, "update", "curves.update");
     wrap(chart?.curves, "buildMainPath", "curves.buildMainPath");
     wrap(chart?.curves, "paintMain", "curves.paintMain");
-    wrap(chart?.curves, "updateOverview", "curves.updateOverview");
     wrap(chart?.interaction, "hover", "interaction.hover");
     const root = panel.shadowRoot;
     const record = (event) => {

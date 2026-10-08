@@ -14,6 +14,7 @@ from .const import DOMAIN
 from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
+from .environment import environment_snapshot
 from .log import LEVELS
 from .presentation import (
     decision_message, fault_message, issues, parameter_error,
@@ -165,6 +166,9 @@ class StateView(HomeAssistantView):
                         "now": now,
                         "phase": controller.phase,
                         "presence": runtime.presence_status,
+                        "environment": environment_snapshot(
+                            request.app[KEY_HASS], runtime.configuration.bindings.values
+                        ),
                         "rule_inputs": controller.regulation_inputs,
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
@@ -203,6 +207,7 @@ class StateView(HomeAssistantView):
                         if session
                         else "estimated",
                         "thermostat_target": controller.thermostat_target,
+                        "thermostat_restart_temperature": controller.thermostat_restart_temperature,
                         "target_temperature": controller.target_temperature,
                         "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
                         "mechanical_timer": controller.mechanical_timer_status,
@@ -699,6 +704,9 @@ class ArchiveView(HomeAssistantView):
         if projection not in (None, "history"):
             raise web.HTTPBadRequest(text="Unbekannte Archivansicht")
         read_options = {"after": after}
+        clock = getattr(runtime, "_clock", None)
+        if callable(clock):
+            read_options["now"] = clock()
         if projection == "history":
             read_options.update(
                 limit=5000,

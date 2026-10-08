@@ -469,10 +469,10 @@ for (const selected of [null, "quiet"]) {
 {
   const settings = { innerHTML: "" },
     button = { innerHTML: "" },
-    library = { dataset: {}, innerHTML: "" },
-    lock = {};
+    library = { dataset: {}, innerHTML: "" };
   const p = Object.assign(Object.create(Panel.prototype), {
     hass: { user: { is_admin: false } },
+    shadowRoot: { querySelectorAll: () => [], activeElement: null },
     entry: "entry-1",
     state: {
       frontend_defaults: frontendDefaults,
@@ -494,11 +494,15 @@ for (const selected of [null, "quiet"]) {
         "#settings": settings,
         "#button-settings": button,
         "#program-library": library,
-        "#program-lock": lock,
       })[selector] || null,
   });
   p.drawSettings();
-  assert.match(settings.innerHTML, /Programme[\s\S]*Saunataster/);
+  assert.match(
+    settings.innerHTML,
+    /Programme[\s\S]*Start über Taster oder Betriebsschalter/,
+  );
+  assert.doesNotMatch(settings.innerHTML, /settings-title-/);
+  assert.match(settings.innerHTML, /data-settings-section="programs" aria-label=/);
   assert.doesNotMatch(
     settings.innerHTML,
     /Grundeinstellungen|Protokollierung|Sitzungsarchiv|Sensoren und Geräte zuordnen/,

@@ -116,6 +116,10 @@ test("featured quantity colors precede advanced colors and legacy height values 
     scales: {},
   };
   const html = p.appearanceSettingsMarkup();
+  assert.doesNotMatch(
+    html,
+    /Eine Farbe je Messgröße|Messhöhe oben:|Farben und Anzeigeskalen dieser Sauna/,
+  );
   assert.doesNotMatch(html, /data-appearance-(picker|color)="series_(upper|lower)"/);
   for (const role of ["series_temperature", "series_humidity"])
     assert.ok(
@@ -127,8 +131,41 @@ test("featured quantity colors precede advanced colors and legacy height values 
     p.historyCurveStyles()["upper:temperature"].stroke,
     p.historyCurveStyles()["lower:temperature"].stroke,
   );
+});
+
+test("history legend groups matching curve, phase and event symbols without height controls", () => {
+  const p = panel();
+  p.historyTitle = () => "Sitzung";
+  p.historyDetail = true;
+  p.shown = {
+    phase_projection: {
+      intervals: [
+        { phase: "aufheizen" },
+        { phase: "saunagang" },
+        { phase: "nachlauf" },
+        { phase: "saunagang" },
+      ],
+    },
+  };
+  const markup = p.historyMarkup({}) + p.historyLegendMarkup();
+  assert.doesNotMatch(markup, /history-detail|position-upper|position-lower|Messhöhen/);
+  for (const label of ["Phasen", "Ereignisse"])
+    assert.ok(markup.includes(`aria-label="${label}"`));
+  for (const kind of ["infusion"]) assert.ok(markup.includes(`<line class="${kind}"`));
+  for (const kind of ["heat", "after", "gang", "door"])
+    assert.ok(markup.includes(`<rect class="${kind}"`));
+  assert.doesNotMatch(markup, /Messkurven|<rect class="ready"/);
+  assert.equal((markup.match(/data-legend-phase="saunagang"/g) || []).length, 1);
+  assert.doesNotMatch(markup, /class="vent"|lüften|Lüftung/);
+  const styles = p.historyCurveStyles();
+  assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);
+  assert.deepEqual(Array.from(styles["upper:humidity"].lineDash), []);
   assert.equal(
-    p.historyCurveStyles().overview.stroke,
-    p.historyCurveStyles()["upper:temperature"].stroke,
+    styles["upper:temperature"].stroke,
+    defaults.appearance.colors.find((item) => item.id === "series_temperature").default,
+  );
+  assert.equal(
+    styles["upper:humidity"].stroke,
+    defaults.appearance.colors.find((item) => item.id === "series_humidity").default,
   );
 });

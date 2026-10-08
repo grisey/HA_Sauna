@@ -177,12 +177,11 @@ class Configuration:
             program_mode = (
                 "progressive" if "final_temperature_c" in values else "constant"
             )
-        # Einmalige Übernahme der alten beidseitigen Bandbreite. Danach werden
-        # ausschließlich die neuen, gemeinsam gespeicherten Parameter konsumiert.
+        # Die frühere Kältetoleranz ist der untere Abstand zum Sollwert.
         if "cold_tolerance_c" in values or "hot_tolerance_c" in values:
-            cold = values.pop("cold_tolerance_c", 0)
-            hot = values.pop("hot_tolerance_c", 0)
-            values.setdefault("readiness_hysteresis_c", cold + hot)
+            if "cold_tolerance_c" in values:
+                values.setdefault("readiness_hysteresis_c", values.pop("cold_tolerance_c"))
+            values.pop("hot_tolerance_c", None)
         if (
             "sauna_min_temperature_c" not in values
             and "temperature_programs" not in options
@@ -591,7 +590,7 @@ class SaunaRuntime:
             for item in packet:
                 event, originals, _temperature = item
                 entity_id = event.data["entity_id"]
-                for role, source in self.configuration.bindings.values.items():
+                for role, source in self.device.bindings.items():
                     if source == entity_id and role in measurement_roles:
                         originals.append(self.device.ingest(
                             role, event.data.get("new_state"), received_at, defer_archive=True,
@@ -612,10 +611,11 @@ class SaunaRuntime:
                     # Original provenance follows the received FIFO, including a
                     # session start/end between same-time measurements. Each value
                     # is archived once, even when a role occurs repeatedly here.
-                    if self.archive and self.session:
+                    if self.archive:
                         for measurement in originals:
                             self.archive.append(
-                                "measurement", received_at, measurement, self.session.session_id,
+                                "measurement", received_at, measurement,
+                                self.session.session_id if self.session else None,
                             )
                     action_at = max(received_at, self.controller._last_at or received_at)
                     # Book only the received regulation input here. Protection
@@ -623,7 +623,7 @@ class SaunaRuntime:
                     temperature, valid_until = regulation_input
                     self.controller.set_temperature(temperature, action_at, valid_until=valid_until)
                     entity_id = event.data["entity_id"]
-                    for role, source in self.configuration.bindings.values.items():
+                    for role, source in self.device.bindings.items():
                         if source == entity_id and role not in measurement_roles:
                             self.device.ingest(role, event.data.get("new_state"), received_at)
                             if role in {"heater", "heater_power", "heater_feedback"}:

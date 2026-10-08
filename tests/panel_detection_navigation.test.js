@@ -573,7 +573,7 @@ const parameters = {
     assert.equal(html.includes('data-action="event-row:tie-b"'), false);
     assert.deepEqual(
       p.historyEventsAt(Date.parse(iso(10)), 10000).map((event) => event.event_id),
-      ["early", undefined, "tie-a", "tie-b"],
+      ["early", "legacy-3", "tie-a", "tie-b"],
     );
     assert.equal(
       JSON.stringify(events),

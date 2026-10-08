@@ -36,7 +36,7 @@ class HeatingAdmissionTests(unittest.TestCase):
                        forced_cooling_minutes=15)
         self.prepare_regular_restart(c)
 
-        c.set_temperature(80, at(1320))
+        c.set_temperature(c.thermostat_restart_temperature, at(1320))
 
         self.assertIsNone(c.session.cooling)
         self.assertTrue(c.last_decision.heat)
@@ -53,7 +53,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         c.set_temperature(85, at(900))
         c.report_heating(False, at(900))
 
-        c.set_temperature(80, at(1200))
+        c.set_temperature(c.thermostat_restart_temperature, at(1200))
 
         self.assertIsNone(c.session.cooling)
         self.assertTrue(c.last_decision.heat)
@@ -64,11 +64,12 @@ class HeatingAdmissionTests(unittest.TestCase):
                        minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         self.prepare_regular_restart(c)
         c.process(event("open", Kind.DOOR_OPEN, 1030, session="admission"))
-        c.set_temperature(80, at(1320))
+        c.set_temperature(c.thermostat_restart_temperature, at(1320))
 
         self.assertIsNone(c.session.cooling)
         self.assertFalse(any(d.purpose in ("person_opportunity", "forced_cooling") for d in c.session.deadlines))
         self.assertTrue(c.last_decision.heat)
+        self.assertEqual(c.last_decision.reason, "below_target")
 
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
                        minimum_heating_minutes=10, thermostat_cooldown_minutes=0)

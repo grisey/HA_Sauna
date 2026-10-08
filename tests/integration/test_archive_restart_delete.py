@@ -23,7 +23,8 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
             snapshot = Path(temp.name) / "interrupted.sqlite"
             with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(snapshot)) as target:
                 source.backup(target)
-            before = runtime.archive.read(identity)
+            observed_at = runtime._clock()
+            before = runtime.archive.read(identity, now=observed_at)
             self.assertIsNone(before["session"]["ended_at"])
             token = await credentials(hass)
             base = f"http://127.0.0.1:{hass.http.server_port}/api/ha_sauna/{entry.entry_id}"
@@ -37,7 +38,7 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
                 await hass.async_block_till_done()
                 new_runtime = entry.runtime_data
                 self.assertIsNone(new_runtime.session)
-                self.assertEqual(new_runtime.archive.read(identity), before)
+                self.assertEqual(new_runtime.archive.read(identity, now=observed_at), before)
                 async with client.post(base + "/archive/erase", json={"session_id": identity}) as response:
                     self.assertEqual(response.status, 200, await response.text())
                     self.assertEqual((await response.json())["deleted_sessions"], 1)

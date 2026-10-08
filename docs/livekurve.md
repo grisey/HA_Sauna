@@ -70,10 +70,9 @@ neue Zeicheninstanz.
 | Ebene | Technische Aufgabe |
 |---|---|
 | Canvas der Hauptansicht | Messkurven als numerisch aufgebaute `Path2D`-Objekte |
-| Canvas der Übersicht | Übersichtskurve über die gesamte Sitzungsdomäne |
 | SVG-Hintergrund | Phasen, Ereignisflächen und Raster unter den Kurven |
 | SVG-Vordergrund | Achsen, Zeiger und Interaktionsfläche |
-| DOM | Tooltiptexte, Tabellen, Beschriftungen und Ausschnittgriffe |
+| DOM | Tooltiptexte, Tabellen, Beschriftungen und Zeitfenstersteuerung mit Ausschnittgriffen |
 
 Die Phasenprojektion liefert die zeitlichen Abschnitte einschließlich
 nachträglicher Zuordnungskorrekturen. Darstellung und Archivansicht übernehmen
@@ -91,25 +90,25 @@ Resolution-Abfrage erkennt Änderungen der Pixeldichte.
 ## Ausschnitt, Zoom und Tooltip
 
 Das sichtbare Zeitfenster liegt innerhalb der gesamten Sitzungsdomäne. Die
-Übersicht ordnet es darin ein; ihre Griffe verändern die Fenstergrenzen.
+Zeitfenstersteuerung an der Zeitachse ordnet es darin ein; ihre Griffe verändern
+die Fenstergrenzen. Sie verwendet dieselbe Zeitdomäne wie das Verlaufsdiagramm.
 Maus, Berührung und Tastatur verwenden denselben begrenzten Fensterzustand.
 Zoomtasten und Vergrößerungsgesten ändern die Zeitabbildung. Strg/Cmd mit dem
 Mausrad vergrößert am Zeiger, das gewöhnliche Mausrad bewegt die Seite.
 
 [Rechtefilterung und Antwortzuordnung](speicherung.md#archivzugriff)
 
-Der Tooltip sucht mit einer binären Suche in den Originalreihen nach dem
-passenden Messpunkt. `raw_value` liefert den empfangenen Originalwert,
-einschließlich des Werts `0`. Liegt ausschließlich der numerische Messwert vor,
-kennzeichnet der Tooltip dessen Quellenqualität. Empfangszeit und vorhandener
-Gerätezeitpunkt behalten ihre Sekundenbruchteile und erscheinen mit lokaler
-Zeitzonenangabe.
+Die Wertanzeige sucht mit einer binären Suche in den Originalreihen nach dem
+passenden Messpunkt. Messwerte erscheinen mit höchstens einer Nachkommastelle
+und Dezimalkomma, die lokale Uhrzeit mit Stunden und Minuten. Der gespeicherte
+Originalwert bleibt unverändert. Beim Verlassen des Diagramms verschwinden
+Werte und Cursor; der reservierte Platz hält die Legende an ihrer Position.
 
 Der Textcache gehört zum Originalpunkt und zur tatsächlich aufgelösten
 Zeitzone. Geänderte Originalwerte oder Zeitangaben erneuern ihn. Die gemeinsame
 Zeitformatierung versorgt Achsen, Tabellen und Annotationen. Dauerhafte
-Textknoten und eine Positionierung per CSS-Transformation tragen den Tooltip;
-die Eingabeverarbeitung verwendet dabei die zuvor gelesene Geometrie.
+Textknoten tragen die Wertanzeige unter der Kurve; die Eingabeverarbeitung
+verwendet dabei die zuvor gelesene Geometrie.
 
 ## Aktualisierung und Lebensdauer
 

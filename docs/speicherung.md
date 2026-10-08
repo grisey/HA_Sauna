@@ -13,8 +13,13 @@ Während einer laufenden Sitzung werden die Daten zunächst vollständig gesamme
 Beim Abschluss ohne bestätigten Gang werden Sitzung und zugehörige Records
 verworfen. Beim Start der Integration gilt dieselbe Bereinigung für ältere
 Sitzungen und unterbrochene Versuche. Ein bereits bestätigter aktiver Gang bleibt
-auch bei einem Neustart erhalten. Messungen außerhalb einer Sitzung werden nicht
-archiviert; ältere solche Records werden beim Start entfernt.
+auch bei einem Neustart erhalten. Der Messverlauf umfasst zusätzlich die
+Originalmessungen der zugeordneten Temperatur- und Feuchtequellen in den
+15 Minuten vor Beginn und nach Ende der Sitzung. Außerhalb dieser Fenster
+bleiben sitzungslose Messungen nur für den jeweils letzten 15-Minuten-Vorlauf
+gespeichert. Fehlende Messungen werden nicht nachträglich ergänzt.
+Das Ende der Sitzung bleibt vom Ende ihres Messfensters getrennt; bis zum
+Ablauf der 15 Minuten nach Sitzungsende können weitere Messungen hinzukommen.
 Ein unterbrochener bestätigter Snapshot behält seinen ursprünglichen offenen
 Endwert. Daraus entsteht nach dem Neustart keine laufende Sitzung und kein
 nachträglich angenommener Endzeitpunkt.

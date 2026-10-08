@@ -28,7 +28,7 @@ const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 vm.runInNewContext(source, sandbox);
 
 assert.match(source, /Standardwerte wiederherstellen/);
-assert.match(source, /Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten/);
+assert.match(source, /Sensor-.*Geräte-.*Tasterzuordnungen.*bleiben erhalten/);
 
 const catalog = JSON.parse(
   fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),

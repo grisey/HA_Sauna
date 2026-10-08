@@ -24,6 +24,7 @@ from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
+from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from custom_components.ha_sauna.core.parameters import (
     EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, Parameters,
 )
@@ -72,14 +73,17 @@ class Preview:
             async_update_entry=self.save_options,
         ))
         self.c = self.runtime.controller
-        self.c.set_temperature(62, self.now)
+        self.now -= timedelta(seconds=HISTORY_CONTEXT_SECONDS)
+        self.c.set_temperature(58, self.now)
+        self.sample()
+        self.step(HISTORY_CONTEXT_SECONDS, temperature=62)
         self.c.set_operation(True, self.now, session_id="lokale-vorschau")
         self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":"binary_sensor.demo_fp300"})
         self.presence("off")
         self.sample()
-        if scenario in ("bereit", "gang", "verlauf", "ausfall"):
+        if scenario in ("bereit", "gang", "verlauf", "archiv", "ausfall"):
             self.step(600, temperature=80)
-        if scenario in ("gang", "verlauf", "ausfall"):
+        if scenario in ("gang", "verlauf", "archiv", "ausfall"):
             self.step(120)
             self.door(Kind.DOOR_OPEN)
             self.step(3)
@@ -87,7 +91,7 @@ class Preview:
             self.step(4)
             self.door(Kind.DOOR_CLOSE)
             self.step(240, temperature=82)
-        if scenario == "verlauf":
+        if scenario in ("verlauf", "archiv"):
             self.door(Kind.INFUSION)
             self.humidity = 39
             self.step(180, temperature=83)
@@ -97,6 +101,10 @@ class Preview:
             self.step(6)
             self.door(Kind.DOOR_CLOSE)
             self.step(160, temperature=79)
+        if scenario == "archiv":
+            self.c.finish_session(self.now)
+            self.sample()
+            self.step(HISTORY_CONTEXT_SECONDS, temperature=65)
         if scenario == "ausfall":
             self.presence("unavailable")
         self.sample()
@@ -151,8 +159,18 @@ class Preview:
             return None
         session = dict(stored["session"])
         projection = stored["phase_projection"]
+        window = measurement_window(
+            datetime.fromisoformat(session["timeline"]["session_started_at"]),
+            datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None,
+            self.now,
+        )
         records = [r for r in self.records
-                   if r["session_id"] == session_id and r["id"] > after]
+                   if r["id"] > after and (
+                       r["session_id"] == session_id or (
+                           r["kind"] == "measurement"
+                           and window["started_at"] <= r["received_at"] <= window["ended_at"]
+                       )
+                   )]
         if not self.admin:
             session = public_session(session)
             projection = public_phase_projection(projection)
@@ -160,7 +178,7 @@ class Preview:
                 {**r, "payload": public_measurement(r["payload"])}
                 for r in records if r["kind"] in ("measurement", "source_snapshot", "phase")
             ]
-        return {"session": session, "phase_projection": projection,
+        return {"session": session, "phase_projection": projection, "measurement_window": window,
                 "records": records, "next_after": None}
 
     def sample(self):
@@ -219,6 +237,29 @@ class Preview:
             "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
             "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
             "frontend_defaults":section("frontend"),
+            "environment": {
+                "configured": True,
+                "station": {"name": "Beispielstation", "id": "demo"},
+                "condition": "partlycloudy",
+                "values": [
+                    {"key": key, "label": label, "state": "current", "value": value,
+                     "unit": unit, "available": True, "last_updated": self.now}
+                    for key, label, value, unit in (
+                        ("temperature", "Temperatur", 16.4, "°C"),
+                        ("humidity", "Relative Luftfeuchte", 64, "%"),
+                        ("absolute_humidity", "Absolute Luftfeuchte", 8.9, "g/m³"),
+                        ("dew_point", "Taupunkt", 9.6, "°C"),
+                        ("pressure", "Luftdruck", 1016.2, "hPa"),
+                        ("wind_speed", "Windgeschwindigkeit", 12.6, "km/h"),
+                        ("wind_direction", "Windrichtung", "W", None),
+                        ("precipitation", "Niederschlag", 0, "mm/h"),
+                    )
+                ],
+                "measurement_time": self.now - timedelta(minutes=10),
+                "forecast_time": self.now,
+                "source": {"mode": "mixed_data", "interpolated": True},
+                "updated_at": self.now,
+            },
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
             "archive_revision":0, "preview_scenario":self.scenario,
             "measurement_ttl_seconds":configuration.parameters.values["sensor_timeout_seconds"],
@@ -230,6 +271,7 @@ class Preview:
             "energy_kwh":session.energy.total_kwh if session else 0,
             "energy_source":session.energy.source if session else "estimated",
             "thermostat_target":c.thermostat_target, "target_temperature":c.target_temperature,
+            "thermostat_restart_temperature":c.thermostat_restart_temperature,
             "mechanical_timer":c.mechanical_timer_status, "phase_timer":phase_timer(c,self.now),
             "start_availability":start_availability(c,self.now), "light_after_run":c.light_after_run,
             "start_errors":[], "issues":[], "decision_text":decision_message(c.last_decision),

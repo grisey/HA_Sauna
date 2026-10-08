@@ -2,9 +2,10 @@ from datetime import timedelta
 import unittest
 
 from custom_components.ha_sauna.core.contracts import ControlInputs
+from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.models import ThermostatState
 from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
-from custom_components.ha_sauna.core.thermostat import evaluate
+from custom_components.ha_sauna.core.thermostat import evaluate, temperature_limits
 from test_foundation import T0, parameters
 
 
@@ -32,6 +33,51 @@ class ThermostatTests(unittest.TestCase):
         state, decision = self.decide(state, now=T0 + timedelta(seconds=59), temperature=70)
         self.assertFalse(decision.heat)
         _, decision = self.decide(state, now=T0 + timedelta(seconds=60), temperature=70)
+        self.assertTrue(decision.heat)
+
+    def test_default_limits_switch_at_setpoint_offsets_and_hold_inside_band(self):
+        configured = Parameters({"target_temperature_c": 80,
+                                 "thermostat_cooldown_minutes": 0})
+        target = configured.values["target_temperature_c"]
+        lower, upper = temperature_limits(target, configured)
+        self.assertEqual(lower, target - BY_KEY["readiness_hysteresis_c"].default)
+        self.assertEqual(upper, target + BY_KEY["readiness_offset_c"].default)
+        controller = Controller(configured)
+        self.assertEqual(controller.thermostat_restart_temperature, lower)
+        self.assertEqual(controller.thermostat_target, upper)
+        state, decision = self.decide(parameters=configured, temperature=lower + .01)
+        self.assertFalse(decision.heat)
+        self.assertEqual(decision.reason, "hysteresis_band")
+        state, decision = self.decide(state, parameters=configured, temperature=lower)
+        self.assertTrue(decision.heat)
+        for temperature in (target, upper - .01):
+            state, decision = self.decide(state, parameters=configured, temperature=temperature)
+            self.assertTrue(decision.heat)
+            self.assertEqual(decision.reason, "hysteresis_band")
+        state, decision = self.decide(state, parameters=configured, temperature=upper)
+        self.assertFalse(decision.heat)
+        for temperature in (upper - .01, target, lower + .01):
+            state, decision = self.decide(state, parameters=configured, temperature=temperature)
+            self.assertFalse(decision.heat)
+        _, decision = self.decide(state, parameters=configured, temperature=lower)
+        self.assertTrue(decision.heat)
+
+    def test_upper_offset_does_not_move_the_lower_setpoint_threshold(self):
+        lower, upper = temperature_limits(80, self.parameters)
+        self.assertEqual((lower, upper), (77, 85))
+        _, decision = self.decide(temperature=80)
+        self.assertFalse(decision.heat)
+        _, decision = self.decide(temperature=77)
+        self.assertTrue(decision.heat)
+        self.assertEqual(temperature_limits(None, self.parameters), (None, None))
+
+    def test_explicit_zero_lower_distance_restarts_at_setpoint(self):
+        configured = Parameters({**self.parameters.as_dict(), "readiness_hysteresis_c": 0})
+        target = configured.values["target_temperature_c"]
+        self.assertEqual(temperature_limits(target, configured)[0], target)
+        _, decision = self.decide(parameters=configured, temperature=target + .01)
+        self.assertFalse(decision.heat)
+        _, decision = self.decide(parameters=configured, temperature=target)
         self.assertTrue(decision.heat)
 
     def test_live_gang_demand_starts_heat_even_above_the_upper_cutoff(self):

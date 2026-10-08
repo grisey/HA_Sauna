@@ -621,13 +621,13 @@ test("fixed user and admin panels navigate an archive while its first page loads
     p.ensureHistoryWindow();
     const domain = Array.from(p.historyDomain());
     assert.deepEqual(domain, [
-      Date.parse(session.timeline.session_started_at) - 15 * 60000,
-      Date.parse(session.ended_at) + 15 * 60000,
+      Date.parse(session.timeline.session_started_at),
+      Date.parse(session.ended_at),
     ]);
     p.setHistoryWindow(domain[0] + 30 * 60000, domain[0] + 60 * 60000);
 
     await p.action("zoom-in");
-    assert.equal(p.zoom, 10);
+    assert.equal(p.zoom, 8);
     const zoomed = Array.from(p.window);
     p.setHistoryWindow(zoomed[0] + 60000, zoomed[1] + 60000);
     const shifted = Array.from(p.window);

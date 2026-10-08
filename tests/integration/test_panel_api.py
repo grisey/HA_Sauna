@@ -378,6 +378,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("measurement_status", state)
                 self.assertEqual(state["measurement_positions"], ["upper", "lower"])
                 self.assertIn("regulation_temperature_position", state)
+                self.assertEqual(state["thermostat_restart_temperature"],
+                                 runtime.controller.thermostat_restart_temperature)
+                self.assertEqual(state["thermostat_target"], runtime.controller.thermostat_target)
                 self.assertIn("target_temperature_c", state["configuration"]["parameters"])
                 self.assertNotIn("bindings", state["configuration"])
                 self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])
@@ -429,6 +432,100 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("configuration", projected["session"])
             async with client.get(url + "/archive", params={"session_id": session_id, "projection": "invalid"}) as response:
                 self.assertEqual(response.status, 400)
+
+    async def test_archive_measurement_context_keeps_originals_until_window_complete(self):
+        import json
+        from datetime import timedelta
+
+        from harness import retain_session
+        from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS
+
+        runtime = self.entry.runtime_data
+        base = runtime._clock()
+        clock = [base]
+        runtime._clock = lambda: clock[0]
+        sensor = runtime.configuration.bindings.values["upper_temperature"]
+        originals = []
+
+        async def measure(seconds, value):
+            clock[0] = base + timedelta(seconds=seconds)
+            self.hass.states.async_set(
+                sensor, str(value), self.hass.states.get(sensor).attributes,
+            )
+            await self.hass.async_block_till_done()
+            originals.append((clock[0].isoformat(), value))
+
+        await measure(0, 31)
+        clock[0] = base + timedelta(seconds=10)
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+        retain_session(runtime)
+        await measure(20, 32)
+        clock[0] = base + timedelta(seconds=30)
+        await runtime.set_operation(False)
+        token = next(d.token for d in runtime.session.deadlines if d.purpose == "session_gap")
+        await runtime.finish_session_gap(token)
+        self.assertIsNone(runtime.session)
+
+        user = await self.hass.auth.async_create_user("Context reader", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        url = self.base + "/" + self.entry.entry_id + "/archive"
+        query = {"session_id": session_id, "projection": "history"}
+
+        async with ClientSession(headers=headers) as public, ClientSession(headers=self.headers) as admin:
+            async def read(client, params):
+                async with client.get(url, params=params) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    return await response.json()
+
+            ended = await read(public, query)
+            window = ended["measurement_window"]
+            self.assertFalse(window["complete"])
+            self.assertEqual(window["started_at"], (
+                base + timedelta(seconds=10 - HISTORY_CONTEXT_SECONDS)
+            ).isoformat())
+            self.assertEqual(window["ended_at"], (
+                base + timedelta(seconds=30 + HISTORY_CONTEXT_SECONDS)
+            ).isoformat())
+            cursor = max(record["id"] for record in ended["records"])
+
+            await measure(40, 33)
+            continued = await read(public, {**query, "after": cursor})
+            measurements = [record for record in continued["records"] if record["kind"] == "measurement"]
+            self.assertEqual([
+                (record["payload"]["received_at"], record["payload"]["value"])
+                for record in measurements
+            ], originals[-1:])
+            self.assertFalse(continued["measurement_window"]["complete"])
+
+            complete = await read(public, query)
+            rows = complete["records"]
+            self.assertEqual(len({row["id"] for row in rows}), len(rows))
+            self.assertEqual([
+                (row["payload"]["received_at"], row["payload"]["value"])
+                for row in rows if row["kind"] == "measurement"
+                and row["payload"]["position"] == "upper"
+                and row["payload"]["quantity"] == "temperature"
+            ], originals)
+            self.assertNotIn(sensor, json.dumps(complete))
+            self.assertTrue(all("source" not in row["payload"] for row in rows))
+            private = await read(admin, query)
+            self.assertEqual([
+                row["payload"]["source"] for row in private["records"]
+                if row["kind"] == "measurement"
+            ], [sensor] * len(originals))
+
+            clock[0] = base + timedelta(seconds=30 + HISTORY_CONTEXT_SECONDS - 1)
+            self.assertFalse((await read(public, query))["measurement_window"]["complete"])
+            clock[0] += timedelta(seconds=1)
+            final = await read(public, {**query, "after": max(row["id"] for row in rows)})
+            self.assertTrue(final["measurement_window"]["complete"])
+            self.assertEqual(final["records"], [])
+            await measure(31 + HISTORY_CONTEXT_SECONDS, 34)
+            outside = await read(public, {**query, "after": max(row["id"] for row in rows)})
+            self.assertTrue(outside["measurement_window"]["complete"])
+            self.assertEqual(outside["records"], [])
 
     async def test_direct_presence_ids_are_private_in_live_and_archived_public_responses(self):
         import json

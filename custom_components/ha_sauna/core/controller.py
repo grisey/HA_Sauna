@@ -328,12 +328,12 @@ class Controller:
     @property
     def thermostat_target(self) -> float | None:
         """Higher switch-off threshold; readiness itself uses the setpoint."""
-        target = self.target_temperature
-        return (
-            None
-            if target is None
-            else target + self.parameters.values["readiness_offset_c"]
-        )
+        return thermostat.temperature_limits(self.target_temperature, self.parameters)[1]
+
+    @property
+    def thermostat_restart_temperature(self) -> float | None:
+        """Lower switch-on threshold relative to the setpoint."""
+        return thermostat.temperature_limits(self.target_temperature, self.parameters)[0]
 
     @property
     def mechanical_timer_ends_at(self):
