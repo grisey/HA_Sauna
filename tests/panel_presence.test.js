@@ -99,12 +99,16 @@ assert.equal(
 );
 assert.equal(
   (annotations.match(/class="heat actual-heat"/g) || []).length,
-  1,
-  "actual heating remains separate",
+  0,
+  "actual heating belongs to technical details",
 );
 panel.shown = { records };
 annotations = panel.historyAnnotations(annotationModel(), session, gangs);
-assert.match(annotations, /class="heat"/, "legacy archive keeps its fallback");
+assert.doesNotMatch(
+  annotations,
+  /class="(?:heat|gang)"/,
+  "phases are only consumed from the backend projection",
+);
 console.log("presence and phase projection panel tests passed");
 
 (async () => {

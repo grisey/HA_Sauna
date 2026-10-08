@@ -116,6 +116,10 @@ test("featured quantity colors precede advanced colors and legacy height values 
     scales: {},
   };
   const html = p.appearanceSettingsMarkup();
+  assert.doesNotMatch(
+    html,
+    /Eine Farbe je Messgröße|Messhöhe oben:|Farben und Anzeigeskalen dieser Sauna/,
+  );
   assert.doesNotMatch(html, /data-appearance-(picker|color)="series_(upper|lower)"/);
   for (const role of ["series_temperature", "series_humidity"])
     assert.ok(
@@ -130,5 +134,31 @@ test("featured quantity colors precede advanced colors and legacy height values 
   assert.equal(
     p.historyCurveStyles().overview.stroke,
     p.historyCurveStyles()["upper:temperature"].stroke,
+  );
+});
+
+test("history legend groups matching curve, phase and event symbols without height controls", () => {
+  const p = panel();
+  p.historyTitle = () => "Sitzung";
+  p.historyDetail = true;
+  const markup = p.historyMarkup({});
+  assert.doesNotMatch(markup, /history-detail|position-upper|position-lower|Messhöhen/);
+  for (const label of ["Messkurven", "Phasen", "Ereignisse"])
+    assert.ok(markup.includes(`aria-label="${label}"`));
+  for (const kind of ["temperature", "humidity", "infusion"])
+    assert.ok(markup.includes(`<line class="${kind}"`));
+  for (const kind of ["heat", "ready", "after", "gang", "door"])
+    assert.ok(markup.includes(`<rect class="${kind}"`));
+  assert.doesNotMatch(markup, /class="vent"|lüften|Lüftung/);
+  const styles = p.historyCurveStyles();
+  assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);
+  assert.deepEqual(Array.from(styles["upper:humidity"].lineDash), [4, 4]);
+  assert.equal(
+    styles["upper:temperature"].stroke,
+    defaults.appearance.colors.find((item) => item.id === "series_temperature").default,
+  );
+  assert.equal(
+    styles["upper:humidity"].stroke,
+    defaults.appearance.colors.find((item) => item.id === "series_humidity").default,
   );
 });

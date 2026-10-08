@@ -62,15 +62,18 @@ def seed_sources(hass):
     bindings = {
         r.key: f"{r.domains[0]}.test_{r.key}"
         for r in ROLES
-        if not r.optional or r.device_class in {"temperature", "humidity"}
+        if not r.key.startswith("environment_")
+        and (not r.optional or r.device_class in {"temperature", "humidity"})
     }
     for role in ROLES:
         if role.key not in bindings:
             continue
+        event_input = role.key == "control_input" and bindings[role.key].startswith("event.")
         hass.states.async_set(bindings[role.key], "off" if role.unit is None else "25", {
-            "device_class": role.device_class,
+            "device_class": "button" if event_input else role.device_class,
             "unit_of_measurement": role.unit,
             "supported_color_modes": ["brightness"],
+            **({"event_types": ["single_push"]} if event_input else {}),
         })
     return bindings
 

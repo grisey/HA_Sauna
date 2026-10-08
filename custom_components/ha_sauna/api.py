@@ -14,6 +14,7 @@ from .const import DOMAIN
 from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
+from .environment import environment_snapshot
 from .log import LEVELS
 from .presentation import (
     decision_message, fault_message, issues, parameter_error,
@@ -165,6 +166,9 @@ class StateView(HomeAssistantView):
                         "now": now,
                         "phase": controller.phase,
                         "presence": runtime.presence_status,
+                        "environment": environment_snapshot(
+                            request.app[KEY_HASS], runtime.configuration.bindings.values
+                        ),
                         "rule_inputs": controller.regulation_inputs,
                         "phase_projection": controller.phase_projection(now),
                         "session": session,

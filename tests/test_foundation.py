@@ -8,7 +8,7 @@ from math import inf, nextafter
 from pathlib import Path
 import unittest
 
-from custom_components.ha_sauna.bindings import BindingError, Bindings, ROLES, validate_metadata
+from custom_components.ha_sauna.bindings import BindingError, Bindings, ROLES, ROLE_BY_KEY, metadata_error, validate_metadata
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.models import Deadline, HeatingTime, Measurement, Position, Quantity, Session
 from custom_components.ha_sauna.core.parameters import BY_KEY, DEFINITIONS, ParameterError, Parameters
@@ -39,7 +39,8 @@ def metadata(binding):
         if role.key not in binding.values:
             continue
         result[binding.values[role.key]] = {
-            "device_class": role.device_class,
+            "device_class": "button" if role.key == "control_input" else role.device_class,
+            "event_types": ["single_push"],
             "unit_of_measurement": role.unit,
             "supported_color_modes": ["brightness"],
         }
@@ -198,6 +199,39 @@ class BindingTests(unittest.TestCase):
         attrs[b.values["upper_temperature"]]["state"] = "unavailable"
         validate_metadata(b, attrs)
         self.assertEqual(b.values["upper_temperature"], "sensor.test_upper_temperature")
+
+    def test_environment_role_metadata_and_units(self):
+        for role in ROLES:
+            if not role.key.startswith("environment_"):
+                continue
+            with self.subTest(role=role.key):
+                entity = f"{role.domains[0]}.source"
+                attrs = {"device_class": role.device_class, "unit_of_measurement": role.unit}
+                self.assertIsNone(metadata_error(role, entity, attrs))
+                self.assertEqual(metadata_error(role, "light.source", attrs), "wrong_domain")
+                if role.device_class:
+                    self.assertEqual(metadata_error(role, entity, {**attrs, "device_class": "power"}),
+                                     "wrong_device_class")
+                if role.unit:
+                    self.assertEqual(metadata_error(role, entity, {**attrs, "unit_of_measurement": "wrong"}),
+                                     "wrong_unit")
+
+    def test_status_presence_and_button_metadata(self):
+        for role in ("upper_status", "lower_status"):
+            self.assertIsNone(metadata_error(ROLE_BY_KEY[role], "sensor.status", {}))
+            self.assertEqual(metadata_error(ROLE_BY_KEY[role], "sensor.temperature",
+                                           {"device_class": "temperature", "unit_of_measurement": "°C"}),
+                             "wrong_device_class")
+        self.assertIsNone(metadata_error(ROLE_BY_KEY["presence"], "binary_sensor.room",
+                                         {"device_class": "occupancy"}))
+        self.assertEqual(metadata_error(ROLE_BY_KEY["presence"], "binary_sensor.door",
+                                         {"device_class": "door"}), "wrong_device_class")
+        self.assertIsNone(metadata_error(ROLE_BY_KEY["control_input"], "event.button",
+                                         {"device_class": "button", "event_types": ["single_push"]}))
+        self.assertEqual(metadata_error(ROLE_BY_KEY["control_input"], "event.button",
+                                         {"device_class": "button"}), "invalid_event_types")
+        self.assertIsNone(metadata_error(ROLE_BY_KEY["control_input"], "binary_sensor.contact",
+                                         {"device_class": "door"}))
 
     def test_bindings_are_immutable(self):
         with self.assertRaises(TypeError):

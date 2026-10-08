@@ -7,9 +7,10 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .bindings import ROLES, BindingError, Bindings, validate_metadata
+from .bindings import ROLES, BindingError, Bindings, metadata_error, validate_metadata
 from .const import CONF_BINDINGS, CONF_PARAMETERS, DOMAIN
 from .core.defaults import instance_default
 from .core.parameters import (
@@ -24,8 +25,21 @@ from .log import LEVELS
 from .settings import ConfigurationLocked, async_set_parameters, parameter_change
 
 
-def binding_schema(*, include_name: bool = False) -> vol.Schema:
+def internal_control_source(hass: HomeAssistant, key: str, entity_id: str) -> bool:
+    """Logical sauna controls cannot serve as hardware actors or feedback."""
+    if key not in {
+        "heater", "light", "control_input", "presence", "heater_feedback",
+        "heater_power", "audio_output",
+    }:
+        return False
+    entry = er.async_get(hass).async_get(entity_id)
+    return entry is not None and entry.platform == DOMAIN
+
+
+def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=None) -> vol.Schema:
     fields: dict = {}
+    saved = saved or {}
+    states = hass.states.async_all()
     if include_name:
         fields[vol.Required("name")] = selector.TextSelector()
     for role in ROLES:
@@ -33,7 +47,16 @@ def binding_schema(*, include_name: bool = False) -> vol.Schema:
         if role.device_class:
             entity_filter["device_class"] = role.device_class
         marker = vol.Optional if role.optional else vol.Required
-        fields[marker(role.key)] = selector.EntitySelector({"filter": entity_filter})
+        candidates = [state.entity_id for state in states
+                      if metadata_error(role, state.entity_id, state.attributes) is None
+                      and not internal_control_source(hass, role.key, state.entity_id)]
+        previous = saved.get(role.key)
+        previous_state = hass.states.get(previous) if previous else None
+        if previous and previous_state is None and not internal_control_source(hass, role.key, previous):
+            candidates.append(previous)
+        fields[marker(role.key)] = selector.EntitySelector({
+            "filter": entity_filter, "include_entities": sorted(set(candidates)),
+        })
     fields[
         vol.Required(
             "control_input_mode",
@@ -125,7 +148,7 @@ def parameter_schema(
     return vol.Schema(fields)
 
 
-def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Bindings:
+def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any], *, saved=None) -> Bindings:
     if user_input.get("presence_source", instance_default("presence_source")) not in ("proxy", "ha_presence"):
         raise BindingError("presence_source", "invalid_presence_source")
     bindings = Bindings(
@@ -135,11 +158,19 @@ def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any]) -> Binding
             if k not in ("control_input_mode", "button_event_type", "presence_source")
         }
     )
+    for key, entity_id in bindings.values.items():
+        if internal_control_source(hass, key, entity_id):
+            raise BindingError(key, "internal_control_source")
     metadata = {
         entity_id: state.attributes if (state := hass.states.get(entity_id)) else None
         for entity_id in bindings.values.values()
     }
-    validate_metadata(bindings, metadata)
+    preserved = {
+        key for key, entity_id in bindings.values.items()
+        if (saved or {}).get(key) == entity_id
+        and hass.states.get(entity_id) is None
+    }
+    validate_metadata(bindings, metadata, preserved=preserved)
     return bindings
 
 
@@ -195,7 +226,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(include_name=True), user_input
+                binding_schema(self.hass, include_name=True), user_input
             ),
             errors=errors,
         )
@@ -335,7 +366,7 @@ class SaunaOptionsFlow(OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
-                bindings = checked_bindings(self.hass, user_input)
+                bindings = checked_bindings(self.hass, user_input, saved=self.config_entry.options[CONF_BINDINGS])
                 if heater_is_used(
                     self.hass.config_entries.async_entries(DOMAIN),
                     bindings,
@@ -365,7 +396,7 @@ class SaunaOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="bindings",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(),
+                binding_schema(self.hass, saved=self.config_entry.options[CONF_BINDINGS]),
                 user_input
                 if user_input is not None
                 else {

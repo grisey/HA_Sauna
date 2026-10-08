@@ -591,7 +591,7 @@ class SaunaRuntime:
             for item in packet:
                 event, originals, _temperature = item
                 entity_id = event.data["entity_id"]
-                for role, source in self.configuration.bindings.values.items():
+                for role, source in self.device.bindings.items():
                     if source == entity_id and role in measurement_roles:
                         originals.append(self.device.ingest(
                             role, event.data.get("new_state"), received_at, defer_archive=True,
@@ -623,7 +623,7 @@ class SaunaRuntime:
                     temperature, valid_until = regulation_input
                     self.controller.set_temperature(temperature, action_at, valid_until=valid_until)
                     entity_id = event.data["entity_id"]
-                    for role, source in self.configuration.bindings.values.items():
+                    for role, source in self.device.bindings.items():
                         if source == entity_id and role not in measurement_roles:
                             self.device.ingest(role, event.data.get("new_state"), received_at)
                             if role in {"heater", "heater_power", "heater_feedback"}:

@@ -1812,6 +1812,31 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await context.close()
         self.assertEqual(self.errors, [])
 
+    async def test_cooling_count_stays_right_and_dashboard_uses_available_width(self):
+        await device_tests.DevicePathTests.prepare_gang_after_run(self)
+        await self.panel.evaluate("p => p.refresh()")
+        await expect(self.panel.locator('#current [data-phase="nachlauf"]')).to_be_visible()
+        for width in (390, 740, 800, 1000):
+            with self.subTest(width=width):
+                await self.page.set_viewport_size({"width": width, "height": 900})
+                geometry = await self.panel.evaluate("""p => {
+                  const line = p.$('#current .state-line').getBoundingClientRect();
+                  const phase = p.$('#current .phase-time').getBoundingClientRect();
+                  const badge = p.$('#current .state-line .badge').getBoundingClientRect();
+                  const current = p.$('#current');
+                  return {lineTop: line.top, lineRight: line.right,
+                    badgeTop: badge.top, badgeRight: badge.right,
+                    phaseRight: phase.right, badgeLeft: badge.left,
+                    columns: getComputedStyle(p.$('.dashboard')).gridTemplateColumns.split(' ').length,
+                    availableWidth: p.clientWidth, scrollWidth: current.scrollWidth,
+                    clientWidth: current.clientWidth};
+                }""")
+                self.assertEqual(geometry["badgeTop"], geometry["lineTop"])
+                self.assertEqual(geometry["badgeRight"], geometry["lineRight"])
+                self.assertLess(geometry["phaseRight"], geometry["badgeLeft"])
+                self.assertEqual(geometry["columns"], 1 if geometry["availableWidth"] <= 800 else 2)
+                self.assertLessEqual(geometry["scrollWidth"], geometry["clientWidth"])
+
     async def test_oven_cooling_end_is_a_split_control_for_admin_and_normal_user(self):
         await device_tests.DevicePathTests.prepare_gang_after_run(self)
         self.now += timedelta(seconds=10)
@@ -1908,21 +1933,31 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-gang-id"), gang_id)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
-        # The curves render in canvas; the SVG retains accessible axes and
-        # interactive markers. Height comparison is an explicit user choice.
+        # Normal history exposes only the leading measurement height.
         await expect(self.panel.locator('canvas.history-curves[role="img"]')).to_be_visible()
         self.assertFalse(await self.panel.evaluate("p=>p.historyDetail"))
-        await self.panel.locator('[data-action="history-detail"]').click()
-        await expect(self.panel.locator('[data-action="history-detail"]')).to_have_text("Messhöhen ausblenden")
-        self.assertTrue(await self.panel.evaluate("p=>p.historyDetail"))
-        self.assertEqual(await self.panel.evaluate("p=>[...p.positions].sort()"), ["lower", "upper"])
+        await expect(self.panel.locator('[data-action="history-detail"]')).to_have_count(0)
+        await expect(self.panel.locator('[data-history-positions]')).to_have_count(0)
+        self.assertEqual(await self.panel.evaluate("p=>p.positions.size"), 1)
         chart = self.panel.locator("svg.session-chart")
         # Hover over a recorded sample, not the empty lead-in before the session.
         sample_time = (self.base + timedelta(seconds=7)).timestamp() * 1000
         sample_x = await self.panel.evaluate("(p,t)=>{const [a,b]=p.window;return (65+(t-a)/(b-a)*1070)/1200*p.shadowRoot.querySelector('svg.session-chart').getBoundingClientRect().width;}", sample_time)
+        legend_before = await self.panel.locator(".history-legend-groups").bounding_box()
+        plot_before = await chart.bounding_box()
         await chart.hover(position={"x": sample_x, "y": 200})
+        legend_after = await self.panel.locator(".history-legend-groups").bounding_box()
+        plot_after = await chart.bounding_box()
+        self.assertAlmostEqual(legend_before["y"] - plot_before["y"], legend_after["y"] - plot_after["y"], delta=1)
         await expect(self.panel.locator("#tooltip")).to_be_visible()
-        await expect(self.panel.locator("#tooltip")).to_contain_text("Temperatur oben")
+        await expect(self.panel.locator("#tooltip")).to_contain_text("Temperatur:")
+        curve_box = await chart.bounding_box()
+        readout_box = await self.panel.locator("#tooltip").bounding_box()
+        self.assertGreaterEqual(readout_box["y"], curve_box["y"] + curve_box["height"])
+        self.assertGreaterEqual(readout_box["x"], curve_box["x"])
+        self.assertLessEqual(readout_box["x"] + readout_box["width"], curve_box["x"] + curve_box["width"] + 1)
+        await self.panel.locator("#history-chart-title").hover()
+        await expect(self.panel.locator("#tooltip")).to_be_visible()
         # Valid but hostile palette: inspect rendered text consumers, not only
         # the palette variables. Curves must keep the chosen measurement color.
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
@@ -1968,18 +2003,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
         await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(19, 19, 19)")
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#000000")
-        compare = self.panel.locator('[data-action="history-detail"]')
-        await expect(compare).to_have_attribute("aria-pressed", "false")
-        await expect(compare).to_have_css("opacity", "1")
-        await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
-        await compare.click()
-        lower = self.panel.locator('[data-action="position-lower"]')
-        await lower.click()
-        await expect(lower).to_be_enabled()
-        await expect(lower).to_have_attribute("aria-pressed", "false")
-        await expect(lower).to_have_css("opacity", "1")
-        await expect(lower).to_have_css("color", "rgb(255, 255, 255)")
-        await compare.click()
+        await expect(self.panel.locator('[data-action="history-detail"]')).to_have_count(0)
+        self.assertEqual(await self.panel.evaluate("p=>p.positions.size"), 1)
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         status_group = editor.locator("summary").filter(has_text="Zustände und Phasen")
         if await status_group.locator("..").get_attribute("open") is None:
@@ -1995,7 +2020,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(error_notice).to_have_css("background-color", "rgb(35, 35, 35)")
         await expect(error_notice).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
-        compare = self.panel.locator('[data-action="history-detail"]')
+        compare = self.panel.locator('[data-action="reset-zoom"]')
         await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
         await compare.hover()
         await expect(compare).to_have_css("filter", "none")
@@ -2198,6 +2223,26 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
         self.assertEqual(await self.page.evaluate("window.testErrors"), [])
         self.assertEqual(self.ws_errors, [])
+
+    async def test_content_scroll_keeps_navigation_visible(self):
+        for width in (1440, 390):
+            with self.subTest(width=width):
+                await self.page.set_viewport_size({"width": width, "height": 720})
+                await self.panel.locator('.main-tabs [data-action="settings"]').click()
+                await self.open_settings_section("operation")
+                content = self.panel.locator("#settings")
+                await content.evaluate("node => { node.scrollTop = 0; node.querySelectorAll('details').forEach(item => item.open = true); }")
+                header = self.panel.locator("header")
+                before = await header.bounding_box()
+                await content.evaluate("node => node.scrollTop = node.scrollHeight")
+                await self.panel.evaluate("p => new Promise(resolve => requestAnimationFrame(resolve))")
+                self.assertGreater(await content.evaluate("node => node.scrollTop"), 0)
+                self.assertEqual(await header.bounding_box(), before)
+                navigation = self.panel.locator(".settings-navigation" if width > 700 else ".settings-mobile-navigation")
+                await expect(navigation).to_be_in_viewport(ratio=1)
+                await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_be_in_viewport(ratio=1)
+                self.assertLessEqual(await content.evaluate("node => node.scrollWidth"), await content.evaluate("node => node.clientWidth"))
+                self.assertEqual(await self.panel.evaluate("p => p.scrollTop"), 0)
 
     async def test_overview_timers_stable_controls_german_settings_and_logging(self):
         await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_have_text("Steuerung")

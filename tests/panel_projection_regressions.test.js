@@ -54,15 +54,59 @@ function panel(projection) {
   return value;
 }
 
-test("ventilation remains visible beside an exclusive phase projection", () => {
+test("normal history consumes phases without ventilation annotations", () => {
   const projection = {
     intervals: [
       { started_at: start, ended_at: end, phase: "aufheizen", complete: true },
     ],
   };
   const svg = panel(projection).historyAnnotations(annotationModel(), session, []);
-  assert.match(svg, /class="vent"/);
+  assert.doesNotMatch(svg, /class="vent"/);
   assert.match(svg, /class="heat"/);
+  assert.doesNotMatch(svg, /actual-heat/);
+});
+
+test("normal history excludes ventilation while retaining original events", () => {
+  const value = panel({ intervals: [] });
+  value.shown.session = session;
+  assert.deepEqual(
+    Array.from(value.normalHistoryEvents(), (e) => e.kind),
+    ["door_close"],
+  );
+  assert.equal(session.timeline.processed.length, 2);
+  assert.equal(
+    value.historyEventsAt(Date.parse("2026-09-22T15:10:00+00:00")).length,
+    0,
+  );
+});
+
+test("filtered legacy events keep their original navigation identity", () => {
+  const value = panel({ intervals: [] });
+  const processed = [
+    { kind: "ventilation_confirmed", effective_at: start },
+    { kind: "infusion", effective_at: end },
+  ];
+  const original = JSON.stringify(processed);
+  value.shown.session = { timeline: { processed } };
+  value.diagnosticData = () => ({ revision: 1, traceTimes: new Map() });
+  const visible = value.normalHistoryEvents();
+  const navigation = value.eventNavigation();
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].event_id, "legacy-1");
+  assert.equal(navigation[1].event_id, visible[0].event_id);
+  assert.equal(navigation[1].kind, "infusion");
+  assert.equal(JSON.stringify(processed), original);
+});
+
+test("missing phase projection does not reconstruct phases from gangs or legacy records", () => {
+  const value = panel(null);
+  value.shown.records = [
+    { kind: "phase", received_at: start, payload: { phase: "aufheizen" } },
+  ];
+  const svg = value.historyAnnotations(annotationModel(), session, [
+    { started_at: start, ended_at: end },
+  ]);
+  assert.doesNotMatch(svg, /class="(?:heat|gang|ready|after)"/);
 });
 
 test("projection supplies the gang rectangle without a duplicate fallback gang", () => {
@@ -88,7 +132,9 @@ test("projection supplies the gang rectangle without a duplicate fallback gang",
 
 test("details render includes the reachable presence and rule card", () => {
   const nodes = {};
-  const defaults = JSON.parse(fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"));
+  const defaults = JSON.parse(
+    fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+  );
   const state = {
     frontend_defaults: defaults.frontend,
     appearance_catalog: defaults.appearance,

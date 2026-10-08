@@ -219,6 +219,29 @@ class Preview:
             "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
             "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
             "frontend_defaults":section("frontend"),
+            "environment": {
+                "configured": True,
+                "station": {"name": "Beispielstation", "id": "demo"},
+                "condition": "partlycloudy",
+                "values": [
+                    {"key": key, "label": label, "state": "current", "value": value,
+                     "unit": unit, "available": True, "last_updated": self.now}
+                    for key, label, value, unit in (
+                        ("temperature", "Temperatur", 16.4, "°C"),
+                        ("humidity", "Relative Luftfeuchte", 64, "%"),
+                        ("absolute_humidity", "Absolute Luftfeuchte", 8.9, "g/m³"),
+                        ("dew_point", "Taupunkt", 9.6, "°C"),
+                        ("pressure", "Luftdruck", 1016.2, "hPa"),
+                        ("wind_speed", "Windgeschwindigkeit", 12.6, "km/h"),
+                        ("wind_direction", "Windrichtung", "W", None),
+                        ("precipitation", "Niederschlag", 0, "mm/h"),
+                    )
+                ],
+                "measurement_time": self.now - timedelta(minutes=10),
+                "forecast_time": self.now,
+                "source": {"mode": "mixed_data", "interpolated": True},
+                "updated_at": self.now,
+            },
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
             "archive_revision":0, "preview_scenario":self.scenario,
             "measurement_ttl_seconds":configuration.parameters.values["sensor_timeout_seconds"],

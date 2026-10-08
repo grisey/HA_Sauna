@@ -13,7 +13,7 @@
       "duplicate_sensor": "Die beiden Positionen benötigen unterschiedliche Messquellen.",
       "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "wrong_unit": "Die Einheit muss zur Messgröße passen: °C, % oder bei Leistung W beziehungsweise kW.",
+      "wrong_unit": "Die Maßeinheit passt nicht zur ausgewählten Rolle.",
       "light_not_dimmable": "Das Licht muss Dimmen unterstützen.",
       "invalid_log_level": "Bitte ERROR, INFO oder DEBUG auswählen.",
       "too_small": "Wert ist zu klein.",
@@ -27,7 +27,9 @@
       "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
       "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
       "invalid_number": "Bitte eine endliche Zahl angeben.",
-      "invalid_presence_source": "Bitte eine angebotene Präsenzquelle auswählen."
+      "invalid_presence_source": "Bitte eine angebotene Präsenzquelle auswählen.",
+      "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
@@ -55,7 +57,18 @@
           "button_event_type": "Auslösendes Tasterereignis",
           "presence": "Externer Präsenzsensor (optional)",
           "audio_output": "Audio-Ausgabeziel (optional)",
-          "presence_source": "Gewünschte Präsenzquelle"
+          "presence_source": "Gewünschte Präsenzquelle",
+          "environment_weather": "Wetterquelle (optional)",
+          "environment_temperature": "Außentemperatur (optional)",
+          "environment_humidity": "Relative Außenfeuchte (optional)",
+          "environment_absolute_humidity": "Absolute Außenfeuchte (optional)",
+          "environment_dew_point": "Taupunkt außen (optional)",
+          "environment_pressure": "Luftdruck (optional)",
+          "environment_wind_speed": "Windgeschwindigkeit (optional)",
+          "environment_wind_direction": "Windrichtung (optional)",
+          "environment_precipitation": "Niederschlagsintensität (optional)",
+          "environment_measurement_time": "Messzeitpunkt (optional)",
+          "environment_forecast_time": "Vorhersagezeitpunkt (optional)"
         },
         "data_description": {
           "name": "Name zur Unterscheidung mehrerer Saunen.",
@@ -74,7 +87,18 @@
           "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen.",
           "presence": "Optionaler Binärsensor. Bei gewählter direkter Präsenz belegen seine Meldungen zusammen mit vollständigen Türvorgängen Gangbeginn und Gangende.",
           "audio_output": "Vorbereitetes Ausgabeziel für spätere Audioreaktionen. Es wird noch kein Audio abgespielt.",
-          "presence_source": "Direkte Präsenz führt die Gänge zusammen mit vollständigen Türevents. Bei fehlender Sensormeldung gibt es keinen automatischen Wechsel zum Proxy."
+          "presence_source": "Direkte Präsenz führt die Gänge zusammen mit vollständigen Türevents. Bei fehlender Sensormeldung gibt es keinen automatischen Wechsel zum Proxy.",
+          "environment_weather": "Wetterentität für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_temperature": "Sensor in °C für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_humidity": "Sensor in % für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_absolute_humidity": "Sensor in g/m³ für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_dew_point": "Sensor in °C für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_pressure": "Sensor in hPa für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_wind_speed": "Sensor in km/h für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_wind_direction": "Sensor in ° für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_precipitation": "Sensor in mm/h für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_measurement_time": "Zeitstempelsensor für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_forecast_time": "Zeitstempelsensor für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung."
         }
       },
       "parameters": {
@@ -268,7 +292,7 @@
       "duplicate_sensor": "Die beiden Positionen benötigen unterschiedliche Messquellen.",
       "invalid_program_mode": "Bitte eine gültige Temperaturautomatik auswählen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "wrong_unit": "Die Einheit muss zur Messgröße passen: °C, % oder bei Leistung W beziehungsweise kW.",
+      "wrong_unit": "Die Maßeinheit passt nicht zur ausgewählten Rolle.",
       "light_not_dimmable": "Das Licht muss Dimmen unterstützen.",
       "invalid_log_level": "Bitte ERROR, INFO oder DEBUG auswählen.",
       "too_small": "Wert ist zu klein.",
@@ -282,7 +306,9 @@
       "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
       "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
       "invalid_number": "Bitte eine endliche Zahl angeben.",
-      "invalid_presence_source": "Bitte eine angebotene Präsenzquelle auswählen."
+      "invalid_presence_source": "Bitte eine angebotene Präsenzquelle auswählen.",
+      "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden."
     },
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
@@ -317,7 +343,18 @@
           "button_event_type": "Auslösendes Tasterereignis",
           "presence": "Externer Präsenzsensor (optional)",
           "audio_output": "Audio-Ausgabeziel (optional)",
-          "presence_source": "Gewünschte Präsenzquelle"
+          "presence_source": "Gewünschte Präsenzquelle",
+          "environment_weather": "Wetterquelle (optional)",
+          "environment_temperature": "Außentemperatur (optional)",
+          "environment_humidity": "Relative Außenfeuchte (optional)",
+          "environment_absolute_humidity": "Absolute Außenfeuchte (optional)",
+          "environment_dew_point": "Taupunkt außen (optional)",
+          "environment_pressure": "Luftdruck (optional)",
+          "environment_wind_speed": "Windgeschwindigkeit (optional)",
+          "environment_wind_direction": "Windrichtung (optional)",
+          "environment_precipitation": "Niederschlagsintensität (optional)",
+          "environment_measurement_time": "Messzeitpunkt (optional)",
+          "environment_forecast_time": "Vorhersagezeitpunkt (optional)"
         },
         "data_description": {
           "upper_temperature": "Oberer Temperaturwert in °C. Er bestimmt die Heizregelung und dient der Erkennung.",
@@ -335,7 +372,18 @@
           "button_event_type": "Nur bei Ereignissensoren: Leer erkennt einen kurzen Shelly-Tastendruck (single_push oder single). Für andere Ereignissensoren die gewünschte Ereignisart eintragen.",
           "presence": "Optionaler Binärsensor. Bei gewählter direkter Präsenz belegen seine Meldungen zusammen mit vollständigen Türvorgängen Gangbeginn und Gangende.",
           "audio_output": "Vorbereitetes Ausgabeziel für spätere Audioreaktionen. Es wird noch kein Audio abgespielt.",
-          "presence_source": "Direkte Präsenz führt die Gänge zusammen mit vollständigen Türevents. Bei fehlender Sensormeldung gibt es keinen automatischen Wechsel zum Proxy."
+          "presence_source": "Direkte Präsenz führt die Gänge zusammen mit vollständigen Türevents. Bei fehlender Sensormeldung gibt es keinen automatischen Wechsel zum Proxy.",
+          "environment_weather": "Wetterentität für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_temperature": "Sensor in °C für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_humidity": "Sensor in % für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_absolute_humidity": "Sensor in g/m³ für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_dew_point": "Sensor in °C für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_pressure": "Sensor in hPa für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_wind_speed": "Sensor in km/h für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_wind_direction": "Sensor in ° für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_precipitation": "Sensor in mm/h für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_measurement_time": "Zeitstempelsensor für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung.",
+          "environment_forecast_time": "Zeitstempelsensor für die Umgebung, beispielsweise vom DWD. Ohne Einfluss auf die Saunaregelung."
         }
       },
       "parameters": {

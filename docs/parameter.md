@@ -285,14 +285,46 @@ Vielfache des Zeitabstands der Personenprüfung sein.
 | Dimmbares Saunalicht | `light` mit Helligkeitssteuerung |
 | Unabhängiger binärer Heiznachweis (optional) | `switch` oder `binary_sensor` |
 | Leistungsmessung des Ofens (optional) | Leistungssensor in W oder kW |
-| Sensorstatus oben / unten | Optionaler `sensor` oder `binary_sensor` |
-| Präsenzentität (beobachtend) | Optionaler `binary_sensor` für die beobachtete Anwesenheit |
+| Sensorstatus oben / unten | Optionaler binärer Sensor oder klassen- und einheitenloser Statussensor |
+| Präsenzentität | Optionaler `binary_sensor` der Klasse `occupancy`, `presence` oder `motion` |
 | Audioziel (vorbereitet) | Optionale hinterlegte Zuordnung eines `media_player` |
+
+Die Auswahllisten berücksichtigen Domain, Geräteklasse, Einheit und erforderliche
+Fähigkeiten. Tasterereignisse benötigen die Klasse `button` und ausgewiesene
+Ereignistypen; das Saunalicht muss Helligkeit unterstützen. Dieselben Kriterien
+gelten beim Speichern. Eine unveränderte, vorübergehend fehlende Zuordnung bleibt
+erhalten und wird nicht automatisch durch eine andere Quelle ersetzt.
 
 Mindestens eine vollständige Temperatur-/Feuchteposition ermöglicht den
 gesamten Betrieb. Oben führt die Regelung, unten übernimmt bei fehlendem
 gültigem oberen Wert. Aus jedem frischen, gültigen Messpaar entsteht zudem
 der diagnostische absolute Wassergehalt der jeweiligen Position.
+
+### Umgebungsdaten
+
+Die optionale Wetterquelle verwendet eine vorhandene `weather`-Entität.
+Temperatur, relative Feuchte, Taupunkt, Luftdruck und Wind können aus deren
+Attributen stammen. Ausdrücklich gewählte Einzelquellen haben Vorrang, auch wenn
+sie vorübergehend nicht verfügbar sind.
+
+| Einzelquelle | Geräteklasse und Einheit |
+| --- | --- |
+| Außentemperatur und Taupunkt | `temperature`, °C |
+| Relative Außenfeuchte | `humidity`, % |
+| Absolute Außenfeuchte | `absolute_humidity`, g/m³ |
+| Luftdruck | `pressure`, hPa |
+| Windgeschwindigkeit | `wind_speed`, km/h |
+| Windrichtung | `wind_direction`, °; Himmelsrichtungen werden ohne Gradzeichen angezeigt. |
+| Niederschlagsintensität | `precipitation_intensity`, mm/h |
+| Mess- und Vorhersagezeitpunkt | Je ein `timestamp`-Sensor |
+
+Umgebungsdaten dienen ausschließlich der Anzeige. Sie fließen weder in die
+Heizregelung noch in die Gangerkennung ein. Die absolute Feuchte wird aus der
+gewählten Quelle übernommen. Fehlende Werte erscheinen als nicht verfügbar.
+Messzeit, Vorhersagezeit und HA-Aktualisierung bleiben getrennt. Bei einer
+DWD-Quelle zeigt die Oberfläche die konfigurierte Datenbasis und eine aktive
+Interpolation an. Die Quelle bleibt für beide Benutzerrollen sichtbar;
+Zuordnungen sind nur mit Administratorrechten änderbar.
 
 ## Protokollierung
 

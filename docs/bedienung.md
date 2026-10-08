@@ -214,13 +214,14 @@ gesondert von der aktuellen Temperaturwahl gespeichert.
 ## Verlauf und technische Details
 
 **Verlauf** enthält die laufende, letzte oder eine frühere Sitzung zur Auswahl.
-**Messhöhen vergleichen** blendet die Messpositionen ein. Die Zoomtasten, eine
+Der Verlauf zeigt die führende Messposition. Die Zoomtasten, eine
 Vergrößerungsgeste oder Strg/Cmd mit dem Mausrad verändern den sichtbaren
-Ausschnitt. Normales Scrollen bewegt die Seite. In der schmalen Übersicht ist
-das Zeitfenster verschiebbar; **Gesamt** zeigt die ganze Sitzung.
+Ausschnitt. Normales Scrollen bewegt die Inhalte; die Menüs bleiben sichtbar.
+In der schmalen Übersicht ist das Zeitfenster verschiebbar; **Gesamt** zeigt
+die ganze Sitzung. Die Wertanzeige steht unter oder neben der Kurve.
 
 Administratoren finden unter **Details → Betrieb & Fristen** die technischen
-Zustände und unter **Detailverlauf** die Messungen beider Positionen. Die
+Zustände und unter **Detailverlauf** den Vergleich beider Messpositionen. Die
 **Erkennungskontrolle** verbindet Ereigniszeilen mit den zugehörigen Markern.
 Unter **Einstellungen → Daten und Wartung** lädt **Archiv als ZIP herunterladen** das Sitzungsarchiv
 herunter.

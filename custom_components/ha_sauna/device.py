@@ -28,7 +28,11 @@ from .presentation import FAULTS, configuration_message
 class HADevice:
     def __init__(self, hass, runtime):
         self.hass, self.runtime = hass, runtime
-        self.bindings = runtime.configuration.bindings.values
+        self.bindings = {
+            role: entity_id
+            for role, entity_id in runtime.configuration.bindings.values.items()
+            if not role.startswith("environment_")
+        }
         self.values = runtime.configuration.parameters.values
         self.states = {}
         self.source_received_at = {}
