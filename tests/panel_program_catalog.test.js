@@ -469,8 +469,7 @@ for (const selected of [null, "quiet"]) {
 {
   const settings = { innerHTML: "" },
     button = { innerHTML: "" },
-    library = { dataset: {}, innerHTML: "" },
-    lock = {};
+    library = { dataset: {}, innerHTML: "" };
   const p = Object.assign(Object.create(Panel.prototype), {
     hass: { user: { is_admin: false } },
     entry: "entry-1",
@@ -494,7 +493,6 @@ for (const selected of [null, "quiet"]) {
         "#settings": settings,
         "#button-settings": button,
         "#program-library": library,
-        "#program-lock": lock,
       })[selector] || null,
   });
   p.drawSettings();

@@ -162,6 +162,11 @@ test("empty history clears the retained overview and every visible sink", () => 
       nodes.set(selector, {
         innerHTML: "old session",
         textContent: "old time",
+        hidden: false,
+        attributes: new Map([["data-phase", "bereit"]]),
+        setAttribute(name, value) {
+          this.attributes.set(name, value);
+        },
         replaceChildren() {
           this.innerHTML = "";
         },
@@ -180,6 +185,9 @@ test("empty history clears the retained overview and every visible sink", () => 
   assert.equal(destroyed, 1);
   assert.equal(node("#history-overview").innerHTML, "");
   assert.equal(node("#range").textContent, "");
+  assert.equal(node("#tooltip").innerHTML, "");
+  assert.equal(node("#tooltip").hidden, true);
+  assert.equal(node("#tooltip").attributes.get("data-phase"), "");
   for (const selector of ["#gangs", "#event-list", "#detection-plots"])
     assert.equal(node(selector).innerHTML, "");
   assert.match(node("#plots").innerHTML, /Noch keine Sitzungsdaten/);

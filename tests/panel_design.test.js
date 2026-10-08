@@ -141,14 +141,25 @@ test("history legend groups matching curve, phase and event symbols without heig
   const p = panel();
   p.historyTitle = () => "Sitzung";
   p.historyDetail = true;
+  p.shown = {
+    phase_projection: {
+      intervals: [
+        { phase: "aufheizen" },
+        { phase: "saunagang" },
+        { phase: "nachlauf" },
+        { phase: "saunagang" },
+      ],
+    },
+  };
   const markup = p.historyMarkup({}) + p.historyLegendMarkup();
   assert.doesNotMatch(markup, /history-detail|position-upper|position-lower|Messhöhen/);
-  for (const label of ["Messkurven", "Phasen", "Ereignisse"])
+  for (const label of ["Phasen", "Ereignisse"])
     assert.ok(markup.includes(`aria-label="${label}"`));
-  for (const kind of ["temperature", "humidity", "infusion"])
-    assert.ok(markup.includes(`<line class="${kind}"`));
-  for (const kind of ["heat", "ready", "after", "gang", "door"])
+  for (const kind of ["infusion"]) assert.ok(markup.includes(`<line class="${kind}"`));
+  for (const kind of ["heat", "after", "gang", "door"])
     assert.ok(markup.includes(`<rect class="${kind}"`));
+  assert.doesNotMatch(markup, /Messkurven|<rect class="ready"/);
+  assert.equal((markup.match(/data-legend-phase="saunagang"/g) || []).length, 1);
   assert.doesNotMatch(markup, /class="vent"|lüften|Lüftung/);
   const styles = p.historyCurveStyles();
   assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);

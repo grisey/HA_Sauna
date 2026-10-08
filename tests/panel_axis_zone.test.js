@@ -57,7 +57,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     };
     let axes = 0,
       annotations = 0;
-    const panel = {
+    const panel = Object.assign(Object.create(context.PanelForTest.prototype), {
       $: node,
       historyDetail: false,
       positions: new Set(["upper"]),
@@ -73,7 +73,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
       syncHistoryOverview() {},
       shown: { phase_projection: null },
       state: { now: "2032-01-01T00:00:00Z" },
-    };
+    });
     const chart = Object.assign(Object.create(context.HistoryChartForTest.prototype), {
       panel,
       surface: { setAttribute() {} },

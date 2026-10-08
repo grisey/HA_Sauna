@@ -147,8 +147,10 @@ den Vergleich beider Positionen.
 | Aufguss | Zeitmarke in der Aufgussfarbe |
 | Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
 
-Die kompakte Legende fasst Messkurven, Phasen und Ereignisse unter dem Diagramm zusammen.
-Ihre Einträge umbrechen gemeinsam und verwenden die gespeicherten Farben.
+Die Messfarben stehen direkt an den zugehörigen Werten unter dem Diagramm.
+Phasen und Ereignisse bilden dort zwei ausgerichtete Legendengruppen mit den
+gespeicherten Farben. Die Phasenlegende enthält die in der Sitzung vorhandenen
+Phasen und markiert die Phase am ausgewählten Zeitpunkt.
 Linien und Konturen sind im normalen Verlauf durchgezogen.
 Die Phasenflächen übernehmen die vom Ablaufkern gelieferten Zeitabschnitte.
 Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technischen Details.
