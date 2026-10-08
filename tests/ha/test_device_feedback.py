@@ -114,7 +114,9 @@ class DeviceFeedbackTests(unittest.TestCase):
     def test_received_readiness_releases_override_before_current_output(self):
         async def exercise(queued, same_time, path):
             runtime, adapter, clock = self.detection_device(feedback_timeout_seconds=10)
-            adapter.ingest("upper_temperature", state("79.99", unit="°C"), T0, initial=True)
+            target = runtime.controller.target_temperature
+            below = target - .01
+            adapter.ingest("upper_temperature", state(str(below), unit="°C"), T0, initial=True)
             adapter.refresh(T0)
             runtime.controller.begin_session("readiness", T0)
             await runtime.start_archive(path, "readiness-entry")
@@ -139,7 +141,9 @@ class DeviceFeedbackTests(unittest.TestCase):
             else:
                 await light
             pending = []
-            for second, value in ((102, 80.01), (102 if same_time else 103, 79.99)):
+            # At the setpoint, readiness releases the override and the default
+            # restart threshold permits heating; just above it is hysteresis.
+            for second, value in ((102, target), (102 if same_time else 103, below)):
                 clock[0] = T0 + timedelta(seconds=second)
                 edge = asyncio.create_task(runtime.device_input(
                     self.detection_edge(runtime, "upper_temperature", value)))
@@ -170,7 +174,8 @@ class DeviceFeedbackTests(unittest.TestCase):
                         temperatures = [r["payload"]["value"] for r in stored["records"]
                                         if r["kind"] == "measurement"
                                         and r["payload"]["quantity"] == "temperature"]
-                        self.assertEqual(temperatures, [80.01, 79.99])
+                        target = runtime.controller.target_temperature
+                        self.assertEqual(temperatures, [target, target - .01])
                         heat = next(r for r in stored["records"]
                                     if r["kind"] == "decision"
                                     and r["payload"]["at"] == (T0 + timedelta(seconds=102)).isoformat()
