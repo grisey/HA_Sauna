@@ -472,6 +472,7 @@ for (const selected of [null, "quiet"]) {
     library = { dataset: {}, innerHTML: "" };
   const p = Object.assign(Object.create(Panel.prototype), {
     hass: { user: { is_admin: false } },
+    shadowRoot: { querySelectorAll: () => [], activeElement: null },
     entry: "entry-1",
     state: {
       frontend_defaults: frontendDefaults,
