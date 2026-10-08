@@ -177,7 +177,12 @@ test("persistent hover rounds local values without changing original data", () =
   const before = JSON.stringify(original);
   const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(original));
   assert.equal(
-    tooltip.textContent,
+    tooltip.children[0].textContent +
+      tooltip.children[1].children
+        .filter((row) => !row.hidden)
+        .map((row) => row.textContent)
+        .join("") +
+      tooltip.children[2].textContent,
     "09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
   );
   assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);

@@ -97,8 +97,7 @@ Fokusfarben werden aus der tatsächlich dargestellten Hintergrundfläche
 abgeleitet; dabei fließen auch Tönungen und ausgewählte Ereigniszeilen ein.
 
 Temperaturbogen und Temperaturkurve teilen eine Messfarbe, ebenso
-Feuchtebogen und Feuchtekurve. Im normalen Verlauf ist die Temperaturkurve
-durchgezogen und die Feuchtekurve gestrichelt. Im Detailverlauf und bei den
+Feuchtebogen und Feuchtekurve. Im normalen Verlauf sind beide Kurven durchgezogen. Im Detailverlauf und bei den
 Temperatur- und Feuchtemerkmalen der Erkennungskontrolle kennzeichnet die
 Linienart die Messposition: oben durchgezogen, unten gestrichelt. Achsenzahlen, Titel und
 Einheiten verwenden die Farbe der zugehörigen Messgröße; die Zeitachse bleibt
@@ -141,15 +140,16 @@ den Vergleich beider Positionen.
 | Element | Darstellung |
 |---|---|
 | Temperatur | Gemeinsame Messfarbe von Anzeige und Kurve, linke °C-Achse; im normalen Verlauf durchgezogen |
-| Relative Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, rechte Prozentachse; im normalen Verlauf gestrichelt |
+| Relative Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, rechte Prozentachse; im normalen Verlauf durchgezogen |
 | Messposition im Detailverlauf | Oben durchgezogen, unten gestrichelt |
 | Tür offen | Fläche in der Türfarbe |
-| Saunagang | Fläche in der Gangfarbe; vorläufiger Gang mit gestrichelter Umrandung |
+| Saunagang | Fläche in der Gangfarbe |
 | Aufguss | Zeitmarke in der Aufgussfarbe |
 | Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
 
 Die Legende gliedert sich in **Messkurven**, **Phasen** und **Ereignisse**.
-Konturen und Strichmuster ergänzen die bestehenden Farben.
+Alle Einträge stehen zusammen unter dem Diagramm und verwenden die gespeicherten Farben.
+Linien und Konturen sind im normalen Verlauf durchgezogen.
 Die Phasenflächen übernehmen die vom Ablaufkern gelieferten Zeitabschnitte.
 Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technischen Details.
 

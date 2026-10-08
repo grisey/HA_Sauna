@@ -973,7 +973,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     const right = snapshotTransform?.right ?? 1135;
     if (!Number.isFinite(start) || !Number.isFinite(end) || right <= left)
       return hide();
-    if (point.x < left || point.x > right) return hide();
+    if (point.x < left || point.x > right) return;
     const time = start + ((point.x - left) / (right - left)) * (end - start);
     const ttl = historyMeasurementTtlSeconds(panel, panel.shown?.session) * 1000;
     const nodes = tooltipNodes();
@@ -1496,8 +1496,8 @@ class SaunaPanel extends HTMLElement {
     return {
       "upper:temperature": { stroke: temperature, lineDash: [] },
       "lower:temperature": { stroke: temperature, lineDash: [] },
-      "upper:humidity": { stroke: humidity, lineDash: [4, 4] },
-      "lower:humidity": { stroke: humidity, lineDash: [4, 4] },
+      "upper:humidity": { stroke: humidity, lineDash: [] },
+      "lower:humidity": { stroke: humidity, lineDash: [] },
       overview: {
         stroke: temperature,
         track: this.appearanceColor("chart_minimap_track"),
@@ -2212,14 +2212,14 @@ class SaunaPanel extends HTMLElement {
         flex-wrap: wrap;
         font-size: 13px;
       }
-      .history-legend { display: flex; align-items: baseline; gap: 8px 16px; margin: 12px 0; font-size: 12px; }
-      .history-legend > strong { flex: 0 0 7em; color: var(--sauna-card-muted-text); font-weight: 500; }
-      .history-legend .legend { justify-content: flex-start; gap: 8px 18px; margin: 0; }
+      .history-legend { flex: 1 1 10rem; margin: 0; font-size: 12px; }
+      .history-legend > strong { display: block; margin-bottom: 8px; color: var(--sauna-card-muted-text); font-weight: 500; }
+      .history-legend .legend { justify-content: flex-start; gap: 8px 16px; margin: 0; }
       .history-legend .legend span { display: inline-flex; align-items: center; gap: 6px; }
-      .history-legend-groups { display: grid; }
-      .history-legend .legend-swatch { width: 28px; height: 14px; display: block; flex: 0 0 auto; background: var(--sauna-color-chart-background); border-radius: 2px; }
+      .history-legend-groups { display: flex; flex-wrap: wrap; gap: 20px 28px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--sauna-color-border); }
+      .history-legend .legend-swatch { width: 28px; height: 14px; display: block; flex: 0 0 auto; background: transparent; }
       .legend-swatch .temperature { stroke: var(--sauna-color-series-temperature); stroke-width: 3.5; }
-      .legend-swatch .humidity { stroke: var(--sauna-color-series-humidity); stroke-width: 3.5; stroke-dasharray: 4 4; }
+      .legend-swatch .humidity { stroke: var(--sauna-color-series-humidity); stroke-width: 3.5; }
       .dot {
         display: inline-block;
         width: 10px;
@@ -2249,7 +2249,6 @@ class SaunaPanel extends HTMLElement {
       .chart .provisional {
         fill: color-mix(in srgb, var(--sauna-color-status-warning) 13%, transparent);
         stroke: var(--sauna-color-status-warning);
-        stroke-dasharray: 5 4;
       }
       .chart .heat {
         stroke: var(--sauna-color-phase-warmup);
@@ -2460,7 +2459,6 @@ class SaunaPanel extends HTMLElement {
       }
       .chart .provisional {
         stroke: var(--sauna-color-phase-session);
-        stroke-dasharray: 5 4;
       }
       .chart .heat {
         stroke: var(--sauna-color-phase-warmup);
@@ -2490,13 +2488,11 @@ class SaunaPanel extends HTMLElement {
       .chart .door {
         stroke: var(--sauna-color-event-door);
         stroke-width: 1;
-        stroke-dasharray: 4 3;
         fill: color-mix(in srgb, var(--sauna-color-event-door) 20%, transparent);
       }
       .chart .infusion {
         stroke: var(--sauna-color-event-infusion);
         stroke-width: 2;
-        stroke-dasharray: 3 3;
       }
       .chart path {
         stroke-width: 3.5;
@@ -2536,7 +2532,7 @@ class SaunaPanel extends HTMLElement {
         padding: 14px 4px 2px;
         font: 13px/1.5 system-ui;
       }
-      .history-readout { block-size: 8.5rem; overflow: auto; scrollbar-gutter: stable; }
+      .history-readout { block-size: 6.5rem; overflow: auto; scrollbar-gutter: stable; }
       .history-readout > #tooltip { min-block-size: 100%; align-content: start; }
       #tooltip[hidden] { display: none; }
       .history-tooltip-time { color: var(--sauna-card-muted-text); font-weight: 500; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -3840,7 +3836,10 @@ class SaunaPanel extends HTMLElement {
       const target = this.eventElement(e, "[data-target-arc]");
       if (target) return this.beginTemperatureDrag(e, target.closest("svg"), target);
       const svg = this.eventElement(e, "svg.session-chart");
-      if (svg && e.pointerType !== "mouse") this.beginChartPointer(e, svg);
+      if (svg) {
+        if (e.pointerType !== "mouse") this.beginChartPointer(e, svg);
+        this.scheduleHover({ svg, clientX: e.clientX, clientY: e.clientY });
+      }
     });
     this.shadowRoot.addEventListener("pointerup", (e) => {
       if (this.temperatureInteraction?.pointerId === e.pointerId) {
@@ -7040,21 +7039,18 @@ class SaunaPanel extends HTMLElement {
   }
   historyMarkup(session) {
     const historyTitle = this.historyTitle(session);
-    return `<div class="plot-panel" aria-labelledby="history-chart-title"><h2 id="history-chart-title" class="plot-title">${esc(historyTitle)}</h2>${this.historyLegend(
+    return `<div class="plot-panel" aria-labelledby="history-chart-title"><h2 id="history-chart-title" class="plot-title">${esc(historyTitle)}</h2><div class="history-plot-surface"><div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 1200 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="65" y="18" width="1070" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 1200 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" visibility="hidden"/></svg></div><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div></div><div class="history-legend-groups">${this.historyLegend(
       "Messkurven",
       [
         ["temperature", "Temperatur"],
         ["humidity", "Luftfeuchte"],
       ],
-    )}<div class="history-plot-surface"><div class="plot-wrap history-stack"><svg class="chart history-background" viewBox="0 0 1200 480" preserveAspectRatio="none" aria-hidden="true"><defs><clipPath id="history-layer-clip"><rect x="65" y="18" width="1070" height="417"/></clipPath></defs><g data-history-annotations clip-path="url(#history-layer-clip)"></g></svg><canvas class="chart history-curves" role="img" aria-label="Temperatur- und Feuchteverlauf; Ereignisse und Zeiten stehen in den nachfolgenden Tabellen." aria-describedby="gangs event-list">Temperatur und Feuchte der Sitzung. Ereignisse und Saunagänge sind in den Tabellen unter dem Diagramm zugänglich.</canvas><svg class="chart session-chart" viewBox="0 0 1200 480" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Sitzungsverlauf"><g data-history-axes></g><line id="cursor" x1="0" x2="0" y1="18" y2="435" stroke="var(--sauna-color-chart-text)" stroke-dasharray="3 3" visibility="hidden"/></svg></div><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div></div><div class="history-legend-groups">${this.historyLegend(
-      "Phasen",
-      [
-        ["heat", "heizen"],
-        ["ready", "bereit"],
-        ["after", "Ofenkühlung"],
-        ["gang", "Saunagang"],
-      ],
-    )}${this.historyLegend("Ereignisse", [
+    )}${this.historyLegend("Phasen", [
+      ["heat", phases.aufheizen],
+      ["ready", phases.bereit],
+      ["after", phases.nachlauf],
+      ["gang", phases.saunagang],
+    ])}${this.historyLegend("Ereignisse", [
       ["door", "Saunatür offen"],
       ["infusion", "Aufguss"],
     ])}</div></div>`;

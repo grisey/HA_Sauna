@@ -633,8 +633,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.evaluate("p=>p.style.getPropertyValue('--sauna-main-background')"), "#081018")
         await expect(self.panel.locator('#current .dial-temperature path[stroke="#19A6C8"]')).to_have_count(1)
         await expect(self.panel.locator('#current .dial:not(.dial-temperature) path[stroke="#9A35C0"]')).to_have_count(1)
-        await expect(self.panel.locator('#history .top-legend span').nth(0).locator('i')).to_have_css('background-color', 'rgb(25, 166, 200)')
-        await expect(self.panel.locator('#history .top-legend span').nth(1).locator('i')).to_have_css('background-color', 'rgb(154, 53, 192)')
+        await expect(self.panel.locator('#history .history-legend[aria-label="Messkurven"] line.temperature')).to_have_css('stroke', 'rgb(25, 166, 200)')
+        await expect(self.panel.locator('#history .history-legend[aria-label="Messkurven"] line.humidity')).to_have_css('stroke', 'rgb(154, 53, 192)')
         self.assertEqual(await self.panel.evaluate("p=>p.style.getPropertyValue('--sauna-color-phase-warmup')"), "#123456")
         await minimum.fill("120")
         await editor.locator('[data-action="appearance-save"]').click()
@@ -1747,6 +1747,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
         handle = rows.first.locator('[data-program-drag]')
         target = rows.nth(1)
+        # Raw pointer coordinates need the source and destination in the
+        # scrollable settings viewport after the preceding discard action.
+        await rows.first.evaluate("row => row.scrollIntoView({block: 'center'})")
+        await expect(handle).to_be_in_viewport(ratio=1)
+        await expect(target).to_be_in_viewport(ratio=1)
         source_box, target_box = await handle.bounding_box(), await target.bounding_box()
         await self.page.mouse.move(source_box['x'] + source_box['width'] / 2,
                                    source_box['y'] + source_box['height'] / 2)
@@ -2254,11 +2259,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         # viewport movements cannot masquerade as a control layout change.
         async def operation_geometry():
             return await operation_button.evaluate("""button => {
-              const panel = button.getRootNode().host;
+              const content = button.getRootNode().querySelector("#current");
               const control = button.getBoundingClientRect();
-              const host = panel.getBoundingClientRect();
-              return {x: control.x - host.x + panel.scrollLeft,
-                y: control.y - host.y + panel.scrollTop,
+              const host = content.getBoundingClientRect();
+              return {x: control.x - host.x + content.scrollLeft,
+                y: control.y - host.y + content.scrollTop,
                 width: control.width, height: control.height};
             }""")
 

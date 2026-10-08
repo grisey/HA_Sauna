@@ -152,7 +152,7 @@ test("history legend groups matching curve, phase and event symbols without heig
   assert.doesNotMatch(markup, /class="vent"|lüften|Lüftung/);
   const styles = p.historyCurveStyles();
   assert.deepEqual(Array.from(styles["upper:temperature"].lineDash), []);
-  assert.deepEqual(Array.from(styles["upper:humidity"].lineDash), [4, 4]);
+  assert.deepEqual(Array.from(styles["upper:humidity"].lineDash), []);
   assert.equal(
     styles["upper:temperature"].stroke,
     defaults.appearance.colors.find((item) => item.id === "series_temperature").default,

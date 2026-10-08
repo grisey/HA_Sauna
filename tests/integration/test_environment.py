@@ -6,7 +6,7 @@ from types import MappingProxyType
 from unittest.mock import patch
 
 from aiohttp import ClientSession
-from homeassistant.auth.const import GROUP_ID_USER
+from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import entity_registry as er
 
@@ -154,13 +154,20 @@ class EnvironmentTests(unittest.IsolatedAsyncioTestCase):
         entry = await create_sauna(self.hass, binding_overrides={
             "environment_weather": self.weather,
         })
+        # HA promotes the first regular user to owner, regardless of groups.
+        await self.hass.auth.async_create_user(
+            "Environment owner", group_ids=[GROUP_ID_ADMIN]
+        )
         user = await self.hass.auth.async_create_user("Environment reader", group_ids=[GROUP_ID_USER])
+        self.assertFalse(user.is_owner)
+        self.assertFalse(user.is_admin)
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
         headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(refresh)}
         url = f"http://127.0.0.1:{self.hass.http.server_port}/api/ha_sauna/{entry.entry_id}/state"
         async with ClientSession(headers=headers) as client, client.get(url) as response:
             self.assertEqual(response.status, 200, await response.text())
             state = await response.json()
+        self.assertFalse(state["permissions"]["admin"])
         self.assertEqual(self.values(state["environment"])["temperature"]["value"], 17.5)
         self.assertNotIn("bindings", state["configuration"])
         self.assertNotIn(self.weather, json.dumps(state))
