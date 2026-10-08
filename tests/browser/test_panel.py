@@ -1992,7 +1992,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         for width in (390, 740, 800, 1000):
             with self.subTest(width=width):
                 await self.page.set_viewport_size({"width": width, "height": 900})
-                geometry = await self.panel.evaluate("""p => {
+                read_geometry = """p => {
                   const line = p.$('#current .state-line').getBoundingClientRect();
                   const phase = p.$('#current .phase-time').getBoundingClientRect();
                   const badge = p.$('#current .state-line .badge').getBoundingClientRect();
@@ -2003,7 +2003,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     columns: getComputedStyle(p.$('.dashboard')).gridTemplateColumns.split(' ').length,
                     availableWidth: p.clientWidth, scrollWidth: current.scrollWidth,
                     clientWidth: current.clientWidth};
-                }""")
+                }"""
+                before_render = await self.panel.evaluate(read_geometry)
+                await self.panel.evaluate("p => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                geometry = await self.panel.evaluate(read_geometry)
+                if before_render != geometry:
+                    print("BROWSER_COOLING_RESIZE", {"width": width, "before": before_render, "after": geometry})
                 self.assertEqual(geometry["badgeTop"], geometry["lineTop"])
                 self.assertEqual(geometry["badgeRight"], geometry["lineRight"])
                 self.assertLess(geometry["phaseRight"], geometry["badgeLeft"])
