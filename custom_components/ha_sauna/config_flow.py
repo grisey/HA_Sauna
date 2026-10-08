@@ -16,7 +16,6 @@ from .core.defaults import instance_default
 from .core.parameters import (
     BY_KEY,
     EDITABLE_DEFINITIONS,
-    LIVE_TEMPERATURE_KEYS,
     ParameterError,
     Parameters,
 )
@@ -80,7 +79,7 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
 
 def parameter_schema(
     *,
-    live_only=False,
+    durable_only=False,
     include_program_choices=False,
     include_button_choices=False,
     program_options=(),
@@ -102,7 +101,7 @@ def parameter_schema(
             }
         )
         for definition in EDITABLE_DEFINITIONS
-        if not live_only or definition.key in LIVE_TEMPERATURE_KEYS
+        if not durable_only or definition.settings_group != "programs"
     }
     if include_program_choices:
         fields[vol.Required(
@@ -414,7 +413,8 @@ class SaunaOptionsFlow(OptionsFlow):
         )
 
     async def async_step_parameters(self, user_input: dict[str, Any] | None = None):
-        live_only = self._has_session()
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
         runtime = getattr(self.config_entry, "runtime_data", None)
         configuration = (
             runtime.configuration if runtime and not runtime.closed else None
@@ -423,74 +423,31 @@ class SaunaOptionsFlow(OptionsFlow):
             from .runtime import Configuration
 
             configuration = Configuration.from_options(self.config_entry.options)
+        durable_keys = {
+            definition.key for definition in EDITABLE_DEFINITIONS
+            if definition.settings_group != "programs"
+        }
         errors = {}
         if user_input is not None:
             try:
                 values = dict(user_input)
-                button_keys = {"button_program", "button_temperature_c"}
-                if live_only and button_keys & values.keys():
-                    raise ConfigurationLocked()
-                # The panel owns the external-button start choice.  The schema
-                # never contains these keys; discard direct callers as well so
-                # an ordinary technical settings save cannot replace them.
+                # The panel owns button and current program choices. Legacy
+                # callers may not change hidden session fields through options.
                 values.pop("button_program", None)
                 values.pop("button_temperature_c", None)
+                if set(values) - durable_keys:
+                    raise ParameterError("base", "unknown_parameter")
                 if runtime and not runtime.closed:
-                    program_mode = values.pop(
-                        "program_mode",
-                        configuration.program_mode,
-                    )
-                    if program_mode not in ("constant", "progressive"):
-                        raise ParameterError("program_mode", "invalid_program_mode")
-                    if live_only:
-                        if set(values) - LIVE_TEMPERATURE_KEYS:
-                            raise ConfigurationLocked()
-                        target_changed = (
-                            "target_temperature_c" in values
-                            and values["target_temperature_c"]
-                            != runtime.controller.target_temperature
-                        )
-                        if (
-                            not target_changed
-                            and program_mode == runtime.configuration.program_mode
-                        ):
-                            values.pop("target_temperature_c", None)
-                    else:
-                        target_changed = False
                     parameters = await async_set_parameters(
-                        self.hass,
-                        self.config_entry,
-                        values,
-                        partial=live_only,
-                        explicit_target=target_changed and program_mode == "constant",
-                        program_mode=program_mode,
-                        new_program=target_changed
-                        or program_mode
-                        != configuration.program_mode,
+                        self.hass, self.config_entry, values,
+                        partial=True, explicit_target=False,
                     )
-                    # The shared writer has persisted its complete candidate,
-                    # including program identity and any cleared free stages.
                     from .runtime import Configuration
 
                     configuration = Configuration.from_options(self.config_entry.options)
                 else:
-                    program_mode = values.pop(
-                        "program_mode",
-                        configuration.program_mode,
-                    )
-                    if program_mode not in ("constant", "progressive"):
-                        raise ParameterError("program_mode", "invalid_program_mode")
-                    values.setdefault(
-                        "temperature_increase_c",
-                        self.config_entry.options[CONF_PARAMETERS].get(
-                            "temperature_increase_c",
-                            BY_KEY["temperature_increase_c"].default,
-                        ),
-                    )
                     configuration = parameter_change(
-                        configuration, values, explicit_target=False,
-                        program_mode=program_mode,
-                        new_program=program_mode != configuration.program_mode,
+                        configuration, values, partial=True, explicit_target=False,
                     ).configuration
                     parameters = configuration.parameters.as_dict()
             except ParameterError as error:
@@ -506,7 +463,6 @@ class SaunaOptionsFlow(OptionsFlow):
                     **self.config_entry.options,
                     **configuration.as_options(),
                     CONF_PARAMETERS: parameters,
-                    "program_mode": program_mode,
                 }
                 return self.async_create_entry(
                     title="",
@@ -518,19 +474,15 @@ class SaunaOptionsFlow(OptionsFlow):
         suggested = {
             definition.key: configuration.parameters.values[definition.key]
             for definition in EDITABLE_DEFINITIONS
-            if definition.key in configuration.parameters.values
+            if definition.key in durable_keys
+            and definition.key in configuration.parameters.values
         }
-        suggested["program_mode"] = configuration.program_mode
-        if live_only:
-            suggested["target_temperature_c"] = runtime.controller.target_temperature
         return self.async_show_form(
             step_id="parameters",
             data_schema=self.add_suggested_values_to_schema(
                 parameter_schema(
-                    live_only=live_only,
-                    include_program_choices=True,
+                    durable_only=True,
                     parameters=configuration.parameters,
-                    program_mode=configuration.program_mode,
                 ),
                 user_input if user_input is not None else suggested,
             ),

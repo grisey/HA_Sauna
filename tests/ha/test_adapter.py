@@ -5,7 +5,7 @@ und Selektorklassen stammen aus dem tatsächlich installierten Home Assistant.
 """
 import importlib.util
 import os
-from math import floor, inf, nextafter
+from math import inf, nextafter
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -36,6 +36,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.values = {d.key: d.default for d in EDITABLE_DEFINITIONS}
         self.values.update(session_gap_minutes=2.5)
         self.expected_values = Parameters(self.values).as_dict()
+        self.durable_values = {d.key: self.values[d.key] for d in EDITABLE_DEFINITIONS
+                               if d.settings_group != "programs"}
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": "button" if r.key == "control_input" else r.device_class,
@@ -318,9 +320,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(
                 "button_temperature_c", {str(key) for key in form["data_schema"].schema}
             )
-            form = await flow.async_step_parameters({**self.values, "session_gap_minutes": -1})
+            form = await flow.async_step_parameters({**self.durable_values, "session_gap_minutes": -1})
             self.assertEqual(form["errors"], {"session_gap_minutes": "positive"})
-            result = await flow.async_step_parameters({**self.values, "session_gap_minutes": 7})
+            result = await flow.async_step_parameters({**self.durable_values, "session_gap_minutes": 7})
             self.assertEqual(result["data"]["parameters"]["session_gap_minutes"], 7)
             self.assertEqual(result["data"]["bindings"], self.inputs)
             self.assertEqual(result["data"]["button_program"], "gipfelstuermer")
@@ -359,9 +361,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow.context = {"source": "options"}
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             form = await flow.async_step_parameters()
-            marker = next(key for key in form["data_schema"].schema if str(key) == "program_mode")
-            self.assertEqual(marker.default(), "constant")
-            self.assertEqual(marker.description["suggested_value"], "constant")
+            self.assertNotIn("program_mode", {str(key) for key in form["data_schema"].schema})
             submitted = form["data_schema"]({"session_gap_minutes": 16})
             result = await flow.async_step_parameters(submitted)
         loaded = Configuration.from_options(result["data"])
@@ -370,67 +370,44 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(loaded.parameters.values["session_gap_minutes"], 16)
         self.assertEqual(loaded.parameters.values["night_brightness_percent"], 37)
 
-    async def test_loaded_and_closed_options_share_effective_program_edit(self):
-        from datetime import UTC, datetime, timedelta
+    async def test_loaded_and_closed_options_preserve_program_and_reject_hidden_fields(self):
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
-        from custom_components.ha_sauna.core.timeline import Event, Kind
 
         for loaded in (True, False):
-            for end in (90, 95):
-                with self.subTest(loaded=loaded, end=end):
-                    initial = Configuration.from_options({
-                        "bindings": self.inputs,
-                        "parameters": {
-                            **self.expected_values, "target_temperature_c": 80,
-                            "final_temperature_c": 90, "temperature_gangs": 3,
-                        },
-                        "program_mode": "progressive",
-                        "temperature_steps": [80, 85, 90],
-                    })
-                    self.entry.options = initial.as_options()
-                    self.entry.runtime_data = SaunaRuntime(initial)
-                    if not loaded:
-                        await self.entry.runtime_data.close()
-                    flow = self.module.SaunaOptionsFlow()
-                    flow.hass = self.hass
-                    with patch.object(
-                        type(flow), "config_entry", new_callable=PropertyMock,
-                        return_value=self.entry,
-                    ):
-                        result = await flow.async_step_parameters({
-                            **initial.parameters.as_dict(), "final_temperature_c": end,
-                            "program_mode": "progressive",
-                        })
-                    self.assertEqual(result["type"], "create_entry")
-                    saved = Configuration.from_options(result["data"])
-                    self.assertEqual(
-                        saved.temperature_steps, (80, 85, 90) if end == 90 else None,
-                    )
-                    now = datetime(2030, 1, 1, tzinfo=UTC)
-                    restored = SaunaRuntime(saved, clock=lambda: now)
-                    await restored.set_operation(True)
-                    restored.controller.set_temperature(
-                        80, now, valid_until=now + timedelta(seconds=60)
-                    )
-                    await restored.receive(Event(
-                        "closed", restored.session.session_id,
-                        Kind.DOOR_CLOSE, now, now,
-                    ))
-                    targets = [restored.controller.target_temperature]
-                    for index in range(2):
-                        now += timedelta(seconds=1)
-                        session_id = restored.session.session_id
-                        await restored.receive(Event(
-                            f"infusion-{index}", session_id, Kind.INFUSION, now, now,
-                        ))
-                        now += timedelta(seconds=1)
-                        await restored.set_operation(False)
-                        now += timedelta(seconds=1)
-                        await restored.set_operation(True)
-                        targets.append(restored.controller.target_temperature)
-                    self.assertEqual(targets, [80, floor((80 + end) / 2 + .5), end])
-                    await restored.close()
-                    await self.entry.runtime_data.close()
+            with self.subTest(loaded=loaded):
+                initial = Configuration.from_options({
+                    "bindings": self.inputs,
+                    "parameters": {**self.expected_values, "target_temperature_c": 80,
+                                   "final_temperature_c": 90, "temperature_gangs": 3},
+                    "program_mode": "progressive",
+                    "selected_program_id": DEFAULT_PROGRAMS[0].id,
+                    "temperature_steps": [80, 83, 90],
+                })
+                self.entry.options = initial.as_options()
+                runtime = self.entry.runtime_data = SaunaRuntime(initial)
+                if not loaded:
+                    await runtime.close()
+                flow = self.module.SaunaOptionsFlow()
+                flow.hass = self.hass
+                with patch.object(type(flow), "config_entry", new_callable=PropertyMock,
+                                  return_value=self.entry):
+                    form = await flow.async_step_parameters()
+                    fields = {str(key) for key in form["data_schema"].schema}
+                    hidden = {"target_temperature_c": 81, "final_temperature_c": 95,
+                              "temperature_gangs": 5, "program_mode": "constant"}
+                    self.assertFalse(fields & hidden.keys())
+                    for key, value in hidden.items():
+                        rejected = await flow.async_step_parameters({key: value})
+                        self.assertEqual(rejected["errors"], {"base": "unknown_parameter"})
+                        self.assertEqual(self.entry.options, initial.as_options())
+                        self.assertIs(runtime.configuration, initial)
+                    result = await flow.async_step_parameters({"session_gap_minutes": 7})
+                self.assertEqual(result["type"], "create_entry")
+                saved = Configuration.from_options(result["data"])
+                expected = initial.as_options()
+                expected["parameters"]["session_gap_minutes"] = 7
+                self.assertEqual(saved.as_options(), expected)
+                await runtime.close()
 
     async def test_loaded_and_closed_options_adopt_only_saved_override_values(self):
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -476,7 +453,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     for value in (nextafter(maximum, inf), maximum * 2):
                         rejected = await flow.async_step_parameters(
                             {
-                                **self.values,
+                                **self.durable_values,
                                 "manual_override_minutes": value,
                             }
                         )
@@ -486,7 +463,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(self.entry.options, before)
                         self.assertIs(runtime.configuration, configuration)
                         self.assertFalse(runtime.reconfiguring)
-                    result = await flow.async_step_parameters(self.values)
+                    result = await flow.async_step_parameters(self.durable_values)
                 self.assertEqual(result["type"], "create_entry")
                 saved = Configuration.from_options(result["data"])
                 self.assertEqual(saved.parameters.values["manual_override_minutes"], self.values["manual_override_minutes"])

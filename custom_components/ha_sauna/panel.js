@@ -4000,26 +4000,6 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("change", (e) => {
       if (!this.state) return;
-      if (
-        e.target.matches(
-          '#parameters input[name="target_temperature_c"],#parameters input[name="preset_start_c"]',
-        ) &&
-        e.target.value.trim()
-      ) {
-        const definition = this.state.parameters?.find(
-          (item) => item.key === e.target.name,
-        );
-        try {
-          e.target.value = String(
-            this.roundTargetTemperature(
-              Number(e.target.value),
-              definition || this.temperatureBounds(),
-            ),
-          );
-        } catch (_error) {
-          // Keep invalid input for the form's existing native validation.
-        }
-      }
       if (e.target.matches("[data-program-step-count]")) {
         if (!this.programEditor) return;
         this.programEditor.values.temperature_steps = this.resizeSteps(
@@ -8020,17 +8000,18 @@ class SaunaPanel extends HTMLElement {
     for (const d of state.parameters) {
       const input = this.$(`#parameters input[name="${d.key}"]`);
       if (!input) continue;
-      input.disabled = !admin || (state.configuration_locked && !d.live_editable);
+      input.disabled = !admin || state.configuration_locked;
       input.min = d.minimum == null ? "" : String(d.minimum);
       input.max = d.maximum == null ? "" : String(d.maximum);
       input.step = String(d.step);
       input.required = !d.optional;
       if (!input.dataset.edited && this.shadowRoot.activeElement !== input)
-        input.value =
-          d.key === "target_temperature_c"
-            ? state.target_temperature
-            : (state.configuration.parameters[d.key] ?? "");
+        input.value = state.configuration.parameters[d.key] ?? "";
     }
+    for (const button of this.shadowRoot.querySelectorAll(
+      'button[form="settings-parameters"]',
+    ))
+      button.disabled = !admin || state.configuration_locked;
     if (admin) {
       this.drawAppearanceStatus();
       this.drawArchiveManagement();
@@ -8589,22 +8570,14 @@ class SaunaPanel extends HTMLElement {
     await this.refresh(true);
   }
   async saveSettings() {
-    if (!this.state) return;
+    if (!this.state?.permissions?.admin || this.state.configuration_locked) return;
     this.message(null);
-    const partial = this.state.configuration_locked;
-    const values = partial ? {} : { ...this.state.configuration.parameters };
-    for (const [key, value] of new FormData(this.$("form"))) {
-      if (
-        partial &&
-        key === "target_temperature_c" &&
-        !this.$(`input[name="${key}"]`).dataset.edited
-      )
-        continue;
+    const values = { ...this.state.configuration.parameters };
+    for (const [key, value] of new FormData(this.$("#settings-parameters"))) {
       if (value !== "") values[key] = Number(value);
-      else if (partial) values[key] = null;
       else delete values[key];
     }
-    await this.updateParameters(values, false, partial);
+    await this.updateParameters(values);
   }
   async resetSettings() {
     if (!this.state) return;

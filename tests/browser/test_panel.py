@@ -1732,17 +1732,19 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_settings_metadata_refresh_preserves_drafts_and_native_validity(self):
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        target = self.panel.locator('#parameters input[name="target_temperature_c"]')
-        await self.open_parameter_group("target_temperature_c")
+        self.assertEqual(await self.panel.evaluate("""panel => panel.state.parameters
+          .filter(definition => definition.settings_group === 'programs')
+          .filter(definition => panel.shadowRoot.querySelector(`#parameters input[name="${definition.key}"]`))
+          .map(definition => definition.key)"""), [])
+        target = self.panel.locator('#parameters input[name="readiness_offset_c"]')
+        await self.open_parameter_group("readiness_offset_c")
         await target.fill("55.5")
         before = await target.element_handle()
         await self.panel.evaluate("""p => {
           const state = structuredClone(p.state);
-          state.configuration.parameters.sauna_min_temperature_c = 50;
           for (const definition of state.parameters) {
-            if (["target_temperature_c", "preset_start_c", "final_temperature_c"].includes(definition.key))
+            if (definition.key === "readiness_offset_c") {
               definition.minimum = 50;
-            if (definition.key === "target_temperature_c") {
               definition.maximum = 95;
               definition.step = 1;
             }
@@ -2709,7 +2711,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(settings.locator("#button-program")).to_be_visible()
         await self.open_parameter_group("sauna_min_temperature_c")
         await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
-        await expect(self.panel.locator('input[name="target_temperature_c"]')).to_be_enabled()
+        await expect(self.panel.locator('input[name="target_temperature_c"]')).to_have_count(0)
+        self.assertTrue(await self.panel.locator('#parameters input[name]').evaluate_all(
+            "inputs => inputs.length > 0 && inputs.every(input => input.disabled)"))
+        self.assertTrue(await self.panel.locator('button[form="settings-parameters"]').evaluate_all(
+            "buttons => buttons.length > 0 && buttons.every(button => button.disabled)"))
+        self.assertEqual(await self.panel.evaluate("""async panel => {
+          const update = panel.updateParameters; let writes = 0;
+          panel.updateParameters = async () => { writes++; };
+          try { await panel.saveSettings(); return writes; }
+          finally { panel.updateParameters = update; }
+        }"""), 0)
         await expect(self.panel.locator('input[name="temperature_increase_c"]')).to_have_count(0)
         await self.open_parameter_group("sensor_timeout_seconds")
         help_text = self.panel.locator('#help-sensor_timeout_seconds')

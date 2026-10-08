@@ -313,7 +313,7 @@
     "abort": {
       "missing_bindings": "Bitte zuerst die Entitäten zuordnen.",
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
-      "session_exists": "Die Saunasitzung ist noch nicht beendet. Nur Solltemperatur, Endtemperatur und die Verteilung der Steigerung sind jetzt änderbar. Gerätezuordnungen und andere Grundeinstellungen bleiben bis zum Sitzungsende gesperrt."
+      "session_exists": "Die Saunasitzung ist noch nicht beendet. Gerätezuordnungen und Dauerparameter bleiben bis zum Sitzungsende gesperrt. Die aktuelle Temperaturwahl ist in der Steuerungsansicht verfügbar."
     },
     "step": {
       "init": {
@@ -554,7 +554,7 @@
           "door_open_drop_c": "Mindesttemperaturverlust einer Türöffnung",
           "light_output_hysteresis_percent": "Hysterese der automatischen Lichtausgabe"
         },
-        "description": "Alle erforderlichen Einstellungen haben Standardwerte. Während einer Sitzung sind Solltemperatur, Verteilung der Steigerung und Endtemperatur änderbar; Heizsperren und laufende Fristen bleiben wirksam. Andere Einstellungen gelten erst für die nächste Sitzung."
+        "description": "Dauerparameter sind nach Ende der Sitzung änderbar. Aktuelle Solltemperatur und Programmwahl bleiben in der Steuerungsansicht."
       },
       "logging": {
         "title": "Protokollierung",

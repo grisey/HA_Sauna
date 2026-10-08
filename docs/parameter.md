@@ -32,10 +32,11 @@ Einstellwerte und bleiben im jeweiligen Fachmodul.
 
 Die Konfiguration einer Sauna ist die gemeinsame Quelle für Einrichtungsdialog,
 Home-Assistant-Entitäten und Saunapanel. Eingaben werden vor dem Speichern auf
-ihre zulässigen Werte und Zusammenhänge geprüft. Während einer Sitzung bleibt
-die aktuelle Temperaturwahl anpassbar. Administratoren können außerdem
-Protokollstufe und Darstellung ändern. Die technische Konfiguration und der
-Programmkatalog werden nach Sitzungsende bearbeitet.
+ihre zulässigen Werte und Zusammenhänge geprüft. Die Einstellungen enthalten
+dauerhafte Vorgaben. Die Temperaturwahl für die Sitzung erfolgt in der
+Steuerungsansicht und bleibt dort während der Sitzung anpassbar. Administratoren
+können außerdem Protokollstufe und Darstellung ändern. Die technische
+Konfiguration und der Programmkatalog werden nach Sitzungsende bearbeitet.
 
 ## Temperatur und Ofen
 

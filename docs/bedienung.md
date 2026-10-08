@@ -212,6 +212,11 @@ steht ein gespeichertes Programm oder eine konstante Solltemperatur zur Wahl.
 Änderungen werden sofort gespeichert. Diese Vorgabe gilt für den externen Start;
 der Einschaltknopf in der Steuerungsansicht verwendet deren aktuelle Temperaturwahl.
 
+Die technischen Parametereinstellungen und der Home-Assistant-Optionsdialog
+enthalten Dauerparameter. Änderungen daran sind nach Ende der Sitzung möglich.
+Aktuelle Solltemperatur und Programmwahl gehören zur Steuerungsansicht;
+technische Änderungen erhalten diese Werte.
+
 Kleine Info-Schalter neben den Feldbezeichnungen öffnen die zugehörige Erklärung.
 Erneutes Betätigen, ein Klick außerhalb oder Escape schließt sie.
 
