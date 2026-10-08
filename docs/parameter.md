@@ -16,7 +16,11 @@ Standardrücksetzung. Gespeicherte Nutzerwerte bleiben maßgeblich.
 `instance` führt die allgemeinen Vorgaben. `setup` benennt abweichende Vorgaben
 für eine neue Einrichtung: Tasterbedienung und progressive Temperaturfolge.
 Eine Standardrücksetzung verwendet die allgemeinen Instanzvorgaben. Die
-historische Interpretation alter Optionen ist davon getrennt: Ohne gespeicherten
+Tastertemperatur beträgt ohne eigene gespeicherte Vorgabe konstant 90 °C und
+ist unabhängig von der aktuellen Solltemperatur. Eine Programmauswahl und eigene
+Einzelstufen sind optionale Wahlzustände und keine eigenständigen Standardwerte.
+Die Grundfarben besitzen konkrete Vorgaben; gespeicherte Farben behalten Vorrang.
+Die historische Interpretation alter Optionen ist davon getrennt: Ohne gespeicherten
 Programmmodus bleibt eine alte Konfiguration ohne Endtemperatur konstant.
 `legacy_parameters` enthält eingefrorene Metadaten alter Schlüssel ausschließlich
 für Lesekompatibilität und den Referenzadapter; sie sind keine aktuellen
@@ -45,12 +49,12 @@ eine entsprechend übernommene Untergrenze erhalten bleiben.
 | --- | --- | --- |
 | Mindesttemperatur der Sauna | 60 °C | Untergrenze für Sollwerte und Schnellauswahl |
 | Solltemperatur | 80 °C | Eine direkte Wahl legt eine konstante Solltemperatur fest. |
-| Temperaturreserve | 5 °C | Aufschlag auf die Solltemperatur zur oberen Regeltemperatur |
-| Schaltabstand der Temperaturregelung | 3 °C | Abstand unter der oberen Regeltemperatur, ab dem erneutes Heizen zulässig ist |
+| Temperaturaufschlag für die Heizungsabschaltung | 5 °C | Aufschlag auf die Solltemperatur zur regulären oberen Abschaltgrenze; bei 80 °C Soll ergibt sich 85 °C. |
+| Schaltabstand der Temperaturregelung | 1 °C | Abstand unter der oberen Regeltemperatur, ab dem erneutes Heizen zulässig ist |
 | Heizpause nach Temperaturabschaltung | 5 min | Wartezeit nach einer regulären Abschaltung an der oberen Regeltemperatur; 0 ermöglicht den unmittelbaren weiteren Regelablauf. |
 | Mindestheizzeit nach dem Einschalten | 10 min | Mindestdauer eines tatsächlich begonnenen Heizintervalls im regulären Thermostatbetrieb; 0 gibt kurze Intervalle frei. |
 
-Die Sauna gilt ab Erreichen der Solltemperatur als bereit. Die Temperaturreserve
+Die Sauna gilt ab Erreichen der Solltemperatur als bereit. Der Temperaturaufschlag
 bestimmt die höhere Regeltemperatur des Ofens. Ausschalten, technische
 Schutzabschaltungen und Ofenkühlung haben Vorrang vor der Mindestheizzeit.
 
@@ -61,28 +65,32 @@ Schutzabschaltungen und Ofenkühlung haben Vorrang vor der Mindestheizzeit.
 Die Einstellung **Verteilung der Steigerung** bestimmt die Zahl der
 Temperaturstufen einer gleichmäßigen Folge. Die Standardvorgabe führt von
 80 auf 95 °C über vier Stufen: 80 → 85 → 90 → 95 °C. Nach jedem beendeten,
-durch Aufguss bestätigten Gang folgt die nächste Stufe. Die letzte Temperatur
+bestätigten Gang folgt die nächste Stufe. Die Bestätigung richtet sich nach der
+gewählten Präsenzquelle gemäß [Gangmodell](gangmodell.md). Die letzte Temperatur
 gilt anschließend für weitere Gänge.
 
 Bei **Einzelne Stufen** erhält jede Stufe eine eigene Temperatur. Die Folge
 kann dabei steigen oder fallen. Ihre Länge bestimmt die Stufenzahl;
 erster und letzter Wert ergeben Start und Ende. Zulässig sind 1 bis 20 Stufen.
+Solltemperaturen und berechnete Zwischenstufen werden auf ganze Grad gerundet;
+ab einem halben Grad wird aufgerundet. Die Steuerung verwendet diese gerundeten
+Werte.
 
 Die Programmbibliothek enthält diese anpassbaren Vorlagen:
 
 | Programm | Temperaturfolge |
 | --- | --- |
 | Genusszeit | 80 → 85 → 90 °C |
-| Gipfelstürmer | 84 → 92 → 100 °C |
-| Ewigkeit | 80 → 84 → 88 → 92 → 96 °C |
+| Ewigkeit | 80 → 83 → 86 → 89 → 92 °C |
 | Liegewiese | 75 → 80 → 85 °C |
-| Höhenwanderung | 90 → 95 → 100 °C |
 | Schnellstarter | 70 → 90 °C |
+| Gipfelstürmer | 84 → 92 → 100 °C |
+| Höhenwanderung | 88 → 91 → 95 → 98 °C |
 
 Gespeicherte Programme besitzen eine feste Kennung. Umbenennen und Sortieren
 erhalten die Zuordnung einer gewählten Programm- oder Tastervorgabe. Die
 Tastervorgabe verwendet ein benanntes Programm oder eine gesondert gespeicherte
-konstante Temperatur, standardmäßig 80 °C.
+konstante Temperatur, standardmäßig 90 °C.
 
 ## Betrieb und Kühlung
 
@@ -96,6 +104,7 @@ konstante Temperatur, standardmäßig 80 °C.
 | Halbwertszeit der Ofenkühlung | 15 min | Alter, nach dem sich das Gewicht eines Heiz- oder Bereitschaftsabschnitts halbiert |
 | Heizminuten je Bereitschaftsminute | 2 | Eine gewichtete Bereitschaftsminute gleicht zwei gewichtete Heizminuten aus. |
 | Höchstdauer manueller Übersteuerungen | 10 min | Dauer vorübergehender Ofen- und Lichtübersteuerungen in Automatik; feste Obergrenze 10 min. Ein passender Programm-, Phasen- oder Schaltwechsel kann sie früher beenden. |
+| Erinnerung vor Ablauf des Ofentimers | 30 min | Vorwarnung vor dem geschätzten Ablauf; 0 deaktiviert sie. |
 | Langdruckdauer des Saunatasters | 2 s | Dauer, nach der ein bei laufendem Betrieb begonnener Binärtasterdruck die Sitzung beendet |
 
 Die Ofenkühlung berechnet ihre Dauer beim tatsächlichen Kühlbeginn. Ihre Uhr
@@ -108,6 +117,11 @@ entsprechen.
 Die Betriebsart **Manuell** bleibt bis zu einem Betriebsartwechsel gewählt.
 Die Höchstdauer in der Tabelle gilt für vorübergehende Übersteuerungen des
 Automatikbetriebs; Ofen- und Lichtwahl in Manuell bleiben unbefristet.
+
+Die Ofentimer-Vorwarnung verwendet bei Neueinrichtung und Standardrücksetzung
+30 Minuten. `0` deaktiviert die Warnung ausdrücklich. Bei gespeicherten älteren
+Konfigurationen bleibt ein fehlender Warnschlüssel oder früheres `null` beim
+Laden als `0` deaktiviert. Gespeicherte Minutenwerte bleiben erhalten.
 
 Für `manual_override_minutes` sind positive Werte bis einschließlich 10 Minuten
 zulässig, auch Bruchteile. Neue Eingaben über Einrichtung, Optionsformular oder
@@ -125,12 +139,11 @@ Laufzeit. Wirksame Konfiguration, Parameteranzeige und Serialisierung über
 erhalten.
 
 Die zwölfminütige Aufgussbestätigungsfrist gehört ausschließlich zum
-Proxyverfahren. Eine später eingerichtete direkte Präsenzführung benötigt
-diese Proxyfrist nicht.
+Proxyverfahren. Bei direkter Präsenzführung gilt diese Proxyfrist nicht.
 
 [Tastergesten und Lichtnachlauf](betrieb.md#bedienhandlungen-und-betriebsart) ·
 [Gangbestätigung](gangmodell.md#beginn-und-bestätigung) ·
-[Direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
+[Direkte Präsenzführung](gangmodell.md#direkter-präsenzsensor)
 
 ## Licht
 
@@ -138,12 +151,12 @@ diese Proxyfrist nicht.
 | --- | --- | --- |
 | Referenztemperatur für das Licht | 30 °C | Kaltpunkt der temperaturabhängigen Lichtkurve |
 | Grundhelligkeit | 5 % | Helligkeit am Kaltpunkt |
-| Lichthelligkeit tagsüber | 40 % | Tageswert der Normalhelligkeit |
-| Lichthelligkeit nachts | 25 % | Nachtwert der Normalhelligkeit |
-| Lichthelligkeit zu Beginn der Ofenkühlung | 15 % | Ausgangswert der Lichtkurve während der Ofenkühlung |
+| Lichthelligkeit tagsüber | 45 % | Tageswert der Normalhelligkeit |
+| Lichthelligkeit nachts | 30 % | Nachtwert der Normalhelligkeit |
+| Lichthelligkeit zu Beginn der Ofenkühlung | 10 % | Ausgangswert der Lichtkurve während der Ofenkühlung |
 | Helligkeit für „Hell“ und Lichtnachlauf | 50 % | Vorgabe für die Stufe **Hell** und den Lichtnachlauf beim Ausschalten |
 | Dauer des Lichtübergangs | 30 s | Dauer eines automatischen Helligkeitswechsels; 0 bewirkt einen unmittelbaren Wechsel. |
-| Schaltabstand der Lichtausgabe | 0,1 Prozentpunkte | Zusätzlicher Abstand hinter der halben Prozentgrenze für automatische Stellwertwechsel; 0 deaktiviert das Band. |
+| Hysterese der automatischen Lichtausgabe | 0,1 Prozentpunkte | Zusätzlicher Abstand hinter der halben Prozentgrenze für automatische Stellwertwechsel; 50 % bleiben bis 50,6 % erhalten. 0 deaktiviert das Band. Manuelle Lichtwahl und fälliges Ausschalten umgehen es. |
 | Helligkeitsskala des Lichtgeräts | 255 | Technische Auflösung für die Zuordnung eigener Rückmeldungen |
 
 Beim Aufheizen steigt das Licht vom Kaltpunkt zur Normalhelligkeit. Während der

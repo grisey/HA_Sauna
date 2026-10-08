@@ -20,9 +20,9 @@ from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
 from .temporary_door_heat import TemporaryDoorHeatState
 from .temporary_door_heat import advance as advance_door_heat
-from .timeline import Event, Kind, apply, utc
+from .timeline import Confirmation, Door, Event, Kind, apply, utc
 
-GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
+GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION, Kind.PRESENCE_CONFIRMED)
 PROGRAM_MODES = frozenset(("constant", "progressive"))
 CONTROL_MODES = frozenset(("automatic", "manual"))
 
@@ -46,11 +46,18 @@ class Controller:
         control_mode: str = instance_default("control_mode"),
         temperature_steps: tuple[float, ...] | None = None,
         decision_clock: Callable[[], datetime] | None = None,
+        presence_source: str = "proxy",
+        presence_entity: str | None = None,
     ) -> None:
         if program_mode not in PROGRAM_MODES:
             raise ValueError("Ungültiger Temperaturprogrammmodus")
         if control_mode not in CONTROL_MODES:
             raise ValueError("Ungültiger Betriebsmodus")
+        if presence_source not in ("proxy", "ha_presence"):
+            raise ValueError("Ungültige Präsenzquelle")
+        self.presence_source = presence_source
+        self.presence_entity = presence_entity
+        self.direct_presence = None
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
@@ -76,7 +83,7 @@ class Controller:
         # sind absichtlich getrennt: eine Bedienung darf die Regelgrundlage
         # nicht umschreiben.
         self.automatic_decision: thermostat.Decision | None = None
-        self.heater_override: bool | None = None
+        self.heater_override: bool | None = False if control_mode == "manual" else None
         self._override_snapshot: tuple[tuple[str | None, str], tuple[bool]] | None = (
             None
         )
@@ -182,7 +189,10 @@ class Controller:
             raise ValueError(
                 "Der Betriebsmodus kann nur ohne laufende Session geändert werden"
             )
+        if self.control_mode == control_mode:
+            return
         self.control_mode = control_mode
+        self._clear_heater_override()
         if control_mode == "manual":
             self.light_after_run = None
 
@@ -387,7 +397,7 @@ class Controller:
             or self.inhibits
             or (
                 session.timeline.active is not None
-                and session.timeline.active.infusion_events
+                and session.timeline.active.confirmation == Confirmation.CONFIRMED
             )
             or session.after_run is not None
             or isinstance(temperature, bool)
@@ -769,7 +779,8 @@ class Controller:
                 event_id=event.event_id,
                 door_open=event.kind == Kind.DOOR_OPEN,
                 enabled=(previous.operation_enabled and observed_enabled and context_current
-                         and self.control_mode == "automatic"),
+                         and self.control_mode == "automatic"
+                         and self.presence_source == "proxy"),
                 gang_active=previous.timeline.active is not None,
                 cooling=previous.after_run is not None or observed_blocked == "after_run",
             )
@@ -805,6 +816,11 @@ class Controller:
                 # A catch-up sample may be old enough to match, but cannot
                 # start a gang after its real confirmation opportunity ended.
                 blocked = "entry_context_expired"
+        if self.presence_source == "ha_presence" and (
+            event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
+            or (event.kind == Kind.INFUSION and previous.timeline.active is None)
+        ):
+            blocked = "direct_presence_leads"
         if blocked:
             self._session = replace(
                 previous,
@@ -816,6 +832,7 @@ class Controller:
             return Result(self._session, False, blocked, event.event_id)
         timeline = apply(previous.timeline, event)
         if (event.kind == Kind.DOOR_CLOSE
+                and previous.timeline.active is None
                 and not self._gang_anchor_allowed_at(event.effective_at)):
             # Preserve the observed closure, but a cold/invalid closure cannot
             # later lend its time to a warm gang or weak-person opportunity.
@@ -834,14 +851,14 @@ class Controller:
         # old temperature sample.
         if (
             active is not None
-            and active.infusion_events
+            and active.confirmation == Confirmation.CONFIRMED
             and (
                 previous.timeline.active is None
-                or not previous.timeline.active.infusion_events
+                or previous.timeline.active.confirmation == Confirmation.PROVISIONAL
             )
         ):
             self._clear_readiness()
-        if active is None or active.infusion_events:
+        if active is None or active.confirmation == Confirmation.CONFIRMED:
             self._cancel("confirmation")
         elif previous.timeline.active is None:
             self._schedule(
@@ -852,7 +869,7 @@ class Controller:
             )
         if (
             len(timeline.completed) > len(previous.timeline.completed)
-            and timeline.completed[-1].infusion_events
+            and timeline.completed[-1].confirmation == Confirmation.CONFIRMED
             and self.control_mode == "automatic"
             and event.kind != Kind.OPERATION_OFF
         ):
@@ -885,6 +902,8 @@ class Controller:
         if session is None or not session.operation_enabled:
             return False
         active = session.timeline.active
+        if self.presence_source == "ha_presence":
+            return kind == Kind.INFUSION and active is not None
         if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK):
             if active is not None:
                 return False
@@ -1162,7 +1181,9 @@ class Controller:
         return (decision.heat,) if decision else (False,)
 
     def _clear_heater_override(self):
-        self.heater_override = None
+        # Manual operation has an explicit OFF selection, never an automatic
+        # demand to inherit from the preceding session or operating mode.
+        self.heater_override = False if self.control_mode == "manual" else None
         if self._session is not None:
             self._cancel("manual_override")
         self._override_snapshot = None
@@ -1224,7 +1245,12 @@ class Controller:
     def regulation_inputs(self):
         session = self._session
         return ControlInputs(
-            gang_heat_demand=bool(session and session.timeline.active),
+            gang_heat_demand=bool(
+                session and session.timeline.active
+                and (self.presence_source == "proxy" or (
+                    self.direct_presence is not None and self.direct_presence.available
+                ))
+            ),
             temporary_door_heat=self._door_request_pending,
             # A live cooling phase keeps priority even if contradictory gang
             # evidence arrives.  Timeline/projection remains observational.
@@ -1275,7 +1301,63 @@ class Controller:
         self._session = replace(session, thermostat=state)
         return decision
 
+    def observe_direct_presence(self, report, at):
+        """Use only the selected entity; absence alone never finishes a round."""
+        if (self.presence_source != "ha_presence"
+                or report.source != self.presence_entity
+                or report.assertion != "direct_presence"):
+            return False
+        previous = self.direct_presence
+        if previous is not None and (
+            report.report_id == previous.report_id
+            or report.effective_at < previous.effective_at
+        ):
+            return False
+        self.advance(at, evaluate=False)
+        self.direct_presence = report
+        self._evaluate(at)
+        return True
+
+    def _reconcile_direct_presence(self, at):
+        """A complete opening/closure and a matching presence change form one act.
+
+        No waiting duration is invented. An unavailable report never establishes
+        an exit. A used door cycle cannot start or end another round.
+        """
+        session, report = self._session, self.direct_presence
+        if (self.presence_source != "ha_presence" or session is None
+                or not session.operation_enabled or report is None
+                or not report.available or report.received_at > self._received_at(at)):
+            return False
+        t = session.timeline
+        if (t.door != Door.CLOSED or t.closed_opening is None or t.anchor is None
+                or t.anchor.event_id == t.resolved_presence_close_id
+                or report.effective_at < t.closed_opening.effective_at
+                or self.recognition_context_at(t.closed_opening.effective_at)[1] is not None
+                or not self._recognition_context_current(t.closed_opening.effective_at)):
+            return False
+        if t.active is None:
+            if (report.occupancy != "present" or self._gang_start_blocked(session)
+                    or not self._gang_anchor_allowed_at(t.anchor.effective_at)):
+                return False
+            kind = Kind.PRESENCE_CONFIRMED
+        else:
+            if (report.occupancy != "absent"
+                    or t.closed_opening.effective_at <= t.active.started_at):
+                return False
+            kind = Kind.PRESENCE_ENDED
+        effective = max(t.anchor.effective_at, report.effective_at)
+        if effective > at:
+            return False
+        self.process(Event(
+            f"{kind.value}:{t.anchor.event_id}:{report.report_id}", session.session_id,
+            kind, effective, self._received_at(at), at,
+        ))
+        return True
+
     def _evaluate(self, at, *, preserve_override=False, decision_session_id=None):
+        if self._reconcile_direct_presence(at):
+            return self.last_decision
         created_at = (
             utc(self._decision_clock()) if self._decision_clock is not None
             else self._received_at(at)
@@ -1519,7 +1601,7 @@ class Controller:
             if (
                 active is not None
                 and active.gang_id == deadline.token
-                and not active.infusion_events
+                and active.confirmation == Confirmation.PROVISIONAL
             ):
                 event = Event(
                     f"deadline:{deadline.token}",

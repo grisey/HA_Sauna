@@ -582,13 +582,13 @@ async def async_set_temperature_steps(hass, entry, values):
             raise ConfigurationLocked(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
             )
-        steps = validate_temperature_steps(values, "temperature_steps")
         maximum = int(BY_KEY["temperature_gangs"].maximum)
         minimum = runtime.configuration.parameters.minimum_for("target_temperature_c")
-        if len(steps) > maximum or any(
-            step < minimum or step > BY_KEY["target_temperature_c"].maximum
-            for step in steps
-        ):
+        steps = validate_temperature_steps(
+            values, "temperature_steps", minimum_c=minimum,
+            maximum_c=BY_KEY["target_temperature_c"].maximum,
+        )
+        if len(steps) > maximum:
             raise ParameterError("base", "invalid_parameters")
         parameters = Parameters(
             {
@@ -623,7 +623,10 @@ async def async_set_control_mode(hass, entry, mode):
             )
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
+        previous_mode = runtime.controller.control_mode
         runtime.controller.set_control_mode(mode)
+        if previous_mode != mode and runtime.device:
+            runtime.device.set_light_override(0 if mode == "manual" else None)
         configuration = replace(runtime.configuration, control_mode=mode)
         runtime.configuration = configuration
         hass.config_entries.async_update_entry(

@@ -221,6 +221,13 @@ def validate_catalog(catalog):
             "temperature_dial_step_c",
             "warmup_minutes_step",
             "settings_subgroups",
+            "control_button_height_px",
+            "primary_action_height_px",
+            "control_radius_px",
+            "surface_radius_px",
+            "surface_gap_px",
+            "surface_padding_px",
+            "control_group_gap_px",
         },
         "frontend",
     )
@@ -278,7 +285,7 @@ def validate_catalog(catalog):
             for name in ("allow_zero", "optional", "integer", "expert"):
                 if not isinstance(spec[name], bool):
                     raise ValueError(f"defaults.json: invalid {key}.{name}")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
-            if spec["optional"] != (key == "mechanical_timer_warning_minutes"):
+            if spec["optional"]:
                 raise ValueError(
                     f"defaults.json: invalid optional consumer value {key}"
                 )
@@ -301,8 +308,7 @@ def validate_catalog(catalog):
                     raise ValueError(f"defaults.json: invalid input step for {key}")
             value = spec["default"]
             if value is None:
-                if not spec["optional"]:
-                    raise ValueError(f"defaults.json: missing default for {key}")
+                raise ValueError(f"defaults.json: missing default for {key}")
             else:
                 _number(value, key)
                 if spec["unit"] == "min":
@@ -344,8 +350,6 @@ def validate_catalog(catalog):
         *choices,
         "button_event_type",
         "button_program",
-        "selected_program_id",
-        "temperature_steps",
         "button_temperature_c",
     }:
         raise ValueError("defaults.json: invalid instance defaults")
@@ -392,31 +396,18 @@ def validate_catalog(catalog):
             raise ValueError("defaults.json: invalid program distribution")
     if instance["button_program"] not in {"constant", *program_ids}:
         raise ValueError("defaults.json: invalid button program")
-    if instance["selected_program_id"] not in {None, *program_ids}:
-        raise ValueError("defaults.json: invalid selected program")
     if not isinstance(instance["button_event_type"], str):
         raise ValueError("defaults.json: invalid button event type")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
     button_temperature = instance["button_temperature_c"]
-    if button_temperature is not None and not (
+    if isinstance(button_temperature, dict):
+        if button_temperature != {"parameter": "target_temperature_c"}:
+            raise ValueError("defaults.json: invalid button temperature")
+    elif not (
         values["sauna_min_temperature_c"]
         <= _number(button_temperature, "button_temperature_c")
         <= definitions["target_temperature_c"]["maximum"]
     ):
-        raise ValueError("defaults.json: invalid button temperature")
-    steps = instance["temperature_steps"]
-    if steps is not None:
-        if (
-            not isinstance(steps, list)
-            or not 1 <= len(steps) <= definitions["temperature_gangs"]["maximum"]
-        ):
-            raise ValueError("defaults.json: invalid temperature steps")
-        for temperature in steps:
-            if (
-                not values["sauna_min_temperature_c"]
-                <= _number(temperature, "temperature_steps")
-                <= definitions["target_temperature_c"]["maximum"]
-            ):
-                raise ValueError("defaults.json: invalid temperature step")
+        raise ValueError("defaults.json: button temperature outside temperature bounds")
     appearance = catalog["appearance"]
     _object(appearance, {"colors", "scales", "precision"}, "appearance")
     _object(appearance["precision"], {"absolute_humidity", "energy"}, "precision")
@@ -446,7 +437,7 @@ def validate_catalog(catalog):
             if key in color
         ):
             raise ValueError("defaults.json: invalid appearance role flag")
-        if color["default"] is not None and (
+        if (
             not isinstance(color["default"], str)
             or re.fullmatch(r"#[0-9a-fA-F]{6}", color["default"]) is None
         ):
@@ -499,11 +490,21 @@ def section(name):
     return deepcopy(_CATALOG[name])
 
 
-def instance_default(key, *, setup=False):
-    """Resolve the documented setup override or the normal instance default."""
+def instance_default(key, *, setup=False, parameters=None):
+    """Resolve a setup override, scalar value or explicit parameter reference."""
     values = (
         _CATALOG["setup"]
         if setup and key in _CATALOG["setup"]
         else _CATALOG["instance"]
     )
-    return deepcopy(values[key])
+    value = values[key]
+    if isinstance(value, dict) and "parameter" in value:
+        parameter = value["parameter"]
+        if parameters is not None and parameter in parameters:
+            return deepcopy(parameters[parameter])
+        return next(
+            deepcopy(spec["default"])
+            for spec in _CATALOG["parameters"]
+            if spec["key"] == parameter
+        )
+    return deepcopy(value)

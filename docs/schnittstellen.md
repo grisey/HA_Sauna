@@ -24,8 +24,9 @@ zurück und meldet `unknown`. Beobachtete Abwesenheit wird durch `absent`
 ausgedrückt. Eine Rücknahme gehört zu ihrem ursprünglichen Beleg; eine jüngere
 Präsenzmeldung mit anderer Referenz bleibt eigenständig.
 
-Die Proxyquelle führt die Gangzuordnung. Direkte Präsenzmeldungen werden mit
-ihrem eigenen Herkunfts- und Verfügbarkeitsnachweis beobachtet.
+Die konfigurierte Quelle führt die Gangzuordnung. Direkte Präsenzmeldungen
+tragen ihren eigenen Herkunfts- und Verfügbarkeitsnachweis. Bei `ha_presence`
+verbindet der Controller diese Meldungen mit vollständigen Türevents.
 
 [Präsenzquellen](praesenz-ofen-phasen.md#präsenzquellen-im-aktuellen-programm)
 

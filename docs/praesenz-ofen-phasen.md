@@ -11,11 +11,14 @@ Im Automatikbetrieb gilt folgende Reihenfolge:
 1. Technischer Schutz, fehlende Heizfreigabe oder Betrieb-AUS fordern Ofen-AUS an.
 2. Angeforderte oder laufende Ofenkühlung fordert Ofen-AUS an.
 3. Ein aktuell aktiver Gang fordert durchgehend Heizen an.
-4. Eine geeignete Türschließung kann die Mindestheizhilfe auslösen.
+4. Im Proxybetrieb kann eine geeignete Türschließung die Mindestheizhilfe auslösen.
 5. Der Thermostat regelt anhand von Temperatur, Mindestheizzeit und Heizpause.
 
-Die Ganganforderung gilt ab der vorläufigen Erkennung und bleibt nach dem ersten
-Aufguss bestehen.
+Im Proxyverfahren gilt die Ganganforderung ab der vorläufigen Erkennung und
+bleibt nach dem ersten Aufguss bestehen. Bei direkter Präsenz gilt sie ab dem
+durch Türvorgang und Anwesenheit bestätigten Gang; bei Ausfall der gewählten
+Präsenzquelle entfällt diese zusätzliche Anforderung. Der Gang selbst bleibt
+bis zu einem belegten Abschluss erhalten ([Gangmodell](gangmodell.md)).
 
 [Kühlablauf](ofenkuehlung.md)
 
@@ -70,27 +73,13 @@ Kühldauer wird beim tatsächlichen Kühlbeginn gespeichert.
 
 ## Präsenzquellen im aktuellen Programm
 
-Die aus Temperatur und Feuchte abgeleiteten Personensignale führen die
-Gangzuordnung. Eine zusätzlich eingerichtete direkte Präsenzquelle dient
-ausschließlich der Beobachtung. Der Controller bleibt für Gangführung und
-Aktorbefehle zuständig. Die Gerätezuordnung bietet außerdem ein
-Audioziel als vorbereitete Bindung für eine spätere Ausgabe.
+`proxy` verwendet die bisherigen Temperatur-/Feuchtesignale. `ha_presence`
+verknüpft die ausgewählte direkte Präsenzquelle mit vollständigen Türevents.
+Die verbindlichen Übergänge stehen im [Gangmodell](gangmodell.md#direkter-präsenzsensor).
+Direkte Präsenz ersetzt die Proxy-Gangführung und die Tür-Mindestheizhilfe.
+Aufgüsse bleiben eigenständige Ereignisse und bestätigen einen bereits direkt
+bestätigten Gang nicht erneut.
 
-[Beobachtungsverträge](schnittstellen.md#präsenz-und-verbraucherereignisse)
-
-### Erweiterungsvertrag für direkte Präsenzführung
-
-Die konkrete Gangführung aus direkter Präsenz entsteht erst nach Prüfung der
-Sensorposition und des realen Sensorverhaltens. Eine einzelne Erkennung löst
-nicht unmittelbar einen Saunagang aus. Beginn, Unterbrechung, Ende und
-Quellausfall sind für eine spätere Aktivierung gemeinsam festzulegen;
-der heutige Pfad bleibt beobachtend.
-
-Die spätere direkte Quelle soll die Gangzuordnung allein führen und die Türhilfe
-vollständig ersetzen. Das ist ein Erweiterungsziel; die konkrete Start- und
-Endauswertung ist noch offen. Die zwölfminütige Aufgussbestätigungsfrist gehört
-zum aktuellen Proxyverfahren und wird bei direkter Präsenzführung nicht benötigt.
-Die spätere Präsenzkopplung der Lüftungsbestätigung bleibt bis zu den Sensortests
-unkonkretisiert. Der Controller bleibt für Aktorbefehle zuständig.
-
-[Gangführung und Lüftungsbestätigung](gangmodell.md#beginn-und-bestätigung)
+Ein Quellausfall nimmt die zusätzliche Ganganforderung zurück, ohne eine
+Abwesenheit oder einen Gangabschluss zu erfinden. Reguläre Thermostatsteuerung,
+Ofenkühlung, explizite Bedienung und technische Schutzregeln bleiben wirksam.

@@ -35,7 +35,9 @@ class ManualModeTests(unittest.TestCase):
 
     def test_manual_mode_never_starts_thermostat_without_a_demand(self):
         controller = self.controller()
+        self.assertIs(controller.heater_override, False)
         self.start(controller)
+        self.assertIs(controller.heater_override, False)
         self.assertEqual(controller.phase, "manuell")
         self.assertFalse(controller.last_decision.heat)
         self.assertEqual(controller.last_decision.reason, "manual_mode")
@@ -45,6 +47,25 @@ class ManualModeTests(unittest.TestCase):
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
         self.assertEqual(phase_timer(controller, at(0))["kind"], "manual")
+
+    def test_mode_change_starts_off_and_return_releases_the_manual_selection(self):
+        controller = Controller(parameters())
+        controller.set_control_mode("manual")
+        self.assertIs(controller.heater_override, False)
+        self.start(controller)
+        controller.set_heater_override(True, at(1))
+        for mode in ("manual", "automatic"):
+            with self.assertRaisesRegex(ValueError, "laufende Session"):
+                controller.set_control_mode(mode)
+            self.assertIs(controller.heater_override, True)
+            self.assertEqual(controller.control_mode, "manual")
+        controller.set_operation(False, at(2))
+        self.assertIs(controller.heater_override, False)
+        controller.finish_session(at(3), light_after_run=False)
+        controller.set_control_mode("automatic")
+        self.assertIsNone(controller.heater_override)
+        controller.set_control_mode("manual")
+        self.assertIs(controller.heater_override, False)
 
     def test_explicit_demand_survives_normal_gang_changes(self):
         controller = self.controller()
@@ -131,7 +152,7 @@ class ManualModeTests(unittest.TestCase):
         controller.advance(at(66))
 
         self.assertEqual(controller.phase, "saunagang")
-        self.assertIsNone(controller.heater_override)
+        self.assertIs(controller.heater_override, False)
         self.assertFalse(controller.last_decision.heat)
 
     def test_finish_session_can_defer_then_start_light(self):

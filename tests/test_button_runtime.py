@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 from custom_components.ha_sauna.bindings import ROLES, Bindings
+from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -377,12 +378,25 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.controller.target_temperature, 74)
         self.assertEqual(self.runtime.configuration.button_temperature_c, 74)
 
+    def test_button_start_uses_the_independent_factory_constant_temperature(self):
+        self.runtime = SaunaRuntime(
+            Configuration(Bindings(bindings()), Parameters({"target_temperature_c": 74})),
+            lambda: self.now,
+        )
+        self._event("short")
+        self.assertEqual(self.runtime.controller.program_mode, "constant")
+        self.assertEqual(
+            self.runtime.controller.target_temperature,
+            instance_default("button_temperature_c"),
+        )
+
     def test_button_start_uses_the_selected_named_program(self):
+        program = self.runtime.configuration.temperature_programs[-1]
         self.runtime = SaunaRuntime(
             Configuration(
                 Bindings(bindings()),
                 Parameters({"target_temperature_c": 70}),
-                button_program="gipfelstuermer",
+                button_program=program.id,
             ),
             lambda: self.now,
         )
@@ -390,7 +404,7 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("short")
 
         self.assertEqual(self.runtime.controller.program_mode, "progressive")
-        self.assertEqual(self.runtime.controller.target_temperature, 84)
+        self.assertEqual(self.runtime.controller.target_temperature, program.start_c)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Idempotente Fachereignisse; keine Musik- oder Aktorausgabe."""
 from .contracts import ConsumerEvent
+from .timeline import Kind
 
 
 def gang_changes(before, after, received_at):
@@ -23,10 +24,14 @@ def gang_changes(before, after, received_at):
             if gang.started_at < gang.detected_at:
                 emit("phase_corrected", gang, gang.started_at, gang.detected_at,
                      gang.recognition_event_id, "archive_correction")
+        direct = gang.recognition_kind == Kind.PRESENCE_CONFIRMED
+        if direct and previous is None:
+            emit("gang_confirmed", gang, gang.started_at, gang.detected_at,
+                 gang.recognition_event_id)
         previous_infusions = {e.event_id for e in previous.infusion_events} if previous else set()
         for event in gang.infusion_events:
             if event.event_id not in previous_infusions:
-                if event == gang.infusion_events[0]:
+                if event == gang.infusion_events[0] and not direct:
                     emit("gang_confirmed", gang, event.effective_at, event.detected_at, event.event_id)
                 emit("infusion", gang, event.effective_at, event.detected_at, event.event_id)
         if gang.ended_at is not None and (previous is None or previous.ended_at is None):

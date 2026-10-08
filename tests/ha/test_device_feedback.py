@@ -186,13 +186,15 @@ class DeviceFeedbackTests(unittest.TestCase):
     def test_same_time_start_does_not_take_a_later_temperature_before_its_input(self):
         async def exercise():
             runtime, adapter, clock = self.detection_device()
-            adapter.ingest("upper_temperature", state("79.99", unit="°C"), T0, initial=True)
+            target = runtime.configuration.button_temperature_c
+            below, above = target - .01, target + .01
+            adapter.ingest("upper_temperature", state(str(below), unit="°C"), T0, initial=True)
             adapter.refresh(T0)
             await runtime._lock.acquire()
             clock[0] = T0 + timedelta(seconds=1)
             pending = []
-            for role, value in (("upper_temperature", 79.99), ("control_input", "on"),
-                                ("upper_temperature", 80.01), ("upper_temperature", 79.99)):
+            for role, value in (("upper_temperature", below), ("control_input", "on"),
+                                ("upper_temperature", above), ("upper_temperature", below)):
                 pending.append(asyncio.create_task(runtime.device_input(
                     self.detection_edge(runtime, role, value))))
                 await asyncio.sleep(0)
@@ -200,6 +202,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             start = runtime.controller.set_operation
 
             def operation(enabled, at, **kwargs):
+                self.assertEqual(runtime.controller.target_temperature, target)
                 result = start(enabled, at, **kwargs)
                 at_start.append((runtime.controller.temperature, runtime.session.ready_at))
                 return result
@@ -210,13 +213,23 @@ class DeviceFeedbackTests(unittest.TestCase):
             return runtime, at_start
 
         runtime, at_start = asyncio.run(exercise())
-        self.assertEqual(at_start, [(79.99, None)])
+        below = runtime.controller.target_temperature - .01
+        self.assertEqual(at_start, [(below, None)])
         self.assertEqual(runtime.session.ready_at, T0 + timedelta(seconds=1))
-        self.assertEqual(runtime.controller.temperature, 79.99)
+        self.assertEqual(runtime.controller.temperature, below)
 
     def test_blocked_humidity_rise_cannot_be_revived_after_waiting_off_service(self):
         async def exercise(queued, resumes_at, off_at=2, fresh_after_resume=False):
             runtime, adapter, clock = self.detection_device()
+            # Regular heat must stay off both before and after a physical
+            # restart; only an admitted infusion may request heat in this test.
+            cutoff = max(
+                runtime.controller.thermostat_target,
+                runtime.configuration.button_temperature_c
+                + runtime.configuration.parameters.values["readiness_offset_c"],
+            )
+            adapter.ingest("upper_temperature", state(str(cutoff), unit="°C"), T0, initial=True)
+            adapter.refresh(T0)
             runtime.controller.begin_session("admission", T0)
             calls, entered, release = [], asyncio.Event(), asyncio.Event()
 

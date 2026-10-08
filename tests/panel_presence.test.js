@@ -65,10 +65,10 @@ const panel = Object.assign(Object.create(Panel.prototype), {
 });
 const detail = panel.presenceDetails();
 assert.match(detail, /Proxy zurückgenommen; keine beobachtete Abwesenheit/);
-assert.match(detail, /Externe Präsenz \(vorbereitet\)/);
+assert.match(detail, /Präsenzsensor/);
 assert.match(detail, /Nicht verfügbar/);
 assert.match(detail, /&lt;sensor&gt;/);
-assert.match(detail, /keine Wiedergabe/);
+assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);
 assert.match(detail, /Heizanforderung im Saunagang[\s\S]*Aktiv/);
 assert.match(detail, /Temporäres Heizen nach Türschluss[\s\S]*Aktiv/);
 
@@ -213,3 +213,117 @@ console.log("presence and phase projection panel tests passed");
   console.error(error);
   process.exitCode = 1;
 });
+
+// The operational history separates observed occupancy, demand and real feedback.
+const operational = Object.assign(Object.create(Panel.prototype), {
+  state: { now: end, configuration: { bindings: { presence: "binary_sensor.demo" } } },
+  shown: {
+    session: {
+      timeline: {
+        session_id: "direct",
+        session_started_at: t,
+        processed: [],
+        completed: [],
+        active: null,
+      },
+      contactor_history: [
+        { at: t, state: true },
+        { at: end, state: false },
+      ],
+    },
+    phase_projection: { intervals: [] },
+    records: [
+      {
+        kind: "presence",
+        payload: {
+          assertion: "direct_presence",
+          source: "binary_sensor.demo",
+          occupancy: "present",
+          available: true,
+          effective_at: t,
+          received_at: t,
+        },
+      },
+      {
+        kind: "presence",
+        payload: {
+          assertion: "direct_presence",
+          source: "binary_sensor.demo",
+          occupancy: "unknown",
+          available: false,
+          effective_at: end,
+          received_at: end,
+        },
+      },
+      {
+        kind: "decision",
+        payload: { at: t, created_at: t, heat: true, reason: "gang_heat_demand" },
+      },
+      {
+        kind: "decision",
+        payload: { at: end, created_at: end, heat: false, reason: "after_run" },
+      },
+    ],
+  },
+  updateMarkup(_selector, html) {
+    this.html = html;
+  },
+});
+operational.renderControlHistory();
+assert.match(operational.html, /Betriebsverlauf/);
+assert.match(operational.html, /<th>Uhrzeit<\/th>/);
+assert.doesNotMatch(operational.html, /Beobachtet|Verarbeitet/);
+assert.match(operational.html, /<dt>Präsenzsensor<\/dt><dd>Nicht verfügbar<\/dd>/);
+assert.match(operational.html, /<dt>Heizanforderung<\/dt><dd>Aus · Ofenkühlung<\/dd>/);
+assert.match(operational.html, /<dt>Ofenschalter<\/dt><dd>Aus<\/dd>/);
+assert.doesNotMatch(operational.html, /session-chart|Temperaturkurve/);
+operational.shown.phase_projection.intervals = [
+  { started_at: t, ended_at: end, phase: "nachlauf" },
+];
+operational.renderControlHistory();
+assert.match(
+  operational.html,
+  /<dt>Ofenkühlung<\/dt><dd>Aktiv<\/dd>/,
+  "the projection cutoff does not fabricate a cooling end",
+);
+operational.state.session = operational.shown.session;
+operational.state.phase = "bereit";
+operational.renderControlHistory();
+assert.match(
+  operational.html,
+  /<dt>Ofenkühlung<\/dt><dd>Inaktiv<\/dd>/,
+  "a current phase change at the right boundary is reflected",
+);
+operational.controlHistoryCursor = Date.parse(t) + 1000;
+operational.renderControlHistory();
+assert.match(operational.html, /<dt>Präsenzsensor<\/dt><dd>Anwesend<\/dd>/);
+assert.match(operational.html, /<dt>Ofenschalter<\/dt><dd>Ein<\/dd>/);
+
+// These are the codes emitted by thermostat.evaluate and Controller._evaluate_manual.
+operational.controlHistoryCursor = null;
+for (const [reason, label] of [
+  ["temperature_reached", "Obere Regeltemperatur erreicht"],
+  ["thermostat_cooldown", "Heizpause"],
+  ["manual_mode", "Manueller Betrieb · Ofen Aus"],
+  ["temperature_configuration_required", "Temperatureinstellungen unvollständig"],
+  ["upper_temperature_unavailable", "Gültiger Regeltemperaturwert fehlt"],
+  ["protection:heater_feedback_mismatch", "Bestätigte technische Störung"],
+  ["inhibit:configuration", "Einrichtung unvollständig"],
+]) {
+  operational.shown.records = [
+    {
+      kind: "decision",
+      payload: { at: end, created_at: end, heat: false, reason },
+    },
+  ];
+  operational.renderControlHistory();
+  assert.ok(
+    operational.html.includes(`<dt>Heizanforderung</dt><dd>Aus · ${label}</dd>`),
+    `${reason} has its German label in the state at the selected time`,
+  );
+  assert.ok(
+    operational.html.includes(`>${label}</td>`),
+    `${reason} has its German label in the decision history`,
+  );
+  assert.ok(!operational.html.includes(reason), `${reason} is not shown as an ID`);
+}

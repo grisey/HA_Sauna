@@ -30,7 +30,7 @@
       "default": 12,
       "minimum": null,
       "integer": false,
-      "description": "Bestätigungsfrist der Proxyerkennung ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Bei späterer direkter Präsenzführung wird diese Proxyfrist nicht benötigt.",
+      "description": "Bestätigungsfrist der Proxyerkennung ab dem zugeordneten Gangbeginn. Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Bei direkter Präsenzführung gilt diese Proxyfrist nicht.",
       "group": "operation",
       "expert": false,
       "step": "any",
@@ -119,13 +119,13 @@
       "key": "mechanical_timer_warning_minutes",
       "label": "Erinnerung vor Ablauf des Ofentimers",
       "unit": "min",
-      "allow_zero": false,
-      "optional": true,
+      "allow_zero": true,
+      "optional": false,
       "maximum": 1000000,
-      "default": null,
+      "default": 30,
       "minimum": null,
       "integer": false,
-      "description": "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. Ein leeres Feld deaktiviert die Vorwarnung.",
+      "description": "Zeitspanne vor dem geschätzten Ablauf, zu der eine Vorwarnung erscheint. 0 deaktiviert die Vorwarnung.",
       "group": "timer",
       "expert": false,
       "step": "any",
@@ -144,7 +144,7 @@
       "default": 5,
       "minimum": null,
       "integer": false,
-      "description": "Mindestens diese Zeit bleibt der Ofen nach einem beendeten, durch Aufguss bestätigten Saunagang aus.",
+      "description": "Mindestdauer der Ofenkühlung nach einem beendeten, bestätigten Saunagang. Die Bestätigung erfolgt durch die gewählte Präsenzquelle: bei direkter Präsenz durch vollständigen Türvorgang und Anwesenheit, im Proxyverfahren durch Aufguss.",
       "group": "operation",
       "expert": false,
       "step": "any",
@@ -212,7 +212,7 @@
     },
     {
       "key": "readiness_offset_c",
-      "label": "Temperaturreserve",
+      "label": "Temperaturaufschlag für die Heizungsabschaltung",
       "unit": "°C",
       "allow_zero": true,
       "optional": false,
@@ -220,7 +220,7 @@
       "default": 5,
       "minimum": null,
       "integer": false,
-      "description": "Aufschlag auf die Solltemperatur für die obere Regeltemperatur des Ofens. Die Sauna gilt bereits ab der Solltemperatur als bereit.",
+      "description": "Aufschlag auf die Solltemperatur für die reguläre Heizungsabschaltung. Bei 80 °C Soll und 5 °C Aufschlag liegt die Abschaltgrenze bei 85 °C. Die Sauna gilt bereits ab der Solltemperatur als bereit.",
       "group": "temperature",
       "expert": false,
       "step": "any",
@@ -236,7 +236,7 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 1000000,
-      "default": 3,
+      "default": 1,
       "minimum": null,
       "integer": false,
       "description": "Die Heizung darf wieder einschalten, wenn die Temperatur um diesen Wert unter die obere Regeltemperatur fällt.",
@@ -299,8 +299,8 @@
       "description": "Solltemperatur der ersten Taste in der Übersicht.",
       "group": "display",
       "expert": false,
-      "step": "any",
-      "number_step": 0.01,
+      "step": 1,
+      "number_step": 1,
       "settings_group": "appearance",
       "order": 15,
       "settings_subgroup": null
@@ -356,8 +356,8 @@
       "description": "Gewünschte Temperatur während eines Saunagangs. Die direkte Auswahl einer Solltemperatur gilt sofort und bleibt anschließend konstant. Eine Steigerung wird separat als Programm gewählt.",
       "group": "temperature",
       "expert": false,
-      "step": "any",
-      "number_step": 0.01,
+      "step": 1,
+      "number_step": 1,
       "settings_group": "operation",
       "order": 18,
       "settings_subgroup": null
@@ -375,8 +375,8 @@
       "description": "Ziel der gleichmäßigen Temperatursteigerung. Danach gilt diese Temperatur für alle weiteren Saunagänge. Bei einer Änderung bleibt das nächste Ziel erhalten; die weitere Verteilung wird angepasst.",
       "group": "temperature_programs",
       "expert": false,
-      "step": "any",
-      "number_step": 0.01,
+      "step": 1,
+      "number_step": 1,
       "settings_group": "programs",
       "order": 20,
       "settings_subgroup": null
@@ -597,7 +597,7 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 100,
-      "default": 25,
+      "default": 30,
       "minimum": null,
       "integer": false,
       "description": "Automatische Lichthelligkeit während der Nacht.",
@@ -616,7 +616,7 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 100,
-      "default": 40,
+      "default": 45,
       "minimum": null,
       "integer": false,
       "description": "Automatische Lichthelligkeit tagsüber.",
@@ -635,7 +635,7 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 100,
-      "default": 15,
+      "default": 10,
       "minimum": null,
       "integer": false,
       "description": "Auf diesen Wert wird zu Beginn der Ofenkühlung gedimmt. Anschließend steigt die Helligkeit bis zum Ende der Ofenkühlung wieder auf das temperaturabhängige Niveau.",
@@ -1257,15 +1257,15 @@
     },
     {
       "key": "light_output_hysteresis_percent",
-      "label": "Schaltabstand der Lichtausgabe",
-      "unit": "%",
+      "label": "Hysterese der automatischen Lichtausgabe",
+      "unit": "Prozentpunkte",
       "allow_zero": true,
       "optional": false,
       "maximum": 0.49,
       "default": 0.1,
       "minimum": 0,
       "integer": false,
-      "description": "Zusätzlicher Abstand hinter der Rundungsgrenze in Prozentpunkten. Er unterdrückt wechselnde ganze Helligkeitswerte bei kleinen Temperaturschwankungen. Null deaktiviert den Schaltabstand.",
+      "description": "Zusätzlicher Abstand hinter der halben Prozentgrenze beim Runden auf ganze Helligkeitsprozente. Bei 0,1 bleibt beispielsweise 50 % bis 50,6 % erhalten. Null deaktiviert das zusätzliche Band. Manuelle Lichtwahl und fälliges Ausschalten umgehen es.",
       "group": "light",
       "expert": true,
       "step": "any",
@@ -1284,17 +1284,10 @@
       "distribution_gangs": 3
     },
     {
-      "id": "gipfelstuermer",
-      "name": "Gipfelstürmer",
-      "start_c": 84.0,
-      "end_c": 100.0,
-      "distribution_gangs": 3
-    },
-    {
       "id": "ewigkeit",
       "name": "Ewigkeit",
       "start_c": 80.0,
-      "end_c": 96.0,
+      "end_c": 92.0,
       "distribution_gangs": 5
     },
     {
@@ -1305,18 +1298,25 @@
       "distribution_gangs": 3
     },
     {
-      "id": "hoehenwanderung",
-      "name": "Höhenwanderung",
-      "start_c": 90.0,
-      "end_c": 100.0,
-      "distribution_gangs": 3
-    },
-    {
       "id": "schnellstarter",
       "name": "Schnellstarter",
       "start_c": 70.0,
       "end_c": 90.0,
       "distribution_gangs": 2
+    },
+    {
+      "id": "gipfelstuermer",
+      "name": "Gipfelstürmer",
+      "start_c": 84.0,
+      "end_c": 100.0,
+      "distribution_gangs": 3
+    },
+    {
+      "id": "hoehenwanderung",
+      "name": "Höhenwanderung",
+      "start_c": 88.0,
+      "end_c": 98.0,
+      "distribution_gangs": 4
     }
   ],
   "instance": {
@@ -1325,11 +1325,9 @@
     "button_event_type": "",
     "program_mode": "constant",
     "button_program": "constant",
-    "selected_program_id": null,
     "control_mode": "automatic",
     "presence_source": "proxy",
-    "temperature_steps": null,
-    "button_temperature_c": null
+    "button_temperature_c": 90
   },
   "setup": {
     "control_input_mode": "button",
@@ -1341,61 +1339,61 @@
         "id": "page_background",
         "label": "Seitenhintergrund",
         "group": "Grunddarstellung",
-        "default": null
+        "default": "#15181C"
       },
       {
         "id": "card_background",
         "label": "Kartenhintergrund",
         "group": "Grunddarstellung",
-        "default": null
+        "default": "#252A30"
       },
       {
         "id": "text",
         "label": "Text",
         "group": "Grunddarstellung",
-        "default": null
+        "default": "#F2F3F5"
       },
       {
         "id": "muted_text",
         "label": "Gedämpfter Text",
         "group": "Grunddarstellung",
-        "default": null
+        "default": "#B6BEC8"
       },
       {
         "id": "border",
         "label": "Rahmen",
         "group": "Grunddarstellung",
-        "default": null
+        "default": "#3C444E"
       },
       {
         "id": "focus",
         "label": "Fokus",
         "group": "Grunddarstellung",
-        "default": null
+        "default": "#DBA477"
       },
       {
         "id": "ui_accent",
         "label": "Auswahl",
         "group": "Bedienung",
-        "default": "#E58A55"
+        "default": "#A86C45"
       },
       {
         "id": "ui_command",
         "label": "Aktion",
         "group": "Bedienung",
-        "default": "#216551"
+        "default": "#A86C45"
       },
       {
         "id": "ui_danger",
         "label": "Stopp",
         "group": "Bedienung",
-        "default": "#A34029"
+        "default": "#A3453C"
       },
       {
         "id": "ui_heater_on",
         "label": "Heizung ein",
         "group": "Bedienung",
-        "default": "#D86D35"
+        "default": "#BE7646"
       },
       {
         "id": "ui_heater_off",
@@ -1443,25 +1441,25 @@
         "id": "phase_warmup",
         "label": "Aufheizen",
         "group": "Zustände und Phasen",
-        "default": "#FF9623"
+        "default": "#BE7646"
       },
       {
         "id": "phase_ready",
         "label": "Bereit",
         "group": "Zustände und Phasen",
-        "default": "#267D52"
+        "default": "#6D8C77"
       },
       {
         "id": "phase_session",
         "label": "Saunagang",
         "group": "Zustände und Phasen",
-        "default": "#A51E55"
+        "default": "#8D7564"
       },
       {
         "id": "phase_cooling",
         "label": "Ofenkühlung",
         "group": "Zustände und Phasen",
-        "default": "#3A7D9B"
+        "default": "#6BA4BF"
       },
       {
         "id": "phase_forced_cooling",
@@ -1499,14 +1497,14 @@
         "id": "series_temperature",
         "label": "Temperatur",
         "group": "Messungen und Ereignisse",
-        "default": "#FF6B4A",
+        "default": "#CD895F",
         "featured": true
       },
       {
         "id": "series_humidity",
         "label": "Luftfeuchte",
         "group": "Messungen und Ereignisse",
-        "default": "#42A5FF",
+        "default": "#6BA4BF",
         "featured": true
       },
       {
@@ -1520,7 +1518,7 @@
         "id": "event_door",
         "label": "Tür",
         "group": "Messungen und Ereignisse",
-        "default": "#FFCD50"
+        "default": "#B6A16E"
       },
       {
         "id": "event_infusion",
@@ -1581,7 +1579,7 @@
       "humidity": {
         "default": {
           "minimum": 0,
-          "maximum": 60
+          "maximum": 50
         },
         "minimum": 0,
         "maximum": 100
@@ -1594,8 +1592,8 @@
   },
   "frontend": {
     "history_cache_records": 100000,
-    "temperature_step_c": 0.5,
-    "climate_temperature_step_c": 0.1,
+    "temperature_step_c": 1,
+    "climate_temperature_step_c": 1,
     "brightness_step_percent": 1,
     "settings_groups": [
       {
@@ -1650,7 +1648,14 @@
         "id": "infusion",
         "label": "Aufguss"
       }
-    ]
+    ],
+    "control_button_height_px": 42,
+    "primary_action_height_px": 54,
+    "control_radius_px": 10,
+    "surface_radius_px": 18,
+    "surface_gap_px": 24,
+    "surface_padding_px": 20,
+    "control_group_gap_px": 6
   },
   "runtime": {
     "archive_projection_cache_entries": 16

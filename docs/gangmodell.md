@@ -3,8 +3,40 @@
 Der Ablaufkern ordnet Erkennungssignale einem Saunagang zu und führt dessen
 Bestätigung, Ende und Zählung. Die [Erkennung](erkennung.md) liefert dafür
 Ereignisse aus dem Messverlauf. Der Controller führt den verbindlichen Gangzustand.
-Das aktuelle Programm führt die Gangzuordnung aus der Proxyerkennung.
-Direkte Präsenzmeldungen bleiben beobachtend.
+Die konfigurierte Präsenzquelle führt die Gangzuordnung. Der Proxyweg bleibt
+für Installationen ohne ausgewählten direkten Präsenzsensor erhalten.
+
+## Direkter Präsenzsensor
+
+Bei `ha_presence` benötigen Gangbeginn und Gangende jeweils einen vollständigen
+Türvorgang: erkannte Öffnung mit anschließender Schließung. Eine einzelne
+Präsenzmeldung, eine Türschließung ohne Öffnung und bloßer Zeitablauf genügen nicht.
+Die Präsenzmeldung muss zur gewählten Entität gehören und darf nicht vor der
+Öffnung liegen. Ein Türvorgang kann nur einen Gangübergang begründen.
+
+Betrieb-EIN, gültige Mindesttemperatur und freigegebene Betriebsphase bleiben
+Voraussetzungen des Beginns. Bei belegter Anwesenheit wird der Gang nach
+vollständigem Türvorgang unmittelbar bestätigt, ohne zusätzliche Wartefrist und
+ohne Aufgusszwang. Der Beginn wird dem Türschluss zugeordnet; der tatsächliche
+Erkennungszeitpunkt bleibt getrennt erhalten. Eine kalte Türepisode wird nicht
+durch späteres Aufheizen nachträglich zum Gangbeginn.
+
+Ein nachfolgender vollständiger Türvorgang mit zugehöriger Abwesenheitsmeldung
+beendet den Gang. Die Meldung darf auch erst nach dem Türschluss eintreffen.
+Solange kein solcher Austritt belegt ist, bleibt der Gang offen. Alleinige
+Abwesenheit oder Durchlüften beendet ihn nicht. Bei vollständigem Austritt
+folgen Zählung, Temperaturstufe und Ofenkühlung dem gemeinsamen Ablaufkern.
+Betrieb-AUS bleibt ein ausdrücklicher Bedienabschluss.
+
+`unknown` und `unavailable` sind keine Abwesenheitsbelege. Der offene Gang bleibt
+erhalten, seine zusätzliche Heizanforderung entfällt während des Quellausfalls.
+Der Thermostat und die Schutzregeln gelten weiter. Es gibt keinen automatischen
+Wechsel zur Proxyerkennung und keine Tür-Mindestheizhilfe.
+
+Die Zuordnung verwendet die gemeldeten Zustandszeiten, ohne einen unbekannten
+Abwesenheitsverzug des Sensors abzuziehen.
+
+## Proxyverfahren
 
 ## Beginn und Bestätigung
 
@@ -51,12 +83,12 @@ Zeit.
 
 Eine kurze Türöffnung mit anschließender Schließung erhält den aktiven Gang.
 Die Lüftungsbestätigung schützt den laufenden Gang bei kurzem Austritt einzelner
-Personen, während mindestens eine Person bleibt. Die spätere Kopplung dieser
-Bestätigung an direkte Präsenz bleibt bis zur Prüfung von Sensorposition und
-realem Verhalten unkonkretisiert.
+Personen, während mindestens eine Person bleibt. Diese Lüftungsregel gehört zum
+Proxyverfahren. Bei direkter Präsenzführung beendet stattdessen ein vollständiger
+Türvorgang mit zugehöriger Abwesenheitsmeldung den Gang gemäß
+[direkter Präsenzführung](#direkter-präsenzsensor).
 
-[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md) ·
-[Erweiterungsvertrag für direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
+[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md)
 
 ## Zählung und Folge
 

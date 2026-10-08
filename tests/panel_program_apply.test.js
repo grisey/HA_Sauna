@@ -65,6 +65,46 @@ function panel(config = configuration(), session = null, api = async () => ({}))
 }
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+function renderControls(p) {
+  const nodes = new Map();
+  p.$ = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: true });
+    return nodes.get(selector);
+  };
+  p.shadowRoot = { activeElement: null };
+  p.drawCurrent = Panel.prototype.drawCurrent;
+  Object.assign(p.state, {
+    now: "2032-01-01T12:00:00Z",
+    last_session: null,
+    operation_enabled: !!p.state.session,
+    phase: p.state.session ? "bereit" : "aus",
+    gang_count: 0,
+    measurements: [],
+    measurement_status: {},
+    mechanical_timer: { state: "idle", remaining_seconds: 0 },
+    manual_controls: { heater: {}, light: {} },
+    start_errors: [],
+    issues: [],
+    heating_observation: { source: "unknown" },
+    heating_feedback: false,
+    energy_kwh: 0,
+    energy_source: "estimated",
+    phase_timer: null,
+    start_availability: null,
+  });
+  p.state.permissions.control = true;
+  for (const method of [
+    "syncHistoryProjection",
+    "applyAppearance",
+    "syncNavigation",
+    "drawSettings",
+    "syncAppearanceEditor",
+  ])
+    p[method] = () => {};
+  p.drawCurrent();
+  return () => nodes.get("#current").innerHTML;
+}
+
 function individualFields(p, values = { start: "80", end: "90", gangs: "3" }) {
   const fields = new Map(
     Object.entries(values).map(([key, value]) => [`#progression-${key}`, { value }]),
@@ -75,6 +115,375 @@ function individualFields(p, values = { start: "80", end: "90", gangs: "3" }) {
     p.progressionDraft = { ...p.progressionDraft, [`progression-${key}`]: value };
   };
 }
+
+test("fractional quick-preset spacing exposes unique whole-degree commands", async () => {
+  const config = configuration();
+  Object.assign(config.parameters, {
+    preset_start_c: 80,
+    preset_step_c: 0.5,
+    preset_count: 6,
+  });
+  const { p, calls } = panel(config);
+  const current = renderControls(p);
+  assert.deepEqual(
+    Array.from(current().matchAll(/data-action="preset:([^\"]+)"/g), (match) =>
+      Number(match[1]),
+    ),
+    [80, 81, 82, 83],
+  );
+  await p.action("preset:81");
+  assert.deepEqual(plain(calls[0]), [
+    "/entry/temperature",
+    "POST",
+    { target_temperature_c: 81 },
+  ]);
+});
+
+test("free explicit stages send and retain whole-degree commands", async () => {
+  const { p, calls } = panel(configuration("progressive"), {
+    timeline: { session_id: "running" },
+  });
+  p.freeProgramKind = "steps";
+  p.freeProgramStepsDraft = ["80.4", "85.5", "90.6"];
+  p.shadowRoot = {
+    querySelectorAll: () => p.freeProgramStepsDraft.map((value) => ({ value })),
+  };
+  await p.applyProgram();
+  assert.deepEqual(plain(calls[0]), [
+    "/entry/program",
+    "POST",
+    { temperature_steps: [80, 86, 91] },
+  ]);
+  assert.deepEqual(plain(p.state.configuration.temperature_steps), [80, 86, 91]);
+});
+
+test("temperature choice returns to direct selection after finally ending a session", async () => {
+  const session = {
+    timeline: {
+      session_id: "current-session",
+      session_started_at: "2032-01-01T11:00:00Z",
+      active: null,
+      completed: [],
+      door: "closed",
+    },
+    heating: { elapsed_seconds: 0 },
+    deadlines: [],
+  };
+  let reportedState;
+  const { p, calls } = panel(configuration(), session, async (path, method, body) => {
+    if (path === "/entry/state") return reportedState;
+    if (path === "/entry/control") {
+      reportedState = {
+        ...reportedState,
+        operation_enabled: body.enabled,
+        session: {
+          ...session,
+          deadlines: body.enabled
+            ? []
+            : [
+                {
+                  purpose: "session_gap",
+                  token: "gap-token",
+                  due_at: "2032-01-01T12:10:00Z",
+                },
+              ],
+        },
+      };
+      return {};
+    }
+    assert.equal(path, "/entry/finish-session");
+    assert.equal(method, "POST");
+    assert.deepEqual(plain(body), { token: "gap-token" });
+    reportedState = { ...reportedState, session: null, last_session: session };
+    return {};
+  });
+  const current = renderControls(p);
+  p.refresh = Panel.prototype.refresh;
+  reportedState = p.state;
+  p.controlSessionKey = session.timeline.session_started_at;
+
+  const checkDisclosure = async () => {
+    if (p.programChoiceOpen) await p.action("program-toggle");
+    assert.match(current(), /id="program-choice-body" hidden/);
+    assert.match(current(), /data-action="program-toggle"[^>]*aria-expanded="false"/);
+    await p.action("program-toggle");
+    assert.match(current(), /id="program-choice-body" >/);
+    assert.match(
+      current(),
+      /data-action="program-toggle"[^>]*aria-expanded="true"[^>]*>Schließen<\/button>/,
+    );
+    await p.action("program-toggle");
+    assert.match(current(), /id="program-choice-body" hidden/);
+  };
+
+  await checkDisclosure();
+  await p.action("operation");
+  assert.equal(p.state.operation_enabled, false);
+  assert.equal(p.state.session.timeline.session_id, "current-session");
+  assert.match(current(), /data-action="finish-session:gap-token"/);
+  assert.match(current(), /data-action="operation"[^>]*>Fortsetzen<\/button>/);
+  await checkDisclosure();
+  await p.action("operation");
+  assert.equal(p.state.operation_enabled, true);
+  assert.equal(p.state.session.timeline.session_id, "current-session");
+  await checkDisclosure();
+  await p.action("operation");
+  await p.action("finish-session:gap-token");
+  assert.equal(p.state.session, null);
+  assert.match(current(), /id="program-choice-body" >/);
+  assert.doesNotMatch(current(), /program-current|data-action="program-toggle"/);
+  assert.match(current(), /data-action="program-mode:constant" aria-pressed="true"/);
+  assert.doesNotMatch(current(), /data-action="finish-session:/);
+  assert.equal(
+    calls.filter(([path]) => path === "/entry/program" || path === "/entry/temperature")
+      .length,
+    0,
+    "opening and closing the temperature choice never writes a program",
+  );
+});
+
+test("a session draft keeps its cancel and apply actions after the session ends", async () => {
+  for (const choice of ["named", "individual", "constant", "preset"])
+    for (const outcome of ["cancel", "apply"]) {
+      const session = {
+        timeline: {
+          session_id: "current-session",
+          session_started_at: "2032-01-01T11:00:00Z",
+          active: null,
+          completed: [],
+          door: "closed",
+        },
+        heating: { elapsed_seconds: 0 },
+        deadlines: [],
+      };
+      let reportedState;
+      const { p, calls } = panel(
+        configuration(choice === "constant" ? "progressive" : "constant"),
+        session,
+        async (path, _method, body) => {
+          if (path === "/entry/state") return reportedState;
+          if (path === "/entry/control") {
+            reportedState = {
+              ...reportedState,
+              operation_enabled: body.enabled,
+              session: {
+                ...session,
+                deadlines: [
+                  {
+                    purpose: "session_gap",
+                    token: "gap-token",
+                    due_at: "2032-01-01T12:10:00Z",
+                  },
+                ],
+              },
+            };
+            return {};
+          }
+          if (path === "/entry/finish-session") {
+            reportedState = {
+              ...reportedState,
+              session: null,
+              last_session: session,
+            };
+            return {};
+          }
+          assert.equal(
+            path,
+            choice === "preset" ? "/entry/temperature" : "/entry/program",
+          );
+          return {};
+        },
+      );
+      p.state.configuration.parameters.preset_count = 3;
+      const current = renderControls(p);
+      p.refresh = Panel.prototype.refresh;
+      p.progressionValues = () => ({ start: 80, end: 95, gangs: 4 });
+      reportedState = p.state;
+      p.controlSessionKey = session.timeline.session_started_at;
+      await p.action("program-toggle");
+      await p.action(
+        choice === "named"
+          ? "program-mode:program"
+          : choice === "preset"
+            ? "preset:75"
+            : `program-mode:${choice}`,
+      );
+      const draft = p.programSelectionDraft;
+      assert.equal(p.programDirty(), true);
+      assert.doesNotMatch(current(), /Vorgemerkt/);
+      assert.match(
+        current(),
+        new RegExp(
+          `data-action="program-mode:${choice === "named" ? "program" : choice === "preset" ? "constant" : choice}" aria-pressed="true"`,
+        ),
+      );
+      assert.match(
+        current(),
+        choice === "constant"
+          ? /class="program-active-label">Individuell<\/strong>/
+          : /class="program-active-label">Konstant<\/strong>/,
+      );
+      assert.equal(p.state.target_temperature, 86);
+      await p.action("operation");
+      assert.equal(p.programSelectionDraft, draft);
+      assert.match(current(), /data-action="program-apply"/);
+      await p.action("finish-session:gap-token");
+      assert.equal(p.state.session, null);
+      assert.equal(p.programSelectionDraft, draft);
+      assert.match(current(), /id="program-choice-body" >/);
+      assert.doesNotMatch(current(), /program-current|data-action="program-toggle"/);
+      assert.doesNotMatch(current(), /Vorgemerkt/);
+      assert.match(current(), /data-action="program-cancel-draft"/);
+      assert.match(current(), /data-action="program-apply"[^>]*>Übernehmen<\/button>/);
+      assert.equal(
+        calls.filter(([path]) =>
+          ["/entry/program", "/entry/temperature"].includes(path),
+        ).length,
+        0,
+        `${choice}: ending a session does not apply its draft`,
+      );
+      if (outcome === "cancel") {
+        await p.action("program-cancel-draft");
+        assert.equal(p.programDirty(), false);
+        assert.match(current(), /id="program-choice-body" >/);
+        assert.equal(p.state.target_temperature, 86);
+        assert.equal(
+          calls.filter(([path]) =>
+            ["/entry/program", "/entry/temperature"].includes(path),
+          ).length,
+          0,
+        );
+      } else {
+        await p.action("program-apply");
+        const expected =
+          choice === "named"
+            ? { profile: "quiet" }
+            : choice === "constant"
+              ? { profile: "constant" }
+              : choice === "preset"
+                ? { target_temperature_c: 75 }
+                : {
+                    target_temperature_c: 80,
+                    final_temperature_c: 95,
+                    temperature_gangs: 4,
+                  };
+        assert.deepEqual(
+          plain(
+            calls.filter(([path]) =>
+              ["/entry/program", "/entry/temperature"].includes(path),
+            ),
+          ),
+          [
+            [
+              choice === "preset" ? "/entry/temperature" : "/entry/program",
+              "POST",
+              expected,
+            ],
+          ],
+        );
+        assert.equal(p.programDirty(), false);
+        if (choice === "preset") {
+          assert.equal(p.state.target_temperature, 75);
+          assert.equal(p.state.configuration.program_mode, "constant");
+        }
+      }
+    }
+});
+
+test("session presets only change the chosen temperature until apply", async () => {
+  for (const mode of ["constant", "progressive"])
+    for (const outcome of ["cancel", "apply"]) {
+      const config = configuration(mode);
+      config.parameters.preset_count = 3;
+      const { p, calls } = panel(config, {
+        timeline: { active: null, completed: [], door: "closed" },
+        heating: { elapsed_seconds: 0 },
+        deadlines: [],
+      });
+      const current = renderControls(p);
+      await p.action("program-toggle");
+      if (mode === "progressive") await p.action("program-mode:constant");
+      assert.match(current(), /data-action="preset:75" aria-pressed="false"/);
+      await p.action("preset:75");
+      assert.equal(calls.length, 0);
+      assert.equal(p.state.target_temperature, 86);
+      assert.equal(p.state.configuration.parameters.target_temperature_c, 80);
+      assert.equal(p.state.configuration.program_mode, mode);
+      assert.deepEqual(plain(p.programSelectionDraft), {
+        mode: "constant",
+        temperature: 75,
+      });
+      assert.equal(p.programDirty(), true);
+      assert.match(current(), /data-action="preset:75" aria-pressed="true"/);
+      assert.match(
+        current(),
+        /data-action="program-apply"[^>]*>Programm übernehmen<\/button>/,
+      );
+      assert.doesNotMatch(current(), /Vorgemerkt/);
+      await p.action(outcome === "cancel" ? "program-cancel-draft" : "program-apply");
+      assert.equal(p.programDirty(), false);
+      assert.equal(p.state.target_temperature, outcome === "cancel" ? 86 : 75);
+      assert.equal(
+        p.state.configuration.program_mode,
+        outcome === "cancel" ? mode : "constant",
+      );
+      assert.deepEqual(
+        plain(calls),
+        outcome === "cancel"
+          ? []
+          : [["/entry/temperature", "POST", { target_temperature_c: 75 }]],
+      );
+    }
+});
+
+test("an off-session preset updates the directly visible temperature selection", async () => {
+  const config = configuration();
+  config.parameters.preset_count = 3;
+  const { p, calls } = panel(config, null);
+  const current = renderControls(p);
+  p.refresh = async () => p.drawCurrent();
+  assert.match(current(), /id="program-choice-body" >/);
+  assert.match(current(), /data-action="preset:75" aria-pressed="false"/);
+  assert.doesNotMatch(current(), /program-current|data-action="program-toggle"/);
+  await p.action("preset:75");
+  assert.deepEqual(plain(calls), [
+    ["/entry/temperature", "POST", { target_temperature_c: 75 }],
+  ]);
+  assert.equal(p.state.target_temperature, 75);
+  assert.equal(p.programDirty(), false);
+  assert.match(current(), /data-action="program-mode:constant" aria-pressed="true"/);
+  assert.match(current(), /data-action="preset:75" aria-pressed="true"/);
+  assert.match(current(), /id="program-choice-body" >/);
+});
+
+test("a failed automatic selection keeps visible retry and cancel actions", async () => {
+  for (const outcome of ["cancel", "retry"]) {
+    let fail = true;
+    const { p, calls } = panel(configuration(), null, async () => {
+      if (fail) throw Error("save failed");
+      return {};
+    });
+    const current = renderControls(p);
+    await assert.rejects(() => p.action("program-mode:program"), /save failed/);
+    assert.equal(p.programDirty(), true);
+    assert.match(current(), /data-action="program-mode:program" aria-pressed="true"/);
+    assert.deepEqual(plain(p.storedProgramChoice(programs)), { mode: "constant" });
+    assert.match(current(), /id="program-choice-body" >/);
+    assert.match(current(), /Noch nicht übernommen: Ruhig/);
+    assert.match(current(), /data-action="program-cancel-draft"/);
+    assert.match(current(), /data-action="program-apply"(?![^>]*disabled)/);
+    fail = false;
+    await p.action(outcome === "cancel" ? "program-cancel-draft" : "program-apply");
+    assert.equal(p.programDirty(), false);
+    assert.equal(calls.length, outcome === "cancel" ? 1 : 2);
+    assert.match(
+      current(),
+      outcome === "cancel"
+        ? /data-action="program-mode:constant" aria-pressed="true"/
+        : /data-action="program-select:quiet" aria-pressed="true"/,
+    );
+  }
+});
 
 test("changing individual steps to even saves without a session and stages within one", async () => {
   for (const session of [null, { timeline: {} }]) {
@@ -788,8 +1197,8 @@ test("gap control keeps its apply action inside the open program editor", () => 
     control,
     /data-action="program-apply"[^>]*program-main[^>]*>Programm übernehmen/,
   );
-  assert.match(control, /data-action="program-select:quiet" aria-pressed="false"/);
-  assert.match(control, /program-draft-label">Vorgemerkt/);
+  assert.match(control, /data-action="program-select:quiet" aria-pressed="true"/);
+  assert.doesNotMatch(control, /Vorgemerkt|program-draft-label/);
   assert.match(control, /data-action="program-cancel-draft"/);
   assert.match(control, /data-action="operation"[^>]*>Fortsetzen/);
   assert.doesNotMatch(nodes.get("#details").innerHTML, /data-action=|<button/);

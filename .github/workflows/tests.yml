@@ -30,6 +30,18 @@ jobs:
         with:
           python-version: '3.14.2'
       - run: python -m pip install 'homeassistant==2026.9.2' 'securetar==2026.4.1' 'cronsim==2.7'
+      - name: Versionsformat für Home Assistant und HACS prüfen
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from awesomeversion import AwesomeVersion
+
+          manifest = json.loads(Path("custom_components/ha_sauna/manifest.json").read_text())
+          version = AwesomeVersion(manifest["version"])
+          assert version.valid, f"Ungültige Version: {version}"
+          print(f"Version: {version}; Format: {version.strategy.value}; Beta: {version.beta}")
+          PY
       - run: python -m unittest discover -s tests/ha -v
         timeout-minutes: 2
         env:

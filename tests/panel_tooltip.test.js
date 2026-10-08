@@ -154,7 +154,7 @@ const tooltipFor = (
     overview,
   );
   interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
-  return { tooltip, interaction };
+  return { tooltip, interaction, panel };
 };
 
 const trackingIntl = () => {
@@ -172,22 +172,27 @@ const trackingIntl = () => {
   };
 };
 
-test("persistent hover text preserves original value and both precise source times", () => {
-  const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(measurement()));
-  assert.match(tooltip.textContent, /Originalwert 79\.123456 °C/);
-  assert.match(tooltip.textContent, /Empfangen .*09:00:20\.987654 GMT\+1/);
-  assert.match(tooltip.textContent, /Gemessen .*09:00:10\.876543 GMT\+1/);
+test("persistent hover rounds local values without changing original data", () => {
+  const original = measurement();
+  const before = JSON.stringify(original);
+  const { tooltip } = inTimeZone("Europe/Berlin", () => tooltipFor(original));
+  assert.equal(
+    tooltip.textContent,
+    "09:00Temperatur oben: 79,1 °CSaunastatus · Unbekannt",
+  );
+  assert.doesNotMatch(tooltip.textContent, /Originalwert|Empfangen|Gemessen|GMT/);
+  assert.equal(JSON.stringify(original), before, "source timestamps stay unchanged");
 });
 
-test("persistent hover only labels valid supplied measurement times", () => {
+test("source measurement timestamps do not add metadata to the compact value", () => {
   for (const measured_at of [undefined, null, false, [], {}, "not-a-time"]) {
     const { tooltip } = tooltipFor(measurement({ measured_at }));
-    assert.match(tooltip.textContent, /Empfangen/);
-    assert.doesNotMatch(tooltip.textContent, /Gemessen/);
+    assert.match(tooltip.textContent, /Temperatur oben: 79,1 °C/);
+    assert.doesNotMatch(tooltip.textContent, /Empfangen|Gemessen/);
   }
 });
 
-test("raw zero, fallback text, and supplied markup stay textual", () => {
+test("zero and numeric fallback values use the same compact localized format", () => {
   const zero = tooltipFor(measurement({ value: 0, raw_value: 0 })).tooltip;
   const missing = tooltipFor(
     measurement({
@@ -199,13 +204,11 @@ test("raw zero, fallback text, and supplied markup stay textual", () => {
     "source_snapshot",
   ).tooltip;
   const escaped = tooltipFor(measurement({ raw_value: '<raw&"value>' })).tooltip;
-  assert.match(zero.textContent, /Originalwert 0 °C/);
-  assert.match(
-    missing.textContent,
-    /Wert 12,345679 °C · kein Originalwert gespeichert/,
-  );
-  assert.doesNotMatch(missing.textContent, /Originalwert 12,345679 °C/);
-  assert.match(escaped.textContent, /Originalwert <raw&"value> °C/);
+  assert.match(zero.textContent, /Temperatur oben: 0 °C/);
+  assert.match(missing.textContent, /Temperatur oben: 12,3 °C/);
+  assert.doesNotMatch(missing.textContent, /Originalwert|gespeichert/);
+  assert.match(escaped.textContent, /Temperatur oben: 79,1 °C/);
+  assert.doesNotMatch(escaped.textContent, /<raw&"value>/);
   const names = (node) => [node.name, ...node.children.flatMap(names)];
   assert.deepEqual(names(escaped), [
     "tooltip",
@@ -213,20 +216,18 @@ test("raw zero, fallback text, and supplied markup stay textual", () => {
     "div",
     "div",
     "span",
-    "br",
     "span",
     "div",
     "span",
-    "br",
     "span",
     "div",
     "span",
-    "br",
     "span",
     "div",
     "span",
-    "br",
     "span",
+    "div",
+    "div",
   ]);
   assert.equal(
     "innerHTML" in escaped,
@@ -235,22 +236,80 @@ test("raw zero, fallback text, and supplied markup stay textual", () => {
   );
 });
 
-test("persistent hover retains source offsets across DST and browser-local zones", () => {
+test("hover uses the archived phase projection and matching effective event markers for both roles", () => {
+  for (const admin of [false, true]) {
+    const { tooltip, interaction, panel } = tooltipFor(measurement());
+    const at = Date.parse(measurement().received_at);
+    const iso = (offset) => new Date(at + offset).toISOString();
+    panel.state.phase = "nachlauf";
+    panel.state.permissions = { admin };
+    panel.shown.phase_projection = {
+      intervals: [
+        { started_at: iso(-10000), ended_at: iso(0), phase: "aufheizen" },
+        { started_at: iso(0), ended_at: iso(10000), phase: "saunagang" },
+      ],
+    };
+    panel.shown.session.timeline = {
+      processed: [
+        { kind: "infusion", effective_at: iso(100), detected_at: iso(20000) },
+        { kind: "infusion", effective_at: iso(0), detected_at: iso(20000) },
+        { kind: "door_close", effective_at: iso(-20000), detected_at: iso(0) },
+      ],
+    };
+    const original = JSON.stringify(panel.shown);
+    interaction.hover({ clientX: 600, clientY: 100 });
+    assert.match(tooltip.textContent, /Saunastatus · Saunagang/);
+    assert.match(tooltip.textContent, /Aufguss/);
+    assert.equal((tooltip.textContent.match(/Aufguss/g) || []).length, 2);
+    assert.equal(tooltip.children[3].children.length, 2);
+    assert.deepEqual(
+      panel.historyEventsAt(at, 200).map((event) => event.effective_at),
+      [iso(0), iso(100)],
+    );
+    assert.doesNotMatch(tooltip.textContent, /Ofenkühlung|Tür geschlossen/);
+    assert.equal(JSON.stringify(panel.shown), original);
+    assert.equal(panel.historyPhaseAt(at - 1).phase, "aufheizen");
+    assert.equal(panel.historyPhaseAt(at).phase, "saunagang");
+    assert.equal(panel.historyPhaseAt(at + 10001), undefined);
+    assert.equal(panel.historyPhaseAt(at - 10001), undefined);
+  }
+});
+
+test("missing or uncovered historical phases never borrow the live status", () => {
+  const { tooltip, interaction, panel } = tooltipFor(measurement());
+  panel.state.phase = "bereit";
+  interaction.hover({ clientX: 600, clientY: 100 });
+  assert.match(tooltip.textContent, /Saunastatus · Unbekannt/);
+  const at = Date.parse(measurement().received_at);
+  panel.shown.phase_projection = {
+    intervals: [
+      {
+        started_at: new Date(at - 20000).toISOString(),
+        ended_at: new Date(at - 10000).toISOString(),
+        phase: "aufheizen",
+      },
+    ],
+  };
+  interaction.hover({ clientX: 600, clientY: 100 });
+  assert.match(tooltip.textContent, /Saunastatus · Unbekannt/);
+});
+
+test("persistent hover clock follows DST and the browser-local zone", () => {
   const [beforeFallback, afterFallback] = inTimeZone("Europe/Berlin", () => [
     tooltipFor(measurement({ received_at: "2026-10-25T00:30:00.123456Z" })).tooltip
       .textContent,
     tooltipFor(measurement({ received_at: "2026-10-25T01:30:00.123456Z" })).tooltip
       .textContent,
   ]);
-  assert.match(beforeFallback, /02:30:00\.123456 GMT\+2/);
-  assert.match(afterFallback, /02:30:00\.123456 GMT\+1/);
+  assert.match(beforeFallback, /^02:30Temperatur/);
+  assert.match(afterFallback, /^02:30Temperatur/);
   const utc = inTimeZone("UTC", () => tooltipFor(measurement()).tooltip.textContent);
   const newYork = inTimeZone(
     "America/New_York",
     () => tooltipFor(measurement()).tooltip.textContent,
   );
-  assert.match(utc, /08:00:20\.987654 GMT/);
-  assert.match(newYork, /03:00:20\.987654 GMT-5/);
+  assert.match(utc, /^08:00Temperatur/);
+  assert.match(newYork, /^03:00Temperatur/);
 });
 
 test("persistent tooltip nodes are reused", () => {

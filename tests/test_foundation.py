@@ -4,13 +4,14 @@ import ast
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
+from math import inf, nextafter
 from pathlib import Path
 import unittest
 
 from custom_components.ha_sauna.bindings import BindingError, Bindings, ROLES, validate_metadata
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.models import Deadline, HeatingTime, Measurement, Position, Quantity, Session
-from custom_components.ha_sauna.core.parameters import DEFINITIONS, ParameterError, Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, DEFINITIONS, ParameterError, Parameters
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
@@ -58,18 +59,18 @@ class ParameterTests(unittest.TestCase):
     def test_required_values_have_defaults_and_saved_values_take_precedence(self):
         defaults = Parameters({})
         self.assertTrue(all(d.optional or d.key in defaults.values for d in DEFINITIONS))
-        self.assertEqual(defaults.values["operation_brightness_percent"], 40)
-        self.assertEqual(defaults.values["after_run_brightness_percent"], 15)
-        self.assertEqual(defaults.values["cooling_brightness_percent"], 5)
-        self.assertEqual(defaults.values["sensor_timeout_seconds"], 180)
+        self.assertEqual(defaults.values["operation_brightness_percent"], BY_KEY["operation_brightness_percent"].default)
+        self.assertEqual(defaults.values["after_run_brightness_percent"], BY_KEY["after_run_brightness_percent"].default)
+        self.assertEqual(defaults.values["cooling_brightness_percent"], BY_KEY["cooling_brightness_percent"].default)
+        self.assertEqual(defaults.values["sensor_timeout_seconds"], BY_KEY["sensor_timeout_seconds"].default)
         self.assertEqual(Parameters({"sensor_timeout_seconds": 7}).values["sensor_timeout_seconds"], 7)
 
     def test_oven_cooling_defaults_and_legacy_base_compatibility(self):
         defaults = Parameters({})
-        self.assertEqual(defaults.values["after_run_minutes"], 5)
-        self.assertEqual(defaults.values["oven_cooling_max_minutes"], 15)
-        self.assertEqual(defaults.values["oven_cooling_half_life_minutes"], 15)
-        self.assertEqual(defaults.values["oven_cooling_heat_idle_ratio"], 2)
+        self.assertEqual(defaults.values["after_run_minutes"], BY_KEY["after_run_minutes"].default)
+        self.assertEqual(defaults.values["oven_cooling_max_minutes"], BY_KEY["oven_cooling_max_minutes"].default)
+        self.assertEqual(defaults.values["oven_cooling_half_life_minutes"], BY_KEY["oven_cooling_half_life_minutes"].default)
+        self.assertEqual(defaults.values["oven_cooling_heat_idle_ratio"], BY_KEY["oven_cooling_heat_idle_ratio"].default)
 
         # Older saved options contain only the former fixed cooling duration.
         # Retain a value above the new default cap by deriving that cap once.
@@ -86,21 +87,23 @@ class ParameterTests(unittest.TestCase):
         with self.assertRaises(ParameterError):
             Parameters({**parameters().as_dict(), "unknown": 3})
 
-    def test_automatic_override_has_a_strict_ten_minute_maximum(self):
+    def test_automatic_override_has_a_strict_catalog_maximum(self):
         definition = next(d for d in DEFINITIONS if d.key == "manual_override_minutes")
-        for value in (10, 0.5):
+        for value in (definition.maximum, 0.5):
             with self.subTest(value=value):
                 checked = Parameters({"manual_override_minutes": value})
                 self.assertEqual(checked.values[definition.key], value)
                 self.assertEqual(checked.seconds(definition.key), value * 60)
-        for value in (10.000000000000002, 20):
+        for value in (nextafter(definition.maximum, inf), definition.maximum * 2):
             with self.subTest(value=value), self.assertRaises(ParameterError) as raised:
                 Parameters({"manual_override_minutes": value})
             self.assertEqual(
                 (raised.exception.key, raised.exception.code),
                 ("manual_override_minutes", "too_large"),
             )
-        self.assertEqual((definition.default, definition.maximum), (10, 10))
+        self.assertEqual(
+            Parameters({}).values[definition.key], definition.default
+        )
 
     def test_invalid_numbers_fail_with_field_context(self):
         for value in (True, "2", None, float("nan"), float("inf"), -1, 10**400):

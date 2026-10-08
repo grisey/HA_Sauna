@@ -5,8 +5,10 @@ Jede Instanz besitzt ein SQLite-Archiv unter
 im privaten Home-Assistant-Konfigurationsbereich. Zugriff und Download erfolgen
 über die berechtigten Schnittstellen der Integration.
 
-Sitzungen mit mindestens einem durch Aufguss bestätigten Gang bleiben mit ihren
+Sitzungen mit mindestens einem bestätigten Gang bleiben mit ihren
 Originalmessungen altersunabhängig in voller empfangener Auflösung erhalten.
+Die Bestätigung richtet sich nach der gewählten Präsenzquelle gemäß
+[Gangmodell](gangmodell.md).
 Während einer laufenden Sitzung werden die Daten zunächst vollständig gesammelt.
 Beim Abschluss ohne bestätigten Gang werden Sitzung und zugehörige Records
 verworfen. Beim Start der Integration gilt dieselbe Bereinigung für ältere

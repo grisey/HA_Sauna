@@ -137,7 +137,7 @@ class FollowupControlTests(unittest.TestCase):
 
 
 class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_external_preview_is_separate_and_reload_deduplicates_consumers(self):
+    async def test_unbound_direct_source_never_falls_back_and_reload_deduplicates_consumers(self):
         config = Configuration(bindings(), Parameters({}), presence_source="ha_presence")
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "test.sqlite"
@@ -148,7 +148,8 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await runtime.accept_presence(replace(report, received_at=at(1)))
             self.assertIsNone(runtime.session)
             self.assertIsNone(runtime.presence.current)
-            self.assertEqual(runtime.presence_status["effective_source"], "proxy")
+            self.assertEqual(runtime.presence_status["effective_source"], "ha_presence")
+            self.assertIsNone(runtime.presence_status["current"])
             self.assertEqual(len(runtime.presence.observations), 1)
             self.assertEqual(len(runtime.consumer_events), 1)
             await runtime.close()

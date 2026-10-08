@@ -28,6 +28,8 @@ class Kind(StrEnum):
     VENTILATION = "ventilation_confirmed"
     OPERATION_OFF = "operation_off"
     CONFIRMATION_EXPIRED = "confirmation_expired"
+    PRESENCE_CONFIRMED = "presence_confirmed"
+    PRESENCE_ENDED = "presence_ended"
 
 
 class Door(StrEnum):
@@ -89,18 +91,24 @@ class Gang:
 
     @property
     def confirmation(self) -> Confirmation:
-        """Nur ein Aufguss bestätigt den Gang; kein zweiter schreibbarer Merker."""
+        """Bestätigung aus dem führenden Quellbeleg, ohne zweiten Zustandsmerker."""
         return (
-            Confirmation.CONFIRMED if self.infusion_events else Confirmation.PROVISIONAL
+            Confirmation.CONFIRMED
+            if self.infusion_events or self.recognition_kind == Kind.PRESENCE_CONFIRMED
+            else Confirmation.PROVISIONAL
         )
 
     @property
     def confirmed_at(self) -> datetime | None:
         """Tatsächliche Erkennungszeit des ersten zugeordneten Aufgusses."""
+        if self.recognition_kind == Kind.PRESENCE_CONFIRMED:
+            return self.detected_at
         return self.infusion_events[0].detected_at if self.infusion_events else None
 
     @property
     def confirmation_event_id(self) -> str | None:
+        if self.recognition_kind == Kind.PRESENCE_CONFIRMED:
+            return self.recognition_event_id
         return self.infusion_events[0].event_id if self.infusion_events else None
 
     def elapsed_seconds(self, now: datetime) -> float:
@@ -119,6 +127,8 @@ class Timeline:
     door: Door = Door.UNKNOWN
     anchor: Event | None = None
     opening: Event | None = None
+    closed_opening: Event | None = None
+    resolved_presence_close_id: str | None = None
     open_ventilation: Event | None = None
     preparation: Event | None = None
     active: Gang | None = None
@@ -130,7 +140,7 @@ class Timeline:
 
     @property
     def gang_count(self) -> int:
-        return sum(bool(g.infusion_events) for g in self.completed)
+        return sum(g.confirmation == Confirmation.CONFIRMED for g in self.completed)
 
     def __post_init__(self) -> None:
         if not self.session_id or not isinstance(self.door, Door):
@@ -168,6 +178,7 @@ def apply(state: Timeline, event: Event) -> Timeline:
             door=Door.OPEN,
             anchor=None,
             opening=event,
+            closed_opening=None,
             open_ventilation=None,
             preparation=None,
             rejected_start_sources=(),
@@ -180,12 +191,19 @@ def apply(state: Timeline, event: Event) -> Timeline:
             door=Door.CLOSED,
             anchor=event,
             opening=None,
+            closed_opening=state.opening,
             preparation=state.open_ventilation,
             open_ventilation=None,
         )
-    elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+    elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION,
+                        Kind.PRESENCE_CONFIRMED):
         if state.door != Door.CLOSED:
             raise ValueError("Gangerkennung benötigt einen geschlossenen Türzustand")
+        if event.kind == Kind.PRESENCE_CONFIRMED and (
+            state.closed_opening is None or state.anchor is None
+            or state.anchor.event_id == state.resolved_presence_close_id
+        ):
+            raise ValueError("Direkte Präsenz benötigt eine vollständige neue Türepisode")
         gang = state.active
         if gang is None:
             source = state.anchor.event_id if state.anchor else "recognition_only"
@@ -210,6 +228,18 @@ def apply(state: Timeline, event: Event) -> Timeline:
         if event.kind == Kind.INFUSION:
             gang = replace(gang, infusion_events=gang.infusion_events + (event,))
         result = replace(state, active=gang)
+        if event.kind == Kind.PRESENCE_CONFIRMED:
+            result = replace(result, resolved_presence_close_id=state.anchor.event_id)
+    elif event.kind == Kind.PRESENCE_ENDED:
+        if (state.active is None or state.door != Door.CLOSED
+                or state.closed_opening is None or state.anchor is None
+                or state.anchor.event_id == state.resolved_presence_close_id
+                or state.closed_opening.effective_at <= state.active.started_at):
+            raise ValueError("Gangende benötigt eine neue vollständige Türepisode")
+        finished = replace(state.active, ended_at=event.booking_at,
+                           end_event_id=event.event_id, end_reason="presence_exit")
+        result = replace(state, active=None, completed=state.completed + (finished,),
+                         resolved_presence_close_id=state.anchor.event_id)
     elif event.kind == Kind.VENTILATION:
         if state.door != Door.OPEN:
             raise ValueError("Durchlüftungsbestätigung benötigt eine offene Episode")
@@ -217,7 +247,8 @@ def apply(state: Timeline, event: Event) -> Timeline:
             raise UnresolvedTransition("Durchlüften ohne zugeordnete Öffnung")
         # Mehrere Bestätigungen derselben Episode ändern deren ersten Beleg nicht.
         result = replace(state, open_ventilation=state.open_ventilation or event)
-        if state.active is not None:
+        if (state.active is not None
+                and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED):
             if state.active.confirmation == Confirmation.PROVISIONAL:
                 result = replace(
                     result,
@@ -241,7 +272,7 @@ def apply(state: Timeline, event: Event) -> Timeline:
                     result, active=None, completed=state.completed + (finished,)
                 )
     elif event.kind == Kind.CONFIRMATION_EXPIRED:
-        if state.active is not None and not state.active.infusion_events:
+        if state.active is not None and state.active.confirmation == Confirmation.PROVISIONAL:
             result = replace(
                 state,
                 active=None,

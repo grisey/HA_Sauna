@@ -80,6 +80,8 @@ class HADevice:
         self.last_input_event = None
         self.last_input_occurred_at = None
         self._button_hold_session_id = None
+        if runtime.controller.control_mode == "manual":
+            self.set_light_override(0)
 
     async def start(self):
         now = self.runtime._clock()

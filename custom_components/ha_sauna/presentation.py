@@ -1,6 +1,8 @@
 """Deutsche Anzeigetexte; technische Zustandskennungen bleiben in der API erhalten."""
 
-from .core.parameters import BY_KEY
+from hashlib import sha256
+
+from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
 
 PHASES = {
     "aus": "Aus",
@@ -165,3 +167,88 @@ def parameter_error(error):
         "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail
+
+
+def public_configuration(options):
+    """Only the choices and bounds used by normal control remain visible."""
+    parameters = options.get("parameters", {})
+    keys = (
+        "target_temperature_c",
+        "final_temperature_c",
+        "temperature_gangs",
+        "sauna_min_temperature_c",
+        "preset_count",
+        "preset_start_c",
+        "preset_step_c",
+        "session_light_brightness_percent",
+    )
+    return {
+        key: value
+        for key, value in options.items()
+        if key in {
+            "program_mode", "temperature_programs", "selected_program_id",
+            "control_mode", "temperature_steps", "appearance",
+            "button_program", "button_temperature_c",
+        }
+    } | {"parameters": {key: parameters[key] for key in keys if key in parameters}}
+
+
+def public_measurement(measurement):
+    """Keep chart values and timestamps without exposing entity bindings."""
+    return {key: value for key, value in measurement.items() if key != "source"}
+
+
+def _public_references(value):
+    """Keep direct-presence references stable without their embedded source."""
+    if isinstance(value, dict):
+        return {
+            key: item if key == "session_id" else _public_references(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_public_references(item) for item in value]
+    if isinstance(value, str) and "presence:direct:" in value:
+        # Gang, cooling and projection references reuse these identities.
+        # Hash the entire identity consistently across live and archive reads.
+        return "public:" + sha256(value.encode("utf-8")).hexdigest()
+    return value
+
+
+def resolve_cooling_token(session, token):
+    """Resolve only the public identity of the currently active cooling phase."""
+    phase = session.after_run if session else None
+    if phase is not None and token == _public_references(phase.phase_id):
+        return phase.phase_id
+    return token
+
+
+def public_session(session):
+    """Project a serialized session without configuration or entity-bearing IDs."""
+    if session is None:
+        return None
+    return _public_references({
+        key: value for key, value in session.items() if key != "configuration"
+    })
+
+
+def public_phase_projection(projection):
+    """Use the same public identities as the session's gang and cooling data."""
+    return _public_references(projection)
+
+
+def public_state(result):
+    """Public panel contract, shared by HA and the local role preview."""
+    result = dict(result)
+    result["configuration"] = public_configuration(result["configuration"])
+    result["parameters"] = [item for item in result["parameters"]
+                            if item["key"] in LIVE_TEMPERATURE_KEYS]
+    result["measurements"] = [public_measurement(item) for item in result["measurements"]]
+    for key in ("session", "last_session"):
+        if key in result:
+            result[key] = public_session(result[key])
+    if "phase_projection" in result:
+        result["phase_projection"] = public_phase_projection(result["phase_projection"])
+    for key in ("rule_inputs", "heating_observation", "decision", "faults", "protection",
+                "inhibits", "archive_error", "detection_channels", "detector_trace", "presence"):
+        result.pop(key, None)
+    return result

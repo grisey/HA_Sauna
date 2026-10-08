@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 
 from .defaults import section
@@ -59,7 +59,11 @@ class NamedTemperatureProgram:
         object.__setattr__(self, "id", self.id.strip())
         object.__setattr__(self, "name", self.name.strip())
         if self.temperature_steps is not None:
-            steps = temperature_steps(self.temperature_steps, "Temperaturstufen")
+            # The instance-specific minimum is checked before rounding by
+            # temperature_program/validate_programs, so retain raw input here.
+            steps = temperature_steps(
+                self.temperature_steps, "Temperaturstufen", rounded=False,
+            )
             if len(steps) > MAXIMUM_DISTRIBUTION_GANGS:
                 raise ValueError("Die Anzahl der Temperaturstufen ist zu groß")
             supplied = (self.start_c, self.end_c, self.distribution_gangs)
@@ -96,9 +100,12 @@ class NamedTemperatureProgram:
         if self.temperature_steps is not None:
             for step in self.temperature_steps:
                 _within_limits(step, "Temperaturstufe", minimum, maximum)
-        return TemperatureProgram(
+        program = TemperatureProgram(
             self.start_c, self.end_c, self.distribution_gangs, self.temperature_steps
         )
+        for target in (program.start_c, program.end_c, *(program.steps or ())):
+            _within_limits(target, "Temperaturstufe", minimum, maximum)
+        return program
 
     def as_dict(self) -> dict[str, str | float | int | tuple[float, ...]]:
         """Return a JSON-safe representation for config-entry options."""
@@ -144,7 +151,7 @@ def validate_programs(
     maximum_c: float,
     maximum_gangs: int = MAXIMUM_DISTRIBUTION_GANGS,
 ) -> tuple[NamedTemperatureProgram, ...]:
-    """Check catalog uniqueness and limits, retaining the immutable objects."""
+    """Check raw limits and uniqueness, then return whole-degree program values."""
     if isinstance(programs, (str, bytes)) or not isinstance(programs, Sequence):
         raise ValueError("Die Programme müssen als Liste übergeben werden")
     ids: set[str] = set()
@@ -154,7 +161,7 @@ def validate_programs(
             raise ValueError("Die Programmliste enthält einen ungültigen Eintrag")
         if program.id in RESERVED_PROGRAM_IDS:
             raise ValueError(f"Die Programm-ID {program.id!r} ist reserviert")
-        program.temperature_program(minimum_c=minimum_c, maximum_c=maximum_c)
+        targets = program.temperature_program(minimum_c=minimum_c, maximum_c=maximum_c)
         if program.distribution_gangs > maximum_gangs:
             raise ValueError(
                 f"Die Anzahl der Temperaturstufen darf höchstens {maximum_gangs} sein"
@@ -162,7 +169,10 @@ def validate_programs(
         if program.id in ids:
             raise ValueError("Jede Programm-ID darf nur einmal vorkommen")
         ids.add(program.id)
-        checked.append(program)
+        checked.append(replace(
+            program, start_c=targets.start_c, end_c=targets.end_c,
+            temperature_steps=targets.steps,
+        ))
     return tuple(checked)
 
 
@@ -241,7 +251,17 @@ def migrate_legacy_programs(
     )
 
 
-_LEGACY_PROGRAMS = (
-    ("program_1", "Bisheriges Programm 1", (80, 95, 4)),
-    ("program_2", "Bisheriges Programm 2", (70, 90, 3)),
+_LEGACY_PROGRAMS = tuple(
+    (
+        identity,
+        name,
+        tuple(
+            BY_KEY[f"{identity}_{part}"].default
+            for part in ("start_c", "end_c", "gangs")
+        ),
+    )
+    for identity, name in (
+        ("program_1", "Bisheriges Programm 1"),
+        ("program_2", "Bisheriges Programm 2"),
+    )
 )

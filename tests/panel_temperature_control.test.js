@@ -88,13 +88,13 @@ assert.deepEqual(
 );
 assert.equal(
   panel.clampTemperature(60.2, { minimum: 60.2, maximum: 100 }),
-  60.2,
-  "rounding cannot escape a fractional minimum",
+  61,
+  "a fractional minimum exposes the next valid whole degree",
 );
 assert.equal(
   panel.clampArcTemperature(60.2, { minimum: 61, maximum: 100 }),
   61,
-  "the dial exposes only whole degrees even when program values allow halves",
+  "the dial exposes only whole degrees inside its bounds",
 );
 assert.equal(panel.clampArcTemperature(80.6, { minimum: 60, maximum: 100 }), 81);
 assert.match(
@@ -118,6 +118,23 @@ assert.match(
     { start: 60, end: 100, gangs: 8 },
     "free progression accepts the catalog's dynamic bounds",
   );
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(p.progressionValues({ start: "80.5", end: "89.4", gangs: "3" })),
+    ),
+    { start: 81, end: 89, gangs: 3 },
+    "completed fractional endpoints become the actual whole-degree commands",
+  );
+  assert.throws(
+    () => p.progressionValues({ start: "59.9", end: "89", gangs: "3" }),
+    /zulässigen Grenzen/,
+    "rounding must not admit a raw value below the allowed minimum",
+  );
+  assert.throws(
+    () => p.roundTargetTemperature(60.3, { minimum: 60.2, maximum: 100 }),
+    /zulässigen Grenzen/,
+    "the rounded command must also remain within the bounds",
+  );
   inputs["#progression-start"].value = "0";
   assert.throws(
     () => p.progressionValues(),
@@ -134,6 +151,13 @@ assert.match(
 }
 
 (async () => {
+  await panel.changeTarget(80.5);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), [
+    "/entry-1/temperature",
+    "POST",
+    { target_temperature_c: 81 },
+  ]);
+  assert.equal(panel.state.target_temperature, 81);
   const svg = { setPointerCapture: () => {}, releasePointerCapture: () => {} };
   panel.beginTemperatureDrag(
     { pointerId: 4, clientX: 224.25, clientY: 204.25, preventDefault: () => {} },

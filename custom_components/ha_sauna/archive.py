@@ -59,7 +59,8 @@ def session_has_gangs(session):
     gangs = list(timeline.get("completed", ()))
     if timeline.get("active"):
         gangs.append(timeline["active"])
-    return any(gang.get("infusion_events") for gang in gangs)
+    return any(gang.get("infusion_events")
+               or gang.get("recognition_kind") == "presence_confirmed" for gang in gangs)
 
 
 class _ExportWork:

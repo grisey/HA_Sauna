@@ -1,7 +1,9 @@
-"""Echte HA-Einbindung der beobachtenden Quelle, Konfigurationssperre und Reload."""
+"""Direkte Präsenz über HA-Listener, Türzuordnung, Quellwechsel und Reload."""
 import unittest
 
 from harness import create_sauna, start_hass
+
+from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 
 
 class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -25,10 +27,10 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         return self.entry.runtime_data
 
-    async def test_preview_initial_changes_unknown_and_audio_have_no_control_effect(self):
+    async def test_initial_changes_unknown_and_audio_do_not_start_a_session(self):
         runtime = await self.configure()
         self.assertEqual(runtime.configuration.presence_source, "ha_presence")
-        self.assertEqual(runtime.presence_status["effective_source"], "proxy")
+        self.assertEqual(runtime.presence_status["effective_source"], "ha_presence")
         source = runtime.configuration.bindings.values["presence"]
         self.assertEqual(runtime.presence.external[source].occupancy, "present")
         self.assertIsNone(runtime.session)
@@ -46,6 +48,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await self.hass.async_block_till_done()
                 report = runtime.presence.external[source]
                 self.assertEqual((report.occupancy, report.available), (occupancy, available))
+                self.assertEqual(runtime.presence_status["current"], report)
             self.assertEqual(tuple(runtime.controller.decisions), decisions)
             self.assertEqual(audio_calls, [])
             self.assertIsNone(runtime.session)
@@ -54,6 +57,57 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(runtime.consumer_events), len({e.event_id for e in runtime.consumer_events}))
         finally:
             unsub()
+
+    async def test_live_presence_needs_complete_door_cycles_and_unknown_preserves_round(self):
+        runtime = await self.configure()
+        source = runtime.configuration.bindings.values["presence"]
+        for role in ("upper_temperature", "lower_temperature"):
+            entity_id = runtime.configuration.bindings.values[role]
+            state = self.hass.states.get(entity_id)
+            self.hass.states.async_set(entity_id, "80", state.attributes)
+        await self.hass.async_block_till_done()
+        await runtime.set_operation(True)
+
+        async def presence(state):
+            self.hass.states.async_set(source, state)
+            await self.hass.async_block_till_done()
+
+        async def door(name, kind):
+            now = runtime._clock()
+            await runtime.receive(Event(
+                name, runtime.session.session_id, kind, now, now,
+            ))
+            await self.hass.async_block_till_done()
+
+        await presence("off")
+        await presence("on")
+        self.assertIsNone(runtime.session.timeline.active)
+        await door("entry-open", Kind.DOOR_OPEN)
+        await presence("off")
+        await presence("on")
+        self.assertIsNone(runtime.session.timeline.active)
+        await door("entry-close", Kind.DOOR_CLOSE)
+        gang = runtime.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(gang.infusion_events, ())
+        self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+
+        await presence("off")
+        self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+        await presence("unavailable")
+        self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+        self.assertFalse(runtime.controller.regulation_inputs.gang_heat_demand)
+        await presence("on")
+        self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
+        await door("exit-open", Kind.DOOR_OPEN)
+        await presence("off")
+        self.assertIsNotNone(runtime.session.timeline.active)
+        await door("exit-close", Kind.DOOR_CLOSE)
+        self.assertIsNone(runtime.session.timeline.active)
+        self.assertEqual(runtime.session.timeline.gang_count, 1)
+        self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
+        self.assertEqual(sum(e.kind == "gang_ended" for e in runtime.consumer_events), 1)
 
     async def test_entity_change_detaches_old_listener_and_active_session_locks_options(self):
         old = await self.configure()
