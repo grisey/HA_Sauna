@@ -1704,7 +1704,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(program["temperature_steps"], [81, 84, 87, 90])
         await self.hass.async_block_till_done()
         self.assertEqual(next(item for item in self.entry.options["temperature_programs"]
-                              if item["id"] == program_id)["temperature_steps"], [81, 84, 87, 90])
+                              if item["id"] == program_id)["temperature_steps"], (81, 84, 87, 90))
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         async with self.page.expect_response(lambda response: response.url.endswith("/program")
                                             and response.request.method == "POST") as result:
