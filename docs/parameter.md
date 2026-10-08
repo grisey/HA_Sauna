@@ -140,7 +140,7 @@ Proxyverfahren. Bei direkter Präsenzführung gilt diese Proxyfrist nicht.
 
 [Tastergesten und Lichtnachlauf](betrieb.md#bedienhandlungen-und-betriebsart) ·
 [Gangbestätigung](gangmodell.md#beginn-und-bestätigung) ·
-[Direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
+[Direkte Präsenzführung](gangmodell.md#direkter-präsenzsensor)
 
 ## Licht
 

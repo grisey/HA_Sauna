@@ -6,6 +6,8 @@ from datetime import timedelta
 import test_device_path as device_fixture
 from homeassistant.core import callback
 
+from custom_components.ha_sauna.settings import async_set_parameters
+
 
 class LightStabilityTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = device_fixture.DevicePathTests.asyncSetUp
@@ -14,6 +16,16 @@ class LightStabilityTests(unittest.IsolatedAsyncioTestCase):
     time = device_fixture.DevicePathTests.time
 
     async def prepare_light(self, temperature):
+        # These temperatures straddle the 35.5-% rounding boundary of this
+        # explicit 5-to-40-% curve; factory brightness edits must not move it.
+        await async_set_parameters(self.hass, self.entry, {
+            "target_temperature_c": 80,
+            "light_reference_temperature_c": 30,
+            "cooling_brightness_percent": 5,
+            "operation_brightness_percent": 40,
+            "light_transition_seconds": 30,
+            "light_output_hysteresis_percent": .1,
+        }, partial=True, explicit_target=True, program_mode="constant")
         self.commands = []
 
         @callback

@@ -34,8 +34,7 @@ Der Thermostat und die Schutzregeln gelten weiter. Es gibt keinen automatischen
 Wechsel zur Proxyerkennung und keine Tür-Mindestheizhilfe.
 
 Die Zuordnung verwendet die gemeldeten Zustandszeiten, ohne einen unbekannten
-Abwesenheitsverzug des Sensors abzuziehen. Das reale Zusammenpassen von
-Präsenzmeldung und thermischer Türerkennung bleibt an Messdaten zu prüfen.
+Abwesenheitsverzug des Sensors abzuziehen.
 
 ## Proxyverfahren
 
@@ -89,8 +88,7 @@ Proxyverfahren. Bei direkter Präsenzführung beendet stattdessen ein vollständ
 Türvorgang mit zugehöriger Abwesenheitsmeldung den Gang gemäß
 [direkter Präsenzführung](#direkter-präsenzsensor).
 
-[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md) ·
-[Erweiterungsvertrag für direkte Präsenzführung](praesenz-ofen-phasen.md#erweiterungsvertrag-für-direkte-präsenzführung)
+[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md)
 
 ## Zählung und Folge
 

@@ -1381,7 +1381,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(replaced["colors"], {"phase_warmup": "#010203"})
             self.assertEqual(replaced["scales"], {
                 "temperature": {"minimum": 40, "maximum": 110},
-                "humidity": {"minimum": 0, "maximum": 60},
+                "humidity": {"minimum": 0, "maximum": 50},
             })
             self.assertEqual(self.entry.runtime_data.configuration.appearance, replaced)
 

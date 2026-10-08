@@ -382,8 +382,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind
         from custom_components.ha_sauna.settings import async_set_parameters
-        await async_set_parameters(self.hass, self.entry, {"target_temperature_c": 80},
-            partial=True, explicit_target=True, program_mode="constant")
+        # Fixed curve/ramp endpoints make the service values independent of
+        # configurable factory brightness defaults.
+        await async_set_parameters(self.hass, self.entry, {
+            "target_temperature_c": 80,
+            "operation_brightness_percent": 40,
+            "after_run_brightness_percent": 15,
+        }, partial=True, explicit_target=True, program_mode="constant")
         self.hass.states.async_set("sun.sun", "above_horizon", {"elevation": 10})
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
@@ -2610,7 +2615,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
         await async_set_parameters(self.hass, self.entry, {
             "session_gap_minutes": 1, "feedback_timeout_seconds": .025,
-            "light_transition_seconds": 0,
+            "light_transition_seconds": 0, "night_brightness_percent": 25,
         }, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data

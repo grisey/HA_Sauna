@@ -4,6 +4,7 @@ from datetime import timedelta
 from hashlib import sha256
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -167,10 +168,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await tabs.locator('[data-action="overview"]').click()
         await self.panel.locator("#current .manual-overrides summary").click()
         await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_visible()
-        await expect(self.panel.locator('#current .manual-overrides [data-action="light-editor"]')).to_be_visible()
-        await expect(self.panel.locator('#current .manual-overrides #manual-light-editor')).to_be_hidden()
+        await expect(self.panel.locator('#current .manual-light [data-action="light-editor"]')).to_be_visible()
+        await expect(self.panel.locator('#current .manual-light #manual-light-editor')).to_be_hidden()
         await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_disabled()
-        await expect(self.panel.locator('#current .manual-overrides [data-action="manual-light-overview"]')).to_be_disabled()
+        await expect(self.panel.locator('#current .manual-light [data-action="manual-light-overview"]')).to_be_disabled()
 
         user = await self.hass.auth.async_create_user("Normal panel user", group_ids=[GROUP_ID_USER])
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
@@ -471,8 +472,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("panel => panel.refresh()")
 
         current = self.panel.locator("#current")
-        await expect(current.locator(".gauges")).to_contain_text("68 °C")
-        await expect(current.locator(".gauges")).to_contain_text("38 %")
+        await expect(current.locator(".dial-temperature .reading > tspan").nth(0)).to_have_text("68")
+        await expect(current.locator(".dial-temperature .reading .reading-unit")).to_have_text("°C")
+        await expect(current.locator(".dial:not(.dial-temperature) .reading > tspan").nth(0)).to_have_text("38")
+        await expect(current.locator(".dial:not(.dial-temperature) .reading .reading-unit")).to_have_text("%")
         await expect(current.locator(".gauges")).not_to_contain_text("Ersatzmessung unten")
         await expect(current.locator('[role="alert"]')).to_contain_text("Temperatur oben")
         self.assertEqual(self.errors, [])
@@ -489,7 +492,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('.main-tabs [data-action="history"]').click()
         empty = self.panel.locator('#plots .card.empty')
         await expect(empty).to_be_visible()
-        await expect(empty).to_have_css('background-color', 'rgb(0, 0, 0)')
+        await expect(empty).to_have_css('background-color', 'rgb(5, 5, 5)')
         await expect(empty).to_have_css('color', 'rgb(255, 255, 255)')
         await expect(self.panel.locator('#history-overview')).to_be_empty()
         await expect(self.panel.locator('#range')).to_be_empty()
@@ -604,7 +607,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         minimum = editor.locator('[data-appearance-scale="temperature.minimum"]')
         await expect(minimum).to_have_value("40")
         await expect(editor.locator('[data-appearance-scale="temperature.maximum"]')).to_have_value("110")
-        await expect(editor.locator('[data-appearance-scale="humidity.maximum"]')).to_have_value("60")
+        await expect(editor.locator('[data-appearance-scale="humidity.maximum"]')).to_have_value("50")
         await temperature.fill("#19A6C8")
         await humidity.fill("#9A35C0")
         await warmup.fill("#123456")
@@ -612,7 +615,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.evaluate("p=>p.appearanceColor('series_temperature')"), "#19A6C8")
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#19A6C8")
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:humidity'].stroke"), "#9A35C0")
-        self.assertEqual(await self.panel.evaluate("p=>p.style.getPropertyValue('--sauna-main-background')"), "#010407")
+        self.assertEqual(await self.panel.evaluate("p=>p.style.getPropertyValue('--sauna-main-background')"), "#081018")
         await expect(self.panel.locator('#current .dial-temperature path[stroke="#19A6C8"]')).to_have_count(1)
         await expect(self.panel.locator('#current .dial:not(.dial-temperature) path[stroke="#9A35C0"]')).to_have_count(1)
         await expect(self.panel.locator('#history .top-legend span').nth(0).locator('i')).to_have_css('background-color', 'rgb(25, 166, 200)')
@@ -677,7 +680,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await editor.locator('[data-appearance-scale="temperature.maximum"]').fill("30")
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_count(0)
-        await expect(self.panel.locator("#current .scale-hint").filter(has_text="Soll außerhalb der Anzeigeskala")).to_have_count(1)
+        await expect(self.panel.locator("#current .scale-hint")).to_have_count(0)
+        await expect(self.panel.locator("#current .target-reading")).to_have_text("100°C")
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await editor.locator('[data-action="appearance-discard"]').click()
         self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
@@ -703,7 +707,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(light_panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
             await expect(light_page.get_by_text("Loading...", exact=True)).to_be_hidden(timeout=30000)
             light_background = await light_panel.evaluate("p=>getComputedStyle(p).backgroundColor")
-            self.assertNotEqual(light_background, dark_background, "light screenshot must use a genuinely different HA surface")
+            self.assertEqual(
+                light_background, dark_background,
+                "the explicit saved panel palette is independent of the HA theme",
+            )
             await light_page.screenshot(path=str(screenshots / "light_control_collapsed.png"), full_page=True)
             await light_panel.locator('[data-action="program-toggle"]').click()
             await light_page.screenshot(path=str(screenshots / "light_control_open.png"), full_page=True)
@@ -757,7 +764,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('[data-action="program-toggle"]')).to_be_visible()
         session_id = self.entry.runtime_data.session.session_id
         active = self.panel.locator(".program-active-label")
-        await expect(active).to_have_text("Aktuell: Benannt individual")
+        await expect(active).to_have_text("Benannt individual")
         await self.panel.locator('[data-action="program-toggle"]').click()
         await self.panel.locator('[data-action="program-select:other"]').click()
         await expect(self.panel.locator(".program-pending")).to_contain_text("Benannt other")
@@ -765,7 +772,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p => p.refresh()")
         await expect(self.panel.locator(".program-pending")).to_contain_text("Benannt other")
         await self.panel.locator('[data-action="program-cancel-draft"]').click()
-        await expect(active).to_have_text("Aktuell: Benannt individual")
+        await expect(active).to_have_text("Benannt individual")
 
         await self.panel.locator('[data-action="program-toggle"]').click()
         await self.panel.locator('[data-action="program-mode:individual"]').click()
@@ -783,7 +790,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.request.post_data_json, {"temperature_steps": [80, 86, 92]})
         self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
         self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (80, 86, 92))
-        await expect(active).to_have_text("Aktuell: Individuell")
+        await expect(active).to_have_text("Individuell")
         await self.panel.locator('[data-action="program-mode:constant"]').click()
         async with self.page.expect_response(
             lambda response: response.url.endswith(program_url) and response.request.method == "POST"
@@ -795,7 +802,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.runtime_data.configuration.program_mode, "constant")
         self.assertIsNone(self.entry.runtime_data.configuration.temperature_steps)
         self.assertEqual(self.entry.runtime_data.session.session_id, session_id)
-        await expect(active).to_have_text("Aktuell: Konstant")
+        await expect(active).to_have_text("Konstant")
         self.assertEqual(self.errors, [])
 
     async def test_running_program_requires_confirmation_and_reports_saved_choice(self):
@@ -803,44 +810,45 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
         await expect(self.panel.locator("#current .control-main .oven-feedback")).to_be_visible()
-        await expect(self.panel.locator("#current .control-main .oven-feedback strong")).to_have_text("Ofen an")
-        active_program = self.panel.locator('#current [data-action="program-toggle"] .program-active-label')
-        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await expect(self.panel.locator("#current .control-main .oven-feedback strong")).to_have_text("Ofen · Ein")
+        active_program = self.panel.locator('#current .program-current .program-active-label')
+        await expect(active_program).to_have_text("Individuell")
         overrides = self.panel.locator("#current .manual-overrides")
         await expect(overrides).to_be_visible()
         await expect(overrides).not_to_have_attribute("open", "")
         await overrides.locator("summary").click()
         await expect(overrides).to_have_attribute("open", "")
-        await expect(overrides.locator(".override-limit")).to_have_text(
-            "Übersteuerung: höchstens 10 Minuten."
-        )
+        await expect(overrides.locator("summary")).to_have_text("Manuelle Ofenübersteuerung")
+        await expect(overrides.locator('[data-action="heater:true"]')).to_be_enabled()
+        self.assertEqual(await overrides.locator('[data-action^="light:"]').count(), 0)
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
-        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await expect(self.panel.locator("#program-choice-body")).to_be_visible()
         self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
         await self.panel.locator('[data-action="program-mode:program"]').click()
         choice = self.panel.locator('[data-action="program-select:genusszeit"]')
         await expect(choice).to_be_visible()
-        await expect(choice).to_have_attribute("aria-pressed", "false")
-        await expect(choice).to_contain_text("Vorgemerkt")
-        await expect(choice).to_have_css("box-shadow", "none")
-        await expect(choice).to_have_css("outline-style", "none")
+        # The open editor marks its draft choice, while the active summary and
+        # backend stay unchanged until the separate confirmation succeeds.
+        await expect(choice).to_have_attribute("aria-pressed", "true")
+        await expect(choice).not_to_contain_text("Vorgemerkt")
+        await expect(choice).not_to_have_css("box-shadow", "none")
         action = self.panel.locator('#program-choice-body [data-action="program-apply"]')
         await expect(action).to_have_text("Programm übernehmen")
         await expect(action).to_be_enabled()
         await expect(self.panel.locator('#current .program-pending')).to_contain_text("Genusszeit")
-        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await expect(active_program).to_have_text("Individuell")
         await self.panel.evaluate("p=>p.refresh()")
         await expect(self.panel.locator("#program-choice-body")).to_be_visible()
-        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await expect(active_program).to_have_text("Individuell")
         await expect(overrides).to_have_attribute("open", "")
         await self.panel.locator('[data-action="program-cancel-draft"]').click()
         await expect(action).to_have_count(0)
         await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
-        await expect(active_program).to_have_text("Aktuell: Individuell")
+        await expect(active_program).to_have_text("Individuell")
         self.assertIsNone(self.entry.runtime_data.configuration.selected_program_id)
 
-        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await self.panel.locator('[data-action="program-mode:program"]').click()
         operation_geometry = lambda: self.panel.evaluate("""p => {
           const button = p.$('#current [data-action="operation"]');
@@ -889,12 +897,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(route_finished.wait(), 10)
             await self.page.unroute("**" + program_url, delay_program)
         self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, "genusszeit")
-        await expect(active_program).to_have_text("Aktuell: Genusszeit")
+        await expect(active_program).to_have_text("Genusszeit")
         await expect(choice).to_have_attribute("aria-pressed", "true")
         await expect(choice).not_to_contain_text("Vorgemerkt")
-        await expect(choice).to_have_css("background-color", "rgb(229, 138, 85)")
+        await expect(choice).to_have_css("background-color", "rgb(168, 108, 69)")
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(active_program).to_have_text("Aktuell: Genusszeit")
+        await expect(active_program).to_have_text("Genusszeit")
         await expect(choice).to_have_attribute("aria-pressed", "true")
         await expect(action).to_have_count(0, timeout=5000)
         self.assertEqual(await operation_geometry(), operation_box)
@@ -1359,9 +1367,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_automatic_light_presets_are_disabled_without_running_operation(self):
-        await self.panel.locator("#current .manual-overrides summary").click()
-        presets = self.panel.locator('#current .manual-overrides [data-action^="light:"]')
-        self.assertEqual(await presets.count(), 4)
+        presets = self.panel.locator('#current .manual-light [data-action^="light:"]')
+        self.assertEqual(
+            await presets.evaluate_all("buttons => buttons.map(button => button.dataset.action)"),
+            ["light:auto", "light:false", "light:true"],
+        )
+        await expect(self.panel.locator('#current .manual-light [data-action="light-editor"]')).to_be_visible()
         for index in range(await presets.count()):
             with self.subTest(preset=index):
                 await expect(presets.nth(index)).to_be_disabled()
@@ -1518,10 +1529,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await field.fill("60")
         await self.panel.locator('[data-action="manual-light-overview"]').click()
         status = self.panel.locator('#current [data-light-observation]')
-        await expect(status).to_have_text("Licht 60 % · gemeldet")
+        await expect(status).to_have_text("Licht 60 %")
         await field.fill("35")
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(status).to_have_text("Licht 60 % · gemeldet")
+        await expect(status).to_have_text("Licht 60 %")
         await expect(field).to_have_value("35")
         self.assertEqual(await self.panel.evaluate("p=>p.state.manual_controls.light.manual"), 60)
         await self.page.screenshot(path=str(screenshots / "light_desktop.png"), full_page=True)
@@ -1737,20 +1748,48 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await context.close()
         self.assertEqual(self.errors, [])
 
-    async def test_manual_oven_cooling_end_is_only_in_automatic_admin_control(self):
+    async def test_oven_cooling_end_is_a_split_control_for_admin_and_normal_user(self):
         await device_tests.DevicePathTests.prepare_gang_after_run(self)
         self.now += timedelta(seconds=10)
         await self.runtime.tick()
         await self.panel.evaluate("p=>p.refresh()")
         end_cooling = self.panel.locator('#current').get_by_role(
-            "button", name="Ofenkühlung jetzt beenden", exact=True
+            "button", name="Kühlung beenden", exact=True
         )
         await expect(end_cooling).to_be_visible()
+        await expect(self.panel.locator('#current .operation-control.split')).to_have_count(1)
+        await expect(self.panel.locator('#current .operation-control.split')).to_contain_text("Ausschalten")
         await self.panel.locator('[data-action="details"]').click()
         self.assertEqual(await self.panel.locator('#details [data-action^="end-phase:"]').count(), 0)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         self.assertFalse(self.heater.is_on)
-        await end_cooling.click()
+        user = await self.hass.auth.async_create_user("Normal cooling user", group_ids=[GROUP_ID_USER])
+        self.assertFalse(user.is_admin)
+        refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
+        tokens = {"hassUrl": self.url, "clientId": self.url + "/",
+                  "access_token": self.hass.auth.async_create_access_token(refresh),
+                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "expires_in": 1800}
+        context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+        try:
+            await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+            page = await context.new_page()
+            page.on("pageerror", lambda error: self.errors.append(str(error)))
+            await page.goto(self.url + "/ha-sauna")
+            panel = page.locator("ha-sauna-panel")
+            split = panel.locator('#current .operation-control.split')
+            await expect(split).to_be_visible(timeout=60000)
+            end_cooling_user = split.get_by_role("button", name="Kühlung beenden", exact=True)
+            await expect(end_cooling_user).to_be_enabled()
+            async with page.expect_response(lambda response: response.url.endswith("/finish_phase")
+                                            and response.request.method == "POST") as result:
+                await end_cooling_user.click()
+            self.assertTrue((await result.value).ok)
+            await expect(panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+            self.assertEqual(await panel.locator('#current [data-action^="end-phase:"]').count(), 0)
+        finally:
+            await context.close()
+        await self.panel.evaluate("p=>p.refresh()")
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         self.assertEqual(await self.panel.locator('#current [data-action^="end-phase:"]').count(), 0)
         await self.hass.async_block_till_done()
@@ -1854,10 +1893,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await chart.hover(position={"x": sample_x, "y": 200})
         # Returning through the main History tab selects the single-height
         # overview, whose label intentionally omits the height suffix.
-        label = self.panel.locator("#tooltip").get_by_text("Temperatur", exact=True)
+        label = self.panel.locator("#tooltip").get_by_text("Temperatur:", exact=True)
         await expect(label).to_be_visible()
+        await expect(self.panel.locator("#tooltip .history-tooltip-time")).to_have_text(re.compile(r"^\d{2}:\d{2}$"))
+        await expect(self.panel.locator("#tooltip .history-tooltip-status")).to_have_text("Saunastatus · Aufheizen")
+        temperature_value = label.locator("..").locator("span").nth(1)
+        humidity_value = self.panel.locator("#tooltip").get_by_text("Luftfeuchte:", exact=True).locator("..").locator("span").nth(1)
+        await expect(temperature_value).to_have_text(re.compile(r"^\d+(?:,\d)? °C$"))
+        await expect(humidity_value).to_have_text(re.compile(r"^\d+(?:,\d)? %$"))
         await expect(label).to_have_css("color", "rgb(255, 255, 255)")
-        await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(0, 0, 0)")
+        await expect(self.panel.locator("#tooltip")).to_have_css("background-color", "rgb(19, 19, 19)")
         self.assertEqual(await self.panel.evaluate("p=>p.historyChart.curves.styles['upper:temperature'].stroke"), "#000000")
         compare = self.panel.locator('[data-action="history-detail"]')
         await expect(compare).to_have_attribute("aria-pressed", "false")
@@ -1883,15 +1928,19 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.message(new Error('Synthetischer Verbindungsfehler'), 'action')")
         error_notice = self.panel.locator("#message.notice.error")
         await expect(error_notice).to_contain_text("Synthetischer Verbindungsfehler")
-        await expect(error_notice).to_have_css("background-color", "rgb(31, 31, 31)")
+        await expect(error_notice).to_have_css("background-color", "rgb(35, 35, 35)")
         await expect(error_notice).to_have_css("color", "rgb(255, 255, 255)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
         compare = self.panel.locator('[data-action="history-detail"]')
-        await expect(compare).to_have_css("color", "rgb(117, 117, 117)")
+        await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
         await compare.hover()
         await expect(compare).to_have_css("filter", "none")
-        await expect(compare).to_have_css("color", "rgb(117, 117, 117)")
+        await expect(compare).to_have_css("color", "rgb(255, 255, 255)")
         await expect(compare).to_have_css("text-decoration-line", "none")
+        await compare.focus()
+        await compare.press("Tab")
+        await self.page.keyboard.press("Shift+Tab")
+        await expect(compare).to_be_focused()
         await expect(compare).to_have_css("outline-style", "solid")
         await expect(compare).to_have_css("outline-width", "2px")
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
@@ -2034,8 +2083,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     start,
                 )
                 return await panel.evaluate("""p => ({
-                  gang: p.$('#gangs tbody tr td:nth-child(2)').textContent,
-                  events: [...p.shadowRoot.querySelectorAll('#event-list tbody tr td:nth-child(2)')].map(e=>e.textContent),
+                  gang: p.$('#gangs tbody tr td:nth-child(3)').textContent,
+                  events: [...p.shadowRoot.querySelectorAll('#event-list .history-event-time')].map(e=>e.textContent),
                   annotations: [...p.shadowRoot.querySelectorAll('[data-history-annotations] title')].filter(e=>/Aufguss|Heizzeit/.test(e.textContent)).map(e=>e.textContent),
                   session: p.$('#session').selectedOptions[0].textContent,
                 })""")
@@ -2086,9 +2135,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_overview_timers_stable_controls_german_settings_and_logging(self):
         await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_have_text("Steuerung")
         operation_button = self.panel.locator('#current [data-action="operation"]')
-        await expect(operation_button).to_have_css("background-color", "rgb(33, 101, 81)")
+        await expect(operation_button).to_have_css("background-color", "rgb(168, 108, 69)")
         operation_box = await operation_button.bounding_box()
         await operation_button.hover()
+        self.assertEqual(await operation_button.bounding_box(), operation_box)
+        await operation_button.focus()
+        await operation_button.press("Tab")
+        await self.page.keyboard.press("Shift+Tab")
+        await expect(operation_button).to_be_focused()
         await expect(operation_button).to_have_css("outline-style", "solid")
         self.assertEqual(await operation_button.bounding_box(), operation_box)
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
@@ -2143,7 +2197,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('#current [data-action="operation"]').click()
         identity=self.runtime.session.session_id
         next_target=self.runtime.controller.target_temperature
-        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await self.panel.locator('#progression-end').fill("90")
         temperature_url=f"/api/ha_sauna/{self.entry.entry_id}/temperature"
         async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
@@ -2161,7 +2215,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.temperatureChange")
         await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
         self.assertEqual(self.entry.options["program_mode"],"constant")
-        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await self.panel.locator('[data-action="program-mode:individual"]').click()
         await self.panel.locator('#progression-gangs').fill("2")
         async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
@@ -2215,10 +2269,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Tür geschlossen")
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=5000)
-        await self.panel.get_by_role("button", name="Programm ändern").click()
+        await self.panel.get_by_role("button", name="Ändern", exact=True).click()
         await self.panel.locator('[data-action="program-mode:constant"]').click()
         await expect(self.panel.locator('#current .program-pending')).to_contain_text("Konstant")
-        await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "false")
+        await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
+        self.assertEqual(self.entry.options["program_mode"], "progressive")
         await self.panel.locator('#current [data-action="program-apply"]').click()
         await expect(self.panel.locator('[data-action="program-mode:constant"]')).to_have_attribute("aria-pressed", "true")
         self.assertEqual(await self.panel.locator('#current [data-action^="preset:"]').count(), 6)
@@ -2287,7 +2342,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
-        await expect(self.panel.locator('#current').get_by_role("button", name="Hell 50 %", exact=True)).to_be_visible()
+        await expect(self.panel.locator('#current').get_by_role("button", name="Hell", exact=True)).to_be_visible()
         self.assertEqual(self.errors,[])
         self.assertEqual(self.ws_errors,[])
 

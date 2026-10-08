@@ -83,10 +83,3 @@ bestätigten Gang nicht erneut.
 Ein Quellausfall nimmt die zusätzliche Ganganforderung zurück, ohne eine
 Abwesenheit oder einen Gangabschluss zu erfinden. Reguläre Thermostatsteuerung,
 Ofenkühlung, explizite Bedienung und technische Schutzregeln bleiben wirksam.
-
-### Erweiterungsvertrag für direkte Präsenzführung
-
-Die lokale Vorschau verwendet denselben Controller und dasselbe Panel mit
-synthetischen Eingängen. Sie dient der Prüfung der beschlossenen Türkopplung;
-sie belegt keine Erkennungsqualität des physischen Sensors. Sensorposition,
-Abwesenheitsverzug und thermische Türerkennung benötigen reale Beobachtungen.
