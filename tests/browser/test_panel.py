@@ -1628,6 +1628,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator('[data-settings-section]:visible').count(), 1)
         self.assertEqual(await self.panel.evaluate("""p => p.state.parameters.filter(d => {
           const fields=p.shadowRoot.querySelectorAll(`#parameters input[name="${d.key}"]`);
+          if (d.settings_group === "programs") return fields.length !== 0;
           return fields.length!==1 || fields[0].form?.id!=="settings-parameters";
         }).map(d=>d.key)"""), [])
         await editor.locator('[data-appearance-color="series_temperature"]').fill("#E64AEB")
