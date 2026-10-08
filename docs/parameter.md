@@ -62,9 +62,8 @@ Schutzabschaltungen und Ofenkühlung haben Vorrang vor der Mindestheizzeit.
 
 ## Temperaturprogramme
 
-Die Einstellung **Verteilung der Steigerung** bestimmt die Zahl der
-Temperaturstufen einer gleichmäßigen Folge. Die Standardvorgabe führt von
-80 auf 95 °C über vier Stufen: 80 → 85 → 90 → 95 °C. Nach jedem beendeten,
+Ein gleichmäßig verteiltes Programm berechnet seine Temperaturfolge aus
+Starttemperatur, Endtemperatur und der Verteilung auf Saunagänge. Nach jedem beendeten,
 bestätigten Gang folgt die nächste Stufe. Die Bestätigung richtet sich nach der
 gewählten Präsenzquelle gemäß [Gangmodell](gangmodell.md). Die letzte Temperatur
 gilt anschließend für weitere Gänge.

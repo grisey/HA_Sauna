@@ -1559,6 +1559,34 @@ class SaunaPanel extends HTMLElement {
     if (!this.$("main")) this.shell();
     this.selectMenu ??= new SaunaSelectMenu(this);
     this.selectMenu.connect();
+    this.infoOutsideHandler ??= (event) => {
+      if (
+        !event.composedPath().some((node) => node.classList?.contains("program-info"))
+      )
+        this.closeInfo();
+    };
+    this.ownerDocument?.addEventListener("click", this.infoOutsideHandler, true);
+    this.infoGeometryHandler ??= (event) => {
+      if (!event.target?.classList?.contains("program-info-popup")) this.closeInfo();
+    };
+    this.shadowRoot.addEventListener?.("scroll", this.infoGeometryHandler, true);
+    this.ownerDocument?.addEventListener("scroll", this.infoGeometryHandler, true);
+    this.ownerDocument?.defaultView?.addEventListener(
+      "resize",
+      this.infoGeometryHandler,
+    );
+    this.ownerDocument?.defaultView?.visualViewport?.addEventListener(
+      "resize",
+      this.infoGeometryHandler,
+    );
+    this.ownerDocument?.defaultView?.visualViewport?.addEventListener(
+      "scroll",
+      this.infoGeometryHandler,
+    );
+    if (typeof MutationObserver !== "undefined") {
+      this.infoObserver ??= new MutationObserver(() => this.syncInfo());
+      this.infoObserver.observe(this.shadowRoot, { childList: true, subtree: true });
+    }
     this.fullscreenDocument = this.ownerDocument;
     this.fullscreenDocument?.addEventListener(
       "fullscreenchange",
@@ -1571,6 +1599,23 @@ class SaunaPanel extends HTMLElement {
   }
   disconnectedCallback() {
     this.selectMenu?.disconnect();
+    this.ownerDocument?.removeEventListener("click", this.infoOutsideHandler, true);
+    this.shadowRoot.removeEventListener?.("scroll", this.infoGeometryHandler, true);
+    this.ownerDocument?.removeEventListener("scroll", this.infoGeometryHandler, true);
+    this.ownerDocument?.defaultView?.removeEventListener(
+      "resize",
+      this.infoGeometryHandler,
+    );
+    this.ownerDocument?.defaultView?.visualViewport?.removeEventListener(
+      "resize",
+      this.infoGeometryHandler,
+    );
+    this.ownerDocument?.defaultView?.visualViewport?.removeEventListener(
+      "scroll",
+      this.infoGeometryHandler,
+    );
+    this.infoObserver?.disconnect();
+    this.closeInfo();
     clearTimeout(this.timer);
     this.fullscreenDocument?.removeEventListener(
       "fullscreenchange",
@@ -1738,6 +1783,7 @@ class SaunaPanel extends HTMLElement {
     const next = target.cloneNode(false);
     next.innerHTML = markup;
     this.patchNode(target, next);
+    this.syncInfo();
   }
   async api(path, method = "GET", body) {
     return this.hass.callApi(method, `ha_sauna${path}`, body);
@@ -3759,23 +3805,26 @@ class SaunaPanel extends HTMLElement {
         margin-top: 10px;
       }
       .program-info {
-        display: inline-flex;
-        align-items: center;
+        display: inline;
       }
       .program-info button {
         width: 25px;
         height: 25px;
+        min-height: 25px;
         border-radius: 50%;
         padding: 0;
       }
       .program-info-popup {
-        position: absolute;
-        z-index: 5;
-        top: 100%;
-        left: 0;
+        position: fixed;
+        inset: auto;
+        z-index: 100;
+        box-sizing: border-box;
+        margin: 0;
         min-width: 0;
-        width: 100%;
+        width: 320px;
         max-width: 320px;
+        overflow: auto;
+        overscroll-behavior: contain;
         padding: 9px 11px;
         border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 8px;
@@ -3787,6 +3836,7 @@ class SaunaPanel extends HTMLElement {
         line-height: 1.4;
         overflow-wrap: anywhere;
       }
+      .program-info-popup[hidden] { display: none; }
       .manual-section h3 {
         margin: 0;
       }
@@ -4096,7 +4146,7 @@ class SaunaPanel extends HTMLElement {
       if (!this.state) return;
       if (
         e.target.matches(
-          '#parameters input[name="target_temperature_c"],#parameters input[name="final_temperature_c"],#parameters input[name="preset_start_c"]',
+          '#parameters input[name="target_temperature_c"],#parameters input[name="preset_start_c"]',
         ) &&
         e.target.value.trim()
       ) {
@@ -4131,6 +4181,12 @@ class SaunaPanel extends HTMLElement {
         this.runPanelAction(() => this.finishFreeProgramInput(e.target));
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.programInfoOpen) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeInfo(true);
+        return;
+      }
       if (!this.state) return;
       if (
         e.key === "Escape" &&
@@ -4158,14 +4214,6 @@ class SaunaPanel extends HTMLElement {
       if (e.key === "Escape" && this.programEditor) {
         e.preventDefault();
         this.cancelProgramEditor();
-      }
-      if (e.key === "Escape" && this.programInfoOpen) {
-        const open = this.programInfoOpen;
-        this.programInfoOpen = null;
-        if (open.startsWith("catalog:")) {
-          this.programLibraryNeedsRender = true;
-          this.renderProgramLibrary();
-        } else this.drawCurrent();
       }
       if (e.target.closest("#history-overview svg, svg.session-chart") && this.window) {
         const width = this.window[1] - this.window[0];
@@ -5962,23 +6010,69 @@ class SaunaPanel extends HTMLElement {
     }
     const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
     const fields = manual
-      ? `<div class="row"><label class="field" for="free-step-count"><span>Stufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${esc(this.progressionDraft?.["free-step-count"] ?? count)}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
+      ? `<div class="row"><label class="field" for="free-step-count"><span>Anzahl der Temperaturstufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${esc(this.progressionDraft?.["free-step-count"] ?? count)}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
           steps,
           count,
         )
           .map(
             (value, index) =>
-              `<label class="field" for="free-step-${index}">Stufe ${index + 1}<input id="free-step-${index}" data-free-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
+              `<label class="field" for="free-step-${index}">Stufe ${index + 1} (°C)<input id="free-step-${index}" data-free-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
           )
           .join("")}</div>`
-      : `<div class="row"><label class="field" for="progression-start">Start<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}></label><label class="field" for="progression-end">Ende<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
+      : `<div class="row"><label class="field" for="progression-start">Starttemperatur (°C)<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}></label><label class="field" for="progression-end">Endtemperatur (°C)<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung auf Saunagänge ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
     return `<div class="program-form">${kindButtons}${fields}</div>`;
   }
   distributionInfo(id, steps) {
     const text = steps?.length
       ? `${steps.length} Stufen von ${num(steps[0], 1)} bis ${num(steps.at(-1), 1)} °C: ${steps.map((value) => num(value, 1)).join(" → ")} °C`
       : "Start, Ende und Verteilung innerhalb der zulässigen Grenzen eingeben";
-    return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="Verteilung erklären" aria-expanded="${this.programInfoOpen === id}">i</button>${this.programInfoOpen === id ? `<span class="program-info-popup">${esc(text)}</span>` : ""}</span>`;
+    return this.infoButton(id, "Verteilung erklären", text);
+  }
+  infoButton(id, label, text, descriptionId = `info-${id}`) {
+    const open = this.programInfoOpen === id;
+    return `<span class="program-info"><button type="button" data-action="program-info:${esc(id)}" aria-label="${esc(label)}" aria-controls="${esc(descriptionId)}" aria-expanded="${open}">i</button><span class="program-info-popup" popover="manual" id="${esc(descriptionId)}" ${open ? "" : "hidden"}>${esc(text)}</span></span>`;
+  }
+  syncInfo() {
+    if (!this.programInfoOpen) return;
+    const button = [...this.shadowRoot.querySelectorAll(".program-info button")].find(
+      (node) => node.dataset.action === `program-info:${this.programInfoOpen}`,
+    );
+    if (!button?.getClientRects().length) return this.closeInfo();
+    const popup = button.nextElementSibling;
+    button.setAttribute("aria-expanded", "true");
+    popup.hidden = false;
+    if (popup.showPopover && !popup.matches(":popover-open")) popup.showPopover();
+    const win = this.ownerDocument.defaultView,
+      viewport = win.visualViewport,
+      width = viewport?.width || win.innerWidth,
+      height = viewport?.height || win.innerHeight,
+      left = viewport?.offsetLeft || 0,
+      top = viewport?.offsetTop || 0,
+      rect = button.getBoundingClientRect(),
+      gap = 6,
+      below = top + height - rect.bottom - gap,
+      above = rect.top - top - gap;
+    popup.style.maxWidth = `${Math.max(0, width - gap * 2)}px`;
+    popup.style.maxHeight = `${Math.max(0, Math.max(above, below) - gap)}px`;
+    const box = popup.getBoundingClientRect();
+    popup.style.left = `${Math.max(left + gap, Math.min(rect.left, left + width - box.width - gap))}px`;
+    popup.style.top = `${below >= box.height ? rect.bottom + gap : Math.max(top + gap, rect.top - box.height - gap)}px`;
+  }
+  closeInfo(focus = false) {
+    const id = this.programInfoOpen;
+    this.programInfoOpen = null;
+    for (const button of this.shadowRoot?.querySelectorAll?.(".program-info button") ||
+      []) {
+      button.setAttribute("aria-expanded", "false");
+      if (
+        button.nextElementSibling.showPopover &&
+        button.nextElementSibling.matches(":popover-open")
+      )
+        button.nextElementSibling.hidePopover();
+      button.nextElementSibling.hidden = true;
+      if (focus && button.dataset.action === `program-info:${id}`)
+        button.focus({ preventScroll: true });
+    }
   }
   setFreeProgramKind(kind) {
     if (!["even", "steps"].includes(kind)) throw Error("Ungültige Eingabeart");
@@ -8048,11 +8142,13 @@ class SaunaPanel extends HTMLElement {
       admin = !!state.permissions?.admin;
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
       const field = (d) =>
-        `<label class="field">${esc(d.label)} (${esc(d.unit)})<input form="settings-parameters" type="number" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}><small id="help-${esc(d.key)}">${esc(d.description)}</small></label>`;
+        `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)} (${esc(d.unit)})</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span><input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}></div>`;
       const groups = state.frontend_defaults.settings_groups.filter(
         ({ id }) => admin || ["programs", "personal"].includes(id),
       );
       const parameterGroup = ({ id, label }) => {
+        // Program values are edited through the catalog or the temperature choice.
+        if (id === "programs") return "";
         const entries = state.parameters
           .filter((d) => d.settings_group === id)
           .sort((a, b) => a.order - b.order);
@@ -8078,7 +8174,7 @@ class SaunaPanel extends HTMLElement {
         return `<div class="card"><details class="settings-group" open><summary>${esc(label)} · Parameter</summary><div class="forms">${regular.map(field).join("")}</div>${experts.length ? `<details class="expert-group"><summary>Experteneinstellungen</summary>${expertFields}</details>` : ""}</details><button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
       };
       const contents = {
-        programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Saunataster</h2><div id="button-settings"></div></div>`,
+        programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
         sensors: `<div class="card"><h2>Messung und Geräte</h2><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a><p><a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a></p></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
         maintenance: `<div class="card"><h2>Protokollierung</h2><p class="muted">Im Home-Assistant-Protokoll unter custom_components.ha_sauna. Die Stufe ist auch während einer Saunasitzung änderbar. Das Sitzungsarchiv ist unabhängig von der Protokollstufe.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Gespeichert werden Sitzungen mit mindestens einem bestätigten Saunagang. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf die Standardwerte zurück. Die Zuordnung von Sensoren, Geräten und Tastern bleibt erhalten. Darstellung und Sitzungsarchiv bleiben ebenfalls erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
@@ -8391,16 +8487,16 @@ class SaunaPanel extends HTMLElement {
     const selector = `<div class="program-kind"><button type="button" data-action="catalog-kind:even:${esc(program.id)}" aria-pressed="${kind === "even"}" ${disabled}>Gleichmäßig</button><button type="button" data-action="catalog-kind:steps:${esc(program.id)}" aria-pressed="${kind === "steps"}" ${disabled}>Einzelne Stufen</button></div>`;
     const values =
       kind === "steps"
-        ? `<div class="row"><label class="field" for="${esc(countId)}"><span>Stufen ${this.distributionInfo(`catalog:${program.id}`, steps)}</span><input id="${esc(countId)}" data-program-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
+        ? `<div class="row"><label class="field" for="${esc(countId)}"><span>Anzahl der Temperaturstufen ${this.distributionInfo(`catalog:${program.id}`, steps)}</span><input id="${esc(countId)}" data-program-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
             steps,
             count,
           )
             .map(
               (value, index) =>
-                `<label class="field" for="catalog-${esc(program.id)}-step-${index}">Stufe ${index + 1}<input id="catalog-${esc(program.id)}-step-${index}" data-program-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
+                `<label class="field" for="catalog-${esc(program.id)}-step-${index}">Stufe ${index + 1} (°C)<input id="catalog-${esc(program.id)}-step-${index}" data-program-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
             )
             .join("")}</div>`
-        : `<div class="row"><label class="field">Start<input data-program-field="start_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}></label><label class="field">Ende<input data-program-field="end_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}></label><label class="field" for="${esc(distributionId)}"><span>Verteilung ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label></div>`;
+        : `<div class="row"><label class="field">Starttemperatur (°C)<input data-program-field="start_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}></label><label class="field">Endtemperatur (°C)<input data-program-field="end_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}></label><label class="field" for="${esc(distributionId)}"><span>Verteilung auf Saunagänge ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label></div>`;
     const protectedProgram = [
       this.state.configuration.selected_program_id,
       this.state.configuration.button_program,
@@ -8427,9 +8523,7 @@ class SaunaPanel extends HTMLElement {
     target.innerHTML = `<div class="program-list">${programs
       .map((program, index) => {
         const open = editor?.id === program.id,
-          summary = Array.isArray(program.temperature_steps)
-            ? `${program.temperature_steps.map((value) => num(value, 1)).join(" → ")} °C · Einzelne Stufen`
-            : `${num(program.start_c, 1)} → ${num(program.end_c, 1)} °C · Verteilung: ${program.distribution_gangs} · Gleichmäßig`;
+          summary = this.programSteps(program);
         return `<div class="program-row" data-program-id="${esc(program.id)}"><div class="program-row-summary"><button type="button" class="program-drag-handle" data-program-drag="${esc(program.id)}" aria-label="${esc(program.name)} verschieben, Position ${index + 1} von ${programs.length}; Pfeiltasten verwenden" ${editable && !busy ? "" : "disabled"}>☰</button><div class="program-row-label"><strong>${esc(program.name)}</strong><small>${esc(summary)}</small></div><button type="button" class="program-edit-button" data-action="program-edit:${esc(program.id)}" aria-label="${esc(program.name)} bearbeiten" ${editable && !busy ? "" : "disabled"}>Bearbeiten</button></div>${open ? this.catalogProgramForm(editor.values, bounds, editable) : ""}</div>`;
       })
       .join(
@@ -8448,7 +8542,7 @@ class SaunaPanel extends HTMLElement {
         `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
     this.updateMarkup(
       "#button-settings",
-      `<div class="row"><label class="field" for="button-program">Beim Einschalten<select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstant")}${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</select></label>${button === "constant" ? `<label class="field" for="button-temperature">Temperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>`,
+      `<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Beim Einschalten über den zugeordneten Taster oder Betriebsschalter wird diese Temperaturwahl übernommen. Der Einschaltknopf in der Steuerungsansicht verwendet deren aktuelle Temperaturwahl. Änderungen an dieser Startvorgabe werden sofort gespeichert.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
     );
   }
   newProgramId() {
@@ -9041,11 +9135,12 @@ class SaunaPanel extends HTMLElement {
     }
     if (action.startsWith("program-info:")) {
       const id = action.slice(13);
-      this.programInfoOpen = this.programInfoOpen === id ? null : id;
-      if (id.startsWith("catalog:")) {
-        this.programLibraryNeedsRender = true;
-        this.renderProgramLibrary();
-      } else this.drawCurrent();
+      const open = this.programInfoOpen !== id;
+      this.closeInfo();
+      if (open) {
+        this.programInfoOpen = id;
+        this.syncInfo();
+      }
       return;
     }
     if (action.startsWith("catalog-kind:")) {

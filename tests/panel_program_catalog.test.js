@@ -496,7 +496,10 @@ for (const selected of [null, "quiet"]) {
       })[selector] || null,
   });
   p.drawSettings();
-  assert.match(settings.innerHTML, /Programme[\s\S]*Saunataster/);
+  assert.match(
+    settings.innerHTML,
+    /Programme[\s\S]*Start über Taster oder Betriebsschalter/,
+  );
   assert.doesNotMatch(settings.innerHTML, /settings-title-/);
   assert.match(settings.innerHTML, /data-settings-section="programs" aria-label=/);
   assert.doesNotMatch(

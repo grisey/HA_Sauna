@@ -1267,7 +1267,7 @@
       "integer": false,
       "description": "Zusätzlicher Abstand hinter der halben Prozentgrenze beim Runden auf ganze Helligkeitsprozente. Bei 0,1 bleibt beispielsweise 50 % bis 50,6 % erhalten. Null deaktiviert das zusätzliche Band. Manuelle Lichtwahl und fälliges Ausschalten umgehen es.",
       "group": "light",
-      "expert": true,
+      "expert": false,
       "step": "any",
       "number_step": 0.01,
       "settings_group": "light",

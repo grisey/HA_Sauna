@@ -207,9 +207,13 @@ oder Pfeiltasten bei fokussiertem Griff ändern die Reihenfolge.
 **Programme speichern** übernimmt den gesamten Entwurf dauerhaft.
 **Änderungen verwerfen** stellt den gespeicherten Katalog wieder her.
 
-Unter **Einstellungen → Programme und Start → Saunataster** steht ein benanntes Programm oder eine
-eigene konstante Temperatur als Startvorgabe zur Wahl. Diese Vorgabe bleibt
-gesondert von der aktuellen Temperaturwahl gespeichert.
+Unter **Einstellungen → Programme und Start → Start über Taster oder Betriebsschalter**
+steht ein gespeichertes Programm oder eine konstante Solltemperatur zur Wahl.
+Änderungen werden sofort gespeichert. Diese Vorgabe gilt für den externen Start;
+der Einschaltknopf in der Steuerungsansicht verwendet deren aktuelle Temperaturwahl.
+
+Kleine Info-Schalter neben den Feldbezeichnungen öffnen die zugehörige Erklärung.
+Erneutes Betätigen, ein Klick außerhalb oder Escape schließt sie.
 
 ## Verlauf und technische Details
 
