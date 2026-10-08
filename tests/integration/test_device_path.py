@@ -1412,7 +1412,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             try:
                 self.now = self.base + timedelta(seconds=1)
                 self.hass.states.async_set(
-                    self.entry.options["bindings"]["upper_temperature"], "90",
+                    self.entry.options["bindings"]["upper_temperature"],
+                    str(self.runtime.controller.thermostat_target),
                     self.hass.states.get(
                         self.entry.options["bindings"]["upper_temperature"]
                     ).attributes,
@@ -2639,10 +2640,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source(f"{position}_temperature", 70)
             await self.set_source(f"{position}_humidity", 30)
         await self.runtime.set_operation(True)
-        retain_session(self.runtime)
         await self.hass.async_block_till_done()
+        # A new session restarts the temperature program. Capture its light
+        # before the retained archive fixture adds a completed program step.
+        initial_target = self.runtime.controller.target_temperature
         automatic_percent = round(self.runtime.device.light_output.last_automatic_brightness)
         automatic_brightness = self.light.brightness
+        retain_session(self.runtime)
+        await self.hass.async_block_till_done()
         old_percent = automatic_percent + 40 if automatic_percent <= 50 else automatic_percent - 40
         old_brightness = round(255 * old_percent / 100)
         self.assertNotEqual(old_brightness, automatic_brightness)
@@ -2715,6 +2720,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 await self.runtime.set_operation(True)
                 new_session = self.runtime.session.session_id
                 self.assertNotEqual(new_session, old_session)
+                self.assertEqual(self.runtime.controller.target_temperature, initial_target)
                 self.assertIsNone(self.runtime.controller.light_after_run)
                 await self.hass.async_block_till_done()
 

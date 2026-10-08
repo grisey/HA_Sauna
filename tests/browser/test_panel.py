@@ -2203,15 +2203,29 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_have_text("Steuerung")
         operation_button = self.panel.locator('#current [data-action="operation"]')
         await expect(operation_button).to_have_css("background-color", default_css_color("ui_command"))
-        operation_box = await operation_button.bounding_box()
+        await operation_button.scroll_into_view_if_needed()
+        # Hover and keyboard focus may scroll the HA shell or the panel host.
+        # Compare all four dimensions in panel content coordinates so those
+        # viewport movements cannot masquerade as a control layout change.
+        async def operation_geometry():
+            return await operation_button.evaluate("""button => {
+              const panel = button.getRootNode().host;
+              const control = button.getBoundingClientRect();
+              const host = panel.getBoundingClientRect();
+              return {x: control.x - host.x + panel.scrollLeft,
+                y: control.y - host.y + panel.scrollTop,
+                width: control.width, height: control.height};
+            }""")
+
+        operation_box = await operation_geometry()
         await operation_button.hover()
-        self.assertEqual(await operation_button.bounding_box(), operation_box)
+        self.assertEqual(await operation_geometry(), operation_box)
         await operation_button.focus()
         await operation_button.press("Tab")
         await self.page.keyboard.press("Shift+Tab")
         await expect(operation_button).to_be_focused()
         await expect(operation_button).to_have_css("outline-style", "solid")
-        self.assertEqual(await operation_button.bounding_box(), operation_box)
+        self.assertEqual(await operation_geometry(), operation_box)
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         self.assertNotIn("Bereitschaft", await self.panel.locator("#current").inner_text())
         gauges_text = await self.panel.locator("#current .gauges").inner_text()

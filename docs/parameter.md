@@ -16,8 +16,8 @@ Standardrücksetzung. Gespeicherte Nutzerwerte bleiben maßgeblich.
 `instance` führt die allgemeinen Vorgaben. `setup` benennt abweichende Vorgaben
 für eine neue Einrichtung: Tasterbedienung und progressive Temperaturfolge.
 Eine Standardrücksetzung verwendet die allgemeinen Instanzvorgaben. Die
-Tastertemperatur verweist ausdrücklich auf die aktuelle Solltemperatur, solange
-keine eigene Tastertemperatur gespeichert ist. Eine Programmauswahl und eigene
+Tastertemperatur beträgt ohne eigene gespeicherte Vorgabe konstant 90 °C und
+ist unabhängig von der aktuellen Solltemperatur. Eine Programmauswahl und eigene
 Einzelstufen sind optionale Wahlzustände und keine eigenständigen Standardwerte.
 Die Grundfarben besitzen konkrete Vorgaben; gespeicherte Farben behalten Vorrang.
 Die historische Interpretation alter Optionen ist davon getrennt: Ohne gespeicherten
