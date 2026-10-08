@@ -33,7 +33,7 @@ diese Bereitschaft; nach Gang und Ofenkühlung kann sie erneut entstehen. Eine
 vorläufige Personenerkennung bewahrt die bereits erreichte Bereitschaft.
 
 Die automatische Thermostatregelung heizt bis zur Solltemperatur zuzüglich
-Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 5 °C. Nach einer
+Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 1 °C. Nach einer
 regulären Temperaturabschaltung gilt eine Heizpause von 5 Minuten. Nach deren Ablauf fordert der Thermostat bei
 Erreichen oder Unterschreiten der oberen Regeltemperatur abzüglich 3 °C
 Hysterese wieder Heizen an. Innerhalb des Hysteresebands bleibt sein bisheriger

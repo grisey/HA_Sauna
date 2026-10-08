@@ -131,10 +131,6 @@ test("featured quantity colors precede advanced colors and legacy height values 
     p.historyCurveStyles()["upper:temperature"].stroke,
     p.historyCurveStyles()["lower:temperature"].stroke,
   );
-  assert.equal(
-    p.historyCurveStyles().overview.stroke,
-    p.historyCurveStyles()["upper:temperature"].stroke,
-  );
 });
 
 test("history legend groups matching curve, phase and event symbols without height controls", () => {

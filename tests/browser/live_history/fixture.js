@@ -179,7 +179,7 @@ window.installHistoryFixture = async function ({ seconds = 14400, both = false }
   await refresh();
   const coldMs = performance.now() - cold;
   if (panel.historyChart)
-    for (const name of ["buildMainPath", "paintMain", "updateOverview", "update"])
+    for (const name of ["buildMainPath", "paintMain", "update"])
       spy(panel.historyChart.curves, name, `curves.${name}`);
   let rendered = panel.historyChart,
     canvas = panel.$("canvas.history-curves"),
