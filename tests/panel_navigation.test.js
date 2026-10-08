@@ -267,3 +267,36 @@ test("an entry change withdraws all old controls until its matching state arrive
   await panel.action("operation");
   assert.equal(requests.length, 3, "the matching state's rights govern control");
 });
+
+test("leaving the history surface clears queued and retained hover before hiding", () => {
+  const { panel } = navigationPanel();
+  const listeners = new Map();
+  panel.shadowRoot.addEventListener = (kind, callback) => {
+    listeners.set(kind, [...(listeners.get(kind) || []), callback]);
+  };
+  panel.shell();
+  const surface = {};
+  panel.eventElement = () => surface;
+  panel.pendingHover = { clientX: 300, clientY: 100 };
+  panel.lastHistoryPointer = { clientX: 300, clientY: 100 };
+  let hidden = 0;
+  panel.historyChart = {
+    interaction: {
+      hide() {
+        assert.equal(panel.pendingHover, null);
+        assert.equal(panel.lastHistoryPointer, null);
+        hidden++;
+      },
+    },
+  };
+  const leave = listeners.get("pointerout")[0];
+  leave({ relatedTarget: { closest: () => surface } });
+  assert.equal(hidden, 0, "moving within the SVG keeps the readout");
+  leave({ relatedTarget: null });
+  assert.equal(hidden, 1);
+  assert.equal(
+    panel.lastHistoryPointer,
+    null,
+    "later chart renders cannot replay old hover",
+  );
+});

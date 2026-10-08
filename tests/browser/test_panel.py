@@ -136,11 +136,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def open_settings_section(self, section, panel=None):
         panel = panel or self.panel
-        select = panel.locator("#settings-section")
-        if await select.is_visible():
-            await select.select_option(section)
-        else:
-            await panel.locator(f'[data-action="settings-section:{section}"]').click()
+        toggle = panel.locator('[data-action="settings-menu"]')
+        if await toggle.is_visible() and await toggle.get_attribute("aria-expanded") == "false":
+            await toggle.click()
+        await panel.locator(f'[data-action="settings-section:{section}"]').click()
+        if await toggle.is_visible():
+            await expect(toggle).to_have_attribute("aria-expanded", "false")
+            await expect(panel.locator(".settings-navigation")).to_be_hidden()
 
     async def open_appearance(self, panel=None):
         panel = panel or self.panel
@@ -231,19 +233,21 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             panel = page.locator("ha-sauna-panel")
             await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
             await panel.locator('.main-tabs [data-action="settings"]').tap()
-            select = panel.locator("#settings-section")
+            await panel.locator('[data-action="settings-menu"]').tap()
+            await panel.locator('[data-action="settings-section:maintenance"]').tap()
+            select = panel.locator("#log-level")
             await select.tap()
-            menu = panel.get_by_role("listbox", name="Einstellungsbereich", exact=True)
+            menu = panel.get_by_role("listbox", name="Protokollstufe", exact=True)
             await expect(menu).to_be_visible()
             box = await menu.bounding_box()
             self.assertGreaterEqual(box["x"], 0)
             self.assertGreaterEqual(box["y"], 0)
             self.assertLessEqual(box["x"] + box["width"], 390)
             self.assertLessEqual(box["y"] + box["height"], 844)
-            index = await select.evaluate("select => [...select.options].findIndex(option => option.value === 'maintenance')")
+            index = await select.evaluate("select => [...select.options].findIndex(option => option.value === 'ERROR')")
             await menu.locator(f'[data-select-index="{index}"]').tap()
-            await expect(select).to_have_value("maintenance")
-            await expect(panel.locator("#log-level")).to_be_visible()
+            await expect(select).to_have_value("ERROR")
+            await expect(select).to_be_focused()
             await expect(menu).to_have_count(0)
         finally:
             await context.close()
@@ -1620,7 +1624,18 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await editor.locator('[data-appearance-color="series_humidity"]').fill("#23DDCC")
         await self.page.screenshot(path=str(screenshots / "settings_desktop.png"), full_page=True)
         await self.page.set_viewport_size({"width": 390, "height": 844})
-        await expect(self.panel.locator("#settings-section")).to_be_visible()
+        toggle = self.panel.locator('[data-action="settings-menu"]')
+        await expect(toggle).to_have_attribute("aria-expanded", "false")
+        await expect(self.panel.locator(".settings-navigation")).to_be_hidden()
+        await toggle.click()
+        await expect(toggle).to_have_attribute("aria-expanded", "true")
+        for button in await self.panel.locator(".settings-navigation button").all():
+            await expect(button).to_be_in_viewport(ratio=1)
+        await self.panel.locator('.settings-navigation button').first.focus()
+        await self.page.keyboard.press("Escape")
+        await expect(toggle).to_have_attribute("aria-expanded", "false")
+        await expect(self.panel.locator(".settings-navigation")).to_be_hidden()
+        await expect(toggle).to_be_focused()
         await self.open_settings_section("sensors")
         await self.open_parameter_group("door_open_drop_c")
         await expect(self.panel.locator('input[name="door_open_drop_c"]')).to_be_visible()
@@ -1628,6 +1643,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.page.screenshot(path=str(screenshots / "settings_mobile.png"), full_page=True)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
         await self.page.set_viewport_size({"width": 1440, "height": 1080})
+        await expect(self.panel.locator(".settings-navigation")).to_be_visible()
         await self.runtime.set_operation(True)
         for second in (1, 10, 20):
             self.now = self.base + timedelta(seconds=second)
@@ -2091,7 +2107,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(readout_box["x"], curve_box["x"])
         self.assertLessEqual(readout_box["x"] + readout_box["width"], curve_box["x"] + curve_box["width"] + 1)
         await self.panel.locator("#session").hover()
-        await expect(self.panel.locator("#tooltip")).to_be_visible()
+        await expect(self.panel.locator("#tooltip")).to_be_hidden()
+        legend_hidden = await self.panel.locator("#history-legends").bounding_box()
+        plot_hidden = await chart.bounding_box()
+        self.assertAlmostEqual(legend_after["y"] - plot_after["y"],
+                               legend_hidden["y"] - plot_hidden["y"], delta=1)
+        await expect(self.panel).to_have_js_property("busy", False)
+        await self.panel.evaluate("panel => panel.refresh(true)")
+        await expect(self.panel.locator("#tooltip")).to_be_hidden()
         # Valid but hostile palette: inspect rendered text consumers, not only
         # the palette variables. Curves must keep the chosen measurement color.
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
@@ -2382,7 +2405,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.page.set_viewport_size({"width": width, "height": 720})
                 await self.panel.locator('.main-tabs [data-action="settings"]').click()
                 await self.open_settings_section("operation")
-                content = self.panel.locator("#settings")
+                content = self.panel.locator(".settings-content")
                 await content.evaluate("node => { node.scrollTop = 0; node.querySelectorAll('details').forEach(item => item.open = true); }")
                 header = self.panel.locator("header")
                 before = await header.bounding_box()
@@ -2390,20 +2413,29 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.panel.evaluate("p => new Promise(resolve => requestAnimationFrame(resolve))")
                 self.assertGreater(await content.evaluate("node => node.scrollTop"), 0)
                 self.assertEqual(await header.bounding_box(), before)
-                navigation = self.panel.locator(".settings-navigation" if width > 700 else ".settings-mobile-navigation")
-                await expect(navigation).to_be_in_viewport(ratio=1)
+                navigation = self.panel.locator(".settings-navigation")
+                if width > 700:
+                    await expect(navigation).to_be_in_viewport(ratio=1)
+                else:
+                    toggle = self.panel.locator('[data-action="settings-menu"]')
+                    await expect(toggle).to_be_in_viewport(ratio=1)
+                    await expect(toggle).to_have_attribute("aria-expanded", "false")
+                    await expect(navigation).to_be_hidden()
+                    await toggle.click()
+                    await expect(navigation).to_be_in_viewport(ratio=1)
+                    await self.page.keyboard.press("Escape")
+                    await expect(toggle).to_be_focused()
                 await expect(self.panel.locator('.main-tabs [data-action="overview"]')).to_be_in_viewport(ratio=1)
                 if width <= 600:
                     tabs = self.panel.locator('.main-tabs')
                     for tab in await tabs.locator('button:visible').all():
                         await expect(tab).to_be_in_viewport(ratio=1)
-                    unused_width = await tabs.evaluate("""nav => {
-                      const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden);
-                      const rect = nav.getBoundingClientRect(), style = getComputedStyle(nav);
-                      return rect.right - buttons.at(-1).getBoundingClientRect().right
-                        - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
-                    }""")
-                    self.assertAlmostEqual(unused_width, 0, delta=1)
+                    tab_box = await tabs.bounding_box()
+                    header_box = await header.bounding_box()
+                    self.assertAlmostEqual(tab_box["x"] + tab_box["width"] / 2,
+                                           header_box["x"] + header_box["width"] / 2, delta=1)
+                    if width == 538:
+                        self.assertLess(tab_box["width"], header_box["width"])
                 self.assertLessEqual(await content.evaluate("node => node.scrollWidth"), await content.evaluate("node => node.clientWidth"))
                 self.assertEqual(await self.panel.evaluate("p => p.scrollTop"), 0)
 

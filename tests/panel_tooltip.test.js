@@ -153,8 +153,9 @@ const tooltipFor = (
     cursor,
     overview,
   );
+  assert.equal(tooltip.hidden, true, "initial readout waits for a chart pointer");
   interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
-  return { tooltip, interaction, panel };
+  return { tooltip, interaction, panel, cursor, surface };
 };
 
 const trackingIntl = () => {
@@ -412,4 +413,29 @@ test("formatter cache separates explicit zones with equal current offsets", () =
     });
     assert.equal(current.tooltipWhen(past, zone), expected);
   }
+});
+
+test("leaving plot bounds hides readout and cursor and clears phase", () => {
+  const { tooltip, interaction, cursor, surface } = tooltipFor(measurement());
+  for (const point of [
+    { clientX: 64, clientY: 100 },
+    { clientX: 1136, clientY: 100 },
+    { clientX: 600, clientY: 17 },
+    { clientX: 600, clientY: 436 },
+  ]) {
+    interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
+    tooltip.setAttribute("data-phase", "bereit");
+    assert.equal(tooltip.hidden, false);
+    interaction.hover({ svg: surface, ...point });
+    assert.equal(tooltip.hidden, true);
+    assert.equal(tooltip.attributes.get("data-phase"), "");
+    assert.equal(cursor.attributes.get("visibility"), "hidden");
+    interaction.readGeometry();
+    assert.equal(tooltip.hidden, true, "geometry refresh must not restore old values");
+  }
+  interaction.hover({ svg: surface, clientX: 600, clientY: 100 });
+  assert.equal(tooltip.hidden, false, "a new pointer shows values again");
+  interaction.hide();
+  assert.equal(tooltip.hidden, true);
+  assert.equal(tooltip.attributes.get("data-phase"), "");
 });

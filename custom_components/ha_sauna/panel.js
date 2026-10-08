@@ -949,7 +949,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
       }
     tooltip.replaceChildren(heading, rows, status, eventList);
     tooltip.setAttribute("data-phase", "");
-    tooltip.hidden = false;
+    tooltip.hidden = true;
     state.tooltip = { heading, series, status, eventList };
     return state.tooltip;
   };
@@ -958,7 +958,10 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   };
   const hide = () => {
     if (state.disposed) return;
-    if (tooltip && state.tooltipVisible) tooltip.hidden = true;
+    if (tooltip) {
+      tooltip.hidden = true;
+      tooltip.setAttribute("data-phase", "");
+    }
     if (cursor && state.cursorVisible) cursor.setAttribute("visibility", "hidden");
     state.tooltipVisible = false;
     state.cursorVisible = false;
@@ -984,7 +987,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     const right = snapshotTransform?.right ?? 1135;
     if (!Number.isFinite(start) || !Number.isFinite(end) || right <= left)
       return hide();
-    if (point.x < left || point.x > right) return;
+    if (point.x < left || point.x > right || point.y < 18 || point.y > 435)
+      return hide();
     const time = start + ((point.x - left) / (right - left)) * (end - start);
     const ttl = historyMeasurementTtlSeconds(panel, panel.shown?.session) * 1000;
     const nodes = tooltipNodes();
@@ -2774,6 +2778,8 @@ class SaunaPanel extends HTMLElement {
       }
       .main-tabs {
         justify-content: center;
+        justify-self: center;
+        width: max-content;
         margin: 0;
         padding: 4px;
         border: 1px solid var(--sauna-color-border, var(--divider-color));
@@ -3126,29 +3132,36 @@ class SaunaPanel extends HTMLElement {
       }
       .settings-layout {
         display: grid;
-        grid-template-columns: 210px minmax(0, 1fr);
+        --settings-navigation-width: 210px;
+        grid-template-columns: var(--settings-navigation-width) minmax(0, 1fr);
         gap: 24px;
         align-items: start;
+        height: 100%;
+        min-height: 0;
+        position: relative;
       }
+      #settings { overflow: hidden; }
+      .settings-menu-toggle, .settings-menu-backdrop { display: none; }
       .settings-navigation {
-        position: sticky;
-        top: 12px;
         display: grid;
         gap: 8px;
+        padding-top: 4px;
       }
       .settings-navigation button { text-align: left; }
-      .settings-mobile-navigation { display: none; }
-      .settings-content { min-width: 0; }
+      .settings-content { min-width: 0; min-height: 0; height: 100%; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 4px; }
       .settings-content > section > h2 { margin-top: 0; }
       .settings-content .card:first-of-type { margin-top: 0; }
       .settings-content .card { padding: 20px; }
       .light-feedback { font-size: 13px; }
       .oven-feedback { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
-      @media (max-width: 700px) {
-        .settings-layout { display: block; }
-        .settings-navigation { display: none; }
-        .settings-mobile-navigation { display: grid; gap: 6px; margin-bottom: 20px; position: sticky; top: 0; z-index: 4; padding: 8px 0; background: var(--sauna-color-page-background); }
-        .settings-mobile-navigation select { width: 100%; }
+      @container (max-width: 700px) {
+        .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
+        .settings-menu-toggle { display: inline-flex; justify-self: start; align-items: center; gap: 8px; margin: 0 4px; }
+        .settings-menu-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+        .settings-navigation { display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: 4px; left: 4px; width: min(var(--settings-navigation-width), calc(100% - 8px)); align-content: start; overflow: auto; z-index: 6; padding: 8px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
+        .settings-layout[data-menu-open] .settings-navigation { display: grid; }
+        .settings-layout[data-menu-open] .settings-menu-backdrop { display: block; position: absolute; grid-area: 2 / 1; inset: 0; z-index: 5; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+        .settings-content { grid-column: 1; grid-row: 2; }
         .settings-content .card { padding: 16px; }
       }
       .expert-group + .expert-group {
@@ -3804,12 +3817,6 @@ class SaunaPanel extends HTMLElement {
         .main-tabs {
           grid-row: 2;
           grid-column: 1 / -1;
-          justify-self: stretch;
-          justify-content: flex-start;
-        }
-        .main-tabs button {
-          flex: 1 1 auto;
-          padding: 7px 10px;
         }
         .phase-time {
           gap: 3px 8px;
@@ -3912,7 +3919,7 @@ class SaunaPanel extends HTMLElement {
       @container (max-width: 450px) {
         .main-tabs { min-width: 0; gap: 2px; }
         .program-types button, .main-tabs button, .segmented-mode button { padding-inline: 7px; font-size: 13px; }
-        .main-tabs button { flex: 1 1 auto; padding-inline: 2px; white-space: nowrap; }
+        .main-tabs button { flex: 0 1 auto; white-space: nowrap; }
         .control-main .control-section, .control-main .manual-section { padding: 12px; }
       }
       .control-main [data-action="light-editor"] { margin-top: 8px; }
@@ -4122,8 +4129,6 @@ class SaunaPanel extends HTMLElement {
           // Keep invalid input for the form's existing native validation.
         }
       }
-      if (e.target.id === "settings-section")
-        this.selectSettingsSection(e.target.value);
       if (e.target.matches("[data-program-step-count]")) {
         if (!this.programEditor) return;
         this.programEditor.values.temperature_steps = this.resizeSteps(
@@ -4142,6 +4147,14 @@ class SaunaPanel extends HTMLElement {
     });
     this.shadowRoot.addEventListener("keydown", (e) => {
       if (!this.state) return;
+      if (
+        e.key === "Escape" &&
+        this.$(".settings-layout")?.hasAttribute("data-menu-open")
+      ) {
+        e.preventDefault();
+        this.setSettingsMenu(false, true);
+        return;
+      }
       if (
         e.target.matches(".diagnostic-marker[data-action]") &&
         ["Enter", " "].includes(e.key)
@@ -4258,7 +4271,7 @@ class SaunaPanel extends HTMLElement {
       ) {
         this.pendingHover = null;
         this.lastHistoryPointer = null;
-        // Keep the selected values and cursor readable outside the curve.
+        this.historyChart?.interaction.hide();
       }
     });
     this.shadowRoot.addEventListener(
@@ -8122,7 +8135,7 @@ class SaunaPanel extends HTMLElement {
         personal: `<div class="card"><h2>Persönliche Startseite</h2><p class="muted">Gilt nur für das eigene Home-Assistant-Profil.</p><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
-        `<div class="settings-layout"><nav class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}><label class="settings-mobile-navigation" for="settings-section">Einstellungsbereich<select id="settings-section">${groups.map(({ id, label }) => `<option value="${esc(id)}">${esc(label)}</option>`).join("")}</select></label>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${contents[group.id] || ""}${parameterGroup(group)}</section>`).join("")}</div></div>`;
+        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${contents[group.id] || ""}${parameterGroup(group)}</section>`).join("")}</div></div>`;
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
@@ -8177,8 +8190,22 @@ class SaunaPanel extends HTMLElement {
           button.setAttribute("aria-current", "page");
         else button.removeAttribute("aria-current");
       });
-    const select = this.$("#settings-section");
-    if (select) select.value = this.settingsSection;
+    const currentLabel = this.$("[data-settings-current]");
+    if (currentLabel)
+      currentLabel.textContent =
+        this.$('.settings-navigation [aria-current="page"]')?.textContent ||
+        "Einstellungen";
+  }
+  setSettingsMenu(open, restoreFocus = false) {
+    this.$(".settings-layout")?.toggleAttribute("data-menu-open", open);
+    const toggle = this.$('[data-action="settings-menu"]');
+    toggle?.setAttribute("aria-expanded", String(open));
+    toggle?.setAttribute(
+      "aria-label",
+      open ? "Einstellungsbereiche schließen" : "Einstellungsbereiche öffnen",
+    );
+    if (open) this.$('.settings-navigation [aria-current="page"]')?.focus?.();
+    else if (restoreFocus && toggle?.getClientRects?.()?.length) toggle.focus?.();
   }
   drawArchiveManagement() {
     if (!this.state?.permissions?.admin || !this.$("#archive-management")) return;
@@ -8594,7 +8621,7 @@ class SaunaPanel extends HTMLElement {
       }
     }
     const edge = 48,
-      host = this.$("#settings")?.getBoundingClientRect?.();
+      host = this.$(".settings-content")?.getBoundingClientRect?.();
     drag.edgeDirection =
       host && event.clientY < host.top + edge
         ? -1
@@ -8610,7 +8637,7 @@ class SaunaPanel extends HTMLElement {
     drag.scrollFrame = globalThis.requestAnimationFrame?.(() => {
       drag.scrollFrame = null;
       if (this.programDrag !== drag || !drag.edgeDirection) return;
-      const container = this.$("#settings");
+      const container = this.$(".settings-content");
       if (container) container.scrollTop += drag.edgeDirection * 18;
       this.updateProgramDrag({
         pointerId: drag.pointerId,
@@ -8848,6 +8875,7 @@ class SaunaPanel extends HTMLElement {
   }
   setPanelView(action, preserveEventFocus = false) {
     if (!preserveEventFocus) this.pendingEventFocus = null;
+    this.setSettingsMenu(false);
     const closeFullscreenMenu = this.isPanelFullscreen() && this.fullscreenMenuOpen;
     this.fullscreenMenuOpen = false;
     this.navigation ??= { main: "overview", detail: "detail" };
@@ -9146,6 +9174,14 @@ class SaunaPanel extends HTMLElement {
     }
     if (action.startsWith("settings-section:")) {
       this.selectSettingsSection(action.slice(17));
+      this.setSettingsMenu(false, true);
+      return;
+    }
+    if (action === "settings-menu" || action === "settings-menu-close") {
+      const open =
+        action === "settings-menu" &&
+        !this.$(".settings-layout")?.hasAttribute("data-menu-open");
+      this.setSettingsMenu(open, !open);
       return;
     }
     if (action === "light-editor") {
