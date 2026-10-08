@@ -35,8 +35,8 @@ vorläufige Personenerkennung bewahrt die bereits erreichte Bereitschaft.
 Die automatische Thermostatregelung heizt bis zur Solltemperatur zuzüglich
 Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 1 °C. Nach einer
 regulären Temperaturabschaltung gilt eine Heizpause von 5 Minuten. Nach deren Ablauf fordert der Thermostat bei
-Erreichen oder Unterschreiten der oberen Regeltemperatur abzüglich 3 °C
-Hysterese wieder Heizen an. Innerhalb des Hysteresebands bleibt sein bisheriger
+Erreichen oder Unterschreiten der oberen Regeltemperatur abzüglich des eingestellten
+Schaltabstands wieder Heizen an. Innerhalb des Hysteresebands bleibt sein bisheriger
 Zustand erhalten.
 
 Ein tatsächlich bestätigter Heizbeginn startet die Mindestheizzeit von
