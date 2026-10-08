@@ -93,12 +93,8 @@ bevor auf die weiteren Schreibabschlüsse gewartet wird. Beobachtete Fehler werd
 an Home Assistant zurückgegeben.
 
 Das Archiv gehört zur Sicherung des Home-Assistant-Konfigurationsverzeichnisses.
-Der Integrationstest `tests/integration/test_archive_backup.py` verwendet dazu
-die offizielle HA-Core-Backup- und Restore-Routine und startet eine getrennte
-Instanz mit den wiederhergestellten Optionen und Originaldaten. Der Vergleich
-umfasst die Sitzungszuordnungen.
-
-[Prüfanleitung](abnahme.md)
+Der [Wiederherstellungstest](abnahme.md#home-assistant) prüft diesen Weg mit einer
+getrennten Instanz.
 
 Nach einem Neustart steht die archivierte Historie zur Verfügung. Der
 Saunabetrieb beginnt mit einem erneuten Einschaltauftrag.

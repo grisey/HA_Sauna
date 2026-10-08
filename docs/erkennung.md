@@ -17,8 +17,8 @@ verfügbaren vollständigen Messpositionen. Eine Position genügt für den volle
 Betrieb; bei zwei gültigen Positionen belegen beide den Abfall. Diese Regeln
 gelten auch in der heißen Sauna.
 
-Beide Öffnungswege benötigen zusätzlich einen geglätteten Temperaturverlust
-von standardmäßig **1 °C** an jeder beteiligten Messposition. Die Referenz ist
+Beide Öffnungswege benötigen zusätzlich den eingestellten geglätteten
+Mindesttemperaturverlust an jeder beteiligten Messposition. Die Referenz ist
 der höchste Wert derselben Temperaturquelle im Trendfenster vor dem ersten
 Hinweis und im anschließenden Öffnungskandidaten. Erst mit diesem Mindestverlust
 beginnt die Bestätigungsdauer. Ein kurzzeitig steiler Trend mit geringer
@@ -66,9 +66,9 @@ Türmerkmalfenster einschließlich seines Randpunkts vor. Die übrigen Trend- un
 Glättungsfenster bestimmen den Speicherbedarf, soweit sie länger sind.
 
 Bei zwei anfangs gültigen Messpositionen ist das Durchlüften mit dem beidseitigen
-Erreichen der Verlustschwellen bestätigt: standardmäßig **3 °C** Temperaturverlust
-und **30 %** Verlust an absolutem Wassergehalt. Bei anfangs einer gültigen
-Position kommt eine Öffnungsdauer von standardmäßig **60 Sekunden** hinzu.
+Erreichen der eingestellten Schwellen für Temperaturverlust und relativen
+Verlust an absolutem Wassergehalt bestätigt. Bei anfangs einer gültigen
+Position muss zusätzlich die eingestellte Mindestöffnungsdauer verstrichen sein.
 Ein mit zwei Positionen begonnener Nachweis setzt beide ursprünglichen
 Positionen voraus.
 

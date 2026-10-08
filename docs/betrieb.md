@@ -3,9 +3,8 @@
 ## Sitzung
 
 Betrieb-EIN beginnt eine Sitzung. Betrieb-AUS beendet den offenen Gang und
-startet die gemeinsame Frist für Wiederaufnahme und Lichtnachlauf, standardmäßig
-15 Minuten. Ein erneutes Einschalten innerhalb dieser Frist setzt dieselbe
-Sitzung fort. Nach Ablauf der Frist beginnt das nächste Einschalten eine neue
+startet die gemeinsame Frist für Wiederaufnahme und Lichtnachlauf. Erneutes
+Einschalten innerhalb dieser Frist setzt dieselbe Sitzung fort. Nach Ablauf der Frist beginnt das nächste Einschalten eine neue
 Sitzung. Jeder Sitzungsstart beendet einen laufenden Lichtnachlauf.
 
 Während der Sitzung lassen sich Solltemperatur und Temperaturprogramm anpassen.
@@ -13,8 +12,6 @@ Grundlegende Einstellungen und Gerätezuordnungen werden nach Sitzungsende
 geändert. Die Wiederaufnahmefrist gehört zur bestehenden Sitzung. Bei einem
 Neustart von Home Assistant bleibt der gespeicherte Verlauf erhalten; der
 Ofenbetrieb beginnt wieder durch ausdrückliches Einschalten.
-
-Genannte Standardwerte sind in den [Parametern](parameter.md) einstellbar.
 
 [Gangmodell](gangmodell.md) · [Heizpriorität](praesenz-ofen-phasen.md) ·
 [Zeitmodell](zeitmodell.md)
@@ -32,24 +29,17 @@ und geänderter Sollwahl bestehen. Der erste Aufguss eines neuen Gangs beendet
 diese Bereitschaft; nach Gang und Ofenkühlung kann sie erneut entstehen. Eine
 vorläufige Personenerkennung bewahrt die bereits erreichte Bereitschaft.
 
-Die automatische Thermostatregelung heizt bis zur Solltemperatur zuzüglich
-Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 1 °C. Die
-Wiedereinschaltschwelle liegt um den eingestellten Temperaturabstand unter der
-Solltemperatur, standardmäßig ebenfalls 1 °C. Bei 80 °C Soll schaltet die
-Regelung damit bei 81 °C ab und fordert bei 79 °C oder darunter wieder Heizen an.
-Nach einer regulären Temperaturabschaltung gilt zunächst eine Heizpause von
-5 Minuten. Innerhalb des Hysteresebands bleibt der bisherige Zustand erhalten.
+Die Thermostatgrenzen beziehen sich auf die Solltemperatur:
 
-Ein tatsächlich bestätigter Heizbeginn startet die Mindestheizzeit von
-standardmäßig 10 Minuten. Ein bereits laufendes Heizintervall behält seinen
-ursprünglichen Beginn. Die Heizpriorität ordnet diese Mindestzeit in die
-[Gangheizung und Ofenkühlung](praesenz-ofen-phasen.md) ein. Ein aktiver Gang
-fordert im Automatikbetrieb ab seiner vorläufigen Erkennung durchgehend Heizen
-an, solange die übergeordneten Freigaben gelten.
+- Abschalten bei Solltemperatur plus eingestelltem Abschaltaufschlag.
+- Wiedereinschalten bei Solltemperatur minus eingestelltem Unterabstand.
 
-Beim Aufheizen steht neben der Phase eine Prognose aus einem geeigneten
-früheren Aufheizverlauf und dem zunehmend belastbaren aktuellen Temperaturtrend.
-Sie erscheint in Fünf-Minuten-Stufen.
+Innerhalb dieses Bands bleibt der bisherige Zustand erhalten. Nach einer
+regulären Temperaturabschaltung muss vor dem Wiedereinschalten zusätzlich die
+Heizpause ablaufen. Ein tatsächlich bestätigter Heizbeginn startet die
+Mindestheizzeit; ein laufendes Intervall behält seinen ursprünglichen Beginn.
+Übergeordnete Anforderungen und Sperren folgen der
+[Heizpriorität](praesenz-ofen-phasen.md#heizpriorität).
 
 [Aufheizprognose](darstellung.md#zustand-und-zeit)
 
@@ -59,12 +49,12 @@ Direkte Sollwahl hält eine konstante Zieltemperatur. Ein Temperaturprogramm
 legt eine Folge von Stufen fest. Es kann als benanntes Programm ausgewählt oder
 individuell zusammengestellt werden. Einzelne Stufen erlauben steigende und
 fallende Folgen; eine gleichmäßige Verteilung berechnet die Stufen aus Start,
-Ende und Stufenzahl. Deren Standardvorgabe lautet 80 → 85 → 90 → 95 °C.
+Ende und Stufenzahl.
 Jeder beendete, bestätigte Gang führt zur nächsten Stufe. Nach der letzten
 Stufe gilt deren Temperatur auch für weitere Gänge.
 
 Bei einer gleichmäßigen Verteilung erhält eine Änderung ausschließlich der
-Endtemperatur das nächste Ziel; die verbleibenden Steigerungen verteilen sich
+Endtemperatur das aktuelle Ziel; die verbleibenden Steigerungen verteilen sich
 bis zum neuen Endwert. Eine neue Starttemperatur beginnt eine neue Verteilung.
 Gangzählung und laufende Zeitabläufe bleiben erhalten.
 
@@ -74,19 +64,18 @@ Gangzählung und laufende Zeitabläufe bleiben erhalten.
 
 Die Heizzeiterfassung verwendet vorrangig eine gültige Leistungsmessung. Als
 weitere Quellen dienen eine eingerichtete Heizrückmeldung und schließlich die
-native Schalterrückmeldung des Ofens. Die bestätigte Schalterstellung des Shelly
-genügt als Rückmeldung. Die Anzeige kennzeichnet die verwendete Quelle und eine
-daraus abgeleitete Schätzung. Eine durchgehend bestätigte Auszeit von
-standardmäßig 10 Minuten setzt die lokale Heizsumme zurück.
+native Schalterrückmeldung des Ofens. Die Anzeige kennzeichnet die verwendete
+Quelle und eine daraus abgeleitete Schätzung. Die lokale Heizsumme wird
+zurückgesetzt, sobald die durchgehend bestätigte Auszeit die eingestellte
+Rücksetzdauer erreicht.
 
 Die Timeranzeige schätzt die verbleibende Laufzeit des mechanischen Ofentimers.
-Sie zählt standardmäßig von 240 Minuten herunter, solange Betrieb und bestätigte
+Sie zählt von der eingestellten Laufzeit herunter, solange Betrieb und bestätigte
 Schützstellung EIN sind. Bei Schütz-AUS oder unbekannter Rückmeldung bleibt der
 zuletzt berechnete Rest erhalten. Nach jeder abgeschlossenen Sitzung beginnt
 die Anzeige beim nächsten Sitzungsstart mit der vollen Dauer, unabhängig von
 der erkannten Gangzahl. Fortsetzen innerhalb derselben Sitzung erhält die
 Restzeit. Die Anzeige stellt den mechanischen Timer am Gerät nicht zurück.
-Die Timerberechnung dient ausschließlich der Anzeige.
 
 Bei alleiniger Schützrückmeldung zeigt das Panel **Heizfreigabe EIN/AUS**.
 Die tatsächliche Heizleistung hinter einem internen Ofenthermostat ist daraus
@@ -94,50 +83,41 @@ nicht bekannt. Eine gültige Leistungsmessung oder unabhängige Heizrückmeldung
 ermöglicht die Anzeige **Ofen an/aus**.
 
 Die Verbrauchsschätzung ergibt sich aus gezählter Heizzeit und eingestellter
-Ofenleistung, standardmäßig 4,5 kW. Eine gültige Leistungsmessung übernimmt die
-Berechnung für ihren jeweiligen Zeitraum. Die Anzeige unterscheidet gemessene,
-geschätzte und unbekannte Anteile. Der Sitzungsverbrauch bleibt über Kühlphasen
+Ofenleistung. Eine gültige Leistungsmessung übernimmt die Berechnung für ihren
+jeweiligen Zeitraum. Die Anzeige unterscheidet gemessene, geschätzte und
+unbekannte Anteile. Der Sitzungsverbrauch bleibt über Kühlphasen
 und lokale Heizzeitrücksetzungen hinweg erhalten.
 
 ## Ofenkühlung
 
-Zur Ofenkühlung fordert die Steuerung Ofen-AUS an. Mit der bestätigten
-Schützstellung AUS berechnet die Steuerung die Dauer und beginnt, die bestätigte
-AUS-Laufzeit zu zählen. Die Standarddauer liegt zwischen 5 und 15 Minuten.
-
-[Auslösung, Dauer und vorzeitiges Ende der Ofenkühlung](ofenkuehlung.md)
+[Auslösung, Berechnung und Abschluss der Ofenkühlung](ofenkuehlung.md)
 
 ## Licht
 
-Die automatische Helligkeit folgt dem Betriebsabschnitt und der Temperatur.
-Die Lichtkurve steigt linear von 5 % bei 30 °C bis zur Normalhelligkeit an der aktuellen
-Solltemperatur. Die Normalhelligkeit beträgt tagsüber 40 % und nachts
-25 %; während der bürgerlichen Dämmerung geht sie gleitend zwischen beiden
-Werten über. Aufheizen und Bereitschaft verwenden dieselbe stetige Lichtkurve;
-die Bereitschaftshysterese verändert das Lichtziel nicht. Während eines
-Saunagangs bleibt die Normalhelligkeit erhalten.
-Die Ausgabe erfolgt in ganzen Prozentwerten. Automatische Stellwerte wechseln
-erst, wenn die Kurve die halbe Prozentgrenze um zusätzlich 0,1 Prozentpunkte
-überschreitet. Dieses einstellbare Hystereseband beruhigt kleine Schwankungen
-an Rundungsgrenzen. Manuelle Wahlen und fälliges AUS gelten unmittelbar.
-Die internen Kurven und gemessenen Helligkeitswerte behalten ihre Genauigkeit.
+Aufheizen und Bereitschaft verwenden dieselbe lineare Lichtkurve: von der
+Grundhelligkeit an der eingestellten Referenztemperatur bis zur Normalhelligkeit
+an der aktuellen Solltemperatur. Die Thermostatgrenzen verändern das Lichtziel
+nicht. Während eines Saunagangs gilt die Normalhelligkeit. Diese geht während
+der bürgerlichen Dämmerung gleitend zwischen eingestelltem Tag- und Nachtwert über.
 
-Zu Beginn der Ofenkühlung geht das Licht auf 15 % zurück. Anschließend steigt es
-über die verbleibende Kühlzeit linear zur temperaturabhängigen Helligkeit an.
-Automatische Übergänge dauern standardmäßig 30 Sekunden; die Kühlphase begrenzt
-den ersten Übergang auf höchstens die Hälfte ihrer verbleibenden Dauer.
-Das Ganzzahlraster begrenzt die Änderung nicht auf einen Prozentpunkt pro Sekunde;
-die eingestellten Übergangszeiten und Phasenfristen bleiben maßgeblich.
+Die Ausgabe wird auf ganze Prozent gerundet. Bei automatischen Änderungen
+kommt zur Rundungsgrenze die eingestellte Ausgabehysterese hinzu; interne
+Kurven und Messwerte behalten ihre Genauigkeit. Manuelle Wahlen und fälliges
+AUS werden nicht durch diese Hysterese verzögert.
 
-Betrieb-AUS startet den Lichtnachlauf bei 50 %. Er endet mit der gemeinsamen
-Wiederaufnahmefrist durch Ausschalten des Lichts. Beim langen Enddruck einer
-neuen Saunatastergeste bleibt das Licht während des Haltens aus; bestätigtes
-Loslassen beginnt den Lichtnachlauf mit derselben eingestellten Dauer.
+Zu Beginn der Ofenkühlung dimmt das Licht auf die eingestellte Kühlhelligkeit.
+Anschließend steigt es über die verbleibende Kühlzeit linear zur
+temperaturabhängigen Helligkeit. Der erste Übergang ist auf die Hälfte der
+verbleibenden Kühlzeit begrenzt.
+
+Betrieb-AUS startet den Lichtnachlauf mit der dafür eingestellten Helligkeit.
+Mit der Wiederaufnahmefrist endet auch der Lichtnachlauf. Beim langen Enddruck
+bleibt das Licht während des Haltens aus; erst bestätigtes Loslassen startet
+den Nachlauf mit der eingestellten Dauer.
 
 Eine manuelle Lichtwahl in Automatik gilt bis zum nächsten passenden Phasenwechsel
-oder längstens für die eingestellte Übersteuerungsdauer. Deren Standardwert und
-feste Obergrenze betragen 10 Minuten. Ausschalten und Dimmen am Lichttaster zählen
-als manuelle Wahl.
+oder längstens für die eingestellte Übersteuerungsdauer. Ausschalten und Dimmen
+am Lichttaster zählen als manuelle Wahl.
 Rückmeldungen eigener Lichtbefehle ordnet die Integration dem automatischen
 Verlauf zu. Bei der Rückkehr zur Automatik beginnt der Übergang an der zuletzt
 beobachteten Helligkeit und blendet zum aktuellen automatischen Verlauf über.
@@ -147,7 +127,7 @@ dadurch nicht neu. Das fällige Ausschalten beendet auch einen laufenden Überga
 Enden Lichtnachlauf und manuelle Lichtwahl gleichzeitig, bleibt die automatische
 Endphase AUS. Eine anschließend ausdrücklich gesetzte Raumlichtwahl gilt als
 neue manuelle Bedienung. Bei ihrer Rückkehr zur Automatik bleibt die Grundlage
-der beendeten Lichtphase 0 %.
+der beendeten Lichtphase AUS.
 
 ## Bedienhandlungen und Betriebsart
 
@@ -176,8 +156,7 @@ Langklassifikation im laufenden Betrieb; sie liefert den Langdrucknachweis.
 
 Die vorübergehende Ofenwahl in Automatik gilt bis zur Rückgabe, einem Wechsel
 der Phase oder der automatischen EIN-/AUS-Anforderung, längstens für die
-eingestellte Übersteuerungsdauer. Deren Standardwert und feste Obergrenze
-betragen 10 Minuten. Beim Fristende gilt wieder die aktuelle Automatik.
+eingestellte Übersteuerungsdauer. Beim Fristende gilt wieder die aktuelle Automatik.
 Ausdrücklich gewähltes Ofen-AUS wirkt auch während eines aktiven Gangs.
 Ofen-EIN setzt die gültige Heizfreigabe einschließlich einer gültigen
 Regeltemperatur voraus. Schutz, Betrieb-AUS und Ofenkühlung haben Vorrang.

@@ -20,8 +20,7 @@ Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 ## Fachkern und JavaScript
 
-Der Fachkern verwendet Python und seine Standardbibliothek. Die CI wählt dafür
-Python 3.13. Die Oberfläche wird mit dem Testläufer von Node geprüft:
+Fachkern und Panelmethoden werden wie in der CI ausgeführt:
 
 ```sh
 python -m unittest discover -s tests -v
@@ -40,9 +39,8 @@ Kalibrierung verwendeten Sitzung belegt den Vergleich an genau dieser Sitzung.
 
 ## Home Assistant
 
-Für die HA-Prüfungen wird eine eigene Python-Umgebung mit der im Workflow
-festgelegten Version verwendet, derzeit Python 3.14.2. Die Installation entspricht
-dem HA-Job:
+Die HA-Prüfungen verwenden eine eigene Python-Umgebung gemäß Workflow.
+Installation wie im HA-Job:
 
 ```sh
 python -m pip install 'homeassistant==2026.9.2' 'securetar==2026.4.1' 'cronsim==2.7'

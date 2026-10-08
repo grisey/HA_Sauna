@@ -22,14 +22,9 @@ bis zu einem belegten Abschluss erhalten ([Gangmodell](gangmodell.md)).
 
 [Kühlablauf](ofenkuehlung.md)
 
-Eine ausdrückliche vorübergehende Ofenwahl ist eine Bedienhandlung innerhalb
-der Automatik. Gewähltes Ofen-AUS hält den Ofen auch während eines aktiven Gangs
-aus. Die Wahl endet bei Rückgabe, Phasenwechsel oder einem Wechsel der
-automatischen EIN-/AUS-Anforderung, spätestens nach 10 Minuten. Ofen-EIN setzt
-die gültige Heizfreigabe voraus; Schutz, Betrieb-AUS und Ofenkühlung behalten
-Vorrang.
-
-[Bedienrechte](bedienung.md)
+Eine ausdrückliche Ofen-AUS-Wahl unterbricht auch die Ganganforderung.
+Ofen-EIN bleibt Schutz, Betrieb-AUS und Ofenkühlung untergeordnet.
+[Rückgabe und Dauer der Übersteuerung](betrieb.md#bedienhandlungen-und-betriebsart)
 
 In der Betriebsart Manuell folgt die Heizanforderung der ausdrücklichen
 Ofenwahl. Gang- und Präsenzereignisse begleiten dort den Verlauf. Die
@@ -46,7 +41,7 @@ verwirft die Eignung dieses Vorgangs. Eine spätere geeignete Türöffnung begin
 einen neuen Vorgang.
 
 Mit der tatsächlichen Heizbestätigung geht die Anforderung in die laufende
-Mindestheizzeit über, standardmäßig 10 Minuten. Bereits laufendes Heizen behält
+Mindestheizzeit über. Bereits laufendes Heizen behält
 seinen ursprünglichen Beginn. Bis zur Bestätigung bleibt die Türanforderung
 eine widerrufbare Anforderung; die Heizzeiterfassung folgt den tatsächlichen
 Rückmeldungen. Betrieb-AUS und eine ausdrückliche Ofen-AUS-Wahl verwerfen die
@@ -65,11 +60,8 @@ können diese Zuordnung ergänzen.
 
 [Zeitpunkte von Beobachtung, Buchung und Erkennung](zeitmodell.md)
 
-Die Grundphasen `base_phases` bilden den zeitlichen Betriebsablauf. Für die
-Ofenkühlung verwendet die Steuerung daraus die Bereitschaftszeiten
-`readiness_pauses`: die Schnittmenge aus zugeordneter Bereitschaft, Betrieb-EIN
-und bestätigtem Schütz-AUS. Jede Zeitspanne zählt einmal. Die daraus berechnete
-Kühldauer wird beim tatsächlichen Kühlbeginn gespeichert.
+Die [Kühldauer](ofenkuehlung.md#berechnung-der-dauer) verwendet die rückblickend
+zugeordneten Bereitschaftszeiten zusammen mit bestätigtem Schütz-AUS.
 
 ## Präsenzquellen im aktuellen Programm
 

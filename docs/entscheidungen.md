@@ -6,11 +6,9 @@ Der Controller besitzt den fachlichen Laufzeitzustand. Runtime, Geräteadapter
 und Oberfläche greifen auf diesen gemeinsamen Zustand zu. Eine Bedienung und
 eine Quellmeldung treffen damit auf dieselbe Sitzung und dieselben Fristen.
 
-Eine Sitzung bildet den Zusammenhang für Gänge und deren zeitlichen Ablauf.
-Ihre eindeutige Identität bindet Ereignisse, Entscheidungen und Fristen an den
-passenden Ursprung. Konfiguration, Archiv und Schutzgründe besitzen eine davon
-getrennte Lebensdauer. Eine neue Sitzung erhält ihre eigenen Ablaufobjekte;
-vorhandene Historie und weiter wirksame Schutzbedingungen behalten ihre Bedeutung.
+Die Sitzungsidentität bindet Gänge, Ereignisse, Entscheidungen und Fristen an
+ihren Ursprung. Konfiguration, Archiv und Schutzgründe bestehen unabhängig vom
+Sitzungswechsel.
 
 ## Trennung von Quellen, Zuordnung und Ausgabe
 

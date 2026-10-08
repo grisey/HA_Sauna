@@ -63,11 +63,10 @@ Der bestätigte Konfigurationsstand führt die benannte ID in `selected_program_
 Der Programmauftrag übermittelt benannte IDs als `profile`, beispielsweise
 `{"profile":"individual"}`. Auch IDs mit Doppelpunkten bleiben vollständig.
 
-Der gemeinsame Einstellungspfad prüft einen vollständigen Konfigurationskandidaten,
-einschließlich der Innenstufen eines freien Temperaturprogramms. Ein gültiger
-Kandidat wird übernommen; bei Abweisung bleibt der bisherige Options- und
-Laufzeitstand wirksam. Auch der Optionsflow einer ungeladenen Integration verwendet
-diesen vollständigen Kandidaten.
+Der gemeinsame Einstellungspfad prüft den vollständigen Konfigurationskandidaten,
+einschließlich der Innenstufen freier Temperaturprogramme. Bei Abweisung bleiben
+Optionen und Laufzeit unverändert. Dieselbe Prüfung gilt im Optionsflow einer
+ungeladenen Integration.
 
 Ein vollständiges Parameterformular erhält das laufende Temperaturprogramm,
 wenn sein mitgesendeter Sollwert unverändert ist. Eine direkte Sollwertwahl über

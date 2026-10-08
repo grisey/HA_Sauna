@@ -38,7 +38,7 @@ Abwesenheitsverzug des Sensors abzuziehen.
 
 ## Proxyverfahren
 
-## Beginn und Bestätigung
+### Beginn und Bestätigung
 
 | Ereignis | Wirkung auf den Gang |
 | --- | --- |
@@ -52,9 +52,8 @@ Abwesenheitsverzug des Sensors abzuziehen.
 
 Ein neuer Gang setzt Betrieb-EIN, fehlende Ofenkühlung und eine aktuelle gültige
 führende Regeltemperatur mindestens in Höhe von `sauna_min_temperature_c` voraus.
-Die bestehende Quellenauswahl bevorzugt die obere gültige Temperatur und weicht
-bei Bedarf auf die untere aus. Diese gemeinsame Freigabe gilt für starke und
-schwache Proxy-Personensignale sowie unmittelbar startende Aufgüsse in beiden
+Die [Quellenauswahl](betrieb.md#temperatur-und-bereitschaft) gilt auch hier.
+Diese Freigabe gilt für starke und schwache Proxy-Personensignale sowie unmittelbar startende Aufgüsse in beiden
 Betriebsarten. Fehlende oder veraltete Regeltemperaturen erlauben keinen Start.
 Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Bestätigung,
 weitere Aufgüsse und Lüftungsende bleiben möglich.
@@ -74,8 +73,7 @@ mit zunehmendem absolutem Wassergehalt kann in dieser Zeit einen vorläufigen
 Gang auslösen. Eine weitere Türöffnung beginnt einen neuen Türbezug. Diese
 Zuordnung setzt eine neue Feuchteentwicklung nach der Öffnung voraus.
 
-Die Aufgussbestätigungsfrist des Proxyverfahrens endet standardmäßig 12 Minuten
-nach dem Gangbeginn.
+Die Aufgussbestätigungsfrist läuft ab dem Gangbeginn für die eingestellte Dauer.
 Ein rechtzeitig zugeordneter Aufguss bestätigt den Gang bis einschließlich dieses
 Endzeitpunkts. Nach einer Rücknahme kann ein neuer gültiger Aufguss einen eigenen
 bestätigten Gang beginnen. Die Anzeige nennt die seit Gangbeginn verstrichene
@@ -99,9 +97,6 @@ Der abgeschlossene Gang bewahrt seinen Beginn und seine zugeordneten Aufgüsse.
 Während angeforderter oder laufender Kühlung bleibt die Gangzuordnung für neue
 Personen- und Aufgusssignale gesperrt. Nach ihrer Freigabe
 beginnt die Erkennung mit Messfenstern aus dem freigegebenen Abschnitt.
-
-Ein aktuell aktiver Gang fordert im Automatikbetrieb Heizen an. Das gilt für
-vorläufige und bestätigte Gänge gleichermaßen.
 
 [Heizpriorität](praesenz-ofen-phasen.md#heizpriorität) ·
 [Gangende und Kühlung](ofenkuehlung.md#auslösung)

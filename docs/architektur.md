@@ -1,10 +1,8 @@
 # Architektur
 
-Jede konfigurierte Sauna besitzt einen führenden Controller. Er verwaltet die
-laufende Sitzung und trifft ihre Regelentscheidungen. Die Runtime ordnet die
-eingehenden Meldungen und Bedienungen zeitlich ein. Der Geräteadapter verbindet
-diesen Ablauf mit Home Assistant: Er liest die konfigurierten Quellen, sendet
-Gerätebefehle und verarbeitet deren Rückmeldungen.
+Pro Sauna führt ein Controller die Sitzung und ihre Regelentscheidungen.
+Die Runtime ordnet Meldungen und Bedienungen zeitlich ein; der Geräteadapter
+liest Home-Assistant-Quellen, sendet Gerätebefehle und verarbeitet Rückmeldungen.
 
 [Designentscheidungen](entscheidungen.md) · [Betrieb](betrieb.md) ·
 [Gangmodell](gangmodell.md) · [Ofenkühlung](ofenkuehlung.md)

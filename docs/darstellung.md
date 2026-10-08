@@ -1,184 +1,85 @@
 # Darstellungsreferenz
 
-[Bedienungsanleitung](bedienung.md) · [Betriebsablauf](betrieb.md) ·
+[Bedienung](bedienung.md) · [Betriebsablauf](betrieb.md) ·
 [Daten- und Zeichenvertrag](livekurve.md)
 
-## Ansichten und Aktualisierung
+## Aktualisierung und Eingaben
 
-Das Panel übernimmt den aktuellen Zustand über die API. Die Bedienrechte folgen
-dem angemeldeten Home-Assistant-Benutzer. Die obere Navigation gliedert die
-Oberfläche nach Aufgabe:
+Bei einem Instanzwechsel bleiben Bedienelemente gesperrt, bis der Zustand der
+gewählten Sauna vorliegt. Antworten der zuvor gewählten Instanz geben die neue
+Ansicht nicht frei.
 
-| Ansicht | Aufgabe |
-|---|---|
-| Steuerung | Betrieb, Temperaturwahl und Licht mit aktuellem Phasenstatus |
-| Verlauf | Aktuelle und archivierte Saunasitzungen |
-| Details | Technische Zustände und Erkennungskontrolle für Administratoren |
-| Einstellungen | Programmbibliothek und Tasterwahl; technische Konfiguration und Darstellung für Administratoren |
+Statusaktualisierungen erhalten bearbeitete Eingaben, aktualisieren aber deren
+Grenzen und Sperren. Ein Programmfehler verwirft den Entwurf nicht.
+Wann eine Temperaturwahl wirksam wird, beschreibt die
+[Bedienungsanleitung](bedienung.md#betriebsstart-und-temperaturwahl).
 
-Bei mehreren eingerichteten Saunen steht eine Instanzauswahl bereit. Ein Wechsel
-führt zunächst durch eine Ladeansicht. Die passende Statusantwort gibt die
-Bedienung der ausgewählten Sauna frei. Auch spätere Antworten werden ihrer
-Instanz und dem zugehörigen Vorgang zugeordnet.
-
-Die regelmäßige Aktualisierung erhält den Wert einer gerade bearbeiteten
-Eingabe und übernimmt zugleich aktuelle Sperrattribute. Ein geöffneter Entwurf
-bleibt bis zum Übernehmen oder Verwerfen bestehen. Auswahlmarkierungen beziehen
-sich auf die vom Backend bestätigte Einstellung.
-
-## Temperaturwahl und Eingabezustände
-
-Die Temperaturanzeige verbindet Messwert und Sollschieber auf derselben Skala.
-Der zulässige Sollbereich beginnt bei einer einstellbaren Untergrenze,
-standardmäßig 60 °C, und endet bei der festen Obergrenze von 100 °C. Eine direkte
-Wahl setzt eine konstante Solltemperatur. Das tatsächliche Heizen folgt den
-Regel- und Schutzbedingungen des Betriebsablaufs.
-
-Der Sollschieber verwendet die ganzen Celsiusgrade im gemeinsamen Bereich aus
-Anzeigeskala und zulässiger Solltemperatur. Für Zeiger- und Tastatureingaben
-müssen ein solcher Bereich und passende Bedienrechte vorliegen. Die Schnellwahl
-hebt den aktuell bestätigten Wert hervor.
-Benannte Programme zeigen ihren Namen und ihre Temperaturfolge. Die Hilfe zur
-gleichmäßigen Verteilung verwendet denselben gültigen Entwurf wie die
-Eingabefelder.
-
-| Eingabezustand | Darstellung |
-|---|---|
-| Bestätigte Auswahl | Hervorgehobene Auswahl und wirksamer Programmname bzw. **Konstant** oder **Individuell** |
-| Bearbeiteter Entwurf | Neutrale Fläche mit **Vorgemerkt** bzw. **Noch nicht übernommen** |
-| Laufende Übertragung | Gesperrte Bestätigungsschaltfläche mit **Wird übernommen …** |
-| Erfolgreiche Übernahme | **✓ Übernommen** für zwei Sekunden auf derselben Fläche |
-| Eingabefehler oder fehlgeschlagene Anfrage | Erklärender Text bei weiterhin bearbeitbarem Entwurf |
+Der Sollschieber verwendet ganze Celsiusgrade im gemeinsamen Bereich von
+Anzeigeskala und zulässiger Solltemperatur. Eine engere Anzeigeskala begrenzt
+also auch den dort direkt wählbaren Bereich; sie ändert keine Regelparameter.
 
 ## Zustand und Zeit
 
-Die Steuerung stellt Phase und passende Zeit nebeneinander dar. Rechts steht
-die Saunagangzahl. Die Ofenrückmeldung erscheint als **Ofen an**, **Ofen aus**
-oder **Ofen unbekannt**. Die markierte Betriebs- oder Übersteuerungsauswahl
-beschreibt den gewählten Modus; die Ofenrückmeldung beschreibt den beobachteten
-Heizzustand.
+Die markierte Ofenwahl ist eine Vorgabe, die Ofenrückmeldung eine Beobachtung.
+Eine fehlende Rückmeldung wird nicht als ausgeschalteter Ofen dargestellt.
 
-| Situation | Zeitdarstellung |
-|---|---|
-| Aufheizen mit belastbarer Prognose | Geschätzte Zeit bis bereit, auf Fünf-Minuten-Stufen gerundet; unter fünf Minuten **noch unter 5 Minuten bis bereit** |
-| Aktiver Saunagang | Seit Gangbeginn verstrichene Zeit |
-| Angeforderte Ofenkühlung | Hinweis auf die Vorbereitung bis zur bestätigten AUS-Rückmeldung des Ofenschalters |
-| Laufende Ofenkühlung | Verbleibende, aus bestätigter AUS-Zeit berechnete Dauer |
-| Zeitlich bestimmte Startsperre | Verbleibende Wartezeit und zugehöriger Grund |
-| Lichtnachlauf | Verbleibende Zeit der aktuellen Lichtfrist |
+Verstrichene Dauern werden auf ganze Minuten abgerundet, verbleibende
+aufgerundet. Unter einer Minute erscheint **unter 1 Minute**; fehlende Werte
+erscheinen als **–**. Ereigniszeitstempel behalten ihre Sekundenangabe, die
+Wertanzeige am Diagramm verwendet eine kompakte Uhrzeit.
 
-Die Aufheizprognose verbindet einen geeigneten Verlauf der letzten Sitzung mit
-dem zunehmend belastbaren aktuellen Temperaturtrend. Technische Fristen und
-der geschätzte mechanische Ofentimer stehen in den Details; dessen Status
-erklärt, wann seine Zählung läuft oder pausiert.
+Die Aufheizprognose verbindet einen geeigneten früheren Aufheizverlauf mit dem
+aktuellen Temperaturtrend. Sie wird in Fünf-Minuten-Stufen angezeigt; unter
+fünf Minuten als **noch unter 5 Minuten bis bereit**. Sie ist eine Schätzung,
+keine zugesagte Bereitschaftszeit.
 
-## Farbrollen und Lesbarkeit
+## Farben und Kontrast
 
-Der zentrale
-[Darstellungskatalog](../custom_components/ha_sauna/defaults.json)
-im Abschnitt `appearance`
-definiert die Farbrollen und Standardwerte. Gespeicherte Anpassungen gelten je
-Sauna. Rollen mit einem Home-Assistant-Standard übernehmen die entsprechende
-Themenfarbe.
+Farbrollen und Vorgaben werden ausschließlich im
+[Darstellungskatalog](../custom_components/ha_sauna/defaults.json), Abschnitt
+`appearance`, geführt. Gespeicherte Anpassungen gelten je Sauna.
+Text- und Fokusfarben werden für die tatsächlich dargestellte Hintergrundfläche
+auf ausreichenden Kontrast angepasst. Das berücksichtigt auch Phasentönungen.
 
-Die Auswahlfarbe kennzeichnet wirksame Optionen und die aktuelle Navigation.
-Befehle verwenden standardmäßig die Aktionsfarbe `#216551`, Ausschalten und
-Beenden die Stoppfarbe `#A34029`.
-Nebenaktionen liegen auf neutralen Flächen mit dezenter Kontur. Beschriftung,
-Markierung und Farbe vermitteln den jeweiligen Zustand gemeinsam. Der
-Tastaturfokus erhält eine deutlich sichtbare Umrandung. Beim Überfahren eines
-bedienbaren Buttons erscheint ebenfalls eine kontrastierende Umrandung ohne
-Layoutverschiebung; der Text wird dabei nicht unterstrichen.
-
-Die große Bedienkachel erhält bei einem aktuellen automatischen Phasenstatus
-eine Tönung mit 8 % der Phasenfarbe auf dem Kartenhintergrund. Aus, Manuell und
-unbekannte oder veraltete Zustände verwenden die neutrale Fläche. Text- und
-Fokusfarben werden aus der tatsächlich dargestellten Hintergrundfläche
-abgeleitet; dabei fließen auch Tönungen und ausgewählte Ereigniszeilen ein.
-
-Temperaturbogen und Temperaturkurve teilen eine Messfarbe, ebenso
-Feuchtebogen und Feuchtekurve. Im normalen Verlauf sind beide Kurven durchgezogen. Im Detailverlauf und bei den
-Temperatur- und Feuchtemerkmalen der Erkennungskontrolle kennzeichnet die
-Linienart die Messposition: oben durchgezogen, unten gestrichelt. Achsenzahlen, Titel und
-Einheiten verwenden die Farbe der zugehörigen Messgröße; die Zeitachse bleibt
-neutral. Die Messwerte und Skalenbeschriftungen der Bögen folgen derselben
-Zuordnung. Gespeicherte frühere Messhöhenfarben bleiben kompatibel erhalten,
-werden aber nicht mehr als unwirksame Farbfelder angeboten.
+Temperatur und Luftfeuchte verwenden jeweils dieselbe Messfarbe in Bogen,
+Kurve und zugehöriger Achse. Die Zeitachse bleibt neutral. Im normalen Verlauf
+sind beide Kurven durchgezogen; die Erkennungskontrolle unterscheidet obere und
+untere Messposition zusätzlich durch durchgezogene bzw. gestrichelte Linien.
+Frühere Messhöhenfarben bleiben in gespeicherten Konfigurationen kompatibel,
+haben aber keine eigenen Farbfelder mehr.
 
 ## Darstellungsentwurf und Skalen
 
-Unter **Einstellungen → Darstellung** stehen die beiden Messgrößenfarben und
-Anzeigeskalen zuerst. **Erweiterte Farben** enthält die übrigen Farbrollen.
-Alle Farbfelder verwenden dieselbe Komponente aus Farbauswahl, Hexeingabe und
-Rücksetzen auf den jeweiligen Standard.
+Gültige Änderungen erscheinen sofort als Vorschau. Erst Speichern übernimmt
+sie für alle Benutzer der gewählten Sauna. Verwerfen stellt den gespeicherten
+Stand wieder her. **Standarddarstellung wiederherstellen** füllt nur den Entwurf
+mit Katalogvorgaben; auch dieser muss gespeichert werden.
 
-Farbfeld und Hexeingabe bearbeiten denselben Darstellungsentwurf. Eine gültige
-Änderung erscheint unmittelbar als Vorschau in der aktuellen Ansicht. Speichern
-übernimmt den Entwurf für die ausgewählte Sauna; Verwerfen stellt den
-gespeicherten Stand wieder her. **Standarddarstellung wiederherstellen** belegt
-den Entwurf mit den Katalogvorgaben. Die Übernahme erfolgt über das gesonderte
-Speichern der Darstellung.
+Ein Messwert außerhalb der gewählten Skala bleibt als Zahl sichtbar. Der Bogen
+endet am Skalenrand und kennzeichnet die Überschreitung. Skalen müssen eine
+kleinere Unter- als Obergrenze haben; Feuchtegrenzen liegen im physikalischen
+Bereich von 0 bis 100 %.
 
-Die Temperaturanzeige umfasst standardmäßig 40–110 °C, die Feuchteanzeige
-0–60 %. Jede Skala hat eine kleinere Unter- als Obergrenze; Feuchtegrenzen liegen
-zwischen 0 und 100 %. Ein Messwert außerhalb der Skala bleibt als Zahl sichtbar.
-Der Bogen endet am Skalenrand und erhält einen Überschreitungshinweis.
-
-Die Verlaufsachsen werden aus den Verlaufsdaten berechnet, die zulässigen
-Solltemperaturen aus der Parameterdefinition. Eine Darstellungsänderung wird in
-die bestehende laufende Ansicht übernommen. Beim allgemeinen
-**Standardwerte wiederherstellen** bleiben die gespeicherte Darstellung und
-die Gerätezuordnungen erhalten.
+Die Verlaufsachsen richten sich nach den Verlaufsdaten, nicht nach den
+Anzeigeskalen der Messbögen. Das allgemeine Zurücksetzen der Betriebsparameter
+verändert die gespeicherte Darstellung nicht.
 
 ## Verlauf und Diagnose
 
-Die aktuelle Auswahl heißt bei laufendem Betrieb **Laufende Sitzung**, sonst
-**Letzte Sitzung**. Archivierte Sitzungen tragen ihren Beginn im Titel. Der
-Standardverlauf verwendet die führende Messposition; der Detailverlauf erlaubt
-den Vergleich beider Positionen.
+Der normale Verlauf verwendet die führende Messposition. Seine Phasenflächen
+stammen aus den gespeicherten Zeitabschnitten des Ablaufkerns. Die Wertanzeige
+verwendet den empfangenen Originalpunkt und die Phase am ausgewählten Zeitpunkt;
+sie wird beim Verlassen des Diagramms ausgeblendet.
 
-| Element | Darstellung |
-|---|---|
-| Temperatur | Gemeinsame Messfarbe von Anzeige und Kurve, linke °C-Achse; im normalen Verlauf durchgezogen |
-| Relative Luftfeuchte | Gemeinsame Messfarbe von Anzeige und Kurve, rechte Prozentachse; im normalen Verlauf durchgezogen |
-| Messposition im Detailverlauf | Oben durchgezogen, unten gestrichelt |
-| Tür offen | Fläche in der Türfarbe |
-| Saunagang | Fläche in der Gangfarbe |
-| Aufguss | Zeitmarke in der Aufgussfarbe |
-| Betriebsphase | Fläche nach der zugehörigen Phasenrolle |
+Zeitfenstersteuerung und Diagramm verwenden dieselbe Zeitdomäne und horizontalen
+Grenzen. Datenlücken, Kurvenaufbereitung und Navigation sind im
+[Daten- und Zeichenvertrag](livekurve.md) beschrieben.
 
-Die Messfarben stehen direkt an den zugehörigen Werten unter dem Diagramm.
-Phasen und Ereignisse bilden dort zwei ausgerichtete Legendengruppen mit den
-gespeicherten Farben. Die Phasenlegende enthält die in der Sitzung vorhandenen
-Phasen und markiert die Phase am ausgewählten Zeitpunkt.
-Linien und Konturen sind im normalen Verlauf durchgezogen.
-Die Phasenflächen übernehmen die vom Ablaufkern gelieferten Zeitabschnitte.
-Lüftungsereignisse und Ofenaktivität erscheinen ausschließlich in den technischen Details.
+Der administrative Detailverlauf zeigt Betriebszustände, Schaltgründe und
+Ereignisse. Die Erkennungskontrolle stellt gespeicherte Detektormerkmale mit den
+Schwellen der jeweiligen Sitzung dar. Ereignisse werden nur bei vorhandenem
+Signal- und Metriknachweis mit Diagnosemarkern verknüpft. Haltezähler bezeichnen
+erfüllte Prüfpunkte. Ein Ereignissprung setzt den Fokus auf das Ziel.
 
-Die Zeitfenstersteuerung ordnet den sichtbaren Ausschnitt in die gesamte Sitzung
-ein. Ihre Griffe verändern die Grenzen des Ausschnitts; Steuerung und
-Verlaufsdiagramm verwenden dieselbe Zeitdomäne. Die Zeitfenstersteuerung schließt
-direkt an die Zeitachse an. Die Wertanzeige
-steht in einem eigenen Bereich darunter.
-Sie greift auf den empfangenen Originalpunkt zurück; ihr Hintergrund verwendet
-die gespeicherte Farbe der Phase am ausgewählten Zeitpunkt. Die Sitzungsauswahl
-steht anstelle einer zusätzlichen Verlaufsüberschrift.
-
-[Kurvenaufbereitung und Ausschnittbedienung](livekurve.md)
-
-Die Erkennungskontrolle stellt gespeicherte Detektormerkmale mit den
-Schwellen der ausgewählten Sitzung dar. Ein vorhandener Signal- und
-Metriknachweis verbindet das Ereignis mit seinem Diagnosemarker. Marker und
-Ereigniszeile bilden ein wechselseitiges Navigationsziel. Haltezähler werden
-als erfüllte Prüfpunkte beschriftet. Sichtbare Merkmalskurven und aktive
-Bestätigungswerte geben den jeweiligen Nachweis wieder.
-
-## Tastatur und zugängliche Beschriftung
-
-Die Navigation kennzeichnet die aktuelle Seite mit `aria-current`. Der
-Temperaturschieber und die Ausschnittgriffe erhalten numerische Werte und
-Grenzen; lesbare Werttexte ergänzen die Zeitangaben der Zeitfenstersteuerung. Fokus und
-Auswahl bleiben visuell unterscheidbar. Ereignissprünge führen zum zugehörigen
-Marker bzw. Listeneintrag.
-
-Verlaufstabellen und Beschriftungen bleiben als DOM-Inhalt zugänglich.
+Verlaufstabellen und Beschriftungen bleiben unabhängig von der Canvas-Zeichnung
+als zugänglicher Text erhalten.

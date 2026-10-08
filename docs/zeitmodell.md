@@ -5,20 +5,20 @@ Oberfläche verwendet die lokale Zeitzone des Browsers.
 
 ## Laufzeiten und Fristen
 
-Die angegebenen Dauern sind einstellbare Standardwerte. Vorübergehende
-Übersteuerungen in Automatik haben zusätzlich eine feste Obergrenze von 10 Minuten.
+Dauern stammen aus den [Parametern](parameter.md). Maßgeblich ist jeweils
+der folgende Beginn; spätere Verarbeitung verschiebt ihn nicht.
 
 | Vorgang | Beginn und Zeitbezug |
 | --- | --- |
 | Gangbeginn | Passende Türschließung derselben Sitzung und Türöffnung; ersatzweise Buchungszeit des zulässigen Personensignals oder Aufgusses. |
-| Aufgussbestätigung im Proxyverfahren | Frist bis Gangbeginn + standardmäßig 12 Minuten. Der erste zugeordnete Aufguss bestätigt den bestehenden Gang. |
-| Wiederaufnahme und Lichtnachlauf | Betrieb-AUS + 15 Minuten, mit gemeinsamem Endzeitpunkt. Wiedereinschalten beendet den Lichtnachlauf. Nach einem langen Enddruck beginnt der Lichtnachlauf mit dem bestätigten Loslassen; die Sitzung ist bereits abgeschlossen. Die [Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart) unterscheidet Start- und Enddruck. |
+| Aufgussbestätigung im Proxyverfahren | Gangbeginn + eingestellte Bestätigungsdauer. Der erste zugeordnete Aufguss bestätigt den bestehenden Gang. |
+| Wiederaufnahme und Lichtnachlauf | Betrieb-AUS + eingestellte Wiederaufnahmezeit, mit gemeinsamem Endzeitpunkt. Wiedereinschalten beendet den Lichtnachlauf. Nach einem langen Enddruck beginnt der Lichtnachlauf mit dem bestätigten Loslassen; die Sitzung ist bereits abgeschlossen. Die [Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart) unterscheidet Start- und Enddruck. |
 | Ofenkühlung | Bestätigtes Schütz-AUS startet Berechnung und Laufzeit. Ausschließlich bestätigte AUS-Zeit zählt zur gespeicherten Dauer gemäß [Ofenkühlung](ofenkuehlung.md). |
-| Mindestheizzeit | Tatsächlich bestätigter Beginn eines Heizintervalls + 10 Minuten. Ein laufendes Intervall behält seinen Beginn. |
-| Thermostatpause | Reguläre Temperaturabschaltung + 5 Minuten. |
-| Lichtübergang | Standardmäßig 30 Sekunden; bei Kühlbeginn höchstens die Hälfte der verbleibenden Kühlzeit. Der Lichtnachlauf endet durch unmittelbares Ausschalten. |
-| Vorübergehende Ofen- oder Lichtwahl in Automatik | Wahl + eingestellte Dauer, standardmäßig und höchstens 10 Minuten. Danach gilt die aktuelle Automatik. Frühere Rückkehrpunkte richten sich nach der jeweiligen [Bedienhandlung](betrieb.md#bedienhandlungen-und-betriebsart). |
-| Mechanischer Timer | Zählt maximal 240 Minuten bei Betrieb-EIN und bestätigtem Schütz-EIN. |
+| Mindestheizzeit | Tatsächlich bestätigter Beginn eines Heizintervalls + eingestellte Mindestheizzeit. Ein laufendes Intervall behält seinen Beginn. |
+| Thermostatpause | Reguläre Temperaturabschaltung + eingestellte Heizpause. |
+| Lichtübergang | Eingestellte Übergangsdauer; bei Kühlbeginn höchstens die Hälfte der verbleibenden Kühlzeit. Der Lichtnachlauf endet durch unmittelbares Ausschalten. |
+| Vorübergehende Ofen- oder Lichtwahl in Automatik | Wahl + eingestellte Übersteuerungsdauer. Danach gilt die aktuelle Automatik. Frühere Rückkehrpunkte richten sich nach der jeweiligen [Bedienhandlung](betrieb.md#bedienhandlungen-und-betriebsart). |
+| Mechanischer Timer | Verbleibende konfigurierte Laufzeit zählt bei Betrieb-EIN und bestätigtem Schütz-EIN herunter. |
 
 Jede Frist gehört zu einer Sitzung und einem bestimmten Vorgang. Ausschließlich
 die aktuelle Frist dieses Vorgangs ist wirksam. Wiederholte Ereignisse behalten

@@ -26,13 +26,9 @@ späteren Auswählen dieser Sitzung. Laufende Abrufe gehören zur Instanz,
 Auswahlgeneration und Sitzungsidentität ihres Auftrags. Antworten werden
 übernommen, solange dieser Bezug zur aktuellen Auswahl passt.
 
-Die Panelabfrage verwendet `projection=history` und bis zu 5000 Records pro
-Seite. Sie überträgt Messungen, Quellen-Schnappschüsse, Phasen und für
-Administratoren zusätzlich Erkennungen und Diagnosen. Frühere vollständige
-Sitzungsrevisionen und übrige interne Records bleiben im Archiv und Export;
-für den Verlauf genügt der aktuelle Sitzungssnapshot jeder Antwort. Die
-Filterung erfolgt vor der Seiteneinteilung. Alle zugehörigen Originalmesspunkte
-bleiben unverändert erhalten.
+Die Panelabfrage verwendet `projection=history` gemäß dem
+[Archivvertrag](speicherung.md#lesen). Für den Verlauf genügt der aktuelle
+Sitzungssnapshot jeder Antwort; frühere Revisionen bleiben im Archiv und Export.
 
 Die Record-ID bestimmt die Deduplizierung. Verschiedene Records mit gleichem
 Quellzeitpunkt behalten ihre eigene Identität. Der chronologische Index führt
@@ -75,9 +71,7 @@ neue Zeicheninstanz.
 | DOM | Tooltiptexte, Tabellen, Beschriftungen und Zeitfenstersteuerung mit Ausschnittgriffen |
 
 Die Phasenprojektion liefert die zeitlichen Abschnitte einschließlich
-nachträglicher Zuordnungskorrekturen. Darstellung und Archivansicht übernehmen
-diesen Stand. Die laufenden Aktorvorgaben entstehen im Controller; der
-Geräteadapter führt sie aus.
+nachträglicher Zuordnungskorrekturen für Darstellung und Archivansicht.
 
 Gespeicherte Pfade und fertige Zeichnungen berücksichtigen Datenquelle,
 Messposition, Abbildung und Stil. Canvasgröße und Pixeldichte bestimmen die
@@ -89,10 +83,8 @@ Resolution-Abfrage erkennt Änderungen der Pixeldichte.
 
 ## Ausschnitt, Zoom und Tooltip
 
-Das sichtbare Zeitfenster liegt innerhalb der gesamten Sitzungsdomäne. Die
-Zeitfenstersteuerung an der Zeitachse ordnet es darin ein; ihre Griffe verändern
-die Fenstergrenzen. Sie verwendet dieselbe Zeitdomäne wie das Verlaufsdiagramm.
-Maus, Berührung und Tastatur verwenden denselben begrenzten Fensterzustand.
+Zeitfenstersteuerung und Verlaufsdiagramm verwenden dieselbe Sitzungsdomäne.
+Maus, Berührung und Tastatur verändern denselben darauf begrenzten Fensterzustand.
 Zoomtasten und Vergrößerungsgesten ändern die Zeitabbildung. Strg/Cmd mit dem
 Mausrad vergrößert am Zeiger, das gewöhnliche Mausrad bewegt die Seite.
 

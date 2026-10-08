@@ -39,11 +39,10 @@ für die erste Kühlung der Sitzung gilt der Sitzungsbeginn.
 
 ## Berechnung der Dauer
 
-Die Basisdauer `after_run_minutes` beträgt standardmäßig **5 Minuten**. Die
-Höchstdauer `oven_cooling_max_minutes` beträgt **15 Minuten**. Bei der Übernahme
-älterer Konfigurationen ohne gespeicherte Höchstdauer wird eine Basisdauer
-oberhalb dieses Standardmaximums zugleich als Höchstdauer übernommen. Eine
-ausdrücklich eingestellte Höchstdauer muss mindestens der Basisdauer entsprechen.
+Basisdauer (`after_run_minutes`) und Höchstdauer (`oven_cooling_max_minutes`)
+begrenzen die Kühlung. Die Höchstdauer darf nicht unter der Basisdauer liegen.
+Bei älteren Konfigurationen ohne gespeicherte Höchstdauer bleibt eine höhere
+Basisdauer erhalten und wird zugleich als Höchstdauer übernommen.
 
 Die Berechnung gewichtet jüngere Zeiten stärker als ältere. Das Gewicht eines
 Zeitpunkts hängt von seinem Alter in Minuten zum Kühlbeginn ab:
@@ -52,10 +51,9 @@ Zeitpunkts hängt von seinem Alter in Minuten zum Kühlbeginn ab:
 w(Alter)=2^{-Alter/h}
 \]
 
-Die Halbwertszeit \(h\) ist über `oven_cooling_half_life_minutes` einstellbar und
-beträgt standardmäßig **15 Minuten**. Ein 15 Minuten alter Zeitpunkt erhält
-halbes Gewicht, ein 30 Minuten alter ein Viertel. Die Berechnung integriert
-analytisch über die tatsächlichen Intervallgrenzen und verwendet für alle
+Die Halbwertszeit \(h\) stammt aus `oven_cooling_half_life_minutes`. Nach einer
+Halbwertszeit beträgt das Gewicht die Hälfte, nach zwei ein Viertel. Die
+Berechnung integriert analytisch über die tatsächlichen Intervallgrenzen und verwendet für alle
 Zeitanteile denselben Kühlbeginn als Bezug.
 
 **H** bezeichnet die gewichtete Zeit mit bestätigtem Schütz-EIN.
@@ -65,8 +63,7 @@ Jeder Zeitpunkt geht einmal in die Berechnung ein. Zeiten mit unbekannter
 Schützstellung erscheinen als unvollständiger Beleg; die Anrechnung als
 Bereitschaftszeit setzt bestätigtes Schütz-AUS voraus.
 
-Das Verhältnis \(r\) ist über `oven_cooling_heat_idle_ratio` einstellbar und
-beträgt standardmäßig **2**. Die Dauer in Minuten lautet:
+Das Verhältnis \(r\) stammt aus `oven_cooling_heat_idle_ratio`. Die Dauer in Minuten lautet:
 
 \[
 \text{Basis}+\operatorname{clip}(H/r-I,\,0,\,
@@ -75,9 +72,8 @@ beträgt standardmäßig **2**. Die Dauer in Minuten lautet:
 
 `clip` begrenzt die Zusatzdauer auf die angegebenen Grenzen. Die Steuerung
 verrechnet zuerst die vollständigen gewichteten Heiz- und Bereitschaftszeiten
-und begrenzt anschließend das Ergebnis. Mit den Standardwerten ergibt sich
-`5 + clip(H / 2 - I, 0, 10)` Minuten. Eine gewichtete Minute Bereitschaft gleicht
-zwei gewichtete Heizminuten aus. Ein verbleibender positiver Heizanteil
+und begrenzt anschließend das Ergebnis. Eine gewichtete Minute Bereitschaft
+gleicht \(r\) gewichtete Heizminuten aus. Ein verbleibender positiver Heizanteil
 verlängert die Basisdauer.
 
 Technische Schutzgründe wirken gemäß der
