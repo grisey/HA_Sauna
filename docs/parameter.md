@@ -50,7 +50,7 @@ eine entsprechend übernommene Untergrenze erhalten bleiben.
 | Mindesttemperatur der Sauna | 60 °C | Untergrenze für Sollwerte und Schnellauswahl |
 | Solltemperatur | 80 °C | Eine direkte Wahl legt eine konstante Solltemperatur fest. |
 | Temperaturaufschlag für die Heizungsabschaltung | 1 °C | Aufschlag auf die Solltemperatur zur regulären oberen Abschaltgrenze; bei 80 °C Soll ergibt sich 81 °C. |
-| Schaltabstand der Temperaturregelung | 1 °C | Abstand unter der oberen Regeltemperatur, ab dem erneutes Heizen zulässig ist |
+| Temperaturabstand für das Wiedereinschalten | 1 °C | Abstand unter der Solltemperatur, ab dem erneutes Heizen zulässig ist; bei 80 °C Soll ergibt sich 79 °C. |
 | Heizpause nach Temperaturabschaltung | 5 min | Wartezeit nach einer regulären Abschaltung an der oberen Regeltemperatur; 0 ermöglicht den unmittelbaren weiteren Regelablauf. |
 | Mindestheizzeit nach dem Einschalten | 10 min | Mindestdauer eines tatsächlich begonnenen Heizintervalls im regulären Thermostatbetrieb; 0 gibt kurze Intervalle frei. |
 

@@ -36,7 +36,7 @@ class HeatingAdmissionTests(unittest.TestCase):
                        forced_cooling_minutes=15)
         self.prepare_regular_restart(c)
 
-        c.set_temperature(80, at(1320))
+        c.set_temperature(c.thermostat_restart_temperature, at(1320))
 
         self.assertIsNone(c.session.cooling)
         self.assertTrue(c.last_decision.heat)
@@ -53,7 +53,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         c.set_temperature(85, at(900))
         c.report_heating(False, at(900))
 
-        c.set_temperature(80, at(1200))
+        c.set_temperature(c.thermostat_restart_temperature, at(1200))
 
         self.assertIsNone(c.session.cooling)
         self.assertTrue(c.last_decision.heat)

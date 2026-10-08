@@ -116,6 +116,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             runtime, adapter, clock = self.detection_device(feedback_timeout_seconds=10)
             target = runtime.controller.target_temperature
             below = target - .01
+            restart = runtime.controller.thermostat_restart_temperature
             adapter.ingest("upper_temperature", state(str(below), unit="°C"), T0, initial=True)
             adapter.refresh(T0)
             runtime.controller.begin_session("readiness", T0)
@@ -141,9 +142,9 @@ class DeviceFeedbackTests(unittest.TestCase):
             else:
                 await light
             pending = []
-            # At the setpoint, readiness releases the override and the default
-            # restart threshold permits heating; just above it is hysteresis.
-            for second, value in ((102, target), (102 if same_time else 103, below)):
+            # Readiness releases the override at the setpoint. Only the lower
+            # setpoint threshold subsequently starts a new heating demand.
+            for second, value in ((102, target), (102 if same_time else 103, restart)):
                 clock[0] = T0 + timedelta(seconds=second)
                 edge = asyncio.create_task(runtime.device_input(
                     self.detection_edge(runtime, "upper_temperature", value)))
@@ -152,6 +153,10 @@ class DeviceFeedbackTests(unittest.TestCase):
                     await asyncio.sleep(0)
                 else:
                     await edge
+                    if value == target:
+                        self.assertIsNotNone(runtime.session.ready_at)
+                        self.assertIsNone(runtime.controller.heater_override)
+                        self.assertFalse(runtime.controller.last_decision.heat)
             clock[0] = T0 + timedelta(seconds=104)
             if queued:
                 release.set()
@@ -175,12 +180,18 @@ class DeviceFeedbackTests(unittest.TestCase):
                                         if r["kind"] == "measurement"
                                         and r["payload"]["quantity"] == "temperature"]
                         target = runtime.controller.target_temperature
-                        self.assertEqual(temperatures, [target, target - .01])
+                        self.assertEqual(temperatures, [target, runtime.controller.thermostat_restart_temperature])
+                        heat_at = T0 + timedelta(seconds=102 if same_time else 103)
+                        if not same_time:
+                            self.assertFalse(any(r["kind"] == "decision"
+                                                 and r["payload"]["at"] == (T0 + timedelta(seconds=102)).isoformat()
+                                                 and r["payload"]["heat"]
+                                                 for r in stored["records"]))
                         heat = next(r for r in stored["records"]
                                     if r["kind"] == "decision"
-                                    and r["payload"]["at"] == (T0 + timedelta(seconds=102)).isoformat()
+                                    and r["payload"]["at"] == heat_at.isoformat()
                                     and r["payload"]["heat"])
-                        created_at = T0 + timedelta(seconds=104 if queued else 102)
+                        created_at = T0 + timedelta(seconds=104) if queued else heat_at
                         self.assertEqual(heat["received_at"], created_at.isoformat())
                         self.assertEqual(heat["payload"]["created_at"], created_at.isoformat())
                         if queued:

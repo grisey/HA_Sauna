@@ -5114,10 +5114,6 @@ class SaunaPanel extends HTMLElement {
             ? `${num(p.target_temperature_c)} → ${num(p.final_temperature_c)} °C`
             : "Konstant"
         : "Konstant";
-    const restartThreshold =
-      s.thermostat_target == null || p.readiness_hysteresis_c == null
-        ? null
-        : s.thermostat_target - p.readiness_hysteresis_c;
     const power = s.heating_observation?.power_w;
     const powerText =
       power == null
@@ -5134,7 +5130,7 @@ class SaunaPanel extends HTMLElement {
         presence: this.presenceDetails(),
         targetTemperature: num(s.target_temperature, 1),
         thermostatTarget: num(s.thermostat_target, 1),
-        restartThreshold: num(restartThreshold, 1),
+        restartThreshold: num(s.thermostat_restart_temperature, 1),
         temperatureProgram,
         heatCaption,
         heatSource,

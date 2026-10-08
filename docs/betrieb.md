@@ -33,11 +33,12 @@ diese Bereitschaft; nach Gang und Ofenkühlung kann sie erneut entstehen. Eine
 vorläufige Personenerkennung bewahrt die bereits erreichte Bereitschaft.
 
 Die automatische Thermostatregelung heizt bis zur Solltemperatur zuzüglich
-Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 1 °C. Nach einer
-regulären Temperaturabschaltung gilt eine Heizpause von 5 Minuten. Nach deren Ablauf fordert der Thermostat bei
-Erreichen oder Unterschreiten der oberen Regeltemperatur abzüglich des eingestellten
-Schaltabstands wieder Heizen an. Innerhalb des Hysteresebands bleibt sein bisheriger
-Zustand erhalten.
+Temperaturaufschlag für die Heizungsabschaltung, standardmäßig 1 °C. Die
+Wiedereinschaltschwelle liegt um den eingestellten Temperaturabstand unter der
+Solltemperatur, standardmäßig ebenfalls 1 °C. Bei 80 °C Soll schaltet die
+Regelung damit bei 81 °C ab und fordert bei 79 °C oder darunter wieder Heizen an.
+Nach einer regulären Temperaturabschaltung gilt zunächst eine Heizpause von
+5 Minuten. Innerhalb des Hysteresebands bleibt der bisherige Zustand erhalten.
 
 Ein tatsächlich bestätigter Heizbeginn startet die Mindestheizzeit von
 standardmäßig 10 Minuten. Ein bereits laufendes Heizintervall behält seinen

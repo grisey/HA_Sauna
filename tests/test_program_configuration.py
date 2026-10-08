@@ -47,6 +47,29 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_legacy_cold_tolerance_remains_the_lower_setpoint_distance(self):
+        loaded = Configuration.from_options(options({
+            "cold_tolerance_c": 2, "hot_tolerance_c": 4,
+        }))
+        self.assertEqual(loaded.parameters.values["readiness_hysteresis_c"], 2)
+        saved = loaded.as_options()
+        self.assertNotIn("cold_tolerance_c", saved[CONF_PARAMETERS])
+        self.assertNotIn("hot_tolerance_c", saved[CONF_PARAMETERS])
+        self.assertEqual(Configuration.from_options(saved), loaded)
+        explicit = Configuration.from_options(options({
+            "cold_tolerance_c": 2, "hot_tolerance_c": 4,
+            "readiness_hysteresis_c": .5,
+        }))
+        self.assertEqual(explicit.parameters.values["readiness_hysteresis_c"], .5)
+        hot_only = Configuration.from_options(options({"hot_tolerance_c": 4}))
+        self.assertEqual(hot_only.parameters.values["readiness_hysteresis_c"],
+                         BY_KEY["readiness_hysteresis_c"].default)
+        zero_cold = Configuration.from_options(options({
+            "cold_tolerance_c": 0, "hot_tolerance_c": 4,
+        }))
+        self.assertEqual(zero_cold.parameters.values["readiness_hysteresis_c"], 0)
+        self.assertEqual(Configuration.from_options(zero_cold.as_options()), zero_cold)
+
     def test_control_targets_round_and_other_parameters_and_measurements_do_not(self):
         parameters = Parameters({
             "target_temperature_c": 80.5, "final_temperature_c": 89.5,

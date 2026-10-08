@@ -177,12 +177,11 @@ class Configuration:
             program_mode = (
                 "progressive" if "final_temperature_c" in values else "constant"
             )
-        # Einmalige Übernahme der alten beidseitigen Bandbreite. Danach werden
-        # ausschließlich die neuen, gemeinsam gespeicherten Parameter konsumiert.
+        # Die frühere Kältetoleranz ist der untere Abstand zum Sollwert.
         if "cold_tolerance_c" in values or "hot_tolerance_c" in values:
-            cold = values.pop("cold_tolerance_c", 0)
-            hot = values.pop("hot_tolerance_c", 0)
-            values.setdefault("readiness_hysteresis_c", cold + hot)
+            if "cold_tolerance_c" in values:
+                values.setdefault("readiness_hysteresis_c", values.pop("cold_tolerance_c"))
+            values.pop("hot_tolerance_c", None)
         if (
             "sauna_min_temperature_c" not in values
             and "temperature_programs" not in options

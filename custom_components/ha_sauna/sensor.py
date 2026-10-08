@@ -117,6 +117,7 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "gang_count": session.timeline.gang_count if session else 0,
             "heating_seconds": session.heating.elapsed_seconds if session else 0,
             "thermostat_target": self.runtime.controller.thermostat_target,
+            "thermostat_restart_temperature": self.runtime.controller.thermostat_restart_temperature,
             "after_run_ends_at": session.after_run.ends_at.isoformat()
             if session and session.after_run and session.after_run.ends_at
             else None,

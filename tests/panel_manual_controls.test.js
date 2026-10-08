@@ -887,6 +887,7 @@ const renderCurrent = (
       energy_source: "estimated",
       target_temperature: 80,
       thermostat_target: 85,
+      thermostat_restart_temperature: 77,
       start_availability: null,
       phase_timer: { kind: "heating", label: "Aufheizen seit", seconds: 600 },
       light_after_run: { ends_at: "2026-09-20T12:09:00Z" },
@@ -903,11 +904,26 @@ const renderCurrent = (
   assert.match(details, /Nennleistung für die Verbrauchsschätzung/);
   assert.match(details, /Erkennung mit: oberer Messposition/);
   assert.match(details, /Licht<\/h2>[\s\S]*Automatik/);
+  assert.match(details, /Wiedereinschaltschwelle<\/dt><dd>77 °C<\/dd>/);
   assert.doesNotMatch(
     details,
     /data-action=|<button|<input/,
     "details present status without controls",
   );
+  // The backend owns the threshold, including fractional values and absence.
+  // Do not derive it from either the upper threshold or local parameters.
+  for (const [value, display] of [
+    [76.5, "76,5"],
+    [null, "–"],
+  ]) {
+    detailPanel.state.thermostat_restart_temperature = value;
+    detailPanel.drawCurrent();
+    assert.ok(
+      detailNodes
+        .get("#details")
+        .innerHTML.includes(`Wiedereinschaltschwelle</dt><dd>${display} °C</dd>`),
+    );
+  }
 
   const nodes = {
     "#current": {},

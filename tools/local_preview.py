@@ -271,6 +271,7 @@ class Preview:
             "energy_kwh":session.energy.total_kwh if session else 0,
             "energy_source":session.energy.source if session else "estimated",
             "thermostat_target":c.thermostat_target, "target_temperature":c.target_temperature,
+            "thermostat_restart_temperature":c.thermostat_restart_temperature,
             "mechanical_timer":c.mechanical_timer_status, "phase_timer":phase_timer(c,self.now),
             "start_availability":start_availability(c,self.now), "light_after_run":c.light_after_run,
             "start_errors":[], "issues":[], "decision_text":decision_message(c.last_decision),
