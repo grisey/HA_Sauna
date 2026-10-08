@@ -1600,7 +1600,7 @@ class SaunaPanel extends HTMLElement {
   disconnectedCallback() {
     this.selectMenu?.disconnect();
     this.ownerDocument?.removeEventListener("click", this.infoOutsideHandler, true);
-    this.shadowRoot.removeEventListener?.("scroll", this.infoGeometryHandler, true);
+    this.shadowRoot?.removeEventListener?.("scroll", this.infoGeometryHandler, true);
     this.ownerDocument?.removeEventListener("scroll", this.infoGeometryHandler, true);
     this.ownerDocument?.defaultView?.removeEventListener(
       "resize",
