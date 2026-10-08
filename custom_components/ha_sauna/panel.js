@@ -2681,13 +2681,13 @@ class SaunaPanel extends HTMLElement {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 16px;
       }
-      label.field {
+      .field {
         display: flex;
         flex-direction: column;
         gap: 6px;
         font-size: 13px;
       }
-      label.field input {
+      .field input {
         width: 100%;
       }
       fieldset {
