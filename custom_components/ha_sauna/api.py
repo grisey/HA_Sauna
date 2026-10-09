@@ -26,6 +26,7 @@ from .settings import (
     async_reset_parameters,
     async_set_appearance,
     async_set_button_program,
+    async_set_button_gesture,
     async_set_control_mode,
     async_set_parameters,
     async_set_program,
@@ -170,6 +171,7 @@ class StateView(HomeAssistantView):
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
                         "configuration": runtime.configuration.as_options(),
+                        "button_session_gestures": runtime.available_button_session_gestures,
                         "measurement_ttl_seconds": runtime.configuration.parameters.values[
                             "sensor_timeout_seconds"
                         ],
@@ -534,6 +536,31 @@ class ProgramsView(HomeAssistantView):
         return self.json({"success": True, "programs": programs})
 
 
+class ButtonGestureView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/button-gesture"
+    name = "api:ha_sauna:button_gesture"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime_for(hass, entry_id)
+        body = await json_body(request)
+        if not isinstance(body, dict) or set(body) != {"gesture"}:
+            raise web.HTTPBadRequest(text="Tastergeste fehlt oder ist ungültig")
+        try:
+            configuration = await async_set_button_gesture(hass, entry, body["gesture"])
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({
+            "success": True,
+            "button_session_gesture": configuration.button_session_gesture,
+        })
+
+
 class ButtonProgramView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/button-program"
     name = "api:ha_sauna:button_program"
@@ -825,6 +852,7 @@ def register(hass):
     hass.http.register_view(ProgramView)
     hass.http.register_view(ProgramsView)
     hass.http.register_view(ButtonProgramView)
+    hass.http.register_view(ButtonGestureView)
     hass.http.register_view(ControlModeView)
     hass.http.register_view(LightView)
     hass.http.register_view(HeaterView)

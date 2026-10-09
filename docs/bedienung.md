@@ -5,10 +5,14 @@
 Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
-Ein langer Tasterdruck startet Automatik mit der gespeicherten Tastervorgabe,
-auch aus dem manuellen Modus. Als Bestätigung leuchtet das Licht während des
-weiteren Haltens hell. Die Tastervorgabe gilt unabhängig von der Temperaturwahl
-im Panel.
+Die unter **Sitzung starten und beenden** gewählte Tastergeste startet Automatik
+mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Lang-, Doppel-
+und Dreifachdruck stehen entsprechend den Meldungen des Tasters zur Wahl.
+Einfachdruck bleibt der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
+gilt unabhängig von der Temperaturwahl im Panel.
+
+Bei Langdruck mit Halte- und Loslassmeldung leuchtet das Licht zur
+Startbestätigung bis zum Loslassen hell.
 
 ## Temperatur während der Sitzung ändern
 
@@ -32,8 +36,8 @@ Ofen- und Lichtwahl einschließlich freier Helligkeit stehen allen Benutzern
 mit Steuerrechten gleichermaßen zur Verfügung. Außerhalb einer Sitzung ist
 in Automatik zunächst der ausdrückliche Wechsel über **Manuell steuern**
 erforderlich. Ofen und Licht schalten dort ohne Sitzung. Eine automatische
-Sitzung beginnt durch **Einschalten** im Automatikmodus oder einen langen
-Tasterdruck.
+Sitzung beginnt durch **Einschalten** im Automatikmodus oder die gewählte
+Tastergeste.
 
 In Automatik endet eine vorübergehende Ofenwahl bei Rückgabe, Phasenwechsel,
 Änderung der automatischen EIN-/AUS-Anforderung oder Ablauf der Übersteuerungsfrist.
@@ -74,8 +78,9 @@ Wiederaufnahme- und Lichtnachlauffrist. Erst nach dieser Frist ist die Sitzung
 abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
 Konfiguration gesperrt.
 
-Ein langer Tasterdruck bei laufendem Betrieb beendet Betrieb und Sitzung sofort.
-Das Licht bleibt während des Haltens AUS; Loslassen startet den Lichtnachlauf.
+Dieselbe Tastergeste beendet bei laufendem Betrieb die Sitzung sofort.
+Bei Langdruck mit Halte- und Loslassmeldung bleibt das Licht bis zum Loslassen
+AUS; anschließend beginnt der Lichtnachlauf.
 
 Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;
 er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im

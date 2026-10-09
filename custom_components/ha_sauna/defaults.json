@@ -1325,6 +1325,7 @@
     "button_event_type": "",
     "program_mode": "constant",
     "button_program": "constant",
+    "button_session_gesture": "long",
     "control_mode": "automatic",
     "presence_source": "proxy",
     "button_temperature_c": 90

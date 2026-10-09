@@ -235,6 +235,28 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertIsNone(self.preview.c.session)
         self.assertTrue(self.preview.c.last_decision.heat)
 
+    def test_native_multiple_press_selection_starts_and_ends_without_short_start(self):
+        for gesture in ("double", "triple"):
+            with self.subTest(gesture=gesture):
+                self.preview.reset("manuell")
+                self.preview.admin = False
+                self.assertIn(gesture, self.preview.state()["button_session_gestures"])
+                saved = self.preview.action("/preview/button-gesture", {"gesture":gesture})
+                self.assertEqual(saved["button_session_gesture"], gesture)
+                self.assertEqual(self.preview.entry.options["button_session_gesture"], gesture)
+                self.preview.action("/simulate", {"action":"button_short"})
+                self.assertIsNone(self.preview.c.session)
+                self.preview.action("/simulate", {"action":f"button_{gesture}"})
+                self.assertIsNotNone(self.preview.c.session)
+                self.assertEqual(self.preview.c.control_mode, "automatic")
+                with self.assertRaises(ValueError):
+                    self.preview.action("/preview/button-gesture", {"gesture":"long"})
+                self.preview.action("/simulate", {"action":f"button_{gesture}"})
+                self.assertIsNone(self.preview.c.session)
+        for gesture in ("short", "unknown"):
+            with self.assertRaises(ValueError):
+                self.preview.action("/preview/button-gesture", {"gesture":gesture})
+
     def test_preview_button_hold_uses_configured_threshold_and_release_feedback(self):
         self.preview.reset("manuell")
         self.assertEqual(self.preview.runtime.configuration.control_input_mode, "button")

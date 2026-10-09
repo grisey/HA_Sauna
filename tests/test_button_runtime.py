@@ -31,6 +31,26 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.now += timedelta(seconds=seconds)
         asyncio.run(self._handle(name))
 
+    def test_selected_multi_click_starts_automatic_and_finishes_without_hold(self):
+        for gesture in ("double", "triple"):
+            with self.subTest(gesture=gesture):
+                self.setUp()
+                self.runtime = SaunaRuntime(
+                    Configuration(Bindings(bindings()), Parameters({}),
+                                  control_mode="manual", button_session_gesture=gesture),
+                    clock=lambda: self.now,
+                )
+                self.runtime.controller.set_temperature(70, self.now)
+                self._event(gesture)
+                identity = self.runtime.session.session_id
+                self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+                self.assertFalse(self.runtime.button_start_hold_active)
+                self.assertIsNone(self.runtime._button_hold_session_id)
+                self._event(gesture, 1)
+                self.assertIsNone(self.runtime.session)
+                self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
+                self.assertIsNone(self.runtime._button_hold_session_id)
+
     def test_received_binary_hold_duration_survives_monotone_action_time(self):
         async def gesture(duration):
             at = self.now + timedelta(seconds=10)

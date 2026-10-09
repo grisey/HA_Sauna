@@ -37,7 +37,8 @@ from custom_components.ha_sauna.presentation import (
 )
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
-    async_set_appearance, async_set_control_mode, async_set_parameters, async_set_program,
+    async_set_appearance, async_set_button_gesture, async_set_control_mode,
+    async_set_parameters, async_set_program,
     async_set_temperature_steps,
 )
 
@@ -223,20 +224,20 @@ class Preview:
     def button(self, action):
         previous_mode = self.c.control_mode
         if action == "button_release":
-            asyncio.run(self.button_event("off"))
+            asyncio.run(self.button_event("release"))
             self.button_pressed = False
             if self.c.light_after_run is not None:
                 self.light = self.c.parameters.values["session_light_brightness_percent"]
         else:
             if self.button_pressed:
                 raise ValueError("Der Taster ist noch gedrückt. Zuerst loslassen.")
-            if action == "button_short":
-                asyncio.run(self.button_event("press", "short", "release"))
+            if action in ("button_short", "button_double", "button_triple"):
+                asyncio.run(self.button_event("press", action.removeprefix("button_"), "release"))
             else:
-                asyncio.run(self.button_event("on"))
+                asyncio.run(self.button_event("press"))
                 self.button_pressed = True
                 self.step(self.c.parameters.values["button_hold_seconds"])
-                asyncio.run(self.runtime.tick())
+                asyncio.run(self.button_event("long"))
         if previous_mode != self.c.control_mode:
             self.light_manual = 0 if self.c.control_mode == "manual" else None
             self.light = 0 if self.light_manual == 0 else 35
@@ -276,6 +277,7 @@ class Preview:
             "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
             "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
             "frontend_defaults":section("frontend"),
+            "button_session_gestures":configuration.available_button_session_gestures,
             "environment": {
                 "configured": True,
                 "station": {"name": "Beispielstation", "id": "demo"},
@@ -345,7 +347,7 @@ class Preview:
             if action.startswith("scenario:"):
                 self.reset(action.split(":")[1])
                 return {}
-            if action in ("button_short", "button_hold", "button_release"):
+            if action in ("button_short", "button_double", "button_triple", "button_hold", "button_release"):
                 self.button(action)
                 return {}
             if action != "step":
@@ -415,6 +417,12 @@ class Preview:
             if not unchanged:
                 self.light_manual = brightness
                 self.light = 35 if brightness is None else brightness
+        elif path.endswith("/button-gesture"):
+            if not isinstance(body, dict) or set(body) != {"gesture"}:
+                raise ValueError("Tastergeste fehlt oder ist ungültig")
+            configuration = asyncio.run(async_set_button_gesture(self.hass, self.entry, body["gesture"]))
+            self.button_pressed = False
+            return {"success":True, "button_session_gesture":configuration.button_session_gesture}
         elif path.endswith("/appearance"):
             appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
             return {"appearance": appearance}

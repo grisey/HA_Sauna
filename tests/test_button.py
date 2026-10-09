@@ -21,6 +21,37 @@ THRESHOLD = timedelta(seconds=1)
 
 
 class ButtonGestureTests(unittest.TestCase):
+    def test_selected_native_multi_click_starts_and_ends_once_without_hold(self):
+        for selected in ("double", "triple"):
+            with self.subTest(selected=selected):
+                button = ButtonGestures(THRESHOLD, selected)
+                button.handle("press", False, at(0))
+                button.handle("release", False, at(.1))
+                self.assertEqual(button.handle_actions(selected, False, at(.2)),
+                                 (START_STANDARD_PROGRAM,))
+                self.assertEqual(button.handle_actions(selected, True, at(.3)), ())
+                button.handle("press", True, at(1))
+                button.handle("release", True, at(1.1))
+                self.assertEqual(button.handle_actions(selected, True, at(1.2)),
+                                 (END_RELEASE,))
+                self.assertIsNone(button.handle("release", False, at(2)))
+
+    def test_selected_event_only_multi_click_and_single_keep_separate_actions(self):
+        for selected in ("double", "triple"):
+            with self.subTest(selected=selected):
+                button = ButtonGestures(THRESHOLD, selected)
+                self.assertEqual(button.handle("short", False, at(0)), HEATER_TOGGLE_OVERRIDE)
+                self.assertEqual(button.handle_actions(selected, False, at(1)),
+                                 (START_STANDARD_PROGRAM,))
+                self.assertEqual(button.handle_actions(selected, True, at(2)),
+                                 (END_RELEASE,))
+                self.assertIsNone(button.handle("long", False, at(3)))
+
+    def test_session_gesture_rejects_single_and_invalid_values(self):
+        for value in ("short", "single", 1, True, None, [], "quadruple"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ButtonGestures(THRESHOLD, value)
+
     def test_native_off_press_waits_for_short_classification(self):
         button = ButtonGestures(THRESHOLD)
         self.assertIsNone(button.handle("press", False, at(0)))

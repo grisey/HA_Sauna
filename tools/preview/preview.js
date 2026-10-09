@@ -29,8 +29,8 @@ const refresh = async (reset = false) => {
     : "user";
   document.querySelector("#scenario").value = panel.state.preview_scenario;
   const button = panel.state.preview_button;
-  document.querySelector('[data-sim="button_short"]').disabled = button.pressed;
-  document.querySelector('[data-sim="button_hold"]').disabled = button.pressed;
+  for (const gesture of ["short", "double", "triple", "hold"])
+    document.querySelector(`[data-sim="button_${gesture}"]`).disabled = button.pressed;
   document.querySelector('[data-sim="button_release"]').disabled = !button.pressed;
   document.querySelector("#button-status").textContent = button.pressed
     ? button.start_hold

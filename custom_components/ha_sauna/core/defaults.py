@@ -348,6 +348,7 @@ def validate_catalog(catalog):
         "program_mode": {"constant", "progressive"},
         "control_mode": {"automatic", "manual"},
         "presence_source": {"proxy", "ha_presence"},
+        "button_session_gesture": {"long", "double", "triple"},
     }
     if not isinstance(instance, dict) or set(instance) != {
         *choices,

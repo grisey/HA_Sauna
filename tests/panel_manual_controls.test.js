@@ -152,6 +152,48 @@ const renderCurrent = (
 };
 
 (async () => {
+  {
+    const { panel, calls } = makePanel({ control: true, program: true });
+    panel.state.configuration = {
+      button_program: "constant",
+      button_temperature_c: 80,
+      button_session_gesture: "double",
+      temperature_programs: [],
+    };
+    panel.state.button_session_gestures = ["long", "double", "triple"];
+    panel.temperatureBounds = () => ({ minimum: 50, maximum: 100 });
+    panel.infoButton = () => "";
+    let markup;
+    panel.updateMarkup = (_selector, html) => {
+      markup = html;
+    };
+    panel.drawButtonProgram();
+    assert.match(markup, /Sitzung starten und beenden/);
+    assert.match(markup, /value="double" selected>Doppeldruck/);
+    assert.doesNotMatch(markup, /value="short"/);
+    panel.$ = () => ({ value: "triple" });
+    await panel.action("button-gesture");
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+      ["/entry-1/button-gesture", "POST", { gesture: "triple" }],
+    ]);
+    calls.length = 0;
+    panel.state.configuration_locked = true;
+    panel.drawButtonProgram();
+    assert.match(markup, /id="button-session-gesture" disabled/);
+    await panel.action("button-gesture");
+    assert.equal(calls.length, 0);
+    panel.state.configuration_locked = false;
+    panel.state.permissions.control = false;
+    await panel.action("button-gesture");
+    assert.equal(calls.length, 0);
+    panel.state.button_session_gestures = ["long"];
+    panel.drawButtonProgram();
+    assert.doesNotMatch(markup, /value="double"|value="triple"/);
+    panel.state.button_session_gestures = [];
+    panel.drawButtonProgram();
+    assert.doesNotMatch(markup, /button-session-gesture|Sitzung starten und beenden/);
+    assert.match(markup, /id="button-program"/);
+  }
   const enabled = { admin: true, heater: true, light: true };
   let { panel, calls } = makePanel(enabled);
   await panel.action("heater:true");

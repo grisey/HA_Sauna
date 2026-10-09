@@ -188,7 +188,7 @@ def public_configuration(options):
         if key in {
             "program_mode", "temperature_programs", "selected_program_id",
             "control_mode", "temperature_steps", "appearance",
-            "button_program", "button_temperature_c",
+            "button_program", "button_temperature_c", "button_session_gesture",
         }
     } | {"parameters": {key: parameters[key] for key in keys if key in parameters}}
 

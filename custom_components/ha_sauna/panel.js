@@ -2325,6 +2325,14 @@ class SaunaPanel extends HTMLElement {
         min-width: 0;
         max-width: 100%;
       }
+      select {
+        appearance: none;
+        padding-inline-end: 40px;
+        background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+        background-position: right 21px center, right 16px center;
+        background-size: 5px 5px;
+        background-repeat: no-repeat;
+      }
       .sauna-select-menu {
         position: fixed;
         inset: auto;
@@ -3573,13 +3581,27 @@ class SaunaPanel extends HTMLElement {
       .program-named-choice > .program-choice-content > span {
         font-weight: 650;
       }
-      .program-named-choice small {
+      .control-main .program-named-choice small {
+        position: absolute;
+        left: 0;
+        bottom: calc(100% + 5px);
+        z-index: 2;
+        width: max-content;
+        max-width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border-radius: var(--sauna-control-radius);
+        background: var(--sauna-surface-raised);
+        box-shadow: var(--sauna-shadow-control);
+        color: var(--sauna-card-text);
         font-weight: 400;
         white-space: normal;
-        text-align: right;
+        text-align: left;
+        pointer-events: none;
+        opacity: 0;
       }
-      .program-named-choice[aria-pressed="true"] small {
-        color: inherit;
+      .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) small {
+        opacity: 1;
       }
       .program-types button,
       .program-named-choice {
@@ -3887,10 +3909,10 @@ class SaunaPanel extends HTMLElement {
       @media (max-width: 700px) { .control-history-inspection { grid-template-columns: 1fr; gap: 12px; } }
       .gauge-card { padding: 26px 20px 20px; }
       .gauge-card h2 { font-size: 13px; font-weight: 500; letter-spacing: .035em; color: var(--sauna-card-muted-text); margin-bottom: 10px; }
-      .gauges { gap: 18px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
+      .gauges { gap: 10px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
       .gauges > * { min-width: 0; }
       .gauges > [data-instrument-style="linear"] { grid-column: 1 / -1; }
-      .dial { width: 100%; max-width: 280px; }
+      .dial { width: 100%; max-width: 320px; }
       .instrument-face { stroke: var(--sauna-color-border, var(--divider-color)); stroke-width: .7; filter: drop-shadow(0 3px 3px rgb(0 0 0 / .25)); }
       .instrument-rim { fill: none; stroke-width: 1; pointer-events: none; }
       .instrument-readout { fill: var(--sauna-color-card-background, var(--card-background-color)); stroke: color-mix(in srgb, var(--measurement-color) 24%, transparent); stroke-width: 1; }
@@ -3927,32 +3949,28 @@ class SaunaPanel extends HTMLElement {
       .linear-scale input.instrument-range::-moz-range-track { background: transparent; }
       input.instrument-range:disabled { opacity: .45; cursor: default; }
       .instrument-notice { display: block; margin-top: 5px; color: var(--sauna-card-muted-text); font-size: 12px; }
-      .weather-instrument { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 24px; align-items: center; margin-top: var(--sauna-surface-gap); padding: 16px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
-      .weather-heading { grid-column: 1 / -1; }
-      .weather-instrument time { grid-column: 1 / -1; }
-      .weather-heading { display: flex; align-items: baseline; gap: 8px; }
+      .weather-instrument { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "heading heading" "condition values"; gap: 10px 20px; align-items: center; margin-top: 16px; padding: 12px 14px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
+      .weather-heading { grid-area: heading; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
       .weather-heading > span { color: var(--sauna-card-muted-text); font-size: 10px; letter-spacing: .08em; }
       .weather-heading h2 { margin: 0; font-size: 14px; color: var(--sauna-card-text); letter-spacing: 0; }
-      .weather-condition { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--sauna-card-muted-text); font-size: 12px; }
-      .weather-picture { width: 80px; flex: 0 0 80px; overflow: visible; fill: none; stroke: var(--sauna-card-muted-text); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+      .weather-condition { grid-area: condition; display: flex; flex-direction: column; align-items: center; gap: 0; margin: 0; color: var(--sauna-card-muted-text); font-size: 11px; }
+      .weather-picture { width: 60px; flex: 0 0 auto; overflow: visible; fill: none; stroke: var(--sauna-card-muted-text); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
       .weather-sun, .weather-moon, .weather-lightning { color: var(--accent); stroke: currentColor; }
       .weather-sun circle, .weather-moon { fill: color-mix(in srgb, var(--accent) 18%, transparent); }
       .weather-cloud { fill: var(--sauna-surface-control); }
       .weather-rain, .weather-snow { stroke: var(--sauna-color-series-humidity); }
-      .weather-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; margin: 12px 0; }
-      .weather-values dt { font-size: 11px; color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
-      .weather-values dd { margin: 4px 0 0; font-size: 19px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .weather-values { grid-area: values; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+      .weather-values dt { margin: 0; font-size: 11px; color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
+      .weather-values dd { margin: 2px 0 0; font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .weather-values dd span { font-size: 11px; color: var(--sauna-card-muted-text); }
-      .weather-instrument time { display: block; text-align: right; color: var(--sauna-card-muted-text); font-size: 11px; }
+      .weather-instrument time { margin-inline-start: auto; color: var(--sauna-card-muted-text); font-size: 11px; white-space: nowrap; }
       .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
       .appearance-instruments label { display: grid; gap: 7px; font-size: 13px; }
       .appearance-instruments select { width: 100%; min-width: 0; }
       @container (max-width: 450px) {
         .manual-controls:not(.manual-entry) { grid-template-columns: 1fr; gap: 0; }
         .gauges { grid-template-columns: minmax(0, 1fr); }
-        .weather-instrument { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 8px 12px; padding: 12px; }
-        .weather-heading, .weather-instrument time { grid-column: 1 / -1; }
-        .weather-condition { flex-direction: column; gap: 0; align-self: center; margin: 0; }
+        .weather-instrument { grid-template-columns: 70px minmax(0, 1fr); gap: 8px 12px; padding: 12px; }
         .linear-instrument { padding: 14px; }
         .weather-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
         .weather-values dd { font-size: 16px; }
@@ -4057,6 +4075,8 @@ class SaunaPanel extends HTMLElement {
       }
       if (["button-program", "button-temperature"].includes(e.target.id))
         this.runPanelAction(() => this.action("button-program"));
+      if (e.target.id === "button-session-gesture")
+        this.runPanelAction(() => this.action("button-gesture"));
     });
     this.shadowRoot.addEventListener("input", (e) => {
       if (!this.state) return;
@@ -4977,7 +4997,7 @@ class SaunaPanel extends HTMLElement {
     ) =>
       !Number.isFinite(minimum) || !Number.isFinite(maximum)
         ? '<p class="muted">Anzeigeskala nicht verfügbar</p>'
-        : `<svg class="dial ${control ? `dial-${key}` : ""}" style="--measurement-color:${color}" viewBox="0 0 300 260" role="${control ? "group" : "img"}" aria-label="${esc(key === "temperature" && control ? "Temperatur und Solltemperatur" : `${caption}: ${num(reading, key === "light" ? 0 : 1)} ${unit}`)}"><defs><linearGradient id="instrument-face-${key}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--sauna-color-card-background, var(--card-background-color))"/><stop offset="1" stop-color="var(--sauna-color-page-background, var(--primary-background-color))"/></linearGradient><linearGradient id="instrument-rim-${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="white" stop-opacity=".16"/><stop offset=".5" stop-color="white" stop-opacity=".025"/><stop offset="1" stop-color="black" stop-opacity=".28"/></linearGradient></defs><circle class="instrument-face" cx="150" cy="130" r="119" fill="url(#instrument-face-${key})"/><circle class="instrument-rim" cx="150" cy="130" r="119" stroke="url(#instrument-rim-${key})"/><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="10" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, (((reading ?? minimum) - minimum) / (maximum - minimum || 1)) * 100))} 100"/>${this.temperatureTickMarks({ minimum, maximum })}<rect class="instrument-readout" width="0" height="0" rx="6"/><text class="reading" ${key === "light" ? "data-light-observation" : ""} x="150" y="130" text-anchor="middle" dominant-baseline="central"><tspan>${num(reading, key === "light" ? 0 : 1)}</tspan><tspan class="reading-unit" dx="5"> ${unit}</tspan></text>${control || (unit === "%" ? '<path class="humidity-symbol" transform="translate(150 210) scale(.58) translate(-150 -126)" d="M150 104 C146 113 135 121 135 132 A15 15 0 0 0 165 132 C165 121 154 113 150 104 Z"/>' : "")}</svg>`;
+        : `<svg class="dial ${control ? `dial-${key}` : ""}" style="--measurement-color:${color}" viewBox="25 5 250 250" role="${control ? "group" : "img"}" aria-label="${esc(key === "temperature" && control ? "Temperatur und Solltemperatur" : `${caption}: ${num(reading, key === "light" ? 0 : 1)} ${unit}`)}"><defs><linearGradient id="instrument-face-${key}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--sauna-color-card-background, var(--card-background-color))"/><stop offset="1" stop-color="var(--sauna-color-page-background, var(--primary-background-color))"/></linearGradient><linearGradient id="instrument-rim-${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="white" stop-opacity=".16"/><stop offset=".5" stop-color="white" stop-opacity=".025"/><stop offset="1" stop-color="black" stop-opacity=".28"/></linearGradient></defs><circle class="instrument-face" cx="150" cy="130" r="119" fill="url(#instrument-face-${key})"/><circle class="instrument-rim" cx="150" cy="130" r="119" stroke="url(#instrument-rim-${key})"/><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="10" stroke-linecap="round"/><path d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, (((reading ?? minimum) - minimum) / (maximum - minimum || 1)) * 100))} 100"/>${this.temperatureTickMarks({ minimum, maximum })}<rect class="instrument-readout" width="0" height="0" rx="6"/><text class="reading" ${key === "light" ? "data-light-observation" : ""} x="150" y="130" text-anchor="middle" dominant-baseline="central"><tspan>${num(reading, key === "light" ? 0 : 1)}</tspan><tspan class="reading-unit" dx="5"> ${unit}</tspan></text>${control || (unit === "%" ? '<path class="humidity-symbol" transform="translate(150 210) scale(.58) translate(-150 -126)" d="M150 104 C146 113 135 121 135 132 A15 15 0 0 0 165 132 C165 121 154 113 150 104 Z"/>' : "")}</svg>`;
     const deadlineLabels = { confirmation: "Aufgussbestätigung" };
     const phaseRemaining = (phase) =>
       Math.max(
@@ -5397,7 +5417,7 @@ class SaunaPanel extends HTMLElement {
             ? num(metric.value, 1)
             : esc(metric.state)
           : "–";
-    return `<section class="weather-instrument" aria-label="Umgebungswetter"><div class="weather-heading"><span>DWD</span><h2>${esc(environment.station?.name || "Umgebungswetter")}</h2></div><div class="weather-condition">${graphic}<span>${esc(label)}</span></div><dl class="weather-values">${metrics.map((metric) => `<div data-weather-quantity="${esc(metric.key)}"><dt>${esc(metric.label)}</dt><dd>${shown(metric)} <span>${esc(metric.unit || "")}</span></dd></div>`).join("")}</dl>${environment.measurement_time ? `<time datetime="${esc(environment.measurement_time)}" title="Messzeit">${esc(new Date(environment.measurement_time).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</time>` : ""}</section>`;
+    return `<section class="weather-instrument" aria-label="Umgebungswetter"><div class="weather-heading"><span>DWD</span><h2>${esc(environment.station?.name || "Umgebungswetter")}</h2>${environment.measurement_time ? `<time datetime="${esc(environment.measurement_time)}" title="Messzeit">${esc(new Date(environment.measurement_time).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }))}</time>` : ""}</div><div class="weather-condition">${graphic}<span>${esc(label)}</span></div><dl class="weather-values">${metrics.map((metric) => `<div data-weather-quantity="${esc(metric.key)}"><dt>${esc(metric.label)}</dt><dd>${shown(metric)} <span>${esc(metric.unit || "")}</span></dd></div>`).join("")}</dl></section>`;
   }
   fitInstrumentReadouts() {
     for (const dial of this.shadowRoot?.querySelectorAll?.("#current .dial") || []) {
@@ -7393,12 +7413,22 @@ class SaunaPanel extends HTMLElement {
       (svg === this.historyChart.surface || svg === this.$("#history-overview svg"))
     )
       return this.historyChart.interaction.coordinates(svg, clientX, clientY);
+    const matrix = svg.getScreenCTM?.();
+    if (matrix && svg.createSVGPoint) {
+      const point = svg.createSVGPoint();
+      point.x = clientX;
+      point.y = clientY;
+      const local = point.matrixTransform(matrix.inverse());
+      if (Number.isFinite(local.x) && Number.isFinite(local.y))
+        return { x: local.x, y: local.y };
+    }
     const rect = svg.getBoundingClientRect();
-    const width = svg.viewBox?.baseVal?.width || 1200,
-      height = svg.viewBox?.baseVal?.height || 480;
+    const viewBox = svg.viewBox?.baseVal,
+      width = viewBox?.width || 1200,
+      height = viewBox?.height || 480;
     return {
-      x: ((clientX - rect.left) / rect.width) * width,
-      y: ((clientY - rect.top) / rect.height) * height,
+      x: (viewBox?.x || 0) + ((clientX - rect.left) / rect.width) * width,
+      y: (viewBox?.y || 0) + ((clientY - rect.top) / rect.height) * height,
     };
   }
   scheduleFrame(key, render) {
@@ -8622,13 +8652,21 @@ class SaunaPanel extends HTMLElement {
   drawButtonProgram() {
     const configuration = this.state.configuration,
       editable = !!this.state.permissions?.program && !this.state.configuration_locked,
+      gestureEditable =
+        !!this.state.permissions?.control && !this.state.configuration_locked,
+      gestureOptions = (this.state.button_session_gestures || [])
+        .map(
+          (value) =>
+            `<option value="${value}" ${configuration.button_session_gesture === value ? "selected" : ""}>${{ long: "Langdruck", double: "Doppeldruck", triple: "Dreifachdruck" }[value]}</option>`,
+        )
+        .join(""),
       button = configuration.button_program,
       bounds = this.temperatureBounds(),
       option = (value, label) =>
         `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
     this.updateMarkup(
       "#button-settings",
-      `<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
+      `${gestureOptions ? `<div class="row"><label class="field" for="button-session-gesture">Sitzung starten und beenden<select id="button-session-gesture" ${gestureEditable ? "" : "disabled"}>${gestureOptions}</select></label></div>` : ""}<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
     );
   }
   newProgramId() {
@@ -9228,6 +9266,8 @@ class SaunaPanel extends HTMLElement {
         !permissions.control) ||
       (action.startsWith("preset:") && !permissions.temperature) ||
       (action === "program-apply" && !permissions.program) ||
+      (action === "button-gesture" &&
+        (!permissions.control || this.state.configuration_locked)) ||
       ((action === "program-add" ||
         action === "program-save" ||
         action.startsWith("program-remove:") ||
@@ -9431,6 +9471,12 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action === "program-save") return this.savePrograms();
+    if (action === "button-gesture") {
+      const gesture = this.$("#button-session-gesture").value;
+      await this.api(`/${this.entry}/button-gesture`, "POST", { gesture });
+      await this.refresh();
+      return;
+    }
     if (action === "button-program") {
       const profile = this.$("#button-program").value,
         payload = { profile };

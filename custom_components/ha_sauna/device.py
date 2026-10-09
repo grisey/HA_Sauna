@@ -17,6 +17,7 @@ from homeassistant.helpers.event import (
 from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core import power
+from .core.button import NATIVE_BUTTON_EVENTS
 from .core.light import normal_brightness, phase_target
 from .core.light_output import LightOutput, LightQuantizer
 from .core.models import Measurement, Position, Quantity
@@ -35,6 +36,7 @@ class HADevice:
         }
         self.values = runtime.configuration.parameters.values
         self.states = {}
+        self._button_event_types = None
         self.source_received_at = {}
         self.measurements = {}
         self.last_valid_temperature = None
@@ -114,6 +116,13 @@ class HADevice:
 
     def ingest(self, role, state, received_at, *, initial=False, defer_archive=False):
         self.states[role] = state
+        if role == "control_input" and state is not None:
+            event_types = state.attributes.get("event_types")
+            if (
+                isinstance(event_types, (list, tuple)) and event_types
+                and all(isinstance(value, str) for value in event_types)
+            ):
+                self._button_event_types = tuple(event_types)
         self.source_received_at[role] = received_at
         if initial and role == "control_input" and state is not None:
             self.last_input_event = state.state
@@ -181,6 +190,19 @@ class HADevice:
                 self.runtime.session.session_id,
             )
 
+    @property
+    def available_button_session_gestures(self):
+        possible = self.runtime.configuration.available_button_session_gestures
+        if not possible:
+            return ()
+        if not self.bindings["control_input"].startswith("event."):
+            return possible
+        if self._button_event_types is None:
+            # Keep the saved choice during startup; do not invent device capabilities.
+            return (self.runtime.configuration.button_session_gesture,)
+        reported = {NATIVE_BUTTON_EVENTS.get(value) for value in self._button_event_types}
+        return tuple(gesture for gesture in possible if gesture in reported)
+
     def physical_action(self, event):
         if event.data["entity_id"] != self.bindings["control_input"]:
             return None
@@ -229,17 +251,7 @@ class HADevice:
         self.last_input_occurred_at = occurred
         event_type = new.attributes.get("event_type")
         if self.runtime.configuration.control_input_mode == "button":
-            native = {
-                "btn_down": "press",
-                "btn_up": "release",
-                "single_push": "short",
-                "single": "short",
-                "double_push": "double",
-                "double": "double",
-                "triple_push": "triple",
-                "triple": "triple",
-                "long_push": "long",
-            }.get(event_type)
+            native = NATIVE_BUTTON_EVENTS.get(event_type)
             if native is not None:
                 return native
             selected = self.runtime.configuration.button_event_type

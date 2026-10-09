@@ -2184,6 +2184,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "aria-pressed", "true", timeout=15000
         )
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        gesture = self.panel.locator('#button-session-gesture')
+        async with self.page.expect_response(lambda response: response.url.endswith("/button-gesture")
+                                            and response.request.method == "POST") as gesture_saved:
+            await gesture.select_option("long")
+        self.assertTrue((await gesture_saved.value).ok)
+        self.assertEqual(self.entry.options["button_session_gesture"], "long")
+        await self.panel.evaluate("p => p.refresh()")
+        await expect(gesture).to_have_value("long")
         async with self.page.expect_response(lambda response: response.url.endswith("/button-program")
                                             and response.request.method == "POST") as result:
             await self.panel.locator('#button-program').select_option(DEFAULT_PROGRAMS[-2]["id"])

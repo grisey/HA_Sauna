@@ -2009,6 +2009,47 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.heater.is_on)
         self.assertEqual(self.runtime.session.session_id, identity)
 
+    async def test_selected_shelly_multi_click_starts_and_ends_without_hold(self):
+        from custom_components.ha_sauna.settings import async_set_button_gesture
+
+        entity = "event.detached_button"
+        self.hass.states.async_set(entity, "unknown", {
+            "device_class": "button", "event_type": None,
+            "event_types": ["single_push", "double_push", "triple_push", "long_push"],
+        })
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "bindings": {**self.entry.options["bindings"], "control_input": entity},
+            "control_input_mode": "button",
+        })
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.now = self.runtime.device.input_started_at + timedelta(seconds=1)
+        self.runtime._clock = lambda: self.now
+
+        async def push(kind):
+            self.now += timedelta(milliseconds=100)
+            self.hass.states.async_set(entity, self.now.isoformat(), {
+                "device_class": "button", "event_type": kind,
+                "event_types": ["single_push", "double_push", "triple_push", "long_push"],
+            })
+            await self.hass.async_block_till_done()
+
+        for gesture in ("double", "triple"):
+            with self.subTest(gesture=gesture):
+                await async_set_button_gesture(self.hass, self.entry, gesture)
+                await self.hass.async_block_till_done()
+                await push(gesture + "_push")
+                identity = self.runtime.session.session_id
+                self.assertTrue(self.heater.is_on)
+                self.assertFalse(self.runtime.button_start_hold_active)
+                self.assertIsNone(self.runtime.device._button_hold_session_id)
+                await push(gesture + "_push")
+                self.assertIsNone(self.runtime.session)
+                self.assertFalse(self.heater.is_on)
+                self.assertIsNone(self.runtime.device._button_hold_session_id)
+                self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
+
     async def test_shelly_event_button_ignores_press_release_and_recovery_duplicates(self):
         # Rebind through real HA options; the old listener must disappear.
         values={**self.entry.options["bindings"], "control_input":"event.detached_button"}

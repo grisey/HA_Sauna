@@ -10,6 +10,76 @@ from custom_components.ha_sauna.core.parameters import Parameters
 
 
 class PanelAPITests(unittest.IsolatedAsyncioTestCase):
+    async def test_button_session_gesture_permission_validation_and_session_lock(self):
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options, "control_input_mode": "button",
+        })
+        await self.hass.async_block_till_done()
+        entity = self.entry.runtime_data.configuration.bindings.values["control_input"]
+        original = self.hass.states.get(entity)
+        self.hass.states.async_set(entity, original.state, {
+            **original.attributes,
+            "event_types": ["single_push", "double_push", "triple_push", "long_push"],
+        })
+        await self.hass.async_block_till_done()
+        user = await self.hass.auth.async_create_user("Taster", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=headers) as client:
+            for gesture in ("double", "triple", "long"):
+                async with client.post(url + "/button-gesture", json={"gesture": gesture}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    self.assertEqual((await response.json())["button_session_gesture"], gesture)
+                await self.hass.async_block_till_done()
+                self.assertEqual(self.entry.options["button_session_gesture"], gesture)
+            for value in ("short", "single", 1, True, None, [], "quadruple"):
+                async with client.post(url + "/button-gesture", json={"gesture": value}) as response:
+                    self.assertEqual(response.status, 400, await response.text())
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertEqual(state["configuration"]["button_session_gesture"], "long")
+                self.assertEqual(state["button_session_gestures"], ["long", "double", "triple"])
+            await self.entry.runtime_data.set_operation(True)
+            async with client.post(url + "/button-gesture", json={"gesture": "double"}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+        denied = await self.hass.auth.async_create_user("Kein Zugriff", group_ids=[])
+        token = await self.hass.auth.async_create_refresh_token(denied, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + "/button-gesture", json={"gesture": "double"}) as response:
+                self.assertEqual(response.status, 403)
+
+    async def test_button_gestures_follow_reported_types_and_survive_unavailable(self):
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options, "control_input_mode": "button",
+        })
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        entity = runtime.configuration.bindings.values["control_input"]
+        original = self.hass.states.get(entity)
+        url = self.base + "/" + self.entry.entry_id
+        self.hass.states.async_set(entity, original.state, {
+            **original.attributes, "event_types": ["single_push", "long_push"],
+        })
+        await self.hass.async_block_till_done()
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url + "/state") as response:
+                self.assertEqual((await response.json())["button_session_gestures"], ["long"])
+            async with client.post(url + "/button-gesture", json={"gesture": "double"}) as response:
+                self.assertEqual(response.status, 400, await response.text())
+            self.hass.states.async_set(entity, "unavailable")
+            await self.hass.async_block_till_done()
+            async with client.get(url + "/state") as response:
+                self.assertEqual((await response.json())["button_session_gestures"], ["long"])
+            self.hass.states.async_set(entity, original.state, {
+                **original.attributes, "event_types": ["single_push"],
+            })
+            await self.hass.async_block_till_done()
+            async with client.get(url + "/state") as response:
+                self.assertEqual((await response.json())["button_session_gestures"], [])
+            self.assertEqual(runtime.configuration.button_session_gesture, "long")
+
     async def test_archive_erase_permissions_session_guard_and_memory_invalidation(self):
         from harness import retain_session
 

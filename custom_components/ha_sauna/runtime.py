@@ -22,6 +22,7 @@ from .core.button import (
     START_RELEASE,
     START_STANDARD_PROGRAM,
     ButtonGestures,
+    validate_session_gesture,
 )
 from .core.controller import Controller, Result
 from .core.defaults import instance_default
@@ -65,9 +66,16 @@ class Configuration:
     temperature_steps: tuple[float, ...] | None = None
     button_temperature_c: float | None = None
     appearance: dict = field(default_factory=default_appearance)
+    button_session_gesture: str = instance_default("button_session_gesture")
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
+        validate_session_gesture(self.button_session_gesture)
+        if (self.button_session_gesture != "long"
+                and not self.bindings.values["control_input"].startswith("event.")):
+            raise ValueError(
+                "Doppel- und Dreifachdruck benötigen einen Taster mit nativen Gestenmeldungen."
+            )
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
         object.__setattr__(self, "appearance", validate_appearance(self.appearance))
@@ -121,6 +129,17 @@ class Configuration:
             self, "temperature_programs", (*self.temperature_programs, *missing)
         )
 
+    @property
+    def available_button_session_gestures(self):
+        """Binary buttons have edges; native event buttons report classified clicks."""
+        if self.control_input_mode != "button":
+            return ()
+        return (
+            ("long", "double", "triple")
+            if self.bindings.values["control_input"].startswith("event.")
+            else ("long",)
+        )
+
     @classmethod
     def from_options(cls, options: Mapping) -> Configuration:
         if (
@@ -135,6 +154,7 @@ class Configuration:
                 "button_event_type",
                 "program_mode",
                 "button_program",
+                "button_session_gesture",
                 "temperature_programs",
                 "selected_program_id",
                 "control_mode",
@@ -259,6 +279,7 @@ class Configuration:
             steps,
             button_temperature_c,
             options.get("appearance", default_appearance()),
+            options.get("button_session_gesture", instance_default("button_session_gesture")),
         )
 
     def as_options(self) -> dict:
@@ -270,6 +291,7 @@ class Configuration:
             "button_event_type": self.button_event_type,
             "program_mode": self.program_mode,
             "button_program": self.button_program,
+            "button_session_gesture": self.button_session_gesture,
             "temperature_programs": [
                 program.as_dict() for program in self.temperature_programs
             ],
@@ -307,9 +329,7 @@ class SaunaRuntime:
         self._tick_pending = False
         self._pending_device_inputs = deque()
         self._device_input_pending = False
-        self._button = ButtonGestures(
-            timedelta(seconds=configuration.parameters.values["button_hold_seconds"])
-        )
+        self._reset_button_gestures()
         self._button_hold_session_id = None
         self._button_start_hold_session_id = None
         self.save_configuration = None
@@ -1018,13 +1038,7 @@ class SaunaRuntime:
             self._button_start_hold_session_id = None
             self._button_hold_session_id = None
             if not preserve_button:
-                self._button = ButtonGestures(
-                    timedelta(
-                        seconds=self.configuration.parameters.values[
-                            "button_hold_seconds"
-                        ]
-                    )
-                )
+                self._reset_button_gestures()
             if self.device:
                 self.device.finish_button_hold_light()
             if self.save_configuration:
@@ -1147,6 +1161,19 @@ class SaunaRuntime:
         value = not bool(current)
         self._validate_heater_override(value)
         return self.controller.set_heater_override(value, now)
+
+    def _reset_button_gestures(self):
+        self._button = ButtonGestures(
+            timedelta(seconds=self.configuration.parameters.values["button_hold_seconds"]),
+            self.configuration.button_session_gesture,
+        )
+
+    @property
+    def available_button_session_gestures(self):
+        return (
+            self.device.available_button_session_gestures
+            if self.device else self.configuration.available_button_session_gestures
+        )
 
     @property
     def button_start_hold_active(self):
