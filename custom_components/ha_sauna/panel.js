@@ -1884,10 +1884,15 @@ class SaunaPanel extends HTMLElement {
     for (const state of ["on", "off"]) {
       const color = this.appearanceColor(`ui_feedback_${state}`);
       if (color) {
-        style.setProperty(`--sauna-feedback-${state}-ink`, appearanceContrast(color));
+        const surface = appearanceBlend(recessedSurface, color, 0.14);
+        style.setProperty(`--sauna-feedback-${state}-surface`, surface);
+        style.setProperty(
+          `--sauna-feedback-${state}-ink`,
+          readable(color, surface, 4.5),
+        );
         style.setProperty(
           `--sauna-feedback-${state}-focus`,
-          readable(proposedFocus, color, 3),
+          readable(proposedFocus, surface, 3),
         );
       }
     }
@@ -3860,10 +3865,12 @@ class SaunaPanel extends HTMLElement {
       .control-auto { padding-bottom: 12px; border-bottom: 1px solid var(--sauna-color-border); }
       .control-auto button { width: 100%; }
       .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
-      .output-toggle button { width: 100%; }
-      .output-toggle button[data-action$=":true"] { --output-color: var(--sauna-color-ui-feedback-on); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
-      .output-toggle button[data-action$=":false"] { --output-color: var(--sauna-color-ui-feedback-off); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
-      .output-toggle button[aria-pressed="true"] { background: var(--output-color); border-color: var(--output-color); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
+      .output-toggle button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+      .output-toggle button::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--output-color); opacity: 0; }
+      .output-toggle button[data-action$=":true"] { --output-color: var(--sauna-color-ui-feedback-on); --output-surface: var(--sauna-feedback-on-surface); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
+      .output-toggle button[data-action$=":false"] { --output-color: var(--sauna-color-ui-feedback-off); --output-surface: var(--sauna-feedback-off-surface); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
+      .output-toggle button[aria-pressed="true"] { background: var(--output-surface); border-color: color-mix(in srgb, var(--output-color) 45%, var(--output-surface)); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
+      .output-toggle button[aria-pressed="true"]::before { opacity: 1; }
       .instrument-arc-track[aria-disabled="true"], .instrument-arc-track[aria-disabled="true"] + .instrument-arc-handle { cursor: default; }
       .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .control-history-lanes { min-width: 660px; }
