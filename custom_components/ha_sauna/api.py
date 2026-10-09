@@ -83,14 +83,6 @@ def require_control(request, entry_id):
         raise web.HTTPForbidden()
 
 
-def can_control_heater(request, entry_id, runtime):
-    """Allow manual heater control to switch controllers and administrators."""
-    return request["hass_user"].is_admin or (
-        can_control(request, entry_id)
-        and runtime.configuration.control_mode == "manual"
-    )
-
-
 def manual_controls(runtime):
     """Expose selected plans and explicit observation without device ids."""
     light = runtime.device.light_output if runtime.device else None
@@ -264,7 +256,7 @@ class StateView(HomeAssistantView):
                             "temperature": can_control(request, entry_id),
                             "program": can_control(request, entry_id),
                             "light": can_control(request, entry_id),
-                            "heater": can_control_heater(request, entry_id, runtime),
+                            "heater": can_control(request, entry_id),
                         },
                     }
                 )
@@ -619,8 +611,6 @@ class LightView(HomeAssistantView):
         percentage = not isinstance(value, bool) and isinstance(value, (int, float))
         if not preset and not percentage:
             raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
-        if percentage and not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         try:
             await runtime.set_light_override(value)
@@ -636,7 +626,7 @@ class HeaterView(HomeAssistantView):
 
     async def post(self, request, entry_id):
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
-        if not can_control_heater(request, entry_id, runtime):
+        if not can_control(request, entry_id):
             raise web.HTTPForbidden()
         body = await json_body(request)
         if (
@@ -648,9 +638,7 @@ class HeaterView(HomeAssistantView):
                 text="Heizwert muss wahr, falsch oder automatisch sein"
             )
         try:
-            await runtime.set_heater_override(
-                body["value"], manual_only=not request["hass_user"].is_admin
-            )
+            await runtime.set_heater_override(body["value"])
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})

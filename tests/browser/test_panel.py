@@ -365,12 +365,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "aria-current", "page"
         )
         await tabs.locator('[data-action="overview"]').click()
-        await self.panel.locator("#current .manual-overrides summary").click()
-        await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_visible()
-        await expect(self.panel.locator('#current .manual-light [data-action="light-editor"]')).to_be_visible()
-        await expect(self.panel.locator('#current .manual-light #manual-light-editor')).to_be_hidden()
-        await expect(self.panel.locator('#current .manual-overrides [data-action="heater:true"]')).to_be_disabled()
-        await expect(self.panel.locator('#current .manual-light [data-action="manual-light-overview"]')).to_be_disabled()
+        await expect(self.panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_visible()
+        await expect(self.panel.locator('#current .light-instrument [data-manual-light-value]')).to_be_disabled()
 
         user = await self.hass.auth.async_create_user("Normal panel user", group_ids=[GROUP_ID_USER])
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
@@ -388,8 +384,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             panel = page.locator("ha-sauna-panel")
             await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
             await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
-            self.assertEqual(await panel.locator('#current .manual-overrides [data-action="heater:true"]').count(), 0)
-            self.assertEqual(await panel.locator('#current [data-action="manual-light-overview"]').count(), 0)
+            await expect(panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_visible()
+            await expect(panel.locator('#current .light-instrument [data-manual-light-value]')).to_be_disabled()
             await panel.locator('.main-tabs [data-action="settings"]').click()
             await expect(panel.locator('#program-library [data-program-id]').first).to_be_visible()
             await expect(panel.locator('#button-program')).to_be_visible()
@@ -786,6 +782,40 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.page.remove_listener("request", record_write)
         self.assertEqual(self.errors, [])
 
+    async def test_instrument_variants_preview_persist_and_restore_catalog_defaults(self):
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.open_appearance()
+        editor = self.panel.locator("#appearance-settings")
+        definitions = section("appearance")["instruments"]
+        selected = {}
+        for name, definition in definitions.items():
+            field = editor.locator(f'[data-appearance-instrument="{name}"]')
+            await expect(field).to_have_value(definition["default"])
+            selected[name] = next(value for value in definition["options"]
+                                  if value != definition["default"])
+            await field.select_option(selected[name])
+        self.assertEqual(self.runtime.configuration.appearance["instruments"],
+                         {name: definition["default"] for name, definition in definitions.items()})
+        await expect(editor.locator("#appearance-status")).to_contain_text("Vorschau")
+        async with self.page.expect_response(lambda response: response.url.endswith("/appearance") and response.request.method == "POST") as saved:
+            await editor.locator('[data-action="appearance-save"]').click()
+        self.assertTrue((await saved.value).ok)
+        self.assertEqual(self.entry.options["appearance"]["instruments"], selected)
+        await self.page.reload()
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.open_appearance()
+        editor = self.panel.locator("#appearance-settings")
+        for name, value in selected.items():
+            await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(value)
+        await editor.locator('[data-action="appearance-default"]').click()
+        for name, definition in definitions.items():
+            await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(definition["default"])
+        await editor.locator('[data-action="appearance-discard"]').click()
+        for name, value in selected.items():
+            await expect(editor.locator(f'[data-appearance-instrument="{name}"]')).to_have_value(value)
+        self.assertEqual(self.errors, [])
+
     async def test_appearance_preview_validation_persistence_and_display_scales(self):
         artifact_dir = os.environ.get("HA_SAUNA_BROWSER_ARTIFACTS")
         screenshots = (
@@ -1046,16 +1076,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
-        await expect(self.panel.locator("#current .control-main .oven-feedback")).to_be_visible()
-        await expect(self.panel.locator("#current .control-main .oven-feedback strong")).to_have_text("Ofen · Ein")
+        await expect(self.panel.locator("#current .control-main .oven-feedback, #current .control-main .light-feedback")).to_have_count(0)
         active_program = self.panel.locator('#current .program-current .program-active-label')
         await expect(active_program).to_have_text("Individuell")
-        overrides = self.panel.locator("#current .manual-overrides")
+        overrides = self.panel.locator("#current .manual-heater")
         await expect(overrides).to_be_visible()
-        await expect(overrides).not_to_have_attribute("open", "")
-        await overrides.locator("summary").click()
-        await expect(overrides).to_have_attribute("open", "")
-        await expect(overrides.locator("summary")).to_have_text("Manuelle Ofenübersteuerung")
         await expect(overrides.locator('[data-action="heater:true"]')).to_be_enabled()
         self.assertEqual(await overrides.locator('[data-action^="light:"]').count(), 0)
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
@@ -1164,7 +1189,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 geometry = lambda: self.panel.evaluate('''p => ({
                   scrollY: window.scrollY,
                   boxes: ['.program-form', '.program-actions', '[data-action="program-apply"]',
-                    '.manual-overrides', '.gauges', '[data-action="operation"]'].map(selector => {
+                    '.manual-controls', '.gauges', '[data-action="operation"]'].map(selector => {
                       const r = p.$('#current ' + selector).getBoundingClientRect();
                       return {selector, x: r.x, y: r.y, width: r.width, height: r.height};
                     })
@@ -1382,7 +1407,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                   const origin = p.getBoundingClientRect();
                   return ['.program-types', '.program-types button:nth-child(1)',
                     '.program-types button:nth-child(2)', '.program-types button:nth-child(3)',
-                    '.program-form', '.manual-overrides', '.gauges', '[data-action="operation"]']
+                    '.program-form', '.manual-controls', '.gauges', '[data-action="operation"]']
                     .map(selector => {
                       const r = p.$('#current ' + selector).getBoundingClientRect();
                       return {selector, x:r.x-origin.x, y:r.y-origin.y, width:r.width, height:r.height};
@@ -1603,20 +1628,90 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await self.page.unroute("**" + temperature_url, delayed_temperature)
         self.assertEqual(self.errors, [])
 
-    async def test_automatic_light_presets_are_disabled_without_running_operation(self):
-        presets = self.panel.locator('#current .manual-light [data-action^="light:"]')
-        self.assertEqual(
-            await presets.evaluate_all("buttons => buttons.map(button => button.dataset.action)"),
-            ["light:auto", "light:false", "light:true"],
-        )
-        await expect(self.panel.locator('#current .manual-light [data-action="light-editor"]')).to_be_visible()
-        for index in range(await presets.count()):
-            with self.subTest(preset=index):
-                await expect(presets.nth(index)).to_be_disabled()
-        await expect(self.panel.locator("#manual-light-value-overview")).to_be_disabled()
-        await expect(self.panel.locator('[data-action="manual-light-overview"]')).to_be_disabled()
+    async def test_idle_automatic_controls_require_explicit_manual_entry(self):
+        await expect(self.panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_enabled()
+        await expect(self.panel.locator('#current .manual-controls [data-action^="light:"]')).to_have_count(0)
+        await expect(self.panel.locator('#current .manual-controls [data-action^="heater:"]')).to_have_count(0)
+        await expect(self.panel.locator('.light-instrument #manual-light-value-overview')).to_be_disabled()
+        await expect(self.panel.locator('[data-action="light-editor"], [data-action="manual-light-overview"]')).to_have_count(0)
         self.assertIsNone(self.runtime.session)
-        self.assertFalse(await self.panel.evaluate("p => p.state.operation_enabled"))
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+
+    async def test_both_roles_control_idle_outputs_and_start_sessions_only_with_master(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        for admin in (True, False):
+            with self.subTest(admin=admin):
+                await async_set_control_mode(self.hass, self.entry, "automatic")
+                user = await self.hass.auth.async_create_user(
+                    f"Idle control {admin}",
+                    group_ids=[GROUP_ID_ADMIN if admin else GROUP_ID_USER],
+                )
+                refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
+                tokens = {"hassUrl": self.url, "clientId": self.url + "/",
+                          "access_token": self.hass.auth.async_create_access_token(refresh),
+                          "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                          "expires_in": 1800}
+                context = await self.browser.new_context(viewport={"width": 390, "height": 844})
+                try:
+                    await context.add_init_script("localStorage.setItem('hassTokens', " + json.dumps(json.dumps(tokens)) + ");")
+                    page = await context.new_page()
+                    writes = []
+                    page.on("request", lambda request: writes.append((request.url.rsplit("/", 1)[-1], request.post_data_json))
+                            if request.method == "POST" and "/api/ha_sauna/" in request.url else None)
+                    await page.goto(self.url + "/ha-sauna")
+                    panel = page.locator("ha-sauna-panel")
+                    field = panel.locator('.light-instrument [data-manual-light-value]')
+                    await expect(field).to_be_visible(timeout=60000)
+                    await expect(field).to_have_attribute("type", "range")
+                    await expect(field).to_be_disabled()
+                    self.assertIsNone(self.runtime.session)
+                    async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as entered:
+                        await panel.get_by_role("button", name="Manuell steuern", exact=True).click()
+                    self.assertTrue((await entered.value).ok)
+                    await expect(field).to_be_enabled()
+                    self.assertIsNone(self.runtime.session)
+                    async with page.expect_response(lambda response: response.url.endswith("/light") and response.request.method == "POST") as applied:
+                        await field.evaluate("input => { input.value = '60'; }")
+                        await field.dispatch_event("change")
+                    self.assertTrue((await applied.value).ok)
+                    self.assertEqual(self.runtime.configuration.control_mode, "manual")
+                    self.assertIsNone(self.runtime.session)
+                    self.assertEqual(self.entry.options["control_mode"], "manual")
+                    async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as heated:
+                        await panel.locator('.manual-heater [data-action="heater:true"]').click()
+                    self.assertTrue((await heated.value).ok)
+                    self.assertIsNone(self.runtime.session)
+                    self.assertTrue(self.heater.is_on)
+                    await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("aria-pressed", "true")
+                    self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
+                    self.assertEqual([item for item in writes if item[0] in ("control", "heater")], [("heater", {"value": True})])
+                    async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as cooled:
+                        await panel.locator('.manual-heater [data-action="heater:false"]').click()
+                    self.assertTrue((await cooled.value).ok)
+                    self.assertIsNone(self.runtime.session)
+                    self.assertFalse(self.heater.is_on)
+                    await expect(panel.locator('.manual-heater [data-action="heater:false"]')).to_have_attribute("aria-pressed", "true")
+                    self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
+                    async with page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
+                        await panel.locator('#current [data-action="operation"]').click()
+                    self.assertTrue((await started.value).ok)
+                    identity = self.runtime.session.session_id
+                    self.assertTrue(self.runtime.session.operation_enabled)
+                    await expect(panel.locator('[data-action="control-mode:automatic"]')).to_be_disabled()
+                    await self.runtime.set_operation(False)
+                    await panel.evaluate("p => p.refresh()")
+                    async with page.expect_response(lambda response: response.url.endswith("/light") and response.request.method == "POST") as pending:
+                        await panel.locator('.manual-light [data-action="light:false"]').click()
+                    self.assertTrue((await pending.value).ok)
+                    self.assertEqual(self.runtime.session.session_id, identity)
+                    self.assertFalse(self.runtime.session.operation_enabled)
+                    token = next(deadline.token for deadline in self.runtime.session.deadlines
+                                 if deadline.purpose == "session_gap")
+                    await self.runtime.finish_session_gap(token)
+                finally:
+                    await context.close()
+        self.assertEqual(self.errors, [])
 
     async def test_normal_user_keeps_simple_light_controls_in_running_automatic_mode(self):
         await self.runtime.set_operation(True)
@@ -1642,8 +1737,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             for index in range(3):
                 await expect(presets.nth(index)).to_be_enabled()
             self.assertEqual(await panel.locator(".manual-overrides").count(), 0)
-            self.assertEqual(await panel.locator('[data-action^="heater:"]').count(), 0)
-            self.assertEqual(await panel.locator("#manual-light-value-overview").count(), 0)
+            await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_be_enabled()
+            await expect(panel.locator('.light-instrument #manual-light-value-overview')).to_be_enabled()
             async with page.expect_response(lambda response: response.url.endswith("/light")
                                             and response.request.method == "POST") as saved:
                 await panel.locator('[data-action="light:false"]').click()
@@ -1777,33 +1872,31 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.page.screenshot(path=str(screenshots / "diagnostics_desktop.png"), full_page=True)
         self.assertEqual(self.errors, [])
 
-    async def test_design_light_status_editor_and_draft_separation(self):
+    async def test_design_light_instrument_applies_changes_and_keeps_observation_separate(self):
         screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "design"
         screenshots.mkdir(parents=True, exist_ok=True)
-        await self.panel.locator('[data-action="control-mode:manual"]').click()
-        await expect(self.panel.locator("#manual-light-editor")).to_be_visible()
+        await self.panel.get_by_role("button", name="Manuell steuern", exact=True).click()
+        await expect(self.panel.locator('.light-instrument #manual-light-value-overview')).to_be_visible()
         await self.panel.locator('[data-action="control-mode:automatic"]').click()
         await self.panel.locator('#current [data-action="operation"]').click()
-        await self.panel.locator("#manual-overrides > summary").click()
-        await expect(self.panel.locator("#manual-light-editor")).to_be_hidden()
         await expect(self.panel.locator('#current [data-light-status]')).to_have_count(0)
-        await self.panel.locator('[data-action="light-editor"]').click()
         field = self.panel.locator("#manual-light-value-overview")
-        await field.fill("60")
-        await self.panel.locator('[data-action="manual-light-overview"]').click()
+        await field.evaluate("input => { input.value = '60'; }")
+        await field.dispatch_event("change")
         status = self.panel.locator('#current [data-light-observation]')
-        await expect(status).to_have_text("Licht 60 %")
-        await field.fill("35")
+        await expect(status).to_have_text("60 %")
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(status).to_have_text("Licht 60 %")
-        await expect(field).to_have_value("35")
+        await expect(status).to_have_text("60 %")
+        await expect(field).to_have_value("60")
         self.assertEqual(await self.panel.evaluate("p=>p.state.manual_controls.light.manual"), 60)
         await self.page.screenshot(path=str(screenshots / "light_desktop.png"), full_page=True)
         self.light.defer_state_writes = True
         self.hass.states.async_set(self.runtime.device.bindings["light"], "unavailable")
         await self.hass.async_block_till_done()
         await self.panel.evaluate("p=>p.refresh()")
-        await expect(status).to_have_text("Lichtvorgabe 60 % · Rückmeldung nicht verfügbar")
+        await expect(status).to_have_text("– %")
+        await expect(self.panel.locator('.light-instrument')).to_contain_text("Rückmeldung fehlt")
+        await expect(self.panel.locator('.light-instrument')).to_contain_text("Vorgabe 60 %")
         await self.page.set_viewport_size({"width": 390, "height": 844})
         await self.page.screenshot(path=str(screenshots / "light_mobile.png"), full_page=True)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
@@ -2742,13 +2835,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#current')).not_to_contain_text("Noch nicht abschätzbar")
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         await self.set_source("upper_temperature", 90)
-        overrides = self.panel.locator("#current .manual-overrides")
-        if await overrides.get_attribute("open") is None:
-            await overrides.locator("summary").click()
-        await self.panel.locator('#current [data-action="light-editor"]').click()
         await expect(self.panel.locator('#current #manual-light-value-overview')).to_be_visible(timeout=10000)
-        await self.panel.locator('#current #manual-light-value-overview').fill("60")
-        await self.panel.locator('#current [data-action="manual-light-overview"]').click()
+        await self.panel.locator('#current #manual-light-value-overview').evaluate("input => { input.value = '60'; }")
+        await self.panel.locator('#current #manual-light-value-overview').dispatch_event("change")
         await expect(self.panel.locator('#current [data-light-status]')).to_have_count(0)
         await expect(self.panel.locator('#current [data-light-observation]')).to_contain_text("60 %")
         await self.panel.locator('[data-action="details"]').click()

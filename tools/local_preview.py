@@ -37,7 +37,7 @@ from custom_components.ha_sauna.presentation import (
 )
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
-    async_set_control_mode, async_set_parameters, async_set_program,
+    async_set_appearance, async_set_control_mode, async_set_parameters, async_set_program,
     async_set_temperature_steps,
 )
 
@@ -290,7 +290,6 @@ class Preview:
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
         result["permissions"]["admin"] = self.admin
-        result["permissions"]["heater"] = self.admin or configuration.control_mode == "manual"
         return result if self.admin else public_state(result)
 
     def action(self, path, body):
@@ -344,9 +343,7 @@ class Preview:
         elif path.endswith("/finish-session"):
             self.c.finish_session_gap(body["token"], self.now)
         elif path.endswith("/heater"):
-            if not self.admin and self.runtime.configuration.control_mode != "manual":
-                raise ValueError("Ofenübersteuerung benötigt Administrationsrechte")
-            self.c.set_heater_override(body["value"], self.now)
+            asyncio.run(self.runtime.set_heater_override(body["value"]))
         elif path.endswith("/light"):
             value = body["value"]
             if value is None:
@@ -357,13 +354,15 @@ class Preview:
                 brightness = 0
             elif value == "normal":
                 brightness = 35
-            elif (self.admin and isinstance(value, (int, float))
-                  and value == int(value) and 0 <= value <= 100):
-                brightness = int(value)
+            elif isinstance(value, (int, float)) and 0 <= value <= 100:
+                brightness = value
             else:
-                raise ValueError("Ungültiger Lichtwert oder fehlende Administrationsrechte")
+                raise ValueError("Ungültiger Lichtwert")
             self.light_manual = brightness
             self.light = 35 if brightness is None else brightness
+        elif path.endswith("/appearance"):
+            appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
+            return {"appearance": appearance}
         elif path.endswith("/temperature"):
             if not body or set(body) - LIVE_TEMPERATURE_KEYS:
                 raise ValueError("Ungültige Temperatureinstellung")

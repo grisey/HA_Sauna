@@ -963,6 +963,130 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.time(600)
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
 
+    async def test_idle_light_selection_preserves_automatic_mode_without_starting_session(self):
+        await self.runtime.set_light_override(True)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertEqual(self.entry.options["control_mode"], "automatic")
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.heater.is_on)
+        self.assertEqual(
+            self.runtime.device.light_output.manual_brightness,
+            self.runtime.configuration.parameters.values["session_light_brightness_percent"],
+        )
+        self.assertEqual(
+            self.runtime.device.light_output.manual_ends_at,
+            self.now + timedelta(minutes=self.runtime.configuration.parameters.values["manual_override_minutes"]),
+        )
+
+    async def test_manual_idle_switches_hardware_without_creating_session(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        for value in (True, False, True):
+            await self.runtime.set_heater_override(value)
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.heater.is_on, value)
+            self.assertEqual(self.heater.calls[-1], value)
+            self.assertIsNone(self.runtime.session)
+            self.assertEqual(self.hass.states.get(self.operation).state, "off")
+        await self.time(10)
+        self.assertEqual(self.runtime.controller.mechanical_timer_status["state"], "running")
+        self.assertEqual(self.runtime.controller.mechanical_timer.elapsed_at(self.now), 10)
+        self.assertIsNone(self.runtime.session)
+        await self.runtime.set_light_override(42)
+        self.assertIsNone(self.runtime.session)
+        await self.hass.services.async_call(
+            "switch", "turn_on", {"entity_id": self.operation}, blocking=True
+        )
+        self.assertTrue(self.runtime.session.operation_enabled)
+        identity = self.runtime.session.session_id
+        for value in (False, True):
+            await self.runtime.set_heater_override(value)
+            self.assertEqual(self.runtime.session.session_id, identity)
+            self.assertTrue(self.runtime.session.operation_enabled)
+            self.assertEqual(self.heater.is_on, value)
+
+    async def test_manual_idle_heater_requires_feedback_and_revokes_on_sensor_loss(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        self.hass.states.async_set(self.heater.entity_id, "unavailable")
+        await self.hass.async_block_till_done()
+        with self.assertRaises(ValueError):
+            await self.runtime.set_heater_override(True)
+        self.assertIsNone(self.runtime.session)
+        self.heater.async_write_ha_state()
+        await self.hass.async_block_till_done()
+        await self.runtime.set_heater_override(True)
+        self.assertTrue(self.heater.is_on)
+        await self.set_source("upper_temperature", "unavailable")
+        await self.set_source("lower_temperature", "unavailable")
+        self.assertFalse(self.heater.is_on)
+        self.assertFalse(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.session)
+
+    async def test_manual_idle_failed_switch_on_is_monitored_without_session(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        self.heater.accept_commands = False
+        await self.runtime.set_heater_override(True)
+        self.assertFalse(self.heater.is_on)
+        self.assertTrue(self.runtime.controller.heater_override)
+        await self.time(3)
+        await self.time(8)
+        self.assertIn("heater_feedback_mismatch", self.runtime.controller.protection)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+        self.assertFalse(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.session)
+
+    async def test_idle_heater_off_preserves_mode_without_session(self):
+        await self.runtime.set_heater_override(False)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.heater.is_on)
+
+    async def test_idle_invalid_or_unsafe_controls_do_not_change_mode_or_start(self):
+        for value in (-1, 101, float("nan")):
+            with self.assertRaises(ValueError):
+                await self.runtime.set_light_override(value)
+            self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        await self.set_source("upper_temperature", "unavailable")
+        await self.set_source("lower_temperature", "unavailable")
+        with self.assertRaises(ValueError):
+            await self.runtime.set_heater_override(True)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.heater.is_on)
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        with self.assertRaises(ValueError):
+            await self.runtime.set_heater_override(True)
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.heater.is_on)
+
+    async def test_pending_session_controls_keep_identity_and_automatic_mode(self):
+        await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
+        await self.runtime.set_operation(False)
+        await self.runtime.set_light_override(True)
+        await self.runtime.set_heater_override(False)
+        with self.assertRaises(ValueError):
+            await self.runtime.set_heater_override(True)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertFalse(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+
+    async def test_external_idle_light_selection_preserves_mode_without_session(self):
+        await self.set_light_externally(True, 128)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertIsNone(self.runtime.session)
+        self.assertEqual(
+            self.runtime.device.light_output.manual_ends_at,
+            self.now + timedelta(minutes=self.runtime.configuration.parameters.values["manual_override_minutes"]),
+        )
+
     async def test_mode_switch_initializes_manual_outputs_off_and_keeps_session_lock(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
 
@@ -982,7 +1106,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 60)
         await self.runtime.set_operation(True)
         self.assertFalse(self.heater.is_on)
-        await self.runtime.set_heater_override(True, manual_only=True)
+        await self.runtime.set_heater_override(True)
         for mode in ("manual", "automatic"):
             with self.assertRaisesRegex(ValueError, "laufende Session"):
                 await async_set_control_mode(self.hass, self.entry, mode)
@@ -1474,6 +1598,57 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_source("upper_temperature", 70)
         self.assertTrue(self.heater.is_on)
         self.assertEqual(len(self.runtime.session.heating.intervals), 2)
+
+    async def test_manual_idle_timer_notifications_warn_expire_and_retry_without_session(self):
+        options = {
+            **self.entry.options,
+            "control_mode": "manual",
+            "parameters": {
+                **self.entry.options["parameters"],
+                "mechanical_timer_minutes": 1,
+                "mechanical_timer_warning_minutes": .25,
+                "sensor_timeout_seconds": 120,
+            },
+        }
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.base = self.now = datetime.now(UTC)
+        self.runtime._clock = lambda: self.now
+        await self.runtime.set_heater_override(True)
+        await self.hass.async_block_till_done()
+        cycle = self.runtime.controller.mechanical_timer.cycle_id
+        device = self.runtime.device
+        self.assertIsNone(self.runtime.session)
+        with (
+            patch("custom_components.ha_sauna.device.persistent_notification.async_create") as create,
+            patch.object(self.runtime.archive, "append", wraps=self.runtime.archive.append) as append,
+        ):
+            self.now = self.base + timedelta(seconds=45)
+            create.side_effect = RuntimeError("Synthetic notification failure")
+            with self.assertRaisesRegex(RuntimeError, "notification failure"):
+                device.notify_mechanical_timer(self.now)
+            self.assertNotIn((cycle, "warning"), device.notified)
+            create.side_effect = None
+            await self.time(45)
+            await self.time(46)
+            self.assertIn((cycle, "warning"), device.notified)
+            await self.time(60)
+            await self.time(61)
+            self.assertEqual(device.notified, {(cycle, "warning"), (cycle, "expired")})
+            self.assertEqual(create.call_count, 3)
+            self.assertEqual(
+                {call.kwargs["notification_id"] for call in create.call_args_list},
+                {f"sauna_timer_{self.entry.entry_id}_{cycle}"},
+            )
+            notices = [call.args for call in append.call_args_list if call.args[0] == "notice"]
+            self.assertEqual(
+                [args[2]["kind"] for args in notices],
+                ["mechanical_timer_warning", "mechanical_timer_expired"],
+            )
+            self.assertTrue(all(args[3] is None for args in notices))
+        self.assertIsNone(self.runtime.session)
+        self.assertTrue(self.heater.is_on)
 
     async def test_mechanical_timer_expiry_is_informative_and_heating_feedback_is_separate(self):
         # Configure before starting, via the real options listener and reload.

@@ -29,6 +29,13 @@ class DefaultsTests(unittest.TestCase):
                 "energy"
             ),
             "missing_scale": lambda data: data["appearance"]["scales"].pop("humidity"),
+            "missing_instrument": lambda data: data["appearance"]["instruments"].pop("light"),
+            "invalid_instrument_default": lambda data: data["appearance"]["instruments"][
+                "default"
+            ].update(default="inherit"),
+            "invalid_instrument_options": lambda data: data["appearance"]["instruments"][
+                "temperature"
+            ].update(options=["round", "linear"]),
             "missing_scale_limit": lambda data: data["appearance"]["scales"][
                 "humidity"
             ].pop("maximum"),

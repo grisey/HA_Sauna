@@ -409,7 +409,19 @@ def validate_catalog(catalog):
     ):
         raise ValueError("defaults.json: button temperature outside temperature bounds")
     appearance = catalog["appearance"]
-    _object(appearance, {"colors", "scales", "precision"}, "appearance")
+    _object(appearance, {"colors", "scales", "instruments", "precision"}, "appearance")
+    _object(appearance["instruments"],
+            {"default", "temperature", "humidity", "light"}, "instruments")
+    for name, instrument in appearance["instruments"].items():
+        _object(instrument, {"label", "default", "options"}, "instrument")
+        options = ["round", "linear"] if name == "default" else ["inherit", "round", "linear"]
+        if (
+            not isinstance(instrument["label"], str)
+            or not instrument["label"].strip()
+            or instrument["options"] != options
+            or instrument["default"] not in options
+        ):
+            raise ValueError("defaults.json: invalid instrument style")
     _object(appearance["precision"], {"absolute_humidity", "energy"}, "precision")
     for value in appearance["precision"].values():
         _integer(value, "display precision")

@@ -14,6 +14,10 @@ COLOR_ROLES = frozenset(definition["id"] for definition in COLOR_DEFINITIONS)
 SCALE_DEFAULTS = {
     name: dict(spec["default"]) for name, spec in APPEARANCE_CATALOG["scales"].items()
 }
+INSTRUMENT_DEFINITIONS = APPEARANCE_CATALOG["instruments"]
+INSTRUMENT_DEFAULTS = {
+    name: spec["default"] for name, spec in INSTRUMENT_DEFINITIONS.items()
+}
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}\Z")
 
 
@@ -22,15 +26,24 @@ def default_appearance():
     return {
         "colors": {},
         "scales": {name: dict(bounds) for name, bounds in SCALE_DEFAULTS.items()},
+        "instruments": dict(INSTRUMENT_DEFAULTS),
     }
 
 
 def validate_appearance(value):
     """Validate a complete replacement; return a detached canonical value."""
-    if not isinstance(value, Mapping) or set(value) - {"colors", "scales"}:
+    if not isinstance(value, Mapping) or set(value) - {"colors", "scales", "instruments"}:
         raise ValueError("Ungültige Darstellungseinstellungen")
     colors = value.get("colors", {})
     scales = value.get("scales", {})
+    instruments = value.get("instruments", {})
+    if not isinstance(instruments, Mapping) or set(instruments) - set(INSTRUMENT_DEFAULTS):
+        raise ValueError("Ungültige Instrumentendarstellung")
+    validated_instruments = dict(INSTRUMENT_DEFAULTS)
+    for name, style in instruments.items():
+        if not isinstance(style, str) or style not in INSTRUMENT_DEFINITIONS[name]["options"]:
+            raise ValueError("Ungültige Instrumentendarstellung")
+        validated_instruments[name] = style
     if not isinstance(colors, Mapping) or set(colors) - COLOR_ROLES:
         raise ValueError("Ungültige Farbrolle")
     if not isinstance(scales, Mapping) or set(scales) - set(SCALE_DEFAULTS):
@@ -74,4 +87,8 @@ def validate_appearance(value):
         ):
             raise ValueError("Diagrammskala liegt außerhalb des zulässigen Bereichs")
         validated_scales[name] = {"minimum": minimum, "maximum": maximum}
-    return {"colors": validated_colors, "scales": validated_scales}
+    return {
+        "colors": validated_colors,
+        "scales": validated_scales,
+        "instruments": validated_instruments,
+    }

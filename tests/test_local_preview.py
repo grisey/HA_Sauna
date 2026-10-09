@@ -9,27 +9,27 @@ class LocalPreviewTests(unittest.TestCase):
     def setUp(self):
         self.preview = Preview()
 
-    def test_user_state_removes_bindings_diagnostics_and_override_permissions(self):
+    def test_user_state_removes_diagnostics_and_retains_control_permissions(self):
         self.preview.action("/simulate", {"action":"role", "value":"user"})
         state = self.preview.state()
         self.assertFalse(state["permissions"]["admin"])
-        self.assertFalse(state["permissions"]["heater"])
+        self.assertTrue(state["permissions"]["heater"])
         self.assertNotIn("bindings", state["configuration"])
         self.assertNotIn("presence", state)
         self.assertNotIn("decision", state)
         self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])
-        with self.assertRaises(ValueError):
-            self.preview.action("/preview/heater", {"value":True})
+        self.preview.action("/preview/heater", {"value":True})
+        self.assertIs(self.preview.c.heater_override, True)
         self.preview.action("/simulate", {"action":"role", "value":"admin"})
         self.assertIn("presence", self.preview.state())
 
-    def test_user_light_presets_keep_boolean_meaning_and_reject_percentages(self):
+    def test_user_light_presets_and_percentages_keep_their_meaning(self):
         self.preview.admin = False
-        for value, expected in ((True, self.preview.c.parameters.values["session_light_brightness_percent"]), (False, 0), ("normal", 35), (None, 35)):
+        for value, expected in ((True, self.preview.c.parameters.values["session_light_brightness_percent"]), (False, 0), ("normal", 35), (None, 35), (55, 55)):
             self.preview.action("/preview/light", {"value":value})
             self.assertEqual(self.preview.light, expected)
         with self.assertRaises(ValueError):
-            self.preview.action("/preview/light", {"value":55})
+            self.preview.action("/preview/light", {"value":101})
 
     def test_user_can_control_manual_heater_through_real_controller(self):
         self.preview.admin = False
@@ -45,7 +45,6 @@ class LocalPreviewTests(unittest.TestCase):
         token = next(d.token for d in self.preview.c.session.deadlines
                      if d.purpose == "session_gap")
         self.preview.action("/preview/finish-session", {"token":token})
-        self.preview.action("/preview/light", {"value":True})
         self.preview.action("/preview/control-mode", {"mode":"manual"})
         controls = self.preview.state()["manual_controls"]
         self.assertIs(controls["heater"]["manual"], False)
@@ -62,6 +61,36 @@ class LocalPreviewTests(unittest.TestCase):
             self.preview.action("/preview/control-mode", {"mode":"automatic"})
         self.assertIs(self.preview.state()["manual_controls"]["heater"]["manual"], True)
         self.assertGreater(self.preview.state()["manual_controls"]["light"]["manual"], 0)
+
+    def test_explicit_manual_entry_for_both_roles_without_extra_sessions(self):
+        for admin in (False, True):
+            with self.subTest(admin=admin):
+                self.preview.reset("archiv")
+                self.preview.admin = admin
+                self.assertIsNone(self.preview.c.session)
+                self.preview.action("/preview/light", {"value":60})
+                self.assertEqual(self.preview.c.control_mode, "automatic")
+                self.assertIsNone(self.preview.c.session)
+                self.preview.action("/preview/control-mode", {"mode":"manual"})
+                self.preview.action("/preview/light", {"value":60})
+                self.assertEqual(self.preview.c.control_mode, "manual")
+                self.assertIsNone(self.preview.c.session)
+                self.assertEqual(self.preview.light, 60)
+                self.preview.action("/preview/heater", {"value":True})
+                self.assertIsNone(self.preview.c.session)
+                self.assertFalse(self.preview.state()["operation_enabled"])
+                self.assertTrue(self.preview.c.last_decision.heat)
+                self.preview.action("/preview/heater", {"value":False})
+                self.assertIsNone(self.preview.c.session)
+                self.assertFalse(self.preview.c.last_decision.heat)
+                self.preview.action("/preview/control", {"enabled":True})
+                session_id = self.preview.c.session.session_id
+                self.preview.action("/preview/heater", {"value":True})
+                self.assertEqual(self.preview.c.session.session_id, session_id)
+                self.preview.action("/preview/control", {"enabled":False})
+                self.preview.action("/preview/light", {"value":40})
+                self.assertEqual(self.preview.c.session.session_id, session_id)
+                self.assertFalse(self.preview.c.session.operation_enabled)
 
     def test_manual_scenario_starts_with_both_explicit_off_selections(self):
         self.preview.reset("manuell")

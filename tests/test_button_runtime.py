@@ -46,11 +46,21 @@ class ButtonRuntimeTests(unittest.TestCase):
                 asyncio.run(gesture(duration))
                 self.assertEqual(self.runtime.session is None, duration == 3)
 
-    def test_manual_only_heater_command_rechecks_mode_when_executed(self):
-        with self.assertRaisesRegex(ValueError, "Betriebsart"):
-            asyncio.run(self.runtime.set_heater_override(True, manual_only=True))
+    def test_automatic_idle_heater_command_requires_explicit_mode_change(self):
+        with self.assertRaisesRegex(ValueError, "Saunabetrieb"):
+            asyncio.run(self.runtime.set_heater_override(True))
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
         self.assertIsNone(self.runtime.controller.heater_override)
         self.assertIsNone(self.runtime.session)
+
+    def test_idle_heater_command_keeps_session_recording_off(self):
+        self.runtime._set_control_mode("manual")
+        self.runtime.controller.set_temperature(70, self.now)
+        asyncio.run(self.runtime.set_heater_override(True))
+        self.assertEqual(self.runtime.configuration.control_mode, "manual")
+        self.assertIsNone(self.runtime.session)
+        self.assertTrue(self.runtime.controller.heater_override)
+        self.assertTrue(self.runtime.controller.last_decision.heat)
 
     async def _handle(self, name):
         async with self.runtime._lock:

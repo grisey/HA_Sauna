@@ -346,6 +346,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
             async with client.post(url + "/finish_phase", json={"purpose":"after_run","token":"old"}) as response:
                 self.assertEqual(response.status, 403)
+            for route in ("/heater", "/light"):
+                async with client.post(url + route, json={"value": True}) as response:
+                    self.assertEqual(response.status, 403)
         self.assertIsNone(self.entry.runtime_data.session)
 
     async def test_instance_read_permission_and_normal_control_history_projection(self):
@@ -866,6 +869,49 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/button-program", json={"profile": profile}) as response:
                 self.assertEqual(response.status, 403)
 
+    async def test_standard_user_manual_controls_explicit_mode_and_override_active_session(self):
+        user = await self.hass.auth.async_create_user(
+            "Manual controller", group_ids=[GROUP_ID_USER]
+        )
+        token = await self.hass.auth.async_create_refresh_token(
+            user, client_id="http://localhost/"
+        )
+        headers = {
+            "Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)
+        }
+        runtime = self.entry.runtime_data
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + "/heater", json={"value": True}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertEqual(runtime.configuration.control_mode, "automatic")
+            async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/light", json={"value": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.configuration.control_mode, "manual")
+            self.assertIsNone(runtime.session)
+            async with client.post(url + "/heater", json={"value": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertIsNone(runtime.session)
+            self.assertTrue(runtime.controller.heater_override)
+            async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertTrue(runtime.session.operation_enabled)
+            await runtime.set_operation(False)
+            gap = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+            await runtime.finish_session_gap(gap.token)
+            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await runtime.set_operation(True)
+            identity = runtime.session.session_id
+            for value in (False, True, None):
+                async with client.post(url + "/heater", json={"value": value}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual(runtime.session.session_id, identity)
+                self.assertEqual(runtime.configuration.control_mode, "automatic")
+                self.assertIs(runtime.controller.heater_override, value)
+
     async def test_standard_user_controls_only_the_permitted_panel_routes(self):
         """The normal HA user inherits control of the integration switch."""
         from datetime import UTC, datetime, timedelta
@@ -964,7 +1010,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(runtime.session.session_id, identity)
                 self.assertFalse(runtime.session.operation_enabled)
 
-            await forbidden(client.post(url + "/light", json={"value": 42}))
+            async with client.post(url + "/light", json={"value": 42}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.device.light_output.manual_brightness, 42)
+            self.assertEqual(runtime.session.session_id, identity)
+            session = runtime.session
             await forbidden(client.post(url + "/parameters", json=dict(self.entry.options["parameters"])))
             await forbidden(client.post(url + "/logging", json={"level": "INFO"}))
             await forbidden(client.get(url + "/export"))
@@ -977,9 +1027,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url + "/state") as response:
                 permissions = (await response.json())["permissions"]
                 self.assertTrue(permissions["control"])
-                self.assertFalse(permissions["heater"])
+                self.assertTrue(permissions["heater"])
             async with client.post(url + "/heater", json={"value": False}) as response:
-                self.assertEqual(response.status, 403, await response.text())
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.configuration.control_mode, "automatic")
+            self.assertIsNone(runtime.session)
 
     async def test_normal_user_phase_end_checks_permission_payload_and_replay(self):
         from datetime import datetime, UTC, timedelta
@@ -1379,6 +1431,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         deadlines = session.deadlines
         appearance = {
             "colors": {"phase_warmup": "#123ABC", "card_background": "#102030"},
+            "instruments": {
+                "default": "linear", "temperature": "round",
+                "humidity": "inherit", "light": "round",
+            },
             "scales": {
                 "temperature": {"minimum": 35, "maximum": 120},
                 "humidity": {"minimum": 5, "maximum": 85},
@@ -1421,7 +1477,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             session = runtime.session
             deadlines = session.deadlines
             external = {"colors": {"status_warning": "#FEDCBA"}, "scales":
-                        appearance["scales"]}
+                        appearance["scales"], "instruments": appearance["instruments"]}
             self.hass.config_entries.async_update_entry(
                 self.entry, options={**self.entry.options, "appearance": external})
             await self.hass.async_block_till_done()
@@ -1438,6 +1494,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Configuration.from_options(legacy).appearance["colors"], {})
         legacy["appearance"] = {"scales": {"humidity": {"maximum": 90}}}
         restored = Configuration.from_options(legacy).appearance
+        instrument_defaults = {
+            key: specification["default"]
+            for key, specification in section("appearance")["instruments"].items()
+        }
+        self.assertEqual(restored["instruments"], instrument_defaults)
         self.assertEqual(restored["scales"]["temperature"],
                          section("appearance")["scales"]["temperature"]["default"])
         self.assertEqual(restored["scales"]["humidity"],
@@ -1472,6 +1533,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 {"scales": {"temperature": {"minimum": -1e308, "maximum": 1e308}}},
                 {"scales": {"temperature": {"minimum": -(10 ** 308), "maximum": 10 ** 308}}},
                 {"scales": {"extra": {}}},
+                {"instruments": {"default": "inherit"}},
+                {"instruments": {"light": "invalid"}},
+                {"instruments": {"extra": "round"}},
+                {"instruments": {"temperature": None}},
+                {"instruments": []},
                 {"extra": True},
             )
             for value in invalid:
@@ -1483,6 +1549,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200, await response.text())
                 replaced = (await response.json())["appearance"]
             self.assertEqual(replaced["colors"], {"phase_warmup": "#010203"})
+            self.assertEqual(replaced["instruments"], instrument_defaults)
             self.assertEqual(replaced["scales"], {
                 key: specification["default"]
                 for key, specification in section("appearance")["scales"].items()

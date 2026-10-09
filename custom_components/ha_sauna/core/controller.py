@@ -347,7 +347,7 @@ class Controller:
         status["pause_reason"] = (
             (
                 "operation_off"
-                if not self._session or not self._session.operation_enabled
+                if not self._timer_operation_active()
                 else "contactor_off"
                 if self.contactor is False
                 else "contactor_unavailable"
@@ -357,11 +357,19 @@ class Controller:
         )
         return status
 
+    def _timer_operation_active(self):
+        return bool(
+            (self._session and self._session.operation_enabled)
+            or (self.control_mode == "manual" and self.contactor is True)
+        )
+
     def _sync_mechanical_timer(self, at):
-        if self._session and self._session.operation_enabled:
-            self.mechanical_timer = self.mechanical_timer.start(
-                at, self._session.session_id
+        if self._timer_operation_active():
+            cycle_id = (
+                self._session.session_id if self._session
+                else self.mechanical_timer.cycle_id or uuid4().hex
             )
+            self.mechanical_timer = self.mechanical_timer.start(at, cycle_id)
             if self.contactor is True:
                 return
         self.mechanical_timer = self.mechanical_timer.pause(at)
@@ -495,13 +503,13 @@ class Controller:
         self._evaluate(at)
         return self._session
 
-    def set_heater_override(self, heat: bool | None, at: datetime):
-        """Manueller Ofenbefehl; ``None`` übergibt wieder an die Automatik."""
+    def validate_heater_override(self, heat: bool | None):
+        """Validate direct heater demand independently of session recording."""
         if heat is not None and not isinstance(heat, bool):
             raise ValueError(
                 "Heizübersteuerung muss wahr, falsch oder automatisch sein"
             )
-        if heat is True and (
+        if heat is True and self.control_mode != "manual" and (
             self._session is None or not self._session.operation_enabled
         ):
             raise ValueError(
@@ -517,6 +525,10 @@ class Controller:
             raise ValueError(
                 "Manuelles Einschalten erfordert einen gültigen oberen Temperaturwert"
             )
+
+    def set_heater_override(self, heat: bool | None, at: datetime):
+        """Manueller Ofenbefehl; ``None`` übergibt wieder an die Automatik."""
+        self.validate_heater_override(heat)
         at = utc(at)
         self.advance(at, evaluate=False)
         previous_override = self.heater_override
@@ -1259,8 +1271,6 @@ class Controller:
 
     def _evaluate_manual(self, at, session):
         """Issue only an explicit heater demand while retaining interlocks."""
-        if not session.operation_enabled:
-            return thermostat.Decision(at, False, "operation_off")
         if self.protection:
             return thermostat.Decision(
                 at, False, "protection:" + ",".join(sorted(self.protection))
@@ -1271,7 +1281,7 @@ class Controller:
             )
         if self.temperature is None or not isfinite(self.temperature):
             return thermostat.Decision(at, False, "upper_temperature_unavailable")
-        if session.after_run is not None:
+        if session is not None and session.after_run is not None:
             return thermostat.Decision(at, False, "after_run")
         if self.heater_override is True and self._manual_heating_allowed():
             return thermostat.Decision(at, True, "manual_override")
@@ -1364,10 +1374,10 @@ class Controller:
         )
         session = self._session
         session_id = session.session_id if session else decision_session_id
-        if session is None:
-            decision = thermostat.Decision(at, False, "operation_off")
-        elif self.control_mode == "manual":
+        if self.control_mode == "manual":
             decision = self._evaluate_manual(at, session)
+        elif session is None:
+            decision = thermostat.Decision(at, False, "operation_off")
         else:
             decision = self._evaluate_thermostat(at)
         if (

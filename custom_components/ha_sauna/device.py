@@ -681,6 +681,7 @@ class HADevice:
         confirmation = self.values.get("fault_confirmation_seconds")
         monitoring = (
             bool(controller.session and controller.session.operation_enabled)
+            or controller.heater_override is True
             or contactor is True
             or self.heating_observation["heating"] is True
         )
@@ -1750,9 +1751,14 @@ class HADevice:
                 if now >= ends - timedelta(seconds=lead)
                 else None
             )
-            key = (self.runtime.controller.mechanical_timer.cycle_id, phase)
+            cycle_id = self.runtime.controller.mechanical_timer.cycle_id
+            key = (cycle_id, phase)
             if phase and key not in self.notified:
-                self.notified.add(key)
+                session_id = self.runtime.session.session_id if self.runtime.session else None
+                instance_id = (
+                    self.runtime.archive.entry_id if self.runtime.archive
+                    else self.bindings["heater"]
+                )
                 message = (
                     "Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen."
                     if phase == "expired"
@@ -1763,7 +1769,7 @@ class HADevice:
                     self.hass,
                     message,
                     title="Sauna: mechanischer Ofentimer",
-                    notification_id=f"sauna_timer_{self.runtime.session.session_id}",
+                    notification_id=f"sauna_timer_{instance_id}_{cycle_id}",
                 )
                 if self.runtime.archive:
                     self.runtime.archive.append(
@@ -1773,8 +1779,9 @@ class HADevice:
                             "kind": "mechanical_timer_" + phase,
                             "estimated_ends_at": ends,
                         },
-                        self.runtime.session.session_id,
+                        session_id,
                     )
+                self.notified.add(key)
 
     async def light_call(self, service, data, *, context=None):
         # The output owner bounds its wait and retains this task until the real

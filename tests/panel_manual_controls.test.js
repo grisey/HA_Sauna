@@ -179,7 +179,7 @@ const renderCurrent = (
   ({ panel, calls } = makePanel({ admin: false, heater: false, light: false }));
   await panel.action("heater:true");
   await panel.action("manual-light-overview");
-  assert.equal(calls.length, 0, "non-admin controls must not route API calls");
+  assert.equal(calls.length, 0, "denied controls must not route API calls");
 
   ({ panel, calls } = makePanel(enabled));
   panel.state.configuration.control_mode = "automatic";
@@ -188,11 +188,7 @@ const renderCurrent = (
   await panel.action("heater:true");
   await panel.action("light:true");
   await panel.action("manual-light-overview");
-  assert.equal(
-    calls.length,
-    0,
-    "automatic overrides cannot resume or start an inactive operation",
-  );
+  assert.equal(calls.length, 0, "paused automatic controls remain unavailable");
   panel.state.operation_enabled = true;
   await panel.action("heater:true");
   await panel.action("light:true");
@@ -211,7 +207,6 @@ const renderCurrent = (
   panel.state.operation_enabled = false;
   await panel.action("heater:true");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
-    ["/entry-1/control", "POST", { enabled: true }],
     ["/entry-1/heater", "POST", { value: true }],
   ]);
   let finishStart;
@@ -221,7 +216,7 @@ const renderCurrent = (
   delayed.panel.state.operation_enabled = false;
   delayed.panel.api = async (...args) => {
     delayed.calls.push(args);
-    if (args[0] === "/entry-1/control")
+    if (args[0] === "/entry-1/heater")
       await new Promise((resolve) => (finishStart = resolve));
   };
   const pendingStart = delayed.panel.action("heater:true");
@@ -230,7 +225,7 @@ const renderCurrent = (
   finishStart();
   await pendingStart;
   assert.deepEqual(JSON.parse(JSON.stringify(delayed.calls)), [
-    ["/entry-1/control", "POST", { enabled: true }],
+    ["/entry-1/heater", "POST", { value: true }],
   ]);
   let rejectStart;
   delayed.panel.entry = "entry-1";
@@ -323,53 +318,55 @@ const renderCurrent = (
   assert.match(automatic, /data-action="program-mode:constant" aria-pressed="true"/);
   assert.match(automatic, /temperature-presets/);
   assert.doesNotMatch(automatic, /program-named-list|program-form/);
-  assert.match(automatic, /Manuelle Ofenübersteuerung/);
-  assert.match(automatic, /id="manual-overrides" class="manual-overrides" >/);
+  for (const html of [automatic, manual]) {
+    assert.match(
+      html,
+      /id="manual-light-value-overview"[^>]*data-manual-light-value[^>]*type="range"/,
+    );
+    assert.doesNotMatch(
+      html,
+      /manual-overrides|manual-status|oven-feedback|light-editor/,
+    );
+    assert.doesNotMatch(html, /<button[^>]*data-action="manual-light-overview"/);
+  }
   assert.doesNotMatch(
     automatic,
     /Übersteuerung: höchstens|Keine laufende Übersteuerung/,
   );
   assert.equal((automatic.match(/Übersteuerung: höchstens/g) || []).length, 0);
-  assert.match(automatic, /data-action="heater:auto"[^>]*disabled/);
+  assert.match(automatic, /class="manual-section manual-controls manual-entry"/);
+  assert.match(automatic, /Ofen und Licht/);
+  assert.match(automatic, /data-action="manual-entry"[^>]*>Manuell steuern<\/button>/);
+  assert.doesNotMatch(
+    automatic,
+    /manual-section manual-(heater|light)|data-action="(?:heater|light):/,
+  );
+  assert.match(manual, /class="manual-section manual-heater"/);
   assert.doesNotMatch(automatic, /Ein startet zuerst den Saunabetrieb/);
   assert.doesNotMatch(automatic, /Gedimmt/);
-  assert.match(
-    automatic,
-    /class="manual-section manual-light"[\s\S]*<details id="manual-overrides"/,
-  );
-  assert.match(manual, /class="manual-controls"/);
+  assert.match(manual, /class="manual-section manual-light"/);
   assert.doesNotMatch(manual, /Manuelle Ofenübersteuerung/);
-  assert.match(automatic, /data-action="light:auto"[^>]*>Automatik<\/button>/);
-  assert.match(automatic, /data-action="heater:auto"/);
-  assert.match(automatic, /data-action="manual-light-overview"/);
+  assert.match(automatic, /data-manual-light-value/);
   assert.equal(
     (automatic.match(/data-action="light:auto"/g) || []).length,
-    1,
-    "automatic light has one control group",
+    0,
+    "idle automatic mode exposes the explicit manual entry",
   );
-  const deniedOverride = renderCurrent("automatic", {}, false, "#current", {
+  const deniedOverride = renderCurrent("manual", {}, false, "#current", {
     admin: true,
     heater: false,
     light: false,
   });
   assert.match(deniedOverride, /data-action="heater:true"[^>]*disabled/);
-  assert.match(deniedOverride, /data-action="manual-light-overview"[^>]*disabled/);
-  assert.match(
-    automatic,
-    /class="card control-main"[\s\S]*class="oven-feedback"[\s\S]*Ofen · Aus/,
-  );
-  assert.doesNotMatch(automatic, /tatsächlicher Zustand/);
-  assert.match(
-    renderCurrent("automatic", {}, true),
-    /class="oven-feedback"[^>]*><strong[^>]*>Ofen · Ein<\/strong>/,
-  );
-  assert.match(
-    renderCurrent("automatic", {}, null),
-    /class="oven-feedback"[^>]*><strong[^>]*>Ofenzustand unbekannt<\/strong>/,
-  );
+  assert.match(deniedOverride, /id="manual-light-value-overview"[^>]*disabled/);
+  for (const feedback of [false, true, null])
+    assert.doesNotMatch(
+      renderCurrent("automatic", {}, feedback),
+      /oven-feedback|manual-status/,
+    );
   assert.doesNotMatch(automatic, /data-door-status|environment-status/);
   assert.doesNotMatch(manual, /Temperaturwahl|program-types|temperature-presets/);
-  assert.match(manual, /data-action="manual-light-overview"/);
+  assert.match(manual, /data-manual-light-value/);
   assert.match(manual, /id="manual-light-value-overview"/);
   assert.match(manual, /Gedimmt <small>25 %<\/small>/);
   assert.match(manual, /Hell<\/button>/);
@@ -390,9 +387,10 @@ const renderCurrent = (
     /data-action="control-mode:manual" aria-pressed="false" >Manuell/,
   );
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Ofenübersteuerung/);
-  assert.doesNotMatch(userAutomatic, /data-action="heater:|manual-light-value/);
+  assert.doesNotMatch(userAutomatic, /data-action="heater:/);
+  assert.match(userAutomatic, /id="manual-light-value-overview"[^>]*disabled/);
   for (const preset of ["auto", "false", "true"])
-    assert.match(
+    assert.doesNotMatch(
       userAutomatic,
       new RegExp(`data-action="light:${preset}"[^>]*disabled`),
     );
@@ -405,10 +403,7 @@ const renderCurrent = (
   assert.match(userManual, /data-action="heater:false" aria-pressed="false" >Aus/);
   for (const preset of ["false", "normal", "true"])
     assert.ok(userManual.includes(`data-action="light:${preset}"`));
-  assert.doesNotMatch(
-    userManual,
-    /Temperaturwahl|data-target-arc|heater:auto|manual-light-value|Freie Helligkeit/,
-  );
+  assert.doesNotMatch(userManual, /Temperaturwahl|data-target-arc|heater:auto/);
   const userLocked = renderCurrent(
     "manual",
     {},
@@ -446,17 +441,20 @@ const renderCurrent = (
     ],
   };
   const controlCases = [
-    { mode: "automatic", session: null, operating: false, allowed: false },
-    { mode: "automatic", session: pausedSession, operating: false, allowed: false },
-    { mode: "automatic", session: pausedSession, operating: true, allowed: true },
-    { mode: "manual", session: null, operating: false, allowed: true },
-    { mode: "manual", session: pausedSession, operating: false, allowed: true },
-    { mode: "manual", session: pausedSession, operating: true, allowed: true },
+    { mode: "automatic", session: null, operating: false },
+    { mode: "automatic", session: pausedSession, operating: false },
+    { mode: "automatic", session: pausedSession, operating: true },
+    { mode: "manual", session: null, operating: false },
+    { mode: "manual", session: pausedSession, operating: false },
+    { mode: "manual", session: pausedSession, operating: true },
   ];
   for (const admin of [false, true]) {
     for (const light of [false, true]) {
       for (const scenario of controlCases) {
-        const context = JSON.stringify({ admin, light, ...scenario }),
+        const allowed =
+            scenario.mode === "manual" || !!(scenario.session && scenario.operating),
+          idleEntry = scenario.mode === "automatic" && !scenario.session,
+          context = JSON.stringify({ admin, light, ...scenario }),
           html = renderCurrent(
             scenario.mode,
             {},
@@ -474,13 +472,15 @@ const renderCurrent = (
           );
         assert.deepEqual(
           presets.map((match) => match[1]),
-          scenario.mode === "manual"
-            ? ["false", "normal", "true"]
-            : ["auto", "false", "true"],
+          idleEntry
+            ? []
+            : scenario.mode === "manual"
+              ? ["false", "normal", "true"]
+              : ["auto", "false", "true"],
           context,
         );
         for (const [tag, preset] of presets) {
-          assert.equal(/\bdisabled\b/.test(tag), !(light && scenario.allowed), context);
+          assert.equal(/\bdisabled\b/.test(tag), !(light && allowed), context);
           const invocation = makePanel({ admin, light, heater: true });
           Object.assign(invocation.panel.state, {
             configuration: { control_mode: scenario.mode },
@@ -490,7 +490,7 @@ const renderCurrent = (
           await invocation.panel.action(`light:${preset}`);
           assert.deepEqual(
             JSON.parse(JSON.stringify(invocation.calls)),
-            light && scenario.allowed
+            light && allowed
               ? [
                   [
                     "/entry-1/light",
@@ -513,34 +513,21 @@ const renderCurrent = (
           operation_enabled: scenario.operating,
         });
         await invocation.panel.action("manual-light-overview");
-        assert.equal(
-          invocation.calls.length,
-          Number(admin && light && scenario.allowed),
+        assert.equal(invocation.calls.length, Number(light && allowed), context);
+        const input = html.match(
+          /<input\b[^>]*id="manual-light-value-overview"[^>]*>/,
+        )[0];
+        assert.match(input, /type="range"/);
+        assert.equal(/\bdisabled\b/.test(input), !(light && allowed), context);
+        if (idleEntry) assert.match(html, /Manuell steuern/);
+        else assert.match(html, /class="manual-section manual-heater"/);
+        invocation.calls.length = 0;
+        await invocation.panel.action("heater:true");
+        assert.deepEqual(
+          JSON.parse(JSON.stringify(invocation.calls)),
+          allowed ? [["/entry-1/heater", "POST", { value: true }]] : [],
           context,
         );
-        if (admin) {
-          assert.match(html, /data-action="manual-light-overview"/);
-          const input = html.match(
-              /<input\b[^>]*id="manual-light-value-overview"[^>]*>/,
-            )[0],
-            apply = html.match(
-              /<button\b[^>]*data-action="manual-light-overview"[^>]*>/,
-            )[0];
-          for (const tag of [input, apply])
-            assert.equal(
-              /\bdisabled\b/.test(tag),
-              !(light && scenario.allowed),
-              context,
-            );
-        } else {
-          assert.doesNotMatch(html, /manual-light-value|Freie Helligkeit/);
-          if (scenario.mode === "automatic") {
-            assert.doesNotMatch(html, /data-action="heater:/);
-            invocation.calls.length = 0;
-            await invocation.panel.action("heater:true");
-            assert.equal(invocation.calls.length, 0, context);
-          }
-        }
       }
     }
   }
@@ -707,11 +694,8 @@ const renderCurrent = (
   await panel.action("heater:true");
   assert.deepEqual(
     JSON.parse(JSON.stringify(calls)),
-    [
-      ["/entry-1/control", "POST", { enabled: true }],
-      ["/entry-1/heater", "POST", { value: true }],
-    ],
-    "a regular user's manual ON starts the operation before the heater",
+    [["/entry-1/heater", "POST", { value: true }]],
+    "a regular user sends one atomic heater command",
   );
   calls.length = 0;
   await panel.action("control-mode:automatic");
@@ -723,7 +707,12 @@ const renderCurrent = (
   await panel.action("control-mode:manual");
   await panel.action("manual-light-overview");
   await panel.action("details");
-  assert.equal(calls.length, 0, "session locking and admin actions remain enforced");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(calls)),
+    [["/entry-1/light", "POST", { value: 42 }]],
+    "session locking does not disable light control",
+  );
+  calls.length = 0;
   panel.state.permissions.heater = false;
   await panel.action("heater:true");
   assert.equal(
@@ -744,6 +733,13 @@ const renderCurrent = (
     "automatic",
     { heater: { manual: null }, light: { manual: null } },
     true,
+    "#current",
+    {},
+    false,
+    pausedSession,
+    [],
+    {},
+    true,
   );
   assert.match(automaticHeater, /data-action="heater:auto" aria-pressed="true"/);
   assert.match(automaticHeater, /data-action="heater:true" aria-pressed="false"/);
@@ -758,7 +754,18 @@ const renderCurrent = (
     "physical feedback remains visible in details",
   );
   assert.doesNotMatch(automaticHeater, /data-action="heater:true" class="primary"/);
-  const automaticLight = renderCurrent("automatic", { light: { manual: null } });
+  const automaticLight = renderCurrent(
+    "automatic",
+    { light: { manual: null } },
+    false,
+    "#current",
+    {},
+    false,
+    pausedSession,
+    [],
+    {},
+    true,
+  );
   assert.match(automaticLight, /data-action="light:auto" aria-pressed="true"/);
 
   const liveSession = {

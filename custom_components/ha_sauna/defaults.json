@@ -1585,6 +1585,28 @@
         "maximum": 100
       }
     },
+    "instruments": {
+      "default": {
+        "label": "Gemeinsame Darstellung",
+        "default": "round",
+        "options": ["round", "linear"]
+      },
+      "temperature": {
+        "label": "Temperatur",
+        "default": "inherit",
+        "options": ["inherit", "round", "linear"]
+      },
+      "humidity": {
+        "label": "Luftfeuchte",
+        "default": "inherit",
+        "options": ["inherit", "round", "linear"]
+      },
+      "light": {
+        "label": "Licht",
+        "default": "inherit",
+        "options": ["inherit", "round", "linear"]
+      }
+    },
     "precision": {
       "absolute_humidity": 2,
       "energy": 4

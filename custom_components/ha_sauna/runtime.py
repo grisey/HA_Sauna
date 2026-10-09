@@ -1177,6 +1177,19 @@ class SaunaRuntime:
             await self._cycle()
             return result
 
+    def _set_control_mode(self, mode):
+        """Apply a mode and its output initialization while holding the lock."""
+        if self.reconfiguring:
+            raise ValueError(
+                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        previous_mode = self.controller.control_mode
+        self.controller.set_control_mode(mode)
+        if previous_mode != mode and self.device:
+            self.device.set_light_override(0 if mode == "manual" else None)
+        self.configuration = replace(self.configuration, control_mode=mode)
+        return self.configuration
+
     async def set_light_override(self, value):
         """Apply a manual light selection through the serialized runtime path."""
         async with self.serialized():
@@ -1199,15 +1212,18 @@ class SaunaRuntime:
                 self.session.session_id if self.session else None,
             )
 
-    async def set_heater_override(self, value: bool | None, *, manual_only=False):
+    async def set_heater_override(self, value: bool | None):
         """Apply a manual heater selection through the serialized runtime path."""
         async with self.serialized():
             self._require_open()
-            if manual_only and self.configuration.control_mode != "manual":
-                raise ValueError("Die Betriebsart wurde inzwischen geändert.")
             now = self._clock()
             if self.device:
                 self.device.refresh(now)
+            self.controller.validate_heater_override(value)
+            if value is True and self.device:
+                errors = self.device.start_errors()
+                if errors:
+                    raise ValueError("Einschalten nicht möglich. " + " ".join(errors))
             decision = self.controller.set_heater_override(value, now)
             self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
             if self.archive:
