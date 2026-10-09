@@ -1971,7 +1971,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "aria-pressed", "true", timeout=15000
         )
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        await self.panel.locator('#button-program').select_option(DEFAULT_PROGRAMS[-2]["id"])
+        async with self.page.expect_response(lambda response: response.url.endswith("/button-program")
+                                            and response.request.method == "POST") as result:
+            await self.panel.locator('#button-program').select_option(DEFAULT_PROGRAMS[-2]["id"])
+        self.assertTrue((await result.value).ok)
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options['button_program'], DEFAULT_PROGRAMS[-2]["id"])
         rows = self.panel.locator('#program-library [data-program-id]')
