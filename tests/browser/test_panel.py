@@ -1638,8 +1638,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.configuration.control_mode, "automatic")
 
     async def test_both_roles_control_idle_outputs_and_start_sessions_only_with_master(self):
-        from custom_components.ha_sauna.settings import async_set_control_mode
+        from custom_components.ha_sauna.settings import async_set_appearance, async_set_control_mode
 
+        appearance = self.runtime.configuration.as_options()["appearance"]
+        appearance["instruments"]["light"] = "linear"
+        await async_set_appearance(self.hass, self.entry, appearance)
         for admin in (True, False):
             with self.subTest(admin=admin):
                 await async_set_control_mode(self.hass, self.entry, "automatic")
@@ -1713,6 +1716,83 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await context.close()
         self.assertEqual(self.errors, [])
 
+    async def test_round_light_keyboard_controls_brightness_without_a_session(self):
+        from custom_components.ha_sauna.settings import async_set_appearance
+
+        appearance = self.runtime.configuration.as_options()["appearance"]
+        appearance["instruments"]["light"] = "round"
+        await async_set_appearance(self.hass, self.entry, appearance)
+        await self.panel.evaluate("p => p.refresh()")
+        slider = self.panel.get_by_role("slider", name="Lichthelligkeit einstellen")
+        await expect(slider).to_have_attribute("aria-disabled", "true")
+        await self.panel.get_by_role("button", name="Manuell steuern", exact=True).click()
+        await expect(slider).to_have_attribute("data-light-arc", "true")
+        await expect(slider).to_have_attribute("aria-disabled", "false")
+        await expect(self.panel.locator('.light-instrument input[type="range"]')).to_have_count(0)
+        for key, expected in (("End", 100), ("Home", 0)):
+            with self.subTest(key=key):
+                async with self.page.expect_response(lambda response: response.url.endswith("/light") and response.request.method == "POST") as changed:
+                    await slider.press(key)
+                response = await changed.value
+                self.assertTrue(response.ok)
+                self.assertEqual(response.request.post_data_json, {"value": expected})
+                await expect(slider).to_have_attribute("aria-valuenow", str(expected))
+                await expect(self.panel.locator('#current .light-instrument [data-light-observation]')).to_have_text(re.compile(rf"^{expected}\s*%$"))
+                self.assertIsNone(self.runtime.session)
+                self.assertFalse(await self.panel.evaluate("p => p.state.operation_enabled"))
+        self.assertEqual(self.errors, [])
+
+    async def test_output_buttons_follow_observation_when_manual_commands_are_not_reported(self):
+        await self.panel.get_by_role("button", name="Manuell steuern", exact=True).click()
+        self.heater.accept_commands = False
+        self.light.defer_state_writes = True
+        try:
+            for output in ("heater", "light"):
+                async with self.page.expect_response(lambda response: response.url.endswith("/" + output) and response.request.method == "POST") as commanded:
+                    await self.panel.locator(f'.manual-{output} [data-action="{output}:true"]').click()
+                self.assertTrue((await commanded.value).ok)
+                await expect(self.panel.locator(f'.manual-{output} .output-toggle [data-action="{output}:false"]')).to_have_attribute("aria-pressed", "true")
+                await expect(self.panel.locator(f'.manual-{output} .output-toggle [data-action="{output}:true"]')).to_have_attribute("aria-pressed", "false")
+                await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_attribute("aria-pressed", "false")
+            self.assertIs(self.runtime.controller.heater_override, True)
+            self.assertGreater(self.runtime.device.light_output.manual_brightness, 0)
+            self.assertIsNone(self.runtime.session)
+            await expect(self.panel.locator('.manual-light [data-action="light:normal"]')).to_have_count(0)
+        finally:
+            self.heater.accept_commands = True
+            self.light.defer_state_writes = False
+        self.assertEqual(self.errors, [])
+
+    async def test_return_to_auto_clears_overrides_while_outputs_and_session_stay_on(self):
+        await self.panel.locator('#current [data-action="operation"]').click()
+        await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+        identity = self.runtime.session.session_id
+        phase = self.runtime.controller.phase
+        for output in ("heater", "light"):
+            with self.subTest(output=output):
+                for value in (False, True):
+                    action = str(value).lower()
+                    async with self.page.expect_response(lambda response: response.url.endswith("/" + output) and response.request.method == "POST") as changed:
+                        await self.panel.locator(f'.manual-{output} [data-action="{output}:{action}"]').click()
+                    self.assertTrue((await changed.value).ok)
+                    await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:{action}"]')).to_have_attribute("aria-pressed", "true")
+                await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_attribute("aria-pressed", "false")
+                async with self.page.expect_response(lambda response: response.url.endswith("/" + output) and response.request.method == "POST") as returned:
+                    await self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]').click()
+                response = await returned.value
+                self.assertTrue(response.ok)
+                self.assertEqual(response.request.post_data_json, {"value": None})
+                await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_attribute("aria-pressed", "true")
+                await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:true"]')).to_have_attribute("aria-pressed", "true")
+                self.assertEqual(self.runtime.session.session_id, identity)
+                self.assertEqual(self.runtime.controller.phase, phase)
+                self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        self.assertTrue(self.heater.is_on)
+        self.assertTrue(self.light.is_on)
+        self.assertEqual(self.errors, [])
+
     async def test_normal_user_keeps_simple_light_controls_in_running_automatic_mode(self):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
@@ -1738,7 +1818,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await expect(presets.nth(index)).to_be_enabled()
             self.assertEqual(await panel.locator(".manual-overrides").count(), 0)
             await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_be_enabled()
-            await expect(panel.locator('.light-instrument #manual-light-value-overview')).to_be_enabled()
+            await expect(panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_enabled()
             async with page.expect_response(lambda response: response.url.endswith("/light")
                                             and response.request.method == "POST") as saved:
                 await panel.locator('[data-action="light:false"]').click()

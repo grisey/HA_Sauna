@@ -978,6 +978,104 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.now + timedelta(minutes=self.runtime.configuration.parameters.values["manual_override_minutes"]),
         )
 
+    async def test_matching_heater_feedback_is_noop_and_auto_return_remains_effective(self):
+        await self.runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.heater.is_on)
+        calls = len(self.heater.calls)
+        await self.runtime.set_heater_override(True)
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertEqual(len(self.heater.calls), calls)
+        await self.runtime.set_heater_override(False)
+        self.assertFalse(self.heater.is_on)
+        deadline = self.runtime.controller.heater_override_ends_at
+        self.assertIsNotNone(deadline)
+        calls = len(self.heater.calls)
+        self.now += timedelta(seconds=1)
+        await self.runtime.set_heater_override(False)
+        self.assertIs(self.runtime.controller.heater_override, False)
+        self.assertEqual(self.runtime.controller.heater_override_ends_at, deadline)
+        self.assertEqual(len(self.heater.calls), calls)
+        await self.runtime.set_heater_override(None)
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.controller.heater_override_ends_at)
+        self.assertTrue(self.heater.is_on)
+
+    async def test_matching_light_feedback_is_noop_but_external_selection_still_overrides(self):
+        self.assertFalse(self.light.is_on)
+        await self.runtime.set_light_override(False)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        await self.runtime.set_operation(True)
+        await self.time(30)
+        self.assertTrue(self.light.is_on)
+        calls = len(self.light.calls)
+        await self.runtime.set_light_override(True)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        self.assertEqual(len(self.light.calls), calls)
+        await self.runtime.set_light_override(42)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 42)
+        deadline = self.runtime.device.light_output.manual_ends_at
+        calls = len(self.light.calls)
+        self.now += timedelta(seconds=1)
+        for value in (True, 42):
+            await self.runtime.set_light_override(value)
+            self.assertEqual(self.runtime.device.light_output.manual_brightness, 42)
+            self.assertEqual(self.runtime.device.light_output.manual_ends_at, deadline)
+        self.assertEqual(len(self.light.calls), calls)
+        await self.runtime.set_light_override(None)
+        self.assertIsNone(self.runtime.device.light_output.manual_brightness)
+        self.assertIsNone(self.runtime.device.light_output.manual_ends_at)
+        await self.set_light_externally(True, 128)
+        self.assertAlmostEqual(self.runtime.device.light_output.manual_brightness, 128 * 100 / 255)
+
+    async def test_unavailable_feedback_is_not_an_off_noop(self):
+        self.heater.accept_commands = False
+        self.light.fail_commands = True
+        self.hass.states.async_set(self.heater.entity_id, "unavailable")
+        await self.hass.async_block_till_done()
+        self.assertIsNone(self.runtime.controller.contactor)
+        await self.runtime.set_heater_override(False)
+        self.assertIs(self.runtime.controller.heater_override, False)
+        self.hass.states.async_set(self.light.entity_id, "unavailable")
+        await self.hass.async_block_till_done()
+        await self.runtime.set_light_override(False)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+
+    async def test_public_heater_controls_expose_contactor_feedback_not_request_or_power(self):
+        from custom_components.ha_sauna.api import manual_controls
+        from custom_components.ha_sauna.presentation import public_state
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        self.heater.accept_commands = False
+        await self.runtime.set_heater_override(True)
+        controls = manual_controls(self.runtime)
+        self.assertTrue(controls["heater"]["manual"])
+        self.assertEqual(controls["heater"]["observation"], {"available": True, "on": False})
+        self.heater.accept_commands = True
+        await self.time(3)
+        self.heater.powered = False
+        await self.set_source("heater_feedback", "off")
+        self.assertFalse(self.runtime.controller.feedback)
+        self.assertEqual(
+            manual_controls(self.runtime)["heater"]["observation"],
+            {"available": True, "on": True},
+        )
+        self.heater.accept_commands = False
+        self.hass.states.async_set(self.heater.entity_id, "unavailable")
+        await self.hass.async_block_till_done()
+        controls = manual_controls(self.runtime)
+        self.assertEqual(controls["heater"]["observation"], {"available": False, "on": None})
+        public = public_state({
+            "configuration": self.runtime.configuration.as_options(),
+            "parameters": [],
+            "measurements": [],
+            "manual_controls": controls,
+        })
+        self.assertEqual(public["manual_controls"]["heater"]["observation"],
+                         {"available": False, "on": None})
+        self.assertNotIn(self.heater.entity_id, str(public["manual_controls"]))
+
     async def test_manual_idle_switches_hardware_without_creating_session(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
 
@@ -1021,6 +1119,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.heater.is_on)
         await self.set_source("upper_temperature", "unavailable")
         await self.set_source("lower_temperature", "unavailable")
+        await self.time(self.runtime.configuration.parameters.values["sensor_timeout_seconds"] + 1)
         self.assertFalse(self.heater.is_on)
         self.assertFalse(self.runtime.controller.heater_override)
         self.assertIsNone(self.runtime.session)
@@ -1053,6 +1152,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.runtime.configuration.control_mode, "automatic")
         await self.set_source("upper_temperature", "unavailable")
         await self.set_source("lower_temperature", "unavailable")
+        await self.time(self.runtime.configuration.parameters.values["sensor_timeout_seconds"] + 1)
         with self.assertRaises(ValueError):
             await self.runtime.set_heater_override(True)
         self.assertEqual(self.runtime.configuration.control_mode, "automatic")

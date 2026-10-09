@@ -455,9 +455,9 @@ state = baseState();
 state.heating_feedback = true;
 state.heating_observation = { source: "contactor", estimated: true };
 assert.match(
-  render(state),
+  render(state, "#details"),
   /Ofen · Ein/,
-  "overview uses the same oven label for every feedback source",
+  "details use the same oven label for every feedback source",
 );
 assert.doesNotMatch(
   render(state),
@@ -466,7 +466,11 @@ assert.doesNotMatch(
 );
 state.heating_observation = { source: "power", estimated: false };
 assert.match(
-  render(state),
+  render(state, "#details"),
   /Ofen · Ein/,
   "measured power still describes actual heating",
 );
+assert.match(render(state), /class="badge"/);
+state.last_session = state.session;
+state.session = null;
+assert.doesNotMatch(render(state), /class="badge"/);

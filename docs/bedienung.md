@@ -40,6 +40,10 @@ In Automatik endet eine vorübergehende Ofenwahl bei Rückgabe, Phasenwechsel,
 Ofen-AUS unterbricht auch Gangheizung und Mindestheizzeit. Ofen-EIN bleibt der
 [Heizfreigabe und Ofenkühlung](betrieb.md#heizpriorität) untergeordnet.
 
+Die Ein-/Aus-Tasten zeigen die Rückmeldung des Geräts. Eine bereits erreichte
+Wahl erzeugt keine Übersteuerung und verlängert keine Frist. **Automatik**
+beendet die jeweilige Übersteuerung auch bei unverändertem Gerätezustand.
+
 Ein kurzer Tasterdruck in Automatik wechselt die vorübergehende Ofenwahl oder
 gibt an die Automatik zurück.
 

@@ -18,18 +18,34 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertNotIn("presence", state)
         self.assertNotIn("decision", state)
         self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])
-        self.preview.action("/preview/heater", {"value":True})
-        self.assertIs(self.preview.c.heater_override, True)
+        value = not self.preview.c.contactor
+        self.preview.action("/preview/heater", {"value":value})
+        self.assertIs(self.preview.c.heater_override, value)
         self.preview.action("/simulate", {"action":"role", "value":"admin"})
         self.assertIn("presence", self.preview.state())
 
     def test_user_light_presets_and_percentages_keep_their_meaning(self):
         self.preview.admin = False
-        for value, expected in ((True, self.preview.c.parameters.values["session_light_brightness_percent"]), (False, 0), ("normal", 35), (None, 35), (55, 55)):
+        for value, expected in ((False, 0), (True, self.preview.c.parameters.values["session_light_brightness_percent"]), ("normal", 35), (None, 35), (55, 55)):
             self.preview.action("/preview/light", {"value":value})
             self.assertEqual(self.preview.light, expected)
         with self.assertRaises(ValueError):
             self.preview.action("/preview/light", {"value":101})
+
+    def test_matching_light_observation_does_not_create_or_change_override(self):
+        self.assertEqual(self.preview.light, 35)
+        self.assertIsNone(self.preview.light_manual)
+        for value in (True, 35):
+            self.preview.action("/preview/light", {"value":value})
+            self.assertIsNone(self.preview.light_manual)
+        self.preview.action("/preview/light", {"value":55})
+        for value in (True, 55):
+            self.preview.action("/preview/light", {"value":value})
+            self.assertEqual(self.preview.light_manual, 55)
+            self.assertEqual(self.preview.light, 55)
+        self.preview.action("/preview/light", {"value":None})
+        self.assertIsNone(self.preview.light_manual)
+        self.assertEqual(self.preview.light, 35)
 
     def test_user_can_control_manual_heater_through_real_controller(self):
         self.preview.admin = False

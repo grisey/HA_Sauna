@@ -39,7 +39,6 @@ assert.match(source, /data-action="heater:auto"/);
 assert.match(source, /data-action="control-mode:automatic"/);
 assert.match(source, /data-action="control-mode:manual"/);
 assert.match(source, /manual-light-overview/);
-assert.match(source, /Gedimmt <small>\$\{num\(light\.normal,\s*0\)\} %<\/small>/);
 assert.doesNotMatch(source, /Normallicht/);
 assert.doesNotMatch(source, /Raumlicht/);
 assert.doesNotMatch(source, /Zwangskühlung pausiert/);
@@ -111,6 +110,7 @@ const renderCurrent = (
       session,
       last_session: null,
       appearance_catalog: appearanceCatalog,
+      appearance: program.appearance,
       configuration: {
         control_mode: mode,
         program_mode: "constant",
@@ -168,6 +168,37 @@ const renderCurrent = (
     ["/entry-1/heater", "POST", { value: null }],
     ["/entry-1/light", "POST", { value: 42 }],
   ]);
+
+  for (const actualOn of [false, true]) {
+    const same = makePanel(enabled);
+    same.panel.state.manual_controls = {
+      heater: { manual: null, observation: { available: true, on: actualOn } },
+      light: {
+        manual: null,
+        observation: {
+          available: true,
+          brightness_percent: actualOn ? 18 : 0,
+        },
+      },
+    };
+    await same.panel.action(`heater:${actualOn}`);
+    await same.panel.action(`light:${actualOn}`);
+    assert.equal(
+      same.calls.length,
+      0,
+      "clicking the observed selected state must not send a new command or renew an override",
+    );
+    await same.panel.action(`heater:${!actualOn}`);
+    await same.panel.action(`light:${!actualOn}`);
+    await same.panel.action("heater:auto");
+    await same.panel.action("light:auto");
+    assert.deepEqual(JSON.parse(JSON.stringify(same.calls)), [
+      ["/entry-1/heater", "POST", { value: !actualOn }],
+      ["/entry-1/light", "POST", { value: !actualOn }],
+      ["/entry-1/heater", "POST", { value: null }],
+      ["/entry-1/light", "POST", { value: null }],
+    ]);
+  }
 
   ({ panel, calls } = makePanel(enabled, "101"));
   await assert.rejects(
@@ -319,10 +350,7 @@ const renderCurrent = (
   assert.match(automatic, /temperature-presets/);
   assert.doesNotMatch(automatic, /program-named-list|program-form/);
   for (const html of [automatic, manual]) {
-    assert.match(
-      html,
-      /id="manual-light-value-overview"[^>]*data-manual-light-value[^>]*type="range"/,
-    );
+    assert.match(html, /data-light-arc[^>]*role="slider"/);
     assert.doesNotMatch(
       html,
       /manual-overrides|manual-status|oven-feedback|light-editor/,
@@ -346,7 +374,7 @@ const renderCurrent = (
   assert.doesNotMatch(automatic, /Gedimmt/);
   assert.match(manual, /class="manual-section manual-light"/);
   assert.doesNotMatch(manual, /Manuelle Ofenübersteuerung/);
-  assert.match(automatic, /data-manual-light-value/);
+  assert.match(automatic, /data-light-arc/);
   assert.equal(
     (automatic.match(/data-action="light:auto"/g) || []).length,
     0,
@@ -358,7 +386,7 @@ const renderCurrent = (
     light: false,
   });
   assert.match(deniedOverride, /data-action="heater:true"[^>]*disabled/);
-  assert.match(deniedOverride, /id="manual-light-value-overview"[^>]*disabled/);
+  assert.match(deniedOverride, /data-light-arc[^>]*aria-disabled="true"/);
   for (const feedback of [false, true, null])
     assert.doesNotMatch(
       renderCurrent("automatic", {}, feedback),
@@ -366,10 +394,12 @@ const renderCurrent = (
     );
   assert.doesNotMatch(automatic, /data-door-status|environment-status/);
   assert.doesNotMatch(manual, /Temperaturwahl|program-types|temperature-presets/);
-  assert.match(manual, /data-manual-light-value/);
-  assert.match(manual, /id="manual-light-value-overview"/);
-  assert.match(manual, /Gedimmt <small>25 %<\/small>/);
-  assert.match(manual, /Hell<\/button>/);
+  assert.match(manual, /data-light-arc/);
+  assert.doesNotMatch(
+    manual,
+    /id="manual-light-value-overview"|Gedimmt|Hell<\/button>/,
+  );
+  assert.match(manual, /data-action="light:true"[^>]*>Ein<\/button>/);
   assert.doesNotMatch(
     manual,
     /environment-status|data-door-status/,
@@ -388,7 +418,7 @@ const renderCurrent = (
   );
   assert.doesNotMatch(userAutomatic, /Gedimmt|Manuelle Ofenübersteuerung/);
   assert.doesNotMatch(userAutomatic, /data-action="heater:/);
-  assert.match(userAutomatic, /id="manual-light-value-overview"[^>]*disabled/);
+  assert.match(userAutomatic, /data-light-arc[^>]*aria-disabled="true"/);
   for (const preset of ["auto", "false", "true"])
     assert.doesNotMatch(
       userAutomatic,
@@ -401,7 +431,7 @@ const renderCurrent = (
   );
   assert.match(userManual, /data-action="heater:true" aria-pressed="false" >Ein/);
   assert.match(userManual, /data-action="heater:false" aria-pressed="false" >Aus/);
-  for (const preset of ["false", "normal", "true"])
+  for (const preset of ["false", "true"])
     assert.ok(userManual.includes(`data-action="light:${preset}"`));
   assert.doesNotMatch(userManual, /Temperaturwahl|data-target-arc|heater:auto/);
   const userLocked = renderCurrent(
@@ -475,7 +505,7 @@ const renderCurrent = (
           idleEntry
             ? []
             : scenario.mode === "manual"
-              ? ["false", "normal", "true"]
+              ? ["false", "true"]
               : ["auto", "false", "true"],
           context,
         );
@@ -514,11 +544,10 @@ const renderCurrent = (
         });
         await invocation.panel.action("manual-light-overview");
         assert.equal(invocation.calls.length, Number(light && allowed), context);
-        const input = html.match(
-          /<input\b[^>]*id="manual-light-value-overview"[^>]*>/,
-        )[0];
-        assert.match(input, /type="range"/);
-        assert.equal(/\bdisabled\b/.test(input), !(light && allowed), context);
+        const arc = html.match(/<[^>]*data-light-arc[^>]*>/)[0];
+        assert.match(arc, /role="slider"/);
+        assert.equal(/aria-disabled="true"/.test(arc), !(light && allowed), context);
+        assert.doesNotMatch(html, /id="manual-light-value-overview"/);
         if (idleEntry) assert.match(html, /Manuell steuern/);
         else assert.match(html, /class="manual-section manual-heater"/);
         invocation.calls.length = 0;
@@ -731,7 +760,10 @@ const renderCurrent = (
 
   const automaticHeater = renderCurrent(
     "automatic",
-    { heater: { manual: null }, light: { manual: null } },
+    {
+      heater: { manual: null, observation: { available: true, on: true } },
+      light: { manual: null },
+    },
     true,
     "#current",
     {},
@@ -742,7 +774,7 @@ const renderCurrent = (
     true,
   );
   assert.match(automaticHeater, /data-action="heater:auto" aria-pressed="true"/);
-  assert.match(automaticHeater, /data-action="heater:true" aria-pressed="false"/);
+  assert.match(automaticHeater, /data-action="heater:true" aria-pressed="true"/);
   assert.match(
     renderCurrent(
       "automatic",
@@ -756,7 +788,9 @@ const renderCurrent = (
   assert.doesNotMatch(automaticHeater, /data-action="heater:true" class="primary"/);
   const automaticLight = renderCurrent(
     "automatic",
-    { light: { manual: null } },
+    {
+      light: { manual: null, observation: { available: true, brightness_percent: 18 } },
+    },
     false,
     "#current",
     {},
@@ -767,6 +801,7 @@ const renderCurrent = (
     true,
   );
   assert.match(automaticLight, /data-action="light:auto" aria-pressed="true"/);
+  assert.match(automaticLight, /data-action="light:true" aria-pressed="true"/);
 
   const liveSession = {
     timeline: {
@@ -805,21 +840,58 @@ const renderCurrent = (
   );
 
   const lightOff = renderCurrent("manual", {
-    heater: { manual: true },
-    light: { manual: 0 },
+    heater: { manual: false, observation: { available: true, on: true } },
+    light: { manual: 42, observation: { available: true, brightness_percent: 0 } },
   });
   assert.match(lightOff, /data-action="heater:true" aria-pressed="true"/);
   assert.match(lightOff, /data-action="light:false" aria-pressed="true"/);
-  const lightDimmed = renderCurrent("manual", { light: { manual: 25.4 } });
-  assert.match(lightDimmed, /data-action="light:normal" aria-pressed="true"/);
-  const lightBright = renderCurrent("manual", { light: { manual: 50.4 } });
-  assert.match(lightBright, /data-action="light:true" aria-pressed="true"/);
-  const freeLight = renderCurrent("manual", { light: { manual: 42 } });
-  assert.doesNotMatch(
-    freeLight,
-    /data-action="light:(?:false|normal|true)" aria-pressed="true"/,
-    "a free brightness does not select a named preset",
+  for (const brightness of [0.1, 25.4, 42, 50.4, 100]) {
+    const observed = renderCurrent("manual", {
+      heater: { manual: true, observation: { available: true, on: false } },
+      light: {
+        manual: 0,
+        observation: { available: true, brightness_percent: brightness },
+      },
+    });
+    assert.match(observed, /data-action="heater:false" aria-pressed="true"/);
+    assert.match(observed, /data-action="light:true" aria-pressed="true"/);
+    assert.match(observed, /data-action="light:false" aria-pressed="false"/);
+    assert.doesNotMatch(observed, /light:normal|Gedimmt/);
+  }
+  for (const manualValue of [true, false, null]) {
+    const unknown = renderCurrent(
+      "manual",
+      {
+        heater: { manual: manualValue, observation: { available: false, on: true } },
+        light: {
+          manual: manualValue === true ? 42 : 0,
+          observation: { available: false, brightness_percent: 42 },
+        },
+      },
+      true,
+    );
+    assert.doesNotMatch(
+      unknown,
+      /data-action="(?:heater|light):(?:false|true)" aria-pressed="true"/,
+      "unavailable physical feedback never highlights the requested switch state",
+    );
+  }
+  const linearLight = renderCurrent(
+    "manual",
+    {},
+    false,
+    "#current",
+    {},
+    false,
+    null,
+    [],
+    { appearance: { instruments: { light: "linear" } } },
   );
+  assert.match(
+    linearLight,
+    /id="manual-light-value-overview"[^>]*data-manual-light-value[^>]*type="range"/,
+  );
+  assert.doesNotMatch(linearLight, /data-light-arc/);
 
   const detailNodes = new Map();
   const detailNode = (selector) => {

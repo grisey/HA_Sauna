@@ -283,6 +283,7 @@ class Preview:
             "decision":c.last_decision, "measurements":measurements, "faults":{}, "protection":[],
             "inhibits":[], "detection_channels":[], "detector_trace":None,
             "manual_controls":{"heater":{"manual":c.heater_override,
+                "observation":{"available":c.contactor is not None,"on":c.contactor},
                 "override_ends_at":c.heater_override_ends_at,
                 "automatic":c.automatic_decision.heat if c.automatic_decision else None},
                 "light":{"observation":{"available":True,"brightness_percent":self.light},
@@ -358,8 +359,15 @@ class Preview:
                 brightness = value
             else:
                 raise ValueError("Ungültiger Lichtwert")
-            self.light_manual = brightness
-            self.light = 35 if brightness is None else brightness
+            unchanged = (
+                (value is False and self.light == 0)
+                or (value is True and self.light > 0)
+                or (not isinstance(value, bool) and isinstance(value, (int, float))
+                    and value == round(self.light))
+            )
+            if not unchanged:
+                self.light_manual = brightness
+                self.light = 35 if brightness is None else brightness
         elif path.endswith("/appearance"):
             appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
             return {"appearance": appearance}

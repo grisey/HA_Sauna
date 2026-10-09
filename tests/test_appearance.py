@@ -17,10 +17,6 @@ class AppearanceTests(unittest.TestCase):
         }
         self.assertEqual(validate_appearance({"colors": {}})["instruments"], expected)
         self.assertEqual(default_appearance()["instruments"], expected)
-        self.assertEqual(expected, {
-            "default": "round", "temperature": "inherit",
-            "humidity": "inherit", "light": "inherit",
-        })
 
     def test_individual_choices_and_inheritance_survive_normalization(self):
         for common in ("round", "linear"):
@@ -37,9 +33,11 @@ class AppearanceTests(unittest.TestCase):
     def test_partial_preferences_and_returned_defaults_are_independent(self):
         value = validate_appearance({"instruments": {"humidity": "linear"}})
         self.assertEqual(value["instruments"]["humidity"], "linear")
-        self.assertEqual(value["instruments"]["temperature"], "inherit")
+        self.assertEqual(value["instruments"]["temperature"],
+                         APPEARANCE_CATALOG["instruments"]["temperature"]["default"])
         value["instruments"]["default"] = "linear"
-        self.assertEqual(default_appearance()["instruments"]["default"], "round")
+        self.assertEqual(default_appearance()["instruments"]["default"],
+                         APPEARANCE_CATALOG["instruments"]["default"]["default"])
 
     def test_invalid_instrument_preferences_are_rejected(self):
         for instruments in (

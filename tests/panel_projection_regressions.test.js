@@ -227,8 +227,8 @@ test("details render includes the reachable presence and rule card", () => {
     lower_humidity: { state: "current" },
   };
   value.drawCurrent();
-  assert.match(nodes["#current"].innerHTML, /67<\/tspan><tspan[^>]*>°C/);
-  assert.match(nodes["#current"].innerHTML, /38<\/tspan><tspan[^>]*>%/);
+  assert.match(nodes["#current"].innerHTML, /67<\/tspan>\s*<tspan[^>]*>°C/);
+  assert.match(nodes["#current"].innerHTML, /38<\/tspan>\s*<tspan[^>]*>%/);
   assert.doesNotMatch(nodes["#current"].innerHTML, /Messung unten/);
 
   state.measurement_positions = ["upper", "lower"];

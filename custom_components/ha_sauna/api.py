@@ -88,6 +88,10 @@ def manual_controls(runtime):
     light = runtime.device.light_output if runtime.device else None
     return {
         "heater": {
+            "observation": {
+                "available": runtime.controller.contactor is not None,
+                "on": runtime.controller.contactor,
+            },
             "manual": runtime.controller.heater_override,
             "override_ends_at": plain(runtime.controller.heater_override_ends_at),
             "automatic": runtime.controller.automatic_decision.heat
