@@ -833,6 +833,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         )
         screenshots.mkdir(parents=True, exist_ok=True)
         print(f"BROWSER_SCREENSHOTS {screenshots}")
+        # Keep a nonzero temperature arc inside the display scale for the color proof.
+        await self.set_source("upper_temperature", 60)
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         session_id = self.entry.runtime_data.session.session_id
@@ -2011,6 +2013,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.evaluate("p=>p.state.manual_controls.light.manual"), 60)
         await self.page.screenshot(path=str(screenshots / "light_desktop.png"), full_page=True)
         self.light.defer_state_writes = True
+        for style in ("linear", "round"):
+            with self.subTest(style=style):
+                await self.set_instrument_style("light", style)
+                slider = self.panel.get_by_role("slider", name="Lichthelligkeit einstellen")
+                for brightness in (0, 60):
+                    await device_tests.DevicePathTests.set_light_externally(
+                        self, brightness > 0, round(brightness * 255 / 100),
+                    )
+                    await self.panel.evaluate("p=>p.refresh()")
+                    await expect(status).to_have_text(re.compile(rf"^{brightness}\s*%$"))
+                    if style == "linear":
+                        await expect(slider).to_have_value(str(brightness))
+                    else:
+                        await expect(slider).to_have_attribute("aria-valuenow", str(brightness))
+                        await expect(self.panel.locator('.light-instrument .instrument-value-arc')).to_have_count(0 if brightness == 0 else 1)
+        await self.set_instrument_style("light", "linear")
         self.hass.states.async_set(self.runtime.device.bindings["light"], "unavailable")
         await self.hass.async_block_till_done()
         await self.panel.evaluate("p=>p.refresh()")
@@ -2018,7 +2036,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('.light-instrument')).to_contain_text("Rückmeldung fehlt")
         await expect(self.panel.locator('.light-instrument')).not_to_contain_text("Vorgabe")
         await expect(self.panel.locator('.light-instrument [data-light-target]')).to_have_count(0)
-        await expect(self.panel.get_by_role("slider", name="Lichthelligkeit einstellen")).to_have_value("60")
+        await expect(self.panel.get_by_role("slider", name="Lichthelligkeit einstellen")).to_have_value("0")
         await self.page.set_viewport_size({"width": 390, "height": 844})
         await self.page.screenshot(path=str(screenshots / "light_mobile.png"), full_page=True)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
