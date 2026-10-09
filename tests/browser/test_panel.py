@@ -1705,7 +1705,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await expect(panel.locator('.manual-heater [data-action="heater:false"]')).to_have_attribute("aria-pressed", "true")
                     self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
                     await expect(panel.locator('#current [data-action="operation"]')).to_have_count(0)
-                    await expect(panel.locator('[data-action="control-mode:automatic"]')).to_be_enabled()
+                    await expect(panel.locator('#current .control-main [data-action="control-mode:automatic"]')).to_be_enabled()
                     async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as automatic:
                         await panel.locator('[data-action="control-mode:automatic"]').click()
                     self.assertTrue((await automatic.value).ok)
@@ -1715,9 +1715,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue((await started.value).ok)
                     identity = self.runtime.session.session_id
                     self.assertTrue(self.runtime.session.operation_enabled)
-                    await expect(panel.locator('[data-action="control-mode:automatic"]')).to_be_disabled()
+                    await expect(panel.locator('[data-action^="control-mode:"]')).to_have_count(0)
                     await self.runtime.set_operation(False)
                     await panel.evaluate("p => p.refresh()")
+                    await expect(panel.locator('[data-action^="control-mode:"]')).to_have_count(0)
                     await expect(panel.locator('.manual-light [data-action="light:true"]')).to_be_disabled()
                     self.assertEqual(self.runtime.session.session_id, identity)
                     self.assertFalse(self.runtime.session.operation_enabled)

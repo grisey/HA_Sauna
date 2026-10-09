@@ -436,16 +436,6 @@ const renderCurrent = (
   for (const preset of ["false", "true"])
     assert.ok(userManual.includes(`data-action="light:${preset}"`));
   assert.doesNotMatch(userManual, /Temperaturwahl|data-target-arc|heater:auto/);
-  const userLocked = renderCurrent(
-    "manual",
-    {},
-    false,
-    "#current",
-    { admin: false },
-    true,
-  );
-  assert.match(userLocked, /data-action="control-mode:automatic"[^>]*disabled/);
-  assert.match(userLocked, /data-action="control-mode:manual"[^>]*disabled/);
   const readOnly = renderCurrent("manual", {}, false, "#current", {
     admin: false,
     control: false,
@@ -472,6 +462,16 @@ const renderCurrent = (
       { purpose: "session_gap", token: "gap-current", due_at: "2026-09-20T12:10:00Z" },
     ],
   };
+  const userLocked = renderCurrent(
+    "automatic",
+    {},
+    false,
+    "#current",
+    { admin: false },
+    true,
+    pausedSession,
+  );
+  assert.doesNotMatch(userLocked, /data-action="control-mode:/);
   const controlCases = [
     { mode: "automatic", session: null, operating: false },
     { mode: "automatic", session: pausedSession, operating: false },
@@ -502,6 +502,11 @@ const renderCurrent = (
           presets = Array.from(
             html.matchAll(/<button\b[^>]*data-action="light:([^"]+)"[^>]*>/g),
           );
+        assert.equal(
+          /data-action="control-mode:/.test(html),
+          !scenario.session,
+          context,
+        );
         assert.deepEqual(
           presets.map((match) => match[1]),
           idleEntry

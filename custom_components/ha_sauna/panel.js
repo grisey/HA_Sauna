@@ -3516,15 +3516,10 @@ class SaunaPanel extends HTMLElement {
         background: transparent;
         color: var(--danger-text);
       }
-      .control-mode-card {
-        padding: 12px 16px;
-        margin: 10px 0;
-        width: fit-content;
-        max-width: 100%;
-      }
-      .control-mode-card .row {
-        justify-content: center;
-      }
+      .control-start-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--sauna-control-gap); }
+      .control-start-row .operation-control { flex: 1 1 9rem; }
+      .control-start-row .operation-control > button { height: 100%; }
+      .control-start-row .control-mode { flex: 0 0 auto; max-width: 100%; }
       .manual-controls {
         margin-top: 16px;
       }
@@ -3778,8 +3773,6 @@ class SaunaPanel extends HTMLElement {
         }
       }
 
-      .control-mode-card { padding: 12px var(--sauna-surface-padding); margin-bottom: var(--sauna-surface-gap); }
-      .control-mode-card .row { justify-content: space-between; }
       .control-main .phase { font-weight: 600; letter-spacing: -.025em; }
       .control-main .control-section, .control-main .manual-section {
         margin-top: var(--sauna-surface-gap);
@@ -3791,7 +3784,7 @@ class SaunaPanel extends HTMLElement {
         transition: background-color 350ms ease;
         color: var(--sauna-page-text);
       }
-      .control-main button:focus-visible, .control-mode-card button:focus-visible {
+      .control-main button:focus-visible {
         outline: 2px solid var(--sauna-focus-current);
         outline-offset: 4px;
       }
@@ -5112,7 +5105,9 @@ class SaunaPanel extends HTMLElement {
     const manualControls = this.manualControlAvailability(),
       canManualHeater = manualControls.heater,
       canManualLight = manualControls.brightness;
-    const modeControls = `<div class="row"><small>Betriebsmodus</small><div class="segmented-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button></div></div>`;
+    const modeControls = session
+      ? ""
+      : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button></div>`;
     const outputControls = (
       key,
       title,
@@ -5441,7 +5436,12 @@ class SaunaPanel extends HTMLElement {
     const roundCount = ["temperature", "humidity", "light"].filter(
       (key) => this.instrumentStyle(key) === "round",
     ).length;
-    return `<div class="control-overview"><div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}${operation ? `<div class="tiles">${operation}</div>` : ""}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
+    const actions = modeControls
+      ? `<div class="control-start-row">${operation}${modeControls}</div>`
+      : operation
+        ? `<div class="tiles">${operation}</div>`
+        : "";
+    return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
     const {
