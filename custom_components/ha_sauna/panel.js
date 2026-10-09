@@ -1392,6 +1392,9 @@ class SaunaPanel extends HTMLElement {
     this.historyPendingFinalId = null;
     this.historyOptionsSignature = null;
     this.manualOverridesOpen = false;
+    this.fullscreenKioskHandler = () => {
+      if (!this.fullscreenKioskDispatching) this.fullscreenKioskOwned = false;
+    };
     this.fullscreenChangeHandler = () => {
       this.syncFullscreenNavigation();
       this.historyChart?.interaction.invalidateGeometry("size");
@@ -1452,6 +1455,10 @@ class SaunaPanel extends HTMLElement {
       "fullscreenchange",
       this.fullscreenChangeHandler,
     );
+    this.fullscreenDocument?.defaultView?.addEventListener(
+      "hass-kiosk-mode",
+      this.fullscreenKioskHandler,
+    );
     this.syncFullscreenNavigation();
     if (typeof document !== "undefined")
       document.addEventListener("visibilitychange", this.visibilityHandler);
@@ -1481,8 +1488,12 @@ class SaunaPanel extends HTMLElement {
       "fullscreenchange",
       this.fullscreenChangeHandler,
     );
+    this.syncFullscreenKiosk(false);
+    this.fullscreenDocument?.defaultView?.removeEventListener(
+      "hass-kiosk-mode",
+      this.fullscreenKioskHandler,
+    );
     this.fullscreenDocument = null;
-    this.fullscreenMenuOpen = false;
     if (typeof document !== "undefined")
       document.removeEventListener("visibilitychange", this.visibilityHandler);
     clearTimeout(this.programSavedTimer);
@@ -2218,10 +2229,6 @@ class SaunaPanel extends HTMLElement {
         flex: 0 0 auto;
       }
       .header-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-      :host(:fullscreen) { width: 100%; height: 100%; }
-      :host(:fullscreen) header { grid-template-columns: minmax(0, 1fr) auto; }
-      :host(:fullscreen) .header-context { grid-column: 2; grid-row: 1; }
-      :host(:fullscreen) .main-tabs { grid-column: 1 / -1; grid-row: 2; }
       .header-context select {
         max-width: 100%;
       }
@@ -3852,7 +3859,7 @@ class SaunaPanel extends HTMLElement {
       .dial .tick { font-size: 11px; font-weight: 450; opacity: .85; }
       .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) 12%, transparent); stroke: var(--measurement-color); stroke-width: 1.2; opacity: .75; }
     </style><main>
-      <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Menü öffnen" aria-expanded="false" aria-controls="main-navigation" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
+      <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
@@ -8612,29 +8619,54 @@ class SaunaPanel extends HTMLElement {
     if (status) status.textContent = "Standardwerte wurden wiederhergestellt.";
   }
   isPanelFullscreen() {
-    return (this.getRootNode?.() || this.ownerDocument)?.fullscreenElement === this;
+    const document = this.ownerDocument;
+    return (
+      !!document?.documentElement &&
+      document.fullscreenElement === document.documentElement
+    );
+  }
+  hasHomeAssistantNavigation() {
+    for (let node = this; node; node = node.parentNode || node.host) {
+      if (node.localName === "home-assistant-main") return true;
+    }
+    return false;
   }
   fullscreenAvailable() {
     return (
       !!this.ownerDocument?.fullscreenEnabled &&
-      typeof this.requestFullscreen === "function" &&
+      typeof this.ownerDocument.documentElement?.requestFullscreen === "function" &&
       typeof this.ownerDocument.exitFullscreen === "function"
     );
   }
+  syncFullscreenKiosk(fullscreen) {
+    if (!!this.fullscreenKioskActive === fullscreen) return;
+    this.fullscreenKioskActive = fullscreen;
+    const window = this.fullscreenDocument?.defaultView;
+    if (!window) return;
+    if (fullscreen) {
+      if (!this.hasHomeAssistantNavigation() || !this._hass || this._hass.kioskMode)
+        return;
+      this.fullscreenKioskOwned = true;
+    } else {
+      if (!this.fullscreenKioskOwned) return;
+      this.fullscreenKioskOwned = false;
+    }
+    this.fullscreenKioskDispatching = true;
+    try {
+      window.dispatchEvent(
+        new CustomEvent("hass-kiosk-mode", { detail: { enable: fullscreen } }),
+      );
+    } finally {
+      this.fullscreenKioskDispatching = false;
+    }
+  }
   syncFullscreenNavigation() {
     const fullscreen = this.isPanelFullscreen();
-    if (!fullscreen) this.fullscreenMenuOpen = false;
+    this.syncFullscreenKiosk(fullscreen);
     const menu = this.$('[data-action="menu"]');
-    if (menu) {
-      menu.hidden = !fullscreen;
-      menu.setAttribute("aria-expanded", String(!!this.fullscreenMenuOpen));
-      menu.setAttribute(
-        "aria-label",
-        this.fullscreenMenuOpen ? "Menü schließen" : "Menü öffnen",
-      );
-    }
+    if (menu) menu.hidden = !fullscreen || !this.hasHomeAssistantNavigation();
     const navigation = this.$(".main-tabs");
-    if (navigation) navigation.hidden = fullscreen && !this.fullscreenMenuOpen;
+    if (navigation) navigation.hidden = false;
     const button = this.$('[data-action="fullscreen"]');
     if (button) {
       const label = fullscreen ? "Vollbild verlassen" : "Vollbild";
@@ -8654,7 +8686,7 @@ class SaunaPanel extends HTMLElement {
     this.syncFullscreenNavigation();
     try {
       if (fullscreen) await this.ownerDocument.exitFullscreen();
-      else await this.requestFullscreen();
+      else await this.ownerDocument.documentElement.requestFullscreen();
     } catch {
       throw Error("Die Vollbildansicht konnte nicht umgeschaltet werden.");
     } finally {
@@ -8721,15 +8753,12 @@ class SaunaPanel extends HTMLElement {
   setPanelView(action, preserveEventFocus = false) {
     if (!preserveEventFocus) this.pendingEventFocus = null;
     this.setSettingsMenu(false);
-    const closeFullscreenMenu = this.isPanelFullscreen() && this.fullscreenMenuOpen;
-    this.fullscreenMenuOpen = false;
     this.navigation ??= { main: "overview", detail: "detail" };
     if (["detail", "detail-history", "diagnostics"].includes(action)) {
       this.navigation.main = "details";
       this.navigation.detail = action;
     } else this.navigation.main = action === "normal" ? "overview" : action;
     this.syncNavigation();
-    if (closeFullscreenMenu) this.$('[data-action="menu"]')?.focus?.();
     if (!["history", "diagnostics"].includes(this.view)) {
       this.cancelHistoryFrame();
       this.historyLoad = null;
@@ -8750,11 +8779,14 @@ class SaunaPanel extends HTMLElement {
   async action(action) {
     if (action === "fullscreen") return this.toggleFullscreen();
     if (action === "menu") {
-      if (!this.isPanelFullscreen()) return;
-      this.fullscreenMenuOpen = !this.fullscreenMenuOpen;
-      this.syncFullscreenNavigation();
-      if (this.fullscreenMenuOpen)
-        this.$('.main-tabs [aria-current="page"]')?.focus?.();
+      if (!this.isPanelFullscreen() || !this.hasHomeAssistantNavigation()) return;
+      this.dispatchEvent(
+        new CustomEvent("hass-toggle-menu", {
+          bubbles: true,
+          composed: true,
+          detail: {},
+        }),
+      );
       return;
     }
     if (action.startsWith("archive-")) {

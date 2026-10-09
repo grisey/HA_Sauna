@@ -263,6 +263,85 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await context.close()
 
+    async def test_fullscreen_keeps_tabs_and_opens_real_home_assistant_sidebar(self):
+        user = await self.hass.auth.async_create_user(
+            "Normal fullscreen user", group_ids=[GROUP_ID_USER]
+        )
+        refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
+        normal_tokens = json.dumps({
+            "hassUrl": self.url, "clientId": self.url + "/",
+            "access_token": self.hass.auth.async_create_access_token(refresh),
+            "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+            "expires_in": 1800,
+        })
+        admin_tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
+        for admin, tokens in ((True, admin_tokens), (False, normal_tokens)):
+            for width in (1440, 390):
+                with self.subTest(admin=admin, width=width):
+                    context = await self.browser.new_context(viewport={"width": width, "height": 1080})
+                    try:
+                        await context.add_init_script(
+                            "localStorage.setItem('hassTokens', " + json.dumps(tokens) + ");"
+                        )
+                        page = await context.new_page()
+                        page.on("pageerror", lambda error: self.errors.append(str(error)))
+                        await page.goto(self.url + "/ha-sauna")
+                        panel = page.locator("ha-sauna-panel")
+                        await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+                        tabs = panel.locator(".main-tabs")
+                        menu = panel.locator('[data-action="menu"]')
+                        fullscreen = panel.locator('[data-action="fullscreen"]')
+                        original_kiosk = await panel.evaluate("element => Boolean(element.hass.kioskMode)")
+                        original_docked = await panel.evaluate("element => element.hass.dockedSidebar")
+                        await expect(menu).to_be_hidden()
+                        await fullscreen.click()
+                        await page.wait_for_function("document.fullscreenElement === document.documentElement")
+                        await page.wait_for_function("document.querySelector('home-assistant').hass.kioskMode === true")
+                        await expect(menu).to_be_visible()
+                        actions = ["history", "settings"] + (["details"] if admin else [])
+                        for action in actions:
+                            tab = tabs.locator(f'[data-action="{action}"]')
+                            await tab.click()
+                            await expect(tab).to_have_attribute("aria-current", "page")
+                            await expect(tabs).to_be_visible()
+
+                        sidebar = page.locator("ha-sidebar")
+                        drawer = page.locator("home-assistant-main ha-drawer")
+                        await expect(drawer).to_have_js_property("open", False)
+                        await menu.click()
+                        await expect(drawer).to_have_js_property("open", True)
+                        # The actual HA navigation must appear, not just receive an event.
+                        await expect(sidebar.locator('a[href="/ha-sauna"]')).to_be_in_viewport()
+                        await expect(tabs).to_be_visible()
+                        # Dismiss HA's modal drawer through its real outside-click surface.
+                        await page.mouse.click(width - 8, 400)
+                        await expect(drawer).to_have_js_property("open", False)
+                        self.assertEqual(await panel.evaluate("element => element.hass.dockedSidebar"), original_docked)
+                        self.assertTrue(await page.evaluate("document.fullscreenElement === document.documentElement"))
+                        await tabs.locator('[data-action="overview"]').click()
+                        await expect(panel.locator("#current")).to_be_visible()
+                        await fullscreen.click()
+                        await page.wait_for_function("document.fullscreenElement === null")
+                        await page.wait_for_function(
+                            "value => Boolean(document.querySelector('home-assistant').hass.kioskMode) === value",
+                            arg=original_kiosk,
+                        )
+                        await expect(menu).to_be_hidden()
+                        await expect(tabs).to_be_visible()
+                        self.assertEqual(await panel.evaluate("element => element.hass.dockedSidebar"), original_docked)
+                        if admin and width == 1440:
+                            await page.evaluate("window.dispatchEvent(new CustomEvent('hass-kiosk-mode', {detail: {enable: true}}))")
+                            await page.wait_for_function("document.querySelector('home-assistant').hass.kioskMode === true")
+                            await fullscreen.click()
+                            await page.wait_for_function("document.fullscreenElement === document.documentElement")
+                            await fullscreen.click()
+                            await page.wait_for_function("document.fullscreenElement === null")
+                            self.assertTrue(await panel.evaluate("element => element.hass.kioskMode"))
+                            self.assertEqual(await panel.evaluate("element => element.hass.dockedSidebar"), original_docked)
+                    finally:
+                        await context.close()
+        self.assertEqual(self.errors, [])
+
     async def test_four_main_tabs_detail_status_and_normal_user_permissions(self):
         tabs = self.panel.locator(".main-tabs")
         for action, section in (("overview", "current"), ("history", "history"),
