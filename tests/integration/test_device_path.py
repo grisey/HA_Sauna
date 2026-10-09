@@ -381,7 +381,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         import asyncio
         data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
         detections = [r["payload"]["event"]["kind"] for r in data["records"] if r["kind"] == "detection"]
-        self.assertEqual(detections, [Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION, Kind.INFUSION])
+        # Entry events were supplied directly; only the real detector outputs
+        # belong to detection records in this sensor-path test.
+        self.assertEqual(detections, [Kind.INFUSION, Kind.INFUSION])
+        self.assertEqual(first_gang.start_source_event_id, f"entry:{Kind.DOOR_CLOSE.value}")
 
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind
