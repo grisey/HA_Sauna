@@ -111,6 +111,17 @@ class DeviceFeedbackTests(unittest.TestCase):
                                                 else "%" if role.endswith("humidity") else None)),
         })
 
+    @staticmethod
+    def complete_proxy_entry(runtime, at):
+        controller = runtime.controller
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+            controller.process(Event(
+                f"entry-{kind.value}", runtime.session.session_id, kind, at, at,
+            ))
+        # These reception scenarios isolate signal-driven heat after entry.
+        controller.set_heater_override(False, at)
+        controller.set_heater_override(None, at)
+
     def test_received_readiness_releases_override_before_current_output(self):
         async def exercise(queued, same_time, path):
             runtime, adapter, clock = self.detection_device(feedback_timeout_seconds=10)
@@ -247,6 +258,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             adapter.ingest("upper_temperature", state(str(cutoff), unit="°C"), T0, initial=True)
             adapter.refresh(T0)
             runtime.controller.begin_session("admission", T0)
+            self.complete_proxy_entry(runtime, T0)
             calls, entered, release = [], asyncio.Event(), asyncio.Event()
 
             async def service(domain, service, data, **_kwargs):
@@ -302,7 +314,7 @@ class DeviceFeedbackTests(unittest.TestCase):
                     self.assertEqual(runtime.session.timeline.gang_count, int(off_at == 28))
                     if off_at == 28:
                         gang = runtime.session.timeline.completed[0]
-                        self.assertEqual(gang.started_at, T0 + timedelta(seconds=17))
+                        self.assertEqual(gang.started_at, T0)
                         self.assertEqual(gang.ended_at, T0 + timedelta(seconds=28))
                         self.assertEqual(gang.detected_at,
                                          T0 + timedelta(seconds=50 if queued else 17))
@@ -311,8 +323,10 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertTrue(runtime.session.timeline.active.infusion_events)
         self.assertIn("turn_on", calls)
         runtime, calls = asyncio.run(exercise(True, 30, 28, fresh_after_resume=True))
-        self.assertTrue(runtime.session.timeline.active.infusion_events)
-        self.assertIn("turn_on", calls)
+        # A new humidity rise cannot reuse the completed gang's entry cycle.
+        self.assertIsNone(runtime.session.timeline.active)
+        self.assertEqual(runtime.session.timeline.gang_count, 1)
+        self.assertNotIn("turn_on", calls)
 
     def test_waiting_api_off_counts_received_infusion_before_current_output(self):
         async def exercise(path):
@@ -321,6 +335,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             runtime.configuration = replace(runtime.configuration, program_mode="progressive")
             runtime.controller.program_mode = "progressive"
             runtime.controller.begin_session("api-admission", T0)
+            self.complete_proxy_entry(runtime, T0)
             await runtime.start_archive(path, "api-admission-entry")
             calls, entered, release = [], asyncio.Event(), asyncio.Event()
 
@@ -358,7 +373,7 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertNotIn("turn_on", calls)
         gang = runtime.session.timeline.completed[0]
         self.assertEqual((gang.started_at, gang.ended_at),
-                         (T0 + timedelta(seconds=17), T0 + timedelta(seconds=50)))
+                         (T0, T0 + timedelta(seconds=50)))
         self.assertEqual(gang.detected_at, T0 + timedelta(seconds=50))
         detection = next(record["payload"] for record in stored["records"]
                          if record["kind"] == "detection"
@@ -378,6 +393,7 @@ class DeviceFeedbackTests(unittest.TestCase):
         async def exercise(path, resumes):
             runtime, adapter, clock = self.detection_device(session_gap_minutes=1)
             runtime.controller.begin_session("gap", T0)
+            self.complete_proxy_entry(runtime, T0)
             await runtime.start_archive(path, "gap-entry")
             await runtime.tick()
             clock[0] = T0 + timedelta(seconds=1)
@@ -516,6 +532,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             runtime.controller.begin_session("confirmation", T0)
             await runtime.tick()
             clock[0] = T0 + timedelta(seconds=11)
+            self.complete_proxy_entry(runtime, clock[0])
             await runtime.receive(Event("person", "confirmation", Kind.PERSON_STRONG,
                                         clock[0], clock[0]))
             old = runtime.session.timeline.active
@@ -566,6 +583,16 @@ class DeviceFeedbackTests(unittest.TestCase):
                 with self.subTest(tick_first=tick_first, confirmation_at=confirmation_at):
                     runtime, old = asyncio.run(exercise(tick_first, confirmation_at))
                     ended = tick_first in ("control_split", "control_last")
+                    if confirmation_at > 71:
+                        self.assertIsNone(runtime.session.timeline.active)
+                        self.assertEqual(runtime.session.timeline.gang_count, 0)
+                        self.assertEqual(runtime.presence.current.occupancy, "unknown")
+                        self.assertIn(old.gang_id, {
+                            gang.gang_id for gang in runtime.session.timeline.retracted
+                        })
+                        if ended:
+                            self.assertFalse(runtime.session.operation_enabled)
+                        continue
                     gang = (runtime.session.timeline.completed[-1] if ended
                             else runtime.session.timeline.active)
                     self.assertTrue(gang.infusion_events)
@@ -573,14 +600,10 @@ class DeviceFeedbackTests(unittest.TestCase):
                         self.assertFalse(runtime.session.operation_enabled)
                         self.assertEqual(runtime.session.timeline.gang_count, 1)
                         self.assertEqual(runtime.presence.current.occupancy, "unknown")
-                    if confirmation_at <= 71:
-                        self.assertEqual((gang.gang_id, gang.started_at),
-                                         (old.gang_id, old.started_at))
-                        if not ended:
-                            self.assertEqual(runtime.presence.current.occupancy, "present")
-                    else:
-                        self.assertNotEqual(gang.gang_id, old.gang_id)
-                        self.assertEqual(runtime.presence.current.occupancy, "unknown")
+                    self.assertEqual((gang.gang_id, gang.started_at),
+                                     (old.gang_id, old.started_at))
+                    if not ended:
+                        self.assertEqual(runtime.presence.current.occupancy, "present")
 
     def test_fifo_native_relay_off_preserves_earlier_thermal_detection(self):
         from custom_components.ha_sauna.device import HADevice
@@ -660,7 +683,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             adapter.report_received_feedback(T0)
             runtime.controller.begin_session("old", T0)
             runtime.controller.set_temperature(80, T0)
-            for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+            for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
                 runtime.controller.process(Event(kind.value, "old", kind, T0, T0))
             await runtime.start_archive(path, "archive-entry")
             clock[0] = T0 + timedelta(seconds=3)

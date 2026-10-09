@@ -23,6 +23,7 @@ class GangTemperatureTests(unittest.TestCase):
                         c = Controller(controller().parameters)
                         c.set_temperature(temperature, T0)
                         c.set_operation(True, T0, session_id="s")
+                        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
                         c.process(event("close", Kind.DOOR_CLOSE, 1))
                         signal = event("signal", kind, 2)
                         admitted = temperature == 60
@@ -42,17 +43,14 @@ class GangTemperatureTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 c = controller()
                 c.set_temperature(25, at(0))
+                c.process(event("entry-open", Kind.DOOR_OPEN, 1))
                 c.process(event("close", Kind.DOOR_CLOSE, 1))
                 self.assertEqual(c.session.timeline.door, Door.CLOSED)
                 self.assertIsNone(c.session.timeline.anchor)
                 c.set_temperature(60, at(9))
                 result = c.process(event("signal", kind, 10))
-                if kind == Kind.PERSON_WEAK:
-                    self.assertEqual(result.reason, "entry_context_missing")
-                    self.assertIsNone(c.session.timeline.active)
-                else:
-                    self.assertEqual(c.session.timeline.active.started_at, at(10))
-                    self.assertEqual(c.session.timeline.active.start_basis, "recognition_only")
+                self.assertEqual(result.reason, "entry_context_missing")
+                self.assertIsNone(c.session.timeline.active)
 
     def test_delayed_close_uses_temperature_at_its_effective_time(self):
         for temperature in (25, None):
@@ -60,13 +58,16 @@ class GangTemperatureTests(unittest.TestCase):
                 c = controller()
                 c.set_temperature(temperature, at(1))
                 c.set_temperature(60, at(9))
+                c.process(Event("entry-open", "s", Kind.DOOR_OPEN, at(1), at(10)))
                 c.process(Event("close", "s", Kind.DOOR_CLOSE, at(2), at(10)))
                 self.assertIsNone(c.session.timeline.anchor)
-                c.process(event("infusion", Kind.INFUSION, 11))
-                self.assertEqual(c.session.timeline.active.started_at, at(11))
+                result = c.process(event("infusion", Kind.INFUSION, 11))
+                self.assertEqual(result.reason, "entry_context_missing")
+                self.assertIsNone(c.session.timeline.active)
 
     def test_warm_close_keeps_its_observed_start_after_history_pruning(self):
         c = controller()
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.discard_recognition_context_before(at(5))
         c.set_temperature(62, at(9))
@@ -77,10 +78,11 @@ class GangTemperatureTests(unittest.TestCase):
     def test_old_cold_signal_cannot_start_when_delivery_is_warm(self):
         c = controller()
         c.set_temperature(25, at(1))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 2))
         c.process(event("close", Kind.DOOR_CLOSE, 2))
         c.set_temperature(60, at(9))
         self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(5)))
-        self.assertTrue(c.recognition_allowed_at(Kind.INFUSION, at(9)))
+        self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(9)))
         result = c.process(Event("old", "s", Kind.INFUSION, at(5), at(10)),
                            recognition_at=at(5))
         self.assertEqual(result.reason, "temperature_below_minimum")
@@ -89,6 +91,7 @@ class GangTemperatureTests(unittest.TestCase):
     def test_expired_selected_temperature_cannot_start_or_preserve_an_unused_anchor(self):
         c = controller()
         c.set_temperature(70, at(0), valid_until=at(5))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.advance(at(5))
         self.assertTrue(c.recognition_allowed(Kind.INFUSION))
@@ -99,12 +102,18 @@ class GangTemperatureTests(unittest.TestCase):
         c.set_temperature(70, at(9), valid_until=at(20))
         self.assertIsNone(c.session.timeline.anchor)
         self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(7)))
-        c.process(event("fresh", Kind.INFUSION, 10))
-        self.assertEqual(c.session.timeline.active.started_at, at(10))
+        result = c.process(event("fresh", Kind.INFUSION, 10))
+        self.assertEqual(result.reason, "entry_context_missing")
+        self.assertIsNone(c.session.timeline.active)
+        c.process(event("fresh-open", Kind.DOOR_OPEN, 11))
+        c.process(event("fresh-close", Kind.DOOR_CLOSE, 12))
+        c.process(event("fresh-entry", Kind.INFUSION, 13))
+        self.assertEqual(c.session.timeline.active.started_at, at(12))
 
     def test_expired_delivery_cannot_book_an_old_fresh_start(self):
         c = controller()
         c.set_temperature(70, at(0), valid_until=at(5))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         result = c.process(Event("late", "s", Kind.INFUSION, at(2), at(10), at(3)),
                            recognition_at=at(2))
@@ -119,12 +128,14 @@ class GangTemperatureTests(unittest.TestCase):
                 if interruption == "cold":
                     c.set_temperature(25, at(4), valid_until=at(8))
                 c.set_temperature(70, at(9), valid_until=at(20))
+                c.process(Event("entry-open", "s", Kind.DOOR_OPEN, at(0), at(10)))
                 c.process(Event("close", "s", Kind.DOOR_CLOSE, at(1), at(10)))
                 self.assertIsNone(c.session.timeline.anchor)
 
     def test_continuous_fresh_measurements_keep_the_same_temperature_interval(self):
         c = controller()
         c.set_temperature(70, at(0), valid_until=at(5))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.set_temperature(71, at(5), valid_until=at(10))
         self.assertEqual(len(c._gang_temperature_gates), 1)
@@ -135,6 +146,7 @@ class GangTemperatureTests(unittest.TestCase):
         for temperature in (25, None):
             with self.subTest(temperature=temperature):
                 c = controller()
+                c.process(event("entry-open", Kind.DOOR_OPEN, 1))
                 c.process(event("close", Kind.DOOR_CLOSE, 1))
                 c.process(event("person", Kind.PERSON_STRONG, 2))
                 gang_id = c.session.timeline.active.gang_id

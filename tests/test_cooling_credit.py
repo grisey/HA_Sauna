@@ -7,6 +7,7 @@ from custom_components.ha_sauna.core.timeline import Kind
 
 
 def finish_gang(c, end_at):
+    c.process(event("entry-open", Kind.DOOR_OPEN, 0))
     c.process(event("close", Kind.DOOR_CLOSE, 1))
     c.process(event("infusion", Kind.INFUSION, 2))
     c.process(event("open", Kind.DOOR_OPEN, end_at - 1))
@@ -24,6 +25,7 @@ class OvenCoolingTests(unittest.TestCase):
             self.assertIsNone(c.session.cooling)
             self.assertEqual(c.session.cooling_history, ())
             self.assertTrue(c.last_decision.heat)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 5400))
         c.process(event("close", Kind.DOOR_CLOSE, 5401))
         c.process(event("infusion", Kind.INFUSION, 5402))
         self.assertIsNotNone(c.session.timeline.active)
@@ -83,8 +85,10 @@ class OvenCoolingTests(unittest.TestCase):
         c._session = replace(c.session, cooling=cycle, cooling_history=(cycle,))
         c.advance(at(60))
         self.assertTrue(c.last_decision.heat)
-        self.assertTrue(c.recognition_allowed(Kind.INFUSION))
+        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 60))
         c.process(event("close-legacy", Kind.DOOR_CLOSE, 61))
+        self.assertTrue(c.recognition_allowed(Kind.INFUSION))
         c.process(event("infusion-legacy", Kind.INFUSION, 62))
         self.assertIsNotNone(c.session.timeline.active)
         self.assertEqual(c.session.cooling_history, (cycle,))

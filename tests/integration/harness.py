@@ -108,7 +108,7 @@ def with_confirmed_round(session):
 
     at = session.timeline.session_started_at
     timeline = Timeline(session.session_id, at)
-    for kind in (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.OPERATION_OFF):
+    for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION, Kind.OPERATION_OFF):
         timeline = apply(timeline, Event(
             f"fixture:{session.session_id}:{kind.value}", session.session_id,
             kind, at, at,

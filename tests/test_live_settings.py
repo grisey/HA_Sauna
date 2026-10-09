@@ -18,6 +18,9 @@ def change(c, second, *, explicit_target=None, new_program=False, program_mode=N
 
 
 def gang(c, index, start):
+    if index > 1:
+        c.process(event(f"previous-exit-close-{index}", Kind.DOOR_CLOSE, start-2))
+    c.process(event(f"entry-open-{index}", Kind.DOOR_OPEN, start-1))
     c.process(event(f"close-{index}", Kind.DOOR_CLOSE, start))
     c.process(event(f"infusion-{index}", Kind.INFUSION, start+1))
     c.process(event(f"open-{index}", Kind.DOOR_OPEN, start+2))
@@ -246,6 +249,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_lower_target_preserves_gang_but_never_overrides_protection(self):
         c = controller()
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         before = c.session.timeline.active

@@ -48,14 +48,19 @@ class InvalidExternalOptionsTests(unittest.IsolatedAsyncioTestCase):
         config_entries = _ConfigEntries()
         config_entries.entry = self.entry
         self.hass = SimpleNamespace(config_entries=config_entries)
+        self.runtime.controller.set_temperature(80, self.now)
         await self.runtime.set_operation(True)
         session_id = self.runtime.session.session_id
+        await self.runtime.receive(
+            Event("door-opened", session_id, Kind.DOOR_OPEN, self.now, self.now)
+        )
         await self.runtime.receive(
             Event("door-closed", session_id, Kind.DOOR_CLOSE, self.now, self.now)
         )
         await self.runtime.receive(
             Event("gang", session_id, Kind.INFUSION, self.now, self.now)
         )
+        self.assertIsNotNone(self.runtime.session.timeline.active)
         await self.runtime.set_heater_override(False)
 
     async def asyncTearDown(self):

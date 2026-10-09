@@ -72,6 +72,7 @@ class HeatingAdmissionTests(unittest.TestCase):
 
         c = controller(minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         self.prepare_regular_restart(c)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1020, session="admission"))
         c.process(event("close", Kind.DOOR_CLOSE, 1021, session="admission"))
         c.process(event("person", Kind.PERSON_STRONG, 1022, session="admission"))
         c.process(event("infusion", Kind.INFUSION, 1023, session="admission"))

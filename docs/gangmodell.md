@@ -10,21 +10,25 @@ Bei beiden Erkennungsverfahren benötigt ein neuer Gang Betrieb-EIN, keine angef
 oder laufende Ofenkühlung und eine frische, gültige
 [Regeltemperatur](betrieb.md#aufheizen-und-bereitschaft) ab der eingestellten
 Mindesttemperatur.
+Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließender
+Schließung. Beide Verfahren benötigen ihn für den Eintritt. Für den erkannten
+Austritt genügen eine neue Türöffnung und der passende Erkennungsnachweis;
+ein anschließender Türschluss ist nicht erforderlich.
+
 Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
 Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
 Messfenster aus dem freigegebenen Zeitraum.
 
 ## Gang mit direktem Präsenzsensor erkennen
 
-Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließender
-Schließung. Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
+Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
 und darf nicht vor der Öffnung liegen. Sie kann auch nach dem Türschluss
 eintreffen. Jeder Türvorgang begründet höchstens einen Übergang.
 
 | Beleg | Wirkung |
 | --- | --- |
 | Vollständiger Türvorgang mit Anwesenheit und erfüllten Startbedingungen | Bestätigter Gang ab Türschluss, ohne Wartefrist oder erforderlichen Aufguss |
-| Nachfolgender vollständiger Türvorgang mit Abwesenheit | Gangende |
+| Nachfolgende Türöffnung mit zugehöriger Abwesenheit | Gangende ohne erforderlichen Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
 | Durchlüften | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
@@ -43,22 +47,27 @@ Proxyverfahren und keine Tür-Mindestheizhilfe.
 
 | Ereignis | Wirkung |
 | --- | --- |
-| Zulässiges Personensignal | Vorläufiger Gang |
-| Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit gleichem Beginn oder eröffnet einen bestätigten Gang |
+| Zulässiges Personensignal nach vollständigem Eintritt | Vorläufiger Gang |
+| Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit gleichem Beginn oder eröffnet nach vollständigem Eintritt einen bestätigten Gang |
 | Weiterer Aufguss | Ergänzt den aktiven Gang |
-| Bestätigungsfrist abgelaufen oder Durchlüften vor Bestätigung | Vorläufiger Gang zurückgenommen |
-| Durchlüften nach Bestätigung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
+| Bestätigungsfrist abgelaufen oder Durchlüften nach Austrittsöffnung vor Bestätigung | Vorläufiger Gang zurückgenommen |
+| Bestätigtes Durchlüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Als Beginn gilt die passende Türschließung derselben Sitzung und Türöffnung,
 wenn zu diesem Zeitpunkt die Temperaturfreigabe bestand. Ein ungenutzter
 Türbezug verfällt bei unterbrochener Temperaturfreigabe oder veraltetem Messwert.
-Ohne gültigen Türbezug gilt der Buchungszeitpunkt des Personen- oder Aufgusssignals.
+Ohne gültigen, ungenutzten Türbezug beginnt kein Gang. Das gilt auch für ein
+deutliches Personensignal oder einen Aufguss.
 
 Die Aufgussbestätigungsfrist läuft ab Gangbeginn einschließlich ihres
-Endzeitpunkts. Nach einer Rücknahme kann ein neuer gültiger Aufguss einen eigenen
-Gang beginnen. Eine kurze Türöffnung mit anschließendem Schließen beendet
-keinen aktiven Gang; dafür ist bestätigtes Durchlüften erforderlich.
+Endzeitpunkts. Auch ein Gangbeginn allein durch Aufguss muss innerhalb dieser
+Frist ab Türschluss liegen. Nach Ablauf oder Rücknahme benötigt ein neuer Gang
+einen neuen vollständigen Eintritt.
+
+Bestätigtes Durchlüften nach der Austrittsöffnung beendet den Gang auch bei
+offener Tür; Gangzählung und Ofenkühlung folgen dann. Eine kurze Türöffnung
+ohne bestätigtes Durchlüften beendet keinen Gang.
 
 ## Gang zählen und nächste Temperaturstufe beginnen
 

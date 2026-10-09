@@ -96,6 +96,7 @@ class ButtonRuntimeTests(unittest.TestCase):
         controller = self.runtime.controller
         session_id = controller.session.session_id
         for name, kind, seconds in (
+            ("entry-open", Kind.DOOR_OPEN, 290),
             ("close", Kind.DOOR_CLOSE, 300),
             ("person", Kind.PERSON_STRONG, 360),
             ("infusion", Kind.INFUSION, 480),
@@ -306,6 +307,7 @@ class ButtonRuntimeTests(unittest.TestCase):
         session_id = controller.session.session_id
         controller.report_heating(True, started_at)
         for name, kind, seconds in (
+            ("entry-open", Kind.DOOR_OPEN, 0),
             ("close", Kind.DOOR_CLOSE, 1),
             ("person", Kind.PERSON_STRONG, 2),
         ):

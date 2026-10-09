@@ -779,21 +779,12 @@ class Controller:
             blocked = "recognition_context_changed"
         if (
             blocked is None
-            and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
+            and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
             and previous.timeline.active is None
         ):
-            anchor = previous.timeline.anchor
-            if anchor is None:
-                if event.kind == Kind.PERSON_WEAK:
-                    blocked = "entry_context_missing"
-            elif event.effective_at < anchor.effective_at:
-                blocked = "entry_context_changed"
-            elif event.booking_at > anchor.effective_at + timedelta(
-                seconds=self.parameters.seconds("confirmation_minutes")
-            ):
-                # A catch-up sample may be old enough to match, but cannot
-                # start a gang after its real confirmation opportunity ended.
-                blocked = "entry_context_expired"
+            blocked = self._proxy_entry_blocked(
+                previous.timeline, event.booking_at, event.effective_at,
+            )
         if self.presence_source == "ha_presence" and (
             event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
             or (event.kind == Kind.INFUSION and previous.timeline.active is None)
@@ -884,18 +875,30 @@ class Controller:
         if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK):
             if active is not None:
                 return False
-            source = (
-                session.timeline.anchor.event_id
-                if session.timeline.anchor
-                else "recognition_only"
-            )
-            if source in session.timeline.rejected_start_sources:
-                return False
-            if kind == Kind.PERSON_WEAK and session.timeline.anchor is None:
-                return False
         elif kind != Kind.INFUSION:
             return False
-        return active is not None or self._gang_start_blocked(session) is None
+        return active is not None or (
+            self._gang_start_blocked(session) is None
+            and self._proxy_entry_blocked(session.timeline, self._last_at) is None
+        )
+
+    def _proxy_entry_blocked(self, timeline, at, effective_at=None):
+        """Admit proxy recognition only from the current unused door cycle."""
+        if not timeline.entry_cycle_available:
+            return "entry_context_missing"
+        anchor, opening = timeline.anchor, timeline.closed_opening
+        if (
+            not self._recognition_context_current(opening.effective_at)
+            or self.recognition_context_at(opening.effective_at)[1] is not None
+            or not self._gang_anchor_allowed_at(anchor.effective_at)
+            or (effective_at is not None and effective_at < anchor.effective_at)
+        ):
+            return "entry_context_changed"
+        if at > anchor.effective_at + timedelta(
+            seconds=self.parameters.seconds("confirmation_minutes")
+        ):
+            return "entry_context_expired"
+        return None
 
     def _gang_temperature_input(self):
         if self._recognition_temperature_raster is not None:
@@ -1294,7 +1297,7 @@ class Controller:
         return True
 
     def _reconcile_direct_presence(self, at):
-        """A complete opening/closure and a matching presence change form one act.
+        """Entry needs both door edges; exit needs an opening and absence.
 
         No waiting duration is invented. An unavailable report never establishes
         an exit. A used door cycle cannot start or end another round.
@@ -1305,27 +1308,31 @@ class Controller:
                 or not report.available or report.received_at > self._received_at(at)):
             return False
         t = session.timeline
-        if (t.door != Door.CLOSED or t.closed_opening is None or t.anchor is None
-                or t.anchor.event_id == t.resolved_presence_close_id
-                or report.effective_at < t.closed_opening.effective_at
-                or self.recognition_context_at(t.closed_opening.effective_at)[1] is not None
-                or not self._recognition_context_current(t.closed_opening.effective_at)):
+        opening = t.opening if t.door == Door.OPEN else t.closed_opening
+        if (opening is None
+                or report.effective_at < opening.effective_at
+                or self.recognition_context_at(opening.effective_at)[1] is not None
+                or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
-            if (report.occupancy != "present" or self._gang_start_blocked(session)
+            if (not t.entry_cycle_available
+                    or report.occupancy != "present" or self._gang_start_blocked(session)
                     or not self._gang_anchor_allowed_at(t.anchor.effective_at)):
                 return False
             kind = Kind.PRESENCE_CONFIRMED
+            source = t.anchor
         else:
             if (report.occupancy != "absent"
-                    or t.closed_opening.effective_at <= t.active.started_at):
+                    or opening.event_id in t.rejected_start_sources
+                    or opening.effective_at <= t.active.started_at):
                 return False
             kind = Kind.PRESENCE_ENDED
-        effective = max(t.anchor.effective_at, report.effective_at)
+            source = opening
+        effective = max(source.effective_at, report.effective_at)
         if effective > at:
             return False
         self.process(Event(
-            f"{kind.value}:{t.anchor.event_id}:{report.report_id}", session.session_id,
+            f"{kind.value}:{source.event_id}:{report.report_id}", session.session_id,
             kind, effective, self._received_at(at), at,
         ))
         return True

@@ -62,6 +62,7 @@ class DetectorTests(unittest.TestCase):
         c = Controller(p)
         c.set_temperature(80, T0)
         c.begin_session("s", T0)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         c.process(event("water", Kind.INFUSION, 0))
         d.report_heating(True, T0)
@@ -87,6 +88,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(d.capacity, 181)
         ventilation = [e for e in found if e.kind == Kind.VENTILATION]
         self.assertEqual([e.trace_at for e in ventilation], [T0 + timedelta(seconds=215)])
+        self.assertNotIn(Kind.DOOR_CLOSE, [e.kind for e in found])
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertFalse(c.regulation_inputs.gang_heat_demand)

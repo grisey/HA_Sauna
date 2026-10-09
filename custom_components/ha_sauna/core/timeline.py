@@ -139,6 +139,17 @@ class Timeline:
     rejected_start_sources: tuple[str, ...] = ()
 
     @property
+    def entry_cycle_available(self) -> bool:
+        """A real, unused opening and closure can establish a new gang."""
+        return bool(
+            self.door == Door.CLOSED
+            and self.anchor is not None and self.closed_opening is not None
+            and self.closed_opening.effective_at <= self.anchor.effective_at
+            and self.anchor.event_id != self.resolved_presence_close_id
+            and self.anchor.event_id not in self.rejected_start_sources
+        )
+
+    @property
     def gang_count(self) -> int:
         return sum(g.confirmation == Confirmation.CONFIRMED for g in self.completed)
 
@@ -152,9 +163,8 @@ def apply(state: Timeline, event: Event) -> Timeline:
     """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
     `active` umfasst vorläufige und bestätigte Gänge. Vorbereitung gehört zur
-    letzten abgeschlossenen Türöffnungsepisode. Das schwache Startsignal
-    benötigt deren tatsächlichen Türschlussanker; der starke Pfad und Aufguss
-    bleiben davon unabhängig.
+    letzten abgeschlossenen Türöffnungsepisode. Jeder neue Gang benötigt eine
+    ungenutzte vollständige Öffnungs- und Schließfolge.
     Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
     """
     if event.session_id != state.session_id:
@@ -181,11 +191,16 @@ def apply(state: Timeline, event: Event) -> Timeline:
             closed_opening=None,
             open_ventilation=None,
             preparation=None,
-            rejected_start_sources=(),
+            rejected_start_sources=(
+                (event.event_id,) if state.active is not None
+                and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED else ()
+            ),
         )
     elif event.kind == Kind.DOOR_CLOSE:
         if state.door == Door.CLOSED:
             raise ValueError("Doppelte Schließung mit unterschiedlicher Ereignis-ID")
+        if state.opening is not None and event.effective_at < state.opening.effective_at:
+            raise ValueError("Türschluss liegt vor der zugehörigen Öffnung")
         result = replace(
             state,
             door=Door.CLOSED,
@@ -195,6 +210,14 @@ def apply(state: Timeline, event: Event) -> Timeline:
             preparation=state.open_ventilation,
             open_ventilation=None,
         )
+        if ((state.active is not None
+             and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED)
+                or (state.opening is not None
+                    and state.opening.event_id in state.rejected_start_sources)):
+            # A door cycle observed during this gang cannot become a new entry.
+            result = replace(result, rejected_start_sources=(
+                *state.rejected_start_sources, event.event_id,
+            ))
     elif event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION,
                         Kind.PRESENCE_CONFIRMED):
         if state.door != Door.CLOSED:
@@ -206,40 +229,47 @@ def apply(state: Timeline, event: Event) -> Timeline:
             raise ValueError("Direkte Präsenz benötigt eine vollständige neue Türepisode")
         gang = state.active
         if gang is None:
-            source = state.anchor.event_id if state.anchor else "recognition_only"
-            if event.kind != Kind.INFUSION and source in state.rejected_start_sources:
-                return replace(state, processed=state.processed + (event,))
-            if event.kind == Kind.PERSON_WEAK and state.anchor is None:
-                raise ValueError("Schwacher Gangstart benötigt einen Türschlussanker")
+            if not state.entry_cycle_available:
+                raise ValueError("Gangstart benötigt eine vollständige neue Türepisode")
             anchor = state.anchor
+            if event.effective_at < anchor.effective_at:
+                raise ValueError("Gangerkennung liegt vor dem zugehörigen Türschluss")
             gang = Gang(
                 gang_id=f"{state.session_id}:{event.event_id}",
                 session_id=state.session_id,
-                started_at=anchor.effective_at if anchor else event.booking_at,
+                started_at=anchor.effective_at,
                 detected_at=event.detected_at,
-                start_source_event_id=anchor.event_id if anchor else event.event_id,
+                start_source_event_id=anchor.event_id,
                 recognition_event_id=event.event_id,
                 recognition_kind=event.kind,
-                start_basis="door_close" if anchor else "recognition_only",
+                start_basis="door_close",
                 preparation_event_id=(
                     state.preparation.event_id if state.preparation else None
                 ),
             )
+            result = replace(result, rejected_start_sources=(
+                *state.rejected_start_sources, anchor.event_id,
+            ))
         if event.kind == Kind.INFUSION:
             gang = replace(gang, infusion_events=gang.infusion_events + (event,))
-        result = replace(state, active=gang)
+        result = replace(result, active=gang)
         if event.kind == Kind.PRESENCE_CONFIRMED:
             result = replace(result, resolved_presence_close_id=state.anchor.event_id)
     elif event.kind == Kind.PRESENCE_ENDED:
-        if (state.active is None or state.door != Door.CLOSED
-                or state.closed_opening is None or state.anchor is None
-                or state.anchor.event_id == state.resolved_presence_close_id
-                or state.closed_opening.effective_at <= state.active.started_at):
-            raise ValueError("Gangende benötigt eine neue vollständige Türepisode")
+        opening = state.opening if state.door == Door.OPEN else state.closed_opening
+        if (state.active is None or opening is None
+                or opening.event_id in state.rejected_start_sources
+                or opening.effective_at <= state.active.started_at):
+            raise ValueError("Gangende benötigt eine neue Austrittsöffnung")
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
         result = replace(state, active=None, completed=state.completed + (finished,),
-                         resolved_presence_close_id=state.anchor.event_id)
+                         rejected_start_sources=(*state.rejected_start_sources,
+                                                 opening.event_id),
+                         resolved_presence_close_id=(
+                             state.anchor.event_id if state.anchor
+                             else state.resolved_presence_close_id
+                         ))
     elif event.kind == Kind.VENTILATION:
         if state.door != Door.OPEN:
             raise ValueError("Durchlüftungsbestätigung benötigt eine offene Episode")
@@ -250,27 +280,13 @@ def apply(state: Timeline, event: Event) -> Timeline:
         if (state.active is not None
                 and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED):
             if state.active.confirmation == Confirmation.PROVISIONAL:
-                result = replace(
-                    result,
-                    active=None,
-                    retracted=state.retracted + (state.active,),
-                    rejected_start_sources=state.rejected_start_sources
-                    + (
-                        state.active.start_source_event_id
-                        if state.active.start_basis == "door_close"
-                        else "recognition_only",
-                    ),
-                )
+                result = replace(result, active=None,
+                                 retracted=state.retracted + (state.active,))
             else:
-                finished = replace(
-                    state.active,
-                    ended_at=event.booking_at,
-                    end_event_id=event.event_id,
-                    end_reason="ventilation",
-                )
-                result = replace(
-                    result, active=None, completed=state.completed + (finished,)
-                )
+                finished = replace(state.active, ended_at=event.booking_at,
+                                   end_event_id=event.event_id, end_reason="ventilation")
+                result = replace(result, active=None,
+                                 completed=state.completed + (finished,))
     elif event.kind == Kind.CONFIRMATION_EXPIRED:
         if state.active is not None and state.active.confirmation == Confirmation.PROVISIONAL:
             result = replace(
@@ -278,11 +294,8 @@ def apply(state: Timeline, event: Event) -> Timeline:
                 active=None,
                 retracted=state.retracted + (state.active,),
                 rejected_start_sources=state.rejected_start_sources
-                + (
-                    state.active.start_source_event_id
-                    if state.active.start_basis == "door_close"
-                    else "recognition_only",
-                ),
+                + (state.active.start_source_event_id,)
+                + ((state.anchor.event_id,) if state.anchor else ()),
             )
     elif event.kind == Kind.OPERATION_OFF:
         completed = state.completed

@@ -345,7 +345,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.device.estimated_ready_seconds(self.now))
 
     async def test_infusion_confirms_presence_and_person_checks_stop_while_further_infusions_work(self):
-        from custom_components.ha_sauna.core.timeline import Kind
+        from custom_components.ha_sauna.core.timeline import Event, Kind
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         first_gang = None
@@ -358,6 +358,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 await self.set_source(position + "_humidity", humidity)
             await self.runtime.tick()
             await self.hass.async_block_till_done()
+            if second == 60:
+                for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+                    await self.runtime.receive(Event(
+                        f"entry:{kind.value}", self.runtime.session.session_id, kind, self.now, self.now
+                    ))
             active = self.runtime.session.timeline.active
             if active and active.infusion_events:
                 first_gang = first_gang or active
@@ -376,7 +381,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         import asyncio
         data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
         detections = [r["payload"]["event"]["kind"] for r in data["records"] if r["kind"] == "detection"]
-        self.assertEqual(detections, [Kind.INFUSION,Kind.INFUSION])
+        self.assertEqual(detections, [Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION, Kind.INFUSION])
 
     async def test_light_uses_real_service_for_temperature_curve_and_phase_ramps(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -420,6 +425,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
         self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
         gang_start = transition + 2
+        await signal(Kind.DOOR_OPEN, transition)
+        await signal(Kind.DOOR_CLOSE, transition + 1)
         await signal(Kind.INFUSION, gang_start)
         gang_end = gang_start + 240
         second = gang_start
@@ -1394,7 +1401,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.core.timeline import Event, Kind
         identity = self.runtime.session.session_id
         self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
-        for kind, second in ((Kind.INFUSION, 2),
+        for kind, second in ((Kind.DOOR_OPEN, 0), (Kind.DOOR_CLOSE, 1), (Kind.INFUSION, 2),
                              (Kind.DOOR_OPEN, 3), (Kind.VENTILATION, 4)):
             self.now = self.base + timedelta(seconds=second)
             await self.runtime.receive(Event(f"cool:{second}", identity, kind, self.now, self.now))
@@ -1892,10 +1899,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
         from custom_components.ha_sauna.core.timeline import Event, Kind
-        # Valid measurement sources establish the documented initial CLOSED
-        # assumption. A synthetic close here would be a duplicate door edge.
+        # The initial CLOSED state is not an observed entry; supply both edges.
         self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
-        for second, kind in ((2, Kind.INFUSION),
+        for second, kind in ((0, Kind.DOOR_OPEN), (1, Kind.DOOR_CLOSE), (2, Kind.INFUSION),
                              (61, Kind.DOOR_OPEN), (62, Kind.VENTILATION)):
             self.now = self.base + timedelta(seconds=second)
             await self.runtime.receive(Event(f"manual-test:{second}", self.runtime.session.session_id,
@@ -2936,7 +2942,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_source("upper_temperature", 70)
         await self.runtime.set_operation(True)
         identity = self.runtime.session.session_id
-        for second, kind in ((2, Kind.INFUSION), (3, Kind.DOOR_OPEN), (4, Kind.VENTILATION)):
+        for second, kind in ((0, Kind.DOOR_OPEN), (1, Kind.DOOR_CLOSE), (2, Kind.INFUSION), (3, Kind.DOOR_OPEN), (4, Kind.VENTILATION)):
             self.now = self.base + timedelta(seconds=second)
             await self.runtime.receive(Event(f"button-cooling:{second}", identity, kind, self.now, self.now))
         phase_id = self.runtime.session.after_run.phase_id

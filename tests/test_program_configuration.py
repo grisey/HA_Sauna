@@ -660,7 +660,8 @@ class ProgramConfigurationTests(unittest.TestCase):
                 80, T0, valid_until=T0 + timedelta(seconds=60)
             )
             for second, kind in enumerate(
-                (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 10
+                (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION,
+                 Kind.DOOR_OPEN, Kind.VENTILATION), 10
             ):
                 runtime.controller.process(
                     event(str(second), kind, second, runtime.session.session_id)

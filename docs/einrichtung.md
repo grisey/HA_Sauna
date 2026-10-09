@@ -25,9 +25,9 @@ mit fehlenden oder veralteten Messwerten
 ## Gangerkennung festlegen
 
 Gänge werden entweder aus Temperatur und Feuchte oder mit einem direkten
-Präsenzsensor erkannt. Auch mit Präsenzsensor bleiben thermisch erkannte
-Türöffnungen und Türschließungen erforderlich; Präsenz allein beginnt oder
-beendet keinen Gang. Die [Gangerkennung](gangmodell.md) beschreibt die
+Präsenzsensor erkannt. Beide Verfahren benötigen zum Beginn eine erkannte
+Türöffnung mit anschließendem Türschluss. Zum Ende genügen eine erneute
+Öffnung und der passende Abwesenheits- oder Lüftungsnachweis. Die [Gangerkennung](gangmodell.md) beschreibt die
 Bedingungen beider Verfahren.
 
 [Einstellungen und Rücksetzungen](parameter.md) ·

@@ -6,7 +6,7 @@ from test_foundation import event
 
 from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Confirmation, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 
 
 class DirectPresenceControlTests(unittest.TestCase):
@@ -57,17 +57,18 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.gang_count, 0)
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
 
-    def test_exit_needs_close_and_is_counted_once(self):
+    def test_exit_opening_and_absence_end_without_close_and_count_once(self):
         self.start()
         self.door(Kind.DOOR_OPEN, 5)
+        self.assertIsNotNone(self.c.session.timeline.active)
         self.report("off", 6)
-        self.assertIsNotNone(self.c.session.timeline.active)
-        self.door(Kind.VENTILATION, 7)
-        self.assertIsNotNone(self.c.session.timeline.active)
-        self.door(Kind.DOOR_CLOSE, 8)
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.gang_count, 1)
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(6))
         self.assertIsNotNone(self.c.session.after_run)
+        self.door(Kind.VENTILATION, 7)
+        self.door(Kind.DOOR_CLOSE, 8)
+        self.assertFalse(self.c.session.timeline.entry_cycle_available)
         self.report("on", 9)
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.gang_count, 1)
@@ -79,6 +80,25 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertIsNotNone(self.c.session.timeline.active)
         self.report("off", 7)
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
+
+    def test_delayed_opening_matches_absence_without_a_close(self):
+        self.start()
+        self.report("off", 6)
+        self.assertIsNotNone(self.c.session.timeline.active)
+        opening = Event("late-exit-open", "s", Kind.DOOR_OPEN, at(5), at(7))
+        self.c.process(opening)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
+        self.assertEqual(self.c.session.timeline.gang_count, 1)
+
+    def test_absence_before_exit_opening_is_not_exit_evidence(self):
+        self.start()
+        self.report("off", 4)
+        self.door(Kind.DOOR_OPEN, 5)
+        self.c.advance(at(6))
+        self.assertIsNotNone(self.c.session.timeline.active)
+        self.report("off", 7)
+        self.assertIsNone(self.c.session.timeline.active)
 
     def test_unknown_never_finishes_and_cannot_heat_from_round(self):
         self.start()
@@ -153,6 +173,101 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertFalse(self.report("off", 4, source="binary_sensor.other"))
         self.assertFalse(self.report("off", 5, effective=1))
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+
+
+class ProxyDoorControlTests(unittest.TestCase):
+    def test_every_proxy_start_needs_a_complete_unused_cycle(self):
+        for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+            with self.subTest(kind=kind):
+                c = controller(confirmation_minutes=1)
+                c.process(event("bare-close", Kind.DOOR_CLOSE, 1))
+                self.assertFalse(c.recognition_allowed(kind))
+                self.assertEqual(c.process(event("bare-signal", kind, 2)).reason,
+                                 "entry_context_missing")
+                c.process(event("entry-open", Kind.DOOR_OPEN, 3))
+                self.assertFalse(c.recognition_allowed(kind))
+                self.assertEqual(c.process(event("open-signal", kind, 4)).reason,
+                                 "entry_context_missing")
+                c.process(event("entry-close", Kind.DOOR_CLOSE, 5))
+                self.assertTrue(c.recognition_allowed(kind))
+                c.process(event("valid-signal", kind, 6))
+                self.assertEqual(c.session.timeline.active.started_at, at(5))
+                self.assertEqual(c.session.timeline.active.start_basis, "door_close")
+                self.assertFalse(c.session.timeline.entry_cycle_available)
+
+    def test_proxy_cycle_cannot_cross_operation_or_temperature_invalidation(self):
+        for invalidation in ("operation", "temperature"):
+            with self.subTest(invalidation=invalidation):
+                c = controller()
+                c.process(event("o", Kind.DOOR_OPEN, 1))
+                if invalidation == "operation":
+                    c.set_operation(False, at(2))
+                    c.set_operation(True, at(3))
+                    c.process(event("c", Kind.DOOR_CLOSE, 4))
+                else:
+                    c.process(event("c", Kind.DOOR_CLOSE, 2))
+                    c.set_temperature(25, at(3))
+                    c.set_temperature(70, at(4))
+                self.assertFalse(c.recognition_allowed(Kind.INFUSION))
+                self.assertFalse(c.process(event("stale", Kind.INFUSION, 5)).changed)
+                self.assertIsNone(c.session.timeline.active)
+                c.process(event("new-o", Kind.DOOR_OPEN, 6))
+                c.process(event("new-c", Kind.DOOR_CLOSE, 7))
+                c.process(event("new-water", Kind.INFUSION, 8))
+                self.assertEqual(c.session.timeline.active.started_at, at(7))
+
+    def test_expired_proxy_entry_cannot_be_restarted_by_infusion(self):
+        c = controller(confirmation_minutes=1)
+        c.process(event("o", Kind.DOOR_OPEN, 1))
+        c.process(event("c", Kind.DOOR_CLOSE, 2))
+        c.process(event("p", Kind.PERSON_STRONG, 3))
+        c.advance(at(62))
+        self.assertIsNone(c.session.timeline.active)
+        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
+        self.assertEqual(c.process(event("water", Kind.INFUSION, 63)).reason,
+                         "entry_context_missing")
+        c.process(event("new-o", Kind.DOOR_OPEN, 64))
+        c.process(event("new-c", Kind.DOOR_CLOSE, 65))
+        c.process(event("new-water", Kind.INFUSION, 66))
+        self.assertEqual(c.session.timeline.active.started_at, at(65))
+
+    def test_unused_entry_expires_for_all_proxy_recognition_routes(self):
+        for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+            with self.subTest(kind=kind):
+                c = controller(confirmation_minutes=1)
+                c.process(event("o", Kind.DOOR_OPEN, 1))
+                c.process(event("c", Kind.DOOR_CLOSE, 2))
+                c.advance(at(63))
+                self.assertFalse(c.recognition_allowed(kind))
+                self.assertEqual(c.process(event("late", kind, 63)).reason,
+                                 "entry_context_expired")
+                self.assertIsNone(c.session.timeline.active)
+
+    def test_ventilation_ends_with_open_door_at_booking_time(self):
+        c = controller()
+        c.process(event("entry-o", Kind.DOOR_OPEN, 1))
+        c.process(event("entry-c", Kind.DOOR_CLOSE, 2))
+        c.process(event("person", Kind.PERSON_STRONG, 3))
+        original = c.session.timeline.active
+        c.process(event("water", Kind.INFUSION, 4))
+        self.assertEqual(c.session.timeline.active.gang_id, original.gang_id)
+        c.process(event("exit-o", Kind.DOOR_OPEN, 5))
+        vent = Event("vent", "s", Kind.VENTILATION, at(6), at(10), at(8))
+        c.process(vent)
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        self.assertEqual(c.session.timeline.completed[0].ended_at, at(8))
+        self.assertEqual(c.session.after_run.requested_at, at(8))
+        close = Event("exit-c", "s", Kind.DOOR_CLOSE, at(21), at(25), at(23))
+        c.process(close)
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        self.assertEqual(c.session.timeline.completed[0].ended_at, at(8))
+        self.assertEqual(c.session.after_run.requested_at, at(8))
+        self.assertIn(vent, c.session.timeline.processed)
+        self.assertIn(close, c.session.timeline.processed)
+        self.assertFalse(c.process(close).changed)
+        self.assertEqual(c.session.timeline.gang_count, 1)
 
 
 class DirectPresenceRuntimeTests(unittest.TestCase):

@@ -9,6 +9,7 @@ from custom_components.ha_sauna.core.timeline import Kind
 def after_run():
     c = controller()
     c.report_heating(True, at(0))
+    c.process(event("entry-open", Kind.DOOR_OPEN, 0))
     c.process(event("close", Kind.DOOR_CLOSE, 1))
     c.process(event("infusion", Kind.INFUSION, 2))
     c.process(event("open", Kind.DOOR_OPEN, 69))
@@ -61,6 +62,7 @@ class ManualPhaseTests(unittest.TestCase):
     def test_pending_cooling_and_other_deadlines_cannot_be_ended(self):
         c = controller()
         c.report_heating(True, at(0))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("infusion", Kind.INFUSION, 2))
         c.advance(at(60))

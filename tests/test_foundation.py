@@ -293,6 +293,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_existing_gang_core_is_used(self):
         self.controller.set_temperature(70, T0)
+        self.controller.process(event("entry-open", Kind.DOOR_OPEN, 9))
         self.controller.process(event("close", Kind.DOOR_CLOSE, 10))
         result = self.controller.process(event("person", Kind.PERSON_STRONG, 20))
         self.assertEqual(result.session.timeline.active.confirmation, Confirmation.PROVISIONAL)

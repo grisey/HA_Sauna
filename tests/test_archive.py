@@ -120,6 +120,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.c.set_temperature(80, T0)
         for n in range(30):
             self.record(n)
+        self.c.process(event("open", Kind.DOOR_OPEN, 0))
         self.c.process(event("close", Kind.DOOR_CLOSE, 1))
         self.c.process(event("person", Kind.PERSON_STRONG, 2))
         provisional = self.c.session.timeline.active

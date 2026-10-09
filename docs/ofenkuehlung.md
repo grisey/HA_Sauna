@@ -3,7 +3,8 @@
 ## Nach einem Gang abkühlen
 
 Im Automatikbetrieb folgt die Kühlung auf einen abgeschlossenen bestätigten Gang:
-beim Proxyverfahren nach Durchlüften, bei direkter Präsenz nach belegtem Austritt
+beim Proxyverfahren nach Durchlüften im Anschluss an die Austrittsöffnung,
+bei direkter Präsenz nach belegtem Austritt
 ([Gangerkennung](gangmodell.md)). Betrieb-AUS verwendet stattdessen den
 [Lichtnachlauf](bedienung.md#ausschalten-oder-sofort-beenden).
 In Manuell bleibt die Bedienwahl maßgeblich.

@@ -755,7 +755,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             current = [start]
             runtime._clock = lambda: current[0]
             self.assertEqual(runtime.session.timeline.door, "closed")
-            for index, kind in enumerate((Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 2):
+            for index, kind in enumerate((Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION)):
                 at = start + timedelta(seconds=index)
                 current[0] = at
                 runtime.controller.process(Event(str(index), runtime.session.session_id, kind, at, at))
@@ -1159,7 +1159,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await runtime.set_operation(True)
         identity = runtime.session.session_id
         self.assertEqual(runtime.session.timeline.door, "closed")
-        for second, kind in ((2,Kind.INFUSION),(3,Kind.DOOR_OPEN),(4,Kind.VENTILATION)):
+        for second, kind in ((0,Kind.DOOR_OPEN),(1,Kind.DOOR_CLOSE),(2,Kind.INFUSION),(3,Kind.DOOR_OPEN),(4,Kind.VENTILATION)):
             now = base + timedelta(seconds=second)
             await runtime.receive(Event(f"api-phase:{second}",identity,kind,now,now))
         token = runtime.session.after_run.phase_id
@@ -1231,7 +1231,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         identity = runtime.session.session_id
         runtime.controller.report_heating(True, now)
         self.assertEqual(runtime.session.timeline.door, "closed")
-        for second, kind in ((2, Kind.INFUSION),
+        for second, kind in ((0, Kind.DOOR_OPEN), (1, Kind.DOOR_CLOSE), (2, Kind.INFUSION),
                              (3, Kind.DOOR_OPEN), (4, Kind.VENTILATION)):
             now = base + timedelta(seconds=second)
             await runtime.receive(Event(f"api-paused-phase:{second}", identity, kind, now, now))
@@ -1347,12 +1347,17 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_live_temperature_api_preserves_session_detector_and_deadlines(self):
         from custom_components.ha_sauna.core.timeline import Event, Kind
         runtime=self.entry.runtime_data
+        temperature = self.entry.options["bindings"]["upper_temperature"]
+        self.hass.states.async_set(temperature, "80", self.hass.states.get(temperature).attributes)
+        await self.hass.async_block_till_done()
         await runtime.set_operation(True)
         session_id=runtime.session.session_id
-        await runtime.tick()  # Erste Messauswertung setzt den belegten Türkontext.
         now=runtime._clock()
-        await runtime.receive(Event("infusion",session_id,Kind.INFUSION,now,now))
+        runtime._clock = lambda: now
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
+            await runtime.receive(Event(kind.value, session_id, kind, now, now))
         gang=runtime.session.timeline.active
+        self.assertIsNotNone(gang)
         detector=runtime.detector
         url=self.base+"/"+self.entry.entry_id
         async with ClientSession(headers=self.headers) as client:

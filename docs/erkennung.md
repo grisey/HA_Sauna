@@ -37,7 +37,9 @@ einen gültigen Temperaturbezug und einen neuen Feuchteanstieg nach der Öffnung
 bestätigtes Durchlüften ist nicht erforderlich. Eine weitere Öffnung beginnt
 einen neuen Türbezug.
 
-Personensignale eröffnen bei Erkennung aus Temperatur und Feuchte neue Gänge.
+Personen- und Aufgusssignale eröffnen bei Erkennung aus Temperatur und Feuchte
+nur nach erkannter Türöffnung und anschließender Schließung einen Gang;
+es gelten die [Startbedingungen](gangmodell.md#gang-aus-temperatur-und-feuchte-erkennen).
 Während eines Gangs werden weitere Aufgüsse erkannt; bei direkter Präsenzführung
 ersetzen Personensignale den gewählten Präsenzsensor nicht.
 
@@ -59,6 +61,10 @@ Eine Messlücke pausiert den Vergleich mit unveränderter Referenz. Er setzt sic
 mit denselben gültigen Quellen fort; ein Quellenwechsel verwirft die Referenz.
 Temperaturerholung beginnt die Schließprüfung und beendet einen noch offenen
 Lüftungsnachweis.
+
+Ein bestätigter Lüftungsnachweis bleibt der Austrittsöffnung zugeordnet und kann
+beim Proxyverfahren den Gang bei offener Tür beenden. Bei direkter Präsenzführung
+bleibt der Präsenznachweis maßgeblich.
 
 ## Erkennungen bei Messlücken prüfen
 

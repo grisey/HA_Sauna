@@ -27,6 +27,7 @@ class DetectionContextTests(unittest.TestCase):
 
     def test_person_search_is_disabled_for_provisional_and_confirmed_gang(self):
         c = controller()
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
         c.process(event("person", Kind.PERSON_STRONG, 1))
@@ -39,6 +40,7 @@ class DetectionContextTests(unittest.TestCase):
 
     def test_fresh_weak_signal_after_close_needs_no_ventilation(self):
         c = controller()
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_WEAK))
         result = c.process(event("weak", Kind.PERSON_WEAK, 1))
@@ -55,6 +57,7 @@ class DetectionContextTests(unittest.TestCase):
 
     def test_late_or_replaced_weak_context_is_a_processed_non_effect(self):
         c = controller(confirmation_minutes=1)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         late = Event("late", "s", Kind.PERSON_WEAK, at(30), at(61))
         result = c.process(late)
@@ -68,20 +71,22 @@ class DetectionContextTests(unittest.TestCase):
         old = Event("old", "s", Kind.PERSON_WEAK, at(0), at(64))
         self.assertEqual(c.process(old).reason, "entry_context_changed")
 
-    def test_retracted_start_stays_suppressed_until_new_door_episode_but_infusion_can_confirm(self):
+    def test_retracted_start_stays_suppressed_until_new_door_episode(self):
         c = controller(confirmation_minutes=1)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         c.process(event("person", Kind.PERSON_STRONG, 1))
         c.advance(at(60))
         self.assertIsNone(c.session.timeline.active)
         self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
-        self.assertTrue(c.recognition_allowed(Kind.INFUSION))
+        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
         c.process(event("open", Kind.DOOR_OPEN, 61))
         c.process(event("close2", Kind.DOOR_CLOSE, 62))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
 
     def test_confirmation_due_at_delivery_waits_for_all_detected_signals(self):
         c = controller(confirmation_minutes=1)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 14))
         c.process(event("close", Kind.DOOR_CLOSE, 14))
         person = Event("person-batch", "s", Kind.PERSON_STRONG, at(16), at(74))
         infusion = Event("infusion-batch", "s", Kind.INFUSION, at(51), at(74))
@@ -94,6 +99,7 @@ class DetectionContextTests(unittest.TestCase):
         self.assertFalse(c.session.timeline.retracted)
 
         late = controller(confirmation_minutes=1)
+        late.process(event("entry-open", Kind.DOOR_OPEN, 14))
         late.process(event("close", Kind.DOOR_CLOSE, 14))
         late.process(person, defer_confirmation=True)
         late.advance(at(74))
@@ -107,11 +113,15 @@ class DetectionContextTests(unittest.TestCase):
             for kind in (Kind.PERSON_STRONG,Kind.PERSON_WEAK,Kind.INFUSION):
                 self.assertFalse(c.recognition_allowed(kind))
         c.advance(at(100))
+        self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
+        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
+        # Erst eine neue vollständige Türepisode gibt einen weiteren Start frei.
+        self.assertFalse(c.recognition_allowed(Kind.PERSON_WEAK))
+        c.process(event("previous-exit-close", Kind.DOOR_CLOSE, 100))
+        c.process(event("new-entry-open", Kind.DOOR_OPEN, 101))
+        c.process(event("new-entry-close", Kind.DOOR_CLOSE, 102))
         self.assertTrue(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertTrue(c.recognition_allowed(Kind.INFUSION))
-        # Alte Lüftung darf nach beendetem Nachlauf keine neue schwache
-        # Erkennung freigeben, selbst wenn der Detektor noch Kontext besitzt.
-        self.assertFalse(c.recognition_allowed(Kind.PERSON_WEAK))
         c.set_operation(False,at(140))
         self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertFalse(c.recognition_allowed(Kind.INFUSION))
@@ -126,6 +136,10 @@ class DetectionContextTests(unittest.TestCase):
                     d.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 90, second))
                     d.accept(measurement(Position.UPPER, Quantity.HUMIDITY,
                                          20 if second < rise_at else 23, second))
+                c.advance(at(100))
+                c.process(event("previous-exit-close", Kind.DOOR_CLOSE, 100))
+                c.process(event("new-entry-open", Kind.DOOR_OPEN, 101))
+                c.process(event("new-entry-close", Kind.DOOR_CLOSE, 102))
                 c.advance(at(125))
                 found = d.advance(at(125), enabled=True, allowed=c.recognition_allowed,
                                   recognition_context=c.recognition_context_at)
@@ -164,6 +178,7 @@ class DetectionContextTests(unittest.TestCase):
 
     def test_confirmation_batch_covers_temperature_and_received_feedback(self):
         c = controller(confirmation_minutes=1)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 11))
         c.process(event("close", Kind.DOOR_CLOSE, 11))
         c.process(event("person", Kind.PERSON_STRONG, 11))
         old = c.session.timeline.active
@@ -185,6 +200,8 @@ class DetectionContextTests(unittest.TestCase):
                 c = controller(confirmation_minutes=1)
                 received = [at(100)]
                 with c.confirmation_batch(lambda: received[0]):
+                    c.process(Event("open-late", "s", Kind.DOOR_OPEN,
+                                    at(9), received[0], at(10)))
                     c.process(Event("close-late", "s", Kind.DOOR_CLOSE,
                                     at(10), received[0], at(11)))
                     c.process(Event("person-late", "s", Kind.PERSON_STRONG,
@@ -218,6 +235,7 @@ class DetectionContextTests(unittest.TestCase):
         c = Controller(p)
         c.set_temperature(70, T0)
         c.begin_session("s",T0)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close",Kind.DOOR_CLOSE,0))
         controlled, raw = Detector(p,T0), Detector(p,T0)
         for second in range(181):

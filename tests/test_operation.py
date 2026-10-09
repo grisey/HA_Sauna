@@ -23,6 +23,7 @@ class OperationTests(unittest.TestCase):
         return self.controller.process(event(key, kind, second))
 
     def start_gang(self):
+        self.send("entry-open", Kind.DOOR_OPEN, 9)
         self.send("close", Kind.DOOR_CLOSE, 10)
         self.send("person", Kind.PERSON_STRONG, 20)
 
@@ -88,14 +89,15 @@ class OperationTests(unittest.TestCase):
         self.assertIsNone(self.controller.session.timeline.active)
         self.assertNotIn("confirmation", [d.purpose for d in self.controller.session.deadlines])
         self.send("late-infusion", Kind.INFUSION, 80)
-        gang = self.controller.session.timeline.active
-        self.assertEqual(gang.started_at, at(10))
-        self.assertEqual(gang.detected_at, at(80))
-        self.assertEqual(gang.confirmed_at, at(80))
-        self.assertEqual(gang.start_source_event_id, "close")
+        self.assertIsNone(self.controller.session.timeline.active)
         self.assertEqual(self.controller.session.timeline.gang_count, 0)
+        self.send("new-entry-open", Kind.DOOR_OPEN, 81)
+        self.send("new-entry-close", Kind.DOOR_CLOSE, 82)
+        self.send("new-infusion", Kind.INFUSION, 83)
+        self.assertEqual(self.controller.session.timeline.active.started_at, at(82))
 
     def test_late_person_gets_only_remaining_time(self):
+        self.send("entry-open", Kind.DOOR_OPEN, 9)
         self.send("close", Kind.DOOR_CLOSE, 10)
         self.send("person", Kind.PERSON_STRONG, 68)
         deadline = self.controller.session.deadlines[0]
@@ -104,6 +106,7 @@ class OperationTests(unittest.TestCase):
         self.assertIsNone(self.controller.session.timeline.active)
 
     def test_person_recognized_after_deadline_is_immediately_retracted(self):
+        self.send("entry-open", Kind.DOOR_OPEN, 9)
         self.send("close", Kind.DOOR_CLOSE, 10)
         self.send("person", Kind.PERSON_STRONG, 80)
         self.assertIsNone(self.controller.session.timeline.active)
@@ -116,6 +119,8 @@ class OperationTests(unittest.TestCase):
         self.assertIsNone(self.controller.session.timeline.active)
         self.assertEqual(self.controller.session.timeline.completed, ())
         self.assertEqual(self.controller.session.deadlines, ())
+        self.send("exit-close", Kind.DOOR_CLOSE, 38)
+        self.send("entry-open2", Kind.DOOR_OPEN, 39)
         self.send("close2", Kind.DOOR_CLOSE, 40)
         self.send("person2", Kind.PERSON_WEAK, 45)
         self.assertEqual(self.controller.session.timeline.active.started_at, at(40))

@@ -30,7 +30,7 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
         c.set_temperature(80, T0)
         c.begin_session(identity, T0)
         if confirmed:
-            for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+            for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
                 c.process(event(kind.value, kind, 0, session=identity))
         return c
 

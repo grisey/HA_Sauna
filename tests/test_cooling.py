@@ -26,6 +26,7 @@ def controller(**overrides):
 
 class CoolingTests(unittest.TestCase):
     def start(self, c):
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.process(event("infusion", Kind.INFUSION, 3))
@@ -38,6 +39,7 @@ class CoolingTests(unittest.TestCase):
 
     def test_provisional_retraction_has_no_after_run_or_count(self):
         c = controller(confirmation_minutes=1)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.set_temperature(90, at(3))
@@ -68,6 +70,7 @@ class CoolingTests(unittest.TestCase):
         c = controller()
         c.set_temperature(80, at(1))
         self.assertIsNotNone(c.session.ready_at)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         c.process(event("close", Kind.DOOR_CLOSE, 2))
         c.process(event("person", Kind.PERSON_STRONG, 3))
         self.assertIsNotNone(c.session.ready_at)  # Vorläufige Erkennung rollt zurück.
@@ -111,6 +114,7 @@ class CoolingTests(unittest.TestCase):
         self.assertEqual(c.completed_sessions[-1].timeline.gang_count, 0)
         c.set_operation(True, at(100), session_id="s2")
         self.assertEqual(c.session.session_id, "s2")
+        c.process(event("entry-open", Kind.DOOR_OPEN, 100, session="s2"))
         c.process(event("close", Kind.DOOR_CLOSE, 101, session="s2"))
         c.process(event("infusion", Kind.INFUSION, 102, session="s2"))
         c.set_operation(False, at(120))
@@ -130,6 +134,9 @@ class CoolingTests(unittest.TestCase):
         self.assertEqual(c.phase, "bereit")
         for index, expected in enumerate((85, 90, 95, 95, 95, 95)):
             start=10+index*20
+            if index:
+                c.process(event(f"previous-exit-close{index}", Kind.DOOR_CLOSE, start-2))
+            c.process(event(f"entry-open{index}", Kind.DOOR_OPEN, start-1))
             c.process(event(f"close{index}", Kind.DOOR_CLOSE, start))
             c.process(event(f"infusion{index}", Kind.INFUSION, start+1))
             c.process(event(f"open{index}", Kind.DOOR_OPEN, start+2))
@@ -154,6 +161,7 @@ class CoolingTests(unittest.TestCase):
 
     def test_retracted_gang_does_not_increase_target(self):
         c = controller(final_temperature_c=95)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.process(event("open", Kind.DOOR_OPEN, 3))

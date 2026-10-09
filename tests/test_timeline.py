@@ -74,19 +74,22 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(state.active.recognition_kind, Kind.INFUSION)
 
     def test_infusion_does_not_require_preparation(self):
-        closed = apply(self.empty, e("c", Kind.DOOR_CLOSE, "21:15:51"))
+        opened = apply(self.empty, e("o", Kind.DOOR_OPEN, "21:15:00"))
+        closed = apply(opened, e("c", Kind.DOOR_CLOSE, "21:15:51"))
         state = apply(closed, e("water", Kind.INFUSION, "21:22:52"))
         self.assertEqual(state.active.confirmation, Confirmation.CONFIRMED)
         self.assertIsNone(state.active.preparation_event_id)
 
     def test_strong_signal_is_provisional_without_preparation(self):
-        closed = apply(self.empty, e("c", Kind.DOOR_CLOSE, "21:15:51"))
+        opened = apply(self.empty, e("o", Kind.DOOR_OPEN, "21:15:00"))
+        closed = apply(opened, e("c", Kind.DOOR_CLOSE, "21:15:51"))
         state = apply(closed, e("p", Kind.PERSON_STRONG, "21:19:15"))
         self.assertEqual(state.active.confirmation, Confirmation.PROVISIONAL)
         self.assertIsNone(state.active.preparation_event_id)
 
     def test_weak_start_uses_close_anchor_without_preparation(self):
-        closed = apply(self.empty, e("c", Kind.DOOR_CLOSE, "21:15:51"))
+        opened = apply(self.empty, e("o", Kind.DOOR_OPEN, "21:15:00"))
+        closed = apply(opened, e("c", Kind.DOOR_CLOSE, "21:15:51"))
         state = apply(closed, self.person)
         self.assertEqual(state.active.start_source_event_id, "c")
         self.assertIsNone(state.active.preparation_event_id)
@@ -148,12 +151,24 @@ class TimelineTests(unittest.TestCase):
         state = apply(state, vent)
         self.assertIsNone(state.active)
         self.assertEqual(len(state.completed), 1)
-        self.assertEqual(state.completed[0].ended_at, t("21:28:25"))
+        self.assertEqual(state.completed[0].ended_at, vent.booking_at)
+        self.assertEqual(state.completed[0].end_event_id, vent.event_id)
         self.assertEqual(state.completed[0].confirmation, Confirmation.CONFIRMED)
         self.assertIs(apply(state, vent), state)
         again = apply(state, e("vent-again", Kind.VENTILATION, "21:28:30"))
         self.assertEqual(again.completed, state.completed)
         self.assertEqual(again.open_ventilation, vent)
+        close = e("exit-close", Kind.DOOR_CLOSE, "21:29:00", "21:28:50")
+        state = apply(again, close)
+        self.assertIsNone(state.active)
+        self.assertEqual(len(state.completed), 1)
+        self.assertEqual(state.completed[0].ended_at, vent.booking_at)
+        self.assertIs(apply(state, close), state)
+        self.assertIn(vent, state.processed)
+        self.assertFalse(state.entry_cycle_available)
+        for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                apply(state, e("reuse", kind, "21:29:01"))
 
     def test_repeated_infusion_keeps_first_confirmation_time(self):
         state = apply(self.active, e("w1", Kind.INFUSION, "21:22:52"))
@@ -204,11 +219,33 @@ class TimelineTests(unittest.TestCase):
             with self.subTest(door=state.door), self.assertRaises(ValueError):
                 apply(state, self.person)
 
-    def test_no_fabricated_closure_when_anchor_missing(self):
+    def test_every_proxy_start_requires_both_door_edges(self):
         known_closed = Timeline("s", t("18:55:42"), door=Door.CLOSED)
-        state = apply(known_closed, e("p", Kind.PERSON_STRONG, "21:19:15"))
-        self.assertEqual(state.active.started_at, t("21:19:15"))
-        self.assertEqual(state.active.start_basis, "recognition_only")
+        bare_close = apply(self.empty, e("close-only", Kind.DOOR_CLOSE, "21:15:00"))
+        opened = apply(self.empty, e("open-only", Kind.DOOR_OPEN, "21:15:00"))
+        for state in (self.empty, known_closed, bare_close, opened):
+            for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+                with self.subTest(door=state.door, kind=kind), self.assertRaises(ValueError):
+                    apply(state, e("signal", kind, "21:19:15"))
+
+    def test_expired_entry_and_intervening_door_cycle_cannot_be_reused(self):
+        for close_before_expiry in (False, True):
+            with self.subTest(close_before_expiry=close_before_expiry):
+                state = apply(self.active, e("o", Kind.DOOR_OPEN, "21:20:00"))
+                if close_before_expiry:
+                    state = apply(state, e("c", Kind.DOOR_CLOSE, "21:20:10"))
+                state = apply(state, e("expire", Kind.CONFIRMATION_EXPIRED, "21:20:20"))
+                if not close_before_expiry:
+                    state = apply(state, e("c", Kind.DOOR_CLOSE, "21:20:30"))
+                self.assertIsNone(state.active)
+                self.assertFalse(state.entry_cycle_available)
+                for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+                    with self.subTest(kind=kind), self.assertRaises(ValueError):
+                        apply(state, e("reuse", kind, "21:20:40"))
+                state = apply(state, e("new-o", Kind.DOOR_OPEN, "21:21:00"))
+                state = apply(state, e("new-c", Kind.DOOR_CLOSE, "21:21:10"))
+                state = apply(state, e("new-water", Kind.INFUSION, "21:21:20"))
+                self.assertEqual(state.active.started_at, t("21:21:10"))
 
     def test_new_opening_replaces_unconsumed_start_anchor(self):
         state = apply(self.closed, e("o", Kind.DOOR_OPEN, "21:16:00"))
@@ -217,21 +254,23 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(state.active.started_at, t("21:17:00"))
 
     def test_effective_closure_differs_from_its_confirmation(self):
-        state = apply(self.empty, e("close", Kind.DOOR_CLOSE, "21:15:51", "21:15:49"))
+        state = apply(self.empty, e("open", Kind.DOOR_OPEN, "21:15:00"))
+        state = apply(state, e("close", Kind.DOOR_CLOSE, "21:15:51", "21:15:49"))
         state = apply(state, e("p", Kind.PERSON_STRONG, "21:19:15"))
         self.assertEqual(state.active.started_at, t("21:15:49"))
-        self.assertEqual(state.processed[0].detected_at, t("21:15:51"))
+        self.assertEqual(state.processed[1].detected_at, t("21:15:51"))
 
     def test_no_historical_activation(self):
         with self.assertRaises(ValueError):
             self.active.active.elapsed_seconds(t("21:18:00"))
 
     def test_booking_orders_catchup_without_rewriting_real_detection(self):
-        state = Timeline("s", t("18:55:42"), door=Door.CLOSED)
+        state = apply(self.empty, e("open", Kind.DOOR_OPEN, "21:15:00"))
+        state = apply(state, e("close", Kind.DOOR_CLOSE, "21:15:05"))
         infusion = Event("water-late", "s", Kind.INFUSION,
                          t("21:15:10"), t("21:15:50"), t("21:15:17"))
         state = apply(state, infusion)
-        self.assertEqual(state.active.started_at, t("21:15:17"))
+        self.assertEqual(state.active.started_at, t("21:15:05"))
         self.assertEqual(state.active.detected_at, t("21:15:50"))
         self.assertEqual(state.active.confirmed_at, t("21:15:50"))
         with self.assertRaises(ValueError):
@@ -240,7 +279,7 @@ class TimelineTests(unittest.TestCase):
                                   t("21:15:28"), t("21:15:51"), t("21:15:28")))
         self.assertEqual(state.gang_count, 1)
         self.assertEqual(state.completed[0].ended_at, t("21:15:28"))
-        self.assertEqual(state.completed[0].elapsed_seconds(t("21:15:51")), 11)
+        self.assertEqual(state.completed[0].elapsed_seconds(t("21:15:51")), 23)
         with self.assertRaises(ValueError):
             apply(state, Event("backwards", "s", Kind.INFUSION,
                                t("21:15:20"), t("21:15:52"), t("21:15:27")))
@@ -261,6 +300,8 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(result.gang_count, 0)
         self.assertEqual(result.retracted, (self.active.active,))
         self.assertIsNotNone(result.open_ventilation)
+        result = apply(result, e("c", Kind.DOOR_CLOSE, "21:28:30"))
+        self.assertFalse(result.entry_cycle_available)
 
     def test_ventilation_requires_an_open_episode(self):
         with self.assertRaises(ValueError):

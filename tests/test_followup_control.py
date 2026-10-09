@@ -59,6 +59,7 @@ class FollowupControlTests(unittest.TestCase):
 
     def test_gang_heat_demand_starts_and_retraction_releases_it(self):
         c = controller(90, confirmation_minutes=1, minimum_heating_minutes=0)
+        c.process(ev(Kind.DOOR_OPEN, 1))
         c.process(ev(Kind.DOOR_CLOSE, 1))
         person = ev(Kind.PERSON_STRONG, 2)
         c.process_presence(ProxyPresenceSource.present(person), person)
@@ -78,6 +79,7 @@ class FollowupControlTests(unittest.TestCase):
         c = controller(90, minimum_heating_minutes=0)
         c.set_heater_override(True, at(1))
         c.report_heating(True, at(2))
+        c.process(ev(Kind.DOOR_OPEN, 3))
         c.process(ev(Kind.DOOR_CLOSE, 3))
         c.process(ev(Kind.PERSON_STRONG, 4))
         self.assertIsNone(c.heater_override)
@@ -100,6 +102,7 @@ class FollowupControlTests(unittest.TestCase):
 
     def test_retracted_candidate_restores_all_background_and_preserves_actual_track(self):
         c = controller(70, confirmation_minutes=1, minimum_heating_minutes=0)
+        c.process(ev(Kind.DOOR_OPEN, 5))
         c.process(ev(Kind.DOOR_CLOSE, 5))
         c.process(ev(Kind.PERSON_STRONG, 10, effective=8))
         c.set_temperature(80, at(20))
@@ -119,6 +122,7 @@ class FollowupControlTests(unittest.TestCase):
 
     def test_backdated_confirmed_gang_has_no_overlap_or_historical_switch(self):
         c = controller(70)
+        c.process(ev(Kind.DOOR_OPEN, 5))
         c.process(ev(Kind.DOOR_CLOSE, 5))
         c.process(ev(Kind.PERSON_STRONG, 20, effective=10))
         c.process(ev(Kind.INFUSION, 25))
@@ -171,6 +175,7 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
         for quantity, value in ((Quantity.TEMPERATURE, 90), (Quantity.HUMIDITY, 20)):
             runtime.detector.accept(measurement(Position.UPPER, quantity, value, 0))
         now = at(1)
+        await runtime.receive(ev(Kind.DOOR_OPEN, 1))
         await runtime.receive(ev(Kind.DOOR_CLOSE, 1))
         now = at(2)
         event = ev(Kind.PERSON_STRONG, 2)
@@ -191,6 +196,7 @@ class PresenceRuntimeTests(unittest.IsolatedAsyncioTestCase):
         runtime.controller.set_temperature(90, now)
         await runtime.begin_session("s")
         now = at(1)
+        await runtime.receive(ev(Kind.DOOR_OPEN, 1))
         await runtime.receive(ev(Kind.DOOR_CLOSE, 1))
         now = at(2)
         event = ev(Kind.PERSON_STRONG, 2)
