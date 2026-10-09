@@ -3516,10 +3516,9 @@ class SaunaPanel extends HTMLElement {
         background: transparent;
         color: var(--danger-text);
       }
-      .control-start-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--sauna-control-gap); }
-      .control-start-row .operation-control { flex: 1 1 9rem; }
-      .control-start-row .operation-control > button { height: 100%; }
-      .control-start-row .control-mode { flex: 0 0 auto; max-width: 100%; }
+      .control-status-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sauna-control-gap); margin-bottom: var(--sauna-control-gap); }
+      .control-status-row .state-line { flex: 1 1 auto; min-width: 0; }
+      .control-status-row .control-mode { flex: 0 0 auto; max-width: 100%; }
       .manual-controls {
         margin-top: 16px;
       }
@@ -5436,12 +5435,11 @@ class SaunaPanel extends HTMLElement {
     const roundCount = ["temperature", "humidity", "light"].filter(
       (key) => this.instrumentStyle(key) === "round",
     ).length;
-    const actions = modeControls
-      ? `<div class="control-start-row">${operation}${modeControls}</div>`
-      : operation
-        ? `<div class="tiles">${operation}</div>`
-        : "";
-    return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
+    const status = modeControls
+      ? `<div class="control-status-row">${stateLine}${modeControls}</div>`
+      : stateLine;
+    const actions = operation ? `<div class="tiles">${operation}</div>` : "";
+    return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${status}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
     const {
