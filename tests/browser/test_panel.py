@@ -1778,11 +1778,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_return_to_auto_clears_overrides_while_outputs_and_session_stay_on(self):
         from custom_components.ha_sauna.settings import async_set_parameters
 
+        previous_runtime = self.runtime
         await async_set_parameters(self.hass, self.entry, {"light_transition_seconds": 0}, partial=True)
+        # Non-temperature options schedule an HA options-listener reload. Bind
+        # the replacement only after HA has finished that asynchronous work.
+        await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
+        self.assertIsNot(self.runtime, previous_runtime)
+        self.assertFalse(self.runtime.closed or self.runtime.reconfiguring)
+        self.assertEqual(self.runtime.configuration.parameters.values["light_transition_seconds"], 0)
+        self.base = self.now = self.runtime._clock()
+        self.runtime._clock = lambda: self.now
         await self.panel.evaluate("p => p.refresh()")
-        await self.panel.locator('#current [data-action="operation"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
+            await self.panel.locator('#current [data-action="operation"]').click()
+        self.assertTrue((await started.value).ok)
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
+        self.assertIs(self.runtime, self.entry.runtime_data)
         identity = self.runtime.session.session_id
         phase = self.runtime.controller.phase
         for output in ("heater", "light"):

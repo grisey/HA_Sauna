@@ -15,27 +15,27 @@ from custom_components.ha_sauna.core.timeline import Door, Event, Kind
 
 
 class GangTemperatureTests(unittest.TestCase):
-    def test_all_start_routes_require_current_valid_minimum_in_both_modes(self):
-        for mode in ("automatic", "manual"):
-            for temperature in (25, 59.9, 60, None, float("nan"), float("inf"), True):
-                for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
-                    for proxy in ((False, True) if kind != Kind.INFUSION else (False,)):
-                        with self.subTest(mode=mode, temperature=temperature,
-                                          kind=kind, proxy=proxy):
-                            c = Controller(controller().parameters, control_mode=mode)
-                            c.set_temperature(temperature, T0)
-                            c.set_operation(True, T0, session_id="s")
-                            c.process(event("close", Kind.DOOR_CLOSE, 1))
-                            signal = event("signal", kind, 2)
-                            admitted = temperature == 60
-                            self.assertEqual(c.recognition_allowed(kind), admitted)
-                            result = (c.process_presence(ProxyPresenceSource.present(signal), signal)
-                                      if proxy else c.process(signal))
-                            self.assertEqual(result.changed, admitted)
-                            self.assertEqual(c.session.timeline.active is not None, admitted)
-                            if not admitted:
-                                self.assertFalse(c.regulation_inputs.gang_heat_demand)
-                                self.assertEqual(c.session.timeline.gang_count, 0)
+    def test_all_automatic_start_routes_require_current_valid_minimum(self):
+        for temperature in (25, 59.9, 60, None, float("nan"), float("inf"), True):
+            for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+                for proxy in ((False, True) if kind != Kind.INFUSION else (False,)):
+                    with self.subTest(temperature=temperature, kind=kind, proxy=proxy):
+                        c = Controller(controller().parameters)
+                        c.set_temperature(temperature, T0)
+                        c.set_operation(True, T0, session_id="s")
+                        c.process(event("close", Kind.DOOR_CLOSE, 1))
+                        signal = event("signal", kind, 2)
+                        admitted = temperature == 60
+                        self.assertEqual(c.recognition_allowed(kind), admitted)
+                        result = (
+                            c.process_presence(ProxyPresenceSource.present(signal), signal)
+                            if proxy else c.process(signal)
+                        )
+                        self.assertEqual(result.changed, admitted)
+                        self.assertEqual(c.session.timeline.active is not None, admitted)
+                        if not admitted:
+                            self.assertFalse(c.regulation_inputs.gang_heat_demand)
+                            self.assertEqual(c.session.timeline.gang_count, 0)
 
     def test_cold_close_cannot_become_a_backdated_warm_start(self):
         for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):

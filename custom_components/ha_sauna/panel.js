@@ -5177,7 +5177,7 @@ class SaunaPanel extends HTMLElement {
       "#current",
       this.renderControlView({
         modeControls,
-        stateLine,
+        stateLine: manualMode ? "" : stateLine,
         overviewLightTimer,
         operation,
         temperatureAutomation,
