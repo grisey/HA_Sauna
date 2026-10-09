@@ -179,6 +179,14 @@ test("light feedback never substitutes a selected value or a draft for unavailab
       assert.match(observed, /data-light-arc[^>]*aria-disabled="true"/);
       assert.match(observed, /data-light-arc[^>]*aria-valuenow="43"/);
     }
+    p.manualLightDraft = null;
+    p.state.manual_controls.light.observation.available = false;
+    const unavailable = p.lightInstrument(dial, true);
+    assert.ok(unavailable.includes("Rückmeldung fehlt"));
+    assert.match(
+      unavailable,
+      style === "linear" ? /<input[^>]*value="0"/ : /aria-valuenow="0"/,
+    );
   }
 });
 
@@ -215,6 +223,99 @@ const pointer = (pointerId, clientX, clientY) => ({
   clientX,
   clientY,
   preventDefault() {},
+});
+
+test("light status refresh moves both controls with external feedback instead of retained plans", async () => {
+  for (const style of ["linear", "round"]) {
+    const { p } = lightPanel(),
+      rendered = [];
+    p.state.appearance.instruments = { light: style };
+    p.state.manual_controls.light.manual = 100;
+    p.state.manual_controls.light.automatic = 100;
+    p.isConnected = true;
+    p.$ = (selector) => (selector === "#history" ? { hidden: true } : null);
+    p.syncHistoryProjection = () => {};
+    p.syncNavigation = () => {};
+    p.message = () => {};
+    p.scheduleRefresh = () => {};
+    p.drawCurrent = () => {
+      let reading;
+      const html = p.lightInstrument((...args) => {
+        reading = args[0];
+        return `<svg>${args[6]}</svg>`;
+      }, true);
+      rendered.push({ html, reading });
+    };
+    for (const brightness of [100, 0, 37]) {
+      const response = clone(p.state);
+      response.manual_controls.light.observation.brightness_percent = brightness;
+      p.api = async (path) => {
+        assert.equal(path, "/instrument-test/state");
+        return response;
+      };
+      await Panel.prototype.refresh.call(p);
+      const { html, reading } = rendered.at(-1);
+      assert.equal(rendered.length, [100, 0, 37].indexOf(brightness) + 1);
+      if (style === "linear") {
+        assert.match(html, new RegExp(`<input[^>]*value="${brightness}"`));
+        assert.match(
+          readout(html, "data-light-observation"),
+          new RegExp(`^${brightness} `),
+        );
+      } else {
+        assert.equal(reading, brightness);
+        assert.match(html, new RegExp(`aria-valuenow="${brightness}"`));
+        const point = p.temperatureArcPoint(brightness, {
+          minimum: 0,
+          maximum: 100,
+        });
+        assert.ok(html.includes(`cx="${point.x}" cy="${point.y}"`));
+      }
+      assert.equal(p.lightTargetValue(), brightness);
+    }
+  }
+});
+
+test("zero light feedback removes the colored progress arc while retaining its control handle", () => {
+  const { p } = lightPanel(),
+    nodes = new Map();
+  p.state.appearance.instruments = { light: "round" };
+  Object.assign(p.state, {
+    now: "2026-09-20T12:00:00Z",
+    parameters: [
+      { key: "target_temperature_c", minimum: 30, maximum: 100, integer: false },
+    ],
+    measurements: [],
+    measurement_status: {},
+    issues: [],
+    start_errors: [],
+    phase: "manuell",
+    gang_count: 0,
+    target_temperature: 80,
+  });
+  p.state.configuration.program_mode = "constant";
+  p.state.configuration.parameters.preset_count = 0;
+  p.$ = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "" });
+    return nodes.get(selector);
+  };
+  for (const brightness of [100, 0]) {
+    p.state.manual_controls.light.observation.brightness_percent = brightness;
+    Panel.prototype.drawCurrent.call(p);
+    const html = nodes
+      .get("#current")
+      .innerHTML.match(/<section class="light-instrument[\s\S]*?<\/section>/)?.[0];
+    assert.ok(html);
+    if (brightness > 0) assert.match(html, /class="instrument-value-arc"/);
+    else assert.doesNotMatch(html, /class="instrument-value-arc"/);
+    assert.match(html, new RegExp(`aria-valuenow="${brightness}"`));
+    const point = p.temperatureArcPoint(brightness, { minimum: 0, maximum: 100 });
+    assert.ok(
+      html.includes(
+        `class="instrument-arc-handle" data-light-arc="true" cx="${point.x}" cy="${point.y}"`,
+      ),
+    );
+  }
 });
 
 test("light arc shares endpoint geometry and sends only the final pointer selection", async () => {
@@ -261,7 +362,7 @@ test("light keyboard uses configured steps, bounds and actual-value no-op", asyn
     await p.keyLightTarget({ key, preventDefault() {} });
     assert.equal(
       calls[0][2].value,
-      Math.max(0, Math.min(100, Math.round(50 + offset * step))),
+      Math.max(0, Math.min(100, Math.round(20 + offset * step))),
     );
     assert.equal(p.lightInteraction, null);
   }
@@ -285,6 +386,40 @@ test("light keyboard uses configured steps, bounds and actual-value no-op", asyn
   assert.equal(calls.length, before, "actual brightness and already-on are no-ops");
   await p.submitLight(null);
   assert.equal(calls.at(-1)[2].value, null, "return to automatic remains a command");
+});
+
+test("failed light gesture releases its draft and returns to observed brightness", async () => {
+  const { p, svg, captures } = lightPanel(),
+    failure = new Error("light command failed"),
+    rendered = [];
+  p.api = async () => {
+    throw failure;
+  };
+  p.drawCurrent = () => rendered.push(p.lightTargetValue());
+  p.beginLightDrag(pointer(3, 224.25, 204.25), svg);
+  assert.equal(p.lightTargetValue(), 100);
+  await assert.rejects(p.endLightDrag({ pointerId: 3 }), failure);
+  assert.equal(p.lightInteraction, null);
+  assert.equal(p.manualLightDraft, null);
+  assert.equal(captures.size, 0);
+  assert.equal(rendered.at(-1), 20);
+});
+
+test("failed older light request cannot discard a newer edit", async () => {
+  const { p } = lightPanel();
+  let reject;
+  p.api = () =>
+    new Promise((_, fail) => {
+      reject = fail;
+    });
+  p.manualLightDraft = "40";
+  p.manualLightRevision = 1;
+  const request = p.submitLight(40);
+  p.manualLightDraft = "80";
+  p.manualLightRevision++;
+  reject(new Error("older command failed"));
+  await assert.rejects(request, /older command failed/);
+  assert.equal(p.manualLightDraft, "80");
 });
 
 test("linear target completion cannot clear newer drafts or another entry", async () => {

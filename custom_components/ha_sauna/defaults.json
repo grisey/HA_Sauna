@@ -1239,46 +1239,46 @@
   ],
   "programs": [
     {
-      "id": "genusszeit",
-      "name": "Genusszeit",
-      "start_c": 80.0,
-      "end_c": 90.0,
+      "id": "schnellstarter",
+      "name": "Schnellstarter",
+      "start_c": 60.0,
+      "end_c": 80.0,
       "distribution_gangs": 3
-    },
-    {
-      "id": "ewigkeit",
-      "name": "Ewigkeit",
-      "start_c": 80.0,
-      "end_c": 92.0,
-      "distribution_gangs": 5
     },
     {
       "id": "liegewiese",
       "name": "Liegewiese",
       "start_c": 75.0,
-      "end_c": 85.0,
+      "end_c": 80.0,
       "distribution_gangs": 3
     },
     {
-      "id": "schnellstarter",
-      "name": "Schnellstarter",
-      "start_c": 70.0,
+      "id": "genusszeit",
+      "name": "Genusszeit",
+      "start_c": 80.0,
       "end_c": 90.0,
-      "distribution_gangs": 2
+      "distribution_gangs": 4
+    },
+    {
+      "id": "ewigkeit",
+      "name": "Ewigkeit",
+      "start_c": 80.0,
+      "end_c": 95.0,
+      "distribution_gangs": 6
     },
     {
       "id": "gipfelstuermer",
       "name": "Gipfelstürmer",
-      "start_c": 84.0,
+      "start_c": 85.0,
       "end_c": 100.0,
       "distribution_gangs": 3
     },
     {
       "id": "hoehenwanderung",
       "name": "Höhenwanderung",
-      "start_c": 88.0,
-      "end_c": 98.0,
-      "distribution_gangs": 4
+      "start_c": 85.0,
+      "end_c": 95.0,
+      "distribution_gangs": 5
     }
   ],
   "instance": {
