@@ -1390,6 +1390,18 @@
         "default": "#A3453C"
       },
       {
+        "id": "ui_feedback_on",
+        "label": "Rückmeldung: Ein",
+        "group": "Bedienung",
+        "default": "#63B6A4"
+      },
+      {
+        "id": "ui_feedback_off",
+        "label": "Rückmeldung: Aus",
+        "group": "Bedienung",
+        "default": "#879BA7"
+      },
+      {
         "id": "ui_heater_on",
         "label": "Heizung ein",
         "group": "Bedienung",
@@ -1505,6 +1517,13 @@
         "label": "Luftfeuchte",
         "group": "Messungen und Ereignisse",
         "default": "#6BA4BF",
+        "featured": true
+      },
+      {
+        "id": "series_light",
+        "label": "Lichthelligkeit",
+        "group": "Messungen und Ereignisse",
+        "default": "#C4BC68",
         "featured": true
       },
       {

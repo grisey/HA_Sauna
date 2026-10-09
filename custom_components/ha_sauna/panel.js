@@ -1881,6 +1881,16 @@ class SaunaPanel extends HTMLElement {
       if (ink) style.setProperty(`--sauna-ink-${role.replaceAll("_", "-")}`, ink);
     }
     const accent = this.appearanceColor("ui_accent");
+    for (const state of ["on", "off"]) {
+      const color = this.appearanceColor(`ui_feedback_${state}`);
+      if (color) {
+        style.setProperty(`--sauna-feedback-${state}-ink`, appearanceContrast(color));
+        style.setProperty(
+          `--sauna-feedback-${state}-focus`,
+          readable(proposedFocus, color, 3),
+        );
+      }
+    }
     if (accent) {
       style.setProperty("--sauna-accent-ink", appearanceContrast(accent));
       const readableAccent = readable(accent, surfaces.card, 4.5);
@@ -2848,9 +2858,10 @@ class SaunaPanel extends HTMLElement {
       .history-event-items .event-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
       .history-event-items .event-row + .event-row { border-top: 1px solid var(--sauna-color-border); }
       .history-event-items .event-row button { flex: 0 0 auto; }
+      .control-overview { max-width: 1280px; margin-inline: auto; }
       .dashboard {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-columns: minmax(300px, 2fr) minmax(0, 3fr);
         gap: var(--sauna-surface-gap);
         max-width: 1280px;
         margin: 0 auto;
@@ -3502,8 +3513,9 @@ class SaunaPanel extends HTMLElement {
       }
       .control-mode-card {
         padding: 12px 16px;
-        margin: 10px auto;
-        max-width: 1280px;
+        margin: 10px 0;
+        width: fit-content;
+        max-width: 100%;
       }
       .control-mode-card .row {
         justify-content: center;
@@ -3849,6 +3861,9 @@ class SaunaPanel extends HTMLElement {
       .control-auto button { width: 100%; }
       .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
       .output-toggle button { width: 100%; }
+      .output-toggle button[data-action$=":true"] { --output-color: var(--sauna-color-ui-feedback-on); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
+      .output-toggle button[data-action$=":false"] { --output-color: var(--sauna-color-ui-feedback-off); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
+      .output-toggle button[aria-pressed="true"] { background: var(--output-color); border-color: var(--output-color); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
       .instrument-arc-track[aria-disabled="true"], .instrument-arc-track[aria-disabled="true"] + .instrument-arc-handle { cursor: default; }
       .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .control-history-lanes { min-width: 660px; }
@@ -3875,8 +3890,9 @@ class SaunaPanel extends HTMLElement {
       @media (max-width: 700px) { .control-history-inspection { grid-template-columns: 1fr; gap: 12px; } }
       .gauge-card { padding: 26px 20px 20px; }
       .gauge-card h2 { font-size: 13px; font-weight: 500; letter-spacing: .035em; color: var(--sauna-card-muted-text); margin-bottom: 10px; }
-      .gauges { gap: 18px; }
-      .gauges > div { min-width: 0; }
+      .gauges { gap: 18px; grid-template-columns: repeat(var(--round-count, 3), minmax(0, 1fr)); align-items: start; }
+      .gauges > * { min-width: 0; }
+      .gauges > [data-instrument-style="linear"] { grid-column: 1 / -1; }
       .dial { width: 100%; max-width: 280px; }
       .instrument-face { stroke: var(--sauna-color-border, var(--divider-color)); stroke-width: .7; filter: drop-shadow(0 3px 3px rgb(0 0 0 / .25)); }
       .instrument-rim { fill: none; stroke-width: 1; pointer-events: none; }
@@ -3889,19 +3905,19 @@ class SaunaPanel extends HTMLElement {
       .dial .tick { font-size: 11px; font-weight: 450; opacity: .85; }
       .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) 12%, transparent); stroke: var(--measurement-color); stroke-width: 1.2; opacity: .75; }
       .light-symbol { fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
+      .light-instrument { --accent: var(--sauna-color-series-light); }
       .measurement-instrument { min-width: 0; text-align: center; }
-      .instrument-supplements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--sauna-surface-gap); margin-top: var(--sauna-surface-gap); }
-      .instrument-supplements:not(:has(.weather-instrument)) { grid-template-columns: minmax(0, 280px); justify-content: center; }
-      .instrument-supplements > section { min-width: 0; }
       .linear-instrument { padding: 16px 20px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-recessed); box-shadow: var(--sauna-shadow-section); }
       .linear-reading { margin: 0 0 22px; font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; line-height: 1.25; }
       .linear-reading > span { font-size: 15px; font-weight: 400; letter-spacing: 0; }
-      .linear-scale { margin-bottom: 25px; }
-      .linear-rail { height: 8px; border-radius: 10px; background: var(--sauna-color-border); overflow: hidden; }
+      .linear-scale { display: grid; grid-template-areas: "track" "ticks" "caption"; grid-template-columns: minmax(0, 1fr); align-items: center; margin-bottom: 4px; }
+      .linear-rail { grid-area: track; height: 8px; border-radius: 10px; background: var(--sauna-color-border); overflow: hidden; }
       .linear-rail i { display: block; height: 100%; border-radius: inherit; background: var(--measurement-color); }
-      .linear-ticks { position: relative; height: 18px; margin-top: 6px; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
+      .linear-ticks { grid-area: ticks; position: relative; height: 18px; margin-top: 6px; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
       .linear-ticks span { position: absolute; transform: translateX(-50%); }
       .instrument-slider { margin: 4px auto 0; max-width: 240px; width: 100%; }
+      .linear-scale .instrument-slider { display: contents; }
+      .linear-scale .instrument-slider label { grid-area: caption; justify-content: center; gap: 8px; margin: 10px 0 0; }
       .instrument-slider label { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; color: var(--sauna-card-muted-text); font-size: 12px; }
       .instrument-slider output { color: var(--sauna-card-text); font-size: 14px; font-variant-numeric: tabular-nums; }
       input.instrument-range { display: block; appearance: none; box-sizing: border-box; width: 100%; max-width: none; min-width: 0; padding: 0; margin: 0; height: 28px; border: 0; background: transparent; cursor: pointer; }
@@ -3909,9 +3925,14 @@ class SaunaPanel extends HTMLElement {
       input.instrument-range::-webkit-slider-thumb { appearance: none; width: 17px; height: 17px; margin-top: -6px; border-radius: 50%; background: var(--accent); border: 2px solid var(--sauna-color-card-background); box-shadow: var(--sauna-shadow-control); }
       input.instrument-range::-moz-range-track { height: 5px; border-radius: 5px; background: var(--sauna-color-border); }
       input.instrument-range::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--accent); border: 2px solid var(--sauna-color-card-background); }
+      .linear-scale input.instrument-range { grid-area: track; z-index: 1; width: calc(100% + 17px); margin-inline: -8.5px; }
+      .linear-scale input.instrument-range::-webkit-slider-runnable-track { background: transparent; }
+      .linear-scale input.instrument-range::-moz-range-track { background: transparent; }
       input.instrument-range:disabled { opacity: .45; cursor: default; }
       .instrument-notice { display: block; margin-top: 5px; color: var(--sauna-card-muted-text); font-size: 12px; }
-      .weather-instrument { padding: 16px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
+      .weather-instrument { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 24px; align-items: center; margin-top: var(--sauna-surface-gap); padding: 16px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
+      .weather-heading { grid-column: 1 / -1; }
+      .weather-instrument time { grid-column: 1 / -1; }
       .weather-heading { display: flex; align-items: baseline; gap: 8px; }
       .weather-heading > span { color: var(--sauna-card-muted-text); font-size: 10px; letter-spacing: .08em; }
       .weather-heading h2 { margin: 0; font-size: 14px; color: var(--sauna-card-text); letter-spacing: 0; }
@@ -3931,8 +3952,7 @@ class SaunaPanel extends HTMLElement {
       .appearance-instruments select { width: 100%; min-width: 0; }
       @container (max-width: 450px) {
         .manual-controls:not(.manual-entry) { grid-template-columns: 1fr; gap: 0; }
-        .instrument-supplements { grid-template-columns: 1fr; gap: 20px; }
-        .light-instrument { width: 100%; max-width: 280px; justify-self: center; }
+        .gauges { grid-template-columns: minmax(0, 1fr); }
         .weather-instrument { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 8px 12px; padding: 12px; }
         .weather-heading, .weather-instrument time { grid-column: 1 / -1; }
         .weather-condition { flex-direction: column; gap: 0; align-self: center; margin: 0; }
@@ -5260,15 +5280,15 @@ class SaunaPanel extends HTMLElement {
           100,
       ),
     );
-    const color = key === "light" ? "ui_accent" : `series_${key}`;
-    return `<div class="linear-instrument" style="--measurement-color:${this.appearanceColor(valid ? color : "status_unknown")}"><div class="linear-reading" ${key === "light" ? "data-light-observation" : ""}>${num(reading, key === "light" ? 0 : 1)} <span>${unit}</span></div><div class="linear-scale" aria-hidden="true"><div class="linear-rail"><i style="width:${fraction}%"></i></div><div class="linear-ticks">${appearanceTickValues(
+    const color = `series_${key}`;
+    return `<div class="linear-instrument" style="--measurement-color:${this.appearanceColor(valid ? color : "status_unknown")}"><div class="linear-reading" ${key === "light" ? "data-light-observation" : ""}>${num(reading, key === "light" ? 0 : 1)} <span>${unit}</span></div><div class="linear-scale"><div class="linear-rail" aria-hidden="true"><i style="width:${fraction}%"></i></div><div class="linear-ticks" aria-hidden="true">${appearanceTickValues(
       bounds,
     )
       .map(
         (value) =>
           `<span style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${num(value)}</span>`,
       )
-      .join("")}</div></div>${control}</div>`;
+      .join("")}</div>${control}</div></div>`;
   }
   linearTargetControl(value, bounds) {
     if (!bounds) return "";
@@ -5313,19 +5333,20 @@ class SaunaPanel extends HTMLElement {
               unit: "%",
               bounds: { minimum: 0, maximum: 100 },
               valid: available,
+              control: `<div class="instrument-slider"><label for="manual-light-value-overview">Vorgabe <output data-light-target>${num(target, 0)} %</output></label><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div>`,
             })
           : dial(
               reading,
               "%",
               "Licht",
-              this.appearanceColor("ui_accent"),
+              this.appearanceColor("series_light"),
               100,
               available,
               arc,
               0,
               "light",
             );
-    return `<section class="light-instrument measurement-instrument" data-instrument="light" data-instrument-style="${style}"><h2>Licht</h2>${graphic}${style === "linear" ? `<div class="instrument-slider"><label for="manual-light-value-overview">Vorgabe <output data-light-target>${num(target, 0)} %</output></label><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div>` : ""}${available ? "" : '<small class="instrument-notice">Rückmeldung fehlt</small>'}</section>`;
+    return `<section class="light-instrument measurement-instrument" data-instrument="light" data-instrument-style="${style}"><h2>Licht</h2>${graphic}${available ? "" : '<small class="instrument-notice">Rückmeldung fehlt</small>'}</section>`;
   }
   weatherMarkup() {
     const environment = this.state.environment;
@@ -5402,7 +5423,10 @@ class SaunaPanel extends HTMLElement {
     const controls =
       manualEntry ||
       `<div class="manual-controls">${heaterControls}${lightControls}</div>`;
-    return `<div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div></div><div class="instrument-supplements">${weather}${lightGauge}</div></div></div>`;
+    const roundCount = ["temperature", "humidity", "light"].filter(
+      (key) => this.instrumentStyle(key) === "round",
+    ).length;
+    return `<div class="control-overview"><div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
     const {

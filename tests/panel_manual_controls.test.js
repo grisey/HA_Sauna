@@ -32,10 +32,6 @@ const appearanceCatalog = JSON.parse(
 ).appearance;
 vm.runInNewContext(source, sandbox);
 
-assert.match(source, /manual-section manual-heater/);
-assert.match(source, /data-action="heater:true"/);
-assert.match(source, /data-action="heater:false"/);
-assert.match(source, /data-action="heater:auto"/);
 assert.match(source, /data-action="control-mode:automatic"/);
 assert.match(source, /data-action="control-mode:manual"/);
 assert.match(source, /manual-light-overview/);

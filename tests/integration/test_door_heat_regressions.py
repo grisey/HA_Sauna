@@ -157,6 +157,11 @@ class DoorHeatRegressionTests(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         await self.event("open-before-off", Kind.DOOR_OPEN)
+        # OFF must change the reported relay state; an already-OFF selection
+        # intentionally creates no override and cannot invalidate this opening.
+        await self.runtime.set_heater_override(True)
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.heater.is_on)
         await self.runtime.set_heater_override(False)
         self.now += timedelta(seconds=61)
         await self.runtime.tick()

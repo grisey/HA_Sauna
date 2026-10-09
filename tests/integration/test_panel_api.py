@@ -869,7 +869,26 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/button-program", json={"profile": profile}) as response:
                 self.assertEqual(response.status, 403)
 
+    async def attach_reporting_heater(self):
+        """Use the shared real switch fixture where assertions depend on feedback."""
+        from homeassistant.setup import async_setup_component
+        from test_device_path import TestHeater
+
+        await async_setup_component(self.hass, "switch", {})
+        heater = TestHeater()
+        await self.hass.data["switch"].async_add_entities([heater])
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            options={
+                **self.entry.options,
+                "bindings": {**self.entry.options["bindings"], "heater": heater.entity_id},
+            },
+        )
+        await self.hass.async_block_till_done()
+        return heater
+
     async def test_standard_user_manual_controls_explicit_mode_and_override_active_session(self):
+        await self.attach_reporting_heater()
         user = await self.hass.auth.async_create_user(
             "Manual controller", group_ids=[GROUP_ID_USER]
         )
@@ -916,6 +935,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         """The normal HA user inherits control of the integration switch."""
         from datetime import UTC, datetime, timedelta
 
+        await self.attach_reporting_heater()
         user = await self.hass.auth.async_create_user("Standard user", group_ids=[GROUP_ID_USER])
         token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
         headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}

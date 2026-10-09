@@ -99,7 +99,7 @@ assert.equal(
 assert.equal(panel.clampArcTemperature(80.6, { minimum: 60, maximum: 100 }), 81);
 assert.match(
   source,
-  /\.target-temperature-track:focus\s*\{[^}]*opacity:\s*0\.35/s,
+  /\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*0\.35/s,
   "keyboard focus no longer turns the complete target arc opaque",
 );
 
