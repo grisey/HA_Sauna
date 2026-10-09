@@ -14,13 +14,21 @@ def at(minutes: float) -> datetime:
 
 
 def calculate(*, marks=(), pauses=(), now=20, start=0, **settings):
+    # Fixed synthetic policy for the analytic expectations below.
+    policy = {
+        "after_run_minutes": 5,
+        "oven_cooling_max_minutes": 15,
+        "oven_cooling_half_life_minutes": 15,
+        "oven_cooling_heat_idle_ratio": 2,
+        **settings,
+    }
     return calculate_oven_cooling(
         contactor_history=marks,
         readiness_pauses=pauses,
         session_started_at=T0,
         window_started_at=at(start),
         at=at(now),
-        **settings,
+        **policy,
     )
 
 

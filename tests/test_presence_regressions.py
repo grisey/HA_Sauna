@@ -3,7 +3,6 @@
 import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from dataclasses import replace
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -13,7 +12,7 @@ from custom_components.ha_sauna.core.button import END_HOLD
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource
-from custom_components.ha_sauna.core.timeline import Door, Event, Kind
+from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
@@ -64,6 +63,7 @@ class PresenceRegressionTests(unittest.TestCase):
             runtime.controller.begin_session("explicit-end", START)
             runtime.controller.set_temperature(75, START)
             runtime._sync_detector()
+            runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 1, "open"))
             runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 5, "close"))
             clock[0] = START + timedelta(seconds=10)
             runtime._process_event(_event(runtime, Kind.PERSON_STRONG, 10, "person"))
@@ -109,6 +109,7 @@ class PresenceRegressionTests(unittest.TestCase):
             runtime = _runtime(clock)
             runtime.controller.begin_session("failed-end", START)
             runtime.controller.set_temperature(75, START)
+            runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 1, "open"))
             runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 5, "close"))
             clock[0] = START + timedelta(seconds=10)
             runtime._process_event(_event(runtime, Kind.PERSON_STRONG, 10, "person"))
@@ -132,10 +133,8 @@ class PresenceRegressionTests(unittest.TestCase):
             runtime.controller.begin_session("batch", START)
             runtime.controller.set_temperature(75, START)
             runtime._sync_detector()
-            runtime.controller._session = replace(
-                runtime.session,
-                timeline=replace(runtime.session.timeline, door=Door.CLOSED),
-            )
+            runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 1, "old-open"))
+            runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 5, "old-close"))
             runtime._process_event(_event(runtime, Kind.PERSON_STRONG, 10, "old-person"))
             clock[0] = START + timedelta(seconds=10)
             runtime.notify()
@@ -185,7 +184,7 @@ class PresenceRegressionTests(unittest.TestCase):
             await runtime.start_archive(path, "entry")
             runtime.controller.begin_session("shutdown-gap", START)
             runtime.controller.set_temperature(80, START)
-            for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+            for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
                 runtime.controller.process(Event(kind.value, "shutdown-gap", kind, START, START))
             clock[0] = START + timedelta(seconds=1)
             runtime.controller.set_operation(False, clock[0])
@@ -232,10 +231,8 @@ class PresenceRegressionTests(unittest.TestCase):
             runtime.controller.begin_session("shutdown", START)
             runtime.controller.set_temperature(75, START)
             runtime._sync_detector()
-            runtime.controller._session = replace(
-                runtime.session,
-                timeline=replace(runtime.session.timeline, door=Door.CLOSED),
-            )
+            runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 1, "open"))
+            runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 5, "close"))
             runtime._process_event(_event(runtime, Kind.PERSON_STRONG, 10, "person"))
             clock[0] = START + timedelta(seconds=10)
             runtime.notify()
@@ -287,10 +284,8 @@ class PresenceRegressionTests(unittest.TestCase):
             runtime.controller.begin_session("end-batch", START)
             runtime.controller.set_temperature(75, START)
             runtime._sync_detector()
-            runtime.controller._session = replace(
-                runtime.session,
-                timeline=replace(runtime.session.timeline, door=Door.CLOSED),
-            )
+            runtime._process_event(_event(runtime, Kind.DOOR_OPEN, 1, "old-open"))
+            runtime._process_event(_event(runtime, Kind.DOOR_CLOSE, 5, "old-close"))
             runtime._process_event(_event(runtime, Kind.PERSON_STRONG, 10, "old-person"))
             clock[0] = START + timedelta(seconds=10)
             runtime.notify()

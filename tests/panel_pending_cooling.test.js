@@ -67,7 +67,7 @@ function state(admin) {
     parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
     measurements: [],
     measurement_status: {},
-    mechanical_timer: { state: "idle", remaining_seconds: 0 },
+
     manual_controls: { light: {}, heater: {} },
     permissions: {
       admin,

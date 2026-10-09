@@ -29,6 +29,13 @@ class DefaultsTests(unittest.TestCase):
                 "energy"
             ),
             "missing_scale": lambda data: data["appearance"]["scales"].pop("humidity"),
+            "missing_instrument": lambda data: data["appearance"]["instruments"].pop("light"),
+            "invalid_instrument_default": lambda data: data["appearance"]["instruments"][
+                "default"
+            ].update(default="inherit"),
+            "invalid_instrument_options": lambda data: data["appearance"]["instruments"][
+                "temperature"
+            ].update(options=["round", "linear"]),
             "missing_scale_limit": lambda data: data["appearance"]["scales"][
                 "humidity"
             ].pop("maximum"),
@@ -57,7 +64,7 @@ class DefaultsTests(unittest.TestCase):
             "unsupported_setup": lambda data: data["setup"].update(log_level="ERROR"),
             "null_parameter_default": lambda data: next(
                 spec for spec in data["parameters"]
-                if spec["key"] == "mechanical_timer_warning_minutes"
+                if spec["key"] == "session_gap_minutes"
             ).update(default=None),
             "null_color_default": lambda data: data["appearance"]["colors"][0].update(default=None),
             "invalid_parameter_reference": lambda data: data["instance"].update(
@@ -111,6 +118,20 @@ class DefaultsTests(unittest.TestCase):
         self.assertTrue(
             all(d.settings_group in group_ids for d in EDITABLE_DEFINITIONS)
         )
+        subgroup_ids = {
+            group["id"] for group in section("frontend")["settings_subgroups"]
+        }
+        self.assertTrue(
+            all(
+                d.settings_subgroup in subgroup_ids
+                for d in EDITABLE_DEFINITIONS
+                if d.settings_group != "programs"
+            )
+        )
+        self.assertEqual(
+            [d.key for d in EDITABLE_DEFINITIONS],
+            [d["key"] for d in sorted(section("parameters"), key=lambda d: d["order"])],
+        )
         door = BY_KEY["door_open_drop_c"]
         self.assertTrue(door.expert)
         self.assertEqual(door.settings_group, "sensors")
@@ -156,13 +177,16 @@ class DefaultsTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_catalog(catalog)
 
-    def test_saved_disabled_timer_warning_survives_new_factory_default(self):
-        key = "mechanical_timer_warning_minutes"
-        self.assertFalse(BY_KEY[key].optional)
-        self.assertEqual(Parameters({}).values[key], BY_KEY[key].default)
-        self.assertEqual(Parameters({key: None}).values[key], 0)
-        self.assertEqual(Parameters({key: 0}).values[key], 0)
-        self.assertEqual(Parameters({key: 12}).values[key], 12)
+    def test_obsolete_timer_parameters_are_accepted_but_not_retained(self):
+        for value in (None, 0, 12, "obsolete"):
+            with self.subTest(value=value):
+                parameters = Parameters({
+                    "mechanical_timer_minutes": value,
+                    "mechanical_timer_warning_minutes": value,
+                })
+                self.assertEqual(parameters.as_dict(), Parameters({}).as_dict())
+        self.assertNotIn("mechanical_timer_minutes", BY_KEY)
+        self.assertNotIn("mechanical_timer_warning_minutes", BY_KEY)
 
     def test_changed_factory_values_preserve_saved_choices_and_legacy_modes(self):
         # A fresh interpreter models the documented reload boundary and avoids

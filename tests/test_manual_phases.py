@@ -6,9 +6,10 @@ from test_foundation import event
 from custom_components.ha_sauna.core.timeline import Kind
 
 
-def after_run(**values):
-    c = controller(**values)
+def after_run():
+    c = controller()
     c.report_heating(True, at(0))
+    c.process(event("entry-open", Kind.DOOR_OPEN, 0))
     c.process(event("close", Kind.DOOR_CLOSE, 1))
     c.process(event("infusion", Kind.INFUSION, 2))
     c.process(event("open", Kind.DOOR_OPEN, 69))
@@ -33,7 +34,7 @@ class ManualPhaseTests(unittest.TestCase):
         self.assertIsNone(c.session.cooling)
 
     def test_after_run_without_cooling_returns_to_regulation_and_preserves_session(self):
-        c = after_run(heating_minutes=20)
+        c = after_run()
         identity, energy = c.session.session_id, c.session.energy
         c.finish_phase("after_run", c.session.after_run.phase_id, at(80))
         self.assertIsNone(c.session.cooling)
@@ -61,6 +62,7 @@ class ManualPhaseTests(unittest.TestCase):
     def test_pending_cooling_and_other_deadlines_cannot_be_ended(self):
         c = controller()
         c.report_heating(True, at(0))
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("infusion", Kind.INFUSION, 2))
         c.advance(at(60))

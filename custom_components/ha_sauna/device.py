@@ -17,11 +17,17 @@ from homeassistant.helpers.event import (
 from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core import power
+from .core.button import NATIVE_BUTTON_EVENTS
 from .core.light import normal_brightness, phase_target
 from .core.light_output import LightOutput, LightQuantizer
 from .core.models import Measurement, Position, Quantity
 from .core.timeline import Door, Kind
-from .core.warmup import WarmupEstimate, historical_warmup_rate
+from .core.warmup import (
+    HeatingProgressEpisode,
+    WarmupEstimate,
+    historical_heating_delay,
+    historical_warmup_rate,
+)
 from .presentation import FAULTS, configuration_message
 
 
@@ -35,6 +41,7 @@ class HADevice:
         }
         self.values = runtime.configuration.parameters.values
         self.states = {}
+        self._button_event_types = None
         self.source_received_at = {}
         self.measurements = {}
         self.last_valid_temperature = None
@@ -46,6 +53,15 @@ class HADevice:
         self._warmup_last_received_at = None
         self._warmup_door_opening_id = None
         self._warmup_door_before_c = None
+        self._heating_progress = None
+        self._heating_progress_key = None
+        self._heating_progress_started_at = None
+        self._heating_progress_received_at = None
+        self._heating_progress_notified = False
+        self._heating_progress_notice_active = False
+        self._heating_response_key = None
+        self._heating_response_delay = None
+        self._heating_response_task = None
         self._historical_warmup_rate = None
         self._historical_warmup_session_id = None
         self._historical_warmup_task = None
@@ -73,7 +89,6 @@ class HADevice:
         self._light_service_task = None
         self._light_service_name = None
         self._light_output_deferred = False
-        self.notified = set()
         self.heating_observation = {
             "source": "unknown",
             "heating": None,
@@ -84,6 +99,7 @@ class HADevice:
         self.last_input_event = None
         self.last_input_occurred_at = None
         self._button_hold_session_id = None
+        self._button_hold_starting = False
         if runtime.controller.control_mode == "manual":
             self.set_light_override(0)
 
@@ -113,6 +129,13 @@ class HADevice:
 
     def ingest(self, role, state, received_at, *, initial=False, defer_archive=False):
         self.states[role] = state
+        if role == "control_input" and state is not None:
+            event_types = state.attributes.get("event_types")
+            if (
+                isinstance(event_types, (list, tuple)) and event_types
+                and all(isinstance(value, str) for value in event_types)
+            ):
+                self._button_event_types = tuple(event_types)
         self.source_received_at[role] = received_at
         if initial and role == "control_input" and state is not None:
             self.last_input_event = state.state
@@ -148,6 +171,13 @@ class HADevice:
                 received_at,
             )
             self.measurements[role] = m
+            if (
+                self._heating_progress_key is not None
+                and quantity == "temperature"
+                and m.source == self._heating_progress_key[2]
+                and (value is None or value >= self._heating_progress_key[3])
+            ):
+                self._reset_heating_progress()
             self.runtime.log.debug(
                 "measurement",
                 "Messwert %s: %s; empfangen: %s.",
@@ -179,6 +209,19 @@ class HADevice:
                 },
                 self.runtime.session.session_id,
             )
+
+    @property
+    def available_button_session_gestures(self):
+        possible = self.runtime.configuration.available_button_session_gestures
+        if not possible:
+            return ()
+        if not self.bindings["control_input"].startswith("event."):
+            return possible
+        if self._button_event_types is None:
+            # Keep the saved choice during startup; do not invent device capabilities.
+            return (self.runtime.configuration.button_session_gesture,)
+        reported = {NATIVE_BUTTON_EVENTS.get(value) for value in self._button_event_types}
+        return tuple(gesture for gesture in possible if gesture in reported)
 
     def physical_action(self, event):
         if event.data["entity_id"] != self.bindings["control_input"]:
@@ -228,17 +271,7 @@ class HADevice:
         self.last_input_occurred_at = occurred
         event_type = new.attributes.get("event_type")
         if self.runtime.configuration.control_input_mode == "button":
-            native = {
-                "btn_down": "press",
-                "btn_up": "release",
-                "single_push": "short",
-                "single": "short",
-                "double_push": "double",
-                "double": "double",
-                "triple_push": "triple",
-                "triple": "triple",
-                "long_push": "long",
-            }.get(event_type)
+            native = NATIVE_BUTTON_EVENTS.get(event_type)
             if native is not None:
                 return native
             selected = self.runtime.configuration.button_event_type
@@ -316,6 +349,8 @@ class HADevice:
         at = max(received_at, controller._last_at or received_at)
         timeout = self.values.get("sensor_timeout_seconds")
         observation = self.heating_observation = self.observe_heating(at)
+        if self.contactor_feedback() is not True:
+            self._reset_heating_progress()
         controller.report_contactor(self.contactor_feedback(), at)
         controller.report_fallback_heating(self.observe_fallback_heating()[1], at)
         controller.report_power(
@@ -345,6 +380,130 @@ class HADevice:
         self._warmup_last_received_at = None
         self._warmup_door_opening_id = None
         self._warmup_door_before_c = None
+
+    @property
+    def _heating_progress_notification_id(self):
+        instance = self.runtime.archive.entry_id if self.runtime.archive else self.bindings["heater"]
+        return f"sauna_heating_progress_{instance}"
+
+    def _dismiss_heating_progress(self):
+        if self._heating_progress_notice_active:
+            persistent_notification.async_dismiss(self.hass, self._heating_progress_notification_id)
+            self._heating_progress_notice_active = False
+
+    def _reset_heating_progress(self):
+        self._dismiss_heating_progress()
+        self._heating_progress = None
+        self._heating_progress_key = None
+        self._heating_progress_started_at = None
+        self._heating_progress_received_at = None
+        self._heating_progress_notified = False
+
+    def _refresh_heating_progress(self, now):
+        """Notify from new comparable observations; never alter heater control."""
+        controller = self.runtime.controller
+        session = controller.session
+        measurement = self.regulation_measurement(now)
+        target = controller.target_temperature
+        if (
+            controller.control_mode != "automatic"
+            or session is None or not session.operation_enabled
+            or self.contactor_feedback() is not True
+            or measurement is None or target is None or measurement.value >= target
+            or session.timeline.door == Door.OPEN
+        ):
+            self._reset_heating_progress()
+            return
+        role = f"{measurement.position.value}_temperature"
+        if self.measurements.get(role) is not measurement:
+            # A cached valid value may still regulate, but cannot bridge an
+            # invalid incoming report in evidence of missing heating progress.
+            self._reset_heating_progress()
+            return
+        door_event = next((event.event_id for event in reversed(session.timeline.processed)
+                           if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)), None)
+        window = self.values["warmup_estimation_minutes"] * 60
+        key = (session.session_id, measurement.position, measurement.source, target, window, door_event)
+        previous = self._heating_progress_received_at
+        if key != self._heating_progress_key or (
+            previous is not None
+            and (measurement.received_at - previous).total_seconds() > self.values["sensor_timeout_seconds"]
+        ):
+            self._reset_heating_progress()
+            self._heating_progress_key = key
+            self._heating_progress_started_at = now
+            self._heating_progress = HeatingProgressEpisode(window, now)
+        self._load_heating_response(key)
+        self._heating_progress.startup_delay_seconds = self._heating_response_delay
+        if measurement.received_at < self._heating_progress_started_at or (
+            self._heating_progress_received_at is not None
+            and measurement.received_at <= self._heating_progress_received_at
+        ):
+            return
+        self._heating_progress_received_at = measurement.received_at
+        evidence = self._heating_progress.accept(measurement.received_at, measurement.value)
+        if evidence is None:
+            return
+        if evidence["rising"]:
+            self._dismiss_heating_progress()
+            return
+        if not evidence["no_rise"] or self._heating_progress_notified:
+            return
+        current_text = f"{measurement.value:.1f}".replace(".", ",")
+        target_text = f"{target:.1f}".replace(".", ",")
+        persistent_notification.async_create(
+            self.hass,
+            "Bei eingeschaltetem Schütz ist kein Temperaturanstieg erkennbar. "
+            f"Aktuell {current_text} °C, Soll {target_text} °C.",
+            title="Sauna: kein Temperaturanstieg",
+            notification_id=self._heating_progress_notification_id,
+        )
+        self._heating_progress_notified = True
+        self._heating_progress_notice_active = True
+        if self.runtime.archive:
+            self.runtime.archive.append("notice", now, {
+                "kind": "heating_no_temperature_rise", **evidence,
+                "source": measurement.source, "target_temperature_c": target,
+                "historical_startup_delay_seconds": self._heating_response_delay,
+            }, session.session_id)
+
+    def _load_heating_response(self, progress_key):
+        """Read source-matched historical startup observations outside the loop."""
+        session_id, position, source, _, window, _ = progress_key
+        timeout = self.values["sensor_timeout_seconds"]
+        heater_source = self.bindings["heater"]
+        key = (session_id, position, source, heater_source, timeout, window)
+        if key == self._heating_response_key:
+            return
+        if self._heating_response_task is not None:
+            self._heating_response_task.cancel()
+        self._heating_response_key = key
+        self._heating_response_delay = None
+        archive = self.runtime.archive
+        if archive is None:
+            return
+
+        async def load():
+            try:
+                # Completed episodes may still be queued by the archive writer.
+                await archive.flush()
+                episodes = await asyncio.to_thread(
+                    archive.heating_response_history,
+                    source, position.value, heater_source, timeout,
+                )
+                delay = await asyncio.to_thread(historical_heating_delay, episodes, window)
+                if self.runtime.closed or key != self._heating_response_key:
+                    return
+                self._heating_response_delay = delay
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.getLogger(__name__).exception("Historische Aufheizverzögerung konnte nicht gelesen werden")
+            finally:
+                if self._heating_response_task is asyncio.current_task():
+                    self._heating_response_task = None
+
+        self._heating_response_task = asyncio.create_task(load())
 
     def _remember_warmup_door_opening(self, session):
         opening = next(
@@ -523,6 +682,11 @@ class HADevice:
 
     def invalidate_historical_warmup(self):
         """Forget a cached rate after a newly completed session was archived."""
+        self._heating_response_key = None
+        self._heating_response_delay = None
+        if self._heating_response_task is not None:
+            self._heating_response_task.cancel()
+            self._heating_response_task = None
         self._historical_warmup_rate = None
         self._historical_warmup_session_id = None
         self._historical_warmup_loaded = False
@@ -681,6 +845,7 @@ class HADevice:
         confirmation = self.values.get("fault_confirmation_seconds")
         monitoring = (
             bool(controller.session and controller.session.operation_enabled)
+            or controller.heater_override is True
             or contactor is True
             or self.heating_observation["heating"] is True
         )
@@ -717,6 +882,7 @@ class HADevice:
         else:
             self.faults.pop("archive", None)
         self._refresh_warmup(now)
+        self._refresh_heating_progress(now)
         controller.advance(now)
 
     async def send(self, heat, now, *, force=False, wait=True):
@@ -889,7 +1055,6 @@ class HADevice:
     async def apply(self, now):
         await self.send(self.runtime.controller.last_decision.heat, now)
         await self.apply_light(now)
-        self.notify_mechanical_timer(now)
 
     async def apply_light(self, now):
         if not self._light_owned:
@@ -1020,7 +1185,7 @@ class HADevice:
             phase=name,
             service=service,
             brightness=brightness if service == "turn_on" else None,
-            session_id=self._light_session_id(),
+            session_id=self._light_session_id(automatic=plan.automatic),
             ends_at=ends_at,
         ):
             self._light_override_dirty = False
@@ -1097,13 +1262,15 @@ class HADevice:
                 self.faults["session_light"] = "feedback_missing"
             return False
 
-    def _light_session_id(self):
+    def _light_session_id(self, *, automatic=True):
+        """Only automatic after-run output belongs to an already ended session."""
         session = self.runtime.controller.session
         light_after_run = self.runtime.controller.light_after_run
         return (
             session.session_id
             if session is not None
-            else (light_after_run.session_id if light_after_run is not None else None)
+            else (light_after_run.session_id
+                  if automatic and light_after_run is not None else None)
         )
 
     async def finish_session_light(self, now, phase, *, purpose="light_reassignment"):
@@ -1690,26 +1857,33 @@ class HADevice:
             self.light_output.set_manual(value, phase_key=phase_key, ends_at=ends_at)
         self._light_override_dirty = True
 
-    def begin_button_hold_light(self, session_id):
+    def begin_button_hold_light(self, session_id, *, starting=False):
         """Mark acknowledgement for regular output after the heater command."""
         self._button_hold_session_id = session_id
+        self._button_hold_starting = starting
         self.light_output.return_to_automatic()
 
     async def show_button_hold_light(self, now, session_id):
-        """Keep the required long-press acknowledgement above all normal phases."""
+        """Keep the long-press acknowledgement above all normal phases."""
         self._button_hold_session_id = session_id
         if not self._light_owned:
             return False
-        key = ("button_hold", session_id, "turn_off", None)
+        brightness = (
+            self.values["session_light_brightness_percent"]
+            if self._button_hold_starting else None
+        )
+        service = "turn_on" if self._button_hold_starting else "turn_off"
+        target = self._light_command_signature(service, brightness)
+        key = ("button_hold", session_id, service, brightness)
         state = self.hass.states.get(self.bindings["light"])
         if (
             not self._light_service_is_pending()
-            and self._light_state_signature(state) == ("off", None)
+            and self._light_state_signature(state) == target
         ):
             self.faults.pop("operation_light", None)
             return True
         if key == self._light_last_command_key and self._light_change_is_pending(
-            self.runtime._clock(), "turn_off", None
+            self.runtime._clock(), service, brightness
         ):
             return True
         unconfirmed = key == self._light_last_command_key
@@ -1717,14 +1891,14 @@ class HADevice:
             now,
             key=key,
             phase="button_hold",
-            service="turn_off",
-            brightness=None,
+            service=service,
+            brightness=brightness,
             session_id=session_id,
             purpose="button_hold",
         )
         if sent and self._light_state_signature(
             self.hass.states.get(self.bindings["light"])
-        ) != ("off", None) and unconfirmed:
+        ) != target and unconfirmed:
             self.faults["operation_light"] = "feedback_missing"
         return sent
 
@@ -1732,49 +1906,13 @@ class HADevice:
         """Only the matching release may hand light control back to the timer."""
         if session_id is None or self._button_hold_session_id == session_id:
             self._button_hold_session_id = None
+            self._button_hold_starting = False
 
     def normal_light_brightness(self):
         """Return the current normal automatic brightness for UI consumers."""
         return normal_brightness(
             self._sun_elevation(), self.runtime.configuration.parameters
         )
-
-    def notify_mechanical_timer(self, now):
-        ends = self.runtime.controller.mechanical_timer_ends_at
-        if ends:
-            lead = self.values.get("mechanical_timer_warning_minutes", 0) * 60
-            phase = (
-                "expired"
-                if now >= ends
-                else "warning"
-                if now >= ends - timedelta(seconds=lead)
-                else None
-            )
-            key = (self.runtime.controller.mechanical_timer.cycle_id, phase)
-            if phase and key not in self.notified:
-                self.notified.add(key)
-                message = (
-                    "Die geschätzte Laufzeit des mechanischen Ofentimers ist abgelaufen."
-                    if phase == "expired"
-                    else "Der mechanische Ofentimer erreicht voraussichtlich bald sein Ende."
-                )
-                message += " Seine tatsächliche Stellung wird nicht gemessen; diese Erinnerung löst keine Steuerung aus."
-                persistent_notification.async_create(
-                    self.hass,
-                    message,
-                    title="Sauna: mechanischer Ofentimer",
-                    notification_id=f"sauna_timer_{self.runtime.session.session_id}",
-                )
-                if self.runtime.archive:
-                    self.runtime.archive.append(
-                        "notice",
-                        now,
-                        {
-                            "kind": "mechanical_timer_" + phase,
-                            "estimated_ends_at": ends,
-                        },
-                        self.runtime.session.session_id,
-                    )
 
     async def light_call(self, service, data, *, context=None):
         # The output owner bounds its wait and retains this task until the real
@@ -1785,6 +1923,9 @@ class HADevice:
         )
 
     async def close(self):
+        self._reset_heating_progress()
+        if self._heating_response_task is not None:
+            self._heating_response_task.cancel()
         if self._historical_warmup_task is not None:
             self._historical_warmup_task.cancel()
         if not await self.prepare_heater_handoff():

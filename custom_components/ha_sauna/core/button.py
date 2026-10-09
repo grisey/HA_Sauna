@@ -10,18 +10,38 @@ jedem Aufruf als ``datetime`` übergeben.
 
 from datetime import datetime, timedelta
 
+from .defaults import instance_default
+
+NATIVE_BUTTON_EVENTS = {
+    "btn_down": "press", "btn_up": "release",
+    "single_push": "short", "single": "short",
+    "double_push": "double", "double": "double",
+    "triple_push": "triple", "triple": "triple",
+    "long_push": "long",
+}
+
 START_STANDARD_PROGRAM = "start_standard_program"
+START_HOLD = "start_hold"
+START_RELEASE = "start_release"
 HEATER_TOGGLE_OVERRIDE = "heater_toggle_override"
 END_HOLD = "end_hold"
 END_RELEASE = "end_release"
+
+
+def validate_session_gesture(value):
+    if not isinstance(value, str) or value not in {"long", "double", "triple"}:
+        raise ValueError(
+            "Ungültige Tastergeste."
+        )
+    return value
 
 
 class ButtonGestures:
     """Translate normalized input into the actions of each completed gesture.
 
     A press records its operation context. Only a short classification, or the
-    confirmed short release of a binary input, can start operation. Completed
-    native gestures retain their context until the next press so trailing
+    confirmed short release of a binary input, toggles the heater. A long
+    gesture starts or ends operation. Completed native gestures retain their context until the next press so trailing
     classifications cannot act on the operation they just started or ended.
     A release without a known press deliberately has no effect.
 
@@ -30,7 +50,11 @@ class ButtonGestures:
     event starts an independent gesture with the current operation context.
     """
 
-    def __init__(self, hold_threshold: timedelta):
+    def __init__(
+        self, hold_threshold: timedelta,
+        session_gesture: str = instance_default("button_session_gesture"),
+    ):
+        self.session_gesture = validate_session_gesture(session_gesture)
         if hold_threshold < timedelta(0):
             raise ValueError("hold_threshold must not be negative")
         self.hold_threshold = hold_threshold
@@ -41,6 +65,7 @@ class ButtonGestures:
         self._event_only_gesture = False
         self._long_seen = False
         self._end_hold_sent = False
+        self._start_hold_sent = False
         self._short_suppressed = False
         self._short_completed = False
         self._native_started_while_off: bool | None = None
@@ -53,7 +78,7 @@ class ButtonGestures:
                 # HOLD still needs the eventual confirmed release to start its
                 # light timer; an unconfirmed gesture has no remaining action.
                 self._pressed_at = None
-                if not self._end_hold_sent:
+                if not (self._end_hold_sent or self._start_hold_sent):
                     self._clear(suppress_short=True)
             return None
         if event == "on":
@@ -95,14 +120,12 @@ class ButtonGestures:
         started_while_off = (
             self._native_started_while_off if native else not operation_enabled
         )
-        if started_while_off:
-            actions = (() if operation_enabled else (START_STANDARD_PROGRAM,)) + (
-                HEATER_TOGGLE_OVERRIDE,
-            ) * (clicks - 1)
-        elif operation_enabled:
-            actions = (HEATER_TOGGLE_OVERRIDE,) * clicks
-        else:
+        if started_while_off != (not operation_enabled):
             actions = ()
+        elif event == self.session_gesture:
+            actions = (END_RELEASE if operation_enabled else START_STANDARD_PROGRAM,)
+        else:
+            actions = (HEATER_TOGGLE_OVERRIDE,) * clicks
         if native:
             # A native summary consumes this gesture, just like ``short``.
             # Keep its context so a trailing long cannot become a sparse hold.
@@ -140,6 +163,7 @@ class ButtonGestures:
         self._event_only_gesture = False
         self._long_seen = False
         self._end_hold_sent = False
+        self._start_hold_sent = False
         self._short_suppressed = False
         self._short_completed = False
         return None
@@ -149,25 +173,19 @@ class ButtonGestures:
             return None
         if not self._gesture_active:
             # Event-only devices may emit just their final click classification.
-            return (
-                HEATER_TOGGLE_OVERRIDE if operation_enabled else START_STANDARD_PROGRAM
-            )
+            return HEATER_TOGGLE_OVERRIDE
         if self._long_seen:
             if self._event_only_gesture:
                 # BASIC has no release: this is its next independent click.
                 self._clear()
-                return (
-                    HEATER_TOGGLE_OVERRIDE
-                    if operation_enabled
-                    else START_STANDARD_PROGRAM
-                )
+                return HEATER_TOGGLE_OVERRIDE
             return None
         if self._short_completed:
             return None
         self._short_completed = True
         self._native_started_while_off = None
         if self._started_while_off:
-            return None if operation_enabled else START_STANDARD_PROGRAM
+            return None if operation_enabled else HEATER_TOGGLE_OVERRIDE
         return HEATER_TOGGLE_OVERRIDE if operation_enabled else None
 
     def _long(self, operation_enabled: bool) -> str | None:
@@ -185,7 +203,18 @@ class ButtonGestures:
             self._pressed_at = None
         self._long_seen = True
         self._native_started_while_off = None
-        if self._started_while_off or not operation_enabled or self._end_hold_sent:
+        if self.session_gesture != "long":
+            return None
+        if self._end_hold_sent or self._start_hold_sent:
+            return None
+        if self._started_while_off:
+            if operation_enabled:
+                return None
+            if self._event_only_gesture:
+                return START_STANDARD_PROGRAM
+            self._start_hold_sent = True
+            return START_HOLD
+        if not operation_enabled:
             return None
         self._end_hold_sent = True
         return END_HOLD
@@ -195,6 +224,9 @@ class ButtonGestures:
     ) -> str | None:
         if not self._gesture_active:
             return None
+        if self._start_hold_sent:
+            self._clear(suppress_short=True)
+            return START_RELEASE
         if self._end_hold_sent:
             self._clear(suppress_short=True)
             return END_RELEASE
@@ -206,8 +238,13 @@ class ButtonGestures:
             # a short action. The runtime ends the session on END_RELEASE even
             # if it could not show the acknowledgement before this release.
             if now - self._pressed_at >= self.hold_threshold:
+                if self.session_gesture != "long":
+                    self._clear(suppress_short=True)
+                    return None
                 action = (
-                    END_RELEASE
+                    START_STANDARD_PROGRAM
+                    if self._started_while_off and not operation_enabled
+                    else END_RELEASE
                     if not self._started_while_off and operation_enabled
                     else None
                 )
@@ -227,6 +264,7 @@ class ButtonGestures:
         self._event_only_gesture = False
         self._long_seen = False
         self._end_hold_sent = False
+        self._start_hold_sent = False
         self._short_suppressed = suppress_short
         self._short_completed = False
         self._native_started_while_off = None

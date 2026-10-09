@@ -14,8 +14,7 @@ def at(seconds):
 
 def controller(**overrides):
     values = {**parameters().as_dict(), "target_temperature_c": 80,
-        "safety_temperature_c": 110, "readiness_offset_c": 5,
-        "readiness_hysteresis_c": 3, "forced_cooling_minutes": 5,
+        "readiness_offset_c": 5, "readiness_hysteresis_c": 3,
         "after_run_minutes": 8, "session_gap_minutes": 30,
         "heat_reset_minutes": 30, **overrides}
     result = Controller(Parameters(values))
@@ -31,6 +30,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         c.report_heating(False, at(1020))
 
     def test_old_short_remainder_does_not_block_regular_restart(self):
+        # Deliberately load obsolete saved settings to verify their lack of effect.
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
                        minimum_heating_minutes=10, thermostat_cooldown_minutes=5,
                        forced_cooling_minutes=15)
@@ -46,7 +46,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertIsNone(c.session.cooling)
         self.assertTrue(c.last_decision.heat)
 
-    def test_exact_minimum_remainder_allows_regular_restart(self):
+    def test_old_exact_minimum_remainder_allows_regular_restart(self):
         c = controller(heating_minutes=25, heating_reduction_minutes=5,
                        minimum_heating_minutes=10, thermostat_cooldown_minutes=5)
         c.report_heating(True, at(0))
@@ -60,8 +60,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertEqual(c.last_decision.reason, "below_target")
 
     def test_running_gang_and_open_door_do_not_create_cooling(self):
-        c = controller(heating_minutes=25, heating_reduction_minutes=5,
-                       minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
+        c = controller(minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         self.prepare_regular_restart(c)
         c.process(event("open", Kind.DOOR_OPEN, 1030, session="admission"))
         c.set_temperature(c.thermostat_restart_temperature, at(1320))
@@ -71,9 +70,9 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "below_target")
 
-        c = controller(heating_minutes=25, heating_reduction_minutes=5,
-                       minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
+        c = controller(minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         self.prepare_regular_restart(c)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1020, session="admission"))
         c.process(event("close", Kind.DOOR_CLOSE, 1021, session="admission"))
         c.process(event("person", Kind.PERSON_STRONG, 1022, session="admission"))
         c.process(event("infusion", Kind.INFUSION, 1023, session="admission"))
@@ -84,8 +83,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertTrue(c.last_decision.heat)
 
     def test_manual_override_and_protection_do_not_create_cooling(self):
-        c = controller(heating_minutes=25, heating_reduction_minutes=5,
-                       minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
+        c = controller(minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         c.report_heating(True, at(0))
         c.set_temperature(85, at(800))
         c.report_heating(False, at(800))
@@ -97,8 +95,7 @@ class HeatingAdmissionTests(unittest.TestCase):
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "manual_override")
 
-        c = controller(heating_minutes=25, heating_reduction_minutes=5,
-                       minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
+        c = controller(minimum_heating_minutes=10, thermostat_cooldown_minutes=0)
         self.prepare_regular_restart(c)
         c.protection.add("confirmed_controller_failure")
         c.set_temperature(80, at(1320))

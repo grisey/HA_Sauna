@@ -21,8 +21,6 @@ _PARAMETER_KEYS = frozenset(
         "heat_reset_minutes",
         "thermostat_cooldown_minutes",
         "minimum_heating_minutes",
-        "mechanical_timer_minutes",
-        "mechanical_timer_warning_minutes",
         "after_run_minutes",
         "oven_cooling_max_minutes",
         "oven_cooling_half_life_minutes",
@@ -113,6 +111,8 @@ _COLOR_ROLES = frozenset(
         "ui_accent",
         "ui_command",
         "ui_danger",
+        "ui_feedback_on",
+        "ui_feedback_off",
         "ui_heater_on",
         "ui_heater_off",
         "ui_heater_unknown",
@@ -132,6 +132,7 @@ _COLOR_ROLES = frozenset(
         "series_lower",
         "series_temperature",
         "series_humidity",
+        "series_light",
         "series_overview",
         "event_door",
         "event_infusion",
@@ -345,6 +346,7 @@ def validate_catalog(catalog):
         "program_mode": {"constant", "progressive"},
         "control_mode": {"automatic", "manual"},
         "presence_source": {"proxy", "ha_presence"},
+        "button_session_gesture": {"long", "double", "triple"},
     }
     if not isinstance(instance, dict) or set(instance) != {
         *choices,
@@ -409,7 +411,19 @@ def validate_catalog(catalog):
     ):
         raise ValueError("defaults.json: button temperature outside temperature bounds")
     appearance = catalog["appearance"]
-    _object(appearance, {"colors", "scales", "precision"}, "appearance")
+    _object(appearance, {"colors", "scales", "instruments", "precision"}, "appearance")
+    _object(appearance["instruments"],
+            {"default", "temperature", "humidity", "light"}, "instruments")
+    for name, instrument in appearance["instruments"].items():
+        _object(instrument, {"label", "default", "options"}, "instrument")
+        options = ["round", "linear"] if name == "default" else ["inherit", "round", "linear"]
+        if (
+            not isinstance(instrument["label"], str)
+            or not instrument["label"].strip()
+            or instrument["options"] != options
+            or instrument["default"] not in options
+        ):
+            raise ValueError("defaults.json: invalid instrument style")
     _object(appearance["precision"], {"absolute_humidity", "energy"}, "precision")
     for value in appearance["precision"].values():
         _integer(value, "display precision")

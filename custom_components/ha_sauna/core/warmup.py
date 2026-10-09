@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import isclose, isfinite, sqrt
 
 
@@ -116,6 +116,94 @@ def _stable_rate(
     return slope
 
 
+class HeatingProgress:
+    """Signed observations, independent of ETA fit quality or historical rates."""
+
+    def __init__(self, window_seconds: float) -> None:
+        self.trend = WarmupTrend(window_seconds)
+
+    def accept(self, received_at: datetime, temperature_c: float):
+        previous = self.trend.observations
+        previous_at = previous[-1][0] if previous else None
+        self.trend.accept(received_at, temperature_c)
+        points = self.trend.observations
+        if len(points) < 3 or points[-1][0] != received_at or points[-1][0] == previous_at:
+            return None
+        span = (points[-1][0] - points[0][0]).total_seconds()
+        # Match the existing temperature analysis' minimum evidence span.
+        if span < self.trend.window_seconds / 2:
+            return None
+        times = [(at - points[0][0]).total_seconds() for at, _ in points]
+        mean_time = sum(times) / len(times)
+        mean_temperature = sum(value for _, value in points) / len(points)
+        slope = sum(
+            (time - mean_time) * (value - mean_temperature)
+            for time, (_, value) in zip(times, points)
+        ) / sum((time - mean_time) ** 2 for time in times)
+        return {
+            "started_at": points[0][0],
+            "ended_at": points[-1][0],
+            "start_temperature_c": points[0][1],
+            "end_temperature_c": points[-1][1],
+            "no_rise": slope <= 0 and points[-1][1] <= points[0][1],
+            "rising": slope > 0 and points[-1][1] > points[0][1],
+        }
+
+
+def historical_heating_delay(episodes, window_seconds):
+    """Largest observed ON-to-positive-response delay, never a default timer."""
+    delays = []
+    for episode in episodes:
+        started_at, ended_at = episode["started_at"], episode["ended_at"]
+        progress = HeatingProgress(window_seconds)
+        for received_at, temperature_c in episode["measurements"]:
+            evidence = progress.accept(received_at, temperature_c)
+            if received_at < started_at:
+                continue
+            if received_at > ended_at:
+                break
+            if evidence is not None and progress.trend.rate(received_at) is not None:
+                delays.append((received_at - started_at).total_seconds())
+                break
+    return max(delays) if delays else None
+
+
+class HeatingProgressEpisode:
+    """Observe startup first, then a fresh analysis window for stagnation."""
+
+    def __init__(self, window_seconds, started_at):
+        self.window_seconds = window_seconds
+        self.started_at = started_at
+        self.startup_delay_seconds = None
+        self.response_at = None
+        self.progress = HeatingProgress(window_seconds)
+        self._analysis_started_at = None
+
+    def accept(self, received_at, temperature_c):
+        if received_at < self.started_at:
+            return None
+        boundary = (
+            self.started_at + timedelta(seconds=self.startup_delay_seconds)
+            if self.startup_delay_seconds is not None else None
+        )
+        if self.response_at is not None:
+            boundary = min(boundary, self.response_at) if boundary else self.response_at
+        if self._analysis_started_at is None and boundary is not None and received_at >= boundary:
+            # No startup samples are lent to the post-startup comparison.
+            self.progress = HeatingProgress(self.window_seconds)
+            self._analysis_started_at = received_at
+        evidence = self.progress.accept(received_at, temperature_c)
+        if evidence is None:
+            return None
+        if self.progress.trend.rate(received_at) is not None and self.response_at is None:
+            self.response_at = received_at
+        if self._analysis_started_at is None or (
+            received_at - self._analysis_started_at
+        ).total_seconds() < self.window_seconds:
+            return None
+        return evidence
+
+
 class WarmupTrend:
     """Sammelt kausal empfangene obere Temperaturen für eine ETA-Anzeige.
 
@@ -142,6 +230,11 @@ class WarmupTrend:
         self._points.clear()
         self._accepted_rate = None
         self._accepted_at = None
+
+    @property
+    def observations(self) -> tuple[tuple[datetime, float], ...]:
+        """Read the accepted window without mutating its ordered observations."""
+        return tuple(self._points)
 
     def accept(self, received_at: datetime, temperature_c: float) -> None:
         """Accept one newly received value; delayed/out-of-order data stay out."""

@@ -138,6 +138,7 @@ test("details render includes the reachable presence and rule card", () => {
   const state = {
     frontend_defaults: defaults.frontend,
     appearance_catalog: defaults.appearance,
+    appearance: { instruments: { temperature: "round", humidity: "round" } },
     now: end,
     phase: "bereit",
     operation_enabled: true,
@@ -160,7 +161,7 @@ test("details render includes the reachable presence and rule card", () => {
     parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
     measurements: [],
     measurement_status: {},
-    mechanical_timer: { state: "idle" },
+
     permissions: {
       admin: true,
       control: true,
@@ -227,8 +228,8 @@ test("details render includes the reachable presence and rule card", () => {
     lower_humidity: { state: "current" },
   };
   value.drawCurrent();
-  assert.match(nodes["#current"].innerHTML, /67<\/tspan><tspan[^>]*>°C/);
-  assert.match(nodes["#current"].innerHTML, /38<\/tspan><tspan[^>]*>%/);
+  assert.match(nodes["#current"].innerHTML, /67<\/tspan>\s*<tspan[^>]*>\s*°C/);
+  assert.match(nodes["#current"].innerHTML, /38<\/tspan>\s*<tspan[^>]*>\s*%/);
   assert.doesNotMatch(nodes["#current"].innerHTML, /Messung unten/);
 
   state.measurement_positions = ["upper", "lower"];

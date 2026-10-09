@@ -55,6 +55,36 @@ const makePanel = (appearance = { colors: {}, scales: {} }) => {
   return { panel, variables };
 };
 
+test("cropped instrument pointers use the SVG transform and viewBox origin", () => {
+  const { panel } = makePanel({
+    colors: {},
+    scales: { temperature: { minimum: 50, maximum: 110 } },
+  });
+  const cropped = {
+    viewBox: { baseVal: { x: 25, y: 5, width: 250, height: 250 } },
+    getBoundingClientRect: () => ({ left: 40, top: 80, width: 500, height: 500 }),
+  };
+  assert.equal(panel.temperatureValueAt(cropped, 500, 330), 100);
+  assert.equal(panel.lightValueAt(cropped, 290, 120), 50);
+
+  // A taller viewport adds letterboxing: its CTM, not the bounding rectangle,
+  // determines the instrument coordinates.
+  const transformed = {
+    ...cropped,
+    getBoundingClientRect: () => ({ left: 40, top: 80, width: 500, height: 600 }),
+    getScreenCTM: () => ({ inverse: () => ({ a: 0.5, d: 0.5, e: 5, f: -60 }) }),
+    createSVGPoint: () => ({
+      x: 0,
+      y: 0,
+      matrixTransform(matrix) {
+        return { x: this.x * matrix.a + matrix.e, y: this.y * matrix.d + matrix.f };
+      },
+    }),
+  };
+  assert.equal(panel.temperatureValueAt(transformed, 500, 380), 100);
+  assert.equal(panel.lightValueAt(transformed, 290, 170), 50);
+});
+
 test("finite display scales bound ticks and preserve backend target limits", () => {
   const { panel } = makePanel({
     colors: {},
@@ -107,7 +137,7 @@ test("finite display scales bound ticks and preserve backend target limits", () 
   );
   assert.deepEqual(
     JSON.parse(JSON.stringify(panel.appearanceScale("humidity"))),
-    { minimum: 0, maximum: 50 },
+    catalog.scales.humidity.default,
     "invalid humidity draft falls back to display defaults",
   );
 });

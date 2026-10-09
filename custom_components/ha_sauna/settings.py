@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from .appearance import validate_appearance
+from .core.button import validate_session_gesture
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .core.program_catalog import load_programs, validate_programs
 from .core.temperature_program import temperature_steps as validate_temperature_steps
@@ -447,6 +448,27 @@ async def apply_temperature_parameters(
     await runtime._cycle()
 
 
+async def async_set_button_gesture(hass, entry, gesture):
+    """Persist the common start/end gesture and discard any unfinished input."""
+    runtime = entry.runtime_data
+    async with runtime.serialized():
+        runtime._require_open()
+        if (
+            runtime.reconfiguring or runtime.session
+            or runtime._button_hold_session_id is not None
+            or runtime._button_start_hold_session_id is not None
+        ):
+            raise ConfigurationLocked("Die Tastergeste kann gerade nicht geändert werden.")
+        gesture = validate_session_gesture(gesture)
+        if gesture not in runtime.available_button_session_gestures:
+            raise ValueError("Der zugeordnete Taster meldet diese Sitzungsgeste nicht.")
+        configuration = replace(runtime.configuration, button_session_gesture=gesture)
+        runtime.configuration = configuration
+        runtime._reset_button_gestures()
+        hass.config_entries.async_update_entry(entry, options=configuration.as_options())
+        return configuration
+
+
 async def async_set_button_program(hass, entry, profile, temperature_c=None):
     """Atomically persist the physical button's named or constant program."""
     runtime = entry.runtime_data
@@ -623,12 +645,7 @@ async def async_set_control_mode(hass, entry, mode):
             )
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
-        previous_mode = runtime.controller.control_mode
-        runtime.controller.set_control_mode(mode)
-        if previous_mode != mode and runtime.device:
-            runtime.device.set_light_override(0 if mode == "manual" else None)
-        configuration = replace(runtime.configuration, control_mode=mode)
-        runtime.configuration = configuration
+        configuration = runtime._set_control_mode(mode)
         hass.config_entries.async_update_entry(
             entry, options=configuration.as_options()
         )

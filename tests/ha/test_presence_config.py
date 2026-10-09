@@ -9,6 +9,34 @@ HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
 
 @unittest.skipUnless(HA_AVAILABLE, "Home Assistant ist lokal nicht installiert")
 class PresenceConfigTests(unittest.IsolatedAsyncioTestCase):
+    async def test_configuration_fields_keep_related_settings_together(self):
+        from custom_components.ha_sauna import config_flow as module
+        from custom_components.ha_sauna.core.defaults import section
+
+        hass = SimpleNamespace(states=SimpleNamespace(async_all=lambda: []))
+        keys = [marker.schema for marker in module.binding_schema(hass).schema]
+        for sequence in (
+            ["upper_temperature", "upper_humidity", "upper_status"],
+            ["lower_temperature", "lower_humidity", "lower_status"],
+            ["heater", "heater_feedback", "heater_power"],
+            ["control_input", "control_input_mode", "button_event_type"],
+            ["presence", "presence_source"],
+        ):
+            with self.subTest(sequence=sequence):
+                start = keys.index(sequence[0])
+                self.assertEqual(keys[start : start + len(sequence)], sequence)
+        expected = [
+            spec["key"]
+            for spec in sorted(section("parameters"), key=lambda spec: spec["order"])
+        ]
+        self.assertEqual(
+            [marker.schema for marker in module.parameter_schema().schema], expected
+        )
+        self.assertEqual(
+            [marker.schema for marker in module.parameter_schema(durable_only=True).schema],
+            [key for key in expected if module.BY_KEY[key].settings_group != "programs"],
+        )
+
     async def test_source_is_not_a_binding_and_invalid_source_is_rejected(self):
         from custom_components.ha_sauna import config_flow as module
         from custom_components.ha_sauna.bindings import BindingError

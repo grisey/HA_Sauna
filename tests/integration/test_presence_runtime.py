@@ -58,7 +58,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             unsub()
 
-    async def test_live_presence_needs_complete_door_cycles_and_unknown_preserves_round(self):
+    async def test_live_presence_needs_entry_cycle_and_can_end_with_door_open(self):
         runtime = await self.configure()
         source = runtime.configuration.bindings.values["presence"]
         for role in ("upper_temperature", "lower_temperature"):
@@ -102,9 +102,12 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
         await door("exit-open", Kind.DOOR_OPEN)
         await presence("off")
-        self.assertIsNotNone(runtime.session.timeline.active)
+        self.assertIsNone(runtime.session.timeline.active)
+        ended = runtime.session.timeline.completed[-1]
+        self.assertEqual(runtime.session.timeline.door, "open")
         await door("exit-close", Kind.DOOR_CLOSE)
         self.assertIsNone(runtime.session.timeline.active)
+        self.assertEqual(runtime.session.timeline.completed[-1], ended)
         self.assertEqual(runtime.session.timeline.gang_count, 1)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
         self.assertEqual(sum(e.kind == "gang_ended" for e in runtime.consumer_events), 1)

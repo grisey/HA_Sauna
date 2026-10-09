@@ -90,7 +90,7 @@ window.installHistoryFixture = async function ({ seconds = 14400, both = false }
     parameters: [{ key: "target_temperature_c", minimum: 30, maximum: 100 }],
     measurements: [],
     measurement_status: {},
-    mechanical_timer: { state: "idle", remaining_seconds: 0 },
+
     manual_controls: { light: { normal: 25 }, heater: {} },
     permissions: { admin: false, control: true, light: true, temperature: true },
     configuration_locked: true,

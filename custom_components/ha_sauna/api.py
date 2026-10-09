@@ -26,6 +26,7 @@ from .settings import (
     async_reset_parameters,
     async_set_appearance,
     async_set_button_program,
+    async_set_button_gesture,
     async_set_control_mode,
     async_set_parameters,
     async_set_program,
@@ -83,19 +84,16 @@ def require_control(request, entry_id):
         raise web.HTTPForbidden()
 
 
-def can_control_heater(request, entry_id, runtime):
-    """Allow manual heater control to switch controllers and administrators."""
-    return request["hass_user"].is_admin or (
-        can_control(request, entry_id)
-        and runtime.configuration.control_mode == "manual"
-    )
-
-
 def manual_controls(runtime):
     """Expose selected plans and explicit observation without device ids."""
     light = runtime.device.light_output if runtime.device else None
     return {
         "heater": {
+            "blocked_on_reason": runtime.heater_on_blocked_reason,
+            "observation": {
+                "available": runtime.controller.contactor is not None,
+                "on": runtime.controller.contactor,
+            },
             "manual": runtime.controller.heater_override,
             "override_ends_at": plain(runtime.controller.heater_override_ends_at),
             "automatic": runtime.controller.automatic_decision.heat
@@ -173,6 +171,7 @@ class StateView(HomeAssistantView):
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
                         "configuration": runtime.configuration.as_options(),
+                        "button_session_gestures": runtime.available_button_session_gestures,
                         "measurement_ttl_seconds": runtime.configuration.parameters.values[
                             "sensor_timeout_seconds"
                         ],
@@ -209,8 +208,6 @@ class StateView(HomeAssistantView):
                         "thermostat_target": controller.thermostat_target,
                         "thermostat_restart_temperature": controller.thermostat_restart_temperature,
                         "target_temperature": controller.target_temperature,
-                        "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
-                        "mechanical_timer": controller.mechanical_timer_status,
                         "phase_timer": phase_timer(controller, now),
                         "start_availability": start_availability(
                             controller,
@@ -264,7 +261,7 @@ class StateView(HomeAssistantView):
                             "temperature": can_control(request, entry_id),
                             "program": can_control(request, entry_id),
                             "light": can_control(request, entry_id),
-                            "heater": can_control_heater(request, entry_id, runtime),
+                            "heater": can_control(request, entry_id),
                         },
                     }
                 )
@@ -537,6 +534,31 @@ class ProgramsView(HomeAssistantView):
         return self.json({"success": True, "programs": programs})
 
 
+class ButtonGestureView(HomeAssistantView):
+    url = "/api/ha_sauna/{entry_id}/button-gesture"
+    name = "api:ha_sauna:button_gesture"
+    requires_auth = True
+
+    async def post(self, request, entry_id):
+        require_control(request, entry_id)
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        runtime_for(hass, entry_id)
+        body = await json_body(request)
+        if not isinstance(body, dict) or set(body) != {"gesture"}:
+            raise web.HTTPBadRequest(text="Tastergeste fehlt oder ist ungültig")
+        try:
+            configuration = await async_set_button_gesture(hass, entry, body["gesture"])
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        return self.json({
+            "success": True,
+            "button_session_gesture": configuration.button_session_gesture,
+        })
+
+
 class ButtonProgramView(HomeAssistantView):
     url = "/api/ha_sauna/{entry_id}/button-program"
     name = "api:ha_sauna:button_program"
@@ -619,8 +641,6 @@ class LightView(HomeAssistantView):
         percentage = not isinstance(value, bool) and isinstance(value, (int, float))
         if not preset and not percentage:
             raise web.HTTPBadRequest(text="Lichtwert fehlt oder ist ungültig")
-        if percentage and not request["hass_user"].is_admin:
-            raise web.HTTPForbidden()
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
         try:
             await runtime.set_light_override(value)
@@ -636,7 +656,7 @@ class HeaterView(HomeAssistantView):
 
     async def post(self, request, entry_id):
         runtime = runtime_for(request.app[KEY_HASS], entry_id)
-        if not can_control_heater(request, entry_id, runtime):
+        if not can_control(request, entry_id):
             raise web.HTTPForbidden()
         body = await json_body(request)
         if (
@@ -648,9 +668,7 @@ class HeaterView(HomeAssistantView):
                 text="Heizwert muss wahr, falsch oder automatisch sein"
             )
         try:
-            await runtime.set_heater_override(
-                body["value"], manual_only=not request["hass_user"].is_admin
-            )
+            await runtime.set_heater_override(body["value"])
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True, "manual_controls": manual_controls(runtime)})
@@ -832,6 +850,7 @@ def register(hass):
     hass.http.register_view(ProgramView)
     hass.http.register_view(ProgramsView)
     hass.http.register_view(ButtonProgramView)
+    hass.http.register_view(ButtonGestureView)
     hass.http.register_view(ControlModeView)
     hass.http.register_view(LightView)
     hass.http.register_view(HeaterView)

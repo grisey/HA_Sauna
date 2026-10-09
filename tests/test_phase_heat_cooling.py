@@ -33,6 +33,7 @@ class PhaseHeatCoolingTests(unittest.TestCase):
         value = controller()
         self.assertFalse(value.last_decision.heat)
 
+        event(value, "entry-open", Kind.DOOR_OPEN, 1)
         event(value, "close", Kind.DOOR_CLOSE, 1)
         event(value, "person", Kind.PERSON_STRONG, 2)
 
@@ -59,6 +60,7 @@ class PhaseHeatCoolingTests(unittest.TestCase):
     def test_cooling_timer_waits_for_actual_off_and_freezes_calculation(self):
         value = controller(after_run_minutes=0.5)
         value.report_contactor(True, at(1))
+        event(value, "entry-open", Kind.DOOR_OPEN, 2)
         event(value, "close", Kind.DOOR_CLOSE, 2)
         event(value, "person", Kind.PERSON_STRONG, 3)
         event(value, "infusion", Kind.INFUSION, 4)
@@ -85,6 +87,7 @@ class PhaseHeatCoolingTests(unittest.TestCase):
 
     def test_cooling_has_priority_over_a_contradictory_active_gang(self):
         value = controller()
+        event(value, "entry-open", Kind.DOOR_OPEN, 1)
         event(value, "close", Kind.DOOR_CLOSE, 1)
         event(value, "person", Kind.PERSON_STRONG, 2)
         event(value, "infusion", Kind.INFUSION, 3)
@@ -105,6 +108,7 @@ class PhaseHeatCoolingTests(unittest.TestCase):
     def test_manual_stop_keeps_a_pending_cooling_from_resetting_the_window(self):
         value = controller()
         value.report_contactor(True, at(1))
+        event(value, "entry-open", Kind.DOOR_OPEN, 1)
         event(value, "close", Kind.DOOR_CLOSE, 1)
         event(value, "person", Kind.PERSON_STRONG, 2)
         event(value, "infusion", Kind.INFUSION, 3)

@@ -41,6 +41,7 @@ def controller(**parameters):
 class EntryContextTests(unittest.TestCase):
     def test_expired_strong_signal_is_processed_without_inventing_a_gang(self):
         sauna = controller()
+        sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close", Kind.DOOR_CLOSE, 0))
         before = (
             sauna.session.timeline.gang_count,
@@ -62,12 +63,13 @@ class EntryContextTests(unittest.TestCase):
         self.assertEqual(tuple(sauna.consumer_events), before[3])
         self.assertEqual(
             [item.event_id for item in sauna.session.timeline.processed],
-            ["close", "old-strong"],
+            ["entry-open", "close", "old-strong"],
         )
         self.assertFalse(sauna.regulation_inputs.gang_heat_demand)
 
     def test_old_strong_signal_cannot_attach_to_replacement_close_or_heat(self):
         sauna = controller()
+        sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close-old", Kind.DOOR_CLOSE, 0))
         sauna.process(event("open-new", Kind.DOOR_OPEN, 100))
         sauna.set_heater_override(False, at(105))
@@ -93,8 +95,9 @@ class EntryContextTests(unittest.TestCase):
             )
         )
 
-    def test_current_strong_signal_and_infusion_remain_admissible(self):
+    def test_current_strong_signal_starts_but_expired_infusion_does_not(self):
         sauna = controller()
+        sauna.process(event("entry-open", Kind.DOOR_OPEN, 110))
         sauna.process(event("close", Kind.DOOR_CLOSE, 110))
 
         result = sauna.process(
@@ -107,35 +110,28 @@ class EntryContextTests(unittest.TestCase):
         self.assertTrue(sauna.regulation_inputs.gang_heat_demand)
 
         sauna = controller()
+        sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close", Kind.DOOR_CLOSE, 0))
         result = sauna.process(event("old-infusion", Kind.INFUSION, 721, effective=1))
-        self.assertTrue(result.changed)
-        self.assertTrue(sauna.session.timeline.active.infusion_events)
+        self.assertFalse(result.changed)
+        self.assertEqual(result.reason, "entry_context_expired")
+        self.assertIsNone(sauna.session.timeline.active)
 
-    def test_recognition_only_strong_and_weak_rules_are_unchanged(self):
-        sauna = controller()
-        sauna._session = replace(
-            sauna.session,
-            timeline=replace(sauna.session.timeline, door=Door.CLOSED),
-        )
-        self.assertTrue(sauna.process(event("strong", Kind.PERSON_STRONG, 1)).changed)
-        self.assertEqual(sauna.session.timeline.active.start_basis, "recognition_only")
-
-        sauna = controller()
-        self.assertEqual(
-            sauna.process(event("weak", Kind.PERSON_WEAK, 1)).reason,
-            "entry_context_missing",
-        )
-        sauna._session = replace(
-            sauna.session,
-            timeline=replace(sauna.session.timeline, door=Door.CLOSED),
-        )
-        self.assertEqual(
-            sauna.process(event("weak-closed", Kind.PERSON_WEAK, 2)).reason,
-            "entry_context_missing",
-        )
+    def test_all_proxy_starts_require_a_complete_door_episode(self):
+        for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+            for door in (Door.UNKNOWN, Door.CLOSED):
+                with self.subTest(kind=kind, door=door):
+                    sauna = controller()
+                    sauna._session = replace(
+                        sauna.session,
+                        timeline=replace(sauna.session.timeline, door=door),
+                    )
+                    result = sauna.process(event("signal", kind, 1))
+                    self.assertEqual(result.reason, "entry_context_missing")
+                    self.assertIsNone(sauna.session.timeline.active)
 
         sauna = controller()
+        sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close", Kind.DOOR_CLOSE, 0))
         self.assertTrue(sauna.process(event("weak", Kind.PERSON_WEAK, 1)).changed)
 
@@ -143,6 +139,7 @@ class EntryContextTests(unittest.TestCase):
         for detected, expected_changed in ((719, True), (720, True), (721, False)):
             with self.subTest(detected=detected):
                 sauna = controller()
+                sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
                 sauna.process(event("close", Kind.DOOR_CLOSE, 0))
                 result = sauna.process(
                     event("strong", Kind.PERSON_STRONG, detected, effective=1)
@@ -162,6 +159,7 @@ class EntryContextTests(unittest.TestCase):
 
     def test_rejected_signal_keeps_identity_and_duplicate_rules(self):
         sauna = controller()
+        sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close", Kind.DOOR_CLOSE, 0))
         old = event("old", Kind.PERSON_STRONG, 721, effective=1)
         self.assertEqual(sauna.process(old).reason, "entry_context_expired")
@@ -179,6 +177,7 @@ class EntryContextArchiveTests(unittest.IsolatedAsyncioTestCase):
             await archive.start()
             try:
                 sauna = controller()
+                sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
                 sauna.process(event("close", Kind.DOOR_CLOSE, 0))
                 sauna.process(event("old-strong", Kind.PERSON_STRONG, 721, effective=1))
                 archive.save_session(sauna.session, at(721), {})
@@ -190,7 +189,7 @@ class EntryContextArchiveTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(timeline["retracted"], [])
                 self.assertEqual(
                     [item["event_id"] for item in timeline["processed"]],
-                    ["close", "old-strong"],
+                    ["entry-open", "close", "old-strong"],
                 )
 
                 export_path = await archive.export()
@@ -204,7 +203,7 @@ class EntryContextArchiveTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(timeline["retracted"], [])
                     self.assertEqual(
                         [item["event_id"] for item in timeline["processed"]],
-                        ["close", "old-strong"],
+                        ["entry-open", "close", "old-strong"],
                     )
                 finally:
                     export_path.unlink()

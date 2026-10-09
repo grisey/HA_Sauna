@@ -62,6 +62,7 @@ class DetectorTests(unittest.TestCase):
         c = Controller(p)
         c.set_temperature(80, T0)
         c.begin_session("s", T0)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         c.process(event("water", Kind.INFUSION, 0))
         d.report_heating(True, T0)
@@ -87,6 +88,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(d.capacity, 181)
         ventilation = [e for e in found if e.kind == Kind.VENTILATION]
         self.assertEqual([e.trace_at for e in ventilation], [T0 + timedelta(seconds=215)])
+        self.assertNotIn(Kind.DOOR_CLOSE, [e.kind for e in found])
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertFalse(c.regulation_inputs.gang_heat_demand)
@@ -271,8 +273,7 @@ class DetectorTests(unittest.TestCase):
             "vent_baseline_seconds": 1, "vent_drop_upper": 100, "vent_drop_lower": 100,
             "person_step_seconds": 1, "strong_window_seconds": 1,
             "strong_hold_seconds": 600, "infusion_hold_seconds": 600,
-            "weak_window_seconds": 2, "weak_temperature_upper": 1,
-            "weak_temperature_lower": 1, "weak_humidity_upper": .1,
+            "weak_window_seconds": 2, "weak_humidity_upper": .1,
             "weak_humidity_lower": .1, "weak_hold_seconds": 1,
             "confirmation_minutes": 1,
         }
@@ -856,8 +857,7 @@ class DetectorTests(unittest.TestCase):
 
     def test_hot_operation_uses_the_continuous_heating_route(self):
         for base, minimum in ((90, 60), (65, 60), (59, 60)):
-            d=Detector(detection_parameters(door_heating_max_temperature_c=100,
-                                             sauna_min_temperature_c=minimum),T0)
+            d=Detector(detection_parameters(sauna_min_temperature_c=minimum),T0)
             events=[]
             for i in range(80):
                 d.report_heating(True,T0+timedelta(seconds=i))

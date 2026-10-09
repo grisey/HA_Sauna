@@ -684,6 +684,144 @@ class Archive:
             return {"session_id": session_id, "measurements": ()}
         return {"session_id": session_id, "measurements": tuple(measurements)}
 
+    def heating_response_history(self, source, position, heater_source, maximum_gap_seconds):
+        """Read complete, uninterrupted OFF/ON/OFF observations for this hardware.
+
+        Original receipt times remain the measurement clock. A session's first
+        ON snapshot is a state, never evidence of a switching edge. Callers run
+        this historical read outside HA's event loop and cache the result.
+        """
+        if (
+            not isinstance(source, str) or not source
+            or not isinstance(position, str) or position not in {"upper", "lower"}
+            or not isinstance(heater_source, str) or not heater_source
+            or isinstance(maximum_gap_seconds, bool)
+            or not isinstance(maximum_gap_seconds, (int, float))
+            or not isfinite(maximum_gap_seconds) or maximum_gap_seconds <= 0
+        ):
+            return ()
+
+        def timestamp(value):
+            at = datetime.fromisoformat(value)
+            if at.tzinfo is None:
+                raise ValueError("Historical evidence requires a timezone")
+            return at
+
+        episodes = []
+        with closing(sqlite3.connect(self.path)) as db:
+            # Configuration, state edges and measurements share one read snapshot.
+            db.execute("BEGIN")
+            sessions = db.execute(
+                "SELECT session_id,payload FROM sessions "
+                "WHERE entry_id=? AND ended_at IS NOT NULL ORDER BY ended_at,session_id",
+                (self.entry_id,),
+            ).fetchall()
+            for session_id, payload in sessions:
+                try:
+                    session = json.loads(payload)
+                    bindings = session.get("configuration", {}).get("bindings", {})
+                    if (
+                        bindings.get(f"{position}_temperature") != source
+                        or bindings.get("heater") != heater_source
+                    ):
+                        continue
+                    session_start = timestamp(session["timeline"]["session_started_at"])
+                    session_end = timestamp(session["ended_at"])
+                    rows = db.execute(
+                        "SELECT kind,received_at,payload FROM records "
+                        "WHERE entry_id=? AND session_id=? "
+                        "AND kind IN ('measurement','source_state','detection') ORDER BY id",
+                        (self.entry_id, session_id),
+                    ).fetchall()
+                    contacts = []
+                    measurements = []
+                    doors = {
+                        (timestamp(event["effective_at"]), event["kind"])
+                        for event in session["timeline"].get("processed", ())
+                        if event.get("kind") in {"door_open", "door_close"}
+                    }
+                    native_contacts = session.get("contactor_history")
+                    if native_contacts:
+                        contacts = [
+                            (timestamp(mark["at"]), mark["state"])
+                            for mark in native_contacts
+                        ]
+                    for kind, received_at, raw in rows:
+                        data = json.loads(raw)
+                        if kind == "measurement":
+                            if data.get("position") != position or data.get("quantity") != "temperature":
+                                continue
+                            at = timestamp(received_at)
+                            value = data.get("value")
+                            valid = (
+                                data.get("source") == source
+                                and not isinstance(value, bool)
+                                and isinstance(value, (int, float)) and isfinite(value)
+                            )
+                            measurements.append((at, float(value) if valid else None))
+                        elif kind == "source_state" and not native_contacts:
+                            if data.get("role") == "heater":
+                                state = (
+                                    {"on": True, "off": False}.get(data.get("state"))
+                                    if data.get("source") == heater_source else None
+                                )
+                                contacts.append((timestamp(received_at), state))
+                        elif kind == "detection":
+                            event = data.get("event", {})
+                            if event.get("kind") in {"door_open", "door_close"}:
+                                doors.add((timestamp(event["effective_at"]), event["kind"]))
+                    if any(state is not None and not isinstance(state, bool) for _, state in contacts):
+                        continue
+                    if any(right[0] < left[0] for left, right in zip(contacts, contacts[1:])):
+                        continue
+                    measurements.sort(key=lambda item: item[0])
+                    doors = sorted(doors)
+                    previous = None
+                    started_at = None
+                    for at, state in contacts:
+                        if not session_start <= at <= session_end:
+                            previous, started_at = None, None
+                            continue
+                        if state is True and previous is False:
+                            started_at = at
+                        elif state is not True and started_at is not None:
+                            if state is False and at > started_at:
+                                # An opening before ON remains relevant until its
+                                # close. Either door edge during ON invalidates it.
+                                before = [kind for when, kind in doors if when < started_at]
+                                disturbed = (
+                                    (before and before[-1] == "door_open")
+                                    or any(started_at <= when <= at for when, _ in doors)
+                                )
+                                samples = [item for item in measurements if started_at <= item[0] <= at]
+                                preceding = [item for item in measurements if item[0] < started_at]
+                                if preceding and preceding[-1][1] is not None and (
+                                    started_at - preceding[-1][0]
+                                ).total_seconds() <= maximum_gap_seconds:
+                                    samples.insert(0, preceding[-1])
+                                if (
+                                    not disturbed and samples
+                                    and all(value is not None for _, value in samples)
+                                    and (samples[0][0] - started_at).total_seconds() <= maximum_gap_seconds
+                                    and (at - samples[-1][0]).total_seconds() <= maximum_gap_seconds
+                                    and all(
+                                        (right[0] - left[0]).total_seconds() <= maximum_gap_seconds
+                                        for left, right in zip(samples, samples[1:])
+                                    )
+                                ):
+                                    episodes.append({
+                                        "session_id": session_id,
+                                        "started_at": started_at,
+                                        "ended_at": at,
+                                        "measurements": tuple(samples),
+                                    })
+                            started_at = None
+                        previous = state
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    # Incomplete legacy evidence cannot teach a heating delay.
+                    continue
+        return tuple(episodes)
+
     async def export(self):
         await self.flush()
         work = _ExportWork(self._export)

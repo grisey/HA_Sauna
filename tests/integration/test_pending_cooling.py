@@ -50,6 +50,8 @@ class PendingCoolingAPITests(unittest.IsolatedAsyncioTestCase):
         session_id = runtime.session.session_id
         self.assertEqual(runtime.session.timeline.door, "closed")
         for second, kind in (
+            (0, Kind.DOOR_OPEN),
+            (1, Kind.DOOR_CLOSE),
             (2, Kind.INFUSION),
             (3, Kind.DOOR_OPEN),
             (4, Kind.VENTILATION),

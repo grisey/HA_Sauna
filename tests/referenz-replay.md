@@ -12,7 +12,7 @@ Die Kanalbezeichnungen K3 und K6 gehören zu diesem festgehaltenen
 Export. Die Integration ordnet ihre Quellen über die konfigurierten Rollen
 oben und unten zu.
 
-[Produktive Erkennung](erkennung.md) · [Gangmodell](gangmodell.md)
+[Produktive Erkennung](../docs/erkennung.md) · [Gangmodell](../docs/gangmodell.md)
 
 ## Eingabeformat
 
@@ -96,17 +96,15 @@ Kanalvariante. `proof_open` verweist mit `state_id` und `states_jsonl_line` auf
 die zugrunde liegenden Originalzeilen. Temperaturminima und deren Abstand zum
 Schließsignal sind nachträgliche Kurvenmerkmale in der Ergebnisbeschreibung.
 
-[Prüfverfahren für optionale private Replays](abnahme.md#fachkern-und-javascript)
+[Prüfverfahren für optionale private Replays](README.md#fachkern-und-javascript)
 
 ## Provenienz und Datenhaltung
 
 [candidate/provenienz.json](../candidate/provenienz.json) beschreibt die Herkunft
 der Referenz. `source_archive` und `source_sha256` kennzeichnen den verwendeten
 Recorderexport. `candidate_files_sha256` bindet Programm, Parametersatz und
-Dokument jeweils mit einer eigenen Prüfsumme. Bei einer Überarbeitung dieser
-Erklärung wird ausschließlich ihre Dokumentprüfsumme aktualisiert.
-`full_replay_result_sha256` bindet die vollständige Referenzausgabe einschließlich
-der Zusatzberechnungen; Quellenkennung, Ergebnisprüfsumme und gespeicherte
+Dokument jeweils mit einer eigenen Prüfsumme. `full_replay_result_sha256` bindet
+die vollständige Referenzausgabe einschließlich der Zusatzberechnungen; Quellenkennung, Ergebnisprüfsumme und gespeicherte
 Referenzwerte bleiben auf die ursprüngliche Berechnung bezogen.
 
 Der im Ergebnis enthaltene Eingabedateiname gehört zum byteweisen Vergleich; die optionale

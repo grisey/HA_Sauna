@@ -35,6 +35,9 @@ ROLES = (
         optional=True,
     ),
     Role(
+        "upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True
+    ),
+    Role(
         "lower_temperature", "Temperatur unten", ("sensor",), "temperature", "°C",
         optional=True,
     ),
@@ -42,17 +45,10 @@ ROLES = (
         "lower_humidity", "Luftfeuchte unten", ("sensor",), "humidity", "%",
         optional=True,
     ),
-    Role("heater", "Schalter des Heizschützes", ("switch",)),
-    Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
-    Role("light", "Dimmbares Saunalicht", ("light",)),
-    Role("presence", "Präsenzentität", ("binary_sensor",), optional=True),
-    Role("audio_output", "Audioziel (vorbereitet)", ("media_player",), optional=True),
-    Role(
-        "upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True
-    ),
     Role(
         "lower_status", "Sensorstatus unten", ("sensor", "binary_sensor"), optional=True
     ),
+    Role("heater", "Schalter des Heizschützes", ("switch",)),
     Role(
         "heater_feedback",
         "Unabhängiger binärer Heiznachweis (optional)",
@@ -68,6 +64,10 @@ ROLES = (
         optional=True,
         accepted_units=("W", "kW"),
     ),
+    Role("light", "Dimmbares Saunalicht", ("light",)),
+    Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
+    Role("presence", "Präsenzentität", ("binary_sensor",), optional=True),
+    Role("audio_output", "Audioziel (vorbereitet)", ("media_player",), optional=True),
     Role(
         "environment_weather", "Wetterquelle", ("weather",),
         None, None, optional=True,

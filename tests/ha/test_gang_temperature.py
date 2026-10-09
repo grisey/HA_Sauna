@@ -28,6 +28,8 @@ class GangTemperatureDeviceTests(unittest.TestCase):
         clock[0] = T0 + timedelta(seconds=11)
         adapter.refresh(clock[0])
         self.assertEqual(runtime.controller.temperature, 60)
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+            runtime.controller.process(Event(kind.value, "s", kind, clock[0], clock[0]))
         self.assertTrue(runtime.controller.recognition_allowed(Kind.INFUSION))
         self.assertEqual(runtime.controller._temperature_valid_until,
                          T0 + timedelta(seconds=15))
@@ -39,7 +41,8 @@ class GangTemperatureDeviceTests(unittest.TestCase):
                 both_positions=True, sensor_timeout_seconds=10,
             )
             runtime.controller.set_operation(True, T0, session_id="s")
-            runtime._process_event(Event("close", "s", Kind.DOOR_CLOSE, T0, T0))
+            for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+                runtime._process_event(Event(kind.value, "s", kind, T0, T0))
             clock[0] = T0 + timedelta(seconds=5)
             await runtime.device_input(fixture.detection_edge(runtime, "lower_temperature", 25))
             self.assertEqual(runtime.controller.temperature, 90)
@@ -56,8 +59,10 @@ class GangTemperatureDeviceTests(unittest.TestCase):
 
             clock[0] = T0 + timedelta(seconds=12)
             await runtime.device_input(fixture.detection_edge(runtime, "lower_temperature", 60))
+            for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+                runtime._process_event(Event(f"warm:{kind.value}", "s", kind, clock[0], clock[0]))
             runtime._process_event(Event("warm", "s", Kind.INFUSION, clock[0], clock[0]))
             self.assertEqual(runtime.session.timeline.active.started_at, clock[0])
-            self.assertEqual(runtime.session.timeline.active.start_basis, "recognition_only")
+            self.assertEqual(runtime.session.timeline.active.start_basis, "door_close")
 
         asyncio.run(exercise())

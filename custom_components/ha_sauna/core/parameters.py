@@ -75,6 +75,8 @@ LEGACY_PARAMETER_KEYS = frozenset(
         "forced_cooling_minutes",
         "heating_minutes",
         "heating_reduction_minutes",
+        "mechanical_timer_minutes",
+        "mechanical_timer_warning_minutes",
         "open_door_wait_minutes",
         "overtemperature_cooling_factor",
         "overtemperature_minutes",
@@ -84,7 +86,8 @@ LEGACY_PARAMETER_KEYS = frozenset(
 )
 # Current settings and read-compatibility metadata are deliberately separate.
 EDITABLE_DEFINITIONS = tuple(
-    ParameterDefinition(**spec) for spec in section("parameters")
+    ParameterDefinition(**spec)
+    for spec in sorted(section("parameters"), key=lambda spec: spec["order"])
 )
 DEFINITIONS = EDITABLE_DEFINITIONS + tuple(
     ParameterDefinition(**spec) for spec in section("legacy_parameters")
@@ -111,11 +114,6 @@ class Parameters:
         # normal configuration write persists that effective value.
         supplied = self.values
         values = dict(supplied)
-        warning_key = "mechanical_timer_warning_minutes"
-        if warning_key in values and values[warning_key] is None:
-            # Older saved configurations used null for an explicitly disabled
-            # warning. Missing settings still take the current factory value.
-            values[warning_key] = 0
         base = values.get("after_run_minutes")
         max_key = "oven_cooling_max_minutes"
         if (

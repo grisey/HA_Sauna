@@ -21,7 +21,7 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 def parameters():
     # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key not in {"final_temperature_c", "door_request_minutes"}},
+    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
                        "session_gap_minutes": 2.5})
 
 
@@ -75,10 +75,11 @@ class ParameterTests(unittest.TestCase):
 
         # Older saved options contain only the former fixed cooling duration.
         # Retain a value above the new default cap by deriving that cap once.
-        legacy = Parameters({"after_run_minutes": 30})
-        self.assertEqual(legacy.values["after_run_minutes"], 30)
-        self.assertEqual(legacy.values["oven_cooling_max_minutes"], 30)
-        self.assertEqual(legacy.minimum_for("oven_cooling_max_minutes"), 30)
+        saved_duration = BY_KEY["oven_cooling_max_minutes"].default + 15
+        legacy = Parameters({"after_run_minutes": saved_duration})
+        self.assertEqual(legacy.values["after_run_minutes"], saved_duration)
+        self.assertEqual(legacy.values["oven_cooling_max_minutes"], saved_duration)
+        self.assertEqual(legacy.minimum_for("oven_cooling_max_minutes"), saved_duration)
 
         with self.assertRaises(ParameterError) as raised:
             Parameters({"after_run_minutes": 16, "oven_cooling_max_minutes": 15})
@@ -292,6 +293,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_existing_gang_core_is_used(self):
         self.controller.set_temperature(70, T0)
+        self.controller.process(event("entry-open", Kind.DOOR_OPEN, 9))
         self.controller.process(event("close", Kind.DOOR_CLOSE, 10))
         result = self.controller.process(event("person", Kind.PERSON_STRONG, 20))
         self.assertEqual(result.session.timeline.active.confirmation, Confirmation.PROVISIONAL)

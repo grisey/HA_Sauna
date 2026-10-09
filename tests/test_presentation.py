@@ -114,7 +114,7 @@ class PresentationTests(unittest.TestCase):
         self.assertIn("noch nicht eingestellt",fault_message("upper_temperature","validity_unconfigured"))
 
     def test_standard_logging_levels_filter_and_changed_states_are_not_repeated(self):
-        log=SaunaLog("unit-test")
+        log=SaunaLog("unit-test", level="INFO")
         records=[]
         class Capture(logging.Handler):
             def emit(self,record): records.append(record)

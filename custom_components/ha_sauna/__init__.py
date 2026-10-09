@@ -257,14 +257,8 @@ async def async_options_updated(hass, entry):
             )
             return
         runtime.reconfiguring = True
-    timer = (
-        runtime.controller.mechanical_timer.pause(runtime._clock())
-        if runtime and not runtime.closed
-        else None
-    )
-    light_timer = (
-        runtime.controller.light_after_run if runtime and not runtime.closed else None
-    )
+    transfer_light = runtime is not None and not runtime.closed
+    light_timer = runtime.controller.light_after_run if transfer_light else None
     try:
         if runtime and not runtime.closed and runtime.device:
             heater_finished = await runtime.device.prepare_heater_handoff(
@@ -315,14 +309,13 @@ async def async_options_updated(hass, entry):
         return
     replacement = getattr(entry, "runtime_data", None)
     if (
-        timer is not None
+        transfer_light
         and replacement is not None
         and replacement is not runtime
         and not replacement.closed
         and entry.options == requested_options
         and replacement.configuration.as_options() == updated.as_options()
     ):
-        replacement.controller.mechanical_timer = timer
         replacement.controller.light_after_run = light_timer
         await replacement.tick()
 

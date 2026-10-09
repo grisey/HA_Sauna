@@ -24,12 +24,33 @@ class ButtonRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 9, 20, 12, tzinfo=UTC)
         self.runtime = SaunaRuntime(
-            Configuration(Bindings(bindings()), Parameters({})), lambda: self.now
+            Configuration(Bindings(bindings()), Parameters({"button_hold_seconds": 2}),
+                          button_session_gesture="long"), lambda: self.now
         )
 
     def _event(self, name, seconds=0):
         self.now += timedelta(seconds=seconds)
         asyncio.run(self._handle(name))
+
+    def test_selected_multi_click_starts_automatic_and_finishes_without_hold(self):
+        for gesture in ("double", "triple"):
+            with self.subTest(gesture=gesture):
+                self.setUp()
+                self.runtime = SaunaRuntime(
+                    Configuration(Bindings(bindings()), Parameters({}),
+                                  control_mode="manual", button_session_gesture=gesture),
+                    clock=lambda: self.now,
+                )
+                self.runtime.controller.set_temperature(70, self.now)
+                self._event(gesture)
+                identity = self.runtime.session.session_id
+                self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+                self.assertFalse(self.runtime.button_start_hold_active)
+                self.assertIsNone(self.runtime._button_hold_session_id)
+                self._event(gesture, 1)
+                self.assertIsNone(self.runtime.session)
+                self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
+                self.assertIsNone(self.runtime._button_hold_session_id)
 
     def test_received_binary_hold_duration_survives_monotone_action_time(self):
         async def gesture(duration):
@@ -46,11 +67,21 @@ class ButtonRuntimeTests(unittest.TestCase):
                 asyncio.run(gesture(duration))
                 self.assertEqual(self.runtime.session is None, duration == 3)
 
-    def test_manual_only_heater_command_rechecks_mode_when_executed(self):
-        with self.assertRaisesRegex(ValueError, "Betriebsart"):
-            asyncio.run(self.runtime.set_heater_override(True, manual_only=True))
+    def test_automatic_idle_heater_command_requires_explicit_mode_change(self):
+        with self.assertRaisesRegex(ValueError, "Saunabetrieb"):
+            asyncio.run(self.runtime.set_heater_override(True))
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
         self.assertIsNone(self.runtime.controller.heater_override)
         self.assertIsNone(self.runtime.session)
+
+    def test_idle_heater_command_keeps_session_recording_off(self):
+        self.runtime._set_control_mode("manual")
+        self.runtime.controller.set_temperature(70, self.now)
+        asyncio.run(self.runtime.set_heater_override(True))
+        self.assertEqual(self.runtime.configuration.control_mode, "manual")
+        self.assertIsNone(self.runtime.session)
+        self.assertTrue(self.runtime.controller.heater_override)
+        self.assertTrue(self.runtime.controller.last_decision.heat)
 
     async def _handle(self, name):
         async with self.runtime._lock:
@@ -58,14 +89,15 @@ class ButtonRuntimeTests(unittest.TestCase):
             await self.runtime._cycle()
 
     def _start_with_temperature(self):
-        self._event("short")
         self.runtime.controller.set_temperature(70, self.now)
+        self._event("long")
         return self.now
 
     def _complete_gang(self, started_at):
         controller = self.runtime.controller
         session_id = controller.session.session_id
         for name, kind, seconds in (
+            ("entry-open", Kind.DOOR_OPEN, 290),
             ("close", Kind.DOOR_CLOSE, 300),
             ("person", Kind.PERSON_STRONG, 360),
             ("infusion", Kind.INFUSION, 480),
@@ -75,124 +107,84 @@ class ButtonRuntimeTests(unittest.TestCase):
             self.now = started_at + timedelta(seconds=seconds)
             controller.process(Event(name, session_id, kind, self.now, self.now))
 
-    def test_physical_start_at_expired_manual_gap_finishes_once(self):
+    def test_long_resumes_pending_session_or_starts_after_gap_expiry(self):
         for seconds in (59, 60, 61):
             with self.subTest(seconds=seconds):
-                self.now = datetime(2026, 9, 20, 12, tzinfo=UTC)
-                configuration = Configuration(
-                    Bindings(bindings()),
-                    Parameters({"session_gap_minutes": 1}),
-                    control_mode="manual",
-                    button_temperature_c=90,
+                self.setUp()
+                self.runtime = SaunaRuntime(
+                    Configuration(Bindings(bindings()), Parameters({"session_gap_minutes": 1}),
+                                  button_session_gesture="long"),
+                    lambda: self.now,
                 )
-                self.runtime = SaunaRuntime(configuration, lambda: self.now)
-                asyncio.run(self.runtime.set_operation(True))
+                self._start_with_temperature()
                 old_id = self.runtime.session.session_id
                 asyncio.run(self.runtime.set_operation(False))
-                self._event("short", seconds)
+                self._event("long", seconds)
                 self.assertTrue(self.runtime.session.operation_enabled)
-                self.assertNotEqual(self.runtime.session.session_id, old_id)
-                self.assertEqual(self.runtime.controller.control_mode, "automatic")
-                self.assertEqual(
-                    [session.session_id for session in self.runtime.controller.completed_sessions],
-                    [old_id],
-                )
+                self.assertEqual(self.runtime.session.session_id == old_id, seconds < 60)
 
-    def test_physical_program_start_archives_old_manual_configuration(self):
-        configuration = Configuration(
-            Bindings(bindings()),
-            Parameters({"target_temperature_c": 75}),
-            control_mode="manual",
-            button_temperature_c=90,
-        )
-        self.runtime = SaunaRuntime(configuration, lambda: self.now)
-        self.runtime.archive = Mock()
-        asyncio.run(self.runtime.set_operation(True))
-        old_id = self.runtime.session.session_id
+    def test_short_during_pending_session_does_not_enter_manual_or_resume(self):
+        self._start_with_temperature()
+        identity = self.runtime.session.session_id
         asyncio.run(self.runtime.set_operation(False))
-        self._event("short", 5)
-        saved_old = [
-            call.args[2]
-            for call in self.runtime.archive.save_session.call_args_list
-            if call.args[0].session_id == old_id
-        ]
-        self.assertTrue(saved_old)
-        self.assertEqual(saved_old[-1]["control_mode"], "manual")
-        self.assertEqual(saved_old[-1]["parameters"]["target_temperature_c"], 75)
+        with self.assertRaisesRegex(ValueError, "Saunabetrieb"):
+            self._event("short", 1)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertFalse(self.runtime.session.operation_enabled)
         self.assertEqual(self.runtime.configuration.control_mode, "automatic")
-        self.assertEqual(self.runtime.configuration.parameters.values["target_temperature_c"], 90)
-
-    def test_press_release_single_starts_once_and_short_toggles_override(self):
-        self._event("press")
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(self.runtime.controller.last_decision.heat)
-        self._event("release")
-        self.assertIsNone(self.runtime.session)
-        self._event("short")
-        session_id = self.runtime.session.session_id
-        self.assertIsNone(self.runtime.controller.heater_override)
-        self._event("short")
-        self._event("long")
-        self._event("release")
-        self.assertEqual(self.runtime.session.session_id, session_id)
-        self.assertIsNone(self.runtime.controller.heater_override)
-        self.runtime.controller.set_temperature(80, self.now)
-        self._event("press")
-        self._event("release")
-        self._event("short")
-        self.assertTrue(self.runtime.controller.heater_override)
-        self._event("press")
-        self._event("release")
-        self._event("short")
         self.assertIsNone(self.runtime.controller.heater_override)
 
-    def test_native_double_starts_at_summary_then_toggles_the_second_press(self):
-        self.runtime.controller.set_temperature(80, self.now)
-        self._event("press")
-        self.assertIsNone(self.runtime.session)
-        self._event("release")
-        self._event("press")
-        self._event("release")
-        self.assertIsNone(self.runtime.session)
-        self._event("double")
-        session_id = self.runtime.session.session_id
-        self.assertTrue(self.runtime.controller.heater_override)
-        self._event("double")
-        self._event("short")
-        self._event("long")
-        self._event("release")
-        self.assertEqual(self.runtime.session.session_id, session_id)
-        self.assertTrue(self.runtime.controller.heater_override)
-        self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
-        self.assertIsNone(self.runtime.controller.light_after_run)
-
-    def test_event_only_triple_applies_each_short_press(self):
-        self._event("short")
-        self.runtime.controller.set_temperature(80, self.now)
-        self._event("triple")
-        self.assertTrue(self.runtime.session.operation_enabled)
-        self.assertTrue(self.runtime.controller.heater_override)
-
-    def test_native_short_in_running_manual_mode_keeps_direct_heater_selection(self):
-        self.runtime = SaunaRuntime(
-            Configuration(Bindings(bindings()), Parameters({}), control_mode="manual"),
-            lambda: self.now,
-        )
+    def test_short_outside_session_enters_manual_and_never_records_a_session(self):
         self.runtime.controller.set_temperature(70, self.now)
-        asyncio.run(self.runtime.set_operation(True))
-        session_id = self.runtime.session.session_id
-        for selection in (True, False):
+        self.runtime.save_configuration = Mock()
+        for value in (True, False, True):
             self._event("press", 1)
             self._event("release")
             self._event("short")
-            self.assertEqual(self.runtime.controller.heater_override, selection)
-            self.assertEqual(self.runtime.controller.last_decision.heat, selection)
-            self.assertEqual(self.runtime.controller.control_mode, "manual")
-            self.assertEqual(self.runtime.session.session_id, session_id)
-            self.runtime.controller.report_contactor(selection, self.now)
+            self.assertIsNone(self.runtime.session)
+            self.assertEqual(self.runtime.controller.heater_override, value)
+            self.assertEqual(self.runtime.controller.last_decision.heat, value)
+            self.assertEqual(self.runtime.configuration.control_mode, "manual")
+        self.runtime.save_configuration.assert_called()
+        self.assertEqual(self.runtime.controller.completed_sessions, ())
+
+    def test_long_manual_start_switches_to_automatic_and_holds_acknowledgement(self):
+        self.runtime._set_control_mode("manual")
+        self.runtime.controller.set_temperature(70, self.now)
+        self._event("press")
+        self._event("long", 2)
+        identity = self.runtime.session.session_id
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertTrue(self.runtime.button_start_hold_active)
+        self._event("long", 1)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self._event("release")
+        self.assertFalse(self.runtime.button_start_hold_active)
+        self._event("short")
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertIsNone(self.runtime.controller.heater_override)
+
+    def test_native_double_toggles_each_press_without_starting(self):
+        self.runtime.controller.set_temperature(70, self.now)
+        self.runtime.controller.report_contactor(False, self.now)
+        for _ in range(2):
+            self._event("press")
+            self._event("release")
+        self._event("double")
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+        self._event("double")
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+
+    def test_event_only_triple_applies_each_short_press(self):
+        self.runtime.controller.set_temperature(70, self.now)
+        self._event("triple")
+        self.assertIsNone(self.runtime.session)
+        self.assertTrue(self.runtime.controller.heater_override)
 
     def test_long_release_finishes_once_and_starts_light_after_run_on_release(self):
-        self._event("short")
+        self._event("long")
         session_id = self.runtime.session.session_id
         self._event("press")
         self._event("long", 2)
@@ -203,43 +195,18 @@ class ButtonRuntimeTests(unittest.TestCase):
         self._event("release")
         self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
 
-    def test_native_off_long_never_starts_and_next_short_starts(self):
-        self.runtime.controller.set_temperature(70, self.now)
-        for event, seconds in (("press", 0), ("long", 2), ("release", 1), ("short", 0)):
-            self._event(event, seconds)
-            self.assertIsNone(self.runtime.session)
-            self.assertFalse(self.runtime.controller.last_decision.heat)
-            self.assertIsNone(self.runtime.controller.heater_override)
-            self.assertIsNone(self.runtime.controller.light_after_run)
-            self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
-        self._event("press", 1)
-        self._event("release")
-        self._event("short")
-        self.assertTrue(self.runtime.session.operation_enabled)
-        self.assertTrue(self.runtime.controller.last_decision.heat)
-        self.assertIsNone(self.runtime.controller.heater_override)
-
-    def test_sparse_off_long_never_starts_but_running_long_releases_heating(self):
-        button = self.runtime._button
+    def test_sparse_long_starts_without_lingering_start_acknowledgement(self):
         self.runtime.controller.set_temperature(70, self.now)
         self._event("long")
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(self.runtime.controller.last_decision.heat)
-        self._event("short", 1)
-        session_id = self.runtime.session.session_id
-        self.assertTrue(self.runtime.controller.last_decision.heat)
-
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertFalse(self.runtime.button_start_hold_active)
         self._event("long", 10)
-
-        self.assertIs(self.runtime._button, button)
         self.assertIsNone(self.runtime.session)
         self.assertFalse(self.runtime.controller.last_decision.heat)
-        self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
-        self.assertIsNone(self.runtime.controller.light_after_run)
-        self._event("release", 1)
-        self.assertEqual(self.runtime.controller.light_after_run.session_id, session_id)
+        self._event("release")
+        self.assertIsNotNone(self.runtime.controller.light_after_run)
 
-    def test_binary_off_start_requires_short_received_duration(self):
+    def test_binary_start_requires_long_received_duration(self):
         async def gesture(duration):
             action_at = self.now + timedelta(seconds=10)
             await self.runtime._handle_button_event(
@@ -258,15 +225,15 @@ class ButtonRuntimeTests(unittest.TestCase):
                 self.setUp()
                 self.runtime.controller.set_temperature(70, self.now)
                 asyncio.run(gesture(duration))
-                self.assertEqual(self.runtime.session is not None, duration == 1)
+                self.assertEqual(self.runtime.session is not None, duration >= 2)
                 self.assertEqual(
-                    self.runtime.controller.last_decision.heat, duration == 1
+                    self.runtime.controller.last_decision.heat, True
                 )
-                self.assertIsNone(self.runtime.controller.heater_override)
+                self.assertIs(self.runtime.controller.heater_override, True if duration == 1 else None)
                 self.assertIsNone(self.runtime.controller.light_after_run)
 
     def test_delayed_binary_release_finishes_and_starts_light_after_run(self):
-        self._event("short")
+        self._event("long")
         session_id = self.runtime.session.session_id
         self._event("on")
         self.now += timedelta(seconds=2)
@@ -275,7 +242,7 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.controller.light_after_run.session_id, session_id)
 
     def test_new_start_makes_an_old_release_harmless(self):
-        self._event("short")
+        self._event("long")
         self._event("press")
         self._event("long", 2)
         self.runtime._set_operation(True)
@@ -290,15 +257,13 @@ class ButtonRuntimeTests(unittest.TestCase):
         controller.report_contactor(True, started_at + timedelta(seconds=1))
         self._complete_gang(started_at)
 
-        self._event("short", 1)
-        self.assertTrue(controller.heater_override)
-        self.assertIsNone(controller.session.after_run.paused_at)
-        self.assertFalse(controller.last_decision.heat)
-
-        self._event("short", 1)
-        self.assertIsNone(controller.heater_override)
-        self.assertIsNone(controller.session.after_run.paused_at)
-        self.assertFalse(controller.last_decision.heat)
+        phase = controller.session.after_run
+        for _ in range(2):
+            with self.assertRaisesRegex(ValueError, "Ofenkühlung"):
+                self._event("short", 1)
+            self.assertIsNone(controller.heater_override)
+            self.assertEqual(controller.session.after_run, phase)
+            self.assertFalse(controller.last_decision.heat)
 
     def test_long_heat_has_no_independent_cooling_and_button_uses_feedback(self):
         started_at = self._start_with_temperature()
@@ -336,6 +301,7 @@ class ButtonRuntimeTests(unittest.TestCase):
             Configuration(
                 Bindings(bindings()),
                 Parameters({"heating_minutes": 1, "heating_reduction_minutes": 0.25}),
+                button_session_gesture="long",
             ),
             lambda: self.now,
         )
@@ -344,6 +310,7 @@ class ButtonRuntimeTests(unittest.TestCase):
         session_id = controller.session.session_id
         controller.report_heating(True, started_at)
         for name, kind, seconds in (
+            ("entry-open", Kind.DOOR_OPEN, 0),
             ("close", Kind.DOOR_CLOSE, 1),
             ("person", Kind.PERSON_STRONG, 2),
         ):
@@ -358,9 +325,8 @@ class ButtonRuntimeTests(unittest.TestCase):
 
         self.assertFalse(controller.heater_override)
 
-    def test_button_parameters_have_the_decided_defaults(self):
+    def test_removed_hold_brightness_parameter_is_not_restored(self):
         values = Parameters({"button_hold_brightness_percent": 1}).values
-        self.assertEqual(values["button_hold_seconds"], 2)
         self.assertNotIn("button_hold_brightness_percent", values)
 
     def test_button_start_uses_its_frozen_constant_temperature(self):
@@ -368,22 +334,24 @@ class ButtonRuntimeTests(unittest.TestCase):
             Configuration(
                 Bindings(bindings()),
                 Parameters({"target_temperature_c": 86}),
+                button_session_gesture="long", button_program="constant",
                 button_temperature_c=74,
             ),
             lambda: self.now,
         )
 
-        self._event("short")
+        self._event("long")
 
         self.assertEqual(self.runtime.controller.target_temperature, 74)
         self.assertEqual(self.runtime.configuration.button_temperature_c, 74)
 
     def test_button_start_uses_the_independent_factory_constant_temperature(self):
         self.runtime = SaunaRuntime(
-            Configuration(Bindings(bindings()), Parameters({"target_temperature_c": 74})),
+            Configuration(Bindings(bindings()), Parameters({"target_temperature_c": 74}),
+                          button_session_gesture="long", button_program="constant"),
             lambda: self.now,
         )
-        self._event("short")
+        self._event("long")
         self.assertEqual(self.runtime.controller.program_mode, "constant")
         self.assertEqual(
             self.runtime.controller.target_temperature,
@@ -396,12 +364,12 @@ class ButtonRuntimeTests(unittest.TestCase):
             Configuration(
                 Bindings(bindings()),
                 Parameters({"target_temperature_c": 70}),
-                button_program=program.id,
+                button_session_gesture="long", button_program=program.id,
             ),
             lambda: self.now,
         )
 
-        self._event("short")
+        self._event("long")
 
         self.assertEqual(self.runtime.controller.program_mode, "progressive")
         self.assertEqual(self.runtime.controller.target_temperature, program.start_c)

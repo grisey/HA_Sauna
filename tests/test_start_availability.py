@@ -10,6 +10,7 @@ from test_foundation import T0, event
 def after_run():
     c = controller(after_run_minutes=2)
     c.report_heating(True, at(0))
+    c.process(event("entry-open", Kind.DOOR_OPEN, 0))
     c.process(event("close", Kind.DOOR_CLOSE, 1))
     c.process(event("infusion", Kind.INFUSION, 2))
     c.process(event("open", Kind.DOOR_OPEN, 299))
@@ -58,6 +59,7 @@ class StartAvailabilityTests(unittest.TestCase):
 
     def test_active_round_has_its_own_elapsed_display(self):
         c = controller()
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         availability = start_availability(c, at(62))

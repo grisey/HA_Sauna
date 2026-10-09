@@ -14,10 +14,9 @@ def at(seconds):
 
 def controller(**overrides):
     values = {**parameters().as_dict(), "target_temperature_c": 80,
-        "safety_temperature_c": 110, "readiness_offset_c": 5,
+        "readiness_offset_c": 5,
         "readiness_hysteresis_c": 3, "thermostat_cooldown_minutes": 0,
-        "heating_minutes": 1, "heating_reduction_minutes": 0.25,
-        "forced_cooling_minutes": 1, "after_run_minutes": 0.5,
+        "after_run_minutes": 0.5,
         "session_gap_minutes": 10, "heat_reset_minutes": 10, **overrides}
     result = Controller(Parameters(values))
     result.set_temperature(70, T0)
@@ -27,6 +26,7 @@ def controller(**overrides):
 
 class CoolingTests(unittest.TestCase):
     def start(self, c):
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.process(event("infusion", Kind.INFUSION, 3))
@@ -38,8 +38,12 @@ class CoolingTests(unittest.TestCase):
         c.report_heating(False, at(71))
 
     def test_provisional_retraction_has_no_after_run_or_count(self):
-        c = controller(confirmation_minutes=1)
+        c = controller(confirmation_minutes=1, minimum_heating_minutes=0)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
+        # Satisfy door heat before isolating the provisional gang's retraction.
+        c.report_heating(True, at(1))
+        self.assertFalse(c.regulation_inputs.temporary_door_heat)
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.set_temperature(90, at(3))
         self.assertTrue(c.last_decision.heat)
@@ -69,6 +73,7 @@ class CoolingTests(unittest.TestCase):
         c = controller()
         c.set_temperature(80, at(1))
         self.assertIsNotNone(c.session.ready_at)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 1))
         c.process(event("close", Kind.DOOR_CLOSE, 2))
         c.process(event("person", Kind.PERSON_STRONG, 3))
         self.assertIsNotNone(c.session.ready_at)  # Vorläufige Erkennung rollt zurück.
@@ -103,50 +108,38 @@ class CoolingTests(unittest.TestCase):
         self.assertIn("confirmed_controller_failure", c.protection)
         self.assertFalse(c.last_decision.heat)
 
-    def test_mechanical_timer_is_independent_of_heating_feedback_and_pauses_with_operation_off(self):
-        c = controller(mechanical_timer_minutes=240)
-        c.report_contactor(True, at(0))
-        self.assertEqual(c.mechanical_timer_ends_at, at(14400))
-        c.report_heating(False, at(10))
-        self.assertEqual(c.mechanical_timer_ends_at, at(14400))
-        c.set_operation(False, at(20))
-        self.assertIsNone(c.mechanical_timer_ends_at)
-        self.assertEqual(c.mechanical_timer_status["state"], "paused")
-        c.advance(at(29))
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14380)
-        c.set_operation(True, at(30))
-        self.assertEqual(c.mechanical_timer_ends_at, at(14410))
-        c.advance(at(14411))
-        self.assertEqual(c.mechanical_timer_status["state"], "expired")
-        self.assertTrue(c.session.operation_enabled)
-
-    def test_completed_sessions_reset_on_next_start_with_or_without_counted_rounds(self):
+    def test_completed_sessions_allow_restart_with_or_without_counted_rounds(self):
         c = controller(session_gap_minutes=1)
         c.report_contactor(True, at(0))
         c.set_operation(False, at(20))
         c.advance(at(80))
         self.assertIsNone(c.session)
+        self.assertEqual(c.completed_sessions[-1].timeline.gang_count, 0)
         c.set_operation(True, at(100), session_id="s2")
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14400)
+        self.assertEqual(c.session.session_id, "s2")
+        c.process(event("entry-open", Kind.DOOR_OPEN, 100, session="s2"))
         c.process(event("close", Kind.DOOR_CLOSE, 101, session="s2"))
         c.process(event("infusion", Kind.INFUSION, 102, session="s2"))
         c.set_operation(False, at(120))
         self.assertEqual(c.session.timeline.gang_count, 1)
         c.advance(at(180))
-        self.assertTrue(c.mechanical_timer_status["reset_pending"])
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14380)
+        self.assertIsNone(c.session)
+        self.assertEqual(c.completed_sessions[-1].timeline.gang_count, 1)
         c.set_operation(True, at(200), session_id="s3")
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14400)
+        self.assertEqual(c.session.session_id, "s3")
+        self.assertEqual(c.session.timeline.gang_count, 0)
 
     def test_temperature_program_distributes_then_holds_for_unlimited_gangs(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-                       temperature_gangs=4, after_run_minutes=.1,
-                       heating_minutes=20)
+                       temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         c.set_temperature(85, at(1))
         self.assertEqual(c.phase, "bereit")
         for index, expected in enumerate((85, 90, 95, 95, 95, 95)):
             start=10+index*20
+            if index:
+                c.process(event(f"previous-exit-close{index}", Kind.DOOR_CLOSE, start-2))
+            c.process(event(f"entry-open{index}", Kind.DOOR_OPEN, start-1))
             c.process(event(f"close{index}", Kind.DOOR_CLOSE, start))
             c.process(event(f"infusion{index}", Kind.INFUSION, start+1))
             c.process(event(f"open{index}", Kind.DOOR_OPEN, start+2))
@@ -171,6 +164,7 @@ class CoolingTests(unittest.TestCase):
 
     def test_retracted_gang_does_not_increase_target(self):
         c = controller(final_temperature_c=95)
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.process(event("open", Kind.DOOR_OPEN, 3))

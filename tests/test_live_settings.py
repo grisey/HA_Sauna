@@ -18,6 +18,9 @@ def change(c, second, *, explicit_target=None, new_program=False, program_mode=N
 
 
 def gang(c, index, start):
+    if index > 1:
+        c.process(event(f"previous-exit-close-{index}", Kind.DOOR_CLOSE, start-2))
+    c.process(event(f"entry-open-{index}", Kind.DOOR_OPEN, start-1))
     c.process(event(f"close-{index}", Kind.DOOR_CLOSE, start))
     c.process(event(f"infusion-{index}", Kind.INFUSION, start+1))
     c.process(event(f"open-{index}", Kind.DOOR_OPEN, start+2))
@@ -29,7 +32,7 @@ def gang(c, index, start):
 class LiveTemperatureTests(unittest.TestCase):
     def test_distribution_does_not_limit_real_gangs_after_end_change(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         gang(c, 1, 10)
         gang(c, 2, 30)
@@ -43,7 +46,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_end_change_keeps_current_stage_then_reaches_new_end(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         gang(c, 1, 10)
         self.assertEqual(c.target_temperature, 85)
@@ -58,7 +61,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_live_distribution_count_uses_gangs_since_program_selection(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         gang(c, 1, 10)
         gang(c, 2, 30)
@@ -77,7 +80,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_one_distribution_point_reaches_a_different_end_after_one_gang(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=1, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=1, after_run_minutes=.1)
         c.program_mode = "progressive"
         self.assertEqual(c.target_temperature, 80)
         gang(c, 1, 10)
@@ -91,7 +94,6 @@ class LiveTemperatureTests(unittest.TestCase):
             final_temperature_c=90,
             temperature_gangs=3,
             after_run_minutes=.1,
-            heating_minutes=20,
         )
         c.program_mode = "progressive"
         c.temperature_steps = (80, 86, 90)
@@ -107,7 +109,6 @@ class LiveTemperatureTests(unittest.TestCase):
             final_temperature_c=95,
             temperature_gangs=4,
             after_run_minutes=.1,
-            heating_minutes=20,
         )
         c.program_mode = "progressive"
         gang(c, 1, 10)
@@ -138,7 +139,6 @@ class LiveTemperatureTests(unittest.TestCase):
             final_temperature_c=90,
             temperature_gangs=3,
             after_run_minutes=.1,
-            heating_minutes=20,
         )
         c.program_mode = "progressive"
         c.temperature_steps = (80, 86, 90)
@@ -156,7 +156,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_repeated_end_changes_remember_gangs_since_program_selection(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         gang(c, 1, 10)
         self.assertEqual(c.target_temperature, 85)
@@ -173,7 +173,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_direct_target_stays_constant_for_all_later_gangs(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         gang(c, 1, 10)
         change(c, 14, target_temperature_c=80)
@@ -184,7 +184,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_new_program_restarts_distribution_at_confirmed_gang(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-            temperature_gangs=4, after_run_minutes=.1, heating_minutes=20)
+            temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         gang(c, 1, 10)
         self.assertEqual(c.session.timeline.gang_count, 1)
@@ -228,7 +228,10 @@ class LiveTemperatureTests(unittest.TestCase):
                 self.assertIsNone(c.session.timeline.active)
 
     def test_target_change_does_not_cancel_minimum_heat_or_thermostat_pause(self):
-        c = controller(heating_minutes=90, thermostat_cooldown_minutes=5)
+        c = controller(
+            minimum_heating_minutes=10,
+            thermostat_cooldown_minutes=5,
+        )
         c.report_heating(True, T0)
         c.set_temperature(90, at(1))
         change(c, 2, target_temperature_c=60)
@@ -246,6 +249,7 @@ class LiveTemperatureTests(unittest.TestCase):
 
     def test_lower_target_preserves_gang_but_never_overrides_protection(self):
         c = controller()
+        c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
         c.process(event("person", Kind.PERSON_STRONG, 2))
         before = c.session.timeline.active

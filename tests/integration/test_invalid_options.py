@@ -25,10 +25,15 @@ class InvalidExternalOptionsIntegrationTests(unittest.IsolatedAsyncioTestCase):
         runtime = self.entry.runtime_data
         now = datetime.now(UTC)
         runtime._clock = lambda: now
+        temperature = self.entry.options["bindings"]["upper_temperature"]
+        self.hass.states.async_set(temperature, "80", self.hass.states.get(temperature).attributes)
+        await self.hass.async_block_till_done()
         await runtime.set_operation(True)
         session_id = runtime.session.session_id
         self.assertEqual(runtime.session.timeline.door, "closed")
-        await runtime.receive(Event("gang", session_id, Kind.INFUSION, now, now))
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
+            await runtime.receive(Event(kind.value, session_id, kind, now, now))
+        self.assertIsNotNone(runtime.session.timeline.active)
         await runtime.set_heater_override(False)
         runtime.controller.report_heating(True, now)
 

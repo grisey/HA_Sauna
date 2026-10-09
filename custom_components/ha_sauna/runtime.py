@@ -18,8 +18,11 @@ from .core.button import (
     END_HOLD,
     END_RELEASE,
     HEATER_TOGGLE_OVERRIDE,
+    START_HOLD,
+    START_RELEASE,
     START_STANDARD_PROGRAM,
     ButtonGestures,
+    validate_session_gesture,
 )
 from .core.controller import Controller, Result
 from .core.defaults import instance_default
@@ -63,9 +66,16 @@ class Configuration:
     temperature_steps: tuple[float, ...] | None = None
     button_temperature_c: float | None = None
     appearance: dict = field(default_factory=default_appearance)
+    button_session_gesture: str = instance_default("button_session_gesture")
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
+        validate_session_gesture(self.button_session_gesture)
+        if (self.button_session_gesture != "long"
+                and not self.bindings.values["control_input"].startswith("event.")):
+            raise ValueError(
+                "Der Taster muss zweimaliges und dreimaliges Drücken selbst erkennen."
+            )
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
         object.__setattr__(self, "appearance", validate_appearance(self.appearance))
@@ -119,6 +129,17 @@ class Configuration:
             self, "temperature_programs", (*self.temperature_programs, *missing)
         )
 
+    @property
+    def available_button_session_gestures(self):
+        """Binary buttons have edges; native event buttons report classified clicks."""
+        if self.control_input_mode != "button":
+            return ()
+        return (
+            ("long", "double", "triple")
+            if self.bindings.values["control_input"].startswith("event.")
+            else ("long",)
+        )
+
     @classmethod
     def from_options(cls, options: Mapping) -> Configuration:
         if (
@@ -133,6 +154,7 @@ class Configuration:
                 "button_event_type",
                 "program_mode",
                 "button_program",
+                "button_session_gesture",
                 "temperature_programs",
                 "selected_program_id",
                 "control_mode",
@@ -153,10 +175,6 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
-        # Older configurations omitted the optional warning when disabled.
-        # Preserve that saved choice; new configurations and resets construct
-        # Parameters directly and retain the current factory warning value.
-        values.setdefault("mechanical_timer_warning_minutes", 0)
         override_key = "manual_override_minutes"
         if override_key in values:
             # Gespeicherte Werte hatten bisher die allgemeine Obergrenze von
@@ -257,6 +275,7 @@ class Configuration:
             steps,
             button_temperature_c,
             options.get("appearance", default_appearance()),
+            options.get("button_session_gesture", instance_default("button_session_gesture")),
         )
 
     def as_options(self) -> dict:
@@ -268,6 +287,7 @@ class Configuration:
             "button_event_type": self.button_event_type,
             "program_mode": self.program_mode,
             "button_program": self.button_program,
+            "button_session_gesture": self.button_session_gesture,
             "temperature_programs": [
                 program.as_dict() for program in self.temperature_programs
             ],
@@ -305,10 +325,9 @@ class SaunaRuntime:
         self._tick_pending = False
         self._pending_device_inputs = deque()
         self._device_input_pending = False
-        self._button = ButtonGestures(
-            timedelta(seconds=configuration.parameters.values["button_hold_seconds"])
-        )
+        self._reset_button_gestures()
         self._button_hold_session_id = None
+        self._button_start_hold_session_id = None
         self.save_configuration = None
         self._cleanup: list[Callable[[], None]] = []
         self._subscribers: set[Callable[[], None]] = set()
@@ -1012,15 +1031,10 @@ class SaunaRuntime:
         result = self.controller.set_operation(enabled, at)
         self._report_detector_heating(at)
         if enabled:
+            self._button_start_hold_session_id = None
             self._button_hold_session_id = None
             if not preserve_button:
-                self._button = ButtonGestures(
-                    timedelta(
-                        seconds=self.configuration.parameters.values[
-                            "button_hold_seconds"
-                        ]
-                    )
-                )
+                self._reset_button_gestures()
             if self.device:
                 self.device.finish_button_hold_light()
             if self.save_configuration:
@@ -1043,8 +1057,7 @@ class SaunaRuntime:
                 self.controller.finish_session(at, light_after_run=False)
             # The old session still belongs to the old control configuration.
             self.persist_completed_sessions()
-            self.controller.set_control_mode("automatic")
-            self.configuration = replace(self.configuration, control_mode="automatic")
+            self._set_control_mode("automatic")
             self.log.info(
                 "button_control_mode",
                 "Saunataster startet das Standardprogramm im Automatikbetrieb.",
@@ -1106,9 +1119,17 @@ class SaunaRuntime:
         if self.device:
             self.device.values = parameters.values
 
-    def _toggle_button_heater_override(self, now, *, refresh_device=True):
+    def _toggle_button_heater_override(
+        self, now, *, refresh_device=True, repeat_manual_click=False
+    ):
         """Toggle the physical-button override while the runtime lock is held."""
+        if self.device and refresh_device:
+            self.device.refresh(now)
         session = self.session
+        if session is None and self.controller.control_mode != "manual":
+            self._set_control_mode("manual")
+            if self.save_configuration:
+                self.save_configuration(self.configuration)
         # The current model has only the active Ofenkühlung (`after_run`).
         # Legacy cooling objects remain archival data and must not steer a
         # physical-button override.
@@ -1124,25 +1145,56 @@ class SaunaRuntime:
             return self.controller.set_heater_override(None, now)
         if self.controller.control_mode != "manual" and cooling_or_after_run:
             return self.controller.set_heater_override(True, now)
-        if self.device:
-            if refresh_device:
-                self.device.refresh(now)
+        if repeat_manual_click and session is None:
+            current = self.controller.heater_override
+        elif self.device:
             known = self.device.contactor_feedback()
             current = self.device.command if known is None else known
         else:
             current = self.controller.contactor
-        return self.controller.set_heater_override(not bool(current), now)
+            if current is None and self.controller.last_decision is not None:
+                current = self.controller.last_decision.heat
+        value = not bool(current)
+        self._validate_heater_override(value)
+        return self.controller.set_heater_override(value, now)
+
+    def _reset_button_gestures(self):
+        self._button = ButtonGestures(
+            timedelta(seconds=self.configuration.parameters.values["button_hold_seconds"]),
+            self.configuration.button_session_gesture,
+        )
+
+    @property
+    def available_button_session_gestures(self):
+        return (
+            self.device.available_button_session_gestures
+            if self.device else self.configuration.available_button_session_gestures
+        )
+
+    @property
+    def button_start_hold_active(self):
+        return bool(
+            self.session
+            and self._button_start_hold_session_id == self.session.session_id
+        )
 
     async def _handle_button_event(self, event, now, *, received_at=None, refresh_device=True):
         """Apply one already-normalized gesture; caller owns ``_lock``."""
         enabled = bool(self.session and self.session.operation_enabled)
         gesture_at = now if received_at is None else received_at
-        for action in self._button.handle_actions(event, enabled, gesture_at):
-            await self._apply_button_action(action, now, refresh_device=refresh_device)
+        for index, action in enumerate(
+            self._button.handle_actions(event, enabled, gesture_at)
+        ):
+            await self._apply_button_action(
+                action, now, refresh_device=refresh_device,
+                repeat_manual_click=index > 0,
+            )
 
-    async def _apply_button_action(self, action, now, *, refresh_device=True):
+    async def _apply_button_action(
+        self, action, now, *, refresh_device=True, repeat_manual_click=False
+    ):
         """Apply a semantic button action; caller owns ``_lock``."""
-        if action == START_STANDARD_PROGRAM:
+        if action in (START_STANDARD_PROGRAM, START_HOLD):
             if self._button_hold_session_id is not None:
                 if self.device:
                     self.device.finish_button_hold_light(self._button_hold_session_id)
@@ -1151,8 +1203,22 @@ class SaunaRuntime:
             self._set_operation(
                 True, preserve_button=True, at=now, refresh_device=refresh_device,
             )
+            if action == START_HOLD:
+                self._button_start_hold_session_id = self.session.session_id
+                if self.device:
+                    self.device.begin_button_hold_light(
+                        self.session.session_id, starting=True
+                    )
+        elif action == START_RELEASE:
+            session_id = self._button_start_hold_session_id
+            self._button_start_hold_session_id = None
+            if session_id is not None and self.device:
+                self.device.finish_button_hold_light(session_id)
         elif action == HEATER_TOGGLE_OVERRIDE:
-            self._toggle_button_heater_override(now, refresh_device=refresh_device)
+            self._toggle_button_heater_override(
+                now, refresh_device=refresh_device,
+                repeat_manual_click=repeat_manual_click,
+            )
         elif action == END_HOLD and self.session is not None:
             session_id = self.session.session_id
             self.controller.finish_session(now, light_after_run=False)
@@ -1177,12 +1243,37 @@ class SaunaRuntime:
             await self._cycle()
             return result
 
+    def _set_control_mode(self, mode):
+        """Apply a mode and its output initialization while holding the lock."""
+        if self.reconfiguring:
+            raise ValueError(
+                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        previous_mode = self.controller.control_mode
+        self.controller.set_control_mode(mode)
+        if previous_mode != mode and self.device:
+            self.device.set_light_override(0 if mode == "manual" else None)
+        self.configuration = replace(self.configuration, control_mode=mode)
+        return self.configuration
+
     async def set_light_override(self, value):
         """Apply a manual light selection through the serialized runtime path."""
         async with self.serialized():
             self._require_open()
             if self.device is None:
                 raise ValueError("Lichtsteuerung ist nicht verfügbar")
+            observation = self.device.light_observation
+            actual = observation["brightness_percent"]
+            if observation["available"] and (
+                (value is False and actual == 0)
+                or (value is True and actual > 0)
+                or (
+                    not isinstance(value, bool)
+                    and isinstance(value, (int, float))
+                    and value == round(actual)
+                )
+            ):
+                return
             now = self._clock()
             self._set_light_override(value, now)
             await self._cycle()
@@ -1199,15 +1290,32 @@ class SaunaRuntime:
                 self.session.session_id if self.session else None,
             )
 
-    async def set_heater_override(self, value: bool | None, *, manual_only=False):
+    def _validate_heater_override(self, value):
+        self.controller.validate_heater_override(value)
+        if value is True and self.device:
+            errors = self.device.start_errors()
+            if errors:
+                raise ValueError("Einschalten nicht möglich. " + " ".join(errors))
+
+    @property
+    def heater_on_blocked_reason(self):
+        """Project the same admission rule used by the heater command."""
+        try:
+            self._validate_heater_override(True)
+        except ValueError as error:
+            return str(error)
+        return None
+
+    async def set_heater_override(self, value: bool | None):
         """Apply a manual heater selection through the serialized runtime path."""
         async with self.serialized():
             self._require_open()
-            if manual_only and self.configuration.control_mode != "manual":
-                raise ValueError("Die Betriebsart wurde inzwischen geändert.")
             now = self._clock()
             if self.device:
                 self.device.refresh(now)
+            if isinstance(value, bool) and value is self.controller.contactor:
+                return self.controller.last_decision
+            self._validate_heater_override(value)
             decision = self.controller.set_heater_override(value, now)
             self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
             if self.archive:
@@ -1287,12 +1395,18 @@ class SaunaRuntime:
                     return
                 if self.configuration.control_input_mode == "button":
                     now = self._clock()
-                    await self._apply_button_action(
-                        self._button.advance(
-                            now, bool(self.session and self.session.operation_enabled)
-                        ),
-                        now,
-                    )
+                    try:
+                        await self._apply_button_action(
+                            self._button.advance(
+                                now, bool(self.session and self.session.operation_enabled)
+                            ),
+                            now,
+                        )
+                    except ValueError as error:
+                        if self.device:
+                            self.device.faults["start_rejected"] = str(error)
+                        else:
+                            raise
                 await self._cycle()
         finally:
             self._tick_pending = False

@@ -13,7 +13,6 @@ from . import energy, heating, thermostat
 from .consumer_events import gang_changes
 from .contracts import BasePhaseMark, ContactorMark, ControlInputs
 from .defaults import instance_default
-from .mechanical_timer import MechanicalTimer
 from .models import Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
@@ -92,7 +91,6 @@ class Controller:
         self._consumer_snapshot = None
         self.door_request = TemporaryDoorHeatState()
         self._door_request_pending = False
-        self.mechanical_timer = MechanicalTimer()
         self.phase_since = None
         self._phase_key = (None, "aus")
         self._recognition_gates = []
@@ -335,39 +333,8 @@ class Controller:
         """Lower switch-on threshold relative to the setpoint."""
         return thermostat.temperature_limits(self.target_temperature, self.parameters)[0]
 
-    @property
-    def mechanical_timer_ends_at(self):
-        return self.mechanical_timer_status["ends_at"]
-
-    @property
-    def mechanical_timer_status(self):
-        status = self.mechanical_timer.status(
-            self._last_at, self.parameters.seconds("mechanical_timer_minutes")
-        )
-        status["pause_reason"] = (
-            (
-                "operation_off"
-                if not self._session or not self._session.operation_enabled
-                else "contactor_off"
-                if self.contactor is False
-                else "contactor_unavailable"
-            )
-            if status["state"] == "paused"
-            else None
-        )
-        return status
-
-    def _sync_mechanical_timer(self, at):
-        if self._session and self._session.operation_enabled:
-            self.mechanical_timer = self.mechanical_timer.start(
-                at, self._session.session_id
-            )
-            if self.contactor is True:
-                return
-        self.mechanical_timer = self.mechanical_timer.pause(at)
-
     def report_contactor(self, value: bool | None, at: datetime):
-        """Stromversorgung des Timerantriebs, getrennt von gemessener Heizleistung."""
+        """Bestätigter Schützzustand, getrennt von gemessener Heizleistung."""
         self.advance(at, evaluate=False)
         self.contactor = value
         if self._session is not None:
@@ -377,7 +344,6 @@ class Controller:
                     self._session,
                     contactor_history=marks + (ContactorMark(utc(at), value),),
                 )
-        self._sync_mechanical_timer(utc(at))
         self._align_after_run_to_contactor(utc(at))
         if value is not False:
             self._suspend_after_run_countdown(utc(at))
@@ -431,6 +397,11 @@ class Controller:
         return "aufheizen"
 
     def begin_session(self, session_id: str, at: datetime) -> Session:
+        if self.control_mode == "manual":
+            raise ValueError(
+                "Im manuellen Modus gibt es keine Saunasitzung. "
+                "Zuerst zur Automatik wechseln."
+            )
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
@@ -457,7 +428,6 @@ class Controller:
             ),
         )
         self._last_at = at
-        self._sync_mechanical_timer(at)
         self._latch_readiness(at)
         self._evaluate(at)
         return self._session
@@ -483,7 +453,6 @@ class Controller:
                 )
                 self._cancel("session_gap")
                 self.light_after_run = None
-                self._sync_mechanical_timer(at)
                 self._latch_readiness(at)
         elif self._session is not None and self._session.operation_enabled:
             self.process(
@@ -495,13 +464,13 @@ class Controller:
         self._evaluate(at)
         return self._session
 
-    def set_heater_override(self, heat: bool | None, at: datetime):
-        """Manueller Ofenbefehl; ``None`` übergibt wieder an die Automatik."""
+    def validate_heater_override(self, heat: bool | None):
+        """Validate direct heater demand independently of session recording."""
         if heat is not None and not isinstance(heat, bool):
             raise ValueError(
                 "Heizübersteuerung muss wahr, falsch oder automatisch sein"
             )
-        if heat is True and (
+        if heat is True and self.control_mode != "manual" and (
             self._session is None or not self._session.operation_enabled
         ):
             raise ValueError(
@@ -517,6 +486,15 @@ class Controller:
             raise ValueError(
                 "Manuelles Einschalten erfordert einen gültigen oberen Temperaturwert"
             )
+
+        if heat is True and self._session is not None and self._session.after_run is not None:
+            raise ValueError(
+                "Während der Ofenkühlung ist Einschalten gesperrt. Zuerst die Kühlung beenden."
+            )
+
+    def set_heater_override(self, heat: bool | None, at: datetime):
+        """Manueller Ofenbefehl; ``None`` übergibt wieder an die Automatik."""
+        self.validate_heater_override(heat)
         at = utc(at)
         self.advance(at, evaluate=False)
         previous_override = self.heater_override
@@ -801,21 +779,12 @@ class Controller:
             blocked = "recognition_context_changed"
         if (
             blocked is None
-            and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
+            and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
             and previous.timeline.active is None
         ):
-            anchor = previous.timeline.anchor
-            if anchor is None:
-                if event.kind == Kind.PERSON_WEAK:
-                    blocked = "entry_context_missing"
-            elif event.effective_at < anchor.effective_at:
-                blocked = "entry_context_changed"
-            elif event.booking_at > anchor.effective_at + timedelta(
-                seconds=self.parameters.seconds("confirmation_minutes")
-            ):
-                # A catch-up sample may be old enough to match, but cannot
-                # start a gang after its real confirmation opportunity ended.
-                blocked = "entry_context_expired"
+            blocked = self._proxy_entry_blocked(
+                previous.timeline, event.booking_at, event.effective_at,
+            )
         if self.presence_source == "ha_presence" and (
             event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
             or (event.kind == Kind.INFUSION and previous.timeline.active is None)
@@ -881,7 +850,6 @@ class Controller:
                 operation_enabled=False,
                 operation_off_at=event.booking_at,
             )
-            self.mechanical_timer = self.mechanical_timer.pause(event.booking_at)
             ends_at = event.booking_at + timedelta(
                 seconds=self.parameters.seconds("session_gap_minutes")
             )
@@ -907,18 +875,30 @@ class Controller:
         if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK):
             if active is not None:
                 return False
-            source = (
-                session.timeline.anchor.event_id
-                if session.timeline.anchor
-                else "recognition_only"
-            )
-            if source in session.timeline.rejected_start_sources:
-                return False
-            if kind == Kind.PERSON_WEAK and session.timeline.anchor is None:
-                return False
         elif kind != Kind.INFUSION:
             return False
-        return active is not None or self._gang_start_blocked(session) is None
+        return active is not None or (
+            self._gang_start_blocked(session) is None
+            and self._proxy_entry_blocked(session.timeline, self._last_at) is None
+        )
+
+    def _proxy_entry_blocked(self, timeline, at, effective_at=None):
+        """Admit proxy recognition only from the current unused door cycle."""
+        if not timeline.entry_cycle_available:
+            return "entry_context_missing"
+        anchor, opening = timeline.anchor, timeline.closed_opening
+        if (
+            not self._recognition_context_current(opening.effective_at)
+            or self.recognition_context_at(opening.effective_at)[1] is not None
+            or not self._gang_anchor_allowed_at(anchor.effective_at)
+            or (effective_at is not None and effective_at < anchor.effective_at)
+        ):
+            return "entry_context_changed"
+        if at > anchor.effective_at + timedelta(
+            seconds=self.parameters.seconds("confirmation_minutes")
+        ):
+            return "entry_context_expired"
+        return None
 
     def _gang_temperature_input(self):
         if self._recognition_temperature_raster is not None:
@@ -1259,8 +1239,6 @@ class Controller:
 
     def _evaluate_manual(self, at, session):
         """Issue only an explicit heater demand while retaining interlocks."""
-        if not session.operation_enabled:
-            return thermostat.Decision(at, False, "operation_off")
         if self.protection:
             return thermostat.Decision(
                 at, False, "protection:" + ",".join(sorted(self.protection))
@@ -1271,7 +1249,7 @@ class Controller:
             )
         if self.temperature is None or not isfinite(self.temperature):
             return thermostat.Decision(at, False, "upper_temperature_unavailable")
-        if session.after_run is not None:
+        if session is not None and session.after_run is not None:
             return thermostat.Decision(at, False, "after_run")
         if self.heater_override is True and self._manual_heating_allowed():
             return thermostat.Decision(at, True, "manual_override")
@@ -1319,7 +1297,7 @@ class Controller:
         return True
 
     def _reconcile_direct_presence(self, at):
-        """A complete opening/closure and a matching presence change form one act.
+        """Entry needs both door edges; exit needs an opening and absence.
 
         No waiting duration is invented. An unavailable report never establishes
         an exit. A used door cycle cannot start or end another round.
@@ -1330,27 +1308,31 @@ class Controller:
                 or not report.available or report.received_at > self._received_at(at)):
             return False
         t = session.timeline
-        if (t.door != Door.CLOSED or t.closed_opening is None or t.anchor is None
-                or t.anchor.event_id == t.resolved_presence_close_id
-                or report.effective_at < t.closed_opening.effective_at
-                or self.recognition_context_at(t.closed_opening.effective_at)[1] is not None
-                or not self._recognition_context_current(t.closed_opening.effective_at)):
+        opening = t.opening if t.door == Door.OPEN else t.closed_opening
+        if (opening is None
+                or report.effective_at < opening.effective_at
+                or self.recognition_context_at(opening.effective_at)[1] is not None
+                or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
-            if (report.occupancy != "present" or self._gang_start_blocked(session)
+            if (not t.entry_cycle_available
+                    or report.occupancy != "present" or self._gang_start_blocked(session)
                     or not self._gang_anchor_allowed_at(t.anchor.effective_at)):
                 return False
             kind = Kind.PRESENCE_CONFIRMED
+            source = t.anchor
         else:
             if (report.occupancy != "absent"
-                    or t.closed_opening.effective_at <= t.active.started_at):
+                    or opening.event_id in t.rejected_start_sources
+                    or opening.effective_at <= t.active.started_at):
                 return False
             kind = Kind.PRESENCE_ENDED
-        effective = max(t.anchor.effective_at, report.effective_at)
+            source = opening
+        effective = max(source.effective_at, report.effective_at)
         if effective > at:
             return False
         self.process(Event(
-            f"{kind.value}:{t.anchor.event_id}:{report.report_id}", session.session_id,
+            f"{kind.value}:{source.event_id}:{report.report_id}", session.session_id,
             kind, effective, self._received_at(at), at,
         ))
         return True
@@ -1364,10 +1346,10 @@ class Controller:
         )
         session = self._session
         session_id = session.session_id if session else decision_session_id
-        if session is None:
-            decision = thermostat.Decision(at, False, "operation_off")
-        elif self.control_mode == "manual":
+        if self.control_mode == "manual":
             decision = self._evaluate_manual(at, session)
+        elif session is None:
+            decision = thermostat.Decision(at, False, "operation_off")
         else:
             decision = self._evaluate_thermostat(at)
         if (
@@ -1470,12 +1452,11 @@ class Controller:
         return project_session(self._session, now) if self._session else None
 
     def _complete_session(self, at, *, light_after_run):
-        """Archive the current session and perform its one-time timer reset."""
+        """Archive the current session and complete its active state."""
         session = self._session
         if session is None:
             return None
         self.completed_sessions += (replace(session, ended_at=at, deadlines=()),)
-        self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
         self._session = None
         self._record_recognition_gate(at)
         self._clear_heater_override()

@@ -1,16 +1,15 @@
 # HA Sauna
 
-HA Sauna steuert Ofen und Licht in Home Assistant. Die Temperaturwahl umfasst
-feste Sollwerte und Programme für aufeinanderfolgende Saunagänge. Die Ansicht
-**Steuerung** zeigt den aktuellen Betrieb; **Verlauf** enthält Messwerte und
-erkannte Gänge der Sitzung.
+HA Sauna steuert Ofen und Licht in Home Assistant und zeichnet Saunasitzungen auf.
 
-## Einstieg
+- [Sauna einrichten](docs/einrichtung.md): Voraussetzungen, Sensoren und Gerätezuordnung.
+- [Sitzung starten, ändern und beenden](docs/bedienung.md): Temperaturprogramm,
+  Taster, manuelle Bedienung und Wiederaufnahme.
+- [Automatischen Betrieb verstehen](docs/betrieb.md): Heizen, Bereitschaft,
+  Licht, Timer und Schutzabschaltung.
+- [Sitzungen aufbewahren und exportieren](docs/speicherung.md): Archiv,
+  Löschung und Backup.
 
-[Einrichtung](docs/einrichtung.md) · [Bedienungsanleitung](docs/bedienung.md)
-
-## Technische Dokumentation
-
-[Betrieb](docs/betrieb.md) · [Parameter](docs/parameter.md) ·
-[Architektur](docs/architektur.md) · [Speicherung](docs/speicherung.md) ·
-[Prüfanleitung](docs/abnahme.md) · [Arbeitsregeln](AGENTS.md)
+Ergänzende Regeln: [Gangerkennung](docs/gangmodell.md),
+[Tür- und Feuchteerkennung](docs/erkennung.md), [Ofenkühlung](docs/ofenkuehlung.md)
+und [Einstellungen und Entitäten](docs/parameter.md).

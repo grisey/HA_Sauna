@@ -12,14 +12,22 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
       this.shadowRoot = { querySelectorAll: () => [] };
     }
   },
+  CustomEvent: class {
+    constructor(type, options) {
+      this.type = type;
+      Object.assign(this, options);
+    }
+  },
   customElements: { get: () => undefined, define: (_name, value) => (Panel = value) },
   clearTimeout,
 });
 
-function fullscreenPanel() {
+function fullscreenPanel({ homeAssistant = true, kioskMode = false } = {}) {
   const nodes = new Map(),
     listeners = new Map(),
-    root = { fullscreenElement: null },
+    events = [],
+    kioskEvents = [],
+    windowListeners = new Map(),
     node = (selector) => {
       if (!nodes.has(selector))
         nodes.set(selector, {
@@ -32,16 +40,26 @@ function fullscreenPanel() {
             if (enabled) this.attributes[name] = "";
             else delete this.attributes[name];
           },
-          focus() {
-            this.focused = true;
-          },
         });
       return nodes.get(selector);
     },
     panel = Object.assign(new Panel(), {
       state: { permissions: { admin: true } },
+      _hass: { kioskMode },
+      start() {},
       $: node,
-      getRootNode: () => root,
+      // The HA sidebar is outside the custom panel, across shadow boundaries.
+      parentNode: homeAssistant
+        ? {
+            host: {
+              localName: "ha-panel-custom",
+              parentNode: {
+                host: { localName: "home-assistant-main" },
+              },
+            },
+          }
+        : null,
+      dispatchEvent: (event) => events.push(event),
       message() {},
       refresh: async () => {},
       fitInstrumentReadouts() {},
@@ -54,8 +72,28 @@ function fullscreenPanel() {
       exitCount: 0,
     });
   panel.ownerDocument = {
+    defaultView: {
+      addEventListener(kind, callback) {
+        windowListeners.set(kind, callback);
+      },
+      removeEventListener(kind, callback) {
+        if (windowListeners.get(kind) === callback) windowListeners.delete(kind);
+      },
+      dispatchEvent(event) {
+        kioskEvents.push(event.detail.enable);
+        panel._hass = { ...panel._hass, kioskMode: event.detail.enable };
+        windowListeners.get(event.type)?.(event);
+      },
+    },
     fullscreenEnabled: true,
     fullscreenElement: null,
+    documentElement: {
+      async requestFullscreen() {
+        panel.requestCount++;
+        panel.ownerDocument.fullscreenElement = this;
+        listeners.get("fullscreenchange")?.();
+      },
+    },
     addEventListener(kind, callback) {
       listeners.set(kind, callback);
     },
@@ -64,70 +102,83 @@ function fullscreenPanel() {
     },
     async exitFullscreen() {
       panel.exitCount++;
-      root.fullscreenElement = null;
       this.fullscreenElement = null;
       listeners.get("fullscreenchange")?.();
     },
   };
-  panel.requestFullscreen = async () => {
-    panel.requestCount++;
-    root.fullscreenElement = panel;
-    // Home Assistant hosts the panel inside another element's shadow tree.
-    panel.ownerDocument.fullscreenElement = { localName: "home-assistant" };
-    listeners.get("fullscreenchange")?.();
-  };
+  panel.requestFullscreen = () =>
+    assert.fail("Panel-only fullscreen excludes HA navigation");
   panel.connectedCallback();
-  return { panel, root, node, listeners };
+  return { panel, node, listeners, events, kioskEvents, windowListeners };
 }
 
-test("only actual panel fullscreen shows the menu, including a nested shadow tree", async () => {
-  const { panel, root, node } = fullscreenPanel();
-  assert.equal(node('[data-action="menu"]').hidden, true);
-  assert.equal(node(".main-tabs").hidden, false);
-  assert.equal(node('[data-action="fullscreen"]').hidden, false);
-  await panel.action("menu");
-  assert.equal(panel.fullscreenMenuOpen, false);
+test("fullscreen includes HA and keeps internal navigation visible for both roles", async () => {
+  for (const admin of [true, false]) {
+    const { panel, node, events } = fullscreenPanel();
+    panel.state.permissions.admin = admin;
+    assert.equal(node('[data-action="menu"]').hidden, true);
+    assert.equal(node(".main-tabs").hidden, false);
+    await panel.action("menu");
+    assert.equal(events.length, 0);
 
-  root.fullscreenElement = { localName: "another-panel" };
-  panel.syncFullscreenNavigation();
-  assert.equal(node('[data-action="menu"]').hidden, true);
+    panel.ownerDocument.fullscreenElement = { localName: "another-panel" };
+    panel.syncFullscreenNavigation();
+    assert.equal(node('[data-action="menu"]').hidden, true);
 
-  await panel.action("fullscreen");
-  assert.equal(panel.requestCount, 1);
-  assert.notEqual(panel.ownerDocument.fullscreenElement, panel);
-  assert.equal(panel.isPanelFullscreen(), true);
-  assert.equal(node('[data-action="menu"]').hidden, false);
-  assert.equal(node(".main-tabs").hidden, true);
-  assert.equal(
-    node('[data-action="fullscreen"]').attributes["aria-label"],
-    "Vollbild verlassen",
-  );
-  assert.ok("hidden" in node('[data-fullscreen-icon="enter"]').attributes);
-  assert.ok(!("hidden" in node('[data-fullscreen-icon="exit"]').attributes));
+    await panel.action("fullscreen");
+    assert.equal(panel.requestCount, 1);
+    assert.equal(
+      panel.ownerDocument.fullscreenElement,
+      panel.ownerDocument.documentElement,
+    );
+    assert.equal(panel.isPanelFullscreen(), true);
+    assert.equal(node('[data-action="menu"]').hidden, false);
+    assert.equal(node(".main-tabs").hidden, false);
+    assert.equal(
+      node('[data-action="fullscreen"]').attributes["aria-label"],
+      "Vollbild verlassen",
+    );
+    assert.ok("hidden" in node('[data-fullscreen-icon="enter"]').attributes);
+    assert.ok(!("hidden" in node('[data-fullscreen-icon="exit"]').attributes));
 
-  await panel.action("menu");
-  assert.equal(node(".main-tabs").hidden, false);
-  assert.equal(node('[data-action="menu"]').attributes["aria-expanded"], "true");
-  assert.equal(node('.main-tabs [aria-current="page"]').focused, true);
-  await panel.action("history");
-  assert.equal(panel.view, "history");
-  assert.equal(node(".main-tabs").hidden, true);
-  assert.equal(node('[data-action="menu"]').focused, true);
+    await panel.action("menu");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "hass-toggle-menu");
+    assert.equal(events[0].bubbles, true);
+    assert.equal(events[0].composed, true);
+    assert.equal(node(".main-tabs").hidden, false);
+    await panel.action("history");
+    assert.equal(panel.view, "history");
+    assert.equal(node(".main-tabs").hidden, false);
+    assert.equal(node('.main-tabs [data-action="details"]').hidden, !admin);
+    assert.equal(events.length, 1);
 
-  await panel.action("fullscreen");
-  assert.equal(panel.exitCount, 1);
-  assert.equal(node('[data-action="menu"]').hidden, true);
-  assert.equal(node(".main-tabs").hidden, false);
+    await panel.action("fullscreen");
+    assert.equal(panel.exitCount, 1);
+    assert.equal(node('[data-action="menu"]').hidden, true);
+    assert.equal(node(".main-tabs").hidden, false);
+  }
 });
 
-test("browser exit while the fullscreen menu is open restores embedded navigation", async () => {
-  const { panel, root, node, listeners } = fullscreenPanel();
+test("standalone preview has fullscreen but no nonfunctional HA menu", async () => {
+  const { panel, node, events, kioskEvents } = fullscreenPanel({
+    homeAssistant: false,
+  });
+  await panel.action("fullscreen");
+  assert.equal(panel.isPanelFullscreen(), true);
+  assert.equal(node('[data-action="menu"]').hidden, true);
+  assert.equal(node(".main-tabs").hidden, false);
+  await panel.action("menu");
+  assert.equal(events.length, 0);
+  assert.deepEqual(kioskEvents, []);
+});
+
+test("browser exit restores embedded controls without hiding internal navigation", async () => {
+  const { panel, node, listeners } = fullscreenPanel();
   await panel.action("fullscreen");
   await panel.action("menu");
-  root.fullscreenElement = null;
   panel.ownerDocument.fullscreenElement = null;
   listeners.get("fullscreenchange")();
-  assert.equal(panel.fullscreenMenuOpen, false);
   assert.equal(node('[data-action="menu"]').hidden, true);
   assert.equal(node(".main-tabs").hidden, false);
   assert.equal(node('[data-action="fullscreen"]').attributes["aria-label"], "Vollbild");
@@ -135,14 +186,17 @@ test("browser exit while the fullscreen menu is open restores embedded navigatio
   assert.ok("hidden" in node('[data-fullscreen-icon="exit"]').attributes);
 });
 
-test("pending, declined, or unconfirmed fullscreen requests never invent fullscreen state", async () => {
+test("pending, declined, or unconfirmed requests never invent fullscreen state", async () => {
   const { panel, node } = fullscreenPanel();
   let resolveRequest;
-  panel.requestFullscreen = () =>
+  panel.ownerDocument.documentElement.requestFullscreen = () =>
     new Promise((resolve) => {
+      panel.requestCount++;
       resolveRequest = resolve;
     });
   const request = panel.action("fullscreen");
+  await panel.action("fullscreen");
+  assert.equal(panel.requestCount, 1);
   assert.equal(node('[data-action="fullscreen"]').disabled, true);
   assert.equal(node('[data-action="menu"]').hidden, true);
   assert.equal(node(".main-tabs").hidden, false);
@@ -151,7 +205,7 @@ test("pending, declined, or unconfirmed fullscreen requests never invent fullscr
   assert.equal(node('[data-action="menu"]').hidden, true);
   assert.equal(node('[data-action="fullscreen"]').disabled, false);
 
-  panel.requestFullscreen = async () => {
+  panel.ownerDocument.documentElement.requestFullscreen = async () => {
     throw Error("NotAllowedError");
   };
   await assert.rejects(panel.action("fullscreen"), /Vollbildansicht/);
@@ -159,11 +213,12 @@ test("pending, declined, or unconfirmed fullscreen requests never invent fullscr
   assert.equal(node('[data-action="fullscreen"]').disabled, false);
 });
 
-test("unavailable or blocked fullscreen hides its button and leaves the tabs usable", async () => {
+test("unavailable fullscreen leaves embedded navigation usable", async () => {
   for (const unsupported of ["policy", "request", "exit"]) {
     const { panel, node } = fullscreenPanel();
     if (unsupported === "policy") panel.ownerDocument.fullscreenEnabled = false;
-    if (unsupported === "request") panel.requestFullscreen = undefined;
+    if (unsupported === "request")
+      panel.ownerDocument.documentElement.requestFullscreen = undefined;
     if (unsupported === "exit") panel.ownerDocument.exitFullscreen = undefined;
     panel.syncFullscreenNavigation();
     assert.equal(node('[data-action="fullscreen"]').hidden, true, unsupported);
@@ -174,7 +229,7 @@ test("unavailable or blocked fullscreen hides its button and leaves the tabs usa
   }
 });
 
-test("fullscreen remains available without state and removes its listener on disconnect", async () => {
+test("fullscreen is independent of API state and listener lifecycle preserves HA navigation", async () => {
   const { panel, node, listeners } = fullscreenPanel();
   panel.state = null;
   await panel.action("fullscreen");
@@ -183,7 +238,49 @@ test("fullscreen remains available without state and removes its listener on dis
   assert.equal(listeners.has("fullscreenchange"), true);
   panel.disconnectedCallback();
   assert.equal(listeners.has("fullscreenchange"), false);
-  assert.equal(panel.fullscreenMenuOpen, false);
+  assert.equal(panel.exitCount, 0);
   panel.connectedCallback();
   assert.equal(listeners.has("fullscreenchange"), true);
+  assert.equal(node(".main-tabs").hidden, false);
+});
+
+test("HA kiosk follows actual fullscreen and restores on browser exit or disconnect", async () => {
+  for (const exit of ["browser", "disconnect"]) {
+    const { panel, listeners, kioskEvents, windowListeners } = fullscreenPanel();
+    await panel.action("fullscreen");
+    assert.deepEqual(kioskEvents, [true]);
+    panel.syncFullscreenNavigation();
+    assert.deepEqual(kioskEvents, [true]);
+    if (exit === "browser") {
+      panel.ownerDocument.fullscreenElement = null;
+      listeners.get("fullscreenchange")();
+    } else {
+      panel.disconnectedCallback();
+      assert.equal(windowListeners.has("hass-kiosk-mode"), false);
+      assert.equal(panel.exitCount, 0);
+    }
+    assert.deepEqual(kioskEvents, [true, false]);
+    assert.equal(panel._hass.kioskMode, false);
+  }
+});
+
+test("preexisting kiosk and later app commands retain control of the HA frame", async () => {
+  const existing = fullscreenPanel({ kioskMode: true });
+  await existing.panel.action("fullscreen");
+  await existing.panel.action("fullscreen");
+  assert.deepEqual(existing.kioskEvents, []);
+  assert.equal(existing.panel._hass.kioskMode, true);
+
+  for (const enable of [true, false]) {
+    const { panel, kioskEvents } = fullscreenPanel();
+    await panel.action("fullscreen");
+    panel.ownerDocument.defaultView.dispatchEvent({
+      type: "hass-kiosk-mode",
+      detail: { enable },
+    });
+    panel.syncFullscreenNavigation();
+    await panel.action("fullscreen");
+    assert.deepEqual(kioskEvents, [true, enable]);
+    assert.equal(panel._hass.kioskMode, enable);
+  }
 });

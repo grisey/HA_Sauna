@@ -28,6 +28,15 @@ const refresh = async (reset = false) => {
     ? "admin"
     : "user";
   document.querySelector("#scenario").value = panel.state.preview_scenario;
+  const button = panel.state.preview_button;
+  for (const gesture of ["short", "double", "triple", "hold"])
+    document.querySelector(`[data-sim="button_${gesture}"]`).disabled = button.pressed;
+  document.querySelector('[data-sim="button_release"]').disabled = !button.pressed;
+  document.querySelector("#button-status").textContent = button.pressed
+    ? button.start_hold
+      ? "Gedrückt · Start bestätigt, Licht hell bis zum Loslassen"
+      : "Gedrückt · Loslassen beendet die Geste"
+    : `Simulierte Haltezeit: ${button.hold_seconds} s`;
   panel._hass.user.is_admin = panel.state.permissions.admin;
   document.querySelector("#sim-time").textContent = new Date(
     panel.state.now,

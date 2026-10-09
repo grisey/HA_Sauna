@@ -95,6 +95,7 @@ class ManualDoorCancelTests(unittest.TestCase):
         other = controller("gang")
         other.set_heater_override(False, at(1))
         other.advance(at(61))
+        event(other, "entry-open", Kind.DOOR_OPEN, 61)
         event(other, "close", Kind.DOOR_CLOSE, 62)
         event(other, "person", Kind.PERSON_STRONG, 63)
         self.assertEqual(other.last_decision.reason, "gang_heat_demand")

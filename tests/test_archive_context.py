@@ -37,7 +37,7 @@ class ArchiveContextTests(unittest.IsolatedAsyncioTestCase):
         controller = Controller(parameters())
         controller.set_temperature(80, at(start))
         controller.begin_session(identity, at(start))
-        for kind in (Kind.DOOR_CLOSE, Kind.INFUSION):
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION):
             controller.process(event(kind.value, kind, start, session=identity))
         session = controller.session
         if end is not None:

@@ -56,24 +56,26 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
         fields[marker(role.key)] = selector.EntitySelector({
             "filter": entity_filter, "include_entities": sorted(set(candidates)),
         })
-    fields[
-        vol.Required(
-            "control_input_mode",
-            default=instance_default("control_input_mode", setup=include_name),
-        )
-    ] = (
-        selector.SelectSelector(
-            {"options": ["button", "switch"], "translation_key": "control_input_mode"}
-        )
-    )
-    fields[
-        vol.Required("presence_source", default=instance_default("presence_source"))
-    ] = selector.SelectSelector(
-        {"options": ["proxy", "ha_presence"], "translation_key": "presence_source"}
-    )
-    fields[
-        vol.Optional("button_event_type", default=instance_default("button_event_type"))
-    ] = selector.TextSelector()
+        if role.key == "control_input":
+            fields[
+                vol.Required(
+                    "control_input_mode",
+                    default=instance_default("control_input_mode", setup=include_name),
+                )
+            ] = selector.SelectSelector(
+                {"options": ["button", "switch"], "translation_key": "control_input_mode"}
+            )
+            fields[
+                vol.Optional(
+                    "button_event_type", default=instance_default("button_event_type")
+                )
+            ] = selector.TextSelector()
+        elif role.key == "presence":
+            fields[
+                vol.Required("presence_source", default=instance_default("presence_source"))
+            ] = selector.SelectSelector(
+                {"options": ["proxy", "ha_presence"], "translation_key": "presence_source"}
+            )
     return vol.Schema(fields)
 
 

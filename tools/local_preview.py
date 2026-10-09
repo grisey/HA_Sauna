@@ -37,7 +37,8 @@ from custom_components.ha_sauna.presentation import (
 )
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
-    async_set_control_mode, async_set_parameters, async_set_program,
+    async_set_appearance, async_set_button_gesture, async_set_control_mode,
+    async_set_parameters, async_set_program,
     async_set_temperature_steps,
 )
 
@@ -57,6 +58,7 @@ class Preview:
         self.light_manual = 0 if scenario == "manuell" else None
         self.humidity = 24.5
         self.follow_feedback = True
+        self.button_pressed = False
         self.runtime = SaunaRuntime(Configuration(
             Bindings({"upper_temperature": "sensor.demo_temperatur",
                       "upper_humidity": "sensor.demo_feuchte",
@@ -64,6 +66,7 @@ class Preview:
                       "control_input": "event.demo_taster",
                       "presence": "binary_sensor.demo_fp300"}),
             Parameters({"target_temperature_c": 80}), presence_source="ha_presence",
+            control_input_mode="button",
             control_mode="manual" if scenario == "manuell" else "automatic",
         ), clock=lambda: self.now)
         self.entry = SimpleNamespace(
@@ -77,7 +80,8 @@ class Preview:
         self.c.set_temperature(58, self.now)
         self.sample()
         self.step(HISTORY_CONTEXT_SECONDS, temperature=62)
-        self.c.set_operation(True, self.now, session_id="lokale-vorschau")
+        if scenario != "manuell":
+            self.c.set_operation(True, self.now, session_id="lokale-vorschau")
         self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":"binary_sensor.demo_fp300"})
         self.presence("off")
         self.sample()
@@ -208,8 +212,36 @@ class Preview:
             self.now = min(end, self.now + timedelta(seconds=10))
             value = initial if temperature is None else initial + (temperature-initial)*(self.now-origin).total_seconds()/seconds
             self.c.set_temperature(value, self.now)
-            self.c.advance(self.now)
+            asyncio.run(self.runtime.tick())
             self.sample()
+
+    async def button_event(self, *events):
+        async with self.runtime.serialized():
+            for event in events:
+                await self.runtime._handle_button_event(event, self.now)
+            await self.runtime._cycle()
+
+    def button(self, action):
+        previous_mode = self.c.control_mode
+        if action == "button_release":
+            asyncio.run(self.button_event("release"))
+            self.button_pressed = False
+            if self.c.light_after_run is not None:
+                self.light = self.c.parameters.values["session_light_brightness_percent"]
+        else:
+            if self.button_pressed:
+                raise ValueError("Der Taster ist noch gedrückt. Zuerst loslassen.")
+            if action in ("button_short", "button_double", "button_triple"):
+                asyncio.run(self.button_event("press", action.removeprefix("button_"), "release"))
+            else:
+                asyncio.run(self.button_event("press"))
+                self.button_pressed = True
+                self.step(self.c.parameters.values["button_hold_seconds"])
+                asyncio.run(self.button_event("long"))
+        if previous_mode != self.c.control_mode:
+            self.light_manual = 0 if self.c.control_mode == "manual" else None
+            self.light = 0 if self.light_manual == 0 else 35
+        self.sample()
 
     def door(self, kind):
         if self.c.session is None:
@@ -224,10 +256,18 @@ class Preview:
         self.record("presence", report)
         self.sample()
 
+    def observed_light(self):
+        if self.runtime.button_start_hold_active:
+            return self.c.parameters.values["session_light_brightness_percent"]
+        if self.runtime._button_hold_session_id is not None:
+            return 0
+        return self.light
+
     def state(self):
         c, session = self.c, self.c.session
         configuration = self.runtime.configuration
         active = session.timeline.active if session else None
+        light_observation = self.observed_light()
         measurements = [{"position":"upper", "quantity":q, "value":v,
                          "received_at":self.now, "measured_at":self.now}
                         for q,v in (("temperature", c.temperature), ("humidity",self.humidity))]
@@ -237,6 +277,7 @@ class Preview:
             "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
             "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
             "frontend_defaults":section("frontend"),
+            "button_session_gestures":configuration.available_button_session_gestures,
             "environment": {
                 "configured": True,
                 "station": {"name": "Beispielstation", "id": "demo"},
@@ -262,6 +303,9 @@ class Preview:
             },
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
             "archive_revision":0, "preview_scenario":self.scenario,
+            "preview_button":{"pressed":self.button_pressed,
+                              "hold_seconds":c.parameters.values["button_hold_seconds"],
+                              "start_hold":self.runtime.button_start_hold_active},
             "measurement_ttl_seconds":configuration.parameters.values["sensor_timeout_seconds"],
             "parameters":[{**asdict(d), "minimum":configuration.parameters.minimum_for(d.key),
                            "live_editable":d.key in LIVE_TEMPERATURE_KEYS} for d in EDITABLE_DEFINITIONS],
@@ -272,7 +316,7 @@ class Preview:
             "energy_source":session.energy.source if session else "estimated",
             "thermostat_target":c.thermostat_target, "target_temperature":c.target_temperature,
             "thermostat_restart_temperature":c.thermostat_restart_temperature,
-            "mechanical_timer":c.mechanical_timer_status, "phase_timer":phase_timer(c,self.now),
+            "phase_timer":phase_timer(c,self.now),
             "start_availability":start_availability(c,self.now), "light_after_run":c.light_after_run,
             "start_errors":[], "issues":[], "decision_text":decision_message(c.last_decision),
             "measurement_status":{f"upper_{q}":{"state":"current"} for q in ("temperature","humidity")},
@@ -283,14 +327,15 @@ class Preview:
             "decision":c.last_decision, "measurements":measurements, "faults":{}, "protection":[],
             "inhibits":[], "detection_channels":[], "detector_trace":None,
             "manual_controls":{"heater":{"manual":c.heater_override,
+                "blocked_on_reason":self.runtime.heater_on_blocked_reason,
+                "observation":{"available":c.contactor is not None,"on":c.contactor},
                 "override_ends_at":c.heater_override_ends_at,
                 "automatic":c.automatic_decision.heat if c.automatic_decision else None},
-                "light":{"observation":{"available":True,"brightness_percent":self.light},
+                "light":{"observation":{"available":True,"brightness_percent":light_observation},
                          "manual":self.light_manual, "automatic":35, "normal":35}},
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
         result["permissions"]["admin"] = self.admin
-        result["permissions"]["heater"] = self.admin or configuration.control_mode == "manual"
         return result if self.admin else public_state(result)
 
     def action(self, path, body):
@@ -301,6 +346,9 @@ class Preview:
                 return {}
             if action.startswith("scenario:"):
                 self.reset(action.split(":")[1])
+                return {}
+            if action in ("button_short", "button_double", "button_triple", "button_hold", "button_release"):
+                self.button(action)
                 return {}
             if action != "step":
                 self.step(1)
@@ -344,9 +392,7 @@ class Preview:
         elif path.endswith("/finish-session"):
             self.c.finish_session_gap(body["token"], self.now)
         elif path.endswith("/heater"):
-            if not self.admin and self.runtime.configuration.control_mode != "manual":
-                raise ValueError("Ofenübersteuerung benötigt Administrationsrechte")
-            self.c.set_heater_override(body["value"], self.now)
+            asyncio.run(self.runtime.set_heater_override(body["value"]))
         elif path.endswith("/light"):
             value = body["value"]
             if value is None:
@@ -357,13 +403,29 @@ class Preview:
                 brightness = 0
             elif value == "normal":
                 brightness = 35
-            elif (self.admin and isinstance(value, (int, float))
-                  and value == int(value) and 0 <= value <= 100):
-                brightness = int(value)
+            elif isinstance(value, (int, float)) and 0 <= value <= 100:
+                brightness = value
             else:
-                raise ValueError("Ungültiger Lichtwert oder fehlende Administrationsrechte")
-            self.light_manual = brightness
-            self.light = 35 if brightness is None else brightness
+                raise ValueError("Ungültiger Lichtwert")
+            actual = self.observed_light()
+            unchanged = (
+                (value is False and actual == 0)
+                or (value is True and actual > 0)
+                or (not isinstance(value, bool) and isinstance(value, (int, float))
+                    and value == round(actual))
+            )
+            if not unchanged:
+                self.light_manual = brightness
+                self.light = 35 if brightness is None else brightness
+        elif path.endswith("/button-gesture"):
+            if not isinstance(body, dict) or set(body) != {"gesture"}:
+                raise ValueError("Tastergeste fehlt oder ist ungültig")
+            configuration = asyncio.run(async_set_button_gesture(self.hass, self.entry, body["gesture"]))
+            self.button_pressed = False
+            return {"success":True, "button_session_gesture":configuration.button_session_gesture}
+        elif path.endswith("/appearance"):
+            appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
+            return {"appearance": appearance}
         elif path.endswith("/temperature"):
             if not body or set(body) - LIVE_TEMPERATURE_KEYS:
                 raise ValueError("Ungültige Temperatureinstellung")

@@ -86,7 +86,6 @@ const { HistoryCurves } = sandbox.chartExports;
 
 assert.ok(panelSource.includes("`/${entry}/temperature`"));
 assert.match(panelSource, /data-target-arc[\s\S]*role="slider"/);
-assert.match(panelSource, /data-action="light:false"/);
 assert.match(panelSource, /permissions\.temperature/);
 assert.doesNotMatch(panelSource, /changeTarget\(Number\(action\.slice\(7\)\),true\)/);
 

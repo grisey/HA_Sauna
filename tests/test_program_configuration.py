@@ -22,6 +22,7 @@ from custom_components.ha_sauna.settings import (
     ConfigurationLocked,
     async_reset_parameters,
     async_set_button_program,
+    async_set_button_gesture,
     async_set_parameters,
     async_set_program_catalog,
     async_set_temperature_steps,
@@ -47,6 +48,87 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_button_session_gesture_roundtrip_and_validation(self):
+        baseline = Configuration.from_options(options())
+        self.assertEqual(baseline.button_session_gesture,
+                         instance_default("button_session_gesture"))
+        for gesture in ("long", "double", "triple"):
+            loaded = Configuration.from_options(options(button_session_gesture=gesture))
+            self.assertEqual(Configuration.from_options(loaded.as_options()), loaded)
+        for value in ("short", "single", 1, True, None, [], "quadruple"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                Configuration.from_options(options(button_session_gesture=value))
+
+    def test_binary_input_cannot_select_native_multi_clicks(self):
+        configured = options(control_input_mode="button")
+        configured[CONF_BINDINGS]["control_input"] = "binary_sensor.button"
+        binary = Configuration.from_options(configured)
+        self.assertEqual(binary.available_button_session_gestures, ("long",))
+        for gesture in ("double", "triple"):
+            with self.subTest(gesture=gesture), self.assertRaises(ValueError):
+                Configuration.from_options({**configured, "button_session_gesture": gesture})
+
+    def test_operation_switch_cannot_choose_a_button_gesture(self):
+        runtime = SaunaRuntime(Configuration.from_options(options(control_input_mode="switch")))
+        entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+        self.assertEqual(runtime.available_button_session_gestures, ())
+        with self.assertRaises(ValueError):
+            asyncio.run(async_set_button_gesture(_FakeHass(), entry, "double"))
+        self.assertEqual(entry.options["button_session_gesture"],
+                         instance_default("button_session_gesture"))
+
+    def test_button_gesture_save_resets_pending_input_and_keeps_session_lock(self):
+        runtime = SaunaRuntime(
+            Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
+        )
+        entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+        hass = _FakeHass()
+        runtime._button.handle("press", False, T0)
+        asyncio.run(async_set_button_gesture(hass, entry, "double"))
+        self.assertEqual(entry.options["button_session_gesture"], "double")
+        self.assertIsNone(runtime._button.handle("release", False, T0))
+        asyncio.run(runtime._handle_button_event("double", T0))
+        self.assertTrue(runtime.session.operation_enabled)
+        with self.assertRaises(ConfigurationLocked):
+            asyncio.run(async_set_button_gesture(hass, entry, "triple"))
+        self.assertEqual(entry.options["button_session_gesture"], "double")
+
+    def test_button_gesture_change_waits_for_end_hold_release(self):
+        runtime = SaunaRuntime(
+            Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
+        )
+        entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+        hass = _FakeHass()
+        runtime.controller.set_operation(True, T0)
+        asyncio.run(runtime._handle_button_event("press", T0))
+        asyncio.run(runtime._handle_button_event("long", T0))
+        self.assertIsNone(runtime.session)
+        with self.assertRaises(ConfigurationLocked):
+            asyncio.run(async_set_button_gesture(hass, entry, "double"))
+        asyncio.run(runtime._handle_button_event("release", T0))
+        self.assertIsNone(runtime._button_hold_session_id)
+        asyncio.run(async_set_button_gesture(hass, entry, "double"))
+        self.assertEqual(entry.options["button_session_gesture"], "double")
+
+    def test_button_gesture_change_preserves_start_release_after_external_finish(self):
+        runtime = SaunaRuntime(
+            Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
+        )
+        entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+        asyncio.run(runtime._handle_button_event("press", T0))
+        asyncio.run(runtime._handle_button_event("long", T0))
+        asyncio.run(runtime.set_operation(False))
+        token = next(deadline.token for deadline in runtime.session.deadlines
+                     if deadline.purpose == "session_gap")
+        asyncio.run(runtime.finish_session_gap(token))
+        self.assertIsNone(runtime.session)
+        with self.assertRaises(ConfigurationLocked):
+            asyncio.run(async_set_button_gesture(_FakeHass(), entry, "double"))
+        asyncio.run(runtime._handle_button_event("release", T0))
+        self.assertIsNone(runtime._button_start_hold_session_id)
+        asyncio.run(async_set_button_gesture(_FakeHass(), entry, "double"))
+        self.assertEqual(entry.options["button_session_gesture"], "double")
+
     def test_legacy_cold_tolerance_remains_the_lower_setpoint_distance(self):
         loaded = Configuration.from_options(options({
             "cold_tolerance_c": 2, "hot_tolerance_c": 4,
@@ -118,25 +200,26 @@ class ProgramConfigurationTests(unittest.TestCase):
         with self.assertRaises(ParameterError):
             Parameters({"sauna_min_temperature_c": 60.2, "target_temperature_c": 60.3})
 
-    def test_saved_timer_warning_adopts_legacy_disabled_state_and_roundtrips(self):
-        key = "mechanical_timer_warning_minutes"
-        for saved_parameters, expected in (
-            ({}, 0),
-            ({key: None}, 0),
-            ({key: 0}, 0),
-            ({key: 12}, 12),
-        ):
-            with self.subTest(saved_parameters=saved_parameters):
+    def test_saved_obsolete_timer_parameters_are_discarded_and_roundtrip(self):
+        for value in (None, 0, 12, "obsolete"):
+            saved_parameters = {
+                "mechanical_timer_minutes": value,
+                "mechanical_timer_warning_minutes": value,
+                "session_gap_minutes": 17,
+            }
+            with self.subTest(value=value):
                 saved = options(saved_parameters)
                 original_parameters = dict(saved_parameters)
                 loaded = Configuration.from_options(saved)
-                self.assertEqual(loaded.parameters.values[key], expected)
-                self.assertEqual(loaded.as_options()[CONF_PARAMETERS][key], expected)
+                self.assertEqual(loaded.parameters.values["session_gap_minutes"], 17)
+                for key in ("mechanical_timer_minutes", "mechanical_timer_warning_minutes"):
+                    self.assertNotIn(key, loaded.parameters.values)
+                    self.assertNotIn(key, loaded.as_options()[CONF_PARAMETERS])
                 self.assertEqual(Configuration.from_options(loaded.as_options()), loaded)
                 self.assertEqual(saved[CONF_PARAMETERS], original_parameters)
 
-    def test_new_configuration_stores_factory_timer_warning_explicitly(self):
-        key = "mechanical_timer_warning_minutes"
+    def test_new_configuration_stores_factory_session_gap_explicitly(self):
+        key = "session_gap_minutes"
         new = Configuration(Bindings(bindings()), Parameters({}))
         expected = Parameters({}).values[key]
         self.assertGreater(expected, 0)
@@ -577,7 +660,8 @@ class ProgramConfigurationTests(unittest.TestCase):
                 80, T0, valid_until=T0 + timedelta(seconds=60)
             )
             for second, kind in enumerate(
-                (Kind.DOOR_CLOSE, Kind.INFUSION, Kind.DOOR_OPEN, Kind.VENTILATION), 10
+                (Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION,
+                 Kind.DOOR_OPEN, Kind.VENTILATION), 10
             ):
                 runtime.controller.process(
                     event(str(second), kind, second, runtime.session.session_id)
@@ -640,7 +724,7 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_reset_restores_all_software_options_but_not_hardware_inputs(self):
         configuration = Configuration(
             Bindings(bindings()),
-            Parameters({"nominal_power_kw": 7, "mechanical_timer_warning_minutes": 0}),
+            Parameters({"nominal_power_kw": 7, "session_gap_minutes": 17}),
             log_level="DEBUG",
             control_input_mode="button",
             button_event_type="press",
@@ -655,8 +739,8 @@ class ProgramConfigurationTests(unittest.TestCase):
         reset = Configuration.from_options(entry.options)
         self.assertEqual(reset.parameters.values["nominal_power_kw"], 4.5)
         self.assertEqual(
-            reset.parameters.values["mechanical_timer_warning_minutes"],
-            Parameters({}).values["mechanical_timer_warning_minutes"],
+            reset.parameters.values["session_gap_minutes"],
+            Parameters({}).values["session_gap_minutes"],
         )
         self.assertEqual(reset.log_level, "INFO")
         self.assertEqual(reset.button_program, "constant")
