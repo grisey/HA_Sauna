@@ -39,9 +39,7 @@ Die Dauer in Minuten lautet:
 \]
 
 `clip` begrenzt die Zusatzdauer zwischen null und der Differenz aus Höchst- und
-Basisdauer. Erst werden die gewichteten Zeiten verrechnet, dann wird begrenzt.
-Eine gewichtete Minute Bereitschaft gleicht somit \(r\) gewichtete Heizminuten aus.
-Die Höchstdauer darf nicht unter der Basisdauer liegen.
+Basisdauer. Die Höchstdauer darf nicht unter der Basisdauer liegen.
 
 Unbekannte Schützzeiten liefern keine Bereitschaftsgutschrift und kennzeichnen
 die Berechnung als unvollständig. Das Archiv bewahrt Zeitraum, Einstellungen

@@ -63,9 +63,7 @@ keinen aktiven Gang; dafür ist bestätigtes Durchlüften erforderlich.
 ## Zählung und Folge
 
 Nur beendete, bestätigte Gänge zählen, jeweils einmal und unabhängig vom
-Endgrund. Gleichzeitig folgt die nächste Temperaturstufe. Zurückgenommene
-vorläufige Gänge zählen nicht. Beginn und zugeordnete Aufgüsse bleiben erhalten.
+Endgrund. Gleichzeitig folgt die nächste Temperaturstufe. Beginn und zugeordnete
+Aufgüsse bleiben erhalten.
 
-Im Automatikbetrieb fordert ein aktiver Gang Heizen an, im Proxyverfahren schon
-ab der vorläufigen Erkennung. Vorränge regelt der [Saunabetrieb](betrieb.md),
-Auslösung und Ablauf der Kühlung die [Ofenkühlung](ofenkuehlung.md).
+[Heizpriorität](betrieb.md#heizpriorität) · [Ofenkühlung](ofenkuehlung.md)

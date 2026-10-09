@@ -16,7 +16,7 @@ Die Regeln gelten auch bei hoher Temperatur.
 Zusätzlich muss jede beteiligte Position den geglätteten Mindesttemperaturverlust
 `door_open_drop_c` erreichen. Bezug ist ihr höchster Wert im vorherigen
 Trendfenster und während des Öffnungshinweises. Erst dann beginnt die
-Bestätigungsdauer; ein steiler, aber zu kleiner Abfall genügt nicht.
+Bestätigungsdauer.
 
 Ein belegter Temperatur-/Feuchteabfall bleibt bei weiter fallender Temperatur
 derselben Quellen gültig, auch wenn die Feuchte nicht weiter fällt. Endet der

@@ -1,93 +1,41 @@
 # Bedienung
 
-## Sitzung steuern
+## Eingriffe in die Sitzung
 
-### Betriebsstart und Temperaturwahl
+Direkte Sollwertänderung am Rundinstrument wirkt sofort und ersetzt das
+Temperaturprogramm durch einen konstanten Sollwert. Programm- und Schnellwahlen
+benötigen während der Sitzung **Programm übernehmen**; außerhalb gelten sie
+sofort. Gangzählung und laufende Zeiten bleiben erhalten.
 
-| Auswahl | Wirkung |
+**Ausschalten** lässt die Sitzung bis zum Ende der Wiederaufnahmefrist offen.
+In dieser Zeit bleiben Betriebsartwechsel und technische Konfiguration gesperrt.
+Der lange Tasterdruck schließt die Sitzung dagegen sofort; sein Lichtnachlauf
+beginnt erst beim Loslassen.
+
+Für Ofen- und Lichtübersteuerung gelten unterschiedliche Rückkehrbedingungen:
+[Übersteuerung und Betriebsart](betrieb.md#bedienhandlungen-und-betriebsart).
+Eine Ofen-EIN-Wahl bleibt der [Heizfreigabe](betrieb.md#heizpriorität) untergeordnet.
+
+## Übernahme und Rechte
+
+| Änderung | Übernahme / Freigabe |
 | --- | --- |
-| Direkte Temperaturwahl am Rundinstrument | Gilt sofort; setzt eine konstante Solltemperatur. |
-| Programm- oder Schnellwahl ohne Sitzung | Gültige Auswahl wird direkt gespeichert. |
-| Programm- oder Schnellwahl während einer Sitzung | Wird erst mit **Programm übernehmen** wirksam. |
+| Programmbibliothek | **Fertig** ändert nur den Entwurf; der gesamte Katalog benötigt **Programme speichern**. Nach Sitzungsende auch ohne Administratorrechte. |
+| Tastervorgabe | Sofort gespeichert, unabhängig von der aktuellen Temperaturwahl im Panel. |
+| Darstellung | Auch die Rücksetzung ändert nur den Entwurf; Speichern wirkt für alle Benutzer der Sauna. |
+| Betriebsart Manuell | Normale Bedienrechte, nach vollständigem Sitzungsende. Ofen und Licht beginnen mit AUS. |
+| Ofenübersteuerung in Automatik | Administratorrechte. |
+| Anlagenparameter und Gerätezuordnungen | Administratorrechte, nach Sitzungsende. Aktuelle Temperaturwahl bleibt erhalten. |
 
-Eine Temperaturänderung erhält laufende Gänge und deren Zeiten.
-Unvollständige oder nach einem Speicherfehler offene Eingaben bleiben Entwürfe;
-auch das Sitzungsende übernimmt sie nicht automatisch.
-[Stufenfolge und Programmänderungen](betrieb.md#temperaturprogramm)
+Offene oder nach Speicherfehlern verbliebene Entwürfe werden durch Sitzungsende
+nicht übernommen. Protokollstufe und Darstellung bleiben während der Sitzung
+änderbar. [Rücksetzumfang](parameter.md#standardwerte-wiederherstellen)
 
-### Ausschalten und Fortsetzen
+## Verlauf und Darstellung
 
-| Aktion | Wirkung |
-| --- | --- |
-| **Ausschalten** | Heizung aus; Sitzungspause mit Lichtnachlauf. |
-| **Fortsetzen** innerhalb der Wiederaufnahmezeit | Dieselbe Sitzung wird fortgesetzt. |
-| **Endgültig beenden** oder Ablauf der Wiederaufnahmezeit | Sitzung abgeschlossen, Licht aus. Der nächste Start beginnt eine neue Sitzung. |
+Der Normalverlauf verwendet die führende Messposition. Diagnoseansichten sind
+Administratoren vorbehalten und verwenden die zur Sitzung gespeicherten
+Einstellungen. [Datenbasis und Export](speicherung.md)
 
-Beim langen Saunatasterdruck beginnt der Lichtnachlauf erst beim Loslassen.
-Die übrigen [Tasterwirkungen](betrieb.md#bedienhandlungen-und-betriebsart) und
-[Kühlregeln](ofenkuehlung.md) sind gesondert beschrieben.
-
-### Betriebsart Manuell und Übersteuerung
-
-| | Manuelle Betriebsart | Ofenübersteuerung in Automatik |
-| --- | --- | --- |
-| Rechte | Normale Bedienrechte | Administrator |
-| Wahl | Nach vollständigem Sitzungsende | Während des Automatikbetriebs |
-| Dauer | Bis zum Betriebsartwechsel | Bis Rückgabe, passendem Phasen-/Schaltwechsel oder Fristablauf |
-| Anfang | Ofen und Licht aus | Ausdrücklich gewählte Ofenstellung |
-
-Technische Schutzbedingungen bleiben wirksam. Die [Heizpriorität](betrieb.md#heizpriorität)
-bestimmt, wann eine Ofen-EIN-Wahl ausgeführt wird.
-
-### Licht
-
-Manuelle Lichtwahl in Automatik gilt bis zum passenden Phasenwechsel oder zum
-Ablauf der Übersteuerungsdauer. Das gilt auch für Änderungen am Lichttaster.
-Im manuellen Betrieb bleibt die Lichtwahl unbefristet.
-Administratoren können zusätzlich eine freie Helligkeit vorgeben.
-[Automatische Lichtkurve](betrieb.md#licht)
-
-## Verlauf und Anzeigen
-
-| Anzeige | Bedeutung |
-| --- | --- |
-| **Bereit** | Solltemperatur erreicht; weiteres Heizen ist möglich. |
-| Ofenwahl / Ofenrückmeldung | Gewünschte Stellung / beobachteter Zustand. Fehlende Rückmeldung bedeutet nicht AUS. |
-| Aufheizprognose | Schätzung aus früherem Aufheizverlauf und aktuellem Temperaturtrend, in Fünf-Minuten-Stufen. |
-| Dauern | Verstrichene Minuten ab-, verbleibende aufgerundet. Ereigniszeitpunkte behalten Sekunden. |
-| Verlaufskurve | Führende Messposition; fehlende oder veraltete Messwerte unterbrechen die Kurve. Die Wertanzeige verwendet Originalmesspunkte. |
-| Detailverlauf und Erkennungskontrolle | Für Administratoren: Schaltgründe und Nachweise der Erkennung mit den damaligen Einstellungen. |
-
-Strg/Cmd mit dem Mausrad oder eine Vergrößerungsgeste zoomt den Verlauf;
-normales Scrollen bewegt den Inhalt. Aufbewahrung, Datenlücken und Export
-beschreibt [Archiv und Export](speicherung.md).
-
-## Dauerhafte Einstellungen
-
-### Programme und Tastervorgabe
-
-Die Programmbibliothek ist nach Sitzungsende mit normalen Bedienrechten
-bearbeitbar. **Fertig** übernimmt eine Eingabe in den Entwurf;
-**Programme speichern** speichert den gesamten Katalog. Die Reihenfolge lässt
-sich auch mit Pfeiltasten am fokussierten Griff ändern.
-
-Die Startvorgabe für Taster oder Betriebsschalter wird sofort gespeichert.
-Der Start im Panel verwendet dessen aktuelle Temperaturwahl.
-
-### Darstellung
-
-Darstellungsänderungen gelten nach dem Speichern für alle Benutzer der Sauna.
-Auch **Standarddarstellung wiederherstellen** ändert zunächst nur den Entwurf.
-Die Home-Assistant-Startseite wird dagegen je Benutzerprofil gewählt.
-
-Die Anzeigeskala begrenzt den direkt am Rundinstrument wählbaren Sollbereich,
-ändert aber keine Regelparameter. Werte außerhalb der Skala bleiben als Zahl
-sichtbar. Verlaufsachsen richten sich nach den gespeicherten Messungen.
-
-### Technische Einstellungen und Rücksetzen
-
-Anlagenparameter und Gerätezuordnungen sind nach Sitzungsende mit
-Administratorrechten änderbar. Protokollstufe und Darstellung bleiben während
-einer Sitzung anpassbar. Technische Änderungen erhalten die aktuelle
-Temperaturwahl. Der [Rücksetzumfang](parameter.md#standardwerte-wiederherstellen)
-unterscheidet Softwarevorgaben, Gerätezuordnungen und Archiv.
+Die Messbogenskala begrenzt zugleich den direkt wählbaren Sollbereich,
+ändert aber keine Regelparameter oder Verlaufsachsen.

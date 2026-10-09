@@ -51,30 +51,20 @@ Gespeicherte Anlagenwerte haben Vorrang.
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Ofentimer-Vorwarnung | `0` deaktiviert die Warnung. |
-| Ofenleistung | Grundlage der Verbrauchsschätzung ohne Leistungsmessung. |
-| Leistungsschwelle | Grenze, ab der eine Leistungsmessung als Heizen zählt. |
 
 ### Licht
 
-| Einstellung | Zu beachten |
-| --- | --- |
-| Lichthysterese | Angabe in Prozentpunkten. |
-| Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen; die Bedienung verwendet Prozent. |
+Die Helligkeitsskala muss dem konfigurierten Maximalwert des Lichtgeräts
+entsprechen; sie dient der Zuordnung eigener Befehle zu Geräterückmeldungen.
 
 ### Erkennung
 
-| Einstellung | Zu beachten |
-| --- | --- |
-| Feuchteänderungen | Relative Feuchteänderung in Prozentpunkten; Wasserverlust beim Durchlüften als Anteil des absoluten Wassergehalts. |
-| Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
+Personenprüffenster müssen ganzzahlige Vielfache des Personen-Prüfabstands sein.
 
 ### Überwachung
 
-| Frist | Bezug |
-| --- | --- |
-| Höchstalter eines Messwerts | Muss die üblichen Meldeabstände des Sensors abdecken. |
-| Schützrückmeldefrist | Zeit zur Bestätigung eines Schaltbefehls. |
-| Störungsbestätigung | Dauer eines abschaltrelevanten Fehlers bis zur verriegelten Schutzabschaltung. |
+Das Höchstalter eines Messwerts muss die regulären Meldeabstände der jeweiligen
+Quelle abdecken.
 
 [Ausfälle und Schutzabschaltung](betrieb.md#rückmeldungen-und-schutz)
 

@@ -34,9 +34,6 @@ Je Sauna liegt eine SQLite-Datei unter
 `<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`.
 Sie wird im Home-Assistant-Backup konsistent gesichert.
 
-Nach einer Wiederherstellung steht der gespeicherte Verlauf bereit.
-Der Saunabetrieb erfordert erneutes Einschalten.
-
 ### Löschen
 
 Administratoren können einzelne abgeschlossene oder durch Neustart unterbrochene
