@@ -24,7 +24,8 @@ class ButtonRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 9, 20, 12, tzinfo=UTC)
         self.runtime = SaunaRuntime(
-            Configuration(Bindings(bindings()), Parameters({})), lambda: self.now
+            Configuration(Bindings(bindings()), Parameters({"button_hold_seconds": 2}),
+                          button_session_gesture="long"), lambda: self.now
         )
 
     def _event(self, name, seconds=0):
@@ -111,7 +112,8 @@ class ButtonRuntimeTests(unittest.TestCase):
             with self.subTest(seconds=seconds):
                 self.setUp()
                 self.runtime = SaunaRuntime(
-                    Configuration(Bindings(bindings()), Parameters({"session_gap_minutes": 1})),
+                    Configuration(Bindings(bindings()), Parameters({"session_gap_minutes": 1}),
+                                  button_session_gesture="long"),
                     lambda: self.now,
                 )
                 self._start_with_temperature()
@@ -299,6 +301,7 @@ class ButtonRuntimeTests(unittest.TestCase):
             Configuration(
                 Bindings(bindings()),
                 Parameters({"heating_minutes": 1, "heating_reduction_minutes": 0.25}),
+                button_session_gesture="long",
             ),
             lambda: self.now,
         )
@@ -331,6 +334,7 @@ class ButtonRuntimeTests(unittest.TestCase):
             Configuration(
                 Bindings(bindings()),
                 Parameters({"target_temperature_c": 86}),
+                button_session_gesture="long", button_program="constant",
                 button_temperature_c=74,
             ),
             lambda: self.now,
@@ -343,7 +347,8 @@ class ButtonRuntimeTests(unittest.TestCase):
 
     def test_button_start_uses_the_independent_factory_constant_temperature(self):
         self.runtime = SaunaRuntime(
-            Configuration(Bindings(bindings()), Parameters({"target_temperature_c": 74})),
+            Configuration(Bindings(bindings()), Parameters({"target_temperature_c": 74}),
+                          button_session_gesture="long", button_program="constant"),
             lambda: self.now,
         )
         self._event("long")
@@ -359,7 +364,7 @@ class ButtonRuntimeTests(unittest.TestCase):
             Configuration(
                 Bindings(bindings()),
                 Parameters({"target_temperature_c": 70}),
-                button_program=program.id,
+                button_session_gesture="long", button_program=program.id,
             ),
             lambda: self.now,
         )

@@ -38,9 +38,12 @@ class CoolingTests(unittest.TestCase):
         c.report_heating(False, at(71))
 
     def test_provisional_retraction_has_no_after_run_or_count(self):
-        c = controller(confirmation_minutes=1)
+        c = controller(confirmation_minutes=1, minimum_heating_minutes=0)
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 1))
+        # Satisfy door heat before isolating the provisional gang's retraction.
+        c.report_heating(True, at(1))
+        self.assertFalse(c.regulation_inputs.temporary_door_heat)
         c.process(event("person", Kind.PERSON_STRONG, 2))
         c.set_temperature(90, at(3))
         self.assertTrue(c.last_decision.heat)

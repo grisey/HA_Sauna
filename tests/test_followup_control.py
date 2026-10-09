@@ -61,6 +61,10 @@ class FollowupControlTests(unittest.TestCase):
         c = controller(90, confirmation_minutes=1, minimum_heating_minutes=0)
         c.process(ev(Kind.DOOR_OPEN, 1))
         c.process(ev(Kind.DOOR_CLOSE, 1))
+        # Actual heat acknowledges door demand; retraction then leaves only
+        # the thermostat, with no outstanding door help or minimum interval.
+        c.report_heating(True, at(1))
+        self.assertFalse(c.regulation_inputs.temporary_door_heat)
         person = ev(Kind.PERSON_STRONG, 2)
         c.process_presence(ProxyPresenceSource.present(person), person)
         self.assertTrue(c.last_decision.heat)

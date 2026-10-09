@@ -18,6 +18,7 @@ class TemperaturePacketTests(unittest.TestCase):
         adapter.ingest("upper_temperature", fixtures.state("60.1", unit="°C"), fixtures.T0)
         adapter.refresh(fixtures.T0)
         runtime.controller.begin_session("packet", fixtures.T0)
+        fixture.complete_proxy_entry(runtime, fixtures.T0)
         await runtime.tick()
         clock[0] = fixtures.T0 + timedelta(seconds=20)
         await runtime.device_input(fixture.detection_edge(runtime, "upper_humidity", 22))

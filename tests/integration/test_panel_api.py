@@ -1316,10 +1316,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             values.pop(key)
         self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options,"parameters":values})
         await self.hass.async_block_till_done()
-        self.assertEqual(self.entry.options["parameters"]["sensor_timeout_seconds"],
-                         Parameters({}).values["sensor_timeout_seconds"])
-        self.assertEqual(self.entry.options["parameters"]["feedback_timeout_seconds"],10)
-        self.assertEqual(self.entry.options["parameters"]["fault_confirmation_seconds"],60)
+        defaults = Parameters({}).values
+        for key in ("sensor_timeout_seconds", "feedback_timeout_seconds", "fault_confirmation_seconds"):
+            self.assertEqual(self.entry.options["parameters"][key], defaults[key])
         async with ClientSession(headers=self.headers) as client:
             async with client.get(url + "/state") as response:
                 state = await response.json()

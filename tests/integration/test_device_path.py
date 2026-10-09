@@ -481,6 +481,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_session_light_defaults_reach_real_light_service_and_switch_off(self):
         from custom_components.ha_sauna.core.display import phase_timer
+        from custom_components.ha_sauna.core.parameters import BY_KEY
+        brightness = BY_KEY["session_light_brightness_percent"].default
         await self.runtime.set_operation(True)
         retain_session(self.runtime)
         session_id = self.runtime.session.session_id
@@ -488,10 +490,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.heater.calls.clear()
         await self.time(30)
-        self.assertAlmostEqual(self.light.brightness, 255 * 0.5, delta=1)
+        self.assertAlmostEqual(self.light.brightness, 255 * brightness / 100, delta=1)
         await self.time(149)
         self.assertIsNotNone(self.runtime.session)
-        self.assertAlmostEqual(self.light.brightness, 255 * 0.5, delta=1)
+        self.assertAlmostEqual(self.light.brightness, 255 * brightness / 100, delta=1)
         await self.time(150)
         self.assertIsNone(self.runtime.session)
         self.assertFalse(self.light.is_on)
@@ -502,7 +504,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.archive.flush()
         stored = self.runtime.archive.read(session_id)
         commands = [r["payload"] for r in stored["records"] if r["kind"] == "light_command" and r["payload"]["purpose"] == "session_end"]
-        self.assertTrue(any(c["service"] == "turn_on" and c["brightness_pct"] == 50
+        self.assertTrue(any(c["service"] == "turn_on" and c["brightness_pct"] == brightness
                             for c in commands))
         self.assertEqual(commands[-1]["service"], "turn_off")
         self.assertTrue(all(c["service_error"] is None for c in commands))

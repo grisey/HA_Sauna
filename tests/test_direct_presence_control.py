@@ -1,4 +1,4 @@
-"""Direkte Präsenz benötigt vollständige Türvorgänge, keine Wartefristen."""
+"""Eintritt braucht beide Türkanten; Austritt eine Öffnung und Abwesenheit."""
 import unittest
 
 from test_cooling import at, controller
