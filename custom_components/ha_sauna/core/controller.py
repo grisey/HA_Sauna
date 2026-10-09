@@ -439,6 +439,11 @@ class Controller:
         return "aufheizen"
 
     def begin_session(self, session_id: str, at: datetime) -> Session:
+        if self.control_mode == "manual":
+            raise ValueError(
+                "Im manuellen Modus gibt es keine Saunasitzung. "
+                "Zuerst zur Automatik wechseln."
+            )
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)

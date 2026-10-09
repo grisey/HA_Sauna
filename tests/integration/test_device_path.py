@@ -766,39 +766,32 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(command["ends_at"] == phase.ends_at.isoformat()
                             and command["service_error"] is None for command in commands))
 
-    async def test_manual_session_finish_ends_the_gap_light_in_both_modes(self):
-        from dataclasses import replace
+    async def test_session_finish_ends_the_automatic_gap_light(self):
+        await self.runtime.set_operation(True)
+        await self.runtime.set_light_override(50)
+        await self.runtime.set_operation(False)
+        token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
 
-        for mode in ("automatic", "manual"):
-            with self.subTest(mode=mode):
-                if mode == "manual":
-                    self.runtime.controller.set_control_mode(mode)
-                    self.runtime.configuration = replace(self.runtime.configuration, control_mode=mode)
-                await self.runtime.set_operation(True)
-                await self.runtime.set_light_override(50)
-                await self.runtime.set_operation(False)
-                token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
+        await self.runtime.finish_session_gap(token)
+        await self.hass.async_block_till_done()
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.heater.is_on)
+        self.assertFalse(self.light.is_on)
+        await self.runtime.tick()
+        self.assertFalse(self.light.is_on)
 
-                await self.runtime.finish_session_gap(token)
-                await self.hass.async_block_till_done()
-                self.assertIsNone(self.runtime.session)
-                self.assertFalse(self.heater.is_on)
-                self.assertFalse(self.light.is_on)
-                await self.runtime.tick()
-                self.assertFalse(self.light.is_on)
-
-                await self.runtime.set_operation(True)
-                await self.runtime.set_light_override(50)
-                await self.runtime.set_operation(False)
-                token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
-                self.light.fail_commands = True
-                await self.runtime.finish_session_gap(token)
-                self.assertIsNone(self.runtime.session)
-                self.assertFalse(self.heater.is_on)
-                self.light.fail_commands = False
-                await self.runtime.tick()
-                await self.hass.async_block_till_done()
-                self.assertFalse(self.light.is_on)
+        await self.runtime.set_operation(True)
+        await self.runtime.set_light_override(50)
+        await self.runtime.set_operation(False)
+        token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
+        self.light.fail_commands = True
+        await self.runtime.finish_session_gap(token)
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.heater.is_on)
+        self.light.fail_commands = False
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
+        self.assertFalse(self.light.is_on)
 
     async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
         from custom_components.ha_sauna.settings import async_set_parameters
@@ -1093,6 +1086,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         await self.runtime.set_light_override(42)
         self.assertIsNone(self.runtime.session)
+        with self.assertRaises(ValueError):
+            await self.runtime.set_operation(True)
+        self.assertIsNone(self.runtime.session)
+        await async_set_control_mode(self.hass, self.entry, "automatic")
         await self.hass.services.async_call(
             "switch", "turn_on", {"entity_id": self.operation}, blocking=True
         )
@@ -1204,20 +1201,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_light_override(60)
         await async_set_control_mode(self.hass, self.entry, "manual")
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 60)
-        await self.runtime.set_operation(True)
-        self.assertFalse(self.heater.is_on)
-        await self.runtime.set_heater_override(True)
-        for mode in ("manual", "automatic"):
-            with self.assertRaisesRegex(ValueError, "laufende Session"):
-                await async_set_control_mode(self.hass, self.entry, mode)
-            self.assertIs(self.runtime.controller.heater_override, True)
-            self.assertEqual(self.runtime.device.light_output.manual_brightness, 60)
-
-        await self.runtime.set_operation(False)
-        self.assertIs(self.runtime.controller.heater_override, False)
-        token = next(d.token for d in self.runtime.session.deadlines
-                     if d.purpose == "session_gap")
-        await self.runtime.finish_session_gap(token)
+        with self.assertRaisesRegex(ValueError, "manuellen Modus"):
+            await self.runtime.set_operation(True)
+        self.assertIsNone(self.runtime.session)
         await async_set_control_mode(self.hass, self.entry, "automatic")
         self.assertIsNone(self.runtime.controller.heater_override)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
@@ -1990,25 +1976,36 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.runtime.session.energy.estimated_kwh, .00625)
         self.assertEqual(self.runtime.session.energy.source, "mixed")
 
-    async def test_detached_binary_button_starts_then_toggles_heater_override(self):
+    async def test_detached_binary_short_toggles_manual_and_long_starts_with_bright_hold(self):
         from dataclasses import replace
+
         self.runtime.configuration = replace(self.runtime.configuration, control_input_mode="button")
+        for value in (True, False):
+            await self.set_source("control_input", "on")
+            self.now += timedelta(seconds=.1)
+            await self.set_source("control_input", "off")
+            self.assertIsNone(self.runtime.session)
+            self.assertEqual(self.heater.is_on, value)
+            self.assertEqual(self.runtime.configuration.control_mode, "manual")
         await self.set_source("control_input", "on")
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(self.runtime.controller.last_decision.heat)
-        self.assertFalse(self.runtime.device.command)
-        self.assertFalse(self.heater.is_on)
-        self.assertFalse(any(self.heater.calls))
-        await self.set_source("control_input", "off")
+        self.now += timedelta(seconds=self.runtime.configuration.parameters.values["button_hold_seconds"])
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
         identity = self.runtime.session.session_id
-        self.assertTrue(self.runtime.session.operation_enabled)
-        self.assertTrue(self.heater.is_on)
-        self.assertIsNone(self.runtime.controller.heater_override)
-        await self.set_source("control_input", "on")
-        self.assertTrue(self.runtime.session.operation_enabled)
-        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        self.assertTrue(self.runtime.button_start_hold_active)
+        self.assertTrue(self.light.is_on)
+        self.assertAlmostEqual(
+            self.light.brightness,
+            255 * self.runtime.configuration.parameters.values["session_light_brightness_percent"] / 100,
+            delta=1,
+        )
         await self.set_source("control_input", "off")
-        self.assertIsNotNone(self.runtime.controller.heater_override)
+        self.assertFalse(self.runtime.button_start_hold_active)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        await self.set_source("control_input", "on")
+        self.now += timedelta(seconds=.1)
+        await self.set_source("control_input", "off")
         self.assertFalse(self.heater.is_on)
         self.assertEqual(self.runtime.session.session_id, identity)
 
@@ -2034,6 +2031,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         self.assertFalse(any(self.heater.calls))
         await push("single_push")
+        self.assertIsNone(self.runtime.session)
+        self.assertTrue(self.heater.is_on)
+        await push("btn_down")
+        await push("long_push")
+        await push("btn_up")
         identity = self.runtime.session.session_id
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertIsNone(self.runtime.controller.heater_override)
@@ -2055,7 +2057,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertIsNotNone(self.runtime.controller.heater_override)
 
-    async def test_independent_event_off_long_never_starts_and_running_long_stops(self):
+    async def test_independent_event_long_starts_without_hold_and_running_long_stops(self):
         values = {**self.entry.options["bindings"], "control_input": "event.detached_button"}
         self.hass.states.async_set("event.detached_button", "unknown", {"event_type": None})
         self.hass.config_entries.async_update_entry(
@@ -2079,24 +2081,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
 
         await push("long_push")
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(self.runtime.controller.last_decision.heat)
-        self.assertFalse(self.runtime.device.command)
-        self.assertFalse(self.heater.is_on)
-        self.assertFalse(any(self.heater.calls))
+        session_id = self.runtime.session.session_id
+        self.assertTrue(self.heater.is_on)
+        self.assertFalse(self.runtime.button_start_hold_active)
         first_event_at = self.now
         self.hass.states.async_set("event.detached_button", "unavailable")
         await self.hass.async_block_till_done()
         await push("long_push", at=first_event_at)
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(any(self.heater.calls))
+        self.assertEqual(self.runtime.session.session_id, session_id)
         self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
-
-        await push("single_push")
-        session_id = self.runtime.session.session_id
-        self.assertTrue(self.runtime.controller.last_decision.heat)
-        self.assertTrue(self.runtime.device.command)
-        self.assertTrue(self.heater.is_on)
 
         await push("long_push")
 
@@ -2120,11 +2113,11 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.heater.is_on)
         self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
 
-        await push("single_push")
+        await push("long_push")
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertTrue(self.heater.is_on)
 
-    async def test_native_off_long_never_starts_then_running_hold_releases_light_afterrun(
+    async def test_native_long_start_holds_bright_and_stop_releases_light_afterrun(
         self,
     ):
         values = {**self.entry.options["bindings"], "control_input": "event.detached_button"}
@@ -2150,19 +2143,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await push("btn_down")
         self.assertIsNone(self.runtime.session)
         await push("long_push")
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(self.runtime.controller.last_decision.heat)
-        self.assertFalse(self.runtime.device.command)
-        self.assertFalse(any(self.heater.calls))
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertTrue(self.runtime.button_start_hold_active)
+        self.assertTrue(self.light.is_on)
         await push("btn_up")
         await push("single_push")
-        self.assertIsNone(self.runtime.session)
-        self.assertFalse(any(self.heater.calls))
-        self.assertIsNone(self.runtime.controller.light_after_run)
+        self.assertFalse(self.runtime.button_start_hold_active)
         self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
-        await push("btn_down")
-        await push("btn_up")
-        await push("single_push")
         session_id = self.runtime.session.session_id
         self.assertIsNone(self.runtime.controller.heater_override)
         await push("btn_down")
@@ -2190,53 +2177,27 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         self.assertEqual(len(self.runtime.controller.completed_sessions), 1)
 
-    async def test_binary_off_long_never_sends_heater_on_including_delayed_tick(self):
+    async def test_binary_long_delayed_tick_starts_without_lingering_acknowledgement(self):
         from dataclasses import replace
 
-        self.runtime.configuration = replace(
-            self.runtime.configuration, control_input_mode="button"
-        )
-        threshold = self.runtime.configuration.parameters.values["button_hold_seconds"]
-        for seconds, tick_while_held in ((1, True), (10, False)):
-            self.now = self.base + timedelta(seconds=seconds)
-            await self.set_source("control_input", "on")
-            self.assertIsNone(self.runtime.session)
-            self.assertFalse(any(self.heater.calls))
-            self.now += timedelta(seconds=threshold)
-            if tick_while_held:
-                await self.runtime.tick()
-                await self.hass.async_block_till_done()
-                self.assertIsNone(self.runtime.session)
-                self.assertFalse(any(self.heater.calls))
-            await self.set_source("control_input", "off")
-            self.assertIsNone(self.runtime.session)
-            self.assertFalse(self.runtime.controller.last_decision.heat)
-            self.assertFalse(self.runtime.device.command)
-            self.assertFalse(any(self.heater.calls))
-            self.assertIsNone(self.runtime.controller.heater_override)
-            self.assertIsNone(self.runtime.controller.light_after_run)
-            self.assertEqual(len(self.runtime.controller.completed_sessions), 0)
-        self.now += timedelta(seconds=1)
+        self.runtime.configuration = replace(self.runtime.configuration, control_input_mode="button")
         await self.set_source("control_input", "on")
-        self.now += timedelta(seconds=0.2)
+        self.now += timedelta(seconds=self.runtime.configuration.parameters.values["button_hold_seconds"])
         await self.set_source("control_input", "off")
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertTrue(self.heater.is_on)
-        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertFalse(self.runtime.button_start_hold_active)
+        self.assertIsNone(self.runtime.device._button_hold_session_id)
 
-    async def test_manual_mode_keeps_explicit_light_through_session_and_operation_off(self):
-        from dataclasses import replace
-        from custom_components.ha_sauna.core.timeline import Event, Kind
+    async def test_manual_mode_keeps_explicit_light_without_session(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
 
-        self.runtime.controller.set_control_mode("manual")
-        self.runtime.configuration = replace(self.runtime.configuration, control_mode="manual")
+        await async_set_control_mode(self.hass, self.entry, "manual")
         await self.runtime.set_light_override(35)
-        await self.runtime.set_operation(True)
-        session_id = self.runtime.session.session_id
-        self.assertEqual(self.runtime.session.timeline.door, Door.CLOSED)
-        await self.runtime.receive(Event("manual-infusion", session_id, Kind.INFUSION, self.now, self.now))
+        with self.assertRaises(ValueError):
+            await self.runtime.set_operation(True)
         await self.runtime.set_operation(False)
-        await self.hass.async_block_till_done()
+        self.assertIsNone(self.runtime.session)
         self.assertAlmostEqual(self.light.brightness, 255 * .35, delta=1)
 
     async def test_reassignment_waits_for_running_on_before_final_off(self):
@@ -3153,7 +3114,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(self.light.brightness, 255 * .5, delta=1)
         self.now += timedelta(seconds=1)
-        planned_at = self.now
         await self.runtime.set_light_override(80)
         await self.hass.async_block_till_done()
         self.assertAlmostEqual(self.light.brightness, 255 * .8, delta=1)
@@ -3168,22 +3128,24 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             if record["kind"] == "light_command"
             and record["payload"]["brightness_pct"] == 80
         ]
-        self.assertEqual(len(commands), 1)
-        command = commands[0]
-        self.assertEqual(command["session_id"], identity)
-        self.assertEqual(command["payload"]["phase"], "session_light")
-        self.assertEqual(command["payload"]["purpose"], "session_end")
-        self.assertEqual(command["payload"]["ends_at"], phase.ends_at.isoformat())
-        self.assertEqual(command["payload"]["planned_at"], planned_at.isoformat())
-        self.assertEqual(command["payload"]["sent_at"], planned_at.isoformat())
-        self.assertEqual(command["payload"]["completed_at"], planned_at.isoformat())
-        self.assertIsNone(command["payload"]["service_error"])
+        self.assertEqual(commands, [], "outside manual choices do not belong to the ended session")
+        automatic_commands = [
+            record for record in stored["records"]
+            if record["kind"] == "light_command"
+            and record["payload"]["phase"] == "session_light"
+        ]
+        self.assertTrue(automatic_commands, "real automatic after-run output remains archived")
+        self.assertTrue(all(record["session_id"] == identity for record in automatic_commands))
         path = await self.runtime.archive.export()
         try:
             with zipfile.ZipFile(path) as archive:
                 exported = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
-            self.assertEqual(
-                [record for record in exported if record["id"] == command["id"]], [command]
-            )
+            self.assertFalse(any(
+                record["kind"] == "light_command"
+                and record["payload"]["brightness_pct"] == 80
+                for record in exported
+            ))
+            self.assertFalse(any(record["kind"] == "manual_light" for record in exported))
+            self.assertTrue(all(record in exported for record in automatic_commands))
         finally:
             path.unlink()

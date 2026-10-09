@@ -5,9 +5,10 @@
 Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
-Ein kurzer Tasterdruck bei ausgeschaltetem Betrieb startet Automatik mit der
-gespeicherten Tastervorgabe. Änderungen dieser Vorgabe werden sofort gespeichert,
-unabhängig von der aktuellen Temperaturwahl im Panel.
+Ein langer Tasterdruck startet Automatik mit der gespeicherten Tastervorgabe,
+auch aus dem manuellen Modus. Als Bestätigung leuchtet das Licht während des
+weiteren Haltens hell. Die Tastervorgabe gilt unabhängig von der Temperaturwahl
+im Panel.
 
 ## Temperatur während der Sitzung ändern
 
@@ -30,10 +31,9 @@ weder Regelparameter noch Verlaufsachsen.
 Ofen- und Lichtwahl einschließlich freier Helligkeit stehen allen Benutzern
 mit Steuerrechten gleichermaßen zur Verfügung. Außerhalb einer Sitzung ist
 in Automatik zunächst der ausdrückliche Wechsel über **Manuell steuern**
-erforderlich. Ofen und Licht lassen sich im manuellen Betrieb auch ohne
-Sitzung schalten. Diese Bedienungen starten oder beenden keine Sitzung und
-ändern die Betriebsart nicht. Eine Sitzung beginnt durch **Einschalten**;
-für ihr Ende gelten die Regeln unter [Ausschalten oder sofort beenden](#ausschalten-oder-sofort-beenden).
+erforderlich. Ofen und Licht schalten dort ohne Sitzung. Eine automatische
+Sitzung beginnt durch **Einschalten** im Automatikmodus oder einen langen
+Tasterdruck.
 
 In Automatik endet eine vorübergehende Ofenwahl bei Rückgabe, Phasenwechsel,
 Änderung der automatischen EIN-/AUS-Anforderung oder Ablauf der Übersteuerungsfrist.
@@ -44,8 +44,8 @@ Die Ein-/Aus-Tasten zeigen die Rückmeldung des Geräts. Eine bereits erreichte
 Wahl erzeugt keine Übersteuerung und verlängert keine Frist. **Automatik**
 beendet die jeweilige Übersteuerung auch bei unverändertem Gerätezustand.
 
-Ein kurzer Tasterdruck in Automatik wechselt die vorübergehende Ofenwahl oder
-gibt an die Automatik zurück.
+Während einer Sitzung wechselt ein kurzer Tasterdruck die vorübergehende
+Ofenwahl oder gibt an die Automatik zurück.
 
 In Automatik endet eine manuelle Lichtwahl beim passenden Phasenwechsel oder spätestens
 mit ihrer Übersteuerungsfrist. Die Rückkehr verlängert weder Kühlung noch
@@ -58,10 +58,14 @@ Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
 Ofen und Licht beginnen beim Wechsel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
-Ein kurzer Tasterdruck bei laufendem manuellem Betrieb wechselt die Ofenvorgabe
-zwischen EIN und AUS. Auch manuelles EIN benötigt eine gültige Regeltemperatur
+Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
+und schaltet den Ofen um. Auch manuelles EIN benötigt eine gültige Regeltemperatur
 und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
+
+Manuelle Bedienung erzeugt keine Sitzung und keine Schaltaufzeichnung im
+Sauna-Archiv. Messkurven im Vor- und Nachlauf automatischer Sitzungen bleiben
+erhalten.
 
 ## Ausschalten oder sofort beenden
 
@@ -72,8 +76,6 @@ Konfiguration gesperrt.
 
 Ein langer Tasterdruck bei laufendem Betrieb beendet Betrieb und Sitzung sofort.
 Das Licht bleibt während des Haltens AUS; Loslassen startet den Lichtnachlauf.
-Bei bereits ausgeschaltetem Betrieb startet weder ein langer Druck noch das
-zugehörige Loslassen die Sauna.
 
 Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;
 er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im

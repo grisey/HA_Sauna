@@ -69,7 +69,6 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
 
         controller = Controller(parameters(), control_mode="manual")
         controller.set_temperature(60, at(0))
-        controller.set_operation(True, at(0), session_id="manual")
         controller.set_heater_override(False, at(1))
         controller.advance(at(1000))
         self.assertFalse(controller.heater_override)

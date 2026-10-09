@@ -57,6 +57,7 @@ class Preview:
         self.light_manual = 0 if scenario == "manuell" else None
         self.humidity = 24.5
         self.follow_feedback = True
+        self.button_pressed = False
         self.runtime = SaunaRuntime(Configuration(
             Bindings({"upper_temperature": "sensor.demo_temperatur",
                       "upper_humidity": "sensor.demo_feuchte",
@@ -64,6 +65,7 @@ class Preview:
                       "control_input": "event.demo_taster",
                       "presence": "binary_sensor.demo_fp300"}),
             Parameters({"target_temperature_c": 80}), presence_source="ha_presence",
+            control_input_mode="button",
             control_mode="manual" if scenario == "manuell" else "automatic",
         ), clock=lambda: self.now)
         self.entry = SimpleNamespace(
@@ -77,7 +79,8 @@ class Preview:
         self.c.set_temperature(58, self.now)
         self.sample()
         self.step(HISTORY_CONTEXT_SECONDS, temperature=62)
-        self.c.set_operation(True, self.now, session_id="lokale-vorschau")
+        if scenario != "manuell":
+            self.c.set_operation(True, self.now, session_id="lokale-vorschau")
         self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":"binary_sensor.demo_fp300"})
         self.presence("off")
         self.sample()
@@ -208,8 +211,36 @@ class Preview:
             self.now = min(end, self.now + timedelta(seconds=10))
             value = initial if temperature is None else initial + (temperature-initial)*(self.now-origin).total_seconds()/seconds
             self.c.set_temperature(value, self.now)
-            self.c.advance(self.now)
+            asyncio.run(self.runtime.tick())
             self.sample()
+
+    async def button_event(self, *events):
+        async with self.runtime.serialized():
+            for event in events:
+                await self.runtime._handle_button_event(event, self.now)
+            await self.runtime._cycle()
+
+    def button(self, action):
+        previous_mode = self.c.control_mode
+        if action == "button_release":
+            asyncio.run(self.button_event("off"))
+            self.button_pressed = False
+            if self.c.light_after_run is not None:
+                self.light = self.c.parameters.values["session_light_brightness_percent"]
+        else:
+            if self.button_pressed:
+                raise ValueError("Der Taster ist noch gedrückt. Zuerst loslassen.")
+            if action == "button_short":
+                asyncio.run(self.button_event("press", "short", "release"))
+            else:
+                asyncio.run(self.button_event("on"))
+                self.button_pressed = True
+                self.step(self.c.parameters.values["button_hold_seconds"])
+                asyncio.run(self.runtime.tick())
+        if previous_mode != self.c.control_mode:
+            self.light_manual = 0 if self.c.control_mode == "manual" else None
+            self.light = 0 if self.light_manual == 0 else 35
+        self.sample()
 
     def door(self, kind):
         if self.c.session is None:
@@ -224,10 +255,18 @@ class Preview:
         self.record("presence", report)
         self.sample()
 
+    def observed_light(self):
+        if self.runtime.button_start_hold_active:
+            return self.c.parameters.values["session_light_brightness_percent"]
+        if self.runtime._button_hold_session_id is not None:
+            return 0
+        return self.light
+
     def state(self):
         c, session = self.c, self.c.session
         configuration = self.runtime.configuration
         active = session.timeline.active if session else None
+        light_observation = self.observed_light()
         measurements = [{"position":"upper", "quantity":q, "value":v,
                          "received_at":self.now, "measured_at":self.now}
                         for q,v in (("temperature", c.temperature), ("humidity",self.humidity))]
@@ -262,6 +301,9 @@ class Preview:
             },
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
             "archive_revision":0, "preview_scenario":self.scenario,
+            "preview_button":{"pressed":self.button_pressed,
+                              "hold_seconds":c.parameters.values["button_hold_seconds"],
+                              "start_hold":self.runtime.button_start_hold_active},
             "measurement_ttl_seconds":configuration.parameters.values["sensor_timeout_seconds"],
             "parameters":[{**asdict(d), "minimum":configuration.parameters.minimum_for(d.key),
                            "live_editable":d.key in LIVE_TEMPERATURE_KEYS} for d in EDITABLE_DEFINITIONS],
@@ -287,7 +329,7 @@ class Preview:
                 "observation":{"available":c.contactor is not None,"on":c.contactor},
                 "override_ends_at":c.heater_override_ends_at,
                 "automatic":c.automatic_decision.heat if c.automatic_decision else None},
-                "light":{"observation":{"available":True,"brightness_percent":self.light},
+                "light":{"observation":{"available":True,"brightness_percent":light_observation},
                          "manual":self.light_manual, "automatic":35, "normal":35}},
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
@@ -302,6 +344,9 @@ class Preview:
                 return {}
             if action.startswith("scenario:"):
                 self.reset(action.split(":")[1])
+                return {}
+            if action in ("button_short", "button_hold", "button_release"):
+                self.button(action)
                 return {}
             if action != "step":
                 self.step(1)
@@ -360,11 +405,12 @@ class Preview:
                 brightness = value
             else:
                 raise ValueError("Ungültiger Lichtwert")
+            actual = self.observed_light()
             unchanged = (
-                (value is False and self.light == 0)
-                or (value is True and self.light > 0)
+                (value is False and actual == 0)
+                or (value is True and actual > 0)
                 or (not isinstance(value, bool) and isinstance(value, (int, float))
-                    and value == round(self.light))
+                    and value == round(actual))
             )
             if not unchanged:
                 self.light_manual = brightness

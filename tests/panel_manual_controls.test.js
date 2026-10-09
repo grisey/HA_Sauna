@@ -366,6 +366,8 @@ const renderCurrent = (
     /manual-section manual-(heater|light)|data-action="(?:heater|light):/,
   );
   assert.match(manual, /class="manual-section manual-heater"/);
+  assert.doesNotMatch(manual, /data-action="(?:operation|finish-session:|end-phase:)/);
+  assert.match(automatic, /data-action="operation"/);
   assert.doesNotMatch(automatic, /Ein startet zuerst den Saunabetrieb/);
   assert.doesNotMatch(automatic, /Gedimmt/);
   assert.match(manual, /class="manual-section manual-light"/);
@@ -421,6 +423,10 @@ const renderCurrent = (
       new RegExp(`data-action="light:${preset}"[^>]*disabled`),
     );
   const userManual = renderCurrent("manual", {}, false, "#current", { admin: false });
+  assert.doesNotMatch(
+    userManual,
+    /data-action="(?:operation|finish-session:|end-phase:)/,
+  );
   assert.match(
     userManual,
     /data-action="control-mode:automatic" aria-pressed="false" >Automatik/,

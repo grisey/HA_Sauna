@@ -84,6 +84,7 @@ class HADevice:
         self.last_input_event = None
         self.last_input_occurred_at = None
         self._button_hold_session_id = None
+        self._button_hold_starting = False
         if runtime.controller.control_mode == "manual":
             self.set_light_override(0)
 
@@ -1021,7 +1022,7 @@ class HADevice:
             phase=name,
             service=service,
             brightness=brightness if service == "turn_on" else None,
-            session_id=self._light_session_id(),
+            session_id=self._light_session_id(automatic=plan.automatic),
             ends_at=ends_at,
         ):
             self._light_override_dirty = False
@@ -1098,13 +1099,15 @@ class HADevice:
                 self.faults["session_light"] = "feedback_missing"
             return False
 
-    def _light_session_id(self):
+    def _light_session_id(self, *, automatic=True):
+        """Only automatic after-run output belongs to an already ended session."""
         session = self.runtime.controller.session
         light_after_run = self.runtime.controller.light_after_run
         return (
             session.session_id
             if session is not None
-            else (light_after_run.session_id if light_after_run is not None else None)
+            else (light_after_run.session_id
+                  if automatic and light_after_run is not None else None)
         )
 
     async def finish_session_light(self, now, phase, *, purpose="light_reassignment"):
@@ -1691,26 +1694,33 @@ class HADevice:
             self.light_output.set_manual(value, phase_key=phase_key, ends_at=ends_at)
         self._light_override_dirty = True
 
-    def begin_button_hold_light(self, session_id):
+    def begin_button_hold_light(self, session_id, *, starting=False):
         """Mark acknowledgement for regular output after the heater command."""
         self._button_hold_session_id = session_id
+        self._button_hold_starting = starting
         self.light_output.return_to_automatic()
 
     async def show_button_hold_light(self, now, session_id):
-        """Keep the required long-press acknowledgement above all normal phases."""
+        """Keep the long-press acknowledgement above all normal phases."""
         self._button_hold_session_id = session_id
         if not self._light_owned:
             return False
-        key = ("button_hold", session_id, "turn_off", None)
+        brightness = (
+            self.values["session_light_brightness_percent"]
+            if self._button_hold_starting else None
+        )
+        service = "turn_on" if self._button_hold_starting else "turn_off"
+        target = self._light_command_signature(service, brightness)
+        key = ("button_hold", session_id, service, brightness)
         state = self.hass.states.get(self.bindings["light"])
         if (
             not self._light_service_is_pending()
-            and self._light_state_signature(state) == ("off", None)
+            and self._light_state_signature(state) == target
         ):
             self.faults.pop("operation_light", None)
             return True
         if key == self._light_last_command_key and self._light_change_is_pending(
-            self.runtime._clock(), "turn_off", None
+            self.runtime._clock(), service, brightness
         ):
             return True
         unconfirmed = key == self._light_last_command_key
@@ -1718,14 +1728,14 @@ class HADevice:
             now,
             key=key,
             phase="button_hold",
-            service="turn_off",
-            brightness=None,
+            service=service,
+            brightness=brightness,
             session_id=session_id,
             purpose="button_hold",
         )
         if sent and self._light_state_signature(
             self.hass.states.get(self.bindings["light"])
-        ) != ("off", None) and unconfirmed:
+        ) != target and unconfirmed:
             self.faults["operation_light"] = "feedback_missing"
         return sent
 
@@ -1733,6 +1743,7 @@ class HADevice:
         """Only the matching release may hand light control back to the timer."""
         if session_id is None or self._button_hold_session_id == session_id:
             self._button_hold_session_id = None
+            self._button_hold_starting = False
 
     def normal_light_brightness(self):
         """Return the current normal automatic brightness for UI consumers."""

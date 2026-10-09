@@ -81,13 +81,14 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertIsNone(self.preview.state()["manual_controls"]["heater"]["manual"])
         self.assertIsNone(self.preview.state()["manual_controls"]["light"]["manual"])
         self.preview.action("/preview/control-mode", {"mode":"manual"})
-        self.preview.action("/preview/control", {"enabled":True})
         self.preview.action("/preview/heater", {"value":True})
         self.preview.action("/preview/light", {"value":True})
-        with self.assertRaisesRegex(ValueError, "laufende Session"):
-            self.preview.action("/preview/control-mode", {"mode":"automatic"})
-        self.assertIs(self.preview.state()["manual_controls"]["heater"]["manual"], True)
-        self.assertGreater(self.preview.state()["manual_controls"]["light"]["manual"], 0)
+        self.assertIsNone(self.preview.c.session)
+        with self.assertRaises(ValueError):
+            self.preview.action("/preview/control", {"enabled":True})
+        self.preview.action("/preview/control-mode", {"mode":"automatic"})
+        self.assertIsNone(self.preview.state()["manual_controls"]["heater"]["manual"])
+        self.assertIsNone(self.preview.state()["manual_controls"]["light"]["manual"])
 
     def test_explicit_manual_entry_for_both_roles_without_extra_sessions(self):
         for admin in (False, True):
@@ -110,6 +111,10 @@ class LocalPreviewTests(unittest.TestCase):
                 self.preview.action("/preview/heater", {"value":False})
                 self.assertIsNone(self.preview.c.session)
                 self.assertFalse(self.preview.c.last_decision.heat)
+                with self.assertRaises(ValueError):
+                    self.preview.action("/preview/control", {"enabled":True})
+                self.assertIsNone(self.preview.c.session)
+                self.preview.action("/preview/control-mode", {"mode":"automatic"})
                 self.preview.action("/preview/control", {"enabled":True})
                 session_id = self.preview.c.session.session_id
                 self.preview.action("/preview/heater", {"value":True})
@@ -121,6 +126,7 @@ class LocalPreviewTests(unittest.TestCase):
 
     def test_manual_scenario_starts_with_both_explicit_off_selections(self):
         self.preview.reset("manuell")
+        self.assertIsNone(self.preview.c.session)
         controls = self.preview.state()["manual_controls"]
         self.assertIs(controls["heater"]["manual"], False)
         self.assertEqual(controls["light"]["manual"], 0)
@@ -215,6 +221,48 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertTrue(public["records"])
         self.assertTrue(all(r["kind"] in ("measurement", "source_snapshot", "phase")
                             for r in public["records"]))
+
+    def test_preview_button_short_uses_real_gestures_without_starting_a_session(self):
+        self.preview.reset("manuell")
+        for expected in (True, False):
+            self.preview.action("/simulate", {"action":"button_short"})
+            self.assertEqual(self.preview.c.last_decision.heat, expected)
+            self.assertIsNone(self.preview.c.session)
+            self.assertEqual(self.preview.c.control_mode, "manual")
+        self.preview.reset("archiv")
+        self.preview.action("/simulate", {"action":"button_short"})
+        self.assertEqual(self.preview.c.control_mode, "manual")
+        self.assertIsNone(self.preview.c.session)
+        self.assertTrue(self.preview.c.last_decision.heat)
+
+    def test_preview_button_hold_uses_configured_threshold_and_release_feedback(self):
+        self.preview.reset("manuell")
+        self.assertEqual(self.preview.runtime.configuration.control_input_mode, "button")
+        before = self.preview.now
+        seconds = self.preview.c.parameters.values["button_hold_seconds"]
+        bright = self.preview.c.parameters.values["session_light_brightness_percent"]
+        self.preview.action("/simulate", {"action":"button_hold"})
+        state = self.preview.state()
+        identity = self.preview.c.session.session_id
+        self.assertEqual(self.preview.now - before, timedelta(seconds=seconds))
+        self.assertEqual(self.preview.c.control_mode, "automatic")
+        self.assertTrue(state["preview_button"]["pressed"])
+        self.assertTrue(state["preview_button"]["start_hold"])
+        self.assertEqual(state["manual_controls"]["light"]["observation"]["brightness_percent"], bright)
+        with self.assertRaises(ValueError):
+            self.preview.action("/simulate", {"action":"button_short"})
+        self.preview.action("/simulate", {"action":"button_release"})
+        self.assertFalse(self.preview.state()["preview_button"]["pressed"])
+        self.assertFalse(self.preview.runtime.button_start_hold_active)
+        self.assertEqual(self.preview.c.session.session_id, identity)
+        self.preview.action("/simulate", {"action":"button_short"})
+        self.assertEqual(self.preview.c.session.session_id, identity)
+        self.preview.action("/simulate", {"action":"button_hold"})
+        self.assertIsNone(self.preview.c.session)
+        self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], 0)
+        self.preview.action("/simulate", {"action":"button_release"})
+        self.assertIsNotNone(self.preview.c.light_after_run)
+        self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], bright)
 
     def test_minute_step_and_scenario_state_match_preview_controls(self):
         before = self.preview.now

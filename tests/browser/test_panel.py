@@ -1111,7 +1111,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.refresh()")
         await expect(self.panel.locator("#program-choice-body")).to_be_visible()
         await expect(active_program).to_have_text("Individuell")
-        await expect(overrides).to_have_attribute("open", "")
+        await expect(overrides).to_be_visible()
         await self.panel.locator('[data-action="program-cancel-draft"]').click()
         await expect(action).to_have_count(0)
         await expect(self.panel.locator("#program-choice-body")).to_be_hidden()
@@ -1645,7 +1645,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         self.assertEqual(self.runtime.configuration.control_mode, "automatic")
 
-    async def test_both_roles_control_idle_outputs_and_start_sessions_only_with_master(self):
+    async def test_both_roles_control_manual_outputs_without_session_controls(self):
         from custom_components.ha_sauna.settings import async_set_appearance, async_set_control_mode
 
         appearance = self.runtime.configuration.as_options()["appearance"]
@@ -1704,6 +1704,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(self.heater.is_on)
                     await expect(panel.locator('.manual-heater [data-action="heater:false"]')).to_have_attribute("aria-pressed", "true")
                     self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
+                    await expect(panel.locator('#current [data-action="operation"]')).to_have_count(0)
+                    await expect(panel.locator('[data-action="control-mode:automatic"]')).to_be_enabled()
+                    async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as automatic:
+                        await panel.locator('[data-action="control-mode:automatic"]').click()
+                    self.assertTrue((await automatic.value).ok)
+                    self.assertIsNone(self.runtime.session)
                     async with page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
                         await panel.locator('#current [data-action="operation"]').click()
                     self.assertTrue((await started.value).ok)
@@ -1712,16 +1718,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await expect(panel.locator('[data-action="control-mode:automatic"]')).to_be_disabled()
                     await self.runtime.set_operation(False)
                     await panel.evaluate("p => p.refresh()")
-                    observation = await panel.evaluate("p => p.state.manual_controls.light.observation")
-                    self.assertTrue(observation["available"])
-                    requested = observation["brightness_percent"] == 0
-                    action = str(requested).lower()
-                    async with page.expect_response(lambda response: response.url.endswith("/light") and response.request.method == "POST") as pending:
-                        await panel.locator(f'.manual-light [data-action="light:{action}"]').click()
-                    response = await pending.value
-                    self.assertTrue(response.ok)
-                    self.assertEqual(response.request.post_data_json, {"value": requested})
-                    await expect(panel.locator(f'.manual-light [data-action="light:{action}"]')).to_have_attribute("aria-pressed", "true")
+                    await expect(panel.locator('.manual-light [data-action="light:true"]')).to_be_disabled()
                     self.assertEqual(self.runtime.session.session_id, identity)
                     self.assertFalse(self.runtime.session.operation_enabled)
                     token = next(deadline.token for deadline in self.runtime.session.deadlines
@@ -1782,6 +1779,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.settings import async_set_parameters
 
         await async_set_parameters(self.hass, self.entry, {"light_transition_seconds": 0}, partial=True)
+        self.runtime = self.entry.runtime_data
+        await self.panel.evaluate("p => p.refresh()")
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         identity = self.runtime.session.session_id
@@ -3076,7 +3075,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
-        await expect(self.panel.locator('#current').get_by_role("button", name="Hell", exact=True)).to_be_visible()
+        await expect(self.panel.get_by_role("slider", name="Lichthelligkeit einstellen")).to_be_visible()
         self.assertEqual(self.errors,[])
         self.assertEqual(self.ws_errors,[])
 

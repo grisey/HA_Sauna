@@ -232,7 +232,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                             ],
                             effective,
                         )
-                    await runtime.set_operation(True)
+                    if mode == "automatic":
+                        await runtime.set_operation(True)
                     await runtime.set_heater_override(mode == "manual")
                     await runtime.set_light_override(80)
                     await self.hass.async_block_till_done()
@@ -297,6 +298,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(light.calls[-1][1]["brightness"], cold_brightness)
                     else:
                         self.assertTrue(runtime.controller.heater_override)
+                        self.assertIsNone(runtime.session)
                         self.assertTrue(heater.is_on)
                         self.assertEqual(
                             runtime.device.light_output.manual_brightness, 80
@@ -849,8 +851,13 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.entry.options["temperature_programs"], catalog)
 
             async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertIsNone(self.entry.runtime_data.session)
+            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
                 self.assertEqual(response.status, 200, await response.text())
-            for suffix, body in (("/control-mode", {"mode": "automatic"}),
+            async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for suffix, body in (("/control-mode", {"mode": "manual"}),
                                  ("/programs", {"programs": catalog}),
                                  ("/button-program", {"profile": "current"})):
                 async with client.post(url + suffix, json=body) as response:
@@ -915,11 +922,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(runtime.session)
             self.assertTrue(runtime.controller.heater_override)
             async with client.post(url + "/control", json={"enabled": True}) as response:
-                self.assertEqual(response.status, 200, await response.text())
-            self.assertTrue(runtime.session.operation_enabled)
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertIsNone(runtime.session)
             await runtime.set_operation(False)
-            gap = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
-            await runtime.finish_session_gap(gap.token)
             async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             await runtime.set_operation(True)
@@ -982,15 +987,22 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200, await response.text())
             self.assertEqual(runtime.configuration.control_mode, "manual")
             async with client.post(url + "/control", json={"enabled": True}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+            self.assertIsNone(runtime.session)
+            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/control", json={"enabled": True}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             self.assertIsNotNone(runtime.session)
             identity = runtime.session.session_id
-            async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
+            async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
                 self.assertEqual(response.status, 409, await response.text())
             async with client.post(url + "/programs", json={"programs": catalog}) as response:
                 self.assertEqual(response.status, 409, await response.text())
             async with client.post(url + "/button-program", json={"profile": "constant"}) as response:
                 self.assertEqual(response.status, 409, await response.text())
+            async with client.post(url + "/heater", json={"value": False}) as response:
+                self.assertEqual(response.status, 200, await response.text())
             async with client.post(url + "/heater", json={"value": True}) as response:
                 self.assertEqual(response.status, 200, await response.text())
                 self.assertTrue((await response.json())["manual_controls"]["heater"]["manual"])

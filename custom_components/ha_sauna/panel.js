@@ -3865,12 +3865,10 @@ class SaunaPanel extends HTMLElement {
       .control-auto { padding-bottom: 12px; border-bottom: 1px solid var(--sauna-color-border); }
       .control-auto button { width: 100%; }
       .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
-      .output-toggle button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
-      .output-toggle button::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--output-color); opacity: 0; }
+      .output-toggle button { width: 100%; }
       .output-toggle button[data-action$=":true"] { --output-color: var(--sauna-color-ui-feedback-on); --output-surface: var(--sauna-feedback-on-surface); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
       .output-toggle button[data-action$=":false"] { --output-color: var(--sauna-color-ui-feedback-off); --output-surface: var(--sauna-feedback-off-surface); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
       .output-toggle button[aria-pressed="true"] { background: var(--output-surface); border-color: color-mix(in srgb, var(--output-color) 45%, var(--output-surface)); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
-      .output-toggle button[aria-pressed="true"]::before { opacity: 1; }
       .instrument-arc-track[aria-disabled="true"], .instrument-arc-track[aria-disabled="true"] + .instrument-arc-handle { cursor: default; }
       .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .control-history-lanes { min-width: 660px; }
@@ -4965,9 +4963,11 @@ class SaunaPanel extends HTMLElement {
       session?.after_run && s.operation_enabled && !manualMode
         ? `<button class="tile operation" data-action="end-phase:after_run:${esc(encodeURIComponent(session.after_run.phase_id))}" ${permissions.control ? "" : "disabled"}>Kühlung beenden</button>`
         : "";
-    const operation = sessionGap
-      ? `<div class="operation-control split"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="tile operation primary" data-action="operation" ${canStart ? "" : "disabled"}>Fortsetzen</button></div>`
-      : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${finishPhase}</div>`;
+    const operation = manualMode
+      ? ""
+      : sessionGap
+        ? `<div class="operation-control split"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="tile operation primary" data-action="operation" ${canStart ? "" : "disabled"}>Fortsetzen</button></div>`
+        : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${finishPhase}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
     const availabilityHint = availabilityLine;
@@ -5441,7 +5441,7 @@ class SaunaPanel extends HTMLElement {
     const roundCount = ["temperature", "humidity", "light"].filter(
       (key) => this.instrumentStyle(key) === "round",
     ).length;
-    return `<div class="control-overview"><div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}<div class="tiles">${operation}</div>${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
+    return `<div class="control-overview"><div class="card control-mode-card">${modeControls}</div><div class="dashboard"><div class="card control-main">${stateLine}${overviewLightTimer}${operation ? `<div class="tiles">${operation}</div>` : ""}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
     const {

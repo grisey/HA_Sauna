@@ -23,11 +23,8 @@ def gap(controller):
 
 
 class FinishSessionTests(unittest.TestCase):
-    def controller(self, *, manual=False):
-        return Controller(
-            Parameters(parameters().as_dict()),
-            control_mode="manual" if manual else "automatic",
-        )
+    def controller(self):
+        return Controller(Parameters(parameters().as_dict()))
 
     def paused(self, controller, session_id="s"):
         controller.set_temperature(60, T0)
@@ -78,9 +75,9 @@ class FinishSessionTests(unittest.TestCase):
         self.assertEqual(completed.energy.accounted_at, at(10))
 
     def test_due_gap_uses_the_regular_completion_once(self):
-        for manual, offset in ((False, 0), (False, 1), (True, 0), (True, 1)):
-            with self.subTest(manual=manual, offset=offset):
-                controller = self.controller(manual=manual)
+        for offset in (0, 1):
+            with self.subTest(offset=offset):
+                controller = self.controller()
                 token = self.paused(controller)
                 due_at = token.due_at
 
@@ -129,8 +126,8 @@ class FinishSessionTests(unittest.TestCase):
         controller.finish_session_gap(current.token, at(5))
         self.assertIsNone(controller.session)
 
-    def test_manual_and_protected_pauses_finish_without_starting_heat(self):
-        controller = self.controller(manual=True)
+    def test_protected_pauses_finish_without_starting_heat(self):
+        controller = self.controller()
         controller.protection.add("confirmed_controller_failure")
         token = self.paused(controller)
 
