@@ -6,7 +6,7 @@ from datetime import timedelta
 from test_foundation import T0, bindings, parameters
 
 from custom_components.ha_sauna.core.controller import Controller
-from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 from custom_components.ha_sauna.runtime import Configuration
 
 
@@ -15,8 +15,19 @@ def at(seconds):
 
 
 class ManualOverrideTimeoutTests(unittest.TestCase):
+    def automatic_parameters(self, **overrides):
+        return Parameters({
+            **parameters().as_dict(),
+            "target_temperature_c": 80,
+            "readiness_offset_c": 1,
+            "readiness_hysteresis_c": 1,
+            "minimum_heating_minutes": 10,
+            "manual_override_minutes": 10,
+            **overrides,
+        })
+
     def automatic(self):
-        controller = Controller(parameters())
+        controller = Controller(self.automatic_parameters())
         controller.set_temperature(60, at(0))
         controller.set_operation(True, at(0), session_id="s")
         return controller
@@ -34,13 +45,21 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
         self.assertIsNone(controller.heater_override_ends_at)
 
     def test_loaded_override_duration_returns_to_current_automatic_demand(self):
-        for stored, seconds in ((10, 600), (20, 600), (0.5, 30)):
+        maximum = BY_KEY["manual_override_minutes"].maximum
+        fractional = min(maximum / 2, 0.5)
+        for stored, seconds in (
+            (maximum, maximum * 60),
+            (maximum * 2, maximum * 60),
+            (fractional, fractional * 60),
+        ):
             with self.subTest(stored=stored):
                 configuration = Configuration.from_options(
                     {
                         "bindings": bindings().as_dict(),
                         "parameters": {
-                            **parameters().as_dict(),
+                            **self.automatic_parameters(
+                                manual_override_minutes=maximum
+                            ).as_dict(),
                             "manual_override_minutes": stored,
                         },
                     }
@@ -88,9 +107,7 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
         self.assertTrue(controller.last_decision.heat)
 
     def test_manual_heat_handoff_only_keeps_a_real_running_minimum_interval(self):
-        short_override = Parameters(
-            {**parameters().values, "manual_override_minutes": 1}
-        )
+        short_override = self.automatic_parameters(manual_override_minutes=1)
         cases = (
             ("explicit return with real feedback", 85, True, True, False),
             ("missing feedback", 85, False, True, False),
@@ -169,9 +186,7 @@ class ManualOverrideTimeoutTests(unittest.TestCase):
                 self.assertNotEqual(controller.last_decision.reason, "minimum_heating")
 
     def test_manual_off_handoff_clears_demand_on_phase_or_deadline(self):
-        short_override = Parameters(
-            {**parameters().values, "manual_override_minutes": 1}
-        )
+        short_override = self.automatic_parameters(manual_override_minutes=1)
         for name, deadline in (("phase", False), ("deadline", True)):
             with self.subTest(name=name):
                 controller = Controller(short_override)
