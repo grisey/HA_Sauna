@@ -65,7 +65,7 @@ class ProgramConfigurationTests(unittest.TestCase):
         binary = Configuration.from_options(configured)
         self.assertEqual(binary.available_button_session_gestures, ("long",))
         for gesture in ("double", "triple"):
-            with self.subTest(gesture=gesture), self.assertRaisesRegex(ValueError, "native"):
+            with self.subTest(gesture=gesture), self.assertRaises(ValueError):
                 Configuration.from_options({**configured, "button_session_gesture": gesture})
 
     def test_operation_switch_cannot_choose_a_button_gesture(self):

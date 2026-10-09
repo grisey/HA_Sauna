@@ -2016,7 +2016,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.evaluate("p=>p.refresh()")
         await expect(status).to_have_text("– %")
         await expect(self.panel.locator('.light-instrument')).to_contain_text("Rückmeldung fehlt")
-        await expect(self.panel.locator('.light-instrument')).to_contain_text("Vorgabe 60 %")
+        await expect(self.panel.locator('.light-instrument')).not_to_contain_text("Vorgabe")
+        await expect(self.panel.locator('.light-instrument [data-light-target]')).to_have_count(0)
+        await expect(self.panel.get_by_role("slider", name="Lichthelligkeit einstellen")).to_have_value("60")
         await self.page.set_viewport_size({"width": 390, "height": 844})
         await self.page.screenshot(path=str(screenshots / "light_mobile.png"), full_page=True)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"), 390)
@@ -2179,6 +2181,23 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_catalog_editor_sorting_and_persisted_program_ids(self):
+        entity = "event.catalog_sauna_button"
+        self.hass.states.async_set(entity, "unknown", {
+            "device_class": "button",
+            "event_types": ["btn_down", "btn_up", "single_push", "double_push",
+                            "triple_push", "long_push"],
+        })
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "bindings": {**self.entry.options["bindings"], "control_input": entity},
+            "control_input_mode": "button",
+        })
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        await self.panel.evaluate("p => p.refresh(true)")
+        state = await self.panel.evaluate("p => p.api(`/${p.entry}/state`)")
+        self.assertEqual(state["configuration"]["control_input_mode"], "button")
+        self.assertEqual(state["button_session_gestures"], ["long", "double", "triple"])
         await self.panel.locator('[data-action="program-mode:program"]').click()
         await expect(self.panel.locator(f'[data-action="program-select:{DEFAULT_PROGRAMS[0]["id"]}"]')).to_have_attribute(
             "aria-pressed", "true", timeout=15000
@@ -2187,11 +2206,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         gesture = self.panel.locator('#button-session-gesture')
         async with self.page.expect_response(lambda response: response.url.endswith("/button-gesture")
                                             and response.request.method == "POST") as gesture_saved:
-            await gesture.select_option("long")
+            await gesture.select_option("double")
         self.assertTrue((await gesture_saved.value).ok)
-        self.assertEqual(self.entry.options["button_session_gesture"], "long")
+        self.assertEqual(self.entry.options["button_session_gesture"], "double")
         await self.panel.evaluate("p => p.refresh()")
-        await expect(gesture).to_have_value("long")
+        await expect(gesture).to_have_value("double")
         async with self.page.expect_response(lambda response: response.url.endswith("/button-program")
                                             and response.request.method == "POST") as result:
             await self.panel.locator('#button-program').select_option(DEFAULT_PROGRAMS[-2]["id"])

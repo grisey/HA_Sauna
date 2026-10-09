@@ -3578,31 +3578,14 @@ class SaunaPanel extends HTMLElement {
         width: 100%;
         text-align: left;
       }
-      .program-named-choice > .program-choice-content > span {
-        font-weight: 650;
-      }
-      .control-main .program-named-choice small {
-        position: absolute;
-        left: 0;
-        bottom: calc(100% + 5px);
-        z-index: 2;
-        width: max-content;
-        max-width: 100%;
-        box-sizing: border-box;
-        padding: 8px 10px;
-        border-radius: var(--sauna-control-radius);
-        background: var(--sauna-surface-raised);
-        box-shadow: var(--sauna-shadow-control);
-        color: var(--sauna-card-text);
-        font-weight: 400;
-        white-space: normal;
-        text-align: left;
-        pointer-events: none;
-        opacity: 0;
-      }
-      .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) small {
-        opacity: 1;
-      }
+      .program-choice-summary,
+      .program-choice-details { grid-area: choice; align-self: center; }
+      .program-choice-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .program-choice-summary > span { font-weight: 650; }
+      .program-choice-summary small { white-space: nowrap; font-weight: 400; }
+      .program-choice-details { opacity: 0; font-weight: 400; white-space: normal; line-height: 1.4; }
+      .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) .program-choice-summary { opacity: 0; }
+      .program-named-choice:not(.program-feedback):is(:hover, :focus-visible) .program-choice-details { opacity: 1; }
       .program-types button,
       .program-named-choice {
         position: relative;
@@ -3625,7 +3608,9 @@ class SaunaPanel extends HTMLElement {
         pointer-events: none;
       }
       .program-named-choice > .program-choice-content {
-        display: contents;
+        display: grid;
+        grid-template-areas: "choice";
+        width: 100%;
       }
       .program-actions {
         display: flex;
@@ -3924,6 +3909,7 @@ class SaunaPanel extends HTMLElement {
       .dial .tick { font-size: 11px; font-weight: 450; opacity: .85; }
       .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) 12%, transparent); stroke: var(--measurement-color); stroke-width: 1.2; opacity: .75; }
       .light-symbol { fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
+      .linear-scale .light-symbol { grid-area: caption; justify-self: center; width: 22px; height: 22px; margin-top: 10px; }
       .light-instrument { --accent: var(--sauna-color-series-light); }
       .measurement-instrument { min-width: 0; text-align: center; }
       .linear-instrument { padding: 16px 20px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-recessed); box-shadow: var(--sauna-shadow-section); }
@@ -4115,8 +4101,6 @@ class SaunaPanel extends HTMLElement {
       if (e.target.matches("[data-manual-light-value]")) {
         this.manualLightDraft = e.target.value;
         this.manualLightRevision = (this.manualLightRevision || 0) + 1;
-        const output = this.$("[data-light-target]");
-        if (output) output.textContent = `${num(Number(e.target.value), 0)} %`;
       }
       if (e.target.id === "linear-target-temperature") {
         this.linearTargetDraft = this.clampArcTemperature(Number(e.target.value));
@@ -5104,7 +5088,7 @@ class SaunaPanel extends HTMLElement {
         ? `<div class="program-named-list">${programs
             .map((program) => {
               const feedback = programFeedback({ mode: "program", id: program.id });
-              return `<button type="button" class="program-named-choice ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : ""}" ${programChoiceAvailable ? "" : "disabled"}>${choiceContent(`<span>${esc(program.name)}</span><small>${esc(this.programSteps(program))}</small>`, feedback)}</button>`;
+              return `<button type="button" class="program-named-choice ${feedback ? `program-feedback program-${this.programSaveState}` : ""}" data-action="program-select:${esc(program.id)}" aria-pressed="${program.id === programChoice.id}" aria-label="${esc(program.name)}${feedback ? `: ${feedback}` : ""}" ${programChoiceAvailable ? "" : "disabled"}>${choiceContent(`<span class="program-choice-summary"><span>${esc(program.name)}</span><small>${num(program.start_c, 0)} → ${num(program.end_c, 0)} °C</small></span><small class="program-choice-details">${esc(this.programSteps(program))}</small>`, feedback)}</button>`;
             })
             .join("")}</div>`
         : "";
@@ -5353,7 +5337,8 @@ class SaunaPanel extends HTMLElement {
       sliderValue = Number.isFinite(target) ? Math.max(0, Math.min(100, target)) : 0,
       style = this.instrumentStyle("light"),
       point = this.temperatureArcPoint(sliderValue, { minimum: 0, maximum: 100 }),
-      arc = `<path class="instrument-arc-track" data-light-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${allowed ? 0 : -1}" aria-label="Lichthelligkeit einstellen" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sliderValue}" aria-valuetext="${num(target, 0)} %" aria-disabled="${!allowed}"/><circle class="instrument-arc-handle" data-light-arc="true" cx="${point.x}" cy="${point.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">VORGABE</text><text class="target-reading" data-light-target x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(target, 0)} %</text>`,
+      symbol = '<path d="M9 18h6m-5 3h4M8 15a6 6 0 1 1 8 0v3H8Z"/>',
+      arc = `<path class="instrument-arc-track" data-light-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${allowed ? 0 : -1}" aria-label="Lichthelligkeit einstellen" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sliderValue}" aria-valuetext="${num(target, 0)} %" aria-disabled="${!allowed}"/><circle class="instrument-arc-handle" data-light-arc="true" cx="${point.x}" cy="${point.y}" r="9"/><g class="light-symbol" transform="translate(138 198)" aria-hidden="true">${symbol}</g>`,
       graphic =
         style === "linear"
           ? this.linearInstrument({
@@ -5362,7 +5347,7 @@ class SaunaPanel extends HTMLElement {
               unit: "%",
               bounds: { minimum: 0, maximum: 100 },
               valid: available,
-              control: `<div class="instrument-slider"><label for="manual-light-value-overview">Vorgabe <output data-light-target>${num(target, 0)} %</output></label><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div>`,
+              control: `<div class="instrument-slider"><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div><svg class="light-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg>`,
             })
           : dial(
               reading,
@@ -9129,13 +9114,11 @@ class SaunaPanel extends HTMLElement {
   renderLightTarget(value) {
     const point = this.temperatureArcPoint(value, { minimum: 0, maximum: 100 }),
       track = this.$('[data-light-arc][role="slider"]'),
-      handle = this.$(".light-instrument .instrument-arc-handle"),
-      output = this.$("[data-light-target]");
+      handle = this.$(".light-instrument .instrument-arc-handle");
     track?.setAttribute("aria-valuenow", value);
     track?.setAttribute("aria-valuetext", `${num(value, 0)} %`);
     handle?.setAttribute("cx", point.x);
     handle?.setAttribute("cy", point.y);
-    if (output) output.textContent = `${num(value, 0)} %`;
   }
   lightValueAt(svg, x, y) {
     const step = this.frontendStep("brightness_step_percent");

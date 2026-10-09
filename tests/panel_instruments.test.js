@@ -152,15 +152,15 @@ test("light feedback never substitutes a selected value or a draft for unavailab
     };
     const html = p.lightInstrument(dial, true);
     assert.ok(html.includes("Rückmeldung fehlt"));
+    assert.doesNotMatch(html, /Vorgabe|VORGABE|data-light-target/);
     if (style === "linear") {
-      assert.ok(html.includes("data-light-target>43 %</output>"));
       assert.ok(html.includes('value="43"'));
+      assert.match(html, /aria-label="Lichthelligkeit einstellen"/);
       assert.match(readout(html, "data-light-observation"), /^– /);
     } else {
       assert.equal(calls[0][0], null);
       assert.equal(calls[0][5], false);
       assert.match(html, /data-light-arc[^>]*role="slider"[^>]*aria-valuenow="43"/);
-      assert.match(html, /data-light-target[^>]*>43 %<\/text>/);
       assert.doesNotMatch(html, /<input|manual-light-value-overview/);
     }
     p.state.manual_controls.light.observation = {
@@ -169,14 +169,15 @@ test("light feedback never substitutes a selected value or a draft for unavailab
     };
     const observed = p.lightInstrument(dial, false);
     assert.ok(!observed.includes("Rückmeldung fehlt"));
+    assert.doesNotMatch(observed, /Vorgabe|VORGABE|data-light-target/);
     if (style === "linear") {
       assert.match(observed, /<input[^>]*disabled/);
       assert.match(readout(observed, "data-light-observation"), /^17 /);
-      assert.ok(observed.includes("data-light-target>43 %</output>"));
+      assert.match(observed, /<input[^>]*value="43"/);
     } else {
       assert.equal(calls[1][0], 17);
       assert.match(observed, /data-light-arc[^>]*aria-disabled="true"/);
-      assert.match(observed, /data-light-target[^>]*>43 %<\/text>/);
+      assert.match(observed, /data-light-arc[^>]*aria-valuenow="43"/);
     }
   }
 });
