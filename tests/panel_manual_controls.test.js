@@ -59,6 +59,7 @@ const makePanel = (permissions, lightValue = "42") => {
     },
     api: async (...args) => calls.push(args),
     refresh: async () => {},
+    drawCurrent: () => {},
     message: () => {},
     $: (selector) =>
       ["#manual-light-value", "#manual-light-value-overview"].includes(selector)
