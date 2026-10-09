@@ -1768,7 +1768,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue((await commanded.value).ok)
                 await expect(self.panel.locator(f'.manual-{output} .output-toggle [data-action="{output}:false"]')).to_have_attribute("aria-pressed", "true")
                 await expect(self.panel.locator(f'.manual-{output} .output-toggle [data-action="{output}:true"]')).to_have_attribute("aria-pressed", "false")
-                await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_attribute("aria-pressed", "false")
+                await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_count(0)
             self.assertIs(self.runtime.controller.heater_override, True)
             self.assertGreater(self.runtime.device.light_output.manual_brightness, 0)
             self.assertIsNone(self.runtime.session)
@@ -1779,6 +1779,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_return_to_auto_clears_overrides_while_outputs_and_session_stay_on(self):
+        from custom_components.ha_sauna.settings import async_set_parameters
+
+        await async_set_parameters(self.hass, self.entry, {"light_transition_seconds": 0}, partial=True)
         await self.panel.locator('#current [data-action="operation"]').click()
         await expect(self.panel.locator('#current [data-phase="aufheizen"]')).to_be_visible()
         identity = self.runtime.session.session_id
@@ -1834,11 +1837,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await panel.locator(".manual-overrides").count(), 0)
             await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_be_enabled()
             await expect(panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_enabled()
+            observation = await panel.evaluate("p => p.state.manual_controls.light.observation")
+            self.assertTrue(observation["available"])
+            requested = observation["brightness_percent"] == 0
+            action = str(requested).lower()
             async with page.expect_response(lambda response: response.url.endswith("/light")
                                             and response.request.method == "POST") as saved:
-                await panel.locator('[data-action="light:false"]').click()
-            self.assertTrue((await saved.value).ok)
-            await expect(panel.locator('[data-action="light:false"]')).to_have_attribute("aria-pressed", "true")
+                await panel.locator(f'[data-action="light:{action}"]').click()
+            response = await saved.value
+            self.assertTrue(response.ok)
+            self.assertEqual(response.request.post_data_json, {"value": requested})
+            await expect(panel.locator(f'[data-action="light:{action}"]')).to_have_attribute("aria-pressed", "true")
             await self.runtime.set_operation(False)
             await panel.evaluate("p => p.refresh()")
             for index in range(3):
@@ -1893,7 +1902,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.open_settings_section("appearance")
         editor = self.panel.locator("#appearance-settings")
         self.assertEqual(await editor.locator('[data-appearance-color="series_upper"], [data-appearance-color="series_lower"]').count(), 0)
-        self.assertEqual(await editor.locator('input[type="color"]:visible').count(), 2)
+        featured = [item["id"] for item in section("appearance")["colors"]
+                    if item.get("featured") and not item.get("hidden")]
+        self.assertEqual(await editor.locator('input[type="color"]:visible').evaluate_all(
+            "inputs => inputs.map(input => input.dataset.appearancePicker)"), featured)
         self.assertEqual(await self.panel.locator('[data-settings-section]:visible').count(), 1)
         self.assertEqual(await self.panel.evaluate("""p => p.state.parameters.filter(d => {
           const fields=p.shadowRoot.querySelectorAll(`#parameters input[name="${d.key}"]`);
