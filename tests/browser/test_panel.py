@@ -726,7 +726,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         second = await device_tests.create_sauna(self.hass, binding_overrides={
             "heater": second_heater.entity_id,
         }, parameter_overrides={
-            "target_temperature_c": 90, "safety_temperature_c": 105,
+            "target_temperature_c": 90,
         })
         await self.page.reload()
         await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
@@ -3112,16 +3112,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_count(0)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Türerkennung ruht")
         await expect(self.panel.locator("#details")).to_contain_text("Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.")
-        await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_value("50")
+        await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_value(str(DEFAULT_PARAMETERS["session_light_brightness_percent"]))
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         bindings = dict(self.entry.options["bindings"])
         await self.open_parameter_group("sensor_timeout_seconds")
         await self.panel.locator('input[name="sensor_timeout_seconds"]').fill("45")
         await self.open_settings_section("maintenance")
         await self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True).click()
-        await expect(self.panel.locator('#log-level')).to_have_value("INFO", timeout=15000)
-        await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_have_value("180")
-        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_have_value("60")
+        await expect(self.panel.locator('#log-level')).to_have_value(section("instance")["log_level"], timeout=15000)
+        await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_have_value(str(DEFAULT_PARAMETERS["sensor_timeout_seconds"]))
+        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_have_value(str(DEFAULT_PARAMETERS["sauna_min_temperature_c"]))
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()

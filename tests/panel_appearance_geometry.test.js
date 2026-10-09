@@ -137,7 +137,7 @@ test("finite display scales bound ticks and preserve backend target limits", () 
   );
   assert.deepEqual(
     JSON.parse(JSON.stringify(panel.appearanceScale("humidity"))),
-    { minimum: 0, maximum: 50 },
+    catalog.scales.humidity.default,
     "invalid humidity draft falls back to display defaults",
   );
 });

@@ -1891,15 +1891,15 @@ class SaunaPanel extends HTMLElement {
     for (const state of ["on", "off"]) {
       const color = this.appearanceColor(`ui_feedback_${state}`);
       if (color) {
-        const surface = appearanceBlend(recessedSurface, color, 0.14);
+        const surface = color;
         style.setProperty(`--sauna-feedback-${state}-surface`, surface);
         style.setProperty(
           `--sauna-feedback-${state}-ink`,
-          readable(color, surface, 4.5),
+          readable(proposedText, surface, 4.5),
         );
         style.setProperty(
           `--sauna-feedback-${state}-focus`,
-          readable(proposedFocus, surface, 3),
+          readable(proposedFocus, recessedSurface, 3),
         );
       }
     }
@@ -2963,16 +2963,6 @@ class SaunaPanel extends HTMLElement {
       .gauge-card h2 {
         text-align: center;
       }
-      .temperature-choice {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        justify-content: center;
-        margin-top: 10px;
-      }
-      .temperature-choice input {
-        width: 95px;
-      }
       @media (max-width: 800px) {
         .chart {
           height: 420px;
@@ -3020,34 +3010,8 @@ class SaunaPanel extends HTMLElement {
       .gauge-card h2 {
         font-size: 16px;
       }
-      .temperature-choice {
-        flex-wrap: wrap;
-      }
-      .temperature-choice input {
-        min-width: 0;
-        width: 80px;
-      }
       .tiles {
         gap: 10px;
-      }
-      .timer-strip {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-        margin: 18px 0;
-        padding: 14px 0;
-        border-block: 1px solid var(--sauna-color-border, var(--divider-color));
-      }
-      .timer-strip small,
-      .timer-strip strong {
-        display: block;
-      }
-      .timer-strip strong {
-        font-size: 21px;
-        font-variant-numeric: tabular-nums;
-      }
-      .timer-strip small {
-        font-size: 12px;
       }
       .detail-grid {
         display: grid;
@@ -3170,26 +3134,6 @@ class SaunaPanel extends HTMLElement {
         grid-template-columns: 1fr 1fr;
         gap: 8px;
       }
-      .program-compact {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 0;
-      }
-      .program-compact label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        font-size: 13px;
-      }
-      .program-compact select {
-        min-width: 0;
-        max-width: 230px;
-      }
-      .program-compact small {
-        white-space: nowrap;
-      }
       .dial-temperature, .dial-light {
         touch-action: none;
       }
@@ -3233,11 +3177,6 @@ class SaunaPanel extends HTMLElement {
       .manual-status.off {
         background: var(--sauna-tint-heater-off-background, var(--sauna-color-card-background, var(--card-background-color)));
         color: var(--sauna-tint-heater-off-text, var(--sauna-card-text, inherit));
-      }
-      .manual-light-value {
-        width: 92px;
-        text-align: right;
-        font-variant-numeric: tabular-nums;
       }
       .diagnostic-grid {
         display: grid;
@@ -3513,12 +3452,6 @@ class SaunaPanel extends HTMLElement {
         .card {
           padding: 14px;
         }
-        .timer-strip strong {
-          font-size: 18px;
-        }
-        .temperature-choice {
-          gap: 6px;
-        }
         header select {
           max-width: 110px;
         }
@@ -3539,9 +3472,6 @@ class SaunaPanel extends HTMLElement {
         opacity: 1;
         cursor: default;
       }
-      button[data-action^="light:"][aria-pressed="true"] small {
-        color: inherit;
-      }
       button[data-action^="heater:"]:disabled:not([aria-pressed="true"]),
       button[data-action^="light:"]:disabled:not([aria-pressed="true"]) {
         opacity: 0.5;
@@ -3555,13 +3485,6 @@ class SaunaPanel extends HTMLElement {
       .control-status-row .control-mode { flex: 0 0 auto; max-width: 100%; }
       .manual-controls {
         margin-top: 16px;
-      }
-      .manual-section .row {
-        margin-top: 10px;
-      }
-      .manual-section .muted {
-        display: block;
-        margin-top: 10px;
       }
       .phase-time {
         display: flex;
@@ -3769,9 +3692,6 @@ class SaunaPanel extends HTMLElement {
       .manual-section h3 {
         margin: 0;
       }
-      .manual-section .row {
-        align-items: center;
-      }
       @container (max-width: 600px) {
         header {
           grid-template-columns: 1fr auto;
@@ -3835,7 +3755,7 @@ class SaunaPanel extends HTMLElement {
         padding: 0 0 16px;
         border-bottom: 1px solid var(--sauna-color-border);
       }
-      .main-tabs button, .program-types button, .segmented-mode button {
+      .main-tabs button, .program-types button, .segmented-mode button, .control-auto button {
         position: relative;
         min-height: var(--sauna-button-height);
         background: transparent;
@@ -3847,12 +3767,12 @@ class SaunaPanel extends HTMLElement {
         font-weight: 600;
         padding: 8px 12px;
       }
-      .main-tabs button[aria-current="page"], .program-types button[aria-pressed="true"], .segmented-mode button[aria-pressed="true"] {
+      .main-tabs button[aria-current="page"], .program-types button[aria-pressed="true"], .segmented-mode button[aria-pressed="true"], .control-auto button[aria-pressed="true"] {
         color: var(--sauna-card-text);
         background: var(--sauna-surface-control);
         box-shadow: var(--sauna-shadow-control);
       }
-      .main-tabs button[aria-current="page"]::after, .program-types button[aria-pressed="true"]::after, .segmented-mode button[aria-pressed="true"]::after {
+      .main-tabs button[aria-current="page"]::after, .program-types button[aria-pressed="true"]::after, .segmented-mode button[aria-pressed="true"]::after, .control-auto button[aria-pressed="true"]::after {
         content: "";
         position: absolute;
         bottom: 3px;
@@ -3882,19 +3802,25 @@ class SaunaPanel extends HTMLElement {
         .main-tabs button { flex: 0 1 auto; white-space: nowrap; }
         .control-main .control-section, .control-main .manual-controls { padding: 12px; }
       }
-      .manual-controls:not(.manual-entry) { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sauna-surface-padding); }
-      .manual-controls .manual-section { min-width: 0; }
-      .manual-controls .manual-section + .manual-section { border-top: 1px solid var(--sauna-color-border); padding-top: var(--sauna-surface-padding); }
-      .manual-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .manual-heading h3 { font-size: 15px; }
-      .manual-controls .manual-section button { padding-inline: 12px; font-size: 14px; }
-      .manual-selection { margin-top: var(--sauna-control-gap); }
-      .control-auto button { min-width: 7.5em; }
-      .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
-      .output-toggle button { width: 100%; }
-      .output-toggle button[data-action$=":true"] { --output-color: var(--sauna-color-ui-feedback-on); --output-surface: var(--sauna-feedback-on-surface); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
-      .output-toggle button[data-action$=":false"] { --output-color: var(--sauna-color-ui-feedback-off); --output-surface: var(--sauna-feedback-off-surface); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
-      .output-toggle button[aria-pressed="true"] { background: var(--output-surface); border-color: color-mix(in srgb, var(--output-color) 45%, var(--output-surface)); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
+      .manual-controls:not(.manual-entry) { container: output-controls / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+      .manual-controls .manual-section { display: grid; grid-template-columns: 4em minmax(0, 1fr); align-items: center; min-width: 0; }
+      .manual-controls .manual-section + .manual-section { border-top: 1px solid var(--sauna-color-border); padding-top: 14px; }
+      .manual-heading h3 { font-size: 15px; font-weight: 600; }
+      .manual-selection { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; width: min(100%, 20em); justify-self: center; font-size: 14px; }
+      .manual-selection:not(:has(.control-auto)) { grid-template-columns: minmax(0, 1fr); max-width: 12em; }
+      .control-auto, .output-toggle { padding: 4px; background: var(--sauna-surface-recessed); border-radius: var(--sauna-control-radius); }
+      .control-auto button, .output-toggle button { width: 100%; min-width: 0; padding-inline: 10px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+      .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+      .output-toggle button { background: transparent; border-color: transparent; border-radius: calc(var(--sauna-control-radius) - 3px); color: var(--sauna-card-muted-text); box-shadow: none; }
+      .output-toggle button[aria-pressed="true"] { box-shadow: var(--sauna-shadow-control); }
+      @container output-controls (max-width: 280px) {
+        .manual-controls .manual-section { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+        .manual-selection { gap: 8px; }
+        .manual-selection:not(:has(.control-auto)) { max-width: none; }
+      }
+      .output-toggle button[data-action$=":true"] { --output-surface: var(--sauna-feedback-on-surface); --output-ink: var(--sauna-feedback-on-ink); --output-focus: var(--sauna-feedback-on-focus); }
+      .output-toggle button[data-action$=":false"] { --output-surface: var(--sauna-feedback-off-surface); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
+      .output-toggle button[aria-pressed="true"] { background: var(--output-surface); border-color: var(--output-surface); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
       .instrument-arc-track[aria-disabled="true"], .instrument-arc-track[aria-disabled="true"] + .instrument-arc-handle { cursor: default; }
       .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .control-history-lanes { min-width: 660px; }
@@ -5125,7 +5051,7 @@ class SaunaPanel extends HTMLElement {
       canControl,
       blockedOnReason = "",
     ) =>
-      `<section class="manual-section manual-${key}"><div class="manual-heading"><h3>${title}</h3>${manualMode ? "" : `<div class="control-auto"><button data-action="${key}:auto" aria-pressed="${selected == null}" ${canControl ? "" : "disabled"}>Automatik</button></div>`}</div><div class="manual-selection"><div class="output-toggle" role="group" aria-label="${title}">${[
+      `<section class="manual-section manual-${key}"><div class="manual-heading"><h3>${title}</h3></div><div class="manual-selection">${manualMode ? "" : `<div class="control-auto"><button data-action="${key}:auto" aria-pressed="${selected == null}" ${canControl ? "" : "disabled"}>Automatik</button></div>`}<div class="output-toggle" role="group" aria-label="${title}">${[
         [false, "Aus"],
         [true, "Ein"],
       ]

@@ -138,6 +138,7 @@ test("details render includes the reachable presence and rule card", () => {
   const state = {
     frontend_defaults: defaults.frontend,
     appearance_catalog: defaults.appearance,
+    appearance: { instruments: { temperature: "round", humidity: "round" } },
     now: end,
     phase: "bereit",
     operation_enabled: true,

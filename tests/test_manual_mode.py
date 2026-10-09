@@ -98,7 +98,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.completed_sessions, ())
 
     def test_manual_heat_does_not_create_session_heating_records(self):
-        controller = self.controller(heating_minutes=1, heat_reset_minutes=10)
+        controller = self.controller(heat_reset_minutes=10)
         self.start(controller)
         controller.report_heating(True, at(0))
         controller.advance(at(70))
@@ -172,10 +172,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertIsNone(controller.session)
 
     def test_technical_protection_still_revokes_manual_heat(self):
-        controller = self.controller(
-            safety_temperature_c=80,
-            overtemperature_minutes=1,
-        )
+        controller = self.controller()
         self.start(controller)
         controller.set_heater_override(True, at(1))
         self.reject_session_event(controller, "close", Kind.DOOR_CLOSE, 2)

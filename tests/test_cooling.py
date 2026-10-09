@@ -14,10 +14,9 @@ def at(seconds):
 
 def controller(**overrides):
     values = {**parameters().as_dict(), "target_temperature_c": 80,
-        "safety_temperature_c": 110, "readiness_offset_c": 5,
+        "readiness_offset_c": 5,
         "readiness_hysteresis_c": 3, "thermostat_cooldown_minutes": 0,
-        "heating_minutes": 1, "heating_reduction_minutes": 0.25,
-        "forced_cooling_minutes": 1, "after_run_minutes": 0.5,
+        "after_run_minutes": 0.5,
         "session_gap_minutes": 10, "heat_reset_minutes": 10, **overrides}
     result = Controller(Parameters(values))
     result.set_temperature(70, T0)
@@ -125,8 +124,7 @@ class CoolingTests(unittest.TestCase):
 
     def test_temperature_program_distributes_then_holds_for_unlimited_gangs(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
-                       temperature_gangs=4, after_run_minutes=.1,
-                       heating_minutes=20)
+                       temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"
         c.set_temperature(85, at(1))
         self.assertEqual(c.phase, "bereit")

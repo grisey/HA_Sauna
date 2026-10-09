@@ -43,6 +43,7 @@ assert.match(source, /Temperaturautomatik/);
 const state = {
   frontend_defaults: frontendDefaults,
   appearance_catalog: appearanceCatalog,
+  appearance: { scales: { temperature: { minimum: 50, maximum: 110 } } },
   permissions: { temperature: true },
   target_temperature: 80,
   configuration: { parameters: { sauna_min_temperature_c: 60 } },
@@ -73,7 +74,7 @@ assert.equal(
 );
 assert.equal(
   panel.temperatureValueAt({}, 150, 25),
-  75,
+  80,
   "the top of the dial is the middle of the display range",
 );
 assert.equal(
@@ -83,8 +84,8 @@ assert.equal(
 );
 assert.deepEqual(
   JSON.parse(JSON.stringify(panel.temperatureTickValues())),
-  [40, 50, 60, 70, 80, 90, 100, 110],
-  "reference ticks derive from the display range",
+  [50, 60, 70, 80, 90, 100, 110],
+  "reference ticks derive from the explicitly configured display range",
 );
 assert.equal(
   panel.clampTemperature(60.2, { minimum: 60.2, maximum: 100 }),
@@ -216,7 +217,7 @@ assert.match(
   await panel.endTemperatureDrag({ pointerId: 11 });
   assert.deepEqual(
     sent.map(([, , body]) => body.target_temperature_c),
-    [75, 100],
+    [80, 100],
   );
 
   let rejectOlder;

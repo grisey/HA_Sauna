@@ -12,8 +12,9 @@ from test_foundation import T0, parameters
 class ThermostatTests(unittest.TestCase):
     def setUp(self):
         self.parameters = Parameters({**parameters().as_dict(),
-            "target_temperature_c": 80, "safety_temperature_c": 110,
+            "target_temperature_c": 80,
             "readiness_offset_c": 5, "readiness_hysteresis_c": 3,
+            "minimum_heating_minutes": 10,
             "thermostat_cooldown_minutes": 1})
 
     def decide(self, state=None, **kwargs):
@@ -97,7 +98,12 @@ class ThermostatTests(unittest.TestCase):
         del values["target_temperature_c"]
         configured = Parameters(values)
         self.assertEqual(configured.values["target_temperature_c"], BY_KEY["target_temperature_c"].default)
-        _, decision = self.decide(parameters=configured)
+        _, decision = self.decide(
+            parameters=configured,
+            temperature=temperature_limits(
+                configured.values["target_temperature_c"], configured
+            )[0] - 1,
+        )
         self.assertTrue(decision.heat)
         _, decision = self.decide(parameters=configured, temperature=None)
         self.assertFalse(decision.heat)

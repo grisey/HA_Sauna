@@ -3,9 +3,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const frontendDefaults = JSON.parse(
+const defaults = JSON.parse(
   fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).frontend;
+);
+const frontendDefaults = defaults.frontend;
+const targetDefinition = defaults.parameters.find(
+  ({ key }) => key === "target_temperature_c",
+);
 
 let Panel;
 const sandbox = {
@@ -27,9 +31,7 @@ const sandbox = {
   Infinity,
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
-const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).appearance;
+const appearanceCatalog = defaults.appearance;
 vm.runInNewContext(source, sandbox);
 
 assert.match(source, /data-action="control-mode:automatic"/);
@@ -107,7 +109,10 @@ const renderCurrent = (
       session,
       last_session: null,
       appearance_catalog: appearanceCatalog,
-      appearance: program.appearance,
+      appearance: {
+        ...program.appearance,
+        instruments: { light: "round", ...program.appearance?.instruments },
+      },
       configuration: {
         control_mode: mode,
         program_mode: "constant",
@@ -122,9 +127,7 @@ const renderCurrent = (
         },
         ...(program.configuration || {}),
       },
-      parameters: [
-        { key: "target_temperature_c", minimum: 30, maximum: 100, integer: false },
-      ],
+      parameters: [{ ...targetDefinition, minimum: 30, maximum: 100 }],
       measurements: [],
       measurement_status: {},
 
@@ -1029,9 +1032,7 @@ const renderCurrent = (
           nominal_power_kw: 4.5,
         },
       },
-      parameters: [
-        { key: "target_temperature_c", minimum: 30, maximum: 100, integer: false },
-      ],
+      parameters: [{ ...targetDefinition, minimum: 30, maximum: 100 }],
       measurements: [],
       measurement_status: {},
       manual_controls: {

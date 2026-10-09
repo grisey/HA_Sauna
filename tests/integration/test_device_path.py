@@ -96,11 +96,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.hass.states.async_set("binary_sensor.actual_heating", "off")
         self.entry = await create_sauna(self.hass, binding_overrides={
             "heater_feedback": "binary_sensor.actual_heating", "control_input": "binary_sensor.operator"},
-            parameter_overrides={"target_temperature_c": 80, "safety_temperature_c": 105,
+            parameter_overrides={"target_temperature_c": 80,
                 "sensor_timeout_seconds": 30, "feedback_timeout_seconds": 2,
                 "fault_confirmation_seconds": 5, "minimum_heating_minutes": 0,
-                "thermostat_cooldown_minutes": 0, "heating_minutes": 4,
-                "heating_reduction_minutes": 1, "forced_cooling_minutes": 1,
+                "thermostat_cooldown_minutes": 0,
                 "after_run_minutes": .5, "confirmation_minutes": 13,
                 "cooling_brightness_percent": 5})
         self.runtime = self.entry.runtime_data
@@ -1497,7 +1496,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.core.display import phase_timer
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
             "sensor_timeout_seconds": validity_seconds, "fault_confirmation_seconds": 120,
-            "minimum_heating_minutes": 10, "heating_minutes": 90}}
+            "minimum_heating_minutes": 10}}
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
@@ -1883,7 +1882,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def prepare_gang_after_run(self):
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
-            "heating_minutes": 1, "heating_reduction_minutes": .25,
             "sensor_timeout_seconds": 180}}
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.hass.async_block_till_done()

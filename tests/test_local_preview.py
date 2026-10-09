@@ -259,6 +259,7 @@ class LocalPreviewTests(unittest.TestCase):
 
     def test_preview_button_hold_uses_configured_threshold_and_release_feedback(self):
         self.preview.reset("manuell")
+        self.preview.action("/preview/button-gesture", {"gesture":"long"})
         self.assertEqual(self.preview.runtime.configuration.control_input_mode, "button")
         before = self.preview.now
         seconds = self.preview.c.parameters.values["button_hold_seconds"]

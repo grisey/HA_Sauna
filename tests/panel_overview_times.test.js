@@ -36,10 +36,6 @@ const parameters = {
   preset_count: 6,
   preset_start_c: 95,
   preset_step_c: 2,
-  program_1_start_c: 70,
-  program_1_end_c: 80,
-  program_2_start_c: 80,
-  program_2_end_c: 90,
   target_temperature_c: 80,
   final_temperature_c: 90,
   temperature_gangs: 3,
@@ -103,7 +99,10 @@ const render = (state, target = "#current") => {
 
 {
   const state = baseState();
-  state.appearance = { scales: { temperature: { minimum: 60, maximum: 100 } } };
+  state.appearance = {
+    scales: { temperature: { minimum: 60, maximum: 100 } },
+    instruments: { temperature: "round" },
+  };
   state.measurements = [{ position: "upper", quantity: "temperature", value: 80 }];
   state.measurement_status = { upper_temperature: { state: "current" } };
   const instrument = render(state).match(

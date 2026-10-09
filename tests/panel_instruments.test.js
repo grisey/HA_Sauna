@@ -84,6 +84,7 @@ test("instrument edits preview separately, submit with colors and scales, and re
   };
   edit(p, "default", "linear");
   edit(p, "temperature", "round");
+  edit(p, "humidity", "inherit");
   assert.deepEqual(p.state.appearance, saved);
   assert.equal(p.instrumentStyle("temperature"), "round");
   assert.equal(p.instrumentStyle("humidity"), "linear");
@@ -96,6 +97,7 @@ test("instrument edits preview separately, submit with colors and scales, and re
     ...instrumentDefaults(),
     default: "linear",
     temperature: "round",
+    humidity: "inherit",
   });
   assert.deepEqual(calls[0][2].scales, saved.scales);
   assert.deepEqual(calls[0][2].colors, saved.colors);
@@ -283,7 +285,11 @@ test("zero light feedback removes the colored progress arc while retaining its c
   Object.assign(p.state, {
     now: "2026-09-20T12:00:00Z",
     parameters: [
-      { key: "target_temperature_c", minimum: 30, maximum: 100, integer: false },
+      {
+        ...defaults.parameters.find(({ key }) => key === "target_temperature_c"),
+        minimum: 30,
+        maximum: 100,
+      },
     ],
     measurements: [],
     measurement_status: {},

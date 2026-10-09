@@ -20,6 +20,7 @@
     body {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       height: 100dvh;
       overflow: hidden;
       margin: 0;
@@ -55,6 +56,10 @@
       border: 1px solid #50584d;
       padding: 6px 10px;
       border-radius: 6px;
+    }
+    select {
+      min-width: 0;
+      max-width: 100%;
     }
     button {
       cursor: pointer;

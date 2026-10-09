@@ -4,7 +4,7 @@ import unittest
 
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer
-from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 from test_foundation import T0
 
 
@@ -18,7 +18,10 @@ class SessionLightTests(unittest.TestCase):
         light = controller.light_after_run
         self.assertEqual(light.started_at, T0 + timedelta(seconds=1))
         self.assertEqual(light.ends_at, T0 + timedelta(seconds=61))
-        self.assertEqual(light.brightness_percent, 50)
+        self.assertEqual(
+            light.brightness_percent,
+            BY_KEY["session_light_brightness_percent"].default,
+        )
         gap = next(
             deadline
             for deadline in controller.session.deadlines

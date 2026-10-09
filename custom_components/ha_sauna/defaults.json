@@ -1356,13 +1356,13 @@
         "id": "ui_feedback_on",
         "label": "Rückmeldung: Ein",
         "group": "Bedienung",
-        "default": "#63B6A4"
+        "default": "#A5B69A"
       },
       {
         "id": "ui_feedback_off",
         "label": "Rückmeldung: Aus",
         "group": "Bedienung",
-        "default": "#879BA7"
+        "default": "#AAA69F"
       },
       {
         "id": "ui_heater_on",
