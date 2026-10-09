@@ -5113,14 +5113,21 @@ class SaunaPanel extends HTMLElement {
       canManualHeater = manualControls.heater,
       canManualLight = manualControls.brightness;
     const modeControls = `<div class="row"><small>Betriebsmodus</small><div class="segmented-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button></div></div>`;
-    const outputControls = (key, title, selected, observed, canControl) =>
+    const outputControls = (
+      key,
+      title,
+      selected,
+      observed,
+      canControl,
+      blockedOnReason = "",
+    ) =>
       `<section class="manual-section manual-${key}"><h3>${title}</h3><div class="manual-selection">${manualMode ? "" : `<div class="control-auto"><button data-action="${key}:auto" aria-pressed="${selected == null}" ${canControl ? "" : "disabled"}>Automatik</button></div>`}<div class="output-toggle" role="group" aria-label="${title}">${[
         [false, "Aus"],
         [true, "Ein"],
       ]
         .map(
           ([on, label]) =>
-            `<button data-action="${key}:${on}" aria-pressed="${observed === on}" ${canControl ? "" : "disabled"}>${label}</button>`,
+            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${label}</button>`,
         )
         .join("")}</div></div></section>`;
     const heaterControls = outputControls(
@@ -5129,6 +5136,7 @@ class SaunaPanel extends HTMLElement {
       heater.manual,
       this.outputState("heater"),
       canManualHeater,
+      heater.blocked_on_reason,
     );
     const lightControls = outputControls(
       "light",

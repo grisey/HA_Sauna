@@ -1155,10 +1155,28 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             await runtime.receive(Event(f"api-paused-phase:{second}", identity, kind, now, now))
         token = runtime.session.after_run.phase_id
         now = base + timedelta(seconds=10)
+        await runtime.tick()
+        runtime.controller.set_heater_override(False, now)
+        original_phase = runtime.session.after_run
+        original_deadline = runtime.controller.heater_override_ends_at
         url = self.base + "/" + self.entry.entry_id
         async with ClientSession(headers=self.headers) as client:
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                reason = state["manual_controls"]["heater"]["blocked_on_reason"]
+                self.assertIn("Ofenkühlung", reason)
+                from custom_components.ha_sauna.presentation import public_state
+                self.assertEqual(public_state(state)["manual_controls"]["heater"]["blocked_on_reason"], reason)
             async with client.post(url + "/heater", json={"value": True}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+                self.assertEqual((await response.json())["error"], reason)
+            self.assertIs(runtime.controller.heater_override, False)
+            self.assertEqual(runtime.controller.heater_override_ends_at, original_deadline)
+            self.assertEqual(runtime.session.after_run, original_phase)
+            async with client.post(url + "/heater", json={"value": None}) as response:
                 self.assertEqual(response.status, 200, await response.text())
+            self.assertIsNone(runtime.controller.heater_override)
+            self.assertEqual(runtime.session.after_run, original_phase)
             phase = runtime.session.after_run
             planned_end = phase.ends_at
             self.assertIsNotNone(planned_end)

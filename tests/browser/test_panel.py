@@ -151,6 +151,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         if await advanced.get_attribute("open") is None:
             await advanced.locator(":scope > summary").click()
 
+    async def set_instrument_style(self, name, style):
+        from custom_components.ha_sauna.settings import async_set_appearance
+
+        appearance = self.runtime.configuration.as_options()["appearance"]
+        appearance["instruments"][name] = style
+        await async_set_appearance(self.hass, self.entry, appearance)
+        await self.panel.evaluate("p => p.refresh()")
+
     async def open_parameter_group(self, key):
         field = self.panel.locator(f'input[name="{key}"]')
         section = await field.evaluate("input => input.closest('[data-settings-section]').dataset.settingsSection")
@@ -366,7 +374,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         )
         await tabs.locator('[data-action="overview"]').click()
         await expect(self.panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_visible()
-        await expect(self.panel.locator('#current .light-instrument [data-manual-light-value]')).to_be_disabled()
+        await expect(self.panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_disabled()
 
         user = await self.hass.auth.async_create_user("Normal panel user", group_ids=[GROUP_ID_USER])
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
@@ -385,7 +393,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
             await expect(panel.locator('.main-tabs [data-action="details"]')).to_be_hidden()
             await expect(panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_visible()
-            await expect(panel.locator('#current .light-instrument [data-manual-light-value]')).to_be_disabled()
+            await expect(panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_disabled()
             await panel.locator('.main-tabs [data-action="settings"]').click()
             await expect(panel.locator('#program-library [data-program-id]').first).to_be_visible()
             await expect(panel.locator('#button-program')).to_be_visible()
@@ -1632,7 +1640,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.get_by_role("button", name="Manuell steuern", exact=True)).to_be_enabled()
         await expect(self.panel.locator('#current .manual-controls [data-action^="light:"]')).to_have_count(0)
         await expect(self.panel.locator('#current .manual-controls [data-action^="heater:"]')).to_have_count(0)
-        await expect(self.panel.locator('.light-instrument #manual-light-value-overview')).to_be_disabled()
+        await expect(self.panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_disabled()
         await expect(self.panel.locator('[data-action="light-editor"], [data-action="manual-light-overview"]')).to_have_count(0)
         self.assertIsNone(self.runtime.session)
         self.assertEqual(self.runtime.configuration.control_mode, "automatic")
@@ -1960,6 +1968,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_design_light_instrument_applies_changes_and_keeps_observation_separate(self):
+        await self.set_instrument_style("light", "linear")
         screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "design"
         screenshots.mkdir(parents=True, exist_ok=True)
         await self.panel.get_by_role("button", name="Manuell steuern", exact=True).click()
@@ -2289,6 +2298,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "button", name="Kühlung beenden", exact=True
         )
         await expect(end_cooling).to_be_visible()
+        blocked_reason = await self.panel.evaluate("p => p.state.manual_controls.heater.blocked_on_reason")
+        self.assertTrue(blocked_reason)
+        await expect(self.panel.locator('.manual-heater [data-action="heater:true"]')).to_be_disabled()
+        await expect(self.panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("title", blocked_reason)
         await expect(self.panel.locator('#current .operation-control.split')).to_have_count(1)
         await expect(self.panel.locator('#current .operation-control.split')).to_contain_text("Ausschalten")
         await self.panel.locator('[data-action="details"]').click()
@@ -2313,6 +2326,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(split).to_be_visible(timeout=60000)
             end_cooling_user = split.get_by_role("button", name="Kühlung beenden", exact=True)
             await expect(end_cooling_user).to_be_enabled()
+            await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_be_disabled()
+            await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("title", blocked_reason)
             async with page.expect_response(lambda response: response.url.endswith("/finish_phase")
                                             and response.request.method == "POST") as result:
                 await end_cooling_user.click()
@@ -2922,6 +2937,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#current')).not_to_contain_text("Noch nicht abschätzbar")
         self.assertEqual(await self.panel.locator("#current [data-door-status]").count(), 0)
         await self.set_source("upper_temperature", 90)
+        await self.set_instrument_style("light", "linear")
         await expect(self.panel.locator('#current #manual-light-value-overview')).to_be_visible(timeout=10000)
         await self.panel.locator('#current #manual-light-value-overview').evaluate("input => { input.value = '60'; }")
         await self.panel.locator('#current #manual-light-value-overview').dispatch_event("change")

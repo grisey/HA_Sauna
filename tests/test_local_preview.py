@@ -18,11 +18,22 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertNotIn("presence", state)
         self.assertNotIn("decision", state)
         self.assertNotIn("sensor_timeout_seconds", state["configuration"]["parameters"])
+        self.preview.reset("bereit")
         value = not self.preview.c.contactor
         self.preview.action("/preview/heater", {"value":value})
         self.assertIs(self.preview.c.heater_override, value)
         self.preview.action("/simulate", {"action":"role", "value":"admin"})
         self.assertIn("presence", self.preview.state())
+
+    def test_cooling_exposes_the_same_reason_as_rejected_heater_action(self):
+        for admin in (True, False):
+            with self.subTest(admin=admin):
+                self.preview.admin = admin
+                reason = self.preview.state()["manual_controls"]["heater"]["blocked_on_reason"]
+                self.assertTrue(reason)
+                with self.assertRaises(ValueError) as rejected:
+                    self.preview.action("/preview/heater", {"value":True})
+                self.assertEqual(str(rejected.exception), reason)
 
     def test_user_light_presets_and_percentages_keep_their_meaning(self):
         self.preview.admin = False

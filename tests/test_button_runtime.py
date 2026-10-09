@@ -300,15 +300,13 @@ class ButtonRuntimeTests(unittest.TestCase):
         controller.report_contactor(True, started_at + timedelta(seconds=1))
         self._complete_gang(started_at)
 
-        self._event("short", 1)
-        self.assertTrue(controller.heater_override)
-        self.assertIsNone(controller.session.after_run.paused_at)
-        self.assertFalse(controller.last_decision.heat)
-
-        self._event("short", 1)
-        self.assertIsNone(controller.heater_override)
-        self.assertIsNone(controller.session.after_run.paused_at)
-        self.assertFalse(controller.last_decision.heat)
+        phase = controller.session.after_run
+        for _ in range(2):
+            with self.assertRaisesRegex(ValueError, "Ofenkühlung"):
+                self._event("short", 1)
+            self.assertIsNone(controller.heater_override)
+            self.assertEqual(controller.session.after_run, phase)
+            self.assertFalse(controller.last_decision.heat)
 
     def test_long_heat_has_no_independent_cooling_and_button_uses_feedback(self):
         started_at = self._start_with_temperature()

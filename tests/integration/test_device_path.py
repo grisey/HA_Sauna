@@ -2846,6 +2846,32 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(commands), 1)
         self.assertIsNone(commands[0]["payload"]["service_error"])
 
+    async def test_button_cooling_rejection_keeps_following_inputs_live(self):
+        from dataclasses import replace
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        self.runtime.configuration = replace(
+            self.runtime.configuration, control_input_mode="button"
+        )
+        await self.set_source("upper_temperature", 70)
+        await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
+        for second, kind in ((2, Kind.INFUSION), (3, Kind.DOOR_OPEN), (4, Kind.VENTILATION)):
+            self.now = self.base + timedelta(seconds=second)
+            await self.runtime.receive(Event(f"button-cooling:{second}", identity, kind, self.now, self.now))
+        phase_id = self.runtime.session.after_run.phase_id
+        for second, value in ((5, "on"), (5.1, "off")):
+            self.now = self.base + timedelta(seconds=second)
+            await self.set_source("control_input", value)
+        self.assertIn("Ofenkühlung", self.runtime.device.faults["start_rejected"])
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertEqual(self.runtime.session.after_run.phase_id, phase_id)
+        self.assertFalse(self.heater.is_on)
+        await self.set_source("upper_temperature", 71)
+        self.assertEqual(self.runtime.controller.temperature, 71)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertFalse(self.runtime.closed)
+
     async def test_binary_button_gap_then_off_cannot_create_a_long_hold(self):
         from dataclasses import replace
 

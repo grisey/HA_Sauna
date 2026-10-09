@@ -1224,6 +1224,22 @@ class SaunaRuntime:
                 self.session.session_id if self.session else None,
             )
 
+    def _validate_heater_override(self, value):
+        self.controller.validate_heater_override(value)
+        if value is True and self.device:
+            errors = self.device.start_errors()
+            if errors:
+                raise ValueError("Einschalten nicht möglich. " + " ".join(errors))
+
+    @property
+    def heater_on_blocked_reason(self):
+        """Project the same admission rule used by the heater command."""
+        try:
+            self._validate_heater_override(True)
+        except ValueError as error:
+            return str(error)
+        return None
+
     async def set_heater_override(self, value: bool | None):
         """Apply a manual heater selection through the serialized runtime path."""
         async with self.serialized():
@@ -1233,11 +1249,7 @@ class SaunaRuntime:
                 self.device.refresh(now)
             if isinstance(value, bool) and value is self.controller.contactor:
                 return self.controller.last_decision
-            self.controller.validate_heater_override(value)
-            if value is True and self.device:
-                errors = self.device.start_errors()
-                if errors:
-                    raise ValueError("Einschalten nicht möglich. " + " ".join(errors))
+            self._validate_heater_override(value)
             decision = self.controller.set_heater_override(value, now)
             self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
             if self.archive:

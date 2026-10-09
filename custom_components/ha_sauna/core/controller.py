@@ -526,6 +526,11 @@ class Controller:
                 "Manuelles Einschalten erfordert einen gültigen oberen Temperaturwert"
             )
 
+        if heat is True and self._session is not None and self._session.after_run is not None:
+            raise ValueError(
+                "Während der Ofenkühlung ist Einschalten gesperrt. Zuerst die Kühlung beenden."
+            )
+
     def set_heater_override(self, heat: bool | None, at: datetime):
         """Manueller Ofenbefehl; ``None`` übergibt wieder an die Automatik."""
         self.validate_heater_override(heat)

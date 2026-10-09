@@ -835,6 +835,50 @@ const renderCurrent = (
       liveAutomatic.indexOf('data-action="light:false"'),
   );
 
+  for (const observed of [false, true, null]) {
+    const blocked = renderCurrent(
+      "automatic",
+      {
+        heater: {
+          manual: null,
+          observation: { available: observed !== null, on: observed },
+          blocked_on_reason: 'Ofenkühlung: "Ein" wartet <noch> & bleibt gesperrt',
+        },
+      },
+      observed,
+      "#current",
+      {},
+      false,
+      liveSession,
+      [],
+      {},
+      true,
+    );
+    const on = blocked.match(/<button\b[^>]*data-action="heater:true"[^>]*>/)[0];
+    assert.match(on, /\bdisabled\b/);
+    assert.match(
+      on,
+      /title="Ofenkühlung: &quot;Ein&quot; wartet &lt;noch&gt; &amp; bleibt gesperrt"/,
+    );
+    assert.match(on, new RegExp(`aria-pressed="${observed === true}"`));
+    for (const action of [
+      "heater:false",
+      "heater:auto",
+      "light:false",
+      "light:true",
+      "light:auto",
+    ]) {
+      const button = blocked.match(
+        new RegExp(`<button\\b[^>]*data-action="${action}"[^>]*>`),
+      )[0];
+      assert.doesNotMatch(
+        button,
+        /\bdisabled\b/,
+        "a blocked heater-on command must not block release or independent light controls",
+      );
+    }
+  }
+
   const lightOff = renderCurrent("manual", {
     heater: { manual: false, observation: { available: true, on: true } },
     light: { manual: 42, observation: { available: true, brightness_percent: 0 } },

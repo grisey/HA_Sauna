@@ -88,6 +88,7 @@ def manual_controls(runtime):
     light = runtime.device.light_output if runtime.device else None
     return {
         "heater": {
+            "blocked_on_reason": runtime.heater_on_blocked_reason,
             "observation": {
                 "available": runtime.controller.contactor is not None,
                 "on": runtime.controller.contactor,

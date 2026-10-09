@@ -283,6 +283,7 @@ class Preview:
             "decision":c.last_decision, "measurements":measurements, "faults":{}, "protection":[],
             "inhibits":[], "detection_channels":[], "detector_trace":None,
             "manual_controls":{"heater":{"manual":c.heater_override,
+                "blocked_on_reason":self.runtime.heater_on_blocked_reason,
                 "observation":{"available":c.contactor is not None,"on":c.contactor},
                 "override_ends_at":c.heater_override_ends_at,
                 "automatic":c.automatic_decision.heat if c.automatic_decision else None},
