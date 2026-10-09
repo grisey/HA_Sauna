@@ -1,4 +1,4 @@
-# Prüfanleitung
+# Tests und Entwicklungsvorschau
 
 [Arbeitsregeln zur Prüfung](../AGENTS.md#prüfung)
 
@@ -35,7 +35,7 @@ mit einem freigegebenen Recorderexport. Der Standardlauf kennzeichnet diese
 Fälle als übersprungen. Die Auswertung einer zur
 Kalibrierung verwendeten Sitzung belegt den Vergleich an genau dieser Sitzung.
 
-[Replaydatengrundlage und Reproduktion](kandidat.md)
+[Replaydatengrundlage und Reproduktion](referenz-replay.md)
 
 ## Home Assistant
 
@@ -82,47 +82,7 @@ python -m playwright install --with-deps chromium
 HA_TEST_REQUIRED=1 python -m unittest discover -s tests/browser -v
 ```
 
-[Mess- und Interaktionsprogramme für den Sitzungsverlauf](livekurve.md#reproduzierbare-prüfmethode)
-
-## Prüfnachweis
-
-Ein Prüfprotokoll verbindet den Quellstand mit Umgebung, exaktem Kommando,
-Exitcode und den beobachteten Ergebnissen. Ausgeführte Fälle, übersprungene Fälle
-und fehlgeschlagene Prozesse werden getrennt ausgewiesen. Der Nachweis erfasst
-den vollständigen Prozessabschluss; ein nachfolgender Absturz gehört zum
-Ergebnis desselben Laufs.
-
-Bei einer PR-Prüfung werden der gemeldete PR-Head und der tatsächlich
-ausgecheckte Commit getrennt festgehalten. Ein Checkout kann der von GitHub
-erzeugte Merge-Commit mit der Zielbasis sein. Der Laufdatensatz mit `headSha`
-bezeichnet den PR-Head; die Checkout-Ausgabe und `git rev-parse HEAD` belegen
-den getesteten Commit. Zu beiden Commits wird der Tree erfasst:
-
-```sh
-git rev-parse '<PR-Head>^{tree}'
-```
-
-```sh
-git rev-parse '<getesteter-Checkout>^{tree}'
-```
-
-Gleiche Tree-IDs belegen denselben versionierten Dateibaum trotz verschiedener
-Commit-IDs. Bei unterschiedlichen Trees wird die tatsächliche Abweichung mit
-`git diff <PR-Head> <getesteter-Checkout>` festgehalten und ihre Relevanz für die
-Prüfung bewertet. Der Nachweis benennt den getesteten Baum; eine neue Ausführung
-richtet sich nach relevanten Abweichungen und anschließend vorgenommenen
-Änderungen. Historische Originalprotokolle behalten ihren ursprünglichen Wortlaut;
-ihre Zuordnung zum geprüften Stand steht im aktuellen Arbeitsnachweis.
-
-Prüfrunden, Befunde und konkrete Ergebnisse liegen im getrennten Arbeitsbereich
-`arbeit/`.
-Die CI führt die Befehle mit ihren im Workflow festgelegten Zeitgrenzen aus und
-beendet überholte parallele Läufe.
-
-Die Wirkung an einer realen Anlage wird in einer eigenen, ausdrücklich
-beauftragten Prüfung durch den Benutzer beobachtet. Ihr Nachweis benennt die
-verwendeten Geräte und Rückmeldungen. Die Softwareprüfungen beschreiben
-ihre jeweiligen Testquellen und simulierten Außenwirkungen.
+[Mess- und Interaktionsprogramme für den Sitzungsverlauf](#sitzungsverlauf-im-browser)
 
 ## Lokale Bedienvorschau
 
@@ -136,3 +96,41 @@ Die Vorschau unterstützt Betrieb, Temperaturprogramme, Solltemperatur und manue
 Ofenwahl. Beendete Sitzungen bleiben bis zum Zurücksetzen des Szenarios im Verlauf.
 Lichtwerte sind simuliert. Nicht angebundene Einstellungsaktionen zeigen eine
 Fehlermeldung. Automatisierte Prüfungen laufen weiterhin ausschließlich unter Linux.
+
+## Sitzungsverlauf im Browser
+
+Für Browserprüfungen werden Node, Playwright als Entwicklungswerkzeug und eine
+installierte Browserlaufzeit benötigt. Die folgenden Aufrufe erfolgen aus dem
+Repositoryverzeichnis.
+
+```sh
+node tests/browser/live_history/accept.cjs
+VARIANTS=fix node tests/browser/live_history/profile.cjs
+VARIANTS=candidate node tests/browser/live_history/interaction.cjs
+```
+
+| Skript | Gegenstand und Ausgabe |
+|---|---|
+| `accept.cjs` | Prüft Datenübernahme, dauerhafte Knoten und Browserinteraktionen anhand fester Erwartungen. |
+| `profile.cjs` | Erfasst Kaltstart, Aktualisierung, Geometriezugriffe und beobachtete Bildschirmframe-Abstände. |
+| `interaction.cjs` | Erfasst Zeigerbewegung, Zoom und Verschieben während eingehender Nachträge; trennt die Zeit bis zum Rendercallback-Ende von dessen synchroner Rechenzeit. |
+
+Die Fixture liefert synthetische Status- und Archivantworten an das
+Originalpanel. Die Browserläufe verwenden dessen tatsächliche Zeichen- und
+Eingabemethoden. Im WebKit-Interaktionsvergleich werden Zoomimpulse als
+Browser-`WheelEvent` mit gesetztem Strg-Modifikator eingespeist. Die Ergebnisse
+beschreiben die im Skript zugestellten Eingaben bis zur gemessenen
+Browserverarbeitung. Eine Messung auf einem verwendeten Endgerät erfasst
+zusätzlich dessen Eingabeweg und sichtbare Bildschirmausgabe.
+
+`HISTORY_EVIDENCE` legt das Ausgabeverzeichnis von `accept.cjs` und
+`profile.cjs` fest. `INTERACTION_EVIDENCE` benennt die Ergebnisdatei der
+Interaktionsprobe. Standardbrowser ist WebKit; `ENGINE=chromium` und
+`CHROMIUM_EXECUTABLE` wählen eine vorhandene Chromium-Laufzeit.
+
+Die oben gesetzten Varianten untersuchen den aktuellen Arbeitsstand.
+Vergleichsläufe können zusätzlich die in den Skripten angegebenen Gitstände
+laden; dafür müssen diese Revisionen im lokalen Repository vorhanden sein.
+`BASELINE_REVISION` bestimmt die Vergleichsrevision der Interaktionsprobe.
+Messberichte halten die tatsächlich verwendeten Revisionen und
+Umgebungsbedingungen fest.

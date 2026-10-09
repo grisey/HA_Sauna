@@ -9,5 +9,4 @@ HA Sauna steuert Ofen und Licht in Home Assistant und zeichnet Saunasitzungen au
 ## Technische Dokumentation
 
 [Betrieb](docs/betrieb.md) · [Parameter](docs/parameter.md) ·
-[Architektur](docs/architektur.md) · [Speicherung](docs/speicherung.md) ·
-[Prüfanleitung](docs/abnahme.md) · [Arbeitsregeln](AGENTS.md)
+[Architektur](docs/architektur.md) · [Speicherung](docs/speicherung.md)

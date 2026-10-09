@@ -103,5 +103,3 @@ Aktuelle Erkennungsdatensätze verbinden das Ereignis über `trace_at` mit genau
 dem Diagnosepunkt, der es ausgelöst hat. Das gilt auch für einen früheren
 fachlichen Beginn und eine spätere Verarbeitung. Archive mit dem früheren
 Datenschema verwenden für diese Zuordnung den fachlichen Ereignisbeginn.
-
-[Historisches Referenz-Replay](kandidat.md)

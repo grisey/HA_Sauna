@@ -8,8 +8,7 @@ und eine ausdrücklich ausgelöste Standardrücksetzung.
 
 `instance` enthält die allgemeinen Instanzvorgaben, `setup` die Abweichungen bei
 Neueinrichtung. Eine Standardrücksetzung verwendet `instance`.
-`legacy_parameters` dient ausschließlich der Lesekompatibilität älterer
-Konfigurationen und des Referenzadapters.
+`legacy_parameters` unterstützt das Lesen älterer Konfigurationen.
 
 [Bedienrechte und Änderbarkeit](bedienung.md#technische-einstellungen-und-rücksetzen)
 

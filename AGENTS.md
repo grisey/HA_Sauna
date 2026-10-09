@@ -51,7 +51,7 @@ deterministische Serialisierung.
 Das Referenzprogramm und seine Parameter unter `candidate/` bilden einen
 eingefrorenen Reproduktionsstand. Änderungen daran erfolgen in einem
 ausdrücklich darauf bezogenen Auftrag. Die begleitende
-[Programmerklärung](docs/kandidat.md) wird als Dokumentation gepflegt;
+[Programmerklärung](tests/referenz-replay.md) wird als Dokumentation gepflegt;
 gebundene Dokumentprüfsummen werden dabei aktualisiert.
 
 ## Prüfung
@@ -74,7 +74,7 @@ nach der konkreten Änderung. PR-Head, tatsächlich ausgecheckter Commit und
 zugehörige Trees werden getrennt erfasst. Ein Treevergleich belegt Gleichheit
 oder die tatsächliche Abweichung.
 
-[Prüfanleitung](docs/abnahme.md)
+[Prüfanleitung](tests/README.md)
 
 Bei reinen Dokumentationsänderungen werden Fachkonsistenz, Entscheidungsstatus
 und Verweise geprüft. Ein Dateivergleich bestätigt den erhaltenen Programmstand.
@@ -82,6 +82,11 @@ Gebundene Dokumentprüfsummen werden separat auf den ausgelieferten Text geprüf
 Der Referenz-Replay verwendet ausdrücklich bereitgestellte Quelldaten.
 
 ## Dokumentationsstil
+
+`README.md` und `docs/` beschreiben Einrichtung, Bedienung und Funktionsweise
+der Integration. Entwicklungs- und Agentenabläufe gehören nicht dorthin.
+Wiederverwendbare Testanleitungen liegen unter `tests/`, Arbeitsregeln in dieser
+Datei und einzelne Prüfnachweise unter `arbeit/`.
 
 Die Dokumentation verwendet neutrale Sachbeschreibungen ohne persönliche
 Ansprache oder Handlungsaufforderungen. Überflüssige Sätze und Dopplungen

@@ -41,8 +41,7 @@ fehlende Werte.
 Der laufende Zustand verwendet einen unveränderlichen Parameterstand.
 Live-Änderungen erreichen den bestehenden Controller über den gemeinsamen
 Einstellungspfad. Das Archiv speichert die zur Sitzung gehörenden
-Konfigurationsrevisionen als historische Snapshots. Der eingefrorene
-Replay-Parametersatz dient der Reproduktion eines definierten Vergleichsfalls.
+Konfigurationsrevisionen als historische Snapshots.
 
 ## Originaldaten und abgeleitete Ansichten
 
@@ -63,11 +62,3 @@ ab. Ihre Diagrammaggregation dient dem Zeichnen; der Originalpunkt bleibt die
 Quelle für Messwert und Tooltip. Die Aufheizprognose ist eine Anzeigehilfe mit
 eigener Messgrundlage. Heizfreigaben und Schutzentscheidungen bleiben Aufgaben
 des Controllers.
-
-## Prüfung entlang der Zuständigkeiten
-
-Die Trennung des Fachkerns von Home Assistant ermöglicht kontrollierte
-Zeitverläufe in kleinen Tests. Adapter-, Integrations- und Browserprüfungen
-ergänzen sie an den tatsächlichen Schnittstellen.
-
-[Prüfanleitung](abnahme.md)
