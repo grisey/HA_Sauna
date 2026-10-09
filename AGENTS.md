@@ -38,7 +38,7 @@ deterministische Serialisierung.
 ## Fachliche Grundlagen
 
 [Messpositionen und Sensorvorrang](docs/betrieb.md#aufheizen-und-bereitschaft) ·
-[Heizzeit und Rückmeldequellen](docs/betrieb.md#heizzeit-timer-und-energie) ·
+[Heizzeit und Rückmeldequellen](docs/betrieb.md#heizzeit-und-energie) ·
 [Heizpriorität](docs/betrieb.md#heizpriorität) ·
 [Gangbestätigung und Zählung](docs/gangmodell.md) ·
 [Ofenkühlung](docs/ofenkuehlung.md)

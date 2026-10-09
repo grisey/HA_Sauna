@@ -63,7 +63,7 @@ const baseState = () => ({
     { key: "target_temperature_c", minimum: 60, maximum: 100 },
     { key: "temperature_gangs", minimum: 1, maximum: 8 },
   ],
-  mechanical_timer: { state: "idle" },
+
   heating_feedback: false,
   permissions: { control: true, temperature: true, program: true, light: true },
   start_errors: [],
@@ -408,7 +408,6 @@ for (const [seconds, elapsed, remaining] of [
 
 state = baseState();
 state.session.heating.elapsed_seconds = 119.9;
-state.mechanical_timer = { state: "running", remaining_seconds: 119.9 };
 state.phase_timer = {
   kind: "minimum_heating",
   label: "Mindestheizzeit noch",
@@ -428,7 +427,6 @@ state.manual_controls.heater = { override_ends_at: "2026-09-20T10:00:59.900Z" };
 state.light_after_run = { ends_at: "2026-09-20T10:01:00Z" };
 let details = render(state, "#details");
 assert.match(details, /Heizsumme \(gezählt\)<\/dt><dd>1 Minute<\/dd>/);
-assert.match(details, /data-mechanical-timer>2 Minuten ·/);
 assert.match(details, /data-phase-timer="minimum_heating">2 Minuten<\/span>/);
 assert.match(details, /Ofenkühlung<\/dt><dd>2 Minuten<\/dd>/);
 assert.match(details, /Aufgussbestätigung<\/dt><dd>2 Minuten<\/dd>/);
@@ -437,10 +435,8 @@ assert.match(details, /Lichtnachlauf<\/dt><dd>1 Minute<\/dd>/);
 assert.doesNotMatch(details, /\d+:\d{2}\s+(?:min|Minuten)/);
 
 state.session.heating.elapsed_seconds = null;
-state.mechanical_timer.remaining_seconds = NaN;
 details = render(state, "#details");
 assert.match(details, /Heizsumme \(gezählt\)<\/dt><dd>–<\/dd>/);
-assert.match(details, /data-mechanical-timer>– ·/);
 
 state = baseState();
 state.start_availability = {

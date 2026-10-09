@@ -116,7 +116,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertTrue(controller.last_decision.heat)
         self.assertIsNone(controller.session)
 
-    def test_manual_idle_demand_uses_protection_and_timer_without_a_session(self):
+    def test_manual_idle_demand_uses_protection_without_a_session(self):
         controller = self.controller()
         controller.set_temperature(60, at(0))
         controller.set_heater_override(True, at(1))
@@ -124,12 +124,10 @@ class ManualModeTests(unittest.TestCase):
         controller.advance(at(11))
         self.assertTrue(controller.last_decision.heat)
         self.assertIsNone(controller.session)
-        self.assertEqual(controller.mechanical_timer.elapsed_at(at(11)), 10)
         controller.set_heater_override(False, at(11))
         controller.report_contactor(False, at(11))
         controller.advance(at(21))
         self.assertFalse(controller.last_decision.heat)
-        self.assertEqual(controller.mechanical_timer.elapsed_at(at(21)), 10)
         controller.set_heater_override(True, at(21))
         controller.protection.add("heater_feedback_mismatch")
         controller.advance(at(22))

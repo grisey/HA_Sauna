@@ -160,7 +160,7 @@ test("details render includes the reachable presence and rule card", () => {
     parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
     measurements: [],
     measurement_status: {},
-    mechanical_timer: { state: "idle" },
+
     permissions: {
       admin: true,
       control: true,

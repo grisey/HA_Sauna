@@ -103,40 +103,25 @@ class CoolingTests(unittest.TestCase):
         self.assertIn("confirmed_controller_failure", c.protection)
         self.assertFalse(c.last_decision.heat)
 
-    def test_mechanical_timer_is_independent_of_heating_feedback_and_pauses_with_operation_off(self):
-        c = controller(mechanical_timer_minutes=240)
-        c.report_contactor(True, at(0))
-        self.assertEqual(c.mechanical_timer_ends_at, at(14400))
-        c.report_heating(False, at(10))
-        self.assertEqual(c.mechanical_timer_ends_at, at(14400))
-        c.set_operation(False, at(20))
-        self.assertIsNone(c.mechanical_timer_ends_at)
-        self.assertEqual(c.mechanical_timer_status["state"], "paused")
-        c.advance(at(29))
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14380)
-        c.set_operation(True, at(30))
-        self.assertEqual(c.mechanical_timer_ends_at, at(14410))
-        c.advance(at(14411))
-        self.assertEqual(c.mechanical_timer_status["state"], "expired")
-        self.assertTrue(c.session.operation_enabled)
-
-    def test_completed_sessions_reset_on_next_start_with_or_without_counted_rounds(self):
+    def test_completed_sessions_allow_restart_with_or_without_counted_rounds(self):
         c = controller(session_gap_minutes=1)
         c.report_contactor(True, at(0))
         c.set_operation(False, at(20))
         c.advance(at(80))
         self.assertIsNone(c.session)
+        self.assertEqual(c.completed_sessions[-1].timeline.gang_count, 0)
         c.set_operation(True, at(100), session_id="s2")
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14400)
+        self.assertEqual(c.session.session_id, "s2")
         c.process(event("close", Kind.DOOR_CLOSE, 101, session="s2"))
         c.process(event("infusion", Kind.INFUSION, 102, session="s2"))
         c.set_operation(False, at(120))
         self.assertEqual(c.session.timeline.gang_count, 1)
         c.advance(at(180))
-        self.assertTrue(c.mechanical_timer_status["reset_pending"])
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14380)
+        self.assertIsNone(c.session)
+        self.assertEqual(c.completed_sessions[-1].timeline.gang_count, 1)
         c.set_operation(True, at(200), session_id="s3")
-        self.assertEqual(c.mechanical_timer_status["remaining_seconds"], 14400)
+        self.assertEqual(c.session.session_id, "s3")
+        self.assertEqual(c.session.timeline.gang_count, 0)
 
     def test_temperature_program_distributes_then_holds_for_unlimited_gangs(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,

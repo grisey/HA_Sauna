@@ -208,8 +208,6 @@ class StateView(HomeAssistantView):
                         "thermostat_target": controller.thermostat_target,
                         "thermostat_restart_temperature": controller.thermostat_restart_temperature,
                         "target_temperature": controller.target_temperature,
-                        "mechanical_timer_ends_at": controller.mechanical_timer_ends_at,
-                        "mechanical_timer": controller.mechanical_timer_status,
                         "phase_timer": phase_timer(controller, now),
                         "start_availability": start_availability(
                             controller,

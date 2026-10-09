@@ -13,7 +13,6 @@ from . import energy, heating, thermostat
 from .consumer_events import gang_changes
 from .contracts import BasePhaseMark, ContactorMark, ControlInputs
 from .defaults import instance_default
-from .mechanical_timer import MechanicalTimer
 from .models import Deadline, Energy, LightAfterRun, Session, TimedPhase
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
@@ -92,7 +91,6 @@ class Controller:
         self._consumer_snapshot = None
         self.door_request = TemporaryDoorHeatState()
         self._door_request_pending = False
-        self.mechanical_timer = MechanicalTimer()
         self.phase_since = None
         self._phase_key = (None, "aus")
         self._recognition_gates = []
@@ -335,47 +333,8 @@ class Controller:
         """Lower switch-on threshold relative to the setpoint."""
         return thermostat.temperature_limits(self.target_temperature, self.parameters)[0]
 
-    @property
-    def mechanical_timer_ends_at(self):
-        return self.mechanical_timer_status["ends_at"]
-
-    @property
-    def mechanical_timer_status(self):
-        status = self.mechanical_timer.status(
-            self._last_at, self.parameters.seconds("mechanical_timer_minutes")
-        )
-        status["pause_reason"] = (
-            (
-                "operation_off"
-                if not self._timer_operation_active()
-                else "contactor_off"
-                if self.contactor is False
-                else "contactor_unavailable"
-            )
-            if status["state"] == "paused"
-            else None
-        )
-        return status
-
-    def _timer_operation_active(self):
-        return bool(
-            (self._session and self._session.operation_enabled)
-            or (self.control_mode == "manual" and self.contactor is True)
-        )
-
-    def _sync_mechanical_timer(self, at):
-        if self._timer_operation_active():
-            cycle_id = (
-                self._session.session_id if self._session
-                else self.mechanical_timer.cycle_id or uuid4().hex
-            )
-            self.mechanical_timer = self.mechanical_timer.start(at, cycle_id)
-            if self.contactor is True:
-                return
-        self.mechanical_timer = self.mechanical_timer.pause(at)
-
     def report_contactor(self, value: bool | None, at: datetime):
-        """Stromversorgung des Timerantriebs, getrennt von gemessener Heizleistung."""
+        """Bestätigter Schützzustand, getrennt von gemessener Heizleistung."""
         self.advance(at, evaluate=False)
         self.contactor = value
         if self._session is not None:
@@ -385,7 +344,6 @@ class Controller:
                     self._session,
                     contactor_history=marks + (ContactorMark(utc(at), value),),
                 )
-        self._sync_mechanical_timer(utc(at))
         self._align_after_run_to_contactor(utc(at))
         if value is not False:
             self._suspend_after_run_countdown(utc(at))
@@ -470,7 +428,6 @@ class Controller:
             ),
         )
         self._last_at = at
-        self._sync_mechanical_timer(at)
         self._latch_readiness(at)
         self._evaluate(at)
         return self._session
@@ -496,7 +453,6 @@ class Controller:
                 )
                 self._cancel("session_gap")
                 self.light_after_run = None
-                self._sync_mechanical_timer(at)
                 self._latch_readiness(at)
         elif self._session is not None and self._session.operation_enabled:
             self.process(
@@ -903,7 +859,6 @@ class Controller:
                 operation_enabled=False,
                 operation_off_at=event.booking_at,
             )
-            self.mechanical_timer = self.mechanical_timer.pause(event.booking_at)
             ends_at = event.booking_at + timedelta(
                 seconds=self.parameters.seconds("session_gap_minutes")
             )
@@ -1490,12 +1445,11 @@ class Controller:
         return project_session(self._session, now) if self._session else None
 
     def _complete_session(self, at, *, light_after_run):
-        """Archive the current session and perform its one-time timer reset."""
+        """Archive the current session and complete its active state."""
         session = self._session
         if session is None:
             return None
         self.completed_sessions += (replace(session, ended_at=at, deadlines=()),)
-        self.mechanical_timer = replace(self.mechanical_timer, reset_pending=True)
         self._session = None
         self._record_recognition_gate(at)
         self._clear_heater_override()

@@ -200,25 +200,26 @@ class ProgramConfigurationTests(unittest.TestCase):
         with self.assertRaises(ParameterError):
             Parameters({"sauna_min_temperature_c": 60.2, "target_temperature_c": 60.3})
 
-    def test_saved_timer_warning_adopts_legacy_disabled_state_and_roundtrips(self):
-        key = "mechanical_timer_warning_minutes"
-        for saved_parameters, expected in (
-            ({}, 0),
-            ({key: None}, 0),
-            ({key: 0}, 0),
-            ({key: 12}, 12),
-        ):
-            with self.subTest(saved_parameters=saved_parameters):
+    def test_saved_obsolete_timer_parameters_are_discarded_and_roundtrip(self):
+        for value in (None, 0, 12, "obsolete"):
+            saved_parameters = {
+                "mechanical_timer_minutes": value,
+                "mechanical_timer_warning_minutes": value,
+                "session_gap_minutes": 17,
+            }
+            with self.subTest(value=value):
                 saved = options(saved_parameters)
                 original_parameters = dict(saved_parameters)
                 loaded = Configuration.from_options(saved)
-                self.assertEqual(loaded.parameters.values[key], expected)
-                self.assertEqual(loaded.as_options()[CONF_PARAMETERS][key], expected)
+                self.assertEqual(loaded.parameters.values["session_gap_minutes"], 17)
+                for key in ("mechanical_timer_minutes", "mechanical_timer_warning_minutes"):
+                    self.assertNotIn(key, loaded.parameters.values)
+                    self.assertNotIn(key, loaded.as_options()[CONF_PARAMETERS])
                 self.assertEqual(Configuration.from_options(loaded.as_options()), loaded)
                 self.assertEqual(saved[CONF_PARAMETERS], original_parameters)
 
-    def test_new_configuration_stores_factory_timer_warning_explicitly(self):
-        key = "mechanical_timer_warning_minutes"
+    def test_new_configuration_stores_factory_session_gap_explicitly(self):
+        key = "session_gap_minutes"
         new = Configuration(Bindings(bindings()), Parameters({}))
         expected = Parameters({}).values[key]
         self.assertGreater(expected, 0)
@@ -722,7 +723,7 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_reset_restores_all_software_options_but_not_hardware_inputs(self):
         configuration = Configuration(
             Bindings(bindings()),
-            Parameters({"nominal_power_kw": 7, "mechanical_timer_warning_minutes": 0}),
+            Parameters({"nominal_power_kw": 7, "session_gap_minutes": 17}),
             log_level="DEBUG",
             control_input_mode="button",
             button_event_type="press",
@@ -737,8 +738,8 @@ class ProgramConfigurationTests(unittest.TestCase):
         reset = Configuration.from_options(entry.options)
         self.assertEqual(reset.parameters.values["nominal_power_kw"], 4.5)
         self.assertEqual(
-            reset.parameters.values["mechanical_timer_warning_minutes"],
-            Parameters({}).values["mechanical_timer_warning_minutes"],
+            reset.parameters.values["session_gap_minutes"],
+            Parameters({}).values["session_gap_minutes"],
         )
         self.assertEqual(reset.log_level, "INFO")
         self.assertEqual(reset.button_program, "constant")

@@ -48,7 +48,6 @@ Gespeicherte Anlagenwerte haben Vorrang.
 | Einstellung | Zusammenhang |
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
-| Ofentimer-Vorwarnung | `0` deaktiviert die Warnung. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
 | Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
 | Höchstalter eines Messwerts | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |

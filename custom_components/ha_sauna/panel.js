@@ -4,6 +4,8 @@ const esc = (v) =>
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
+const unitInput = (input, unit) =>
+  `<span class="number-input">${input}<span class="input-unit" aria-hidden="true">${esc(unit)}</span></span>`;
 const HISTORY_PLOT = Object.freeze({ width: 1200, left: 65, right: 1135 });
 const stamp = (v) => (v ? new Date(v).getTime() : null);
 const orderedHistoryEvents = (items = []) =>
@@ -1993,10 +1995,11 @@ class SaunaPanel extends HTMLElement {
         .join("");
     const scaleFields = ["temperature", "humidity"]
       .map((name) => {
-        const label = name === "temperature" ? "Temperatur (°C)" : "Luftfeuchte (%)";
+        const label = name === "temperature" ? "Temperatur" : "Luftfeuchte",
+          unit = name === "temperature" ? "°C" : "%";
         const scale =
           this.appearanceScale(name) || catalog.scales?.[name]?.default || {};
-        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}<input type="number" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}"></label>`).join("")}</fieldset>`;
+        return `<fieldset class="appearance-scale"><legend>${label}</legend>${["minimum", "maximum"].map((end) => `<label>${end === "minimum" ? "Minimum" : "Maximum"}${unitInput(`<input type="number" aria-label="${label} ${end === "minimum" ? "Minimum" : "Maximum"} (${unit})" step="any" data-appearance-scale="${name}.${end}" value="${esc(this.appearanceRaw?.[`${name}.${end}`] ?? scale[end] ?? "")}">`, unit)}</label>`).join("")}</fieldset>`;
       })
       .join("");
     const instrumentFields = Object.entries(catalog.instruments || {})
@@ -2313,7 +2316,8 @@ class SaunaPanel extends HTMLElement {
       }
       button,
       select,
-      input {
+      input,
+      .number-input {
         font: inherit;
         border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: var(--sauna-control-radius);
@@ -2321,6 +2325,11 @@ class SaunaPanel extends HTMLElement {
         background: var(--sauna-color-card-background, var(--card-background-color));
         color: var(--sauna-card-text, var(--sauna-color-text, var(--primary-text-color)));
       }
+      .number-input { display: flex; align-items: center; min-width: 0; padding: 0; }
+      .number-input input { flex: 1 1 0; min-width: 0; width: 100%; border: 0; background: transparent; }
+      .input-unit { flex: 0 0 auto; padding-inline-end: 13px; color: var(--sauna-card-muted-text, var(--secondary-text-color)); white-space: nowrap; }
+      .number-input:has(input:focus-visible) { outline: 2px solid var(--sauna-focus-current); outline-offset: 3px; }
+      .number-input input:focus-visible { outline: none; }
       #session {
         min-width: 0;
         max-width: 100%;
@@ -2469,7 +2478,7 @@ class SaunaPanel extends HTMLElement {
       .appearance-scale { display: flex; gap: 9px; align-items: end; border-top: 1px solid var(--sauna-color-border, var(--divider-color)); padding-top: 12px; }
       .appearance-scale legend { font-weight: 600; }
       .appearance-scale label { display: grid; gap: 4px; font-size: 13px; }
-      .appearance-scale input { width: 110px; }
+      .appearance-scale .number-input { width: 110px; }
       #appearance-status[data-kind="success"] { color: var(--sauna-ink-status-success, var(--sauna-color-status-success)); }
       #appearance-status[data-kind="error"] { color: var(--sauna-ink-status-error, var(--sauna-color-status-error)); }
       #appearance-status[data-kind="pending"] { border-left: 3px solid var(--sauna-color-status-info); padding-left: 8px; }
@@ -3081,6 +3090,15 @@ class SaunaPanel extends HTMLElement {
       .settings-group .forms {
         padding-bottom: 18px;
       }
+      .parameter-section + .parameter-section,
+      .parameter-section + .expert-group {
+        margin-top: var(--sauna-surface-gap);
+        padding-top: var(--sauna-surface-gap);
+        border-top: 1px solid var(--sauna-color-border, var(--divider-color));
+      }
+      .parameter-section h3 { margin: 0 0 18px; }
+      .settings-parameters-card .field > .number-input { margin-top: auto; }
+      .settings-parameters-card > button { margin-top: var(--sauna-surface-gap); }
       .settings-layout {
         display: grid;
         --settings-navigation-width: 210px;
@@ -4847,22 +4865,6 @@ class SaunaPanel extends HTMLElement {
     const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
     const formatValue = (position, quantity, unit) =>
       `${num(value(position, quantity), 1)} ${unit}`;
-    const timer = s.mechanical_timer;
-    const timerPause = {
-      operation_off: "Angehalten · Saunabetrieb Aus",
-      contactor_off: "Angehalten · Schütz Aus",
-      contactor_unavailable: "Angehalten · Schützstellung unbekannt",
-    };
-    const timerStatus =
-      timer.state === "paused"
-        ? timerPause[timer.pause_reason] || "Angehalten"
-        : {
-            idle: "Noch nicht gestartet",
-            running: "Geschätzte Restzeit bei eingeschaltetem Schütz",
-            expired: "Geschätzte Laufzeit abgelaufen",
-          }[timer.state];
-    const timerText =
-      timer.state === "idle" ? "–" : duration(timer.remaining_seconds, "remaining");
     const energyLabel = {
       measured: "Gemessen",
       estimated: "Geschätzt",
@@ -4992,10 +4994,6 @@ class SaunaPanel extends HTMLElement {
       );
     const timerRows = [
       ["Heizsumme (gezählt)", duration(session ? session.heating?.elapsed_seconds : 0)],
-      [
-        "Mechanischer Ofentimer",
-        `<span data-mechanical-timer>${timerText} · ${timerStatus}</span>`,
-      ],
     ];
     if (session?.after_run) {
       const phase = session.after_run;
@@ -5039,7 +5037,7 @@ class SaunaPanel extends HTMLElement {
         `<span data-phase-timer="${esc(s.phase_timer.kind)}">${duration(s.phase_timer.seconds, s.phase_timer.kind === "gang" ? "elapsed" : "remaining")}</span>`,
         true,
       ]);
-    const timers = `<dl class="compact-times">${timerRows.map(([label, value, html]) => `<dt>${esc(label)}</dt><dd>${html || label === "Mechanischer Ofentimer" ? value : esc(value)}</dd>`).join("")}</dl>`;
+    const timers = `<dl class="compact-times">${timerRows.map(([label, value, html]) => `<dt>${esc(label)}</dt><dd>${html ? value : esc(value)}</dd>`).join("")}</dl>`;
     const temperatureColor = this.appearanceColor("series_temperature");
     const humidity = value(measurementPosition, "humidity"),
       humidityColor = this.appearanceColor("series_humidity");
@@ -6125,10 +6123,10 @@ class SaunaPanel extends HTMLElement {
         )
           .map(
             (value, index) =>
-              `<label class="field" for="free-step-${index}">Stufe ${index + 1} (°C)<input id="free-step-${index}" data-free-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
+              `<label class="field" for="free-step-${index}">Stufe ${index + 1}${unitInput(`<input id="free-step-${index}" data-free-step="${index}" type="number" aria-label="Stufe ${index + 1} (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}>`, "°C")}</label>`,
           )
           .join("")}</div>`
-      : `<div class="row"><label class="field" for="progression-start">Starttemperatur (°C)<input id="progression-start" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}></label><label class="field" for="progression-end">Endtemperatur (°C)<input id="progression-end" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}></label><label class="field" for="progression-gangs"><span>Verteilung auf Saunagänge ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
+      : `<div class="row"><label class="field" for="progression-start">Starttemperatur${unitInput(`<input id="progression-start" type="number" aria-label="Starttemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}>`, "°C")}</label><label class="field" for="progression-end">Endtemperatur${unitInput(`<input id="progression-end" type="number" aria-label="Endtemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}>`, "°C")}</label><label class="field" for="progression-gangs"><span>Verteilung auf Saunagänge ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
     return `<div class="program-form">${kindButtons}${fields}</div>`;
   }
   distributionInfo(id, steps) {
@@ -8242,11 +8240,11 @@ class SaunaPanel extends HTMLElement {
       admin = !!state.permissions?.admin;
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
       const field = (d) =>
-        `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)} (${esc(d.unit)})</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span><input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}></div>`;
+        `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}</div>`;
       const groups = state.frontend_defaults.settings_groups.filter(
         ({ id }) => admin || ["programs", "personal"].includes(id),
       );
-      const parameterGroup = ({ id, label }) => {
+      const parameterGroup = ({ id }) => {
         // Program values are edited through the catalog or the temperature choice.
         if (id === "programs") return "";
         const entries = state.parameters
@@ -8256,6 +8254,17 @@ class SaunaPanel extends HTMLElement {
         const regular = entries.filter((d) => !d.expert),
           experts = entries.filter((d) => d.expert),
           subgroups = state.frontend_defaults.settings_subgroups || [],
+          regularFields = subgroups
+            .map((group) => {
+              const members = regular.filter((d) => d.settings_subgroup === group.id);
+              return members.length
+                ? `<section class="parameter-section" aria-labelledby="parameter-group-${esc(group.id)}"><h3 id="parameter-group-${esc(group.id)}">${esc(group.label)}</h3><div class="forms">${members.map(field).join("")}</div></section>`
+                : "";
+            })
+            .join(""),
+          ungrouped = regular.filter(
+            (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
+          ),
           expertFields =
             subgroups
               .map((group) => {
@@ -8271,17 +8280,17 @@ class SaunaPanel extends HTMLElement {
               )
               .map(field)
               .join("")}</div>`;
-        return `<div class="card"><details class="settings-group" open><summary>${esc(label)} · Parameter</summary><div class="forms">${regular.map(field).join("")}</div>${experts.length ? `<details class="expert-group"><summary>Experteneinstellungen</summary>${expertFields}</details>` : ""}</details><button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
+        return `<div class="card settings-parameters-card">${regularFields}${ungrouped.length ? `<div class="forms parameter-section">${ungrouped.map(field).join("")}</div>` : ""}${experts.length ? `<details class="expert-group"><summary>Experteneinstellungen</summary>${expertFields}</details>` : ""}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
       };
       const contents = {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
         sensors: `<div class="card"><h2>Messung und Geräte</h2><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a><p><a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a></p></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Protokollierung</h2><p class="muted">Home-Assistant-Protokoll: custom_components.ha_sauna. Die Stufe ist jederzeit änderbar; das Sitzungsarchiv bleibt unabhängig davon.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Sitzungen mit bestätigtem Saunagang bleiben gespeichert. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf Standardwerte zurück. Sensor-, Geräte- und Tasterzuordnungen, Darstellung und Sitzungsarchiv bleiben erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
+        maintenance: `<div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Sitzungen mit bestätigtem Saunagang bleiben gespeichert. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung</h2><p class="muted">Home-Assistant-Protokoll: custom_components.ha_sauna. Die Stufe ist jederzeit änderbar; das Sitzungsarchiv bleibt unabhängig davon.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf Standardwerte zurück. Sensor-, Geräte- und Tasterzuordnungen, Darstellung und Sitzungsarchiv bleiben erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
         personal: `<div class="card"><h2>Persönliche Startseite</h2><p class="muted">Nur für das aktuelle Home-Assistant-Profil.</p><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
-        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${contents[group.id] || ""}${parameterGroup(group)}</section>`).join("")}</div></div>`;
+        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${group.id === "appearance" ? parameterGroup(group) + (contents[group.id] || "") : (contents[group.id] || "") + parameterGroup(group)}</section>`).join("")}</div></div>`;
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
@@ -8594,10 +8603,10 @@ class SaunaPanel extends HTMLElement {
           )
             .map(
               (value, index) =>
-                `<label class="field" for="catalog-${esc(program.id)}-step-${index}">Stufe ${index + 1} (°C)<input id="catalog-${esc(program.id)}-step-${index}" data-program-step="${index}" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}></label>`,
+                `<label class="field" for="catalog-${esc(program.id)}-step-${index}">Stufe ${index + 1}${unitInput(`<input id="catalog-${esc(program.id)}-step-${index}" data-program-step="${index}" type="number" aria-label="Stufe ${index + 1} (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}>`, "°C")}</label>`,
             )
             .join("")}</div>`
-        : `<div class="row"><label class="field">Starttemperatur (°C)<input data-program-field="start_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}></label><label class="field">Endtemperatur (°C)<input data-program-field="end_c" type="number" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}></label><label class="field" for="${esc(distributionId)}"><span>Verteilung auf Saunagänge ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label></div>`;
+        : `<div class="row"><label class="field">Starttemperatur${unitInput(`<input data-program-field="start_c" type="number" aria-label="Starttemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}>`, "°C")}</label><label class="field">Endtemperatur${unitInput(`<input data-program-field="end_c" type="number" aria-label="Endtemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}>`, "°C")}</label><label class="field" for="${esc(distributionId)}"><span>Verteilung auf Saunagänge ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label></div>`;
     const protectedProgram = [
       this.state.configuration.selected_program_id,
       this.state.configuration.button_program,
@@ -8651,7 +8660,7 @@ class SaunaPanel extends HTMLElement {
         `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
     this.updateMarkup(
       "#button-settings",
-      `${gestureOptions ? `<div class="row"><label class="field" for="button-session-gesture">Sitzung starten und beenden<select id="button-session-gesture" ${gestureEditable ? "" : "disabled"}>${gestureOptions}</select></label></div>` : ""}<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur (°C)<input id="button-temperature" type="number" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}></label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
+      `${gestureOptions ? `<div class="row"><label class="field" for="button-session-gesture">Sitzung starten und beenden<select id="button-session-gesture" ${gestureEditable ? "" : "disabled"}>${gestureOptions}</select></label></div>` : ""}<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur${unitInput(`<input id="button-temperature" type="number" aria-label="Solltemperatur (°C)" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}>`, "°C")}</label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
     );
   }
   newProgramId() {

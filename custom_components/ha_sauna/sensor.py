@@ -133,19 +133,6 @@ class SaunaPhase(SaunaEntity, SensorEntity):
             "after_run_remaining_seconds": session.after_run.remaining_seconds
             if session and session.after_run and not session.after_run.pending_start
             else None,
-            "mechanical_timer_ends_at": self.runtime.controller.mechanical_timer_ends_at.isoformat()
-            if self.runtime.controller.mechanical_timer_ends_at
-            else None,
-            "mechanical_timer_state": self.runtime.controller.mechanical_timer_status[
-                "state"
-            ],
-            "mechanical_timer_pause_reason": self.runtime.controller.mechanical_timer_status[
-                "pause_reason"
-            ],
-            "mechanical_timer_remaining_seconds": self.runtime.controller.mechanical_timer_status[
-                "remaining_seconds"
-            ],
-            "mechanical_timer_estimated": True,
             "faults": dict(self.runtime.device.faults) if self.runtime.device else {},
             "heating_feedback": self.runtime.controller.feedback,
             "heating_observation": dict(self.runtime.device.heating_observation)

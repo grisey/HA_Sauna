@@ -126,7 +126,7 @@ const renderCurrent = (
       ],
       measurements: [],
       measurement_status: {},
-      mechanical_timer: { state: "idle", remaining_seconds: 0 },
+
       manual_controls: {
         light: { normal: 25, automatic: 12, ...controls.light },
         heater: controls.heater || {},
@@ -1033,11 +1033,6 @@ const renderCurrent = (
       ],
       measurements: [],
       measurement_status: {},
-      mechanical_timer: {
-        state: "paused",
-        remaining_seconds: 600,
-        pause_reason: "contactor_off",
-      },
       manual_controls: {
         light: { normal: 25, automatic: 40, override_ends_at: "2026-09-20T12:04:00Z" },
         heater: {},

@@ -102,7 +102,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 "thermostat_cooldown_minutes": 0, "heating_minutes": 4,
                 "heating_reduction_minutes": 1, "forced_cooling_minutes": 1,
                 "after_run_minutes": .5, "confirmation_minutes": 13,
-                "cooling_brightness_percent": 5, "mechanical_timer_minutes": 240})
+                "cooling_brightness_percent": 5})
         self.runtime = self.entry.runtime_data
         self.base = datetime.now(UTC)
         self.now = self.base
@@ -1081,8 +1081,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(self.runtime.session)
             self.assertEqual(self.hass.states.get(self.operation).state, "off")
         await self.time(10)
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["state"], "running")
-        self.assertEqual(self.runtime.controller.mechanical_timer.elapsed_at(self.now), 10)
         self.assertIsNone(self.runtime.session)
         await self.runtime.set_light_override(42)
         self.assertIsNone(self.runtime.session)
@@ -1431,13 +1429,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.runtime.session.operation_enabled)
         self.assertEqual(self.runtime.session.session_id, identity)
         self.assertEqual(self.hass.states.get(self.climate).attributes["hvac_action"], "idle")
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["pause_reason"], "contactor_off")
         await self.time(20)
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14390)
-        self.assertIsNone(self.runtime.controller.mechanical_timer_ends_at)
         await self.set_source("upper_temperature", 70)
         await self.time(25)
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14385)
         await self.set_source("control_input", "on")
         await self.set_source("control_input", "off")
         self.assertFalse(self.runtime.session.operation_enabled)
@@ -1454,8 +1448,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("heater_feedback_mismatch", self.runtime.controller.protection)
         await self.time(7)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, 0)
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14400)
-        self.assertIsNone(self.runtime.controller.mechanical_timer_ends_at)
         self.assertIn("heater_feedback_mismatch", self.runtime.controller.protection)
         self.assertFalse(self.heater.is_on)
         await self.time(8)
@@ -1685,61 +1677,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.heater.is_on)
         self.assertEqual(len(self.runtime.session.heating.intervals), 2)
 
-    async def test_manual_idle_timer_notifications_warn_expire_and_retry_without_session(self):
-        options = {
-            **self.entry.options,
-            "control_mode": "manual",
-            "parameters": {
-                **self.entry.options["parameters"],
-                "mechanical_timer_minutes": 1,
-                "mechanical_timer_warning_minutes": .25,
-                "sensor_timeout_seconds": 120,
-            },
-        }
-        self.hass.config_entries.async_update_entry(self.entry, options=options)
-        await self.hass.async_block_till_done()
-        self.runtime = self.entry.runtime_data
-        self.base = self.now = datetime.now(UTC)
-        self.runtime._clock = lambda: self.now
-        await self.runtime.set_heater_override(True)
-        await self.hass.async_block_till_done()
-        cycle = self.runtime.controller.mechanical_timer.cycle_id
-        device = self.runtime.device
-        self.assertIsNone(self.runtime.session)
-        with (
-            patch("custom_components.ha_sauna.device.persistent_notification.async_create") as create,
-            patch.object(self.runtime.archive, "append", wraps=self.runtime.archive.append) as append,
-        ):
-            self.now = self.base + timedelta(seconds=45)
-            create.side_effect = RuntimeError("Synthetic notification failure")
-            with self.assertRaisesRegex(RuntimeError, "notification failure"):
-                device.notify_mechanical_timer(self.now)
-            self.assertNotIn((cycle, "warning"), device.notified)
-            create.side_effect = None
-            await self.time(45)
-            await self.time(46)
-            self.assertIn((cycle, "warning"), device.notified)
-            await self.time(60)
-            await self.time(61)
-            self.assertEqual(device.notified, {(cycle, "warning"), (cycle, "expired")})
-            self.assertEqual(create.call_count, 3)
-            self.assertEqual(
-                {call.kwargs["notification_id"] for call in create.call_args_list},
-                {f"sauna_timer_{self.entry.entry_id}_{cycle}"},
-            )
-            notices = [call.args for call in append.call_args_list if call.args[0] == "notice"]
-            self.assertEqual(
-                [args[2]["kind"] for args in notices],
-                ["mechanical_timer_warning", "mechanical_timer_expired"],
-            )
-            self.assertTrue(all(args[3] is None for args in notices))
-        self.assertIsNone(self.runtime.session)
-        self.assertTrue(self.heater.is_on)
-
-    async def test_mechanical_timer_expiry_is_informative_and_heating_feedback_is_separate(self):
+    async def test_heating_feedback_is_separate_from_contactor_state(self):
         # Configure before starting, via the real options listener and reload.
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
-            "mechanical_timer_minutes": 1, "mechanical_timer_warning_minutes": .25,
             "sensor_timeout_seconds": 120}}
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.hass.async_block_till_done()
@@ -1752,13 +1692,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.heater.powered = False
         await self.set_source("heater_feedback", "off")
         await self.time(20)
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 40)
         self.assertEqual(self.runtime.session.heating.elapsed_seconds, 10)
         self.heater.powered = True
         await self.set_source("heater_feedback", "on")
         await self.time(45)
-        self.assertIn((self.runtime.session.session_id, "warning"), self.runtime.device.notified)
-        # Ablauf der Schätzung allein schaltet nichts und verändert keine Diagnose.
         await self.time(60)
         self.assertTrue(self.heater.is_on)
         self.assertTrue(self.runtime.controller.feedback)
@@ -1777,15 +1714,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.controller.protection, set())
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.runtime.device.faults["heater_no_power"], "measured")
-        self.assertEqual(self.runtime.device.notified, {(self.runtime.session.session_id, "warning"),
-            (self.runtime.session.session_id, "expired")})
-        import asyncio
-        await self.runtime.archive.flush()
-        data = await asyncio.to_thread(self.runtime.archive.read, self.runtime.session.session_id, limit=10000)
-        self.assertEqual([r["payload"]["kind"] for r in data["records"] if r["kind"] == "notice"],
-                         ["mechanical_timer_warning", "mechanical_timer_expired"])
 
-    async def configure_feedback(self, *, power_sensor=False):
+    async def configure_feedback(self, *, power_sensor=False, warmup_window_minutes=None):
         bindings = dict(self.entry.options["bindings"])
         bindings.pop("heater_feedback", None)
         if power_sensor:
@@ -1794,11 +1724,162 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 "device_class": "power", "unit_of_measurement": "kW"})
         self.hass.config_entries.async_update_entry(self.entry, options={
             "bindings": bindings, "parameters": {**self.entry.options["parameters"],
-                "power_heating_threshold_w": 100, "sensor_timeout_seconds": 120}})
+                "power_heating_threshold_w": 100, "sensor_timeout_seconds": 120,
+                **({"warmup_estimation_minutes": warmup_window_minutes}
+                   if warmup_window_minutes is not None else {})}})
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
+
+    async def test_missing_temperature_progress_notifies_once_despite_measured_zero_power(self):
+        await self.configure_feedback(power_sensor=True, warmup_window_minutes=5)
+        await self.set_source("upper_temperature", 40)
+        await self.set_source("lower_temperature", 40)
+        await self.runtime.set_operation(True)
+        with patch("custom_components.ha_sauna.device.persistent_notification.async_create") as create:
+            for second in range(15, 676, 15):
+                self.now = self.base + timedelta(seconds=second)
+                await self.set_source("heater_power", 0)
+                await self.set_source("upper_temperature", 40 + min(second, 60) / 60)
+                await self.set_source("lower_temperature", 40)
+                await self.runtime.tick()
+            self.assertEqual(create.call_count, 1)
+            self.assertTrue(self.heater.is_on)
+            self.assertIs(self.runtime.device.contactor_feedback(), True)
+            self.assertEqual(self.runtime.device.heating_observation["power_w"], 0)
+            self.assertIs(self.runtime.controller.feedback, False)
+            self.assertEqual(self.runtime.controller.protection, set())
+            for _ in range(3):
+                await self.runtime.tick()
+            self.assertEqual(create.call_count, 1)
+            with patch("custom_components.ha_sauna.device.persistent_notification.async_dismiss") as dismiss:
+                for second in range(690, 1021, 15):
+                    self.now = self.base + timedelta(seconds=second)
+                    await self.set_source("heater_power", 0)
+                    await self.set_source("upper_temperature", 41 + (second - 675) / 600)
+                    await self.set_source("lower_temperature", 40)
+                self.assertEqual(dismiss.call_count, 1)
+            self.assertEqual(create.call_count, 1)
+
+    async def test_temperature_progress_cannot_bridge_source_gap_target_change_or_door(self):
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        await self.configure_feedback(power_sensor=True, warmup_window_minutes=5)
+        await self.set_source("upper_temperature", 40)
+        await self.set_source("lower_temperature", 40)
+        await self.runtime.set_operation(True)
+        with patch("custom_components.ha_sauna.device.persistent_notification.async_create") as create:
+            for second in (15, 30, 45):
+                self.now = self.base + timedelta(seconds=second)
+                await self.set_source("upper_temperature", 40 + second / 60)
+            previous = self.runtime.device._heating_progress
+            self.now = self.base + timedelta(seconds=46)
+            await self.set_source("upper_temperature", "unavailable")
+            self.assertIsNone(self.runtime.device._heating_progress)
+            self.now = self.base + timedelta(seconds=47)
+            await self.set_source("upper_temperature", 41)
+            self.assertIsNot(self.runtime.device._heating_progress, previous)
+            previous = self.runtime.device._heating_progress
+            self.now = self.base + timedelta(seconds=48)
+            await self.hass.services.async_call("climate", "set_temperature", {
+                "entity_id": self.climate, "temperature": 85,
+            }, blocking=True)
+            await self.hass.async_block_till_done()
+            self.assertIsNot(self.runtime.device._heating_progress, previous)
+            self.now = self.base + timedelta(seconds=200)
+            await self.set_source("lower_temperature", 40)
+            await self.set_source("heater_power", 0)
+            self.assertEqual(self.runtime.device._heating_progress_key[1].value, "lower")
+            await self.runtime.receive(Event(
+                "progress-door-open", self.runtime.session.session_id,
+                Kind.DOOR_OPEN, self.now, self.now,
+            ))
+            self.assertIsNone(self.runtime.device._heating_progress)
+            self.assertEqual(create.call_count, 0)
+
+    async def test_progress_warning_excludes_reached_target_even_with_forced_contactor_on(self):
+        await self.configure_feedback(power_sensor=True)
+        await self.set_source("upper_temperature", 40)
+        await self.set_source("lower_temperature", 40)
+        await self.runtime.set_operation(True)
+        await self.runtime.set_heater_override(True)
+        with patch("custom_components.ha_sauna.device.persistent_notification.async_create") as create:
+            for second in range(15, 676, 15):
+                self.now = self.base + timedelta(seconds=second)
+                await self.set_source("heater_power", 0)
+                await self.set_source("upper_temperature", self.runtime.controller.target_temperature)
+                await self.set_source("lower_temperature", 40)
+                await self.runtime.tick()
+            self.assertIs(self.runtime.device.contactor_feedback(), True)
+            self.assertEqual(create.call_count, 0)
+
+    async def test_archived_startup_inertia_delays_warning_for_completely_missing_heating(self):
+        from dataclasses import replace
+        from custom_components.ha_sauna.core.contracts import ContactorMark
+        from custom_components.ha_sauna.core.models import Measurement, Position, Quantity, Session
+
+        # This fixture deliberately uses a five-minute analysis window.
+        await self.configure_feedback(power_sensor=True, warmup_window_minutes=5)
+        source = self.entry.options["bindings"]["upper_temperature"]
+        start = self.base - timedelta(seconds=1000)
+        historical = with_confirmed_round(Session.create("startup-history", start))
+        historical = replace(historical,
+            ended_at=start + timedelta(seconds=700),
+            contactor_history=(
+                ContactorMark(start, False),
+                ContactorMark(start + timedelta(seconds=1), True),
+                ContactorMark(start + timedelta(seconds=631), False),
+            ),
+        )
+        for second in range(0, 631, 30):
+            value = 40 + max(0, second - 300) / 60
+            measurement = Measurement(
+                Position.UPPER, Quantity.TEMPERATURE, value, str(value),
+                source, start + timedelta(seconds=second),
+            )
+            self.runtime.archive.append("measurement", measurement.received_at, measurement, historical.session_id)
+        self.runtime.archive.save_session(
+            historical, historical.ended_at, self.runtime.configuration.as_options(),
+        )
+        await self.set_source("upper_temperature", 40)
+        await self.set_source("lower_temperature", 40)
+        archive = self.runtime.archive
+        flush, read = archive.flush, archive.heating_response_history
+        order = []
+
+        async def flushed():
+            await flush()
+            order.append("flushed")
+
+        def read_after_flush(*args):
+            self.assertIn("flushed", order)
+            order.append("read")
+            return read(*args)
+
+        with (
+            patch.object(archive, "flush", side_effect=flushed),
+            patch.object(archive, "heating_response_history", side_effect=read_after_flush),
+        ):
+            await self.runtime.set_operation(True)
+            await self.hass.async_block_till_done()
+            task = self.runtime.device._heating_response_task
+            if task is not None:
+                await task
+        self.assertEqual(order, ["flushed", "read"])
+        self.assertEqual(self.runtime.device._heating_response_delay, 359)
+        with patch("custom_components.ha_sauna.device.persistent_notification.async_create") as create:
+            for second in range(15, 661, 15):
+                self.now = self.base + timedelta(seconds=second)
+                await self.set_source("heater_power", 0)
+                await self.set_source("upper_temperature", 40)
+                await self.set_source("lower_temperature", 40)
+                await self.runtime.tick()
+                if second < 660:
+                    self.assertEqual(create.call_count, 0)
+            self.assertEqual(create.call_count, 1)
+            self.assertTrue(self.heater.is_on)
+            self.assertEqual(self.runtime.controller.protection, set())
 
     async def prepare_gang_after_run(self):
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
@@ -1920,7 +2001,6 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.runtime.session.timeline.gang_count, 1)
         self.assertEqual(self.runtime.session.session_id, identity)
-        self.assertEqual(self.runtime.controller.mechanical_timer_status["remaining_seconds"], 14400-62)
         import asyncio
         await self.runtime.archive.flush()
         archived = await asyncio.to_thread(self.runtime.archive.read, identity, limit=10000)

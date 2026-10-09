@@ -21,8 +21,6 @@ _PARAMETER_KEYS = frozenset(
         "heat_reset_minutes",
         "thermostat_cooldown_minutes",
         "minimum_heating_minutes",
-        "mechanical_timer_minutes",
-        "mechanical_timer_warning_minutes",
         "after_run_minutes",
         "oven_cooling_max_minutes",
         "oven_cooling_half_life_minutes",

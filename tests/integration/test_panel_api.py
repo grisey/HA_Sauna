@@ -166,8 +166,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200)
             async with client.get(url + "/state") as response:
                 state = await response.json()
-                self.assertEqual(state["mechanical_timer"]["state"], "paused")
-                self.assertIsNone(state["mechanical_timer_ends_at"])
+                self.assertNotIn("mechanical_timer", state)
+                self.assertNotIn("mechanical_timer_ends_at", state)
             async with client.post(url + "/parameters", json={**values,"after_run_minutes":20,"oven_cooling_max_minutes":20}) as response:
                 self.assertEqual(response.status, 409)
 
@@ -1354,7 +1354,6 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await runtime.receive(Event("infusion",session_id,Kind.INFUSION,now,now))
         gang=runtime.session.timeline.active
         detector=runtime.detector
-        timer=runtime.controller.mechanical_timer
         url=self.base+"/"+self.entry.entry_id
         async with ClientSession(headers=self.headers) as client:
             for values in ({"target_temperature_c":81,"final_temperature_c":95}, {"final_temperature_c":None}):
@@ -1364,7 +1363,6 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(self.entry.runtime_data,runtime)
                 self.assertIs(runtime.detector,detector)
                 self.assertEqual(runtime.session.timeline.active,gang)
-                self.assertEqual(runtime.controller.mechanical_timer,timer)
                 self.assertEqual(runtime.controller.target_temperature,81)
                 self.assertTrue(runtime.session.operation_enabled)
             async with client.post(url+"/temperature",json={"temperature_increase_c":2}) as response:

@@ -81,7 +81,7 @@ function renderControls(p) {
     gang_count: 0,
     measurements: [],
     measurement_status: {},
-    mechanical_timer: { state: "idle", remaining_seconds: 0 },
+
     manual_controls: { heater: {}, light: {} },
     start_errors: [],
     issues: [],
@@ -1164,7 +1164,7 @@ test("gap control keeps its apply action inside the open program editor", () => 
     gang_count: 0,
     measurements: [],
     measurement_status: {},
-    mechanical_timer: { state: "idle", remaining_seconds: 0 },
+
     manual_controls: { heater: {}, light: {} },
     start_errors: [],
     issues: [],

@@ -175,10 +175,6 @@ class Configuration:
         if mode not in ("button", "switch") or not isinstance(event_type, str):
             raise ValueError("Ungültige Taster- oder Schaltereinstellung")
         values = dict(options[CONF_PARAMETERS])
-        # Older configurations omitted the optional warning when disabled.
-        # Preserve that saved choice; new configurations and resets construct
-        # Parameters directly and retain the current factory warning value.
-        values.setdefault("mechanical_timer_warning_minutes", 0)
         override_key = "manual_override_minutes"
         if override_key in values:
             # Gespeicherte Werte hatten bisher die allgemeine Obergrenze von

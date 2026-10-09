@@ -3,9 +3,12 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from custom_components.ha_sauna.core.warmup import (
+    HeatingProgress,
+    HeatingProgressEpisode,
     WarmupEstimate,
     WarmupTrend,
     historical_warmup_rate,
+    historical_heating_delay,
 )
 
 
@@ -14,6 +17,79 @@ T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 def at(seconds):
     return T0 + timedelta(seconds=seconds)
+
+
+class HeatingProgressTests(unittest.TestCase):
+    def test_flat_and_falling_observations_need_existing_minimum_evidence(self):
+        for values in ((40, 40, 40), (40, 39, 38)):
+            with self.subTest(values=values):
+                progress = HeatingProgress(300)
+                self.assertIsNone(progress.accept(at(0), values[0]))
+                self.assertIsNone(progress.accept(at(75), values[1]))
+                evidence = progress.accept(at(150), values[2])
+                self.assertTrue(evidence["no_rise"])
+                self.assertEqual(evidence["started_at"], at(0))
+                self.assertEqual(evidence["ended_at"], at(150))
+
+    def test_arbitrarily_small_positive_progress_is_not_a_failure(self):
+        progress = HeatingProgress(300)
+        for second, value in ((0, 40), (75, 40.001), (150, 40.002)):
+            evidence = progress.accept(at(second), value)
+        self.assertFalse(evidence["no_rise"])
+
+    def test_missing_eta_due_to_wobble_does_not_mean_missing_progress(self):
+        progress = HeatingProgress(300)
+        for second, value in ((0, 40), (50, 50), (100, 35), (150, 41)):
+            evidence = progress.accept(at(second), value)
+        self.assertIsNone(progress.trend.rate(at(150)))
+        self.assertFalse(evidence["no_rise"])
+
+    def test_window_forgets_old_rise_and_detects_later_plateau(self):
+        progress = HeatingProgress(300)
+        for second in range(0, 601, 30):
+            evidence = progress.accept(at(second), min(50, 40 + second / 15))
+        self.assertTrue(evidence["no_rise"])
+        self.assertEqual(evidence["started_at"], at(300))
+
+    def test_repeated_or_out_of_order_reports_cannot_supply_new_evidence(self):
+        progress = HeatingProgress(300)
+        for second in (0, 75, 150):
+            progress.accept(at(second), 40)
+        self.assertIsNone(progress.accept(at(150), 40))
+        self.assertIsNone(progress.accept(at(100), 39))
+
+    def test_longest_observed_startup_is_learned_without_a_default(self):
+        episodes = [{
+            "started_at": at(0), "ended_at": at(600),
+            "measurements": tuple(
+                (at(second), 40 + max(0, second - lag) / 60)
+                for second in range(0, 601, 30)
+            ),
+        } for lag in (0, 300)]
+        self.assertEqual(historical_heating_delay(episodes, 300), 360)
+        self.assertIsNone(historical_heating_delay([], 300))
+        self.assertIsNone(historical_heating_delay([{
+            "started_at": at(0), "ended_at": at(600),
+            "measurements": tuple((at(second), 40) for second in range(0, 601, 30)),
+        }], 300))
+
+    def test_known_startup_delay_then_new_complete_window_can_detect_total_failure(self):
+        episode = HeatingProgressEpisode(300, at(0))
+        episode.startup_delay_seconds = 330
+        for second in range(0, 630, 30):
+            self.assertIsNone(episode.accept(at(second), 40))
+        self.assertTrue(episode.accept(at(630), 40)["no_rise"])
+
+    def test_unknown_startup_is_not_replaced_with_an_arbitrary_deadline(self):
+        episode = HeatingProgressEpisode(300, at(0))
+        for second in range(0, 1201, 30):
+            self.assertIsNone(episode.accept(at(second), 40))
+
+    def test_live_rise_can_establish_response_then_later_stagnation_without_history(self):
+        episode = HeatingProgressEpisode(300, at(0))
+        for second in range(0, 480, 30):
+            self.assertIsNone(episode.accept(at(second), 40 + min(second, 150) / 30))
+        self.assertTrue(episode.accept(at(480), 45)["no_rise"])
 
 
 class WarmupTrendTests(unittest.TestCase):

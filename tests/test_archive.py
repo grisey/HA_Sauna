@@ -400,6 +400,163 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             tuple((T0 + timedelta(seconds=second), value) for second, value in ((0, 20), (60, 26), (120, 32), (180, 38))),
         )
 
+    async def response_history_session(
+        self, identity, marks, samples, *, legacy=False, doors=(),
+        source="sensor.upper_temperature", heater="switch.heater", position="upper",
+        completed=True, sample_source=None, feedback_source=None,
+    ):
+        snapshot = plain(self.c.session)
+        snapshot["timeline"]["session_id"] = identity
+        snapshot["ended_at"] = (T0 + timedelta(seconds=300)).isoformat() if completed else None
+        snapshot["configuration"] = {
+            "bindings": {f"{position}_temperature": source, "heater": heater},
+        }
+        if legacy:
+            snapshot.pop("contactor_history", None)
+            for second, state in marks:
+                self.archive.append("source_state", T0 + timedelta(seconds=second), {
+                    "role": "heater", "source": feedback_source or heater,
+                    "state": state if isinstance(state, str) else (
+                        "on" if state is True else "off" if state is False else "unavailable"
+                    ),
+                }, identity)
+        else:
+            snapshot["contactor_history"] = [
+                {"at": (T0 + timedelta(seconds=second)).isoformat(), "state": state}
+                for second, state in marks
+            ]
+        self.archive.append("session", T0 + timedelta(seconds=300), snapshot, identity)
+        for second, value in samples:
+            m = replace(
+                measurement(Position(position), Quantity.TEMPERATURE, value, second),
+                source=sample_source or source,
+            )
+            self.archive.append("measurement", m.received_at, m, identity)
+        for second, kind in doors:
+            self.archive.append("detection", T0 + timedelta(seconds=second + 1), {
+                "event": {
+                    "kind": kind, "effective_at": (T0 + timedelta(seconds=second)).isoformat(),
+                },
+            }, identity)
+        await self.archive.flush()
+
+    async def test_heating_response_history_preserves_real_edges_and_original_samples(self):
+        samples = ((5, 20), (20, 20), (40, 21), (60, 23))
+        for legacy in (False, True):
+            await self.response_history_session(
+                f"response-{legacy}", ((0, False), (10, True), (70, False)), samples,
+                legacy=legacy,
+            )
+        history = await asyncio.to_thread(
+            self.archive.heating_response_history,
+            "sensor.upper_temperature", "upper", "switch.heater", 30,
+        )
+        self.assertEqual(len(history), 2)
+        for episode in history:
+            self.assertEqual(episode["started_at"], T0 + timedelta(seconds=10))
+            self.assertEqual(episode["ended_at"], T0 + timedelta(seconds=70))
+            self.assertEqual(episode["measurements"], tuple(
+                (T0 + timedelta(seconds=second), value) for second, value in samples
+            ))
+
+    async def test_heating_response_history_rejects_unproven_and_interrupted_episodes(self):
+        marks = ((0, False), (10, True), (70, False))
+        samples = ((10, 20), (30, 21), (50, 22), (70, 23))
+        cases = (
+            ("initial-on", ((0, True), (70, False)), samples, {}),
+            ("unknown-on", ((0, None), (10, True), (70, False)), samples, {}),
+            ("unknown-end", ((0, False), (10, True), (70, None)), samples, {}),
+            ("no-off", ((0, False), (10, True)), samples, {}),
+            ("invalid-value", marks, ((10, 20), (30, None), (50, 22), (70, 23)), {}),
+            ("sample-gap", marks, ((10, 20), (70, 23)), {}),
+            ("late-first", marks, ((50, 22), (70, 23)), {}),
+            ("early-last", marks, ((10, 20), (30, 21)), {}),
+            ("door-during", marks, samples, {"doors": ((30, "door_open"),)}),
+            ("door-before", marks, samples, {"doors": ((5, "door_open"),)}),
+            ("other-source", marks, samples, {"source": "sensor.changed"}),
+            ("other-height", marks, samples, {"position": "lower"}),
+            ("other-heater", marks, samples, {"heater": "switch.changed"}),
+            ("ongoing", marks, samples, {"completed": False}),
+        )
+        for identity, contact_marks, values, options in cases:
+            await self.response_history_session(identity, contact_marks, values, **options)
+        history = await asyncio.to_thread(
+            self.archive.heating_response_history,
+            "sensor.upper_temperature", "upper", "switch.heater", 30,
+        )
+        self.assertEqual(history, ())
+
+    async def test_heating_response_history_keeps_later_complete_episode_after_unknown(self):
+        await self.response_history_session(
+            "later", ((0, True), (20, None), (30, False), (40, True), (100, False)),
+            ((40, 20), (60, 21), (80, 22), (100, 23)),
+            doors=((5, "door_open"), (25, "door_close")),
+        )
+        history = await asyncio.to_thread(
+            self.archive.heating_response_history,
+            "sensor.upper_temperature", "upper", "switch.heater", 30,
+        )
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["started_at"], T0 + timedelta(seconds=40))
+
+    async def test_heating_response_history_uses_runtime_received_door_events(self):
+        now = T0
+        runtime = SaunaRuntime(Configuration(bindings(), parameters()), lambda: now)
+        runtime.archive = self.archive
+        runtime.controller.report_contactor(False, now)
+        await runtime.begin_session("received-door")
+        now = T0 + timedelta(seconds=10)
+        runtime.controller.report_contactor(True, now)
+        source = runtime.configuration.bindings.values["upper_temperature"]
+        heater = runtime.configuration.bindings.values["heater"]
+        for second, value in ((10, 20), (30, 21), (50, 22), (70, 23)):
+            m = measurement(Position.UPPER, Quantity.TEMPERATURE, value, second, source=source)
+            self.archive.append("measurement", m.received_at, m, "received-door")
+        now = T0 + timedelta(seconds=30)
+        await runtime.receive(event("door", Kind.DOOR_OPEN, 30, "received-door"))
+        now = T0 + timedelta(seconds=70)
+        runtime.controller.report_contactor(False, now)
+        now = T0 + timedelta(seconds=100)
+        runtime.controller.finish_session(now)
+        runtime.persist()
+        await self.archive.flush()
+
+        stored = await asyncio.to_thread(self.archive.read, "received-door")
+        self.assertTrue(any(
+            item["kind"] == "door_open"
+            for item in stored["session"]["timeline"]["processed"]
+        ))
+        self.assertFalse(any(record["kind"] == "detection" for record in stored["records"]))
+        history = await asyncio.to_thread(
+            self.archive.heating_response_history, source, "upper", heater, 30,
+        )
+        self.assertEqual(history, ())
+
+    async def test_heating_response_history_rejects_invalid_legacy_evidence_and_foreign_reports(self):
+        samples = ((10, 20), (30, 21), (50, 22), (70, 23))
+        marks = ((0, False), (10, True), (70, False))
+        cases = (
+            ("legacy-initial-on", ((0, True), (70, False)), {}),
+            ("legacy-unknown-start", ((0, None), (10, True), (70, False)), {}),
+            ("legacy-unknown-end", ((0, False), (10, True), (70, None)), {}),
+            ("legacy-invalid-start", ((0, "invalid"), (10, True), (70, False)), {}),
+            ("legacy-invalid-during", ((0, False), (10, True), (40, "invalid"), (70, False)), {}),
+            ("legacy-foreign-feedback", marks, {"feedback_source": "switch.foreign"}),
+            ("legacy-foreign-measurement", marks, {"sample_source": "sensor.foreign"}),
+        )
+        for identity, contact_marks, options in cases:
+            await self.response_history_session(
+                identity, contact_marks, samples, legacy=True, **options,
+            )
+        await self.response_history_session(
+            "native-foreign-measurement", marks, samples, sample_source="sensor.foreign",
+        )
+        history = await asyncio.to_thread(
+            self.archive.heating_response_history,
+            "sensor.upper_temperature", "upper", "switch.heater", 30,
+        )
+        self.assertEqual(history, ())
+
     async def test_temperature_change_at_session_expiry_keeps_original_archive_configuration(self):
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
         from custom_components.ha_sauna.core.parameters import Parameters
