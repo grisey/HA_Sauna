@@ -8657,7 +8657,7 @@ class SaunaPanel extends HTMLElement {
       gestureOptions = (this.state.button_session_gestures || [])
         .map(
           (value) =>
-            `<option value="${value}" ${configuration.button_session_gesture === value ? "selected" : ""}>${{ long: "Langdruck", double: "Doppeldruck", triple: "Dreifachdruck" }[value]}</option>`,
+            `<option value="${value}" ${configuration.button_session_gesture === value ? "selected" : ""}>${{ long: "Gedrückt halten", double: "Zweimal drücken", triple: "Dreimal drücken" }[value]}</option>`,
         )
         .join(""),
       button = configuration.button_program,

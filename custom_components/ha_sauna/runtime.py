@@ -74,7 +74,7 @@ class Configuration:
         if (self.button_session_gesture != "long"
                 and not self.bindings.values["control_input"].startswith("event.")):
             raise ValueError(
-                "Doppel- und Dreifachdruck benötigen einen Taster mit nativen Gestenmeldungen."
+                "Der Taster muss zweimaliges und dreimaliges Drücken selbst erkennen."
             )
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")

@@ -31,7 +31,7 @@ END_RELEASE = "end_release"
 def validate_session_gesture(value):
     if not isinstance(value, str) or value not in {"long", "double", "triple"}:
         raise ValueError(
-            "Als Sitzungsgeste Langdruck, Doppeldruck oder Dreifachdruck wählen."
+            "Ungültige Tastergeste."
         )
     return value
 

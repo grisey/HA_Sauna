@@ -516,7 +516,7 @@
     },
     {
       "key": "button_hold_seconds",
-      "label": "Langdruckdauer des Saunatasters",
+      "label": "Haltezeit des Saunatasters",
       "unit": "s",
       "allow_zero": true,
       "optional": false,

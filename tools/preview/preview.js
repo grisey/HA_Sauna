@@ -36,7 +36,7 @@ const refresh = async (reset = false) => {
     ? button.start_hold
       ? "Gedrückt · Start bestätigt, Licht hell bis zum Loslassen"
       : "Gedrückt · Loslassen beendet die Geste"
-    : `Lange halten simuliert die eingestellte Haltezeit: ${button.hold_seconds} s`;
+    : `Simulierte Haltezeit: ${button.hold_seconds} s`;
   panel._hass.user.is_admin = panel.state.permissions.admin;
   document.querySelector("#sim-time").textContent = new Date(
     panel.state.now,

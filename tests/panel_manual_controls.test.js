@@ -169,7 +169,7 @@ const renderCurrent = (
     };
     panel.drawButtonProgram();
     assert.match(markup, /Sitzung starten und beenden/);
-    assert.match(markup, /value="double" selected>Doppeldruck/);
+    assert.match(markup, /value="double" selected>Zweimal drücken/);
     assert.doesNotMatch(markup, /value="short"/);
     panel.$ = () => ({ value: "triple" });
     await panel.action("button-gesture");

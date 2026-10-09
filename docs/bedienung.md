@@ -6,13 +6,13 @@ Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
 Die unter **Sitzung starten und beenden** gewählte Tastergeste startet Automatik
-mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Lang-, Doppel-
-und Dreifachdruck stehen entsprechend den Meldungen des Tasters zur Wahl.
-Einfachdruck bleibt der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
+mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Die Auswahl
+richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
+der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
 gilt unabhängig von der Temperaturwahl im Panel.
 
-Bei Langdruck mit Halte- und Loslassmeldung leuchtet das Licht zur
-Startbestätigung bis zum Loslassen hell.
+Beim Gedrückthalten bestätigt helles Licht den Start bis zum Loslassen.
+Dafür muss der Taster Halten und Loslassen melden.
 
 ## Temperatur während der Sitzung ändern
 
@@ -79,8 +79,8 @@ abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
 Konfiguration gesperrt.
 
 Dieselbe Tastergeste beendet bei laufendem Betrieb die Sitzung sofort.
-Bei Langdruck mit Halte- und Loslassmeldung bleibt das Licht bis zum Loslassen
-AUS; anschließend beginnt der Lichtnachlauf.
+Beim Gedrückthalten bleibt das Licht bis zur Loslassmeldung AUS;
+anschließend beginnt der Lichtnachlauf.
 
 Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;
 er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
