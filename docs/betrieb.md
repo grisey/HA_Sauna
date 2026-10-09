@@ -1,6 +1,8 @@
 # Saunabetrieb
 
-## Sitzung
+## Sitzung und Bedienung
+
+### Sitzung
 
 Betrieb-EIN beginnt eine Sitzung. Betrieb-AUS beendet den offenen Gang und
 startet die gemeinsame Wiederaufnahme- und Lichtnachlauffrist. Einschalten
@@ -10,7 +12,41 @@ danach beginnt eine neue Sitzung. Ein langer Enddruck schließt die Sitzung sofo
 Nach einem Home-Assistant-Neustart bleibt das [Archiv](speicherung.md) erhalten.
 Der Ofen startet erst durch ausdrückliches Einschalten.
 
-## Temperatur und Bereitschaft
+### Bedienhandlungen und Betriebsart
+
+| Tastergeste | Wirkung |
+| --- | --- |
+| Kurz bei Betrieb-AUS | Startet Automatik mit der gespeicherten Tastervorgabe. |
+| Kurz in Automatik | Wechselt die vorübergehende Ofenwahl oder gibt an die Automatik zurück. |
+| Kurz in Manuell | Wechselt die Ofenvorgabe zwischen EIN und AUS. |
+| Lang bei laufendem Betrieb | Beendet Betrieb und Sitzung. Licht bleibt beim Halten AUS; Loslassen startet den Lichtnachlauf. |
+| Lang bei Betrieb-AUS | Kein Saunastart, auch nicht durch zugehöriges Loslassen. |
+
+**Übersteuerung in Automatik:** Die Ofenwahl endet bei Rückgabe, Phasenwechsel,
+Änderung der automatischen EIN-/AUS-Anforderung oder Fristablauf. Ofen-AUS
+unterbricht auch Gangheizung und Mindestheizzeit. Die manuelle Lichtwahl endet
+beim passenden Phasenwechsel oder spätestens mit ihrer Übersteuerungsfrist.
+
+**Betriebsart Manuell:** Nach Sitzungsende wählbar; bleibt bis zur erneuten
+Betriebsartwahl erhalten. Ofen und Licht starten beim Wechsel und nach Neustart
+mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist. Zurückschalten auf
+Automatik gibt beide frei. Auch manuelles EIN benötigt gültige Regeltemperatur
+und Heizfreigabe; Schutz und Betrieb-AUS haben weiter Vorrang.
+
+### Temperaturprogramm
+
+Direkte Sollwahl hält eine konstante Temperatur. Programme folgen gespeicherten
+oder frei gewählten Stufen, auf Wunsch gleichmäßig aus Start, Ende und Anzahl
+verteilt. Steigende und fallende Folgen sind möglich. Jeder beendete bestätigte
+Gang schaltet einmal weiter; nach der letzten Stufe bleibt deren Temperatur.
+
+Eine alleinige Änderung der Endtemperatur erhält das aktuelle Ziel und verteilt
+die verbleibenden Schritte neu. Ein neuer Startwert beginnt eine neue Verteilung.
+Gangzählung und laufende Fristen bleiben erhalten.
+
+## Regelung und Schutz
+
+### Temperatur und Bereitschaft
 
 Für die Regelung führt die gültige obere Temperatur, ersatzweise die untere.
 Sobald oben wieder gültige Werte vorliegen, übernimmt diese Quelle erneut.
@@ -33,7 +69,7 @@ Solländerung heben diese Bereitschaft nicht auf. Eine vorläufige Gangerkennung
 bewahrt sie; ein bestätigter Gang beendet sie. Nach Gang und Kühlung kann sie
 neu entstehen ([Gangmodell](gangmodell.md)).
 
-## Heizpriorität
+### Heizpriorität
 
 Im Automatikbetrieb gilt, von oben nach unten:
 
@@ -55,56 +91,18 @@ Anforderung widerrufbar, danach gilt die Mindestheizzeit. Betrieb-AUS und
 manuelles Ofen-AUS verwerfen die Türanforderung. Direkte Präsenzführung verwendet
 keine Türhilfe.
 
-## Bedienhandlungen und Betriebsart
+### Rückmeldungen und Schutz
 
-| Tastergeste | Wirkung |
-| --- | --- |
-| Kurz bei Betrieb-AUS | Startet Automatik mit der gespeicherten Tastervorgabe. |
-| Kurz in Automatik | Wechselt die vorübergehende Ofenwahl oder gibt an die Automatik zurück. |
-| Kurz in Manuell | Wechselt die Ofenvorgabe zwischen EIN und AUS. |
-| Lang bei laufendem Betrieb | Beendet Betrieb und Sitzung. Licht bleibt beim Halten AUS; Loslassen startet den Lichtnachlauf. |
-| Lang bei Betrieb-AUS | Kein Saunastart, auch nicht durch zugehöriges Loslassen. |
+Ohne gültige Regeltemperatur bleibt die Heizung aus. Gültige Ersatzquellen
+übernehmen ihre Aufgaben; ein einzelner Quellenausfall beendet die Sitzung nicht.
 
-**Übersteuerung in Automatik:** Die Ofenwahl endet bei Rückgabe, Phasenwechsel,
-Änderung der automatischen EIN-/AUS-Anforderung oder Fristablauf. Ofen-AUS
-unterbricht auch Gangheizung und Mindestheizzeit. Die manuelle Lichtwahl endet
-beim passenden Phasenwechsel oder spätestens mit ihrer Übersteuerungsfrist.
+Fehlende Schützrückmeldung, ausgebliebener Schaltvollzug, Befehlsfehler oder
+Weiterheizen trotz AUS sind abschaltrelevant. Ebenso fehlende Regeltemperatur:
+Bleiben solche Fehler in der Betriebs- oder Heizüberwachung über die
+Bestätigungsdauer bestehen, wird die Heizfreigabe verriegelt. Quittieren setzt
+Betrieb-AUS und bestätigtes Ofen-AUS voraus.
 
-**Betriebsart Manuell:** Nach Sitzungsende wählbar; bleibt bis zur erneuten
-Betriebsartwahl erhalten. Ofen und Licht starten beim Wechsel und nach Neustart
-mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist. Zurückschalten auf
-Automatik gibt beide frei. Auch manuelles EIN benötigt gültige Regeltemperatur
-und Heizfreigabe; Schutz und Betrieb-AUS haben weiter Vorrang.
-
-## Temperaturprogramm
-
-Direkte Sollwahl hält eine konstante Temperatur. Programme folgen gespeicherten
-oder frei gewählten Stufen, auf Wunsch gleichmäßig aus Start, Ende und Anzahl
-verteilt. Steigende und fallende Folgen sind möglich. Jeder beendete bestätigte
-Gang schaltet einmal weiter; nach der letzten Stufe bleibt deren Temperatur.
-
-Eine alleinige Änderung der Endtemperatur erhält das aktuelle Ziel und verteilt
-die verbleibenden Schritte neu. Ein neuer Startwert beginnt eine neue Verteilung.
-Gangzählung und laufende Fristen bleiben erhalten.
-
-## Heizzeit, Timer und Energie
-
-Heizzeit verwendet die erste gültige Quelle dieser Reihenfolge: Leistungsmessung,
-Heizrückmeldung, native Ofenschalterrückmeldung. Die letzte belegt nur die
-Heizfreigabe, nicht die tatsächliche Leistung hinter einem internen Thermostat.
-Nach der eingestellten durchgehend bestätigten Auszeit wird die lokale Heizsumme
-zurückgesetzt.
-
-Der mechanische Timer zählt nur bei Betrieb-EIN und bestätigtem Schütz-EIN.
-Bei AUS oder unbekannter Rückmeldung pausiert die Schätzung. Wiederaufnahme
-erhält den Rest; eine neue Sitzung beginnt mit voller Laufzeit. Die Anzeige
-verstellt den Timer am Ofen nicht.
-
-Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus Heizzeit mal
-konfigurierter Ofenleistung. Gemessene, geschätzte und unbekannte Anteile werden
-unterschieden. Kühlung und Heizzeitrücksetzung löschen keinen Sitzungsverbrauch.
-
-## Licht
+### Licht
 
 | Betriebsabschnitt | Automatisches Lichtziel |
 | --- | --- |
@@ -124,18 +122,26 @@ verzögert.
 verlängert weder Kühlung noch Nachlauf; fälliges AUS beendet auch einen Übergang.
 Eine spätere Raumlichtwahl startet keinen neuen automatischen Nachlauf.
 
-## Rückmeldungen und Schutz
+## Zeit und Verbrauch
 
-Ohne gültige Regeltemperatur bleibt die Heizung aus. Gültige Ersatzquellen
-übernehmen ihre Aufgaben; ein einzelner Quellenausfall beendet die Sitzung nicht.
+### Heizzeit, Timer und Energie
 
-Fehlende Schützrückmeldung, ausgebliebener Schaltvollzug, Befehlsfehler oder
-Weiterheizen trotz AUS sind abschaltrelevant. Ebenso fehlende Regeltemperatur:
-Bleiben solche Fehler in der Betriebs- oder Heizüberwachung über die
-Bestätigungsdauer bestehen, wird die Heizfreigabe verriegelt. Quittieren setzt
-Betrieb-AUS und bestätigtes Ofen-AUS voraus.
+Heizzeit verwendet die erste gültige Quelle dieser Reihenfolge: Leistungsmessung,
+Heizrückmeldung, native Ofenschalterrückmeldung. Die letzte belegt nur die
+Heizfreigabe, nicht die tatsächliche Leistung hinter einem internen Thermostat.
+Nach der eingestellten durchgehend bestätigten Auszeit wird die lokale Heizsumme
+zurückgesetzt.
 
-## Zeitliche Zuordnung
+Der mechanische Timer zählt nur bei Betrieb-EIN und bestätigtem Schütz-EIN.
+Bei AUS oder unbekannter Rückmeldung pausiert die Schätzung. Wiederaufnahme
+erhält den Rest; eine neue Sitzung beginnt mit voller Laufzeit. Die Anzeige
+verstellt den Timer am Ofen nicht.
+
+Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus Heizzeit mal
+konfigurierter Ofenleistung. Gemessene, geschätzte und unbekannte Anteile werden
+unterschieden. Kühlung und Heizzeitrücksetzung löschen keinen Sitzungsverbrauch.
+
+### Zeitliche Zuordnung
 
 Empfangene Messungen werden vor späteren Bedienhandlungen mit ihren damaligen
 Freigaben ausgewertet. Auch ein nur zwischenzeitlich erreichter Sollwert zählt

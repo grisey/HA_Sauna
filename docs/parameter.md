@@ -1,36 +1,5 @@
 # Einstellungen und Entitäten
 
-Standardwerte, zulässige Grenzen und Programmvorlagen stehen im
-[zentralen Katalog](../custom_components/ha_sauna/defaults.json).
-Gespeicherte Anlagenwerte haben Vorrang.
-
-## Anlagenparameter
-
-| Einstellung | Zu beachten |
-| --- | --- |
-| Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
-| Ofentimer-Vorwarnung | `0` deaktiviert die Warnung. |
-| Ofenleistung | Grundlage der Verbrauchsschätzung ohne Leistungsmessung. |
-| Leistungsschwelle | Grenze, ab der eine Leistungsmessung als Heizen zählt. |
-| Lichthysterese | Angabe in Prozentpunkten. |
-| Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen; die Bedienung verwendet Prozent. |
-| Feuchteänderungen | Relative Feuchteänderung in Prozentpunkten; Wasserverlust beim Durchlüften als Anteil des absoluten Wassergehalts. |
-| Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
-
-Zusammenhänge: [Heizregelung und Licht](betrieb.md),
-[Ofenkühlung](ofenkuehlung.md), [Gangerkennung](gangmodell.md),
-[Erkennungsschwellen](erkennung.md).
-
-## Überwachung
-
-| Frist | Bezug |
-| --- | --- |
-| Höchstalter eines Messwerts | Muss die üblichen Meldeabstände des Sensors abdecken. |
-| Schützrückmeldefrist | Zeit zur Bestätigung eines Schaltbefehls. |
-| Störungsbestätigung | Dauer eines abschaltrelevanten Fehlers bis zur verriegelten Schutzabschaltung. |
-
-[Ausfälle und Schutzabschaltung](betrieb.md#rückmeldungen-und-schutz)
-
 ## Entitätsrollen
 
 | Rolle | Geeignete Entität |
@@ -70,12 +39,57 @@ Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung.
 Absolute Feuchte wird aus der Quelle übernommen; Mess-, Vorhersage- und
 HA-Aktualisierungszeit bleiben getrennt.
 
-## Protokollierung
+## Anlagenparameter
+
+Standardwerte, zulässige Grenzen und Programmvorlagen stehen im
+[zentralen Katalog](../custom_components/ha_sauna/defaults.json).
+Gespeicherte Anlagenwerte haben Vorrang.
+
+### Betrieb und Ofen
+
+| Einstellung | Zu beachten |
+| --- | --- |
+| Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
+| Ofentimer-Vorwarnung | `0` deaktiviert die Warnung. |
+| Ofenleistung | Grundlage der Verbrauchsschätzung ohne Leistungsmessung. |
+| Leistungsschwelle | Grenze, ab der eine Leistungsmessung als Heizen zählt. |
+
+### Licht
+
+| Einstellung | Zu beachten |
+| --- | --- |
+| Lichthysterese | Angabe in Prozentpunkten. |
+| Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen; die Bedienung verwendet Prozent. |
+
+### Erkennung
+
+| Einstellung | Zu beachten |
+| --- | --- |
+| Feuchteänderungen | Relative Feuchteänderung in Prozentpunkten; Wasserverlust beim Durchlüften als Anteil des absoluten Wassergehalts. |
+| Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
+
+### Überwachung
+
+| Frist | Bezug |
+| --- | --- |
+| Höchstalter eines Messwerts | Muss die üblichen Meldeabstände des Sensors abdecken. |
+| Schützrückmeldefrist | Zeit zur Bestätigung eines Schaltbefehls. |
+| Störungsbestätigung | Dauer eines abschaltrelevanten Fehlers bis zur verriegelten Schutzabschaltung. |
+
+[Ausfälle und Schutzabschaltung](betrieb.md#rückmeldungen-und-schutz)
+
+Zusammenhänge: [Heizregelung und Licht](betrieb.md),
+[Ofenkühlung](ofenkuehlung.md), [Gangerkennung](gangmodell.md),
+[Erkennungsschwellen](erkennung.md).
+
+## Wartung
+
+### Protokollierung
 
 Die Protokollstufe wirkt sofort auf das Home-Assistant-Protokoll.
 Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 
-## Standardwerte wiederherstellen
+### Standardwerte wiederherstellen
 
 Zurückgesetzt werden Betriebsparameter, Programmbibliothek, Betriebsart,
 aktuelle Temperaturwahl, Tastervorgabe, Präsenzquelle und Protokollstufe.

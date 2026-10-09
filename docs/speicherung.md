@@ -14,7 +14,39 @@ aufbewahrt. Der Nachlauf kann eine bereits beendete Sitzung noch ergänzen.
 Nach einem Neustart bleibt eine unterbrochene Sitzung historisch offen; ein
 Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
 
-## Daten und Zeitangaben
+## Archiv verwalten
+
+### Export
+
+Der ZIP-Download unter **Einstellungen** erfordert Administratorrechte.
+Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung.
+
+| Datei | Inhalt |
+| --- | --- |
+| `manifest.json` | Schema, Instanz, Auflösung und Zeitformat |
+| `sessions.jsonl` | Neuester Stand jeder Sitzung einschließlich ihrer Konfiguration |
+| `records.jsonl` | Alle Datensätze und gespeicherten Revisionen in Aufzeichnungsreihenfolge |
+| `measurements.csv` | Originalmessungen mit Datensatz-/Sitzungs-ID, Empfangs-/Messzeit, Messort, Messgröße, Quelle, Wert und Rohwert |
+
+### Backup und Wiederherstellung
+
+Je Sauna liegt eine SQLite-Datei unter
+`<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`.
+Sie wird im Home-Assistant-Backup konsistent gesichert.
+
+Nach einer Wiederherstellung steht der gespeicherte Verlauf bereit.
+Der Saunabetrieb erfordert erneutes Einschalten.
+
+### Löschen
+
+Administratoren können einzelne abgeschlossene oder durch Neustart unterbrochene
+Sitzungen sowie das gesamte Archiv löschen. Eine laufende Sitzung einschließlich
+Wiederaufnahmepause sperrt beide Aktionen. Einstellungen und Gerätezuordnungen
+bleiben erhalten.
+
+## Datenreferenz
+
+### Daten und Zeitangaben
 
 Originalwerte behalten Messrolle, Quelle, Empfangszeit und verfügbare Genauigkeit.
 Ein Gerätezeitstempel wird nur übernommen, wenn die Quelle ihn liefert.
@@ -35,35 +67,7 @@ Gerätewechsel schreibt die Herkunft alter Messungen nicht um.
 Fehlende oder veraltete Messungen bleiben Datenlücken. Für die Zeichnung
 verdichtete Kurven verändern die Originalwerte im Export nicht.
 
-## Backup und Wiederherstellung
-
-Je Sauna liegt eine SQLite-Datei unter
-`<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`.
-Sie wird im Home-Assistant-Backup konsistent gesichert.
-
-Nach einer Wiederherstellung steht der gespeicherte Verlauf bereit.
-Der Saunabetrieb erfordert erneutes Einschalten.
-
-## Löschen
-
-Administratoren können einzelne abgeschlossene oder durch Neustart unterbrochene
-Sitzungen sowie das gesamte Archiv löschen. Eine laufende Sitzung einschließlich
-Wiederaufnahmepause sperrt beide Aktionen. Einstellungen und Gerätezuordnungen
-bleiben erhalten.
-
-## Export
-
-Der ZIP-Download unter **Einstellungen** erfordert Administratorrechte.
-Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung.
-
-| Datei | Inhalt |
-| --- | --- |
-| `manifest.json` | Schema, Instanz, Auflösung und Zeitformat |
-| `sessions.jsonl` | Neuester Stand jeder Sitzung einschließlich ihrer Konfiguration |
-| `records.jsonl` | Alle Datensätze und gespeicherten Revisionen in Aufzeichnungsreihenfolge |
-| `measurements.csv` | Originalmessungen mit Datensatz-/Sitzungs-ID, Empfangs-/Messzeit, Messort, Messgröße, Quelle, Wert und Rohwert |
-
-## API-Zugriff
+### API-Zugriff
 
 Alle Zugriffe benötigen eine Home-Assistant-Anmeldung und die Berechtigung
 für die jeweilige Sauna (`entry_id`).

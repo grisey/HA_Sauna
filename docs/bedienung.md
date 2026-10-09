@@ -1,6 +1,8 @@
 # Bedienung
 
-## Betriebsstart und Temperaturwahl
+## Sitzung steuern
+
+### Betriebsstart und Temperaturwahl
 
 | Auswahl | Wirkung |
 | --- | --- |
@@ -13,7 +15,7 @@ Unvollständige oder nach einem Speicherfehler offene Eingaben bleiben Entwürfe
 auch das Sitzungsende übernimmt sie nicht automatisch.
 [Stufenfolge und Programmänderungen](betrieb.md#temperaturprogramm)
 
-## Ausschalten und Fortsetzen
+### Ausschalten und Fortsetzen
 
 | Aktion | Wirkung |
 | --- | --- |
@@ -25,7 +27,7 @@ Beim langen Saunatasterdruck beginnt der Lichtnachlauf erst beim Loslassen.
 Die übrigen [Tasterwirkungen](betrieb.md#bedienhandlungen-und-betriebsart) und
 [Kühlregeln](ofenkuehlung.md) sind gesondert beschrieben.
 
-## Betriebsart Manuell und Übersteuerung
+### Betriebsart Manuell und Übersteuerung
 
 | | Manuelle Betriebsart | Ofenübersteuerung in Automatik |
 | --- | --- | --- |
@@ -37,23 +39,13 @@ Die übrigen [Tasterwirkungen](betrieb.md#bedienhandlungen-und-betriebsart) und
 Technische Schutzbedingungen bleiben wirksam. Die [Heizpriorität](betrieb.md#heizpriorität)
 bestimmt, wann eine Ofen-EIN-Wahl ausgeführt wird.
 
-## Licht
+### Licht
 
 Manuelle Lichtwahl in Automatik gilt bis zum passenden Phasenwechsel oder zum
 Ablauf der Übersteuerungsdauer. Das gilt auch für Änderungen am Lichttaster.
 Im manuellen Betrieb bleibt die Lichtwahl unbefristet.
 Administratoren können zusätzlich eine freie Helligkeit vorgeben.
 [Automatische Lichtkurve](betrieb.md#licht)
-
-## Programme und Tastervorgabe
-
-Die Programmbibliothek ist nach Sitzungsende mit normalen Bedienrechten
-bearbeitbar. **Fertig** übernimmt eine Eingabe in den Entwurf;
-**Programme speichern** speichert den gesamten Katalog. Die Reihenfolge lässt
-sich auch mit Pfeiltasten am fokussierten Griff ändern.
-
-Die Startvorgabe für Taster oder Betriebsschalter wird sofort gespeichert.
-Der Start im Panel verwendet dessen aktuelle Temperaturwahl.
 
 ## Verlauf und Anzeigen
 
@@ -70,7 +62,19 @@ Strg/Cmd mit dem Mausrad oder eine Vergrößerungsgeste zoomt den Verlauf;
 normales Scrollen bewegt den Inhalt. Aufbewahrung, Datenlücken und Export
 beschreibt [Archiv und Export](speicherung.md).
 
-## Darstellung
+## Dauerhafte Einstellungen
+
+### Programme und Tastervorgabe
+
+Die Programmbibliothek ist nach Sitzungsende mit normalen Bedienrechten
+bearbeitbar. **Fertig** übernimmt eine Eingabe in den Entwurf;
+**Programme speichern** speichert den gesamten Katalog. Die Reihenfolge lässt
+sich auch mit Pfeiltasten am fokussierten Griff ändern.
+
+Die Startvorgabe für Taster oder Betriebsschalter wird sofort gespeichert.
+Der Start im Panel verwendet dessen aktuelle Temperaturwahl.
+
+### Darstellung
 
 Darstellungsänderungen gelten nach dem Speichern für alle Benutzer der Sauna.
 Auch **Standarddarstellung wiederherstellen** ändert zunächst nur den Entwurf.
@@ -80,7 +84,7 @@ Die Anzeigeskala begrenzt den direkt am Rundinstrument wählbaren Sollbereich,
 ändert aber keine Regelparameter. Werte außerhalb der Skala bleiben als Zahl
 sichtbar. Verlaufsachsen richten sich nach den gespeicherten Messungen.
 
-## Technische Einstellungen und Rücksetzen
+### Technische Einstellungen und Rücksetzen
 
 Anlagenparameter und Gerätezuordnungen sind nach Sitzungsende mit
 Administratorrechten änderbar. Protokollstufe und Darstellung bleiben während
