@@ -4,12 +4,11 @@
 
 Betrieb-EIN beginnt eine Sitzung. Betrieb-AUS beendet den offenen Gang und
 startet die gemeinsame Frist für Wiederaufnahme und Lichtnachlauf. Erneutes
-Einschalten innerhalb dieser Frist setzt dieselbe Sitzung fort. Nach Ablauf der Frist beginnt das nächste Einschalten eine neue
-Sitzung. Jeder Sitzungsstart beendet einen laufenden Lichtnachlauf.
+Einschalten innerhalb dieser Frist setzt dieselbe Sitzung fort. Nach Ablauf der
+Frist beginnt das nächste Einschalten eine neue Sitzung. Jeder Sitzungsstart
+beendet einen laufenden Lichtnachlauf.
 
-Während der Sitzung lassen sich Solltemperatur und Temperaturprogramm anpassen.
-Grundlegende Einstellungen und Gerätezuordnungen werden nach Sitzungsende
-geändert. Die Wiederaufnahmefrist gehört zur bestehenden Sitzung. Bei einem
+Die Wiederaufnahmefrist gehört zur bestehenden Sitzung. Bei einem
 Neustart von Home Assistant bleibt der gespeicherte Verlauf erhalten; der
 Ofenbetrieb beginnt wieder durch ausdrückliches Einschalten.
 
@@ -133,24 +132,16 @@ der beendeten Lichtphase AUS.
 
 Ein kurzer Tastendruck bei Betrieb-AUS startet den Automatikbetrieb mit der
 gespeicherten Tastervorgabe: einem benannten Programm oder einer eigenen
-konstanten Temperatur. Bei nativen Ereignisquellen startet ausschließlich die
-Kurzklassifikation, auch ohne vorherige Druckmeldung. Drücken und Loslassen
-allein starten den Betrieb nicht. Beim Binärtaster bestätigt das Loslassen
-vor Erreichen der eingestellten Langdruckdauer den kurzen Druck.
+konstanten Temperatur.
 
-Ein langer Druck aus Betrieb-AUS startet die Sauna nicht. Zugehöriges Loslassen
-und nachlaufende Meldungen derselben Langgeste erzeugen keinen Kurzstart.
-Die nächste eigenständige Kurzbetätigung kann regulär starten. Die Kurzstartgeste
-wird einmal ausgeführt; zugehörige Folgemeldungen erzeugen keine zusätzliche
-Ofenübersteuerung. Bei eingeschaltetem Automatikbetrieb
+Ein langer Druck aus Betrieb-AUS startet die Sauna nicht. Bei eingeschaltetem Automatikbetrieb
 schaltet ein kurzer Druck die vorübergehende Ofenwahl um beziehungsweise gibt
 an die Automatik zurück. Bei eingeschaltetem Betrieb in Manuell wechselt ein
 kurzer Druck die Ofenvorgabe zwischen EIN und AUS.
 
 Ein langer Druck bei laufendem Betrieb beendet den Betrieb und schließt die
 Sitzung ab. Das Licht bleibt während des Haltens AUS. Erst das bestätigte
-Loslassen startet den Lichtnachlauf. Das gilt auch für eine eigenständige
-Langklassifikation im laufenden Betrieb; sie liefert den Langdrucknachweis.
+Loslassen startet den Lichtnachlauf.
 
 [Tastermeldungen und einmalige Verarbeitung](schnittstellen.md#tasterereignisse)
 
@@ -181,8 +172,11 @@ technische Schutzgründe und Betrieb-AUS behalten Vorrang.
 
 Gültige Temperaturmessungen und bestätigte Geräterückmeldungen bilden die
 Grundlage der Heizfreigabe. Messwerte und Befehlsrückmeldungen haben eigene
-Gültigkeits- beziehungsweise Bestätigungsfristen. Eine ausgelöste
-Schutzabschaltung verriegelt die Heizfreigabe.
+Gültigkeits- beziehungsweise Bestätigungsfristen. Abschaltrelevant sind fehlende
+Regeltemperatur oder Schützrückmeldung, ausgebliebene Schaltvollzüge,
+fehlgeschlagene Schaltbefehle und nachgewiesenes Weiterheizen trotz AUS-Befehl.
+Bestehen sie während der Betriebs- oder Heizüberwachung über die
+Bestätigungsdauer fort, verriegelt die Schutzabschaltung die Heizfreigabe.
 
 [Überwachungsfristen](parameter.md#überwachung)
 

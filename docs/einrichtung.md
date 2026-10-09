@@ -21,14 +21,12 @@ Teil der Bedienung.
 
 Eine Messposition besteht aus einem zusammengehörigen Temperatur- und
 Feuchtesensor. Eine vollständige Position genügt; eine zweite ergänzt die
-Beobachtung. Für die Regelung führt die obere gültige Temperatur, bei deren
-Ausfall die untere. Der Ausfall einer konfigurierten Position bleibt als Störung
-sichtbar, auch wenn der Betrieb mit der anderen Position weiterläuft.
+Beobachtung. Den Vorrang und Ersatz ausgefallener Messungen beschreibt die
+[Temperaturregelung](betrieb.md#temperatur-und-bereitschaft).
 
 Bedieneingang und Heizschütz sind getrennte Zuordnungen: Der Taster oder
 Betriebsschalter bedient die Sitzung, HA Sauna steuert den Heizaktor.
-Die bestätigte Stellung des Heizschütz-Schalters dient als Relaisrückmeldung;
-dafür genügt auch die bestätigte Stellung des verwendeten Shelly-Schalters.
+Die bestätigte Stellung des Heizschütz-Schalters dient als Relaisrückmeldung.
 Leistungssensor und unabhängiger binärer Heiznachweis sind optionale Ergänzungen.
 Das Saunalicht muss dimmbar sein.
 
@@ -46,17 +44,11 @@ die [Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart).
 
 ## Anlageneinstellungen
 
-Das **Höchstalter eines Messwerts** muss zu den üblichen Meldeabständen der
-Sensoren passen. Schützrückmeldung und Helligkeitsskala müssen der tatsächlichen
-Gerätekonfiguration entsprechen. Die [Parameterreferenz](parameter.md) erklärt
-die Zusammenhänge; Vorgaben werden im zentralen Katalog geführt.
-
-Dauerparameter und Gerätezuordnungen lassen sich nach Sitzungsende im Panel bzw.
-Home-Assistant-Optionsdialog ändern. Die aktuelle Solltemperatur und
-Programmwahl werden in der Steuerungsansicht bedient. Technische Änderungen
-setzen diese Werte nicht zurück.
+Sensorfristen, Helligkeitsskala und weitere Anlagenparameter sind in der
+[Parameterreferenz](parameter.md) beschrieben; die
+[Bedienungsanleitung](bedienung.md#technische-einstellungen-und-rücksetzen)
+nennt die erforderlichen Rechte und Sitzungssperren.
 
 Die Programmbibliothek und die Startvorgabe für Taster oder Betriebsschalter
-stehen unter **Programme und Start**. Der externe Start verwendet diese
-Vorgabe, der Start im Panel dessen aktuelle Temperaturwahl. Die unterschiedlichen
-Speicherregeln erklärt [Programme und Tastervorgabe](bedienung.md#programme-und-tastervorgabe).
+stehen unter **Programme und Start**. Geltungsbereich und Speicherregeln erklärt
+[Programme und Tastervorgabe](bedienung.md#programme-und-tastervorgabe).

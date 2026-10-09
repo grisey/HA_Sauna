@@ -11,10 +11,7 @@ Neueinrichtung. Eine Standardrücksetzung verwendet `instance`.
 `legacy_parameters` dient ausschließlich der Lesekompatibilität älterer
 Konfigurationen und des Referenzadapters.
 
-Einstellungen sind dauerhafte Anlagenvorgaben. Aktuelle Solltemperatur und
-Programmwahl werden in der Steuerung geändert. Technische Einstellungen und
-Programmbibliothek sind nach Sitzungsende bearbeitbar; Protokollstufe und
-Darstellung auch während der Sitzung.
+[Bedienrechte und Änderbarkeit](bedienung.md#technische-einstellungen-und-rücksetzen)
 
 ## Temperatur und Ofen
 
@@ -23,9 +20,7 @@ Programmstufen und Tastervorgabe. Sollwerte und berechnete Zwischenstufen werden
 auf ganze Grad gerundet; ab einem halben Grad wird aufgerundet. Diese Werte
 verwendet auch die Regelung.
 
-Abschaltaufschlag und Wiedereinschaltabstand beziehen sich jeweils auf die
-Solltemperatur. Heizpause und Mindestheizzeit ergänzen dieses Temperaturband.
-Ihre Wirkung und Priorität beschreibt
+Thermostatband, Heizpause und Mindestheizzeit beschreibt
 [Temperatur und Bereitschaft](betrieb.md#temperatur-und-bereitschaft).
 
 ## Temperaturprogramme
@@ -39,24 +34,18 @@ von der aktuellen Temperaturwahl im Panel unabhängig.
 
 ## Betrieb und Kühlung
 
-Die Wiederaufnahmezeit bestimmt zugleich die Sitzungspause und den Lichtnachlauf.
-Die Dauer manueller Übersteuerungen gilt nur in Automatik; die Betriebsart
-Manuell besitzt keine solche Frist. Die Aufgussbestätigungsfrist gehört
-allein zum Proxyverfahren der Gangerkennung.
+Die Aufgussbestätigungsfrist gehört allein zum Proxyverfahren der Gangerkennung.
 
-Die maximale Kühldauer darf die Mindestdauer nicht unterschreiten. Die
-[Ofenkühlung](ofenkuehlung.md) berechnet ihre Dauer beim Kühlbeginn aus der
-Betriebshistorie und den eingestellten Gewichten.
+Zusammenhang und Wirkung der Kühlparameter beschreibt die
+[Ofenkühlung](ofenkuehlung.md#berechnung-der-dauer).
 
 [Bedienhandlungen und Betriebsart](betrieb.md#bedienhandlungen-und-betriebsart) ·
 [Gangbestätigung](gangmodell.md)
 
 ## Licht
 
-Die Lichtparameter formen die temperaturabhängige Helligkeit und den Übergang
-während der Kühlung; der Ablauf ist unter [Licht](betrieb.md#licht) beschrieben.
-Die Hysterese wird in Prozentpunkten angegeben und stabilisiert automatische
-Stellwertwechsel. Manuelle Lichtwahl und fälliges Ausschalten umgehen sie.
+Die Hysterese wird in Prozentpunkten angegeben. Lichtkurve, Übergänge und
+manuelle Übersteuerung sind unter [Licht](betrieb.md#licht) beschrieben.
 
 Die Helligkeitsskala muss dem konfigurierten Maximalwert des Lichtgeräts
 entsprechen. Sie dient der Zuordnung von Geräterückmeldungen; die Bedienung
@@ -66,8 +55,7 @@ verwendet weiterhin Prozentwerte.
 
 Das Höchstalter eines Messwerts muss die normalen Meldeabstände der Sensoren
 abdecken. Die Rückmeldefrist überwacht die Bestätigung eines Schützbefehls.
-Eine anhaltende technische Störung führt nach der Bestätigungsdauer zur
-verriegelten Schutzabschaltung.
+Die Bestätigungsdauer gilt für abschaltrelevante Fehler der Heizfreigabe.
 
 [Sensorvorrang](betrieb.md#temperatur-und-bereitschaft) ·
 [Rückmeldungen und Schutz](betrieb.md#rückmeldungen-und-schutz)

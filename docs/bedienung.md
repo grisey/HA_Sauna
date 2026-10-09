@@ -1,10 +1,5 @@
 # Bedienungsanleitung
 
-Eine Saunasitzung kann mehrere Saunagänge enthalten. Beginn und Bestätigung
-hängen von der gewählten [Präsenzquelle](gangmodell.md) ab. Die markierte
-Ofenwahl bezeichnet den gewünschten Modus; die Ofenrückmeldung zeigt den
-beobachteten Zustand.
-
 ## Betriebsstart und Temperaturwahl
 
 Der Start setzt gültige Messwerte und eine vollständige Einrichtung voraus.
@@ -12,7 +7,7 @@ Fehlende Voraussetzungen werden im Panel angezeigt.
 
 Die direkte Wahl am Temperaturbogen gilt sofort und setzt eine konstante
 Solltemperatur. Programm- und Schnellwahlen benötigen während einer bestehenden
-Sitzung dagegen **Programm übernehmen**. **Abbrechen** erhält die bisherige Wahl.
+Sitzung dagegen **Programm übernehmen**.
 Laufende Gänge und ihre Zeiten bleiben bei einer Temperaturänderung erhalten.
 
 Ohne Sitzung werden gültige Programmwahlen und abgeschlossene individuelle
@@ -23,10 +18,8 @@ Ein Speicherfehler erhält den Entwurf und stoppt weitere automatische Übernahm
 Beginnt inzwischen eine Sitzung, benötigen wartende Änderungen eine Bestätigung.
 Auch das Sitzungsende übernimmt einen noch offenen Entwurf nicht automatisch.
 
-Bei Temperaturfolgen gilt nach jedem beendeten, bestätigten Gang die nächste
-Stufe; nach der letzten bleibt deren Temperatur erhalten. Gleichmäßige
-Verteilung und einzeln vorgegebene Stufen sind alternative Eingabeformen.
-Grenzen und Berechnung stehen unter [Temperaturprogramm](betrieb.md#temperaturprogramm).
+Stufenfolge und Änderungen laufender Programme sind unter
+[Temperaturprogramm](betrieb.md#temperaturprogramm) beschrieben.
 
 ## Phasen und Zeitangaben
 
@@ -101,7 +94,7 @@ Vorrang. Details stehen unter [Bedienhandlungen und Betriebsart](betrieb.md#bedi
 Normale Bedienrechte genügen zum Bearbeiten der Programmbibliothek nach
 Sitzungsende. **Fertig** übernimmt eine Programmeingabe zunächst nur in den
 Katalogentwurf; erst **Programme speichern** speichert den gesamten Entwurf
-dauerhaft. **Änderungen verwerfen** stellt den gespeicherten Katalog wieder her.
+dauerhaft.
 Die Reihenfolge lässt sich auch mit Pfeiltasten am fokussierten Griff ändern.
 
 Die Startvorgabe unter **Programme und Start** wird dagegen sofort gespeichert.
@@ -115,9 +108,8 @@ oder eine Vergrößerungsgeste verändert den Ausschnitt; normales Scrollen bewe
 die Inhalte. Die Wertanzeige bezieht sich auf empfangene Originalmesspunkte,
 nicht auf interpolierte Kurvenwerte.
 
-Administratoren finden im Detailverlauf die historischen Betriebszustände und
-Schaltgründe. Die Erkennungskontrolle verknüpft gespeicherte Ereignisse mit ihren
-Diagnosemarkern. Zum Messverlauf siehe [Daten- und Zeichenvertrag](livekurve.md).
+Die technischen Ansichten sind in der
+[Darstellungsreferenz](darstellung.md#verlauf-und-diagnose) beschrieben.
 
 Das Löschen einzelner Sitzungen oder des gesamten Archivs benötigt eine
 Bestätigung und ist erst nach Sitzungsende möglich. Einstellungen und
@@ -127,10 +119,9 @@ bestätigten Gang werden automatisch verworfen. Export und Sicherung beschreibt
 
 ## Darstellung und persönliche Startseite
 
-Darstellungsänderungen sind zunächst eine Vorschau und gelten nach dem Speichern
-für alle Benutzer dieser Sauna. Das Wiederherstellen der Standarddarstellung
-ändert zunächst nur den Entwurf. Einzelheiten zu Skalen und Kontrast stehen in
-der [Darstellungsreferenz](darstellung.md).
+Darstellungsänderungen gelten für alle Benutzer dieser Sauna. Vorschau,
+Speicherung und Rücksetzung beschreibt die
+[Darstellungsreferenz](darstellung.md#darstellungsentwurf-und-skalen).
 
 Die Wahl der Home-Assistant-Startseite gilt nur für das angemeldete Profil und
 lässt sich dort wieder ändern.
@@ -143,8 +134,5 @@ Aktuelle Solltemperatur und Programmwahl gehören zur Steuerung; technische
 Änderungen erhalten diese Werte. Protokollstufe und Darstellung bleiben während
 einer Sitzung anpassbar.
 
-**Standardwerte wiederherstellen** setzt nach Sitzungsende die
-Betriebsparameter und Temperaturvorgaben zurück. Gerätezuordnungen,
-Taster-/Schalterkonfiguration, Darstellung und Sitzungsarchiv bleiben erhalten.
-Der genaue [Rücksetzumfang](parameter.md#standardwerte-wiederherstellen) ist
-zentral beschrieben.
+Der [Rücksetzumfang](parameter.md#standardwerte-wiederherstellen) unterscheidet
+Softwarevorgaben, Gerätezuordnungen und gespeicherte Daten.
