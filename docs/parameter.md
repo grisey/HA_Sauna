@@ -39,47 +39,32 @@ Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung.
 Absolute Feuchte wird aus der Quelle übernommen; Mess-, Vorhersage- und
 HA-Aktualisierungszeit bleiben getrennt.
 
-## Anlagenparameter
+## Betriebsparameter abstimmen
 
 Standardwerte, zulässige Grenzen und Programmvorlagen stehen im
 [zentralen Katalog](../custom_components/ha_sauna/defaults.json).
 Gespeicherte Anlagenwerte haben Vorrang.
 
-### Betrieb und Ofen
-
-| Einstellung | Zu beachten |
+| Einstellung | Zusammenhang |
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Ofentimer-Vorwarnung | `0` deaktiviert die Warnung. |
+| Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
+| Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
+| Höchstalter eines Messwerts | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
 
-### Licht
-
-Die Helligkeitsskala muss dem konfigurierten Maximalwert des Lichtgeräts
-entsprechen; sie dient der Zuordnung eigener Befehle zu Geräterückmeldungen.
-
-### Erkennung
-
-Personenprüffenster müssen ganzzahlige Vielfache des Personen-Prüfabstands sein.
-
-### Überwachung
-
-Das Höchstalter eines Messwerts muss die regulären Meldeabstände der jeweiligen
-Quelle abdecken.
-
-[Ausfälle und Schutzabschaltung](betrieb.md#rückmeldungen-und-schutz)
+[Ausfälle und Schutzabschaltung](betrieb.md#bei-sensorausfall-oder-schutzabschaltung)
 
 Zusammenhänge: [Heizregelung und Licht](betrieb.md),
 [Ofenkühlung](ofenkuehlung.md), [Gangerkennung](gangmodell.md),
 [Erkennungsschwellen](erkennung.md).
 
-## Wartung
-
-### Protokollierung
+## Fehler im Home-Assistant-Protokoll untersuchen
 
 Die Protokollstufe wirkt sofort auf das Home-Assistant-Protokoll.
 Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 
-### Standardwerte wiederherstellen
+## Standardwerte wiederherstellen
 
 Zurückgesetzt werden Betriebsparameter, Programmbibliothek, Betriebsart,
 aktuelle Temperaturwahl, Tastervorgabe, Präsenzquelle und Protokollstufe.

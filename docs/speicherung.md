@@ -1,6 +1,6 @@
 # Archiv und Export
 
-## Aufbewahrung
+## Welche Sitzungen erhalten bleiben
 
 Sitzungen mit mindestens einem bestätigten Gang bleiben mit ihren Originaldaten
 ohne Altersbegrenzung erhalten. Sitzungen ohne bestätigten Gang werden nach dem
@@ -14,9 +14,7 @@ aufbewahrt. Der Nachlauf kann eine bereits beendete Sitzung noch ergänzen.
 Nach einem Neustart bleibt eine unterbrochene Sitzung historisch offen; ein
 Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
 
-## Archiv verwalten
-
-### Export
+## Sitzungen exportieren
 
 Der ZIP-Download unter **Einstellungen** erfordert Administratorrechte.
 Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung.
@@ -28,20 +26,24 @@ Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung
 | `records.jsonl` | Alle Datensätze und gespeicherten Revisionen in Aufzeichnungsreihenfolge |
 | `measurements.csv` | Originalmessungen mit Datensatz-/Sitzungs-ID, Empfangs-/Messzeit, Messort, Messgröße, Quelle, Wert und Rohwert |
 
-### Backup und Wiederherstellung
+## Archiv sichern und wiederherstellen
 
 Je Sauna liegt eine SQLite-Datei unter
 `<HA-Konfigurationsverzeichnis>/ha_sauna/<entry-id>.sqlite`.
 Sie wird im Home-Assistant-Backup konsistent gesichert.
 
-### Löschen
+## Sitzungen löschen
 
 Administratoren können einzelne abgeschlossene oder durch Neustart unterbrochene
 Sitzungen sowie das gesamte Archiv löschen. Eine laufende Sitzung einschließlich
 Wiederaufnahmepause sperrt beide Aktionen. Einstellungen und Gerätezuordnungen
 bleiben erhalten.
 
-## Datenreferenz
+## Messungen und Verlauf nachvollziehen
+
+Der Normalverlauf verwendet die führende Messposition der Regelung.
+Diagnoseansichten sind Administratoren vorbehalten und verwenden die zur Sitzung
+gespeicherten Einstellungen.
 
 ### Daten und Zeitangaben
 
@@ -64,7 +66,19 @@ Gerätewechsel schreibt die Herkunft alter Messungen nicht um.
 Fehlende oder veraltete Messungen bleiben Datenlücken. Für die Zeichnung
 verdichtete Kurven verändern die Originalwerte im Export nicht.
 
-### API-Zugriff
+### Nachträgliche Zuordnung im Verlauf
+
+Empfangene Messungen werden vor späteren Bedienhandlungen mit ihren damaligen
+Freigaben ausgewertet. Auch ein nur zwischenzeitlich erreichter Sollwert zählt
+für die Bereitschaft. Am Ende einer Bestätigungsfrist werden bereits empfangene
+Messungen dieses Zeitpunkts noch berücksichtigt.
+
+Ereignisbeginn, Buchung und Erkennung können auseinanderliegen. Späte Erkennung
+kann Gang- und Phasenzuordnung im Verlauf berichtigen; Gerätebefehle gelten erst
+zur tatsächlichen Ausgabezeit. Messzeiten und bestätigte Schalterrückmeldungen
+bleiben erhalten.
+
+## Technische Referenz: API-Zugriff
 
 Alle Zugriffe benötigen eine Home-Assistant-Anmeldung und die Berechtigung
 für die jeweilige Sauna (`entry_id`).

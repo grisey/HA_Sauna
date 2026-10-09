@@ -37,16 +37,16 @@ deterministische Serialisierung.
 
 ## Fachliche Grundlagen
 
-[Messpositionen und Sensorvorrang](docs/betrieb.md#temperatur-und-bereitschaft) ·
+[Messpositionen und Sensorvorrang](docs/betrieb.md#aufheizen-und-bereitschaft) ·
 [Heizzeit und Rückmeldequellen](docs/betrieb.md#heizzeit-timer-und-energie) ·
 [Heizpriorität](docs/betrieb.md#heizpriorität) ·
 [Gangbestätigung und Zählung](docs/gangmodell.md) ·
 [Ofenkühlung](docs/ofenkuehlung.md)
 
-[Bedienhandlungen und Betriebsart](docs/betrieb.md#bedienhandlungen-und-betriebsart) ·
-[Tasterwirkungen](docs/betrieb.md#bedienhandlungen-und-betriebsart) ·
+[Bedienhandlungen und Betriebsart](docs/bedienung.md) ·
+[Tasterwirkungen](docs/bedienung.md) ·
 [Archiv, Backup und Wiederherstellung](docs/speicherung.md) ·
-[Sitzung und Neustart](docs/betrieb.md#sitzung)
+[Sitzung und Neustart](docs/bedienung.md#ausschalten-oder-sofort-beenden)
 
 Das Referenzprogramm und seine Parameter unter `candidate/` bilden einen
 eingefrorenen Reproduktionsstand. Änderungen daran erfolgen in einem

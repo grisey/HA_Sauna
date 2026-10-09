@@ -1,13 +1,14 @@
 # Ofenkühlung
 
-## Auslösung
+## Nach einem Gang abkühlen
 
 Im Automatikbetrieb folgt die Kühlung auf einen abgeschlossenen bestätigten Gang:
 beim Proxyverfahren nach Durchlüften, bei direkter Präsenz nach belegtem Austritt
-([Gangmodell](gangmodell.md)). Betrieb-AUS verwendet stattdessen den
-[Lichtnachlauf](betrieb.md#licht). In Manuell bleibt die Bedienwahl maßgeblich.
+([Gangerkennung](gangmodell.md)). Betrieb-AUS verwendet stattdessen den
+[Lichtnachlauf](bedienung.md#ausschalten-oder-sofort-beenden).
+In Manuell bleibt die Bedienwahl maßgeblich.
 
-## Laufzeit und Abschluss
+## Kühlung abwarten oder vorzeitig beenden
 
 Die Kühlanforderung schaltet den Ofen aus und sperrt erneutes Heizen. Erst
 bestätigtes Schütz-AUS startet die Uhr und legt die Kühldauer fest. Diese bleibt
@@ -17,10 +18,11 @@ unbekannte Rückmeldung pausieren die Uhr, ohne die Heizsperre aufzuheben.
 Vorzeitiges Beenden gibt die reguläre Steuerung wieder frei. Es verkürzt ebenso
 wie Betrieb-AUS den Bemessungszeitraum für die nächste Kühlung nicht: Nur eine
 vollständig durchlaufene Kühlung setzt dessen Beginn auf ihren Abschluss.
-Bei der ersten Kühlung gilt der Sitzungsbeginn.
 
-## Berechnung der Dauer
+## Wie die Kühldauer entsteht
 
+Die Kühldauer berücksichtigt bisheriges Heizen und Bereitschaft seit dem Ende der letzten
+vollständigen Kühlung, bei der ersten Kühlung seit Sitzungsbeginn.
 Alle Zeiten beziehen sich auf den tatsächlichen Kühlbeginn. Jüngere Anteile
 zählen stärker, mit der eingestellten Halbwertszeit \(h\):
 

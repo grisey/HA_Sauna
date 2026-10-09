@@ -1,16 +1,34 @@
-# Einrichtung
+# Sauna einrichten
 
-Home Assistant ab **2026.9.0**. HACS-Repository:
-`https://github.com/grisey/HA_Sauna`, Typ **Integration**.
+## Installation vorbereiten
+
+Voraussetzung ist Home Assistant ab **2026.9.0**. Das HACS-Repository
+`https://github.com/grisey/HA_Sauna` wird als Typ **Integration** eingebunden.
 Installation und Updates erfordern einen Home-Assistant-Neustart.
-
-## Anbindung
 
 HA Sauna übernimmt Ofen und Licht; parallele Steuerungsautomationen müssen
 deaktiviert sein. Externe Lichttaster werden als manuelle Eingriffe ausgewertet.
 
-Eine vollständige Temperatur-/Feuchteposition, Heizschütz, Bedieneingang und
-dimmbares Licht sind erforderlich. Die [Entitätsrollen](parameter.md#entitätsrollen)
-definieren unterstützte Typen und Einheiten.
-[Direkte Präsenzführung](gangmodell.md#direkter-präsenzsensor) verwendet weiterhin
-die thermische Türerkennung.
+## Sensoren und Geräte zuordnen
+
+Erforderlich sind mindestens ein vollständiges Temperatur-/Feuchtepaar,
+Heizschütz, Bedieneingang und dimmbares Licht. Temperatur und Feuchte eines
+Paars müssen denselben Messort abbilden. Die
+[Entitätsrollen](parameter.md#entitätsrollen) beschreiben unterstützte Typen,
+Einheiten und optionale Quellen.
+
+Den Vorrang der Messpositionen beschreibt
+[Aufheizen und Bereitschaft](betrieb.md#aufheizen-und-bereitschaft), den Umgang
+mit fehlenden oder veralteten Messwerten
+[Ausfälle und Schutzabschaltung](betrieb.md#bei-sensorausfall-oder-schutzabschaltung).
+
+## Gangerkennung festlegen
+
+Gänge werden entweder aus Temperatur und Feuchte oder mit einem direkten
+Präsenzsensor erkannt. Auch mit Präsenzsensor bleiben thermisch erkannte
+Türöffnungen und Türschließungen erforderlich; Präsenz allein beginnt oder
+beendet keinen Gang. Die [Gangerkennung](gangmodell.md) beschreibt die
+Bedingungen beider Verfahren.
+
+[Einstellungen und Rücksetzungen](parameter.md) ·
+[Sitzung starten und bedienen](bedienung.md)

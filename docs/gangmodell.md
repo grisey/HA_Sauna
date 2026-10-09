@@ -1,19 +1,20 @@
-# Gangmodell
+# Beginn, Bestätigung und Ende eines Saunagangs
 
-Die gewählte Präsenzquelle bestimmt Beginn und Ende eines Saunagangs:
-`ha_presence` verwendet einen direkten Präsenzsensor, `proxy` die
-[Temperatur- und Feuchtesignale](erkennung.md).
+Die gewählte Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
+direkten Präsenzsensor oder aus [Temperatur und Feuchte](erkennung.md)
+(Proxyverfahren).
 
-## Startbedingungen
+## Wann ein Gang beginnen kann
 
-In beiden Betriebsarten benötigt ein neuer Gang Betrieb-EIN, keine angeforderte
+Bei beiden Erkennungsverfahren benötigt ein neuer Gang Betrieb-EIN, keine angeforderte
 oder laufende Ofenkühlung und eine frische, gültige
-[Regeltemperatur](betrieb.md) ab der eingestellten Mindesttemperatur.
+[Regeltemperatur](betrieb.md#aufheizen-und-bereitschaft) ab der eingestellten
+Mindesttemperatur.
 Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
 Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
 Messfenster aus dem freigegebenen Zeitraum.
 
-## Direkter Präsenzsensor
+## Gang mit direktem Präsenzsensor erkennen
 
 Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließender
 Schließung. Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
@@ -28,7 +29,8 @@ eintreffen. Jeder Türvorgang begründet höchstens einen Übergang.
 | Durchlüften | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
-Eine kalte Türepisode wird durch späteres Aufheizen nicht nachträglich zum Start.
+Ein Türvorgang unterhalb der Mindesttemperatur wird durch späteres Aufheizen
+nicht nachträglich zum Gangbeginn.
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
 
@@ -37,9 +39,7 @@ seine zusätzliche Heizanforderung entfällt bis zur Rückkehr der Quelle.
 Thermostat und Schutz bleiben wirksam. Es gibt keinen automatischen Wechsel zum
 Proxyverfahren und keine Tür-Mindestheizhilfe.
 
-## Proxyverfahren
-
-### Beginn und Bestätigung
+## Gang aus Temperatur und Feuchte erkennen
 
 | Ereignis | Wirkung |
 | --- | --- |
@@ -60,10 +60,11 @@ Endzeitpunkts. Nach einer Rücknahme kann ein neuer gültiger Aufguss einen eige
 Gang beginnen. Eine kurze Türöffnung mit anschließendem Schließen beendet
 keinen aktiven Gang; dafür ist bestätigtes Durchlüften erforderlich.
 
-## Zählung und Folge
+## Gang zählen und nächste Temperaturstufe beginnen
 
 Nur beendete, bestätigte Gänge zählen, jeweils einmal und unabhängig vom
-Endgrund. Gleichzeitig folgt die nächste Temperaturstufe. Beginn und zugeordnete
-Aufgüsse bleiben erhalten.
+Endgrund. Gleichzeitig folgt die nächste Stufe des
+[Temperaturprogramms](bedienung.md#temperatur-während-der-sitzung-ändern).
+Beginn und zugeordnete Aufgüsse bleiben erhalten.
 
 [Heizpriorität](betrieb.md#heizpriorität) · [Ofenkühlung](ofenkuehlung.md)
