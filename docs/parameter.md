@@ -1,150 +1,85 @@
-# Parameter und Entitätsrollen
+# Einstellungen und Entitäten
 
-[defaults.json](../custom_components/ha_sauna/defaults.json) führt Standardwerte,
-Grenzen, Einheiten, Programmvorlagen und Darstellungsvorgaben. Gespeicherte
-Anlagenwerte haben Vorrang. Änderungen am Katalog werden nach einem Neustart von
-Home Assistant eingelesen und wirken auf neue Instanzen, fehlende Einstellungen
-und eine ausdrücklich ausgelöste Standardrücksetzung.
+Standardwerte, zulässige Grenzen und Programmvorlagen stehen im
+[zentralen Katalog](../custom_components/ha_sauna/defaults.json).
+Gespeicherte Anlagenwerte haben Vorrang.
 
-`instance` enthält die allgemeinen Instanzvorgaben, `setup` die Abweichungen bei
-Neueinrichtung. Eine Standardrücksetzung verwendet `instance`.
-`legacy_parameters` unterstützt das Lesen älterer Konfigurationen.
+## Anlagenparameter
 
-[Bedienrechte und Änderbarkeit](bedienung.md#technische-einstellungen-und-rücksetzen)
+| Einstellung | Zu beachten |
+| --- | --- |
+| Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
+| Ofentimer-Vorwarnung | `0` deaktiviert die Warnung. |
+| Ofenleistung | Grundlage der Verbrauchsschätzung ohne Leistungsmessung. |
+| Leistungsschwelle | Grenze, ab der eine Leistungsmessung als Heizen zählt. |
+| Lichthysterese | Angabe in Prozentpunkten. |
+| Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen; die Bedienung verwendet Prozent. |
+| Feuchteänderungen | Relative Feuchteänderung in Prozentpunkten; Wasserverlust beim Durchlüften als Anteil des absoluten Wassergehalts. |
+| Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
 
-## Temperatur und Ofen
-
-Der zulässige Sollbereich gilt gemeinsam für direkte Temperaturwahl,
-Programmstufen und Tastervorgabe. Sollwerte und berechnete Zwischenstufen werden
-auf ganze Grad gerundet; ab einem halben Grad wird aufgerundet. Diese Werte
-verwendet auch die Regelung.
-
-Thermostatband, Heizpause und Mindestheizzeit beschreibt
-[Temperatur und Bereitschaft](betrieb.md#temperatur-und-bereitschaft).
-
-## Temperaturprogramme
-
-Programme behalten beim Umbenennen oder Sortieren ihre Kennung. Eine bestehende
-Programm- oder Tasterzuordnung bleibt dadurch erhalten. Die Tastervorgabe ist
-von der aktuellen Temperaturwahl im Panel unabhängig.
-
-[Stufenfolge und Änderungen während der Sitzung](betrieb.md#temperaturprogramm) ·
-[Programme und Tastervorgabe speichern](bedienung.md#programme-und-tastervorgabe)
-
-## Betrieb und Kühlung
-
-Die Aufgussbestätigungsfrist gehört allein zum Proxyverfahren der Gangerkennung.
-
-Zusammenhang und Wirkung der Kühlparameter beschreibt die
-[Ofenkühlung](ofenkuehlung.md#berechnung-der-dauer).
-
-[Bedienhandlungen und Betriebsart](betrieb.md#bedienhandlungen-und-betriebsart) ·
-[Gangbestätigung](gangmodell.md)
-
-## Licht
-
-Die Hysterese wird in Prozentpunkten angegeben. Lichtkurve, Übergänge und
-manuelle Übersteuerung sind unter [Licht](betrieb.md#licht) beschrieben.
-
-Die Helligkeitsskala muss dem konfigurierten Maximalwert des Lichtgeräts
-entsprechen. Sie dient der Zuordnung von Geräterückmeldungen; die Bedienung
-verwendet weiterhin Prozentwerte.
+Zusammenhänge: [Heizregelung und Licht](betrieb.md),
+[Ofenkühlung](ofenkuehlung.md), [Gangerkennung](gangmodell.md),
+[Erkennungsschwellen](erkennung.md).
 
 ## Überwachung
 
-Das Höchstalter eines Messwerts muss die normalen Meldeabstände der Sensoren
-abdecken. Die Rückmeldefrist überwacht die Bestätigung eines Schützbefehls.
-Die Bestätigungsdauer gilt für abschaltrelevante Fehler der Heizfreigabe.
+| Frist | Bezug |
+| --- | --- |
+| Höchstalter eines Messwerts | Muss die üblichen Meldeabstände des Sensors abdecken. |
+| Schützrückmeldefrist | Zeit zur Bestätigung eines Schaltbefehls. |
+| Störungsbestätigung | Dauer eines abschaltrelevanten Fehlers bis zur verriegelten Schutzabschaltung. |
 
-[Sensorvorrang](betrieb.md#temperatur-und-bereitschaft) ·
-[Rückmeldungen und Schutz](betrieb.md#rückmeldungen-und-schutz)
-
-## Timer und Energie
-
-Die Ofentimer-Vorwarnung ist mit `0` deaktiviert. Bei älteren gespeicherten
-Konfigurationen bleibt eine fehlende oder ehemals leere Warnvorgabe deaktiviert.
-
-Die Ofenleistung dient der Verbrauchsschätzung. Bei zugeordneter Leistungsmessung
-bestimmt die Leistungsschwelle, wann tatsächliches Heizen gezählt wird.
-[Heizzeit, Timer und Energie](betrieb.md#heizzeit-timer-und-energie) erklärt
-Quellenvorrang, Zählung und Datenlücken.
-
-## Anzeige
-
-Schnellauswahl und Sollschieber verwenden den zulässigen Sollbereich.
-Messbogenskalen und Farben werden getrennt von den Regelparametern gespeichert.
-Den Einfluss der Skalen und die Regeln für Zeitangaben beschreibt die
-[Darstellungsreferenz](darstellung.md).
-
-## Erkennungsparameter
-
-Feuchteänderungen sind in Prozentpunkten angegeben. Der Wasserverlust beim
-Durchlüften ist dagegen ein relativer Anteil des absoluten Wassergehalts.
-Die Zeitfenster für deutliche und schwache Personensignale müssen ganzzahlige
-Vielfache des Zeitabstands der Personenprüfung sein.
-
-Die [Erkennungsregeln](erkennung.md) beschreiben das Zusammenwirken der
-Schwellen. Für historische Diagnosen gelten die zur jeweiligen Sitzung
-gespeicherten Einstellungen.
+[Ausfälle und Schutzabschaltung](betrieb.md#rückmeldungen-und-schutz)
 
 ## Entitätsrollen
 
-| Rolle | Zuordnung und Einheit |
+| Rolle | Geeignete Entität |
 | --- | --- |
-| Temperatur oben / unten | Temperatursensor in °C, zusammen mit der Luftfeuchte derselben Position |
-| Luftfeuchte oben / unten | Sensor für relative Luftfeuchte in %, zusammen mit der Temperatur derselben Position |
-| Schalter des Heizschützes | `switch`; seine bestätigte Stellung dient als Relaisrückmeldung. |
-| Taster oder Betriebsschalter | `event` oder `binary_sensor`, passend zur gewählten Bedienart |
-| Dimmbares Saunalicht | `light` mit Helligkeitssteuerung |
-| Unabhängiger binärer Heiznachweis (optional) | `switch` oder `binary_sensor` |
-| Leistungsmessung des Ofens (optional) | Leistungssensor in W oder kW |
-| Sensorstatus oben / unten | Optionaler binärer Sensor oder klassen- und einheitenloser Statussensor |
-| Präsenzentität | Optionaler `binary_sensor` der Klasse `occupancy`, `presence` oder `motion` |
-| Audioziel (vorbereitet) | Optionale hinterlegte Zuordnung eines `media_player` |
+| Temperatur oben / unten | `sensor`, Klasse `temperature`, °C |
+| Relative Feuchte oben / unten | `sensor`, Klasse `humidity`, % |
+| Heizschütz | `switch` |
+| Bedieneingang | `event` der Klasse `button` mit Ereignistypen oder `binary_sensor` |
+| Saunalicht | `light` mit Helligkeitssteuerung |
+| Unabhängiger Heiznachweis, optional | `switch` oder `binary_sensor` |
+| Ofenleistung, optional | `sensor`, Klasse `power`, W oder kW |
+| Sensorstatus, optional | `binary_sensor` oder klassen- und einheitenloser Statussensor |
+| Präsenz, optional | `binary_sensor`, Klasse `occupancy`, `presence` oder `motion` |
 
-Die Auswahllisten und die Prüfung beim Speichern berücksichtigen Domain,
-Geräteklasse, Einheit und erforderliche Fähigkeiten. Tasterereignisse benötigen
-die Klasse `button` und ausgewiesene Ereignistypen. Eine unveränderte,
-vorübergehend fehlende Zuordnung bleibt erhalten und wird nicht automatisch
-durch eine andere Quelle ersetzt.
-
-Mindestens eine vollständige Temperatur-/Feuchteposition ist erforderlich.
-Messpaare müssen denselben Messort abbilden; aus ihnen wird der diagnostische
-absolute Wassergehalt der jeweiligen Position berechnet.
+Mindestens ein vollständiges Temperatur-/Feuchtepaar ist erforderlich.
+Beide Werte müssen denselben Messort abbilden, auch für die Berechnung der
+absoluten Feuchte. Ein vorübergehend fehlender Sensor behält seine Zuordnung;
+er wird nicht automatisch durch eine andere Entität ersetzt.
 
 ### Umgebungsdaten
 
-Eine optionale `weather`-Entität liefert Temperatur, relative Feuchte, Taupunkt,
-Luftdruck und Wind aus ihren Attributen. Ausdrücklich gewählte Einzelquellen
-haben Vorrang, auch wenn sie vorübergehend nicht verfügbar sind.
+Eine `weather`-Entität kann Temperatur, relative Feuchte, Taupunkt, Luftdruck und
+Wind liefern. Gewählte Einzelquellen haben Vorrang, auch bei deren Ausfall.
 
 | Einzelquelle | Geräteklasse und Einheit |
 | --- | --- |
-| Außentemperatur und Taupunkt | `temperature`, °C |
-| Relative Außenfeuchte | `humidity`, % |
-| Absolute Außenfeuchte | `absolute_humidity`, g/m³ |
+| Temperatur / Taupunkt | `temperature`, °C |
+| Relative Feuchte | `humidity`, % |
+| Absolute Feuchte | `absolute_humidity`, g/m³ |
 | Luftdruck | `pressure`, hPa |
 | Windgeschwindigkeit | `wind_speed`, km/h |
 | Windrichtung | `wind_direction`, ° |
 | Niederschlagsintensität | `precipitation_intensity`, mm/h |
-| Mess- und Vorhersagezeitpunkt | Je ein `timestamp`-Sensor |
+| Mess- / Vorhersagezeit | Je ein `timestamp`-Sensor |
 
-Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung. Die absolute
-Feuchte wird aus der gewählten Quelle übernommen. Messzeit, Vorhersagezeit und
-HA-Aktualisierung bleiben getrennt. Zuordnungen erfordern Administratorrechte.
+Umgebungsdaten beeinflussen weder Heizregelung noch Gangerkennung.
+Absolute Feuchte wird aus der Quelle übernommen; Mess-, Vorhersage- und
+HA-Aktualisierungszeit bleiben getrennt.
 
 ## Protokollierung
 
-**ERROR** beschränkt das Home-Assistant-Protokoll auf Fehler. **INFO** ergänzt
-Betriebsereignisse, **DEBUG** Messwerte und Erkennungsprüfungen. Änderungen wirken
-sofort; der Datenumfang des Sitzungsarchivs bleibt davon unabhängig.
+Die Protokollstufe wirkt sofort auf das Home-Assistant-Protokoll.
+Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 
 ## Standardwerte wiederherstellen
 
-Die Rücksetzung ist nach Sitzungsende möglich. Sie umfasst Betriebsparameter,
-Programmbibliothek, Betriebsart, aktuelle Temperaturwahl, Tastervorgabe,
-Präsenzquelle und Protokollstufe. Maßgeblich sind die Katalogvorgaben.
+Zurückgesetzt werden Betriebsparameter, Programmbibliothek, Betriebsart,
+aktuelle Temperaturwahl, Tastervorgabe, Präsenzquelle und Protokollstufe.
 
-Geräte- und Sensorzuordnungen, Taster-/Schalterart samt Ereignistyp, Darstellung
-und Sitzungsarchiv bleiben erhalten. Die Darstellung besitzt eine
-[eigene Rücksetzung](darstellung.md#darstellungsentwurf-und-skalen).
+Erhalten bleiben Gerätezuordnungen, Taster-/Schalterart samt Ereignistyp,
+Darstellung und Archiv. Die Darstellung hat eine eigene Rücksetzung.
+Alle Rücksetzungen der Betriebsparameter sind erst nach Sitzungsende möglich.

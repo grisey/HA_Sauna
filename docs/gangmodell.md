@@ -1,102 +1,71 @@
 # Gangmodell
 
-Der Ablaufkern ordnet Erkennungssignale einem Saunagang zu und führt dessen
-Bestätigung, Ende und Zählung. Die [Erkennung](erkennung.md) liefert dafür
-Ereignisse aus dem Messverlauf. Der Controller führt den verbindlichen Gangzustand.
-Die konfigurierte Präsenzquelle führt die Gangzuordnung. Der Proxyweg bleibt
-für Installationen ohne ausgewählten direkten Präsenzsensor erhalten.
+Die gewählte Präsenzquelle bestimmt Beginn und Ende eines Saunagangs:
+`ha_presence` verwendet einen direkten Präsenzsensor, `proxy` die
+[Temperatur- und Feuchtesignale](erkennung.md).
+
+## Startbedingungen
+
+In beiden Betriebsarten benötigt ein neuer Gang Betrieb-EIN, keine angeforderte
+oder laufende Ofenkühlung und eine frische, gültige
+[Regeltemperatur](betrieb.md) ab der eingestellten Mindesttemperatur.
+Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
+Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
+Messfenster aus dem freigegebenen Zeitraum.
 
 ## Direkter Präsenzsensor
 
-Bei `ha_presence` benötigen Gangbeginn und Gangende jeweils einen vollständigen
-Türvorgang: erkannte Öffnung mit anschließender Schließung. Eine einzelne
-Präsenzmeldung, eine Türschließung ohne Öffnung und bloßer Zeitablauf genügen nicht.
-Die Präsenzmeldung muss zur gewählten Entität gehören und darf nicht vor der
-Öffnung liegen. Ein Türvorgang kann nur einen Gangübergang begründen.
+Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließender
+Schließung. Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
+und darf nicht vor der Öffnung liegen. Sie kann auch nach dem Türschluss
+eintreffen. Jeder Türvorgang begründet höchstens einen Übergang.
 
-Betrieb-EIN, gültige Mindesttemperatur und freigegebene Betriebsphase bleiben
-Voraussetzungen des Beginns. Bei belegter Anwesenheit wird der Gang nach
-vollständigem Türvorgang unmittelbar bestätigt, ohne zusätzliche Wartefrist und
-ohne Aufgusszwang. Der Beginn wird dem Türschluss zugeordnet; der tatsächliche
-Erkennungszeitpunkt bleibt getrennt erhalten. Eine kalte Türepisode wird nicht
-durch späteres Aufheizen nachträglich zum Gangbeginn.
+| Beleg | Wirkung |
+| --- | --- |
+| Vollständiger Türvorgang mit Anwesenheit und erfüllten Startbedingungen | Bestätigter Gang ab Türschluss, ohne Wartefrist oder erforderlichen Aufguss |
+| Nachfolgender vollständiger Türvorgang mit Abwesenheit | Gangende |
+| Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
+| Durchlüften | Kein Gangende |
+| Betrieb-AUS | Ende des offenen Gangs |
 
-Ein nachfolgender vollständiger Türvorgang mit zugehöriger Abwesenheitsmeldung
-beendet den Gang. Die Meldung darf auch erst nach dem Türschluss eintreffen.
-Solange kein solcher Austritt belegt ist, bleibt der Gang offen. Alleinige
-Abwesenheit oder Durchlüften beendet ihn nicht. Bei vollständigem Austritt
-folgen Zählung, Temperaturstufe und Ofenkühlung dem gemeinsamen Ablaufkern.
-Betrieb-AUS bleibt ein ausdrücklicher Bedienabschluss.
+Eine kalte Türepisode wird durch späteres Aufheizen nicht nachträglich zum Start.
+Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
+Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
 
-`unknown` und `unavailable` sind keine Abwesenheitsbelege. Der offene Gang bleibt
-erhalten, seine zusätzliche Heizanforderung entfällt während des Quellausfalls.
-Der Thermostat und die Schutzregeln gelten weiter. Es gibt keinen automatischen
-Wechsel zur Proxyerkennung und keine Tür-Mindestheizhilfe.
-
-Die Zuordnung verwendet die gemeldeten Zustandszeiten, ohne einen unbekannten
-Abwesenheitsverzug des Sensors abzuziehen.
+`unknown` und `unavailable` belegen keine Abwesenheit. Der Gang bleibt offen,
+seine zusätzliche Heizanforderung entfällt bis zur Rückkehr der Quelle.
+Thermostat und Schutz bleiben wirksam. Es gibt keinen automatischen Wechsel zum
+Proxyverfahren und keine Tür-Mindestheizhilfe.
 
 ## Proxyverfahren
 
 ### Beginn und Bestätigung
 
-| Ereignis | Wirkung auf den Gang |
+| Ereignis | Wirkung |
 | --- | --- |
-| Zulässiges Personensignal | Eröffnet einen vorläufigen Gang. |
-| Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit derselben Identität und demselben Beginn oder eröffnet unmittelbar einen bestätigten Gang. |
-| Weiterer Aufguss | Ergänzt den aktiven Gang unter derselben Identität. |
-| Ablauf der Bestätigungsfrist | Nimmt den noch vorläufigen Gang zurück. |
-| Bestätigtes Durchlüften während eines vorläufigen Gangs | Nimmt den vorläufigen Gang zurück. |
-| Bestätigtes Durchlüften nach einem Aufguss | Beendet den bestätigten Gang zum Buchungszeitpunkt der Lüftungsbestätigung. |
-| Betrieb-AUS | Beendet den offenen Gang. |
+| Zulässiges Personensignal | Vorläufiger Gang |
+| Erster gültiger Aufguss | Bestätigt den vorläufigen Gang mit gleichem Beginn oder eröffnet einen bestätigten Gang |
+| Weiterer Aufguss | Ergänzt den aktiven Gang |
+| Bestätigungsfrist abgelaufen oder Durchlüften vor Bestätigung | Vorläufiger Gang zurückgenommen |
+| Durchlüften nach Bestätigung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
+| Betrieb-AUS | Ende des offenen Gangs |
 
-Ein neuer Gang setzt Betrieb-EIN, fehlende Ofenkühlung und eine aktuelle gültige
-führende Regeltemperatur mindestens in Höhe von `sauna_min_temperature_c` voraus.
-Die [Quellenauswahl](betrieb.md#temperatur-und-bereitschaft) gilt auch hier.
-Diese Freigabe gilt für starke und schwache Proxy-Personensignale sowie unmittelbar startende Aufgüsse in beiden
-Betriebsarten. Fehlende oder veraltete Regeltemperaturen erlauben keinen Start.
-Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Bestätigung,
-weitere Aufgüsse und Lüftungsende bleiben möglich.
+Als Beginn gilt die passende Türschließung derselben Sitzung und Türöffnung,
+wenn zu diesem Zeitpunkt die Temperaturfreigabe bestand. Ein ungenutzter
+Türbezug verfällt bei unterbrochener Temperaturfreigabe oder veraltetem Messwert.
+Ohne gültigen Türbezug gilt der Buchungszeitpunkt des Personen- oder Aufgusssignals.
 
-Als Beginn dient die passende Türschließung derselben Sitzung und Türöffnung,
-wenn ihre effektive Zeit bereits eine gültige Temperaturfreigabe hatte.
-Eine kalte oder ungültige Türschließung bleibt beobachtet, liefert aber keinen
-Ganganker und keine empfindlichere Personenprüfung.
-Ein ungenutzter Anker verfällt auch bei einer Unterbrechung dieser
-Temperaturfreigabe oder beim Ablauf der führenden Messung.
-Ersatzweise gilt der Buchungszeitpunkt des zulässigen Personensignals oder
-Aufgusses. Die tatsächliche Erkennungszeit wird gesondert festgehalten.
-
-Eine erkannte Türöffnung mit anschließender Schließung eröffnet die empfindlichere
-Personenprüfung für die eingestellte Bestätigungsfrist. Ein neuer Feuchteanstieg
-mit zunehmendem absolutem Wassergehalt kann in dieser Zeit einen vorläufigen
-Gang auslösen. Eine weitere Türöffnung beginnt einen neuen Türbezug. Diese
-Zuordnung setzt eine neue Feuchteentwicklung nach der Öffnung voraus.
-
-Die Aufgussbestätigungsfrist läuft ab dem Gangbeginn für die eingestellte Dauer.
-Ein rechtzeitig zugeordneter Aufguss bestätigt den Gang bis einschließlich dieses
+Die Aufgussbestätigungsfrist läuft ab Gangbeginn einschließlich ihres
 Endzeitpunkts. Nach einer Rücknahme kann ein neuer gültiger Aufguss einen eigenen
-bestätigten Gang beginnen. Die Anzeige nennt die seit Gangbeginn verstrichene
-Zeit.
-
-Eine kurze Türöffnung mit anschließender Schließung erhält den aktiven Gang.
-Die Lüftungsbestätigung schützt den laufenden Gang bei kurzem Austritt einzelner
-Personen, während mindestens eine Person bleibt. Diese Lüftungsregel gehört zum
-Proxyverfahren. Bei direkter Präsenzführung beendet stattdessen ein vollständiger
-Türvorgang mit zugehöriger Abwesenheitsmeldung den Gang gemäß
-[direkter Präsenzführung](#direkter-präsenzsensor).
-
-[Erkennung](erkennung.md) · [Zeitmodell](zeitmodell.md)
+Gang beginnen. Eine kurze Türöffnung mit anschließendem Schließen beendet
+keinen aktiven Gang; dafür ist bestätigtes Durchlüften erforderlich.
 
 ## Zählung und Folge
 
-Die Gangzahl steigt genau einmal beim Ende eines bestätigten Gangs, unabhängig
-vom Endgrund. Zugleich wechselt die Temperaturautomatik zur nächsten Stufe.
-Der abgeschlossene Gang bewahrt seinen Beginn und seine zugeordneten Aufgüsse.
+Nur beendete, bestätigte Gänge zählen, jeweils einmal und unabhängig vom
+Endgrund. Gleichzeitig folgt die nächste Temperaturstufe. Zurückgenommene
+vorläufige Gänge zählen nicht. Beginn und zugeordnete Aufgüsse bleiben erhalten.
 
-Während angeforderter oder laufender Kühlung bleibt die Gangzuordnung für neue
-Personen- und Aufgusssignale gesperrt. Nach ihrer Freigabe
-beginnt die Erkennung mit Messfenstern aus dem freigegebenen Abschnitt.
-
-[Heizpriorität](praesenz-ofen-phasen.md#heizpriorität) ·
-[Gangende und Kühlung](ofenkuehlung.md#auslösung)
+Im Automatikbetrieb fordert ein aktiver Gang Heizen an, im Proxyverfahren schon
+ab der vorläufigen Erkennung. Vorränge regelt der [Saunabetrieb](betrieb.md),
+Auslösung und Ablauf der Kühlung die [Ofenkühlung](ofenkuehlung.md).

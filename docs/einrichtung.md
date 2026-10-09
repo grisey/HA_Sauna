@@ -1,54 +1,40 @@
 # Einrichtung
 
-Die Einrichtung erfordert Home-Assistant-Administratorrechte und
-Home Assistant ab **2026.9.0**. Sensoren und Aktoren müssen bereits als
-Home-Assistant-Entitäten verfügbar sein.
+Voraussetzungen: Home Assistant ab **2026.9.0**, Administratorrechte und bereits
+in Home Assistant eingerichtete Sensoren und Aktoren. Andere Automationen für
+denselben Ofen oder dasselbe Licht müssen deaktiviert sein; vorhandene
+Lichttaster können weiterverwendet werden.
 
 ## Installation
 
-HACS verwendet `https://github.com/grisey/HA_Sauna` als benutzerdefiniertes
-Repository vom Typ **Integration**. Nach dem Herunterladen und einem Neustart
-von Home Assistant lässt sich HA Sauna unter **Geräte & Dienste** einrichten.
-Auch nach Updates ist ein Neustart erforderlich; gespeicherte Einstellungen
-und Gerätezuordnungen bleiben erhalten. Vorabversionen sind verfügbar, wenn sie
-für HA Sauna in HACS aktiviert sind.
+1. Benutzerdefiniertes HACS-Repository: `https://github.com/grisey/HA_Sauna`, Typ **Integration**.
+2. Nach dem Herunterladen: Neustart von Home Assistant.
+3. Einrichtung unter **Geräte & Dienste → Integration hinzufügen → HA Sauna**.
 
-Bisherige Automationen für denselben Ofen oder dasselbe Licht müssen deaktiviert
-sein, damit sie nicht gegen HA Sauna steuern. Vorhandene Lichttaster bleiben
-Teil der Bedienung.
+Vorabversionen erfordern die Freigabe in HACS. Auch Updates benötigen einen
+Neustart; gespeicherte Einstellungen und Gerätezuordnungen bleiben erhalten.
 
-## Entitätszuordnung
+## Gerätezuordnung
 
-Eine Messposition besteht aus einem zusammengehörigen Temperatur- und
-Feuchtesensor. Eine vollständige Position genügt; eine zweite ergänzt die
-Beobachtung. Den Vorrang und Ersatz ausgefallener Messungen beschreibt die
-[Temperaturregelung](betrieb.md#temperatur-und-bereitschaft).
+Erforderlich sind:
 
-Bedieneingang und Heizschütz sind getrennte Zuordnungen: Der Taster oder
-Betriebsschalter bedient die Sitzung, HA Sauna steuert den Heizaktor.
-Die bestätigte Stellung des Heizschütz-Schalters dient als Relaisrückmeldung.
-Leistungssensor und unabhängiger binärer Heiznachweis sind optionale Ergänzungen.
-Das Saunalicht muss dimmbar sein.
+- Ein zusammengehöriges Temperatur-/Feuchtepaar am selben Messort; eine zweite Position ist optional.
+- Ein Schalter für das Heizschütz. Seine bestätigte Stellung dient als Relaisrückmeldung.
+- Ein Saunataster oder Betriebsschalter als Bedieneingang, getrennt vom Heizaktor.
+- Ein dimmbares Saunalicht.
 
-Unterstützte Entitätstypen, Einheiten und optionale Umgebungsdaten stehen unter
-[Entitätsrollen](parameter.md#entitätsrollen). Die Wahl eines direkten
-Präsenzsensors verändert die Gangzuordnung; siehe [Präsenzquelle](gangmodell.md).
+Beim Ereignistaster muss der passende Ereignistyp ausgewählt sein. Ein binärer
+Taster liefert Drücken und Loslassen; ein Betriebsschalter seine Ein-/Ausstellung.
+Die [Tasterwirkungen](betrieb.md#bedienhandlungen-und-betriebsart) unterscheiden
+sich von den Panelaktionen.
 
-## Bedieneingang
+Zusätzliche Präsenz-, Leistungs- und Umgebungssensoren sowie passende
+Entitätstypen stehen unter [Entitätsrollen](parameter.md#entitätsrollen).
+Die Präsenzquelle bestimmt das [Verfahren der Gangerkennung](gangmodell.md).
 
-Beim Ereignistaster muss der passende Ereignistyp zugeordnet sein. Ein binärer
-Taster liefert Drücken und Loslassen; seine Langdruckdauer ist einstellbar.
-Ein Betriebsschalter überträgt seine Ein-/Ausstellung auf den Saunabetrieb.
-Die Wirkungen unterscheiden sich von einzelnen Panelaktionen; maßgeblich ist
-die [Gestenzuordnung](betrieb.md#bedienhandlungen-und-betriebsart).
+## Anlagenparameter
 
-## Anlageneinstellungen
-
-Sensorfristen, Helligkeitsskala und weitere Anlagenparameter sind in der
-[Parameterreferenz](parameter.md) beschrieben; die
-[Bedienungsanleitung](bedienung.md#technische-einstellungen-und-rücksetzen)
-nennt die erforderlichen Rechte und Sitzungssperren.
-
-Die Programmbibliothek und die Startvorgabe für Taster oder Betriebsschalter
-stehen unter **Programme und Start**. Geltungsbereich und Speicherregeln erklärt
-[Programme und Tastervorgabe](bedienung.md#programme-und-tastervorgabe).
+Besonders anlagenabhängig sind Sensor-Meldeabstände, Lichtgeräteskala und
+Ofenleistung für die Verbrauchsschätzung. Ihre Zuordnung erklärt die
+[Parameterreferenz](parameter.md). Startvorgabe und Temperaturprogramme werden
+unter [Programme und Start](bedienung.md#programme-und-tastervorgabe) eingestellt.

@@ -3,184 +3,146 @@
 ## Sitzung
 
 Betrieb-EIN beginnt eine Sitzung. Betrieb-AUS beendet den offenen Gang und
-startet die gemeinsame Frist für Wiederaufnahme und Lichtnachlauf. Erneutes
-Einschalten innerhalb dieser Frist setzt dieselbe Sitzung fort. Nach Ablauf der
-Frist beginnt das nächste Einschalten eine neue Sitzung. Jeder Sitzungsstart
-beendet einen laufenden Lichtnachlauf.
+startet die gemeinsame Wiederaufnahme- und Lichtnachlauffrist. Einschalten
+innerhalb dieser Frist setzt die Sitzung fort und beendet den Lichtnachlauf;
+danach beginnt eine neue Sitzung. Ein langer Enddruck schließt die Sitzung sofort.
 
-Die Wiederaufnahmefrist gehört zur bestehenden Sitzung. Bei einem
-Neustart von Home Assistant bleibt der gespeicherte Verlauf erhalten; der
-Ofenbetrieb beginnt wieder durch ausdrückliches Einschalten.
-
-[Gangmodell](gangmodell.md) · [Heizpriorität](praesenz-ofen-phasen.md) ·
-[Zeitmodell](zeitmodell.md)
+Nach einem Home-Assistant-Neustart bleibt das [Archiv](speicherung.md) erhalten.
+Der Ofen startet erst durch ausdrückliches Einschalten.
 
 ## Temperatur und Bereitschaft
 
-Die Regelung verwendet den gültigen oberen Temperaturwert. Bei Ausfall der oberen
-Messung übernimmt der gültige untere Wert. Sobald oben wieder gültige Werte
-vorliegen, führt erneut die obere Messung. Eine vollständige Temperatur- und
-Feuchteposition genügt für den vollen Betrieb.
+Für die Regelung führt die gültige obere Temperatur, ersatzweise die untere.
+Sobald oben wieder gültige Werte vorliegen, übernimmt diese Quelle erneut.
+Eine vollständige Temperatur-/Feuchteposition genügt für den Betrieb.
 
-Im freigegebenen Automatikbetrieb merkt sich die Steuerung das erste Erreichen
-der Solltemperatur als Bereitschaft. Diese bleibt auch bei sinkender Temperatur
-und geänderter Sollwahl bestehen. Der erste Aufguss eines neuen Gangs beendet
-diese Bereitschaft; nach Gang und Ofenkühlung kann sie erneut entstehen. Eine
-vorläufige Personenerkennung bewahrt die bereits erreichte Bereitschaft.
+Die Thermostatgrenzen liegen bei:
 
-Die Thermostatgrenzen beziehen sich auf die Solltemperatur:
+- **AUS:** Solltemperatur plus Abschaltaufschlag.
+- **EIN:** Solltemperatur minus Wiedereinschaltabstand.
 
-- Abschalten bei Solltemperatur plus eingestelltem Abschaltaufschlag.
-- Wiedereinschalten bei Solltemperatur minus eingestelltem Unterabstand.
+An den Grenzen wird geschaltet; dazwischen bleibt der bisherige Zustand erhalten.
+Nach einer Temperaturabschaltung muss zusätzlich die Heizpause ablaufen.
+Die Mindestheizzeit beginnt mit dem tatsächlich bestätigten Heizbeginn und
+verzögert eine reguläre Temperaturabschaltung. Ihr Beginn bleibt auch bei
+Solländerungen oder Rückgabe einer manuellen EIN-Wahl erhalten.
 
-Innerhalb dieses Bands bleibt der bisherige Zustand erhalten. Nach einer
-regulären Temperaturabschaltung muss vor dem Wiedereinschalten zusätzlich die
-Heizpause ablaufen. Ein tatsächlich bestätigter Heizbeginn startet die
-Mindestheizzeit; ein laufendes Intervall behält seinen ursprünglichen Beginn.
-Übergeordnete Anforderungen und Sperren folgen der
-[Heizpriorität](praesenz-ofen-phasen.md#heizpriorität).
+**Bereit** gilt im freigegebenen Automatikbetrieb ab dem ersten Erreichen des
+Sollwerts, unabhängig von der höheren Abschaltschwelle. Temperaturabfall und
+Solländerung heben diese Bereitschaft nicht auf. Eine vorläufige Gangerkennung
+bewahrt sie; ein bestätigter Gang beendet sie. Nach Gang und Kühlung kann sie
+neu entstehen ([Gangmodell](gangmodell.md)).
 
-[Aufheizprognose](darstellung.md#zustand-und-zeit)
+## Heizpriorität
 
-## Temperaturprogramm
+Im Automatikbetrieb gilt, von oben nach unten:
 
-Direkte Sollwahl hält eine konstante Zieltemperatur. Ein Temperaturprogramm
-legt eine Folge von Stufen fest. Es kann als benanntes Programm ausgewählt oder
-individuell zusammengestellt werden. Einzelne Stufen erlauben steigende und
-fallende Folgen; eine gleichmäßige Verteilung berechnet die Stufen aus Start,
-Ende und Stufenzahl.
-Jeder beendete, bestätigte Gang führt zur nächsten Stufe. Nach der letzten
-Stufe gilt deren Temperatur auch für weitere Gänge.
+1. Schutz, fehlende Heizfreigabe oder Betrieb-AUS: Ofen AUS.
+2. Angeforderte oder laufende [Ofenkühlung](ofenkuehlung.md): Ofen AUS.
+3. Ausdrückliche vorübergehende Ofenwahl, solange sie gilt.
+4. Aktiver Gang: durchgehende Heizanforderung, auch oberhalb der Thermostatgrenze.
+5. Geeigneter Türschluss im Proxybetrieb: Mindestheizhilfe.
+6. Thermostat einschließlich Mindestheizzeit und Heizpause.
 
-Bei einer gleichmäßigen Verteilung erhält eine Änderung ausschließlich der
-Endtemperatur das aktuelle Ziel; die verbleibenden Steigerungen verteilen sich
-bis zum neuen Endwert. Eine neue Starttemperatur beginnt eine neue Verteilung.
-Gangzählung und laufende Zeitabläufe bleiben erhalten.
+Die Ganganforderung gilt im Proxybetrieb schon ab der vorläufigen Erkennung.
+Bei direkter Präsenz setzt sie einen bestätigten Gang voraus; Quellausfall nimmt
+nur diese zusätzliche Heizanforderung zurück, ohne den Gang zu beenden.
 
-[Programme auswählen und bearbeiten](bedienung.md#betriebsstart-und-temperaturwahl)
-
-## Heizzeit, Timer und Energie
-
-Die Heizzeiterfassung verwendet vorrangig eine gültige Leistungsmessung. Als
-weitere Quellen dienen eine eingerichtete Heizrückmeldung und schließlich die
-native Schalterrückmeldung des Ofens. Die Anzeige kennzeichnet die verwendete
-Quelle und eine daraus abgeleitete Schätzung. Die lokale Heizsumme wird
-zurückgesetzt, sobald die durchgehend bestätigte Auszeit die eingestellte
-Rücksetzdauer erreicht.
-
-Die Timeranzeige schätzt die verbleibende Laufzeit des mechanischen Ofentimers.
-Sie zählt von der eingestellten Laufzeit herunter, solange Betrieb und bestätigte
-Schützstellung EIN sind. Bei Schütz-AUS oder unbekannter Rückmeldung bleibt der
-zuletzt berechnete Rest erhalten. Nach jeder abgeschlossenen Sitzung beginnt
-die Anzeige beim nächsten Sitzungsstart mit der vollen Dauer, unabhängig von
-der erkannten Gangzahl. Fortsetzen innerhalb derselben Sitzung erhält die
-Restzeit. Die Anzeige stellt den mechanischen Timer am Gerät nicht zurück.
-
-Bei alleiniger Schützrückmeldung zeigt das Panel **Heizfreigabe EIN/AUS**.
-Die tatsächliche Heizleistung hinter einem internen Ofenthermostat ist daraus
-nicht bekannt. Eine gültige Leistungsmessung oder unabhängige Heizrückmeldung
-ermöglicht die Anzeige **Ofen an/aus**.
-
-Die Verbrauchsschätzung ergibt sich aus gezählter Heizzeit und eingestellter
-Ofenleistung. Eine gültige Leistungsmessung übernimmt die Berechnung für ihren
-jeweiligen Zeitraum. Die Anzeige unterscheidet gemessene, geschätzte und
-unbekannte Anteile. Der Sitzungsverbrauch bleibt über Kühlphasen
-und lokale Heizzeitrücksetzungen hinweg erhalten.
-
-## Ofenkühlung
-
-[Auslösung, Berechnung und Abschluss der Ofenkühlung](ofenkuehlung.md)
-
-## Licht
-
-Aufheizen und Bereitschaft verwenden dieselbe lineare Lichtkurve: von der
-Grundhelligkeit an der eingestellten Referenztemperatur bis zur Normalhelligkeit
-an der aktuellen Solltemperatur. Die Thermostatgrenzen verändern das Lichtziel
-nicht. Während eines Saunagangs gilt die Normalhelligkeit. Diese geht während
-der bürgerlichen Dämmerung gleitend zwischen eingestelltem Tag- und Nachtwert über.
-
-Die Ausgabe wird auf ganze Prozent gerundet. Bei automatischen Änderungen
-kommt zur Rundungsgrenze die eingestellte Ausgabehysterese hinzu; interne
-Kurven und Messwerte behalten ihre Genauigkeit. Manuelle Wahlen und fälliges
-AUS werden nicht durch diese Hysterese verzögert.
-
-Zu Beginn der Ofenkühlung dimmt das Licht auf die eingestellte Kühlhelligkeit.
-Anschließend steigt es über die verbleibende Kühlzeit linear zur
-temperaturabhängigen Helligkeit. Der erste Übergang ist auf die Hälfte der
-verbleibenden Kühlzeit begrenzt.
-
-Betrieb-AUS startet den Lichtnachlauf mit der dafür eingestellten Helligkeit.
-Mit der Wiederaufnahmefrist endet auch der Lichtnachlauf. Beim langen Enddruck
-bleibt das Licht während des Haltens aus; erst bestätigtes Loslassen startet
-den Nachlauf mit der eingestellten Dauer.
-
-Eine manuelle Lichtwahl in Automatik gilt bis zum nächsten passenden Phasenwechsel
-oder längstens für die eingestellte Übersteuerungsdauer. Ausschalten und Dimmen
-am Lichttaster zählen als manuelle Wahl.
-Rückmeldungen eigener Lichtbefehle ordnet die Integration dem automatischen
-Verlauf zu. Bei der Rückkehr zur Automatik beginnt der Übergang an der zuletzt
-beobachteten Helligkeit und blendet zum aktuellen automatischen Verlauf über.
-Eine laufende Kühl- oder Lichtnachlauffrist begrenzt diesen Übergang; sie beginnt
-dadurch nicht neu. Das fällige Ausschalten beendet auch einen laufenden Übergang.
-
-Enden Lichtnachlauf und manuelle Lichtwahl gleichzeitig, bleibt die automatische
-Endphase AUS. Eine anschließend ausdrücklich gesetzte Raumlichtwahl gilt als
-neue manuelle Bedienung. Bei ihrer Rückkehr zur Automatik bleibt die Grundlage
-der beendeten Lichtphase AUS.
+Für die Türhilfe müssen Öffnung und anschließender Schluss zu demselben Vorgang
+bei Betrieb-EIN in Aufheizen oder Bereit gehören. Gangbeginn oder Kühlung
+verwerfen diesen Vorgang. Bis zur tatsächlichen Heizbestätigung bleibt die
+Anforderung widerrufbar, danach gilt die Mindestheizzeit. Betrieb-AUS und
+manuelles Ofen-AUS verwerfen die Türanforderung. Direkte Präsenzführung verwendet
+keine Türhilfe.
 
 ## Bedienhandlungen und Betriebsart
 
-Ein kurzer Tastendruck bei Betrieb-AUS startet den Automatikbetrieb mit der
-gespeicherten Tastervorgabe: einem benannten Programm oder einer eigenen
-konstanten Temperatur.
+| Tastergeste | Wirkung |
+| --- | --- |
+| Kurz bei Betrieb-AUS | Startet Automatik mit der gespeicherten Tastervorgabe. |
+| Kurz in Automatik | Wechselt die vorübergehende Ofenwahl oder gibt an die Automatik zurück. |
+| Kurz in Manuell | Wechselt die Ofenvorgabe zwischen EIN und AUS. |
+| Lang bei laufendem Betrieb | Beendet Betrieb und Sitzung. Licht bleibt beim Halten AUS; Loslassen startet den Lichtnachlauf. |
+| Lang bei Betrieb-AUS | Kein Saunastart, auch nicht durch zugehöriges Loslassen. |
 
-Ein langer Druck aus Betrieb-AUS startet die Sauna nicht. Bei eingeschaltetem Automatikbetrieb
-schaltet ein kurzer Druck die vorübergehende Ofenwahl um beziehungsweise gibt
-an die Automatik zurück. Bei eingeschaltetem Betrieb in Manuell wechselt ein
-kurzer Druck die Ofenvorgabe zwischen EIN und AUS.
+**Übersteuerung in Automatik:** Die Ofenwahl endet bei Rückgabe, Phasenwechsel,
+Änderung der automatischen EIN-/AUS-Anforderung oder Fristablauf. Ofen-AUS
+unterbricht auch Gangheizung und Mindestheizzeit. Die manuelle Lichtwahl endet
+beim passenden Phasenwechsel oder spätestens mit ihrer Übersteuerungsfrist.
 
-Ein langer Druck bei laufendem Betrieb beendet den Betrieb und schließt die
-Sitzung ab. Das Licht bleibt während des Haltens AUS. Erst das bestätigte
-Loslassen startet den Lichtnachlauf.
+**Betriebsart Manuell:** Nach Sitzungsende wählbar; bleibt bis zur erneuten
+Betriebsartwahl erhalten. Ofen und Licht starten beim Wechsel und nach Neustart
+mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist. Zurückschalten auf
+Automatik gibt beide frei. Auch manuelles EIN benötigt gültige Regeltemperatur
+und Heizfreigabe; Schutz und Betrieb-AUS haben weiter Vorrang.
 
-[Tastermeldungen und einmalige Verarbeitung](schnittstellen.md#tasterereignisse)
+## Temperaturprogramm
 
-Die vorübergehende Ofenwahl in Automatik gilt bis zur Rückgabe, einem Wechsel
-der Phase oder der automatischen EIN-/AUS-Anforderung, längstens für die
-eingestellte Übersteuerungsdauer. Beim Fristende gilt wieder die aktuelle Automatik.
-Ausdrücklich gewähltes Ofen-AUS wirkt auch während eines aktiven Gangs.
-Ofen-EIN setzt die gültige Heizfreigabe einschließlich einer gültigen
-Regeltemperatur voraus. Schutz, Betrieb-AUS und Ofenkühlung haben Vorrang.
+Direkte Sollwahl hält eine konstante Temperatur. Programme folgen gespeicherten
+oder frei gewählten Stufen, auf Wunsch gleichmäßig aus Start, Ende und Anzahl
+verteilt. Steigende und fallende Folgen sind möglich. Jeder beendete bestätigte
+Gang schaltet einmal weiter; nach der letzten Stufe bleibt deren Temperatur.
 
-Bei der Rückgabe eines manuell eingeschalteten Ofens an die Automatik bleibt
-eine noch laufende Mindestheizzeit mit ihrem ursprünglichen tatsächlichen
-Beginn erhalten. Ausdrücklich gewähltes Ofen-AUS beendet diese Anforderung.
+Eine alleinige Änderung der Endtemperatur erhält das aktuelle Ziel und verteilt
+die verbleibenden Schritte neu. Ein neuer Startwert beginnt eine neue Verteilung.
+Gangzählung und laufende Fristen bleiben erhalten.
 
-[Bedienrechte und Übersteuerung](bedienung.md#betriebsart-manuell-und-übersteuerung)
+## Heizzeit, Timer und Energie
 
-Die Betriebsart Manuell wird nach Sitzungsende gewählt und bleibt bis zur
-nächsten ausdrücklichen Betriebsartwahl bestehen. Beim Wechsel zu Manuell
-beginnen Ofen und Licht mit AUS; vorherige Übersteuerungen werden nicht
-übernommen. Das gilt auch beim Neustart mit gespeicherter Betriebsart Manuell.
-Die Rückkehr zur Automatik gibt beide manuellen Wahlen frei.
-Ofen- und Lichtwahl sind dort
-direkt und unbefristet; die Übersteuerungsfrist der Automatik gilt hier nicht.
-Messung und Archivierung begleiten den Betrieb;
-technische Schutzgründe und Betrieb-AUS behalten Vorrang.
+Heizzeit verwendet die erste gültige Quelle dieser Reihenfolge: Leistungsmessung,
+Heizrückmeldung, native Ofenschalterrückmeldung. Die letzte belegt nur die
+Heizfreigabe, nicht die tatsächliche Leistung hinter einem internen Thermostat.
+Nach der eingestellten durchgehend bestätigten Auszeit wird die lokale Heizsumme
+zurückgesetzt.
+
+Der mechanische Timer zählt nur bei Betrieb-EIN und bestätigtem Schütz-EIN.
+Bei AUS oder unbekannter Rückmeldung pausiert die Schätzung. Wiederaufnahme
+erhält den Rest; eine neue Sitzung beginnt mit voller Laufzeit. Die Anzeige
+verstellt den Timer am Ofen nicht.
+
+Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus Heizzeit mal
+konfigurierter Ofenleistung. Gemessene, geschätzte und unbekannte Anteile werden
+unterschieden. Kühlung und Heizzeitrücksetzung löschen keinen Sitzungsverbrauch.
+
+## Licht
+
+| Betriebsabschnitt | Automatisches Lichtziel |
+| --- | --- |
+| Aufheizen und Bereit | Linear von Grundhelligkeit an der Referenztemperatur zur Normalhelligkeit am Sollwert. |
+| Saunagang | Normalhelligkeit. |
+| Ofenkühlung | Zunächst Kühlhelligkeit, danach über die Restzeit linear zum temperaturabhängigen Ziel. |
+| Betrieb-AUS | Nachlaufhelligkeit bis zum Fristende, dann AUS. |
+
+Die Normalhelligkeit geht während der bürgerlichen Dämmerung zwischen Tag- und
+Nachtwert über. Thermostatgrenzen beeinflussen die Lichtkurve nicht.
+Automatische Stellwerte werden auf ganze Prozent gerundet und durch die
+Ausgabehysterese beruhigt; manuelle Wahlen und fälliges AUS werden dadurch nicht
+verzögert.
+
+Übergänge beginnen an der beobachteten Helligkeit. Bei Kühlbeginn ist der erste
+Übergang auf die halbe Restzeit begrenzt. Rückkehr aus manueller Lichtwahl
+verlängert weder Kühlung noch Nachlauf; fälliges AUS beendet auch einen Übergang.
+Eine spätere Raumlichtwahl startet keinen neuen automatischen Nachlauf.
 
 ## Rückmeldungen und Schutz
 
-Gültige Temperaturmessungen und bestätigte Geräterückmeldungen bilden die
-Grundlage der Heizfreigabe. Messwerte und Befehlsrückmeldungen haben eigene
-Gültigkeits- beziehungsweise Bestätigungsfristen. Abschaltrelevant sind fehlende
-Regeltemperatur oder Schützrückmeldung, ausgebliebene Schaltvollzüge,
-fehlgeschlagene Schaltbefehle und nachgewiesenes Weiterheizen trotz AUS-Befehl.
-Bestehen sie während der Betriebs- oder Heizüberwachung über die
-Bestätigungsdauer fort, verriegelt die Schutzabschaltung die Heizfreigabe.
+Ohne gültige Regeltemperatur bleibt die Heizung aus. Gültige Ersatzquellen
+übernehmen ihre Aufgaben; ein einzelner Quellenausfall beendet die Sitzung nicht.
 
-[Überwachungsfristen](parameter.md#überwachung)
+Fehlende Schützrückmeldung, ausgebliebener Schaltvollzug, Befehlsfehler oder
+Weiterheizen trotz AUS sind abschaltrelevant. Ebenso fehlende Regeltemperatur:
+Bleiben solche Fehler in der Betriebs- oder Heizüberwachung über die
+Bestätigungsdauer bestehen, wird die Heizfreigabe verriegelt. Quittieren setzt
+Betrieb-AUS und bestätigtes Ofen-AUS voraus.
 
-Während einer Lücke der gültigen Regeltemperatur bleibt die Heizung aus.
-Fehler einzelner konfigurierter Quellen bleiben sichtbar; gültige Ersatzquellen
-führen ihre vorgesehenen Aufgaben weiter. Die Quittierung technischer
-Schutzgründe setzt Betrieb-AUS und bestätigtes Ofen-AUS voraus.
+## Zeitliche Zuordnung
+
+Empfangene Messungen werden vor späteren Bedienhandlungen mit ihren damaligen
+Freigaben ausgewertet. Auch ein nur zwischenzeitlich erreichter Sollwert zählt
+für die Bereitschaft. Am Ende einer Bestätigungsfrist werden bereits empfangene
+Messungen dieses Zeitpunkts noch berücksichtigt.
+
+Ereignisbeginn, Buchung und Erkennung können auseinanderliegen. Späte Erkennung
+kann Gang- und Phasenzuordnung im Verlauf berichtigen; Gerätebefehle gelten erst
+zur tatsächlichen Ausgabezeit. Messzeiten und bestätigte Schalterrückmeldungen
+bleiben erhalten. Die Anzeige verwendet die lokale Browserzeit.

@@ -27,7 +27,7 @@ setzen dort an. Gemeinsam verwendete Bedienelemente und Zustände werden an
 einer Stelle geführt. Ein zusätzlicher Ablauf braucht einen konkreten
 fachlichen Anwendungsfall und eine eindeutige Zuständigkeit.
 
-[Architektur](docs/architektur.md) · [Zeitbezüge](docs/zeitmodell.md) ·
+[Betrieb](docs/betrieb.md) · [Zeitangaben](docs/speicherung.md#daten-und-zeitangaben) ·
 [Erkennung](docs/erkennung.md) · [Parameter und Entitätsrollen](docs/parameter.md)
 
 Python folgt Ruff gemäß `pyproject.toml`. Die Oberfläche folgt der in
@@ -39,12 +39,12 @@ deterministische Serialisierung.
 
 [Messpositionen und Sensorvorrang](docs/betrieb.md#temperatur-und-bereitschaft) ·
 [Heizzeit und Rückmeldequellen](docs/betrieb.md#heizzeit-timer-und-energie) ·
-[Heizpriorität](docs/praesenz-ofen-phasen.md#heizpriorität) ·
+[Heizpriorität](docs/betrieb.md#heizpriorität) ·
 [Gangbestätigung und Zählung](docs/gangmodell.md) ·
 [Ofenkühlung](docs/ofenkuehlung.md)
 
 [Bedienhandlungen und Betriebsart](docs/betrieb.md#bedienhandlungen-und-betriebsart) ·
-[Tasterereignisse](docs/schnittstellen.md#tasterereignisse) ·
+[Tasterwirkungen](docs/betrieb.md#bedienhandlungen-und-betriebsart) ·
 [Archiv, Backup und Wiederherstellung](docs/speicherung.md) ·
 [Sitzung und Neustart](docs/betrieb.md#sitzung)
 
