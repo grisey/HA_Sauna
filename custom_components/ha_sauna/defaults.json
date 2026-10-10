@@ -1310,8 +1310,7 @@
     "button_program": "constant",
     "button_session_gesture": "long",
     "control_mode": "automatic",
-    "presence_source": "proxy",
-    "button_temperature_c": 90
+    "presence_source": "proxy"
   },
   "setup": {
     "control_input_mode": "button",

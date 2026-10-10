@@ -386,7 +386,6 @@ def validate_catalog(catalog):
         *choices,
         "button_event_type",
         "button_program",
-        "button_temperature_c",
     }:
         raise ValueError("defaults.json: invalid instance defaults")
     setup = catalog["setup"]
@@ -434,16 +433,6 @@ def validate_catalog(catalog):
         raise ValueError("defaults.json: invalid button program")
     if not isinstance(instance["button_event_type"], str):
         raise ValueError("defaults.json: invalid button event type")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
-    button_temperature = instance["button_temperature_c"]
-    if isinstance(button_temperature, dict):
-        if button_temperature != {"parameter": "target_temperature_c"}:
-            raise ValueError("defaults.json: invalid button temperature")
-    elif not (
-        values["sauna_min_temperature_c"]
-        <= _number(button_temperature, "button_temperature_c")
-        <= definitions["target_temperature_c"]["maximum"]
-    ):
-        raise ValueError("defaults.json: button temperature outside temperature bounds")
     appearance = catalog["appearance"]
     _object(appearance, {"colors", "scales", "instruments", "precision"}, "appearance")
     _object(appearance["instruments"],
@@ -538,21 +527,11 @@ def section(name):
     return deepcopy(_CATALOG[name])
 
 
-def instance_default(key, *, setup=False, parameters=None):
-    """Resolve a setup override, scalar value or explicit parameter reference."""
+def instance_default(key, *, setup=False):
+    """Return the instance default or its setup override."""
     values = (
         _CATALOG["setup"]
         if setup and key in _CATALOG["setup"]
         else _CATALOG["instance"]
     )
-    value = values[key]
-    if isinstance(value, dict) and "parameter" in value:
-        parameter = value["parameter"]
-        if parameters is not None and parameter in parameters:
-            return deepcopy(parameters[parameter])
-        definitions = {spec["key"]: spec for spec in _CATALOG["parameters"]}
-        default = definitions[parameter]["default"]
-        if isinstance(default, dict):
-            default = definitions[default["parameter"]]["default"]
-        return deepcopy(default)
-    return deepcopy(value)
+    return deepcopy(values[key])

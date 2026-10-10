@@ -738,7 +738,6 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     "selected_program_id": DEFAULT_PROGRAMS[0].id,
                     "temperature_steps": [80, 83, 90],
                     "button_program": "current",
-                    "button_temperature_c": 79,
                     "log_level": "DEBUG",
                     "control_input_mode": "button",
                     "button_event_type": "single_push",

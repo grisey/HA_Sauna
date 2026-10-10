@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
 from custom_components.ha_sauna.bindings import ROLES, Bindings
-from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
@@ -341,50 +340,89 @@ class ButtonRuntimeTests(unittest.TestCase):
         values = Parameters({"button_hold_brightness_percent": 1}).values
         self.assertNotIn("button_hold_brightness_percent", values)
 
-    def test_button_start_uses_its_frozen_constant_temperature(self):
-        self.runtime = SaunaRuntime(
-            Configuration(
-                Bindings(bindings()),
-                Parameters({"target_temperature_c": 86}),
-                button_session_gesture="long", button_program="constant",
-                button_temperature_c=74,
-            ),
-            lambda: self.now,
-        )
+    def test_constant_button_start_uses_standard_from_automatic_or_manual(self):
+        for control_mode in ("automatic", "manual"):
+            for gesture in ("long", "double", "triple"):
+                with self.subTest(control_mode=control_mode, gesture=gesture):
+                    self.setUp()
+                    self.runtime = SaunaRuntime(
+                        Configuration(
+                            Bindings(bindings()),
+                            Parameters({
+                                "standard_temperature_c": 86,
+                                "target_temperature_c": 74,
+                            }),
+                            control_mode=control_mode,
+                            button_session_gesture=gesture,
+                            button_program="constant",
+                        ),
+                        lambda: self.now,
+                    )
+                    self._event(gesture)
+                    self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+                    self.assertEqual(self.runtime.controller.program_mode, "constant")
+                    self.assertEqual(self.runtime.controller.target_temperature, 86)
+                    self.assertIsNone(self.runtime.configuration.selected_program_id)
+                    self.assertTrue(self.runtime.session.operation_enabled)
 
-        self._event("long")
-
-        self.assertEqual(self.runtime.controller.target_temperature, 74)
-        self.assertEqual(self.runtime.configuration.button_temperature_c, 74)
-
-    def test_button_start_uses_the_independent_factory_constant_temperature(self):
-        self.runtime = SaunaRuntime(
-            Configuration(Bindings(bindings()), Parameters({"target_temperature_c": 74}),
-                          button_session_gesture="long", button_program="constant"),
-            lambda: self.now,
-        )
-        self._event("long")
-        self.assertEqual(self.runtime.controller.program_mode, "constant")
-        self.assertEqual(
-            self.runtime.controller.target_temperature,
-            instance_default("button_temperature_c"),
-        )
-
-    def test_button_start_uses_the_selected_named_program(self):
+    def test_button_start_uses_the_selected_named_program_from_either_mode(self):
         program = self.runtime.configuration.temperature_programs[-1]
-        self.runtime = SaunaRuntime(
-            Configuration(
-                Bindings(bindings()),
-                Parameters({"target_temperature_c": 70}),
-                button_session_gesture="long", button_program=program.id,
-            ),
-            lambda: self.now,
-        )
+        for control_mode in ("automatic", "manual"):
+            with self.subTest(control_mode=control_mode):
+                self.setUp()
+                self.runtime = SaunaRuntime(
+                    Configuration(
+                        Bindings(bindings()),
+                        Parameters({"target_temperature_c": 70, "standard_temperature_c": 99}),
+                        control_mode=control_mode,
+                        button_session_gesture="long", button_program=program.id,
+                    ),
+                    lambda: self.now,
+                )
+                self._event("long")
+                self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+                self.assertEqual(self.runtime.controller.program_mode, "progressive")
+                self.assertEqual(self.runtime.controller.target_temperature, program.start_c)
+                self.assertEqual(self.runtime.configuration.selected_program_id, program.id)
+                self.assertEqual(
+                    tuple(self.runtime.configuration.parameters.values[key] for key in (
+                        "target_temperature_c", "final_temperature_c", "temperature_gangs"
+                    )),
+                    (program.start_c, program.end_c, program.distribution_gangs),
+                )
 
-        self._event("long")
-
-        self.assertEqual(self.runtime.controller.program_mode, "progressive")
-        self.assertEqual(self.runtime.controller.target_temperature, program.start_c)
+    def test_short_press_preserves_active_session_setpoint_and_program(self):
+        for named in (False, True):
+            with self.subTest(named=named):
+                self.setUp()
+                program = self.runtime.configuration.temperature_programs[-1]
+                self.runtime = SaunaRuntime(
+                    Configuration(
+                        Bindings(bindings()),
+                        Parameters({"target_temperature_c": 74, "standard_temperature_c": 99}),
+                        program_mode="progressive" if named else "constant",
+                        selected_program_id=program.id if named else None,
+                        button_program="constant",
+                        button_session_gesture="long",
+                    ),
+                    lambda: self.now,
+                )
+                self.runtime.controller.set_temperature(70, self.now)
+                asyncio.run(self.runtime.set_operation(True))
+                session_id = self.runtime.session.session_id
+                configuration = self.runtime.configuration
+                target = self.runtime.controller.target_temperature
+                program_steps = self.runtime.session.temperature_program_steps
+                self.runtime.controller.report_contactor(True, self.now)
+                for override in (False, None, False):
+                    self._event("short", 1)
+                    self.assertIs(self.runtime.controller.heater_override, override)
+                    self.assertEqual(self.runtime.session.session_id, session_id)
+                    self.assertTrue(self.runtime.session.operation_enabled)
+                    self.assertEqual(self.runtime.configuration, configuration)
+                    self.assertEqual(self.runtime.controller.target_temperature, target)
+                    self.assertEqual(self.runtime.session.temperature_program_steps, program_steps)
+                    self.assertEqual(self.runtime.controller.completed_sessions, ())
 
 
 if __name__ == "__main__":

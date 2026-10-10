@@ -213,7 +213,7 @@ class DeviceFeedbackTests(unittest.TestCase):
     def test_same_time_start_does_not_take_a_later_temperature_before_its_input(self):
         async def exercise():
             runtime, adapter, clock = self.detection_device()
-            target = runtime.configuration.button_temperature_c
+            target = runtime.configuration.parameters.values["standard_temperature_c"]
             below, above = target - .01, target + .01
             adapter.ingest("upper_temperature", state(str(below), unit="°C"), T0, initial=True)
             adapter.refresh(T0)
@@ -252,7 +252,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             # restart; only an admitted infusion may request heat in this test.
             cutoff = max(
                 runtime.controller.thermostat_target,
-                runtime.configuration.button_temperature_c
+                runtime.configuration.parameters.values["standard_temperature_c"]
                 + runtime.configuration.parameters.values["readiness_offset_c"],
             )
             adapter.ingest("upper_temperature", state(str(cutoff), unit="°C"), T0, initial=True)
@@ -675,7 +675,7 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_long_hold_off_decision_and_command_keep_old_archive_session(self):
         async def exercise(path):
-            runtime, adapter, _ = self.device(target_temperature_c=100)
+            runtime, adapter, _ = self.device(target_temperature_c=100, standard_temperature_c=100)
             runtime._clock = lambda: clock[0]
             adapter.hass.services = SimpleNamespace(async_call=AsyncMock())
             adapter.command, adapter.command_at = True, T0
@@ -1037,9 +1037,9 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_queued_operation_pause_restarts_thermal_proof_without_physical_pause(self):
         async def exercise(queued):
-            runtime, adapter, _ = self.device(target_temperature_c=100)
+            runtime, adapter, _ = self.device(target_temperature_c=100, standard_temperature_c=100)
             options = runtime.configuration.as_options()
-            options.update(button_program="constant", button_temperature_c=100)
+            options.update(button_program="constant")
             runtime.configuration = Configuration.from_options(options)
             clock = [T0]
             runtime._clock = lambda: clock[0]

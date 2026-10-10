@@ -10,7 +10,9 @@ gewählte Tastergeste startet Automatik
 mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Die Auswahl
 richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
 der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
-gilt unabhängig von der Temperaturwahl im Panel.
+gilt unabhängig von der Temperaturwahl im Panel. Bei **Konstante Temperatur**
+verwendet sie die Standardtemperatur aus der Integrationskonfiguration;
+gespeicherte Programme verwenden ihre eigenen Temperaturen.
 
 Bei gewählter Haltegeste geht das Licht beim Drücken zunächst aus. Sobald die
 Haltezeit erreicht ist, bestätigt die eingestellte Einschalthelligkeit den Start
@@ -21,7 +23,7 @@ und schaltet den Ofen. Dafür muss der Taster Drücken, Halten und Loslassen mel
 
 Beim Wechsel zu **Konstant** oder **Manuell** gilt die einstellbare
 Standardtemperatur aus der Integrationskonfiguration. Danach bleibt eine
-direkt gewählte Solltemperatur erhalten. Programme und Tastervorgaben behalten
+direkt gewählte Solltemperatur erhalten. Gespeicherte Programme behalten
 ihre eigenen Temperaturen.
 
 Eine direkte Sollwertänderung am Temperaturinstrument wirkt sofort und ersetzt das
@@ -57,7 +59,8 @@ bereits erreichte Wahl keine Übersteuerung und verlängert keine Frist. **Autom
 beendet die jeweilige Übersteuerung auch bei unverändertem Gerätezustand.
 
 Während einer Sitzung wechselt ein kurzer Tasterdruck die vorübergehende
-Ofenwahl oder gibt an die Automatik zurück.
+Ofenwahl oder gibt an die Automatik zurück. Solltemperatur und Temperaturprogramm
+bleiben erhalten.
 
 In Automatik endet eine manuelle Lichtwahl beim passenden Phasenwechsel oder spätestens
 mit ihrer Übersteuerungsfrist. Die Rückkehr verlängert weder Kühlung noch

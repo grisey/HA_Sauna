@@ -164,7 +164,6 @@ def parameter_error(error):
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
         "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
-        "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail
 
@@ -189,7 +188,7 @@ def public_configuration(options):
         if key in {
             "program_mode", "temperature_programs", "selected_program_id",
             "control_mode", "temperature_steps", "appearance",
-            "button_program", "button_temperature_c", "button_session_gesture",
+            "button_program", "button_session_gesture",
         }
     } | {"parameters": {key: parameters[key] for key in keys if key in parameters}}
 

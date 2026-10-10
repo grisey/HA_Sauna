@@ -64,7 +64,6 @@ class Configuration:
     control_mode: str = instance_default("control_mode")
     presence_source: str = instance_default("presence_source")
     temperature_steps: tuple[float, ...] | None = None
-    button_temperature_c: float | None = None
     appearance: dict = field(default_factory=default_appearance)
     button_session_gesture: str = instance_default("button_session_gesture")
 
@@ -88,24 +87,6 @@ class Configuration:
             if len(steps) > BY_KEY["temperature_gangs"].maximum:
                 raise ValueError("Ungültige manuelle Temperaturstufen")
             object.__setattr__(self, "temperature_steps", steps)
-        if self.button_temperature_c is None:
-            object.__setattr__(
-                self,
-                "button_temperature_c",
-                instance_default(
-                    "button_temperature_c", parameters=self.parameters.values
-                ),
-            )
-        button_parameters = Parameters(
-            {
-                **self.parameters.as_dict(),
-                "target_temperature_c": self.button_temperature_c,
-            }
-        )
-        object.__setattr__(
-            self, "button_temperature_c",
-            button_parameters.values["target_temperature_c"],
-        )
         if self.button_program not in {"program_1", "program_2"} or any(
             program.id == self.button_program for program in self.temperature_programs
         ):
@@ -160,7 +141,7 @@ class Configuration:
                 "control_mode",
                 "presence_source",
                 "temperature_steps",
-                "button_temperature_c",
+                "button_temperature_c",  # Obsolete saved option; ignored on load.
                 "appearance",
             }
         ):
@@ -246,10 +227,6 @@ class Configuration:
                 if selected_program_id in program_ids
                 else "constant"
             )
-        button_temperature_c = options.get(
-            "button_temperature_c",
-            instance_default("button_temperature_c", parameters=parameters.values),
-        )
         if (
             program_mode not in ("constant", "progressive")
             or button_program not in {"constant", *program_ids}
@@ -273,7 +250,6 @@ class Configuration:
             control_mode,
             options.get("presence_source", instance_default("presence_source")),
             steps,
-            button_temperature_c,
             options.get("appearance", default_appearance()),
             options.get("button_session_gesture", instance_default("button_session_gesture")),
         )
@@ -295,7 +271,6 @@ class Configuration:
             "control_mode": self.control_mode,
             "presence_source": self.presence_source,
             "temperature_steps": self.temperature_steps,
-            "button_temperature_c": self.button_temperature_c,
             "appearance": validate_appearance(self.appearance),
         }
 
@@ -1082,13 +1057,6 @@ class SaunaRuntime:
             self.configuration.button_program,
             catalog=self.configuration.temperature_programs,
         )
-        if self.configuration.button_program == "constant":
-            parameters = Parameters(
-                {
-                    **parameters.as_dict(),
-                    "target_temperature_c": self.configuration.button_temperature_c,
-                }
-            )
         self.controller.update_temperature_parameters(
             parameters,
             at,

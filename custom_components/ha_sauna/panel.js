@@ -4139,7 +4139,7 @@ class SaunaPanel extends HTMLElement {
         this.drawHistory("archive");
         this.startHistoryLoad();
       }
-      if (["button-program", "button-temperature"].includes(e.target.id))
+      if (e.target.id === "button-program")
         this.runPanelAction(() => this.action("button-program"));
       if (e.target.id === "button-session-gesture")
         this.runPanelAction(() => this.action("button-gesture"));
@@ -8742,12 +8742,11 @@ class SaunaPanel extends HTMLElement {
         )
         .join(""),
       button = configuration.button_program,
-      bounds = this.temperatureBounds(),
       option = (value, label) =>
         `<option value="${esc(value)}" ${button === value ? "selected" : ""}>${esc(label)}</option>`;
     this.updateMarkup(
       "#button-settings",
-      `${gestureOptions ? `<div class="row"><label class="field" for="button-session-gesture">Sitzung starten und beenden<select id="button-session-gesture" ${gestureEditable ? "" : "disabled"}>${gestureOptions}</select></label></div>` : ""}<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div>${button === "constant" ? `<label class="field" for="button-temperature">Solltemperatur${unitInput(`<input id="button-temperature" type="number" aria-label="Solltemperatur (°C)" min="${bounds?.minimum}" max="${bounds?.maximum}" step="${this.temperatureStep()}" value="${configuration.button_temperature_c}" ${editable ? "" : "disabled"}>`, "°C")}</label>` : ""}</div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
+      `${gestureOptions ? `<div class="row"><label class="field" for="button-session-gesture">Sitzung starten und beenden<select id="button-session-gesture" ${gestureEditable ? "" : "disabled"}>${gestureOptions}</select></label></div>` : ""}<div class="row"><div class="field"><span><label for="button-program">Temperaturwahl</label> ${this.infoButton("button-start", "Temperaturwahl beim externen Start", "Wird sofort als Startvorgabe für Taster und Betriebsschalter gespeichert. Beim Einschalten in der Steuerungsansicht gilt deren Temperaturwahl.")}</span><select id="button-program" ${editable ? "" : "disabled"}>${option("constant", "Konstante Temperatur")}<optgroup label="Gespeicherte Programme">${configuration.temperature_programs.map((program) => option(program.id, program.name)).join("")}</optgroup></select></div></div>${button !== "constant" ? `<p class="muted">Temperaturfolge: ${esc(this.programSteps(configuration.temperature_programs.find((program) => program.id === button)))}</p>` : ""}`,
     );
   }
   newProgramId() {
@@ -9674,25 +9673,8 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action === "button-program") {
-      const profile = this.$("#button-program").value,
-        payload = { profile };
-      if (profile === "constant") {
-        const input = this.$("#button-temperature"),
-          value = input
-            ? Number(input.value)
-            : this.state.configuration.button_temperature_c,
-          bounds = this.temperatureBounds();
-        if (
-          !bounds ||
-          (input && !input.value.trim()) ||
-          !Number.isFinite(value) ||
-          value < bounds.minimum ||
-          value > bounds.maximum
-        )
-          throw Error("Temperatur innerhalb der zulässigen Grenzen eingeben");
-        payload.temperature_c = this.roundTargetTemperature(value, bounds);
-      }
-      await this.api(`/${this.entry}/button-program`, "POST", payload);
+      const profile = this.$("#button-program").value;
+      await this.api(`/${this.entry}/button-program`, "POST", { profile });
       await this.refresh();
       return;
     }

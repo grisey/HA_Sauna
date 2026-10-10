@@ -390,14 +390,13 @@ for (const selected of [null, "quiet"]) {
 }
 
 // The separate button setting has no implicit "current" option.  It accepts
-// a named saved program or a constant temperature, and both it and the catalog
-// share the program permission/session lock.
+// a named saved program or the central standard temperature. Both it and the
+// catalog share the program permission/session lock.
 {
   const button = { innerHTML: "" },
     library = { dataset: {}, innerHTML: "" },
     inputs = {
       "#button-program": { value: "constant" },
-      "#button-temperature": { value: "83" },
     };
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "entry-1",
@@ -409,7 +408,6 @@ for (const selected of [null, "quiet"]) {
       configuration_locked: false,
       configuration: {
         button_program: "constant",
-        button_temperature_c: 83,
         temperature_programs: programs,
         parameters: {},
       },
@@ -429,7 +427,7 @@ for (const selected of [null, "quiet"]) {
     /option value="constant"[\s\S]*option value="quiet"[\s\S]*option value="program_1"/,
   );
   assert.doesNotMatch(button.innerHTML, /option value="current"/);
-  assert.match(button.innerHTML, /id="button-temperature"[^>]*value="83"/);
+  assert.doesNotMatch(button.innerHTML, /button-temperature|type="number"/);
   p.renderProgramLibrary();
   assert.match(library.innerHTML, /data-action="program-add"(?![^>]*disabled)/);
   assert.match(library.innerHTML, /data-action="program-edit:quiet"(?![^>]*disabled)/);
@@ -438,7 +436,18 @@ for (const selected of [null, "quiet"]) {
   p.action("button-program")
     .then(async () => {
       assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
-        ["/entry-1/button-program", "POST", { profile: "constant", temperature_c: 83 }],
+        ["/entry-1/button-program", "POST", { profile: "constant" }],
+      ]);
+      inputs["#button-program"].value = "quiet";
+      p.state.configuration.button_program = "quiet";
+      p.drawButtonProgram();
+      assert.match(button.innerHTML, /Temperaturfolge:/);
+      assert.ok(button.innerHTML.includes(p.programSteps(programs[0])));
+      await p.action("button-program");
+      assert.deepEqual(JSON.parse(JSON.stringify(calls[1])), [
+        "/entry-1/button-program",
+        "POST",
+        { profile: "quiet" },
       ]);
       p.state.configuration_locked = true;
       p.drawButtonProgram();
@@ -447,7 +456,7 @@ for (const selected of [null, "quiet"]) {
       assert.match(button.innerHTML, /button-program[^>]*disabled/);
       assert.match(library.innerHTML, /program-save" class="confirm" disabled/);
       await p.action("button-program");
-      assert.equal(calls.length, 1, "locked button settings never reach the API");
+      assert.equal(calls.length, 2, "locked button settings never reach the API");
       p.state.configuration_locked = false;
       p.state.permissions.program = false;
       p.drawButtonProgram();
@@ -456,7 +465,7 @@ for (const selected of [null, "quiet"]) {
       assert.match(button.innerHTML, /button-program[^>]*disabled/);
       assert.match(library.innerHTML, /program-save" class="confirm" disabled/);
       await p.action("button-program");
-      assert.equal(calls.length, 1, "button settings require the program permission");
+      assert.equal(calls.length, 2, "button settings require the program permission");
       console.log("panel button program regressions passed");
     })
     .catch((error) => {
@@ -480,7 +489,6 @@ for (const selected of [null, "quiet"]) {
       configuration_locked: false,
       configuration: {
         button_program: "quiet",
-        button_temperature_c: 80,
         temperature_programs: programs,
         parameters: {},
       },

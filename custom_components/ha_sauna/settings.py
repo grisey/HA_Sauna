@@ -162,13 +162,6 @@ def parameter_change(
     if partial and merged.get("final_temperature_c", False) is None:
         merged.pop("final_temperature_c")
     parameters = Parameters(merged)
-    button_temperature = configuration.button_temperature_c
-    if not (
-        parameters.minimum_for("target_temperature_c")
-        <= button_temperature
-        <= BY_KEY["target_temperature_c"].maximum
-    ):
-        raise ParameterError("sauna_min_temperature_c", "button_temperature_invalid")
     # A changed lower bound must be valid for the whole stored catalog before
     # options are written; otherwise the next reload would reject saved data.
     try:
@@ -467,7 +460,7 @@ async def async_set_button_gesture(hass, entry, gesture):
         return configuration
 
 
-async def async_set_button_program(hass, entry, profile, temperature_c=None):
+async def async_set_button_program(hass, entry, profile):
     """Atomically persist the physical button's named or constant program."""
     runtime = entry.runtime_data
     async with runtime.serialized():
@@ -480,21 +473,11 @@ async def async_set_button_program(hass, entry, profile, temperature_c=None):
         if (
             not isinstance(profile, str)
             or profile not in {"constant", *ids}
-            or (profile != "constant" and temperature_c is not None)
         ):
             raise ValueError("Ungültiges Tasterprogramm")
-        temperature = runtime.configuration.button_temperature_c
-        if profile == "constant" and temperature_c is not None:
-            temperature = Parameters(
-                {
-                    **runtime.configuration.parameters.as_dict(),
-                    "target_temperature_c": temperature_c,
-                }
-            ).values["target_temperature_c"]
         configuration = replace(
             runtime.configuration,
             button_program=profile,
-            button_temperature_c=temperature,
         )
         # This selection has no effect on an already-running controller (which
         # is excluded above), so it can be adopted immediately instead of
