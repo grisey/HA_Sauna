@@ -2240,7 +2240,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await group_picker.locator("ha-select").click()
         await expect(group_picker.get_by_text(controls_label, exact=True)).to_be_visible()
         await expect(group_picker.get_by_text(external_label, exact=True)).to_be_visible()
-        await self.page.screenshot(path=str(screenshots / "options_rename_groups.png"), full_page=True)
+        await self.page.screenshot(
+            path=str(screenshots / "options_rename_groups.png"),
+            full_page=True, animations="disabled")
         await group_picker.get_by_text(controls_label, exact=True).click()
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(dialog.get_by_text("Entität auswählen", exact=True)).to_be_visible()
@@ -2252,7 +2254,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await search.fill("Saunabetrieb")
         operation_option = picker.get_by_text("Saunabetrieb", exact=False).last
         await expect(operation_option).to_be_visible()
-        await self.page.screenshot(path=str(screenshots / "options_rename_search.png"), full_page=True)
+        await self.page.screenshot(
+            path=str(screenshots / "options_rename_search.png"),
+            full_page=True, animations="disabled")
         await operation_option.click()
         await expect(dialog.locator("ha-selector-entity")).to_have_js_property("value", self.operation)
         await dialog.get_by_role("button", name="Weiter", exact=True).click()

@@ -611,12 +611,11 @@
         "data": {
           "group": "Bereich oder Gerät"
         },
-        "submit": "Weiter",
-        "description": "Zuerst einen Funktionsbereich der Sauna oder ein zugeordnetes Gerät auswählen. Die Zahl zeigt die enthaltenen Entitäten."
+        "submit": "Weiter"
       },
       "rename_entity_select": {
         "title": "Entität auswählen",
-        "description": "{group}\n\nGenau eine Entität auswählen. Aktive Entitäten lassen sich nach Namen suchen; deaktivierte oder nicht geladene Entitäten stehen im eigenen Auswahlfeld.",
+        "description": "{group}",
         "data": {
           "entity_id": "Aktive Entität",
           "inactive_entity_id": "Deaktivierte oder nicht geladene Entität",

@@ -32,11 +32,7 @@ mit fehlenden oder veralteten Messwerten
 Bei mehreren Saunen heißt der gemeinsame Seitenleisteneintrag weiterhin „Sauna“.
 
 **Entität umbenennen** ordnet eigene Entitäten nach Funktionsbereichen und
-zugeordnete Entitäten nach Geräten beziehungsweise Rollen. Nach der Bereichsauswahl
-folgt die Suche nach einer aktiven Entität. Deaktivierte oder nicht geladene
-Entitäten stehen innerhalb desselben Bereichs in einem gesonderten Auswahlfeld.
-Die Auswahl- und Bearbeitungsschritte bieten jeweils eine Rückkehr ohne Änderung.
-Änderungen der
+zugeordnete Entitäten nach Geräten beziehungsweise Rollen. Änderungen der
 Entitäts-ID führen die Zuordnungen aller betroffenen Sauna-Instanzen nach und
 laden diese neu; Ofen und Licht werden dabei ausgeschaltet. Anzeigenamen allein
 erfordern keinen Neustart. Außerhalb dieses Dialogs geänderte IDs werden nicht
