@@ -1679,6 +1679,14 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.entry.runtime_data.configuration.appearance, replaced)
 
     async def test_appearance_survives_parameter_reset_and_other_settings(self):
+        entity_id = "binary_sensor.reset_presence"
+        self.hass.states.async_set(entity_id, "off", {"device_class": "occupancy"})
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "presence_source": "ha_presence",
+            "bindings": {**self.entry.options["bindings"], "presence": entity_id},
+        })
+        await self.hass.async_block_till_done()
         url = self.base + "/" + self.entry.entry_id
         appearance = {"colors": {"event_door": "#010203"},
                       "scales": {"temperature": {"minimum": 30, "maximum": 130}}}
@@ -1696,6 +1704,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
             self.assertIsNot(self.entry.runtime_data, runtime_before_reset)
             self.assertEqual(self.entry.options["appearance"], stored)
+            self.assertEqual(self.entry.options["presence_source"], "ha_presence")
+            self.assertEqual(self.entry.options["bindings"]["presence"], entity_id)
+            self.assertEqual(
+                self.entry.runtime_data.configuration.presence_source, "ha_presence"
+            )
             async with client.get(url + "/state") as response:
                 self.assertEqual((await response.json())["appearance"], stored)
 

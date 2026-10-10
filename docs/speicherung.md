@@ -16,7 +16,8 @@ Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
 
 ## Sitzungen exportieren
 
-Der ZIP-Download unter **Einstellungen** erfordert Administratorrechte.
+**Archiv als ZIP herunterladen** unter **Einstellungen → Daten und Wartung**
+erfordert Administratorrechte.
 Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung.
 
 | Datei | Inhalt |
@@ -63,8 +64,9 @@ Frühere Zustände und die tatsächlichen Schalterrückmeldungen bleiben erhalte
 Jede Sitzungsrevision enthält den damaligen Konfigurationsstand. Ein späterer
 Gerätewechsel schreibt die Herkunft alter Messungen nicht um.
 
-Fehlende oder veraltete Messungen bleiben Datenlücken. Für die Zeichnung
-verdichtete Kurven verändern die Originalwerte im Export nicht.
+Verlaufskurven verbinden vorhandene Messwerte auch über Messlücken hinweg.
+Die Zeichnung wird an die Bildschirmauflösung angepasst; Wertanzeige und
+Export verwenden weiterhin Originalmessungen.
 
 ### Nachträgliche Zuordnung im Verlauf
 

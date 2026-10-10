@@ -13,7 +13,7 @@ from . import energy, heating, thermostat
 from .consumer_events import gang_changes
 from .contracts import BasePhaseMark, ContactorMark, ControlInputs
 from .defaults import instance_default
-from .models import Deadline, Energy, LightAfterRun, Session, TimedPhase
+from .models import Deadline, Energy, LightAfterRun, Session, ThermostatState, TimedPhase
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
@@ -86,6 +86,7 @@ class Controller:
         self._override_snapshot: tuple[tuple[str | None, str], tuple[bool]] | None = (
             None
         )
+        self._manual_thermostat = ThermostatState()
         self.decisions: list[thermostat.Decision] = []
         self.consumer_events = []
         self._consumer_snapshot = None
@@ -201,6 +202,8 @@ class Controller:
     @property
     def target_temperature(self) -> float | None:
         start = self.parameters.values.get("target_temperature_c")
+        if self.control_mode == "manual":
+            return start
         end = self.parameters.values.get("final_temperature_c")
         session = self._session
         mode = (
@@ -1164,6 +1167,7 @@ class Controller:
         # Manual operation has an explicit OFF selection, never an automatic
         # demand to inherit from the preceding session or operating mode.
         self.heater_override = False if self.control_mode == "manual" else None
+        self._manual_thermostat = ThermostatState()
         if self._session is not None:
             self._cancel("manual_override")
         self._override_snapshot = None
@@ -1237,23 +1241,22 @@ class Controller:
             cooling=bool(session and session.after_run),
         )
 
-    def _evaluate_manual(self, at, session):
-        """Issue only an explicit heater demand while retaining interlocks."""
-        if self.protection:
-            return thermostat.Decision(
-                at, False, "protection:" + ",".join(sorted(self.protection))
-            )
-        if self.inhibits:
-            return thermostat.Decision(
-                at, False, "inhibit:" + ",".join(sorted(self.inhibits))
-            )
-        if self.temperature is None or not isfinite(self.temperature):
-            return thermostat.Decision(at, False, "upper_temperature_unavailable")
-        if session is not None and session.after_run is not None:
-            return thermostat.Decision(at, False, "after_run")
-        if self.heater_override is True and self._manual_heating_allowed():
-            return thermostat.Decision(at, True, "manual_override")
-        return thermostat.Decision(at, False, "manual_mode")
+    def _evaluate_manual(self, at):
+        """Regulate an explicitly enabled heater without session rules or timers."""
+        self._manual_thermostat, decision = thermostat.evaluate(
+            self._manual_thermostat,
+            now=at,
+            parameters=self.parameters,
+            target_temperature=self.target_temperature,
+            temperature=self.temperature,
+            enabled=self.heater_override is True,
+            protection=tuple(sorted(self.protection)),
+            inhibits=tuple(sorted(self.inhibits)),
+            pure_hysteresis=True,
+        )
+        if decision.reason == "operation_off":
+            decision = replace(decision, reason="manual_mode")
+        return decision
 
     def _evaluate_thermostat(self, at):
         """Evaluate and retain the thermostat state for the current session."""
@@ -1347,7 +1350,7 @@ class Controller:
         session = self._session
         session_id = session.session_id if session else decision_session_id
         if self.control_mode == "manual":
-            decision = self._evaluate_manual(at, session)
+            decision = self._evaluate_manual(at)
         elif session is None:
             decision = thermostat.Decision(at, False, "operation_off")
         else:

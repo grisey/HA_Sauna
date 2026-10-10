@@ -2,7 +2,8 @@
 
 HA Sauna steuert Ofen und Licht in Home Assistant und zeichnet Saunasitzungen auf.
 
-- [Sauna einrichten](docs/einrichtung.md): Voraussetzungen, Sensoren und Gerätezuordnung.
+- [Sauna einrichten](docs/einrichtung.md): Voraussetzungen, Gerätezuordnung und
+  dauerhafte Anlagenwerte in der Integrationskonfiguration.
 - [Sitzung starten, ändern und beenden](docs/bedienung.md): Temperaturprogramm,
   Taster, manuelle Bedienung und Wiederaufnahme.
 - [Automatischen Betrieb verstehen](docs/betrieb.md): Heizen, Bereitschaft,

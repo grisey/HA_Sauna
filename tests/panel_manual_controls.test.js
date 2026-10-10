@@ -213,6 +213,8 @@ const renderCurrent = (
 
   for (const actualOn of [false, true]) {
     const same = makePanel(enabled);
+    same.panel.state.configuration.control_mode = "automatic";
+    same.panel.state.session = { timeline: {} };
     same.panel.state.manual_controls = {
       heater: { manual: null, observation: { available: true, on: actualOn } },
       light: {
@@ -477,11 +479,12 @@ const renderCurrent = (
     userManual,
     /data-action="control-mode:automatic" aria-pressed="false" >Automatik/,
   );
-  assert.match(userManual, /data-action="heater:true" aria-pressed="false" >Ein/);
-  assert.match(userManual, /data-action="heater:false" aria-pressed="false" >Aus/);
+  assert.match(userManual, /data-action="heater:true" aria-pressed="false"[^>]*>Ein/);
+  assert.match(userManual, /data-action="heater:false" aria-pressed="false"[^>]*>Aus/);
   for (const preset of ["false", "true"])
     assert.ok(userManual.includes(`data-action="light:${preset}"`));
-  assert.doesNotMatch(userManual, /Temperaturwahl|data-target-arc|heater:auto/);
+  assert.doesNotMatch(userManual, /Temperaturwahl|heater:auto/);
+  assert.match(userManual, /data-target-arc="true"/);
   const readOnly = renderCurrent("manual", {}, false, "#current", {
     admin: false,
     control: false,
@@ -933,6 +936,64 @@ const renderCurrent = (
         /\bdisabled\b/,
         "a blocked heater-on command must not block release or independent light controls",
       );
+    }
+  }
+
+  for (const permitted of [false, true]) {
+    for (const observed of [false, true, null]) {
+      const controls = {
+        heater: {
+          manual: permitted,
+          observation: { available: observed !== null, on: observed },
+        },
+      };
+      const html = renderCurrent("manual", controls);
+      for (const on of [false, true]) {
+        const button = html.match(
+          new RegExp(`<button\\b[^>]*data-action="heater:${on}"[^>]*>`),
+        )[0];
+        assert.match(button, new RegExp(`aria-pressed="${observed === on}"`));
+        assert.match(
+          button,
+          new RegExp(`data-regulation-selected="${permitted === on}"`),
+        );
+        assert.match(button, /aria-label="Temperaturregelung/);
+      }
+      const invocation = makePanel(enabled);
+      invocation.panel.state.manual_controls = controls;
+      await invocation.panel.action(`heater:${!permitted}`);
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(invocation.calls)),
+        [["/entry-1/heater", "POST", { value: !permitted }]],
+        "manual enablement is independent of contactor feedback",
+      );
+    }
+  }
+  for (const style of ["round", "linear"]) {
+    for (const allowed of [false, true]) {
+      const html = renderCurrent(
+        "manual",
+        {},
+        false,
+        "#current",
+        { temperature: allowed },
+        false,
+        null,
+        [],
+        { appearance: { instruments: { temperature: style } } },
+      );
+      if (style === "round") {
+        assert.match(html, /class="target-caption"[^>]*>SOLL/);
+        assert.match(
+          html,
+          new RegExp(`data-target-arc="true"[^>]*aria-disabled="${!allowed}"`),
+        );
+      } else {
+        const input = html.match(/<input[^>]*id="linear-target-temperature"[^>]*>/)[0];
+        assert.equal(/disabled/.test(input), !allowed);
+        assert.match(html, /data-linear-target>80 °C/);
+      }
+      assert.doesNotMatch(html, /program-types|data-action="operation"/);
     }
   }
 

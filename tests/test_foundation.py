@@ -10,6 +10,7 @@ import unittest
 
 from custom_components.ha_sauna.bindings import BindingError, Bindings, ROLES, ROLE_BY_KEY, metadata_error, validate_metadata
 from custom_components.ha_sauna.core.controller import Controller
+from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.models import Deadline, HeatingTime, Measurement, Position, Quantity, Session
 from custom_components.ha_sauna.core.parameters import BY_KEY, DEFINITIONS, ParameterError, Parameters
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
@@ -454,9 +455,33 @@ class PackagingTests(unittest.TestCase):
         strings = json.loads((folder / "strings.json").read_text())
         translated = json.loads((folder / "translations/de.json").read_text())
         self.assertEqual(strings, translated)
-        self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]),
-                         {d.key for d in DEFINITIONS} | {"program_mode", "button_program", "button_temperature_c"})
-        self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type", "presence_source"})
+        basic_fields = {role.key for role in ROLES} | {
+            "control_input_mode", "button_event_type", "presence_source",
+        }
+        self.assertEqual(set(strings["config"]["step"]), {"user", "entities"})
+        areas = {
+            group["id"] for group in section("frontend")["settings_groups"]
+            if group.get("surface", "panel") == "integration"
+        }
+        subgroups = {
+            definition["settings_subgroup"] for definition in section("parameters")
+            if definition["settings_group"] in areas
+            and definition["minimum"] != definition["maximum"]
+        }
+        self.assertEqual(
+            set(strings["options"]["step"]),
+            {"init", "bindings", "binding_entities", *areas, *(f"parameters_{key}" for key in subgroups)},
+        )
+        self.assertEqual(
+            set(strings["options"]["step"]["init"]["menu_options"]),
+            {"bindings", *areas},
+        )
+        for scope, step in (("config", "entities"), ("options", "binding_entities")):
+            form = strings[scope]["step"][step]
+            translated_fields = set(form["data"])
+            for group in form["sections"].values():
+                translated_fields.update(group["data"])
+            self.assertEqual(translated_fields, basic_fields | ({"name"} if scope == "config" else set()))
 
     def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"

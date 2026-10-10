@@ -102,6 +102,7 @@ async def async_reset_parameters(hass, entry):
             defaults,
             control_input_mode=runtime.configuration.control_input_mode,
             button_event_type=runtime.configuration.button_event_type,
+            presence_source=runtime.configuration.presence_source,
             appearance=runtime.configuration.appearance,
         )
         # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre

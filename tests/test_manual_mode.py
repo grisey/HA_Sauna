@@ -28,6 +28,81 @@ class ManualModeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ohne Session"):
             controller.process(event(name, kind, second))
 
+    def test_manual_hysteresis_switches_without_minimum_heat_or_pause(self):
+        controller = self.controller(
+            target_temperature_c=80, readiness_offset_c=5,
+            readiness_hysteresis_c=3, minimum_heating_minutes=10,
+            thermostat_cooldown_minutes=10,
+        )
+        controller.set_temperature(77, at(0))
+        controller.set_heater_override(True, at(1))
+        controller.report_heating(True, at(1))
+        for second, temperature, heat in (
+            (2, 84, True), (3, 85, False), (4, 78, False),
+            (5, 77, True), (6, 80, True),
+        ):
+            controller.set_temperature(temperature, at(second))
+            self.assertEqual(controller.last_decision.heat, heat)
+            self.assertIs(controller.heater_override, True)
+            self.assertIsNone(controller.session)
+        self.assertEqual(controller.completed_sessions, ())
+        self.assertIsNone(controller.light_after_run)
+
+    def test_manual_target_changes_apply_immediately_without_starting_a_program(self):
+        controller = Controller(
+            Parameters({**parameters().as_dict(), "target_temperature_c": 80,
+                        "final_temperature_c": 100}),
+            control_mode="manual", program_mode="progressive",
+            temperature_steps=(60, 90, 100),
+        )
+        self.assertEqual(controller.target_temperature, 80)
+        controller.set_temperature(70, at(0))
+        controller.set_heater_override(True, at(1))
+        self.assertTrue(controller.last_decision.heat)
+        controller.update_temperature_parameters(
+            Parameters({**controller.parameters.as_dict(), "target_temperature_c": 60}),
+            at(2), explicit_target=True,
+        )
+        self.assertEqual(controller.target_temperature, 60)
+        self.assertFalse(controller.last_decision.heat)
+        self.assertTrue(controller.heater_override)
+        controller.update_temperature_parameters(
+            Parameters({**controller.parameters.as_dict(), "target_temperature_c": 80}),
+            at(3), explicit_target=True,
+        )
+        self.assertTrue(controller.last_decision.heat)
+        self.assertIsNone(controller.session)
+        self.assertEqual(controller.completed_sessions, ())
+
+    def test_off_and_mode_change_clear_manual_hysteresis_memory(self):
+        for clear in ("off", "release", "mode"):
+            with self.subTest(clear=clear):
+                controller = self.controller(target_temperature_c=80)
+                self.start(controller)
+                controller.set_heater_override(True, at(1))
+                controller.set_temperature(80, at(2))
+                self.assertTrue(controller.last_decision.heat)
+                if clear == "mode":
+                    controller.set_control_mode("automatic")
+                    controller.set_control_mode("manual")
+                else:
+                    controller.set_heater_override(False if clear == "off" else None, at(3))
+                controller.set_heater_override(True, at(4))
+                self.assertFalse(controller.last_decision.heat)
+                self.assertTrue(controller.heater_override)
+
+    def test_invalid_measurement_revokes_manual_thermostat_enable(self):
+        for temperature in (None, float("nan"), float("inf")):
+            with self.subTest(temperature=temperature):
+                controller = self.controller()
+                self.start(controller)
+                controller.set_heater_override(True, at(1))
+                controller.set_temperature(temperature, at(2))
+                self.assertFalse(controller.last_decision.heat)
+                self.assertFalse(controller.heater_override)
+                controller.set_temperature(60, at(3))
+                self.assertFalse(controller.last_decision.heat)
+
     def test_mode_can_only_change_between_sessions(self):
         controller = Controller(parameters())
         controller.set_control_mode("manual")
@@ -135,7 +210,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertFalse(controller.heater_override)
         self.assertIsNone(controller.session)
 
-    def test_old_temperature_threshold_without_a_gang_keeps_manual_demand(self):
+    def test_temperature_cutoff_keeps_manual_enable_without_starting_cooling(self):
         controller = self.controller(
             safety_temperature_c=80,
             overtemperature_minutes=1,
@@ -149,7 +224,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertTrue(controller.heater_override)
         self.assertEqual(controller.phase, "aus")
         self.assertIsNone(controller.session)
-        self.assertTrue(controller.last_decision.heat)
+        self.assertFalse(controller.last_decision.heat)
 
     def test_presence_and_old_temperature_threshold_create_no_manual_session(self):
         controller = self.controller(
@@ -168,7 +243,7 @@ class ManualModeTests(unittest.TestCase):
 
         self.assertEqual(controller.phase, "aus")
         self.assertTrue(controller.heater_override)
-        self.assertTrue(controller.last_decision.heat)
+        self.assertFalse(controller.last_decision.heat)
         self.assertIsNone(controller.session)
 
     def test_technical_protection_still_revokes_manual_heat(self):

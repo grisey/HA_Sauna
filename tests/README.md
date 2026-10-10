@@ -93,8 +93,10 @@ HA-Zugang und keine Aktorausgabe. Szenarien sind zurücksetzbar. Türbewegung,
 Präsenz und Ofenrückmeldung können getrennt eingegeben werden.
 
 Die Vorschau unterstützt Betrieb, Temperaturprogramme, Solltemperatur und manuelle
-Ofenwahl. Beendete Sitzungen bleiben bis zum Zurücksetzen des Szenarios im Verlauf.
-Lichtwerte sind simuliert. Nicht angebundene Einstellungsaktionen zeigen eine
+Ofenwahl. Die Lichtwerte folgen der produktiven Lichtplanung. „Steuerung folgen“
+führt die simulierte Ofenrückmeldung nach; „Ein“, „Aus“ und „Unbekannt“ halten sie
+fest. Beendete Sitzungen bleiben bis zum Zurücksetzen des Szenarios im Verlauf.
+Nicht angebundene Einstellungsaktionen zeigen eine
 Fehlermeldung. Automatisierte Prüfungen laufen weiterhin ausschließlich unter Linux.
 
 ## Sitzungsverlauf im Browser

@@ -9,7 +9,8 @@ from test_cooling import at, controller
 from test_foundation import event
 
 from custom_components.ha_sauna.archive import plain
-from custom_components.ha_sauna.core.parameters import DEFINITIONS
+from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.log import SaunaLog
@@ -93,22 +94,104 @@ class PresentationTests(unittest.TestCase):
         self.assertIsNone(public_session(None))
         self.assertIsNone(public_phase_projection(None))
 
-    def test_all_settings_have_the_same_labels_and_help_in_both_ha_forms(self):
-        root=Path(__file__).resolve().parents[1]/"custom_components/ha_sauna"
-        strings=json.loads((root/"strings.json").read_text())
-        self.assertEqual(strings,json.loads((root/"translations/de.json").read_text()))
-        for section in ("config","options"):
-            fields=strings[section]["step"]["parameters"]
-            for d in DEFINITIONS:
-                self.assertEqual(fields["data"][d.key], d.label)
-                self.assertEqual(fields["data_description"][d.key], d.description)
-                self.assertTrue(d.description and d.group)
+    def test_ha_translation_fallback_contains_the_complete_german_base(self):
+        # HA loads translations/<locale>.json with en.json as fallback; a
+        # custom integration's strings.json is not a runtime fallback file.
+        root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
+        source = json.loads((root / "strings.json").read_text())
+        fallback = json.loads((root / "translations/en.json").read_text())
+        self.assertEqual(fallback, source)
+        self.assertEqual(fallback, json.loads((root / "translations/de.json").read_text()))
+
+    def test_basic_configuration_shares_labels_and_help_in_both_ha_forms(self):
+        root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
+        strings = json.loads((root / "strings.json").read_text())
+        setup = strings["config"]["step"]["user"]
+        options = strings["options"]["step"]["bindings"]
+        for key in options["data"]:
+            with self.subTest(key=key):
+                self.assertEqual(setup["data"][key], options["data"][key])
+                self.assertEqual(
+                    setup["data_description"][key], options["data_description"][key]
+                )
+                self.assertTrue(options["data"][key])
+                self.assertTrue(options["data_description"][key])
         self.assertNotIn("Grundgerüst", json.dumps(strings))
         self.assertNotIn("Testsession", json.dumps(strings))
+        setup_entities = strings["config"]["step"]["entities"]
+        options_entities = strings["options"]["step"]["binding_entities"]
+        for part in ("data", "data_description"):
+            self.assertEqual(
+                {key: value for key, value in setup_entities[part].items() if key != "name"},
+                options_entities[part],
+            )
+        self.assertEqual(setup_entities["sections"], options_entities["sections"])
+        from custom_components.ha_sauna.bindings import ROLES
+        translated = set(options_entities["data"])
+        for group in options_entities["sections"].values():
+            self.assertTrue(group["name"])
+            self.assertEqual(set(group["data"]), set(group["data_description"]))
+            self.assertFalse(translated.intersection(group["data"]))
+            translated.update(group["data"])
+        self.assertEqual(translated, {role.key for role in ROLES} | {
+            "control_input_mode", "button_event_type", "presence_source",
+        })
+
+    def test_parameter_labels_and_help_come_from_the_catalog(self):
+        catalog = {item["key"]: item for item in section("parameters")}
+        self.assertEqual({definition.key for definition in EDITABLE_DEFINITIONS}, set(catalog))
+        for definition in EDITABLE_DEFINITIONS:
+            with self.subTest(key=definition.key):
+                expected = catalog[definition.key]
+                self.assertEqual(definition.label, expected["label"])
+                self.assertEqual(definition.description, expected["description"])
+                self.assertTrue(definition.label and definition.description and definition.group)
+
+    def test_integration_parameter_translations_follow_catalog_ownership_and_text(self):
+        root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
+        strings = json.loads((root / "strings.json").read_text())
+        steps = strings["options"]["step"]
+        frontend = section("frontend")
+        catalog = section("parameters")
+        for area in frontend["settings_groups"]:
+            if area.get("surface", "panel") != "integration":
+                continue
+            members = [
+                item for item in catalog
+                if item["settings_group"] == area["id"]
+                and item["minimum"] != item["maximum"]
+            ]
+            with self.subTest(area=area["id"]):
+                self.assertEqual(steps[area["id"]]["title"], area["label"])
+                self.assertEqual(
+                    steps["init"]["menu_options"][area["id"]], area["label"]
+                )
+                expected_menu = {}
+                for subgroup in frontend["settings_subgroups"]:
+                    fields = [
+                        item for item in members
+                        if item["settings_subgroup"] == subgroup["id"]
+                    ]
+                    if not fields:
+                        continue
+                    step_id = f"parameters_{subgroup['id']}"
+                    expected_menu[step_id] = subgroup["label"]
+                    self.assertEqual(steps[step_id]["title"], subgroup["label"])
+                    self.assertEqual(
+                        steps[step_id]["data"],
+                        {item["key"]: item["label"] for item in fields},
+                    )
+                    self.assertEqual(
+                        steps[step_id]["data_description"],
+                        {item["key"]: item["description"] for item in fields},
+                    )
+                self.assertEqual(steps[area["id"]]["menu_options"], expected_menu)
 
     def test_configuration_and_measurement_errors_are_distinct_german_messages(self):
         text=configuration_message(["sensor_timeout_seconds","feedback_timeout_seconds"])
-        self.assertIn("Höchstalter eines Messwerts",text)
+        catalog = {item["key"]: item for item in section("parameters")}
+        for key in ("sensor_timeout_seconds", "feedback_timeout_seconds"):
+            self.assertIn(catalog[key]["label"], text)
         self.assertNotIn("_seconds",text)
         self.assertIn("veraltet",fault_message("upper_temperature","measurement_stale"))
         self.assertIn("noch nicht eingestellt",fault_message("upper_temperature","validity_unconfigured"))

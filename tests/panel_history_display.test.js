@@ -1,5 +1,5 @@
 // Display aggregation remains pure data work. Canvas checks below use a
-// functional FakeCanvas only to verify paths and gap commands, never speed.
+// functional FakeCanvas only to verify paths and original endpoints, never speed.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const appearanceCatalog = JSON.parse(
@@ -130,15 +130,15 @@ const geometry = {
     p = panel(30, records);
   p.historyIndex(records);
   p.historyDisplayValues("upper", "temperature", base, base + 30_000, 5_000, 100);
-  const display = p.historyDisplay(p.series("upper", "temperature"));
+  const display = p.historyDisplay(p.historyCurveSeries("upper", "temperature"));
   records.push(record(20, 90));
   p.invalidateHistoryIndex();
   p.historyIndex(records);
-  assert.equal(p.historyDisplay(p.series("upper", "temperature")), display);
+  assert.equal(p.historyDisplay(p.historyCurveSeries("upper", "temperature")), display);
   assert.equal(display.values.at(-1).value, 90);
 }
 
-// Nulls and stale intervals descend to raw points and stay separate Canvas paths.
+// Missing and stale intervals connect available originals in one Canvas path.
 {
   const records = [
     record(0, 70),
@@ -161,11 +161,11 @@ const geometry = {
     curves.mainPaths
       .get("upper:temperature")
       .path.commands.filter(([kind]) => kind === "M").length,
-    3,
+    1,
   );
 }
 
-// A timeout inside one coarse bucket is still represented by a raw display gap.
+// A timeout inside a coarse bucket does not force unbounded raw-point output.
 {
   const records = [record(0, 20), record(1, 21), record(12, 22)],
     p = panel(32, records);
@@ -178,8 +178,10 @@ const geometry = {
     5_000,
     1,
   );
-  assert.equal(display.length, 3);
-  assert.equal(display[2].displayGap, true);
+  assert.ok(display.length <= 3);
+  assert.equal(display[0].value, 20);
+  assert.equal(display.at(-1).value, 22);
+  assert.ok(display.every((point) => !point.displayGap));
 }
 
 // Crossing a power-of-two level merges cached bins instead of rereading raw values.
@@ -266,8 +268,7 @@ const geometry = {
   );
 }
 
-// Real discontinuities are never capped. Command collection uses loops, so a
-// missing-value stream cannot become a spread-argument overflow.
+// A dense missing-value stream stays pixel-bounded and continuous.
 {
   const records = Array.from({ length: 150_000 }, (_, index) =>
     record(index / 10, index % 2 ? null : 70),
@@ -281,8 +282,104 @@ const geometry = {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
-  assert.doesNotThrow(() =>
-    curves.update(modelFor(p, records, 15_000, chart), geometry),
+  const model = modelFor(p, records, 15_000, chart);
+  assert.ok(model.series.get("upper:temperature").values.length < 4500);
+  curves.update(model, geometry);
+  assert.equal(
+    curves.mainPaths
+      .get("upper:temperature")
+      .path.commands.filter(([kind]) => kind === "M").length,
+    1,
+  );
+  assert.equal(p.series("upper", "temperature").length, records.length);
+  assert.equal(p.nearestMeasurement("upper", "temperature", base + 100).value, null);
+}
+
+// Zooming entirely into a long reporting hole still joins the exact nearest
+// valid originals outside the window. The raw null remains the hover result.
+{
+  const records = [
+    record(0, null),
+    record(10, 70),
+    record(20, null),
+    record(40, null),
+    record(100, 80),
+    record(110, null),
+  ];
+  const p = panel(120, records);
+  p.historyIndex(records);
+  p.window = [base + 20_000, base + 80_000];
+  const chart = { prepared: new Map() };
+  const model = p.historyModel(chart, session(120));
+  const selected = model.series.get("upper:temperature").values;
+  assert.equal(selected.length, 2);
+  assert.equal(selected[0].source, records[1].payload);
+  assert.equal(selected[1].source, records[4].payload);
+  const curves = new HistoryCurves(new FakeCanvas(), { Path2DClass: FakePath2D });
+  curves.update(model, geometry);
+  const commands = curves.mainPaths.get("upper:temperature").path.commands;
+  assert.equal(commands.filter(([kind]) => kind === "M").length, 1);
+  assert.equal(commands.filter(([kind]) => kind === "C").length, 1);
+  assert.equal(p.nearestMeasurement("upper", "temperature", base + 40_000).value, null);
+  const prepared = model.series.get("upper:temperature");
+  records.push(record(60, null));
+  p.historyIndex(records);
+  assert.equal(
+    p.historyModel(chart, session(120)).series.get("upper:temperature"),
+    prepared,
+  );
+  records.push(record(50, 75));
+  p.historyIndex(records);
+  assert.ok(
+    p
+      .historyModel(chart, session(120))
+      .series.get("upper:temperature")
+      .values.some((point) => point.source === records.at(-1).payload),
+  );
+  for (const window of [
+    [-20_000, 5_000],
+    [101_000, 130_000],
+  ]) {
+    p.window = window.map((offset) => base + offset);
+    curves.update(p.historyModel(chart, session(120)), geometry);
+    assert.equal(
+      curves.mainPaths
+        .get("upper:temperature")
+        .path.commands.filter(([kind]) => kind === "C").length,
+      0,
+      "no extrapolated line before the first or after the last valid observation",
+    );
+  }
+  assert.equal(p.series("upper", "temperature").length, records.length);
+}
+
+// Actual CSS width controls reduction; resize invalidates the preparation key
+// and restoring a wide view restores its exact original selections.
+{
+  const records = Array.from({ length: 14_400 }, (_, second) =>
+    record(second, 70 + Math.sin(second / 37)),
+  );
+  const p = panel(14_400, records);
+  p.historyIndex(records);
+  const chart = { prepared: new Map() };
+  const wide = p
+    .historyModel(chart, session(14_400), 1200)
+    .series.get("upper:temperature");
+  const narrow = p
+    .historyModel(chart, session(14_400), 300)
+    .series.get("upper:temperature");
+  assert.notEqual(wide.key, narrow.key);
+  assert.ok(narrow.values.length < wide.values.length);
+  assert.ok(narrow.values.length <= 4 * (300 + 3));
+  const restored = p
+    .historyModel(chart, session(14_400), 1200)
+    .series.get("upper:temperature");
+  assert.equal(restored.key, wide.key);
+  assert.deepEqual(restored.values, wide.values);
+  assert.ok(
+    restored.values.every((point) =>
+      records.some((record) => record.payload === point.source),
+    ),
   );
 }
 

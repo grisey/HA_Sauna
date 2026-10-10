@@ -5,7 +5,8 @@
 Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
-Die unter **Sitzung starten und beenden** gewählte Tastergeste startet Automatik
+Die unter **Einstellungen → Programme und Start → Sitzung starten und beenden**
+gewählte Tastergeste startet Automatik
 mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Die Auswahl
 richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
 der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
@@ -44,8 +45,8 @@ In Automatik endet eine vorübergehende Ofenwahl bei Rückgabe, Phasenwechsel,
 Ofen-AUS unterbricht auch Gangheizung und Mindestheizzeit. Ofen-EIN bleibt der
 [Heizfreigabe und Ofenkühlung](betrieb.md#heizpriorität) untergeordnet.
 
-Die Ein-/Aus-Tasten zeigen die Rückmeldung des Geräts. Eine bereits erreichte
-Wahl erzeugt keine Übersteuerung und verlängert keine Frist. **Automatik**
+Die Ein-/Aus-Tasten zeigen die Rückmeldung des Geräts. In Automatik erzeugt eine
+bereits erreichte Wahl keine Übersteuerung und verlängert keine Frist. **Automatik**
 beendet die jeweilige Übersteuerung auch bei unverändertem Gerätezustand.
 
 Während einer Sitzung wechselt ein kurzer Tasterdruck die vorübergehende
@@ -62,9 +63,16 @@ Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
 Ofen und Licht beginnen beim Wechsel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
+Ofen-EIN aktiviert die Temperaturregelung um den am Instrument eingestellten
+Sollwert. Sie verwendet dieselben Hystereseabstände wie die Automatik, jedoch
+ohne Mindestheizzeit oder Heizpause. Ofen-AUS beendet die Regelung sofort.
+Gangheizung, Türhilfe, Kühlung und Lichtautomatik bleiben deaktiviert.
+Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
+zeigt weiterhin die tatsächliche Ofenrückmeldung.
+
 Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
-und schaltet den Ofen um. Auch manuelles EIN benötigt eine gültige Regeltemperatur
-und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
+und schaltet die Temperaturregelung um. Auch manuelles EIN benötigt eine gültige
+Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 
 Manuelle Bedienung erzeugt keine Sitzung und keine Schaltaufzeichnung im
@@ -92,11 +100,12 @@ er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
 | --- | --- |
 | Programmbibliothek | **Fertig** ändert nur den Entwurf; erst **Programme speichern** übernimmt den gesamten Katalog. Nach Sitzungsende auch ohne Administratorrechte. |
 | Darstellung | Auch die Rücksetzung ändert nur den Entwurf; Speichern wirkt für alle Benutzer der Sauna. |
-| Anlagenparameter und Gerätezuordnungen | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
+| Anlagenwerte und Gerätezuordnungen in der Integrationskonfiguration | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
 
 Die gemeinsame Instrumentenform kann für Temperatur, Luftfeuchte und Licht
-einzeln überschrieben werden.
+einzeln überschrieben werden. Die konstanten Temperaturen der Schnellwahl werden
+ebenfalls unter **Darstellung** eingestellt.
 
 Offene oder nach Speicherfehlern verbliebene Entwürfe werden durch Sitzungsende
 nicht übernommen. Protokollstufe und Darstellung bleiben während der Sitzung
-änderbar. [Umfang der Rücksetzungen](parameter.md#standardwerte-wiederherstellen)
+änderbar. [Umfang der Rücksetzungen](parameter.md#werkseinstellungen)

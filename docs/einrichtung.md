@@ -11,6 +11,10 @@ deaktiviert sein. Externe Lichttaster werden als manuelle Eingriffe ausgewertet.
 
 ## Sensoren und Geräte zuordnen
 
+Die Home-Assistant-Integrationskonfiguration enthält **Geräte und Erkennungsverfahren**
+einschließlich Bedieneingang. Eine Änderung der Zuordnung
+erhält die gespeicherten Einstellungen, Programme und Darstellung.
+
 Erforderlich sind mindestens ein vollständiges Temperatur-/Feuchtepaar,
 Heizschütz, Bedieneingang und dimmbares Licht. Temperatur und Feuchte eines
 Paars müssen denselben Messort abbilden. Die
@@ -25,10 +29,26 @@ mit fehlenden oder veralteten Messwerten
 ## Gangerkennung festlegen
 
 Gänge werden entweder aus Temperatur und Feuchte oder mit einem direkten
-Präsenzsensor erkannt. Beide Verfahren benötigen zum Beginn eine erkannte
+Präsenzsensor erkannt. Die Türerkennung stammt in beiden Verfahren weiterhin
+aus Temperatur und Feuchte. Der Präsenzsensor ersetzt ausschließlich den
+indirekten Anwesenheitsnachweis. Beim FP300 gehört dazu die Präsenzentität;
+der PIR-Bewegungsausgang belegt keine dauerhafte Anwesenheit.
+
+Beide Verfahren benötigen zum Beginn eine erkannte
 Türöffnung mit anschließendem Türschluss. Zum Ende genügen eine erneute
 Öffnung und der passende Abwesenheits- oder Lüftungsnachweis. Die [Gangerkennung](gangmodell.md) beschreibt die
 Bedingungen beider Verfahren.
+
+## Betrieb, Erkennung und Licht einstellen
+
+Die Integrationskonfiguration gliedert die dauerhaften Einstellungen in
+**Betrieb und Ofen**, **Sensoren und Erkennung** sowie **Licht**. Die jeweiligen
+Untergruppen enthalten Regelung, Erkennung und Lichtautomatik.
+Änderungen erfordern Administratorrechte und eine vollständig beendete Sitzung.
+
+Programme, Taster- und Startvorgaben sowie Darstellung bleiben unter
+**Einstellungen** im Sauna-Panel. Die aktuelle Temperaturwahl und vorübergehende
+Ofen- oder Lichtwahl werden in der Steuerungsansicht bedient.
 
 [Einstellungen und Rücksetzungen](parameter.md) ·
 [Sitzung starten und bedienen](bedienung.md)

@@ -152,6 +152,38 @@ assert.match(
 }
 
 (async () => {
+  const manualConfiguration = {
+    control_mode: "manual",
+    program_mode: "program",
+    selected_program_id: "saved-program",
+    temperature_steps: [75, 80],
+    parameters: { target_temperature_c: 80 },
+  };
+  const manualPanel = Object.assign(Object.create(Panel.prototype), {
+    entry: "manual-entry",
+    state: { ...state, configuration: manualConfiguration },
+    api: async (...args) => calls.push(args),
+    refresh: async () => {},
+  });
+  await manualPanel.changeTarget(84.6);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), [
+    "/manual-entry/temperature",
+    "POST",
+    { target_temperature_c: 85 },
+  ]);
+  assert.equal(manualPanel.state.target_temperature, 85);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(manualPanel.state.configuration)),
+    {
+      ...manualConfiguration,
+      program_mode: "constant",
+      selected_program_id: null,
+      temperature_steps: null,
+      parameters: { target_temperature_c: 85 },
+    },
+    "manual instruments use the shared constant temperature choice",
+  );
+
   await panel.changeTarget(80.5);
   assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), [
     "/entry-1/temperature",

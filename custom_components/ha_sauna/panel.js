@@ -280,9 +280,8 @@ const appearanceTickValues = (bounds) => {
   return values;
 };
 
-// Split before reducing points: a pixel-sized reduction must never hide a
-// missing measurement interval.  The cubic controls below are monotone, so
-// the display is calm without inventing peaks between measurements.
+// User-facing history joins available observations across reporting gaps.
+// Original missing/stale observations remain available to hover and exports.
 const historyMeasurementTtlSeconds = (panel, session) =>
   Number(
     session?.measurement_ttl_seconds ??
@@ -290,30 +289,9 @@ const historyMeasurementTtlSeconds = (panel, session) =>
       session?.configuration?.parameters?.sensor_timeout_seconds ??
       panel.state?.configuration?.parameters?.sensor_timeout_seconds,
   );
-const historySegments = (values, start, end, ttl) => {
-  const segments = [];
-  let segment = [];
-  for (const point of values) {
-    const time = point.time ?? stamp(point.received_at);
-    if (point.value == null) {
-      if (segment.length) segments.push(segment);
-      segment = [];
-      continue;
-    }
-    if (
-      segment.length &&
-      ttl &&
-      (point.displayGap ||
-        (!Object.hasOwn(point, "displayGap") &&
-          time - (segment.at(-1).time ?? stamp(segment.at(-1).received_at)) > ttl))
-    ) {
-      segments.push(segment);
-      segment = [];
-    }
-    segment.push(point);
-  }
-  if (segment.length) segments.push(segment);
-  return segments;
+const historySegments = (values) => {
+  const available = values.filter((point) => point.value != null);
+  return available.length ? [available] : [];
 };
 const reduceHistorySegment = (segment, x) => {
   const output = [];
@@ -1023,7 +1001,7 @@ class HistoryChart {
     )
       this.domain = this.panel.historyDomain();
     const panel = this.panel,
-      model = panel.historyModel(this, session);
+      model = panel.historyModel(this, session, geometry.canvas.cssWidth);
     this.model = model;
     panel.historyDetail = false;
     const chromeKey = panel.historyTitle(session);
@@ -1089,6 +1067,8 @@ class SaunaSelectMenu {
     this.document = panel.ownerDocument;
     this.window = this.document.defaultView;
     this.listeners = [];
+    this.models = new Map();
+    this.triggers = new WeakMap();
     this.serial = 0;
     this.search = "";
   }
@@ -1101,27 +1081,28 @@ class SaunaSelectMenu {
     const selectFrom = (event) =>
       event
         .composedPath()
-        .find((node) => node.tagName === "SELECT" && this.root.contains(node));
+        .map((node) => this.triggers.get(node))
+        .find(Boolean);
     listen(this.root, "pointerdown", (event) => {
-      if (this.menu && event.composedPath().includes(this.menu)) {
-        event.preventDefault();
-        return;
-      }
-      const select = selectFrom(event);
-      if (!this.supports(select) || event.button > 0) return;
-      event.preventDefault();
-      this.pointerOpened = select;
-      select.focus({ preventScroll: true });
-      this.select === select ? this.close() : this.open(select);
+      if (this.menu && event.composedPath().includes(this.menu)) event.preventDefault();
     });
     listen(this.root, "click", (event) => {
-      const select = selectFrom(event);
-      if (this.supports(select)) {
+      let select = selectFrom(event);
+      if (
+        !select &&
+        !event
+          .composedPath()
+          .some((node) => ["BUTTON", "A", "INPUT", "TEXTAREA"].includes(node.tagName))
+      ) {
+        const label = event.composedPath().find((node) => node.tagName === "LABEL");
+        if (this.models.has(label?.control)) select = label.control;
+      }
+      if (select) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (this.pointerOpened !== select)
-          this.select === select ? this.close() : this.open(select);
-        this.pointerOpened = null;
+        if (!this.supports(select)) return;
+        this.models.get(select).trigger.focus({ preventScroll: true });
+        this.select === select ? this.close() : this.open(select);
       } else {
         const option = event
           .composedPath()
@@ -1134,60 +1115,138 @@ class SaunaSelectMenu {
       const select = selectFrom(event);
       if (this.supports(select)) this.key(event, select);
     });
-    listen(this.root, "change", (event) => {
-      if (event.target === this.select) this.close();
-    });
-    listen(this.document, "pointerdown", (event) => {
+    for (const type of ["input", "change"])
+      listen(this.root, type, (event) => {
+        if (!this.models.has(event.target)) return;
+        this.syncAttributes(event.target);
+        if (event.target === this.select) this.close();
+      });
+    const outside = (event) => {
       if (
         this.select &&
-        !event.composedPath().includes(this.select) &&
+        !event.composedPath().includes(this.models.get(this.select)?.trigger) &&
         !event.composedPath().includes(this.menu)
       )
         this.close();
-    });
-    listen(this.document, "focusin", (event) => {
-      if (
-        this.select &&
-        !event.composedPath().includes(this.select) &&
-        !event.composedPath().includes(this.menu)
-      )
-        this.close();
-    });
-    listen(this.document, "scroll", (event) => {
-      if (this.select && event.target !== this.menu) this.place();
-    });
-    listen(this.root, "scroll", (event) => {
-      if (this.select && event.target !== this.menu) this.place();
-    });
+    };
+    listen(this.document, "pointerdown", outside);
+    listen(this.document, "focusin", outside);
+    for (const target of [this.document, this.root])
+      listen(target, "scroll", (event) => {
+        if (this.select && event.target !== this.menu) this.place();
+      });
     listen(this.window, "resize", () => this.place());
     if (this.window.visualViewport) {
       listen(this.window.visualViewport, "resize", () => this.place());
       listen(this.window.visualViewport, "scroll", () => this.place());
     }
     this.observer = new MutationObserver((records) => {
-      if (!this.select) return;
-      if (
-        !this.select.isConnected ||
-        !this.supports(this.select) ||
-        !this.select.getClientRects().length
-      )
-        return this.close();
-      if (records.some((record) => this.select.contains(record.target))) this.render();
+      this.sync();
+      if (this.select && records.some((record) => this.select.contains(record.target)))
+        this.render();
     });
     this.observer.observe(this.root, {
       subtree: true,
       childList: true,
+      characterData: true,
       attributes: true,
-      attributeFilter: ["disabled", "hidden", "label", "value"],
+      attributeFilter: [
+        "disabled",
+        "hidden",
+        "label",
+        "value",
+        "selected",
+        "class",
+        "style",
+        "aria-label",
+        "aria-labelledby",
+        "aria-describedby",
+      ],
     });
+    this.sync();
   }
   disconnect() {
     this.close();
     this.observer?.disconnect();
     this.listeners.splice(0).forEach((remove) => remove());
+    for (const select of this.models.keys()) this.restore(select);
   }
   supports(select) {
     return !!select && !select.disabled && !select.multiple && select.size <= 1;
+  }
+  isTrigger(node) {
+    return this.triggers.has(node);
+  }
+  hasFocus(select) {
+    const trigger = this.models.get(select)?.trigger;
+    return !!trigger && this.root.activeElement === trigger;
+  }
+  restore(select) {
+    const record = this.models.get(select);
+    if (!record) return;
+    if (this.select === select) this.close();
+    for (const [name, value] of record.attributes)
+      value == null ? select.removeAttribute(name) : select.setAttribute(name, value);
+    select.removeAttribute("data-sauna-select-model");
+    record.trigger.remove();
+    this.triggers.delete(record.trigger);
+    this.models.delete(select);
+  }
+  sync() {
+    for (const select of this.models.keys())
+      if (!this.root.contains(select) || select.multiple || select.size > 1)
+        this.restore(select);
+    for (const select of this.root.querySelectorAll("select")) {
+      if (select.multiple || select.size > 1) continue;
+      if (!this.models.has(select)) {
+        const trigger = this.document.createElement("button");
+        trigger.type = "button";
+        trigger.id = `sauna-select-trigger-${++this.serial}`;
+        trigger.setAttribute("role", "combobox");
+        trigger.setAttribute("aria-haspopup", "listbox");
+        this.models.set(select, {
+          trigger,
+          attributes: new Map(
+            ["tabindex", "aria-hidden"].map((name) => [
+              name,
+              select.getAttribute(name),
+            ]),
+          ),
+        });
+        this.triggers.set(trigger, select);
+      }
+      const trigger = this.models.get(select).trigger;
+      if (select.nextSibling !== trigger) {
+        const focused = this.hasFocus(select);
+        select.after(trigger);
+        if (focused) trigger.focus({ preventScroll: true });
+      }
+      this.syncAttributes(select);
+    }
+    if (
+      this.select &&
+      (!this.supports(this.select) ||
+        !this.models.get(this.select)?.trigger.getClientRects().length)
+    )
+      this.close();
+  }
+  setAttribute(node, name, value) {
+    if (value == null) {
+      if (node.hasAttribute(name)) node.removeAttribute(name);
+    } else if (node.getAttribute(name) !== String(value))
+      node.setAttribute(name, String(value));
+  }
+  label(select) {
+    const labels = [...(select.labels || [])].map((label) => {
+      const clone = label.cloneNode(true);
+      clone
+        .querySelectorAll("select, input, textarea, button")
+        .forEach((control) => control.remove());
+      return clone.textContent.trim();
+    });
+    return (
+      select.getAttribute("aria-label") || labels.filter(Boolean).join(" ") || "Auswahl"
+    );
   }
   available(option) {
     return (
@@ -1198,31 +1257,17 @@ class SaunaSelectMenu {
     );
   }
   open(select) {
+    if (!this.supports(select) || !this.models.has(select)) return;
     this.close();
     this.select = select;
     this.active = select.selectedIndex;
-    this.savedAttributes = new Map(
-      ["aria-expanded", "aria-controls", "aria-activedescendant"].map((name) => [
-        name,
-        select.getAttribute(name),
-      ]),
-    );
     this.menu = this.document.createElement("div");
     this.menu.className = "sauna-select-menu";
     this.menu.id = `sauna-select-menu-${++this.serial}`;
     this.menu.setAttribute("role", "listbox");
-    const label = select.labels?.[0]?.cloneNode(true);
-    label
-      ?.querySelectorAll("select, input, textarea, button")
-      .forEach((control) => control.remove());
-    this.menu.setAttribute(
-      "aria-label",
-      select.getAttribute("aria-label") || label?.textContent.trim() || "Auswahl",
-    );
+    this.menu.setAttribute("aria-label", this.label(select));
     this.menu.setAttribute("popover", "manual");
     this.root.append(this.menu);
-    select.setAttribute("aria-expanded", "true");
-    select.setAttribute("aria-controls", this.menu.id);
     this.render();
     this.menu.showPopover?.();
     this.place();
@@ -1236,18 +1281,44 @@ class SaunaSelectMenu {
     this.menu?.remove();
     this.menu = null;
     if (select) {
-      for (const [name, value] of this.savedAttributes)
-        value == null ? select.removeAttribute(name) : select.setAttribute(name, value);
-      if (focus && select.isConnected) select.focus({ preventScroll: true });
+      this.syncAttributes(select);
+      const trigger = this.models.get(select)?.trigger;
+      if (focus && trigger?.isConnected) trigger.focus({ preventScroll: true });
     }
     this.search = "";
   }
-  syncAttributes(select = this.select) {
-    if (!select || select !== this.select || !this.menu) return;
-    select.setAttribute("aria-expanded", "true");
-    select.setAttribute("aria-controls", this.menu.id);
-    if (this.active >= 0)
-      select.setAttribute("aria-activedescendant", `${this.menu.id}-${this.active}`);
+  syncAttributes(select) {
+    const record = this.models.get(select);
+    if (!record) return;
+    const trigger = record.trigger;
+    // The renderer may replace model attributes from the next markup.
+    if (!select.hasAttribute("data-sauna-select-model"))
+      for (const name of record.attributes.keys())
+        record.attributes.set(name, select.getAttribute(name));
+    this.setAttribute(select, "data-sauna-select-model", "");
+    this.setAttribute(select, "tabindex", "-1");
+    this.setAttribute(select, "aria-hidden", "true");
+    this.setAttribute(
+      trigger,
+      "class",
+      `${select.className} sauna-select-trigger`.trim(),
+    );
+    this.setAttribute(trigger, "style", select.getAttribute("style"));
+    this.setAttribute(trigger, "aria-label", this.label(select));
+    for (const name of ["aria-labelledby", "aria-describedby", "title"])
+      this.setAttribute(trigger, name, select.getAttribute(name));
+    this.setAttribute(trigger, "disabled", select.disabled ? "" : null);
+    this.setAttribute(trigger, "hidden", select.hidden ? "" : null);
+    const text = select.selectedOptions[0]?.label || "";
+    if (trigger.textContent !== text) trigger.textContent = text;
+    const expanded = this.select === select && !!this.menu;
+    this.setAttribute(trigger, "aria-expanded", String(expanded));
+    this.setAttribute(trigger, "aria-controls", expanded ? this.menu.id : null);
+    this.setAttribute(
+      trigger,
+      "aria-activedescendant",
+      expanded && this.active >= 0 ? `${this.menu.id}-${this.active}` : null,
+    );
   }
   render() {
     if (!this.select) return;
@@ -1278,11 +1349,7 @@ class SaunaSelectMenu {
       row.textContent = option.label;
       this.menu.append(row);
     });
-    if (this.active >= 0)
-      this.select.setAttribute(
-        "aria-activedescendant",
-        `${this.menu.id}-${this.active}`,
-      );
+    this.syncAttributes(this.select);
     this.place();
     this.menu
       .querySelector('[data-active="true"]')
@@ -1290,7 +1357,7 @@ class SaunaSelectMenu {
   }
   place() {
     if (!this.select || !this.menu) return;
-    const rect = this.select.getBoundingClientRect();
+    const rect = this.models.get(this.select).trigger.getBoundingClientRect();
     if (!rect.width || !rect.height) return this.close();
     const viewport = this.window.visualViewport;
     const width = viewport?.width || this.window.innerWidth,
@@ -1336,6 +1403,12 @@ class SaunaSelectMenu {
         event.preventDefault();
         this.close(true);
       }
+      return;
+    }
+    if (event.key === "F4") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.select === select ? this.close(true) : this.open(select);
       return;
     }
     const navigation = ["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(
@@ -1598,7 +1671,8 @@ class SaunaPanel extends HTMLElement {
       if (current.data !== next.data) current.data = next.data;
       return current;
     }
-    const focused = this.shadowRoot.activeElement === current;
+    const focused =
+      this.shadowRoot.activeElement === current || this.selectMenu?.hasFocus(current);
     if (focused && current.nodeName === "SELECT") {
       this.patchAttributes(current, next);
       return current;
@@ -1618,15 +1692,18 @@ class SaunaPanel extends HTMLElement {
       this.optionSignature(current) === this.optionSignature(next)
     ) {
       if (current.value !== next.value) current.value = next.value;
+      this.selectMenu?.syncAttributes(current);
       return current;
     }
     if (current.nodeName === "INPUT" || current.nodeName === "TEXTAREA") {
       if (current.value !== next.value) current.value = next.value;
       if ("checked" in current) current.checked = next.checked;
     }
-    const oldChildren = [...current.childNodes],
+    const oldChildren = [...current.childNodes].filter(
+        (child) => !this.selectMenu?.isTrigger(child),
+      ),
       used = new Set();
-    let cursor = current.firstChild;
+    let cursor = oldChildren[0] || null;
     for (const nextChild of [...next.childNodes]) {
       const key = this.nodeKey(nextChild);
       let match = key
@@ -1647,8 +1724,10 @@ class SaunaPanel extends HTMLElement {
       }
       if (match !== cursor) current.insertBefore(match, cursor);
       cursor = match.nextSibling;
+      while (cursor && this.selectMenu?.isTrigger(cursor)) cursor = cursor.nextSibling;
     }
     for (const child of oldChildren) if (!used.has(child)) child.remove();
+    this.selectMenu?.syncAttributes(current);
     return current;
   }
   updateMarkup(selector, markup) {
@@ -1661,6 +1740,7 @@ class SaunaPanel extends HTMLElement {
     const next = target.cloneNode(false);
     next.innerHTML = markup;
     this.patchNode(target, next);
+    this.selectMenu?.sync();
     this.syncInfo();
   }
   async api(path, method = "GET", body) {
@@ -2076,8 +2156,13 @@ class SaunaPanel extends HTMLElement {
     if (this.appearanceDraft) return;
     for (const name of Object.keys(this.appearanceCatalog().instruments || {})) {
       const input = this.$(`[data-appearance-instrument="${name}"]`);
-      if (input && input !== this.shadowRoot.activeElement)
+      if (
+        input &&
+        input !== this.shadowRoot.activeElement &&
+        !this.selectMenu?.hasFocus(input)
+      )
         input.value = this.instrumentSelection(name);
+      this.selectMenu?.syncAttributes(input);
     }
     for (const definition of this.appearanceCatalog().colors || []) {
       const input = this.$(`[data-appearance-color="${definition.id}"]`);
@@ -2286,7 +2371,7 @@ class SaunaPanel extends HTMLElement {
         flex: 0 0 auto;
       }
       .header-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-      .header-context select {
+      .header-context :is(select, .sauna-select-trigger) {
         max-width: 100%;
       }
       h1 {
@@ -2335,17 +2420,26 @@ class SaunaPanel extends HTMLElement {
       .input-unit { flex: 0 0 auto; padding-inline-end: 13px; color: var(--sauna-card-muted-text, var(--secondary-text-color)); white-space: nowrap; }
       .number-input:has(input:focus-visible) { outline: 2px solid var(--sauna-focus-current); outline-offset: 3px; }
       .number-input input:focus-visible { outline: none; }
-      #session {
+      #session, #session + .sauna-select-trigger {
         min-width: 0;
         max-width: 100%;
       }
-      select {
+      select, .sauna-select-trigger {
         appearance: none;
         padding-inline-end: 40px;
         background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
         background-position: right 21px center, right 16px center;
         background-size: 5px 5px;
         background-repeat: no-repeat;
+      }
+      select[data-sauna-select-model] { display: none !important; }
+      .sauna-select-trigger {
+        text-align: start;
+        font: inherit;
+        min-height: 0;
+        background-color: var(--sauna-color-card-background, var(--card-background-color));
+        border-color: var(--sauna-color-border, var(--divider-color));
+        box-shadow: none;
       }
       .sauna-select-menu {
         position: fixed;
@@ -2667,7 +2761,7 @@ class SaunaPanel extends HTMLElement {
         .card {
           padding: 16px;
         }
-        header select {
+        header :is(select, .sauna-select-trigger) {
           max-width: 180px;
         }
       }
@@ -3086,6 +3180,8 @@ class SaunaPanel extends HTMLElement {
         padding-top: 4px;
       }
       .settings-navigation button { text-align: left; }
+      .settings-configuration-link { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px; margin-top: 8px; color: inherit; border-top: 1px solid var(--sauna-color-border); text-decoration: none; font-size: 13px; }
+      .settings-configuration-link:hover, .settings-configuration-link:focus-visible { text-decoration: underline; }
       .settings-content { min-width: 0; min-height: 0; height: 100%; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 4px; }
       .settings-content > section > h2 { margin-top: 0; }
       .settings-content .card:first-of-type { margin-top: 0; }
@@ -3096,7 +3192,7 @@ class SaunaPanel extends HTMLElement {
         .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
         .settings-menu-toggle { display: inline-flex; justify-self: start; align-items: center; gap: 8px; margin: 0 4px; }
         .settings-menu-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
-        .settings-navigation { display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: 4px; left: 4px; width: min(var(--settings-navigation-width), calc(100% - 8px)); align-content: start; overflow: auto; z-index: 6; padding: 8px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
+        .settings-navigation { color: var(--sauna-card-text, inherit); display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: 4px; left: 4px; width: min(var(--settings-navigation-width), calc(100% - 8px)); align-content: start; overflow: auto; z-index: 6; padding: 8px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
         .settings-layout[data-menu-open] .settings-navigation { display: grid; }
         .settings-layout[data-menu-open] .settings-menu-backdrop { display: block; position: absolute; grid-area: 2 / 1; inset: 0; z-index: 5; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
         .settings-content { grid-column: 1; grid-row: 2; }
@@ -3452,7 +3548,7 @@ class SaunaPanel extends HTMLElement {
         .card {
           padding: 14px;
         }
-        header select {
+        header :is(select, .sauna-select-trigger) {
           max-width: 110px;
         }
         .state-line,
@@ -3789,7 +3885,7 @@ class SaunaPanel extends HTMLElement {
       .program-pending { background: transparent; padding: 12px 0 0; }
       .program-actions { margin-top: 12px; border-top: 0; padding-top: 0; }
       .history-controls { margin: 0 0 16px; }
-      .history-controls select { max-width: 100%; font-weight: 600; }
+      .history-controls :is(select, .sauna-select-trigger) { max-width: 100%; font-weight: 600; }
       .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); }
       .history-overview { background: transparent; border-radius: var(--sauna-control-radius); }
       .control-history-inspection > div { padding: 16px; border-radius: var(--sauna-control-radius); border: 1px solid var(--sauna-color-border); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
@@ -3813,6 +3909,7 @@ class SaunaPanel extends HTMLElement {
       .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
       .output-toggle button { background: transparent; border-color: transparent; border-radius: calc(var(--sauna-control-radius) - 3px); color: var(--sauna-card-muted-text); box-shadow: none; }
       .output-toggle button[aria-pressed="true"] { box-shadow: var(--sauna-shadow-control); }
+      .output-toggle button[data-regulation-selected="true"] { outline: 2px solid var(--sauna-card-muted-text); outline-offset: -3px; }
       @container output-controls (max-width: 280px) {
         .manual-controls .manual-section { grid-template-columns: minmax(0, 1fr); gap: 8px; }
         .manual-selection { gap: 8px; }
@@ -3862,20 +3959,31 @@ class SaunaPanel extends HTMLElement {
       .dial .tick { font-size: 11px; font-weight: 450; opacity: .85; }
       .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) 12%, transparent); stroke: var(--measurement-color); stroke-width: 1.2; opacity: .75; }
       .light-symbol { fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
-      .linear-scale .light-symbol { grid-area: caption; justify-self: center; width: 22px; height: 22px; margin-top: 10px; }
       .light-instrument { --accent: var(--sauna-color-series-light); }
       .measurement-instrument { min-width: 0; text-align: center; }
-      .linear-instrument { padding: 16px 20px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-recessed); box-shadow: var(--sauna-shadow-section); }
-      .linear-reading { margin: 0 0 22px; font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; line-height: 1.25; }
+      .measurement-instrument[data-instrument-style="linear"] { padding: 12px 16px; border: 1px solid var(--sauna-color-border, var(--divider-color)); border-radius: var(--sauna-control-radius); background: linear-gradient(135deg, var(--sauna-color-card-background, var(--card-background-color)), var(--sauna-color-page-background, var(--primary-background-color))); box-shadow: var(--sauna-shadow-section); }
+      .measurement-instrument[data-instrument-style="linear"] > h2 { margin: 0 0 2px; text-align: left; }
+      .linear-instrument { display: grid; grid-template-columns: 100px minmax(0, 1fr) 22px; align-items: center; gap: 16px; }
+      .linear-reading { margin: 0; color: var(--measurement-color); text-align: left; white-space: nowrap; font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; line-height: 1.25; }
+      .linear-symbol { width: 22px; height: 22px; fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
       .linear-reading > span { font-size: 15px; font-weight: 400; letter-spacing: 0; }
-      .linear-scale { display: grid; grid-template-areas: "track" "ticks" "caption"; grid-template-columns: minmax(0, 1fr); align-items: center; margin-bottom: 4px; }
+      .linear-scale { container: linear-scale / inline-size; display: grid; grid-template-areas: "caption" "track" "ticks"; grid-template-columns: minmax(0, 1fr); grid-template-rows: 17px 28px 18px; align-items: center; min-width: 0; }
       .linear-rail { grid-area: track; height: 8px; border-radius: 10px; background: var(--sauna-color-border); overflow: hidden; }
       .linear-rail i { display: block; height: 100%; border-radius: inherit; background: var(--measurement-color); }
-      .linear-ticks { grid-area: ticks; position: relative; height: 18px; margin-top: 6px; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
+      .linear-ticks { grid-area: ticks; position: relative; height: 18px; margin-top: 0; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
       .linear-ticks span { position: absolute; transform: translateX(-50%); }
+      .linear-ticks [data-tick-density="middle"] { display: none; }
+      @container linear-scale (max-width: 220px) {
+        .linear-ticks [data-tick-density="detail"] { display: none; }
+        .linear-ticks [data-tick-density="middle"] { display: inline; }
+      }
+      @container linear-scale (max-width: 110px) {
+        .linear-ticks [data-tick-density="middle"] { display: none; }
+      }
       .instrument-slider { margin: 4px auto 0; max-width: 240px; width: 100%; }
       .linear-scale .instrument-slider { display: contents; }
-      .linear-scale .instrument-slider label { grid-area: caption; justify-content: center; gap: 8px; margin: 10px 0 0; }
+      .linear-scale .instrument-slider label { grid-area: caption; justify-content: flex-end; gap: 6px; margin: 0; font-size: 11px; }
+      .linear-scale .instrument-slider output { font-size: 12px; }
       .instrument-slider label { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; color: var(--sauna-card-muted-text); font-size: 12px; }
       .instrument-slider output { color: var(--sauna-card-text); font-size: 14px; font-variant-numeric: tabular-nums; }
       input.instrument-range { display: block; appearance: none; box-sizing: border-box; width: 100%; max-width: none; min-width: 0; padding: 0; margin: 0; height: 28px; border: 0; background: transparent; cursor: pointer; }
@@ -3905,11 +4013,15 @@ class SaunaPanel extends HTMLElement {
       .weather-instrument time { margin-inline-start: auto; color: var(--sauna-card-muted-text); font-size: 11px; white-space: nowrap; }
       .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
       .appearance-instruments label { display: grid; gap: 7px; font-size: 13px; }
-      .appearance-instruments select { width: 100%; min-width: 0; }
+      .appearance-instruments :is(select, .sauna-select-trigger) { width: 100%; min-width: 0; }
       @container (max-width: 450px) {
         .gauges { grid-template-columns: minmax(0, 1fr); }
         .weather-instrument { grid-template-columns: 70px minmax(0, 1fr); gap: 8px 12px; padding: 12px; }
-        .linear-instrument { padding: 14px; }
+        .measurement-instrument[data-instrument-style="linear"] { padding: 10px 12px; }
+        .linear-instrument { grid-template-columns: 88px minmax(0, 1fr) 18px; gap: 12px; }
+        .linear-reading { font-size: 25px; }
+        .linear-reading > span { font-size: 13px; }
+        .linear-symbol { width: 18px; height: 18px; }
         .weather-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
         .weather-values dd { font-size: 16px; }
       }
@@ -4638,6 +4750,7 @@ class SaunaPanel extends HTMLElement {
       this.historyOptionsSignature = options;
     }
     if (select.value !== this.selected) select.value = this.selected;
+    this.selectMenu?.syncAttributes(select);
   }
   startHistoryLoad() {
     if (
@@ -4981,10 +5094,9 @@ class SaunaPanel extends HTMLElement {
         s.target_temperature,
       targetPoint =
         temperatureScale && this.temperatureArcPoint(targetValue, temperatureScale);
-    const targetControl =
-      !manualMode && temperatureScale
-        ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="Soll ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">SOLL</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
-        : "";
+    const targetControl = temperatureScale
+      ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="Soll ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">SOLL</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
+      : "";
     const programs = Array.isArray(s.configuration.temperature_programs)
       ? s.configuration.temperature_programs
       : [];
@@ -5057,7 +5169,7 @@ class SaunaPanel extends HTMLElement {
       ]
         .map(
           ([on, label]) =>
-            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${label}</button>`,
+            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${manualMode && key === "heater" ? ` data-regulation-selected="${(selected === true) === on}" aria-label="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}; Ofen ${observed == null ? "unbekannt" : observed ? "Ein" : "Aus"}"` : ""}${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : manualMode && key === "heater" ? ` title="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${label}</button>`,
         )
         .join("")}</div></div></section>`;
     const heaterControls = outputControls(
@@ -5127,9 +5239,7 @@ class SaunaPanel extends HTMLElement {
                 unit: "°C",
                 bounds: temperatureScale,
                 valid: quality(measurementPosition, "temperature") === "current",
-                control: !manualMode
-                  ? this.linearTargetControl(targetValue, arcBounds)
-                  : "",
+                control: this.linearTargetControl(targetValue, arcBounds),
               })
             : dial(
                 value(measurementPosition, "temperature"),
@@ -5225,15 +5335,23 @@ class SaunaPanel extends HTMLElement {
           100,
       ),
     );
-    const color = `series_${key}`;
+    const color = `series_${key}`,
+      symbol = {
+        temperature:
+          '<path d="M9 14.5V5a3 3 0 0 1 6 0v9.5a5 5 0 1 1-6 0Z"/><path d="M12 8v10"/>',
+        humidity: '<path d="M12 3C10 7 5 11 5 15a7 7 0 0 0 14 0c0-4-5-8-7-12Z"/>',
+        light: '<path d="M9 18h6m-5 3h4M8 15a6 6 0 1 1 8 0v3H8Z"/>',
+      }[key];
     return `<div class="linear-instrument" style="--measurement-color:${this.appearanceColor(valid ? color : "status_unknown")}"><div class="linear-reading" ${key === "light" ? "data-light-observation" : ""}>${num(reading, key === "light" ? 0 : 1)} <span>${unit}</span></div><div class="linear-scale"><div class="linear-rail" aria-hidden="true"><i style="width:${fraction}%"></i></div><div class="linear-ticks" aria-hidden="true">${appearanceTickValues(
       bounds,
     )
       .map(
-        (value) =>
-          `<span style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${num(value)}</span>`,
+        (value, index, ticks) =>
+          `<span data-tick-density="${index === 0 || index === ticks.length - 1 ? "edge" : "detail"}" style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${num(value)}</span>`,
       )
-      .join("")}</div>${control}</div></div>`;
+      .join(
+        "",
+      )}<span data-tick-density="middle" style="left:50%">${num((bounds.minimum + bounds.maximum) / 2)}</span></div>${control}</div><svg class="linear-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg></div>`;
   }
   linearTargetControl(value, bounds) {
     if (!bounds) return "";
@@ -5278,7 +5396,7 @@ class SaunaPanel extends HTMLElement {
               unit: "%",
               bounds: { minimum: 0, maximum: 100 },
               valid: available,
-              control: `<div class="instrument-slider"><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div><svg class="light-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg>`,
+              control: `<div class="instrument-slider"><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div>`,
             })
           : dial(
               reading,
@@ -5415,16 +5533,31 @@ class SaunaPanel extends HTMLElement {
         : "Nicht verfügbar";
       const assertion =
         item.assertion === "provisional_proxy"
-          ? "Vorläufiger Proxy"
+          ? "Vorläufiger Hinweis aus Temperatur und Feuchte"
           : item.assertion === "proxy_retraction"
-            ? "Proxy zurückgenommen; keine beobachtete Abwesenheit"
+            ? "Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit"
             : "Direkte Präsenz";
-      return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${item.reason ? ` · ${item.reason}` : ""}`;
+      const reason = {
+        no_proxy_evidence: "Noch kein Personenhinweis",
+        source_unavailable: "Messquelle nicht verfügbar",
+        unavailable: "Sensor nicht verfügbar",
+        unknown: "Sensorzustand unbekannt",
+        missing: "Sensor fehlt",
+        gang_retracted: "Vorläufiger Gang aufgehoben",
+        gang_ended: "Gang beendet",
+        ...events,
+      }[item.reason];
+      return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${reason ? ` · ${reason}` : ""}`;
     };
-    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Gewünschte Quelle</dt><dd>${presence?.configured_source === "ha_presence" ? "Präsenzsensor" : "Proxy"}</dd><dt>Wirksame Quelle</dt><dd>${presence?.effective_source === "ha_presence" ? "Präsenzsensor + Türevent" : "Proxy"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
+    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Eingestellte Personenerkennung</dt><dd>${(this.state.configuration?.presence_source || presence?.configured_source) === "ha_presence" ? "Präsenzsensor" : "Temperatur und Feuchte"}</dd><dt>Wirksame Personenerkennung</dt><dd>${presence?.effective_source === "ha_presence" ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
       presence?.external || {},
     )
-      .map(([source, item]) => `<dt>${esc(source)}</dt><dd>${esc(report(item))}</dd>`)
+      .map(([source, item]) => {
+        const leading =
+          presence?.effective_source === "ha_presence" &&
+          source === this.state.configuration?.bindings?.presence;
+        return `<dt>${leading ? "Führender Präsenzsensor" : "Beobachtete Quelle"} · ${esc(source)}</dt><dd>${esc(report(item))}</dd>`;
+      })
       .join(
         "",
       )}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl></div>`;
@@ -6435,7 +6568,7 @@ class SaunaPanel extends HTMLElement {
       }
     }
   }
-  async updateParameters(parameters, start = false, partial = false) {
+  async updateParameters(parameters, start = false, partial = false, method = "POST") {
     if (!this.state) return;
     parameters = { ...parameters };
     for (const key of [
@@ -6457,7 +6590,7 @@ class SaunaPanel extends HTMLElement {
       request = (this.settingsRequestSerial = (this.settingsRequestSerial || 0) + 1);
     const saved = await this.api(
       `/${entry}/${partial ? "temperature" : "parameters"}`,
-      "POST",
+      method,
       parameters,
     );
     parameters = saved.parameters;
@@ -7062,6 +7195,7 @@ class SaunaPanel extends HTMLElement {
       index = {
         records,
         series: new Map(),
+        curveSeries: new Map(),
         byKind: new Map(),
         display: new Map(),
         seriesState: new Map(),
@@ -7110,21 +7244,29 @@ class SaunaPanel extends HTMLElement {
       point.serial = ++state.revision;
       if (value != null) state.hasValue = true;
       index.seriesState.set(key, state);
-      const display = index.display.get(values);
-      if (rebuild || !values.length || values.at(-1).time <= time) {
-        values.push(point);
-        if (display) this.appendHistoryDisplay(display, point, values.length - 1);
-      } else {
-        values.splice(lowerBoundHistory(values, time), 0, point);
-        // Normal archive additions are chronological.  A late item or a
-        // duplicate that needs insertion is rare; rebuild only this series'
-        // display tree before it is next queried.
-        index.display.delete(values);
+      // Raw observations retain nulls for truthful hover readouts. The
+      // curve index shares only valid point objects, making a valid neighbour
+      // across even a long missing interval available by binary search.
+      const targets = [values];
+      if (value != null) {
+        const curveValues = index.curveSeries.get(key) || [];
+        index.curveSeries.set(key, curveValues);
+        targets.push(curveValues);
+      }
+      for (const target of targets) {
+        const display = index.display.get(target);
+        if (rebuild || !target.length || target.at(-1).time <= time) {
+          target.push(point);
+          if (display) this.appendHistoryDisplay(display, point, target.length - 1);
+        } else {
+          target.splice(lowerBoundHistory(target, time), 0, point);
+          index.display.delete(target);
+        }
       }
       index.series.set(key, values);
     }
     if (rebuild)
-      for (const values of index.series.values())
+      for (const values of [...index.series.values(), ...index.curveSeries.values()])
         values.sort((a, b) => a.time - b.time);
     index.indexedCount = records.length;
     return (this.chartDataIndex = index);
@@ -7166,12 +7308,8 @@ class SaunaPanel extends HTMLElement {
         lastIndex: index,
         first: point,
         last: point,
-        minimum: point.value == null ? null : point,
-        maximum: point.value == null ? null : point,
-        firstValid: point.value == null ? null : point,
-        lastValid: point.value == null ? null : point,
-        missing: point.value == null,
-        maximumGap: 0,
+        minimum: point,
+        maximum: point,
       };
       level.nodes.set(key, node);
       level.keys.push(key);
@@ -7179,14 +7317,6 @@ class SaunaPanel extends HTMLElement {
     }
     node.lastIndex = index;
     node.last = point;
-    if (point.value == null) {
-      node.missing = true;
-      return;
-    }
-    if (node.lastValid)
-      node.maximumGap = Math.max(node.maximumGap, point.time - node.lastValid.time);
-    node.lastValid = point;
-    if (!node.firstValid) node.firstValid = point;
     if (!node.minimum || point.value < node.minimum.value) node.minimum = point;
     if (!node.maximum || point.value > node.maximum.value) node.maximum = point;
   }
@@ -7201,94 +7331,68 @@ class SaunaPanel extends HTMLElement {
     }
     node.lastIndex = child.lastIndex;
     node.last = child.last;
-    node.missing ||= child.missing;
-    node.maximumGap = Math.max(
-      node.maximumGap,
-      child.maximumGap,
-      node.lastValid && child.firstValid
-        ? child.firstValid.time - node.lastValid.time
-        : 0,
-    );
-    if (!node.firstValid) node.firstValid = child.firstValid;
-    if (child.lastValid) node.lastValid = child.lastValid;
     if (child.minimum && (!node.minimum || child.minimum.value < node.minimum.value))
       node.minimum = child.minimum;
     if (child.maximum && (!node.maximum || child.maximum.value > node.maximum.value))
       node.maximum = child.maximum;
   }
-  historyDisplayValues(position, quantity, start, end, ttl, pixels) {
-    const values = this.series(position, quantity);
+  historyDisplayValues(position, quantity, start, end, _ttl, pixels) {
+    const values = this.historyCurveSeries(position, quantity);
     if (!values.length) return values;
-    // A dyadic bucket is at most two display pixels wide.  Its first, last
-    // and extrema remain visible; a null or timeout descends to raw points.
+    // Keep first/last/extrema per one-to-two-pixel bin. Missing observations
+    // and elapsed time do not disable reduction or split the user's curve.
     const width = Math.max(1, 2 ** Math.ceil(Math.log2((end - start) / pixels || 1)));
     const display = this.historyDisplay(values),
       level = this.historyDisplayLevel(display, width),
-      first = Math.max(0, lowerBoundNumber(level.keys, Math.floor(start / width)) - 1),
-      after = Math.min(
-        level.keys.length,
-        lowerBoundNumber(level.keys, Math.floor(end / width) + 1) + 1,
+      firstIndex = Math.max(0, lowerBoundHistory(values, start) - 1),
+      afterIndex = Math.min(values.length, lowerBoundHistory(values, end + 1) + 1),
+      first = lowerBoundNumber(level.keys, Math.floor(values[firstIndex].time / width)),
+      after = lowerBoundNumber(
+        level.keys,
+        Math.floor(values[afterIndex - 1].time / width) + 1,
       ),
       output = [];
-    let previous = null;
     for (let offset = first; offset < after; offset++) {
-      const node = level.nodes.get(level.keys[offset]);
+      let node = level.nodes.get(level.keys[offset]);
       if (!node) continue;
-      const displayGap = !!previous && !!ttl && node.first.time - previous.time > ttl;
-      const edge = node.first.time < start || node.last.time > end;
-      if (edge || node.missing || (ttl && node.maximumGap > ttl)) {
-        const firstRaw = edge
-            ? Math.max(node.firstIndex, lowerBoundHistory(values, start) - 1)
-            : node.firstIndex,
-          afterRaw = edge
-            ? Math.min(node.lastIndex + 1, lowerBoundHistory(values, end + 1) + 1)
-            : node.lastIndex + 1;
-        for (let index = firstRaw; index < afterRaw; index++) {
-          const point = values[index];
-          output.push({
-            time: point.time,
-            value: point.value,
-            source: point.source,
-            displayGap:
-              index === firstRaw
-                ? displayGap
-                : !!ttl && point.time - values[index - 1].time > ttl,
-          });
+      if (node.firstIndex < firstIndex || node.lastIndex >= afterIndex) {
+        // Reduce the clipped edge bin too. Only exact adjacent valid samples
+        // outside the viewport may contribute; older extrema must not leak in.
+        const left = Math.max(firstIndex, node.firstIndex),
+          right = Math.min(afterIndex, node.lastIndex + 1);
+        let minimum = values[left],
+          maximum = values[left];
+        for (let index = left + 1; index < right; index++) {
+          if (values[index].value < minimum.value) minimum = values[index];
+          if (values[index].value > maximum.value) maximum = values[index];
         }
-        previous = node.last;
-        continue;
+        node = {
+          first: values[left],
+          last: values[right - 1],
+          minimum,
+          maximum,
+          lastIndex: right - 1,
+        };
       }
-      // A changing viewport still uses the same interior aggregation bins.
-      // Retain their selected points instead of sorting and copying every bin
-      // on each wheel event or live tick. Appends change lastIndex; a late
-      // insertion discards this series' display tree in historyIndex().
+      // Retain unchanged interior selections across appends and navigation.
       let points = node.displayPoints;
-      if (
-        !points ||
-        node.displayLastIndex !== node.lastIndex ||
-        node.displayGap !== displayGap
-      ) {
-        const selected = [node.first, node.minimum, node.maximum, node.last]
-          .filter(Boolean)
-          .sort((a, b) => a.time - b.time);
+      if (!points || node.displayLastIndex !== node.lastIndex) {
+        const selected = [node.first, node.minimum, node.maximum, node.last].sort(
+          (a, b) => a.time - b.time,
+        );
         points = [];
         for (const point of selected)
-          if (points.at(-1)?.source !== point.source)
-            points.push({
-              time: point.time,
-              value: point.value,
-              source: point.source,
-              displayGap: point === selected[0] && displayGap,
-            });
+          if (points.at(-1)?.source !== point.source) points.push(point);
         node.displayPoints = points;
         node.displayLastIndex = node.lastIndex;
-        node.displayGap = displayGap;
       }
       for (const point of points)
         if (output.at(-1)?.source !== point.source) output.push(point);
-      previous = node.last;
     }
     return output;
+  }
+  historyCurveSeries(position, quantity) {
+    return this.chartDataIndex?.curveSeries.get(`${position}:${quantity}`) || [];
   }
   series(position, quantity) {
     return this.chartDataIndex?.series.get(`${position}:${quantity}`) || [];
@@ -7557,7 +7661,7 @@ class SaunaPanel extends HTMLElement {
     )}</div>`;
   }
   historyPreparedSeries(position, quantity, start, end, ttl, pixels, cache) {
-    const values = this.series(position, quantity),
+    const values = this.historyCurveSeries(position, quantity),
       state = this.chartDataIndex.seriesState?.get(`${position}:${quantity}`),
       first = Math.max(0, lowerBoundHistory(values, start) - 1),
       after = Math.min(values.length, lowerBoundHistory(values, end + 1) + 1),
@@ -7594,7 +7698,7 @@ class SaunaPanel extends HTMLElement {
     cache.set(name, result);
     return result;
   }
-  historyModel(chart, session) {
+  historyModel(chart, session, cssWidth = HISTORY_PLOT.width) {
     const [start, end] = this.window,
       left = HISTORY_PLOT.left,
       right = HISTORY_PLOT.right,
@@ -7614,7 +7718,7 @@ class SaunaPanel extends HTMLElement {
           start,
           end,
           ttl,
-          right - left,
+          Math.max(1, ((right - left) * cssWidth) / HISTORY_PLOT.width),
           chart.prepared,
         );
         series.set(`${position}:${quantity}`, entry);
@@ -8164,6 +8268,54 @@ class SaunaPanel extends HTMLElement {
     this.$("#detection-plots").innerHTML = html;
     this.revealEventTarget("marker");
   }
+  settingsParameterGroup({ id }) {
+    const state = this.state;
+    // Program values are edited through the catalog or the temperature choice.
+    const group = state.frontend_defaults.settings_groups.find(
+      (group) => group.id === id,
+    );
+    if (
+      !state.permissions?.admin ||
+      id === "programs" ||
+      group?.surface === "integration"
+    )
+      return "";
+    const source = state.configuration.presence_source || "proxy";
+    const subgroups = state.frontend_defaults.settings_subgroups || [];
+    const entries = state.parameters
+      .filter((d) => {
+        const group = subgroups.find((group) => group.id === d.settings_subgroup);
+        return (
+          d.settings_group === id &&
+          (!group?.presence_sources || group.presence_sources.includes(source))
+        );
+      })
+      .sort((a, b) => a.order - b.order);
+    if (!entries.length) return "";
+    const field = (d) =>
+      `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}</div>`;
+    const groupFields = (members) => {
+      const grouped = subgroups
+        .map((group) => {
+          const fields = members.filter((d) => d.settings_subgroup === group.id);
+          if (!fields.length) return "";
+          const description = group.descriptions?.[source] || group.description;
+          const heading = `${esc(group.label)}${description ? ` ${this.infoButton(`parameter-group:${group.id}`, `${group.label} erklären`, description)}` : ""}`;
+          return `<section class="parameter-section" aria-labelledby="parameter-group-${esc(group.id)}"><h3 id="parameter-group-${esc(group.id)}">${heading}</h3><div class="forms">${fields.map(field).join("")}</div></section>`;
+        })
+        .join("");
+      const ungrouped = members.filter(
+        (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
+      );
+      return (
+        grouped +
+        (ungrouped.length
+          ? `<div class="forms parameter-section">${ungrouped.map(field).join("")}</div>`
+          : "")
+      );
+    };
+    return `<div class="card settings-parameters-card">${groupFields(entries)}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
+  }
   drawSettings() {
     if (!this.state) {
       this.renderStateLoading();
@@ -8172,58 +8324,19 @@ class SaunaPanel extends HTMLElement {
     const state = this.state,
       admin = !!state.permissions?.admin;
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
-      const field = (d) =>
-        `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}</div>`;
       const groups = state.frontend_defaults.settings_groups.filter(
-        ({ id }) => admin || ["programs", "personal"].includes(id),
+        ({ id, surface }) =>
+          surface !== "integration" && (admin || ["programs", "personal"].includes(id)),
       );
-      const parameterGroup = ({ id }) => {
-        // Program values are edited through the catalog or the temperature choice.
-        if (id === "programs") return "";
-        const entries = state.parameters
-          .filter((d) => d.settings_group === id)
-          .sort((a, b) => a.order - b.order);
-        if (!admin || !entries.length) return "";
-        const regular = entries.filter((d) => !d.expert),
-          experts = entries.filter((d) => d.expert),
-          subgroups = state.frontend_defaults.settings_subgroups || [],
-          regularFields = subgroups
-            .map((group) => {
-              const members = regular.filter((d) => d.settings_subgroup === group.id);
-              return members.length
-                ? `<section class="parameter-section" aria-labelledby="parameter-group-${esc(group.id)}"><h3 id="parameter-group-${esc(group.id)}">${esc(group.label)}</h3><div class="forms">${members.map(field).join("")}</div></section>`
-                : "";
-            })
-            .join(""),
-          ungrouped = regular.filter(
-            (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
-          ),
-          expertFields =
-            subgroups
-              .map((group) => {
-                const members = experts.filter((d) => d.settings_subgroup === group.id);
-                return members.length
-                  ? `<details class="expert-group"><summary>${esc(group.label)}</summary><div class="forms">${members.map(field).join("")}</div></details>`
-                  : "";
-              })
-              .join("") +
-            `<div class="forms">${experts
-              .filter(
-                (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
-              )
-              .map(field)
-              .join("")}</div>`;
-        return `<div class="card settings-parameters-card">${regularFields}${ungrouped.length ? `<div class="forms parameter-section">${ungrouped.map(field).join("")}</div>` : ""}${experts.length ? `<details class="expert-group"><summary>Experteneinstellungen</summary>${expertFields}</details>` : ""}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
-      };
+      const parameterGroup = (group) => this.settingsParameterGroup(group);
       const contents = {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
-        sensors: `<div class="card"><h2>Messung und Geräte</h2><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a><p><a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a></p></div>`,
         appearance: admin ? this.appearanceSettingsMarkup() : "",
-        maintenance: `<div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Sitzungen mit bestätigtem Saunagang bleiben gespeichert. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung</h2><p class="muted">Home-Assistant-Protokoll: custom_components.ha_sauna. Die Stufe ist jederzeit änderbar; das Sitzungsarchiv bleibt unabhängig davon.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf Standardwerte zurück. Sensor-, Geräte- und Tasterzuordnungen, Darstellung und Sitzungsarchiv bleiben erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
-        personal: `<div class="card"><h2>Persönliche Startseite</h2><p class="muted">Nur für das aktuelle Home-Assistant-Profil.</p><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
+        maintenance: `<div class="card"><h2>Sitzungsarchiv ${this.infoButton("archive-retention", "Gespeicherte Sitzungen", "Nur Sitzungen mit bestätigtem Saunagang bleiben im Archiv.")}</h2><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung ${this.infoButton("logging", "Protokollumfang", "Home-Assistant-Protokoll, unabhängig vom Sitzungsarchiv. Betriebsereignisse enthalten auch Fehler und Warnungen; Diagnose ergänzt Messwerte und Erkennungsprüfungen.")}</h2><div class="row"><label for="log-level">Umfang</label><select id="log-level"><option value="ERROR">Fehler</option><option value="INFO">Betriebsereignisse</option><option value="DEBUG">Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Werkseinstellungen ${this.infoButton("reset-scope", "Umfang des Zurücksetzens", "Setzt Anlagenwerte, Programme, Startvorgaben und Protokollierung zurück. Gerätezuordnung, Erkennungsverfahren, Farben, Instrumente und Archiv bleiben erhalten.")}</h2><button class="stop" data-action="reset-settings">Werkseinstellungen wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
+        personal: `<div class="card"><h2>Persönliche Startseite ${this.infoButton("start-page", "Gültigkeit der Startseite", "Gilt nur für das aktuelle Home-Assistant-Profil.")}</h2><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
       };
       this.$("#settings").innerHTML =
-        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${group.id === "appearance" ? parameterGroup(group) + (contents[group.id] || "") : (contents[group.id] || "") + parameterGroup(group)}</section>`).join("")}</div></div>`;
+        `<div class="settings-layout"><button type="button" class="settings-menu-toggle" data-action="settings-menu" aria-label="Einstellungsbereiche öffnen" aria-expanded="false" aria-controls="settings-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span data-settings-current></span></button><button type="button" class="settings-menu-backdrop" data-action="settings-menu-close" tabindex="-1" aria-label="Einstellungsbereiche schließen"></button><nav id="settings-navigation" class="settings-navigation" aria-label="Einstellungsbereiche">${groups.map(({ id, label }) => `<button type="button" data-action="settings-section:${esc(id)}" aria-controls="settings-${esc(id)}">${esc(label)}</button>`).join("")}${admin ? '<a class="settings-configuration-link" href="/config/integrations/integration/ha_sauna">Sauna konfigurieren <span aria-hidden="true">↗</span></a>' : ""}</nav><div class="settings-content" ${admin ? 'id="parameters"' : ""}>${admin ? '<form id="settings-parameters"></form>' : ""}${groups.map((group) => `<section id="settings-${esc(group.id)}" data-settings-section="${esc(group.id)}" aria-label="${esc(group.label)}">${group.id === "appearance" ? parameterGroup(group) + (contents[group.id] || "") : (contents[group.id] || "") + parameterGroup(group)}</section>`).join("")}</div></div>`;
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
@@ -8815,12 +8928,12 @@ class SaunaPanel extends HTMLElement {
   async saveSettings() {
     if (!this.state?.permissions?.admin || this.state.configuration_locked) return;
     this.message(null);
-    const values = { ...this.state.configuration.parameters };
+    const values = {};
     for (const [key, value] of new FormData(this.$("#settings-parameters"))) {
       if (value !== "") values[key] = Number(value);
       else delete values[key];
     }
-    await this.updateParameters(values);
+    await this.updateParameters(values, false, false, "PATCH");
   }
   async resetSettings() {
     if (!this.state) return;
@@ -8852,7 +8965,7 @@ class SaunaPanel extends HTMLElement {
     )
       return;
     const status = this.shadowRoot.querySelector("#settings-reset-status");
-    if (status) status.textContent = "Standardwerte wurden wiederhergestellt.";
+    if (status) status.textContent = "Werkseinstellungen wurden wiederhergestellt.";
   }
   isPanelFullscreen() {
     const document = this.ownerDocument;
@@ -9022,7 +9135,6 @@ class SaunaPanel extends HTMLElement {
       : null;
   }
   async submitLight(value) {
-    if (!this.manualControlAvailability().light) return;
     const light = this.state?.manual_controls?.light,
       observation = light?.observation,
       same =
@@ -9036,6 +9148,7 @@ class SaunaPanel extends HTMLElement {
       revision = this.manualLightRevision || 0,
       request = (this.manualLightRequest = (this.manualLightRequest || 0) + 1);
     try {
+      if (!this.manualControlAvailability().light) return;
       if (!same) await this.api(`/${entry}/light`, "POST", { value });
     } finally {
       if (
@@ -9476,7 +9589,12 @@ class SaunaPanel extends HTMLElement {
         value = preset === "true" ? true : preset === "false" ? false : null;
       if (preset !== "true" && preset !== "false" && preset !== "auto")
         throw Error("Ungültige Ofensteuerung");
-      if (value != null && this.outputState("heater") === value) return;
+      if (
+        this.state.configuration.control_mode !== "manual" &&
+        value != null &&
+        this.outputState("heater") === value
+      )
+        return;
       const entry = this.entry,
         generation = this.generation,
         request = (this.heaterRequestSerial = (this.heaterRequestSerial || 0) + 1);

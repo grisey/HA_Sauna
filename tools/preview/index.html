@@ -64,6 +64,10 @@
     button {
       cursor: pointer;
     }
+    button[aria-pressed="true"] {
+      border-color: var(--primary-color);
+      box-shadow: inset 0 -2px var(--primary-color);
+    }
     details {
       max-width: 1216px;
       margin: 8px auto 0;
@@ -122,10 +126,15 @@
       <div class="row">
         <label
           >Temperatur <input id="sim-temperature" type="number" value="80" /> °C</label
-        ><button id="temperature">Übernehmen</button><span>Ofenschalter</span
+        ><button id="temperature">Übernehmen</button>
+      </div>
+      <div class="row" role="group" aria-label="Simulierte Ofenrückmeldung">
+        <span>Ofenrückmeldung</span>
+        <button data-feedback='"follow"'>Steuerung folgen</button
         ><button data-feedback="true">Ein</button
         ><button data-feedback="false">Aus</button
         ><button data-feedback="null">Unbekannt</button>
+        <small id="feedback-status" role="status"></small>
       </div>
       <div class="row">
         <span>Taster</span><button data-sim="button_short">Kurz drücken</button

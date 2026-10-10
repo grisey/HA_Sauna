@@ -50,13 +50,14 @@ keine Türhilfe.
 
 | Betriebsabschnitt | Automatisches Lichtziel |
 | --- | --- |
-| Aufheizen und Bereit | Linear von Grundhelligkeit an der Referenztemperatur zur Normalhelligkeit am Sollwert. |
-| Saunagang | Normalhelligkeit. |
-| Ofenkühlung | Zunächst Kühlhelligkeit, danach über die Restzeit linear zum temperaturabhängigen Ziel. |
-| Betrieb-AUS | Nachlaufhelligkeit bis zum Fristende, dann AUS. |
+| Aufheizen und Bereit | Linear von der Helligkeit bei kalter Sauna am Kaltpunkt der Lichtkurve zum Tag- oder Nachtwert bei Solltemperatur. |
+| Saunagang | Tag- oder Nachtwert bei Solltemperatur. |
+| Ofenkühlung | Zunächst Dimmhelligkeit bei Ofenkühlung, danach über die Restzeit linear zum temperaturabhängigen Ziel. |
+| Betrieb-AUS | Helligkeit für „Hell“ und Lichtnachlauf bis zum Fristende, dann AUS. |
 
-Die Normalhelligkeit geht während der bürgerlichen Dämmerung zwischen Tag- und
-Nachtwert über. Thermostatgrenzen beeinflussen die Lichtkurve nicht.
+Das Helligkeitsziel bei Solltemperatur und im Saunagang geht während der
+bürgerlichen Dämmerung zwischen Tag- und Nachtwert über. Thermostatgrenzen
+beeinflussen die Lichtkurve nicht.
 Automatische Stellwerte werden auf ganze Prozent gerundet und durch die
 Ausgabehysterese beruhigt; manuelle Wahlen und fälliges AUS werden dadurch nicht
 verzögert.

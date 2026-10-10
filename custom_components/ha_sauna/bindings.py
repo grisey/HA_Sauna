@@ -27,37 +27,37 @@ class Role:
 
 ROLES = (
     Role(
-        "upper_temperature", "Temperatur oben", ("sensor",), "temperature", "°C",
+        "upper_temperature", "Temperatursensor oben", ("sensor",), "temperature", "°C",
         optional=True,
     ),
     Role(
-        "upper_humidity", "Luftfeuchte oben", ("sensor",), "humidity", "%",
+        "upper_humidity", "Luftfeuchtesensor oben", ("sensor",), "humidity", "%",
         optional=True,
     ),
     Role(
-        "upper_status", "Sensorstatus oben", ("sensor", "binary_sensor"), optional=True
+        "upper_status", "Zusätzlicher Sensorstatus oben", ("sensor", "binary_sensor"), optional=True
     ),
     Role(
-        "lower_temperature", "Temperatur unten", ("sensor",), "temperature", "°C",
+        "lower_temperature", "Temperatursensor unten", ("sensor",), "temperature", "°C",
         optional=True,
     ),
     Role(
-        "lower_humidity", "Luftfeuchte unten", ("sensor",), "humidity", "%",
+        "lower_humidity", "Luftfeuchtesensor unten", ("sensor",), "humidity", "%",
         optional=True,
     ),
     Role(
-        "lower_status", "Sensorstatus unten", ("sensor", "binary_sensor"), optional=True
+        "lower_status", "Zusätzlicher Sensorstatus unten", ("sensor", "binary_sensor"), optional=True
     ),
     Role("heater", "Schalter des Heizschützes", ("switch",)),
     Role(
         "heater_feedback",
-        "Unabhängiger binärer Heiznachweis (optional)",
+        "Zusätzliche Heizrückmeldung",
         ("switch", "binary_sensor"),
         optional=True,
     ),
     Role(
         "heater_power",
-        "Leistungsmessung des Ofens (optional)",
+        "Leistungsmessung des Ofens",
         ("sensor",),
         "power",
         "W",
@@ -66,7 +66,11 @@ ROLES = (
     ),
     Role("light", "Dimmbares Saunalicht", ("light",)),
     Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
-    Role("presence", "Präsenzentität", ("binary_sensor",), optional=True),
+    Role("presence", "Präsenzmeldung", ("binary_sensor",), optional=True),
+    Role(
+        "presence_illuminance", "Lichtstärke am Präsenzsensor", ("sensor",),
+        "illuminance", "lx", optional=True,
+    ),
     Role("audio_output", "Audioziel (vorbereitet)", ("media_player",), optional=True),
     Role(
         "environment_weather", "Wetterquelle", ("weather",),

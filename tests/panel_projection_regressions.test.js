@@ -212,10 +212,8 @@ test("details render includes the reachable presence and rule card", () => {
   value.drawCurrent();
   assert.match(nodes["#details"].innerHTML, /Präsenz und Regelursache/);
   assert.match(nodes["#details"].innerHTML, /Präsenzsensor/);
-  assert.match(
-    nodes["#details"].innerHTML,
-    /Proxy zurückgenommen; keine beobachtete Abwesenheit/,
-  );
+  assert.match(nodes["#details"].innerHTML, /keine beobachtete Abwesenheit/);
+  assert.doesNotMatch(nodes["#details"].innerHTML, /proxy_retraction/);
 
   state.measurement_positions = ["lower"];
   state.regulation_temperature_position = "lower";

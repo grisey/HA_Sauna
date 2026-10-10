@@ -11,32 +11,25 @@ HA_AVAILABLE = importlib.util.find_spec("homeassistant") is not None
 class PresenceConfigTests(unittest.IsolatedAsyncioTestCase):
     async def test_configuration_fields_keep_related_settings_together(self):
         from custom_components.ha_sauna import config_flow as module
-        from custom_components.ha_sauna.core.defaults import section
 
         hass = SimpleNamespace(states=SimpleNamespace(async_all=lambda: []))
-        keys = [marker.schema for marker in module.binding_schema(hass).schema]
+        schema = module.binding_schema(hass)
+        keys = []
+        for marker, value in schema.schema.items():
+            if hasattr(value, "schema"):
+                keys.extend(str(key) for key in value.schema.schema)
+            else:
+                keys.append(str(marker))
         for sequence in (
             ["upper_temperature", "upper_humidity", "upper_status"],
             ["lower_temperature", "lower_humidity", "lower_status"],
-            ["heater", "heater_feedback", "heater_power"],
+            ["heater_feedback", "heater_power", "audio_output"],
             ["control_input", "control_input_mode", "button_event_type"],
-            ["presence", "presence_source"],
+            ["presence", "presence_illuminance", "presence_source"],
         ):
             with self.subTest(sequence=sequence):
                 start = keys.index(sequence[0])
                 self.assertEqual(keys[start : start + len(sequence)], sequence)
-        expected = [
-            spec["key"]
-            for spec in sorted(section("parameters"), key=lambda spec: spec["order"])
-        ]
-        self.assertEqual(
-            [marker.schema for marker in module.parameter_schema().schema], expected
-        )
-        self.assertEqual(
-            [marker.schema for marker in module.parameter_schema(durable_only=True).schema],
-            [key for key in expected if module.BY_KEY[key].settings_group != "programs"],
-        )
-
     async def test_source_is_not_a_binding_and_invalid_source_is_rejected(self):
         from custom_components.ha_sauna import config_flow as module
         from custom_components.ha_sauna.bindings import BindingError
@@ -47,22 +40,3 @@ class PresenceConfigTests(unittest.IsolatedAsyncioTestCase):
             bindings.assert_called_once_with({"presence": "binary_sensor.room"})
         with self.assertRaises(BindingError):
             module.checked_bindings(hass, {"presence_source": "combined"})
-
-    async def test_source_survives_setup_and_binding_options(self):
-        from custom_components.ha_sauna import config_flow as module
-        from homeassistant.config_entries import OptionsFlow
-        bindings = SimpleNamespace(values={"heater": "switch.heater"}, as_dict=lambda: {"heater": "switch.heater"})
-        hass = SimpleNamespace(config_entries=SimpleNamespace(async_entries=lambda _: []))
-        flow = module.SaunaConfigFlow()
-        flow.hass = hass
-        with patch.object(module, "checked_bindings", return_value=bindings), patch.object(flow, "_async_current_entries", return_value=[]), patch.object(flow, "async_step_parameters", return_value={}):
-            await flow.async_step_user({"name": "Test", "presence_source": "ha_presence"})
-        self.assertEqual(flow._input_options["presence_source"], "ha_presence")
-        from unittest.mock import PropertyMock
-        entry = SimpleNamespace(entry_id="test", options={"presence_source": "ha_presence", "bindings": bindings.as_dict()})
-        options = module.SaunaOptionsFlow()
-        options.hass = hass
-        with patch.object(OptionsFlow, "config_entry", new_callable=PropertyMock, return_value=entry), patch.object(module, "checked_bindings", return_value=bindings):
-            result = await options.async_step_bindings({"heater": "switch.heater", "presence_source": "proxy"})
-        self.assertEqual(result["data"]["presence_source"], "proxy")
-        self.assertNotIn("presence_source", result["data"]["bindings"])

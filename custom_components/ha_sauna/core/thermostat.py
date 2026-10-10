@@ -45,12 +45,14 @@ def evaluate(
     heating_since: datetime | None = None,
     heating_active: bool = False,
     target_temperature: float | None = None,
+    pure_hysteresis: bool = False,
 ):
     """Return the present heat command using the fixed demand priority.
 
     Positive live gang and temporary-door levels bypass the normal temperature
     cut-off and thermostat cooldown. They never bypass operation, protection,
     inhibitions, or a missing/invalid selected regulation temperature.
+    Pure hysteresis ignores session inputs and heating timers.
     """
     values = parameters.values
     controls = inputs if inputs is not None else ControlInputs(
@@ -58,6 +60,8 @@ def evaluate(
     )
 
     def result(demand, reason, cooldown=state.cooldown_until):
+        if pure_hysteresis:
+            cooldown = None
         return replace(state, demand=demand, cooldown_until=cooldown), Decision(
             now, demand, reason
         )
@@ -77,16 +81,17 @@ def evaluate(
         return result(False, "temperature_configuration_required")
     if temperature is None or not isfinite(temperature):
         return result(False, "upper_temperature_unavailable")
-    if controls.cooling:
+    if not pure_hysteresis and controls.cooling:
         return result(False, "after_run")
 
-    if controls.gang_heat_demand:
+    if not pure_hysteresis and controls.gang_heat_demand:
         return result(True, "gang_heat_demand", None)
-    if controls.temporary_door_heat:
+    if not pure_hysteresis and controls.temporary_door_heat:
         return result(True, "temporary_door_heat", None)
 
     if (
-        (state.demand or heating_active)
+        not pure_hysteresis
+        and (state.demand or heating_active)
         and heating_since is not None
         and now
         < heating_since
@@ -98,11 +103,11 @@ def evaluate(
     if temperature >= stop_temperature:
         cooldown = (
             now + timedelta(seconds=parameters.seconds("thermostat_cooldown_minutes"))
-            if state.demand
+            if state.demand and not pure_hysteresis
             else state.cooldown_until
         )
         return result(False, "temperature_reached", cooldown)
-    if state.cooldown_until and now < state.cooldown_until:
+    if not pure_hysteresis and state.cooldown_until and now < state.cooldown_until:
         return result(False, "thermostat_cooldown")
     if temperature <= restart_temperature:
         return result(True, "below_target", None)

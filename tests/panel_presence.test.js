@@ -64,10 +64,22 @@ const panel = Object.assign(Object.create(Panel.prototype), {
   historyRecords: () => [],
 });
 const detail = panel.presenceDetails();
-assert.match(detail, /Proxy zurückgenommen; keine beobachtete Abwesenheit/);
+assert.match(
+  detail,
+  /Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit/,
+);
 assert.match(detail, /Präsenzsensor/);
 assert.match(detail, /Nicht verfügbar/);
-assert.match(detail, /&lt;sensor&gt;/);
+assert.match(detail, /Beobachtete Quelle · &lt;sensor&gt;/);
+assert.match(detail, /Temperatur und Feuchte/);
+assert.doesNotMatch(detail, /Proxy/);
+panel.state.configuration.bindings = { presence: "<sensor>" };
+panel.state.presence.effective_source = "ha_presence";
+panel.state.presence.external["<sensor>"].reason = "unavailable";
+const directDetail = panel.presenceDetails();
+assert.match(directDetail, /Führender Präsenzsensor · &lt;sensor&gt;/);
+assert.match(directDetail, /Sensor nicht verfügbar/);
+assert.doesNotMatch(directDetail, /unavailable/);
 assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);
 assert.match(detail, /Heizanforderung im Saunagang[\s\S]*Aktiv/);
 assert.match(detail, /Temporäres Heizen nach Türschluss[\s\S]*Aktiv/);

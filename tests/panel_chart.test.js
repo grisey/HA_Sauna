@@ -145,7 +145,7 @@ const draw = (model) => {
   );
 }
 
-// A raw TTL interval and a raw null are independent Canvas subpaths.
+// TTL intervals and null observations do not interrupt the user-facing curve.
 {
   const records = [record(0, 70), record(1, 71), record(20, 72), record(21, 73)];
   const p = panel(30, records);
@@ -153,7 +153,7 @@ const draw = (model) => {
     draw(modelFor(p, records, 30))
       .curves.mainPaths.get("upper:temperature")
       .path.commands.filter(([kind]) => kind === "M").length,
-    2,
+    1,
   );
   const missing = [record(0, 70), record(1, null), record(2, 71)];
   const missingPanel = panel(30, missing);
@@ -161,7 +161,7 @@ const draw = (model) => {
     draw(modelFor(missingPanel, missing, 30))
       .curves.mainPaths.get("upper:temperature")
       .path.commands.filter(([kind]) => kind === "M").length,
-    2,
+    1,
   );
 }
 

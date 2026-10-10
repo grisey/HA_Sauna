@@ -91,6 +91,65 @@ class DefaultsTests(unittest.TestCase):
         data["setup"] = {"program_mode": "constant", "control_input_mode": "switch"}
         self.assertIs(validate_catalog(data), data)
 
+    def test_settings_surface_accepts_explicit_ownership_or_panel_fallback(self):
+        for surface in ("panel", "integration"):
+            with self.subTest(surface=surface):
+                data = load_catalog()
+                data["frontend"]["settings_groups"][0]["surface"] = surface
+                self.assertIs(validate_catalog(data), data)
+        data = load_catalog()
+        for group in data["frontend"]["settings_groups"]:
+            group.pop("surface", None)
+        self.assertIs(validate_catalog(data), data)
+        self.assertTrue(all(
+            group.get("surface", "panel") == "panel"
+            for group in data["frontend"]["settings_groups"]
+        ))
+
+    def test_settings_surface_rejects_null_unknown_and_subgroup_ownership(self):
+        for surface in (None, "", "both", True, [], {}):
+            with self.subTest(surface=surface):
+                data = load_catalog()
+                data["frontend"]["settings_groups"][0]["surface"] = surface
+                with self.assertRaises(ValueError):
+                    validate_catalog(data)
+        data = load_catalog()
+        data["frontend"]["settings_subgroups"][0]["surface"] = "integration"
+        with self.assertRaises(ValueError):
+            validate_catalog(data)
+
+    def test_plant_settings_have_one_owner_and_no_current_session_values(self):
+        groups = {
+            group["id"]: group.get("surface", "panel")
+            for group in section("frontend")["settings_groups"]
+        }
+        self.assertEqual(
+            {key for key, owner in groups.items() if owner == "integration"},
+            {"operation", "sensors", "light"},
+        )
+        for definition in EDITABLE_DEFINITIONS:
+            with self.subTest(key=definition.key):
+                if groups[definition.settings_group] == "integration":
+                    self.assertTrue(definition.settings_subgroup)
+                    self.assertNotIn(definition.key, {
+                        "target_temperature_c", "final_temperature_c", "temperature_gangs",
+                    })
+
+    def test_detection_group_scope_requires_known_sources_and_complete_hints(self):
+        for metadata in (
+            {"presence_sources": ["combined"]},
+            {"presence_sources": []},
+            {"presence_sources": ["proxy", "proxy"]},
+            {"presence_sources": "proxy"},
+            {"descriptions": {"proxy": "Hinweis"}},
+            {"descriptions": {"proxy": "Hinweis", "ha_presence": ""}},
+        ):
+            with self.subTest(metadata=metadata):
+                data = load_catalog()
+                data["frontend"]["settings_subgroups"][0].update(metadata)
+                with self.assertRaises(ValueError):
+                    validate_catalog(data)
+
     def test_catalog_rejects_invalid_defaults_before_consumer_imports(self):
         mutations = (
             lambda data: data["parameters"].append(deepcopy(data["parameters"][0])),
