@@ -69,3 +69,19 @@ denselben Datensatzhash vor und nach der Optimierung. Laufzeiten werden als
 CI-Messwerte ausgegeben; ein physisches HA-Gerät und dessen Netzwerk sind nicht
 Teil dieses Vergleichs. Das Fixture übernimmt nur Setup/Cleanup der vorhandenen
 Browserprüfung und sammelt deren Tests nicht erneut.
+
+Der zusätzliche Fall `ARCHIVE_LEGACY_VOLUME_BENCHMARK` entfernt die nativen
+Phasenlisten des synthetischen Sitzungsmodells und ergänzt sechs Stunden
+historische Belege: zwölf Gänge, Phasenwechsel, regelmäßige Heizschützmeldungen,
+Sitzungsrevisionen und dichte Meldungen anderer tatsächlich archivierter
+Quellenrollen. Die Meldeabstände sind ausdrücklich synthetische Lastannahmen,
+keine gemessene private Archivdichte oder duplizierte Konfigurationsvorgaben.
+Alle vorhandenen Messwertdatensätze bleiben unverändert.
+
+Gemessen werden erste Seite, sämtliche Folgeseiten, vollständiger kalter und
+warmer Abruf sowie Zeit und Aufrufzahl der Legacy-Projektion einschließlich
+Belegabruf und Decodierung. Kalt darf genau ein vollständiger Belegabruf erfolgen,
+warm keiner; alle Antworten müssen identisch bleiben. Zusätzlich prüft der Fall
+die semantische Gleichheit einer Projektion, der nur `source_state`-Belege mit
+Rolle `heater` sowie sämtliche `phase`- und `session`-Belege übergeben werden.
+Dies ist ein Filter-Nachweis im Test, keine Änderung des produktiven Lesepfads.

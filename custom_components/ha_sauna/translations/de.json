@@ -234,17 +234,17 @@
         "title": "Temperaturregelung",
         "data": {
           "sauna_min_temperature_c": "Mindesttemperatur",
-          "readiness_offset_c": "Abschaltabstand über Solltemperatur",
-          "readiness_hysteresis_c": "Einschaltabstand unter Solltemperatur",
+          "readiness_offset_c": "Heizung aus bei Solltemperatur plus",
+          "readiness_hysteresis_c": "Heizung ein bei Solltemperatur minus",
           "minimum_heating_minutes": "Mindestheizzeit",
-          "thermostat_cooldown_minutes": "Heizpause nach Erreichen der Abschalttemperatur"
+          "thermostat_cooldown_minutes": "Heizpause nach Abschalten"
         },
         "data_description": {
           "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
           "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. Mindestheizzeit und Heizen während eines Saunagangs haben Vorrang.",
           "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein, sobald die Heizpause abgelaufen ist.",
           "minimum_heating_minutes": "Nach dem Einschalten bleibt der Ofen mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
-          "thermostat_cooldown_minutes": "Sperrt das normale Wiederheizen nach einer temperaturbedingten Abschaltung für diese Zeit."
+          "thermostat_cooldown_minutes": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten."
         }
       },
       "parameters_heater_feedback": {

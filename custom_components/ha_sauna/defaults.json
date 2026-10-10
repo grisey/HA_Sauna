@@ -79,7 +79,7 @@
     },
     {
       "key": "readiness_offset_c",
-      "label": "Abschaltabstand über Solltemperatur",
+      "label": "Heizung aus bei Solltemperatur plus",
       "unit": "°C",
       "allow_zero": true,
       "optional": false,
@@ -98,7 +98,7 @@
     },
     {
       "key": "readiness_hysteresis_c",
-      "label": "Einschaltabstand unter Solltemperatur",
+      "label": "Heizung ein bei Solltemperatur minus",
       "unit": "°C",
       "allow_zero": true,
       "optional": false,
@@ -136,7 +136,7 @@
     },
     {
       "key": "thermostat_cooldown_minutes",
-      "label": "Heizpause nach Erreichen der Abschalttemperatur",
+      "label": "Heizpause nach Abschalten",
       "unit": "min",
       "allow_zero": true,
       "optional": false,
@@ -144,7 +144,7 @@
       "default": 5,
       "minimum": null,
       "integer": false,
-      "description": "Sperrt das normale Wiederheizen nach einer temperaturbedingten Abschaltung für diese Zeit.",
+      "description": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten.",
       "group": "temperature",
       "expert": false,
       "step": "any",

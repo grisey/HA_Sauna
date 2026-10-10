@@ -73,3 +73,74 @@ def old_page_query(sql, parameters, sources, start):
          (end + timedelta(minutes=15)).isoformat(), start.isoformat(), end.isoformat(),
          parameters[2], *kinds, parameters[-1]),
     )
+
+
+def seed_legacy_evidence(archive, stored, start, *, identity="volume"):
+    """Add dense old-format evidence without changing any measurement record.
+
+    Four sources report every two seconds, heater feedback every minute, and
+    a session revision every thirty seconds. These are synthetic load choices,
+    not configuration defaults or a claim about a particular installation.
+    """
+    end = start + timedelta(hours=6)
+    legacy = json.loads(json.dumps(stored))
+    legacy.pop("base_phases", None)
+    legacy.pop("contactor_history", None)
+    legacy["timeline"]["session_id"] = identity
+    gangs = [
+        {"gang_id": f"synthetic-{number}",
+         "started_at": (start + timedelta(seconds=1800 + number * 1500)).isoformat(),
+         "ended_at": (start + timedelta(seconds=2400 + number * 1500)).isoformat()}
+        for number in range(12)
+    ]
+    legacy["timeline"]["completed"] = gangs
+    legacy["ready_at"] = start.isoformat()
+    legacy["operation_enabled"] = False
+    legacy["operation_off_at"] = end.isoformat()
+    counts = {"phase": 0, "source_state": 0, "session": 0, "heater_source_state": 0}
+    phase_marks = {start.isoformat(): "bereit", end.isoformat(): "aus"}
+    for gang in gangs:
+        phase_marks[gang["started_at"]] = "saunagang"
+        phase_marks[gang["ended_at"]] = "bereit"
+
+    def row(kind, at, payload):
+        counts[kind] += 1
+        return (archive.entry_id, identity, kind, at, json.dumps(payload))
+
+    def rows():
+        for second in range(0, 6 * 3600 + 1, 2):
+            at = (start + timedelta(seconds=second)).isoformat()
+            if at in phase_marks:
+                yield row("phase", at, {"phase": phase_marks[at]})
+            # Device.ingest archives measurement roles as measurement, not
+            # source_state. Use actual non-measurement roles for this load.
+            for role in ("heater_power", "upper_status", "lower_status", "light"):
+                yield row("source_state", at, {
+                    "role": role, "source": f"sensor.synthetic_{role}",
+                    "state": "9000" if role == "heater_power" else "on",
+                    "attributes": {"synthetic_report": second,
+                                   "synthetic_padding": "x" * 256},
+                })
+            if second % 60 == 0:
+                counts["heater_source_state"] += 1
+                yield row("source_state", at, {
+                    "role": "heater", "state": "on" if second % 120 == 0 else "off",
+                })
+            if second % 30 == 0:
+                snapshot = {**legacy, "timeline": {**legacy["timeline"]}}
+                snapshot["timeline"]["completed"] = [g for g in gangs if g["ended_at"] <= at]
+                snapshot["timeline"]["active"] = next(
+                    (g for g in gangs if g["started_at"] <= at < g["ended_at"]), None,
+                )
+                snapshot["ended_at"] = end.isoformat() if second == 21600 else None
+                snapshot["operation_enabled"] = second < 21600
+                snapshot["operation_off_at"] = end.isoformat() if second == 21600 else None
+                yield row("session", at, snapshot)
+
+    with closing(sqlite3.connect(archive.path)) as db, db:
+        db.execute("UPDATE sessions SET payload=? WHERE entry_id=? AND session_id=?",
+                   (json.dumps(legacy), archive.entry_id, identity))
+        db.executemany("INSERT INTO records(entry_id,session_id,kind,received_at,payload) "
+                       "VALUES(?,?,?,?,?)", rows())
+    archive._invalidate_projection(identity)
+    return legacy, counts

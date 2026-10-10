@@ -123,7 +123,7 @@ def device_schema(hass: HomeAssistant, *, include_name=False, saved=None) -> vol
             label = (device.name_by_user or device.name or device_id) if device else device_id
             options.append({"value": device_id, "label": label})
         fields[vol.Optional(device_key)] = selector.SelectSelector({
-            "options": options, "mode": "dropdown",
+            "options": options, "mode": "dropdown", "sort": True,
         })
     return vol.Schema(fields)
 
