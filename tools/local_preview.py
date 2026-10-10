@@ -429,9 +429,18 @@ class Preview:
         elif path.endswith("/parameters"):
             if not self.admin:
                 raise ValueError("Administratorrechte erforderlich")
-            if not isinstance(body, dict) or not body:
-                raise ValueError("Ungültige Einstellungen")
+            display_keys = {
+                definition.key for definition in EDITABLE_DEFINITIONS
+                if definition.settings_group == "appearance"
+            }
+            if not isinstance(body, dict) or not body or set(body) - display_keys:
+                raise ValueError("Ungültige Darstellungseinstellungen")
             asyncio.run(async_set_parameters(self.hass, self.entry, body, partial=True))
+            # The preview has no HA options listener. Only display choices are
+            # accepted here; publish the saved configuration without a reload.
+            self.runtime.configuration = Configuration.from_options(self.entry.options)
+            self.c.parameters = self.runtime.configuration.parameters
+            self.runtime.reconfiguring = False
         elif path.endswith("/temperature"):
             if not body or set(body) - LIVE_TEMPERATURE_KEYS:
                 raise ValueError("Ungültige Temperatureinstellung")

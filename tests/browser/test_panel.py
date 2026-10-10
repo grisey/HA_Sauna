@@ -201,27 +201,27 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(menu).to_be_visible()
         await expect(select).to_be_focused()
         await expect(select).to_have_attribute("aria-expanded", "true")
-        await expect(menu.get_by_role("option", name="DEBUG", exact=False)).to_have_attribute("aria-disabled", "true")
+        await expect(menu.get_by_role("option", name="Detaillierte Diagnose", exact=True)).to_have_attribute("aria-disabled", "true")
         radius = await select.evaluate("element => getComputedStyle(element).borderRadius")
         await expect(menu).to_have_css("border-radius", radius)
         await select.press("Home")
-        await expect(menu.locator('[data-active="true"]')).to_contain_text("ERROR")
+        await expect(menu.locator('[data-active="true"]')).to_contain_text("Fehler")
         await select.press("ArrowDown")
         await select.press("End")
-        await expect(menu.locator('[data-active="true"]')).to_contain_text("INFO")
+        await expect(menu.locator('[data-active="true"]')).to_contain_text("Betriebsereignisse")
         await select.press("ArrowUp")
         await select.press("Escape")
         await expect(menu).to_have_count(0)
         await expect(select).to_be_focused()
         await expect(select).to_have_value("INFO")
         self.assertEqual(await select.evaluate("select => select.testEvents"), [])
-        await select.press("e")
-        await expect(menu.locator('[data-active="true"]')).to_contain_text("ERROR")
+        await select.press("f")
+        await expect(menu.locator('[data-active="true"]')).to_contain_text("Fehler")
         await select.press("Enter")
         await expect(select).to_have_value("ERROR")
         self.assertEqual(await select.evaluate("select => select.testEvents"), ["input", "change"])
         await select.click()
-        await menu.get_by_role("option", name="INFO", exact=False).click()
+        await menu.get_by_role("option", name="Betriebsereignisse", exact=True).click()
         await expect(select).to_have_value("INFO")
         await expect(select).to_be_focused()
         await select.click()
@@ -256,7 +256,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await panel.locator('[data-action="settings-section:maintenance"]').tap()
             select = panel.locator("#log-level")
             await select.tap()
-            menu = panel.get_by_role("listbox", name="Protokollstufe", exact=True)
+            menu = panel.get_by_role("listbox", name="Umfang", exact=True)
             await expect(menu).to_be_visible()
             box = await menu.bounding_box()
             self.assertGreaterEqual(box["x"], 0)
@@ -1913,6 +1913,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         # HA config registers the real integration page and options-flow HTTP API.
         # Selectors follow frontend's ha-config-entry-row, step-flow-menu and
         # ha-selector-number components, not an injected replacement dialog.
+        self.assertTrue(await async_setup_component(self.hass, "logger", {}))
         self.assertTrue(await async_setup_component(self.hass, "config", {}))
         await self.hass.async_block_till_done()
         await self.page.reload()
@@ -1929,11 +1930,25 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         dialog = self.page.locator("dialog-data-entry-flow")
         menu = dialog.locator("step-flow-menu")
         groups = section("frontend")["settings_groups"]
-        for group in groups:
-            if group.get("surface") == "integration":
-                await expect(menu.get_by_text(group["label"], exact=True)).to_be_visible()
         screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "screenshots"
         screenshots.mkdir(parents=True, exist_ok=True)
+        await self.page.screenshot(path=str(screenshots / "options_menu.png"), full_page=True)
+        try:
+            for group in groups:
+                if group.get("surface") == "integration":
+                    await expect(menu.get_by_text(group["label"], exact=True)).to_be_visible()
+        except AssertionError:
+            await self.page.screenshot(path=str(screenshots / "options_menu.png"), full_page=True)
+            print("NATIVE_OPTIONS_DIALOG", await dialog.evaluate_all("""dialogs => dialogs.map(dialog => ({
+              step: dialog._step,
+              loading: dialog._loading,
+              markup: dialog.shadowRoot?.innerHTML,
+              language: dialog.hass?.locale?.language,
+              title: dialog.hass?.localize('component.ha_sauna.options.step.init.title'),
+              operation: dialog.hass?.localize('component.ha_sauna.options.step.init.menu_options.operation')
+            }))"""), flush=True)
+            print("NATIVE_OPTIONS_ERRORS", self.errors, self.console_errors, self.ws_errors, flush=True)
+            raise
         await self.page.screenshot(path=str(screenshots / "options_menu.png"), full_page=True)
         area = next(group for group in groups if group["id"] == "operation")
         await menu.get_by_text(area["label"], exact=True).click()
@@ -2673,7 +2688,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await info_button.click()
         await expect(popup).to_be_hidden()
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        await expect(self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True)).to_have_css("color", "rgb(255, 255, 255)")
+        await expect(self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True)).to_have_css("color", "rgb(0, 0, 0)")
         await self.open_settings_section("maintenance")
         await expect(self.panel.get_by_role("link", name="Home-Assistant-Protokoll öffnen")).to_have_css("color", "rgb(255, 255, 255)")
         await self.open_settings_section("appearance")

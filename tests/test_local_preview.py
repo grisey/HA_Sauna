@@ -25,6 +25,20 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.action("/simulate", {"action":"role", "value":"admin"})
         self.assertIn("presence", self.preview.state())
 
+    def test_display_parameter_save_is_visible_without_a_ha_options_listener(self):
+        self.preview.reset("archiv")
+        before = self.preview.runtime.configuration.as_options()
+        current = before["parameters"]["preset_step_c"]
+        changed = current + 1
+        self.preview.action("/preview/parameters", {"preset_step_c": changed})
+        after = self.preview.state()["configuration"]
+        before["parameters"]["preset_step_c"] = changed
+        self.assertEqual(after, before)
+        self.assertFalse(self.preview.runtime.reconfiguring)
+        self.preview.admin = False
+        with self.assertRaises(ValueError):
+            self.preview.action("/preview/parameters", {"preset_step_c": current})
+
     def test_cooling_exposes_the_same_reason_as_rejected_heater_action(self):
         for admin in (True, False):
             with self.subTest(admin=admin):

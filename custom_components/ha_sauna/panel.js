@@ -3086,8 +3086,8 @@ class SaunaPanel extends HTMLElement {
         padding-top: 4px;
       }
       .settings-navigation button { text-align: left; }
-      .settings-configuration-link { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px; margin-top: 8px; color: var(--sauna-color-muted-text); border-top: 1px solid var(--sauna-color-border); text-decoration: none; font-size: 13px; }
-      .settings-configuration-link:hover, .settings-configuration-link:focus-visible { color: var(--sauna-color-text); text-decoration: underline; }
+      .settings-configuration-link { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px; margin-top: 8px; color: inherit; border-top: 1px solid var(--sauna-color-border); text-decoration: none; font-size: 13px; }
+      .settings-configuration-link:hover, .settings-configuration-link:focus-visible { text-decoration: underline; }
       .settings-content { min-width: 0; min-height: 0; height: 100%; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 4px; }
       .settings-content > section > h2 { margin-top: 0; }
       .settings-content .card:first-of-type { margin-top: 0; }
@@ -3098,7 +3098,7 @@ class SaunaPanel extends HTMLElement {
         .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
         .settings-menu-toggle { display: inline-flex; justify-self: start; align-items: center; gap: 8px; margin: 0 4px; }
         .settings-menu-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
-        .settings-navigation { display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: 4px; left: 4px; width: min(var(--settings-navigation-width), calc(100% - 8px)); align-content: start; overflow: auto; z-index: 6; padding: 8px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
+        .settings-navigation { color: var(--sauna-card-text, inherit); display: none; position: absolute; grid-area: 2 / 1; top: 0; bottom: 4px; left: 4px; width: min(var(--settings-navigation-width), calc(100% - 8px)); align-content: start; overflow: auto; z-index: 6; padding: 8px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); background: var(--sauna-surface-raised); box-shadow: var(--sauna-shadow-card); }
         .settings-layout[data-menu-open] .settings-navigation { display: grid; }
         .settings-layout[data-menu-open] .settings-menu-backdrop { display: block; position: absolute; grid-area: 2 / 1; inset: 0; z-index: 5; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
         .settings-content { grid-column: 1; grid-row: 2; }

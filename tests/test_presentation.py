@@ -94,6 +94,15 @@ class PresentationTests(unittest.TestCase):
         self.assertIsNone(public_session(None))
         self.assertIsNone(public_phase_projection(None))
 
+    def test_ha_translation_fallback_contains_the_complete_german_base(self):
+        # HA loads translations/<locale>.json with en.json as fallback; a
+        # custom integration's strings.json is not a runtime fallback file.
+        root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
+        source = json.loads((root / "strings.json").read_text())
+        fallback = json.loads((root / "translations/en.json").read_text())
+        self.assertEqual(fallback, source)
+        self.assertEqual(fallback, json.loads((root / "translations/de.json").read_text()))
+
     def test_basic_configuration_shares_labels_and_help_in_both_ha_forms(self):
         root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
         strings = json.loads((root / "strings.json").read_text())

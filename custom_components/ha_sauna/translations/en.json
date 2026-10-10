@@ -1,0 +1,508 @@
+{
+  "config": {
+    "error": {
+      "wrong_device_class": "Die Geräteklasse passt nicht zur Messgröße.",
+      "wrong_domain": "Die Entität gehört nicht zum benötigten Typ.",
+      "duplicate_sensor": "Die beiden Positionen benötigen unterschiedliche Messquellen.",
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "wrong_unit": "Die Maßeinheit passt nicht zur ausgewählten Rolle.",
+      "light_not_dimmable": "Das Licht muss Dimmen unterstützen.",
+      "invalid_bindings": "Die Entitätszuordnung ist ungültig.",
+      "unknown_binding": "Unbekannte Gerätezuordnung.",
+      "entity_required": "Bitte eine passende Entität auswählen.",
+      "sensor_pair_required": "Bitte mindestens eine vollständige Messposition mit Temperatur und Luftfeuchte zuordnen.",
+      "required": "Bitte einen Wert angeben.",
+      "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
+      "invalid_presence_source": "Bitte ein angebotenes Erkennungsverfahren auswählen.",
+      "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
+      "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
+      "invalid_configuration": "Die Gerätezuordnung passt nicht zu den gespeicherten Einstellungen."
+    },
+    "abort": {
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "session_exists": "Gerätezuordnung und Erkennungsverfahren sind erst nach Sitzungsende änderbar."
+    },
+    "step": {
+      "user": {
+        "title": "Grundkonfiguration",
+        "data": {
+          "name": "Name der Sauna",
+          "upper_temperature": "Temperatursensor oben",
+          "upper_humidity": "Luftfeuchtesensor oben",
+          "lower_temperature": "Temperatursensor unten",
+          "lower_humidity": "Luftfeuchtesensor unten",
+          "heater": "Schalter des Heizschützes",
+          "control_input": "Taster oder Betriebsschalter",
+          "light": "Dimmbares Saunalicht",
+          "upper_status": "Zusätzlicher Sensorstatus oben",
+          "lower_status": "Zusätzlicher Sensorstatus unten",
+          "heater_feedback": "Zusätzliche Heizrückmeldung",
+          "heater_power": "Leistungsmessung des Ofens",
+          "control_input_mode": "Bedienart",
+          "button_event_type": "Ereignis bei kurzer Betätigung",
+          "presence": "Präsenzsensor",
+          "audio_output": "Audioziel (vorbereitet)",
+          "presence_source": "Anwesenheit erkennen",
+          "environment_weather": "Wetterquelle",
+          "environment_temperature": "Außentemperatur",
+          "environment_humidity": "Relative Außenfeuchte",
+          "environment_absolute_humidity": "Absolute Außenfeuchte",
+          "environment_dew_point": "Taupunkt außen",
+          "environment_pressure": "Luftdruck",
+          "environment_wind_speed": "Windgeschwindigkeit",
+          "environment_wind_direction": "Windrichtung",
+          "environment_precipitation": "Niederschlagsintensität",
+          "environment_measurement_time": "Messzeitpunkt",
+          "environment_forecast_time": "Vorhersagezeitpunkt"
+        },
+        "data_description": {
+          "name": "Unterscheidet mehrere Saunen.",
+          "upper_temperature": "Hauptmessung für Heizregelung und Erkennung.",
+          "upper_humidity": "Mit der oberen Temperatur für Tür-, Personen- und Aufgusserkennung.",
+          "lower_temperature": "Zusätzliche Messposition; ersetzt die obere Messung bei deren Ausfall.",
+          "lower_humidity": "Mit der unteren Temperatur für die Erkennung. Mindestens ein vollständiges Messpaar ist erforderlich.",
+          "heater": "Schaltausgang des Heizschützes; meldet zugleich dessen Schalterstellung.",
+          "control_input": "Entkoppelter Bedieneingang, getrennt vom Ofen-Schaltausgang.",
+          "light": "Dimmbare Leuchte für Automatik und manuelle Bedienung.",
+          "upper_status": "Zusätzliche Diagnose im Archiv, ohne Steuerwirkung.",
+          "lower_status": "Zusätzliche Diagnose im Archiv, ohne Steuerwirkung.",
+          "heater_feedback": "Zusätzlicher binärer Heiznachweis. Der Heizschütz muss hier nicht erneut zugeordnet werden.",
+          "heater_power": "Gültige Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
+          "control_input_mode": "Taster: kurze Betätigung schaltet den Ofen, die Sitzungsgeste steuert die Sitzung. Betriebsschalter: Ein/Aus steuert die Sitzung.",
+          "button_event_type": "Ereignis der kurzen Betätigung. Leer: Shelly single_push oder single.",
+          "presence": "Präsenz-/Belegungsentität; beim FP300 nicht den PIR-Bewegungsausgang verwenden.",
+          "audio_output": "Noch ohne Audioausgabe.",
+          "presence_source": "Nur die Anwesenheit wechselt die Quelle. Tür und Aufguss werden immer aus Temperatur und Feuchte erkannt.",
+          "environment_weather": "Wetterzustand und verfügbare Wetterattribute; ohne Einfluss auf die Regelung.",
+          "environment_temperature": "Separater Außensensor statt des Temperaturattributs der Wetterquelle.",
+          "environment_humidity": "Separater Außensensor statt des Feuchteattributs der Wetterquelle.",
+          "environment_absolute_humidity": "Wassergehalt der Außenluft.",
+          "environment_dew_point": "Taupunkt der Außenluft.",
+          "environment_pressure": "Luftdruck der Wetterstation.",
+          "environment_wind_speed": "Windgeschwindigkeit der Wetterstation.",
+          "environment_wind_direction": "Windrichtung der Wetterstation.",
+          "environment_precipitation": "Niederschlag pro Stunde.",
+          "environment_measurement_time": "Zeitpunkt der Messwerte, nicht deren Abrufzeit.",
+          "environment_forecast_time": "Zeitpunkt der Vorhersagewerte."
+        }
+      }
+    }
+  },
+  "title": "HA Sauna",
+  "options": {
+    "error": {
+      "wrong_device_class": "Die Geräteklasse passt nicht zur Messgröße.",
+      "wrong_domain": "Die Entität gehört nicht zum benötigten Typ.",
+      "duplicate_sensor": "Die beiden Positionen benötigen unterschiedliche Messquellen.",
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "wrong_unit": "Die Maßeinheit passt nicht zur ausgewählten Rolle.",
+      "light_not_dimmable": "Das Licht muss Dimmen unterstützen.",
+      "invalid_bindings": "Die Entitätszuordnung ist ungültig.",
+      "unknown_binding": "Unbekannte Gerätezuordnung.",
+      "entity_required": "Bitte eine passende Entität auswählen.",
+      "sensor_pair_required": "Bitte mindestens eine vollständige Messposition mit Temperatur und Luftfeuchte zuordnen.",
+      "required": "Bitte einen Wert angeben.",
+      "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
+      "invalid_presence_source": "Bitte ein angebotenes Erkennungsverfahren auswählen.",
+      "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
+      "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
+      "invalid_configuration": "Die Eingabe passt nicht zu den übrigen gespeicherten Einstellungen.",
+      "invalid_number": "Bitte eine gültige Zahl eingeben.",
+      "positive": "Der Wert muss größer als null sein.",
+      "non_negative": "Der Wert darf nicht negativ sein.",
+      "too_small": "Der Wert liegt unter der zulässigen Untergrenze.",
+      "too_large": "Der Wert liegt über der zulässigen Obergrenze.",
+      "integer_required": "Bitte eine ganze Zahl eingeben.",
+      "window_not_divisible": "Das Zeitfenster muss durch den Abstand der Personenprüfung teilbar sein.",
+      "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Programmen.",
+      "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",
+      "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
+      "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
+      "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}"
+    },
+    "abort": {
+      "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
+      "session_exists": "Anlagenwerte und Gerätezuordnungen sind erst nach Sitzungsende änderbar.",
+      "settings_unavailable": "Dieser Bereich ist für das gewählte Erkennungsverfahren nicht verfügbar."
+    },
+    "step": {
+      "init": {
+        "title": "Anlage konfigurieren",
+        "menu_options": {
+          "bindings": "Geräte und Erkennungsverfahren",
+          "operation": "Betrieb und Ofen",
+          "sensors": "Sensoren und Erkennung",
+          "light": "Licht"
+        }
+      },
+      "bindings": {
+        "title": "Geräte und Erkennungsverfahren",
+        "data": {
+          "upper_temperature": "Temperatursensor oben",
+          "upper_humidity": "Luftfeuchtesensor oben",
+          "lower_temperature": "Temperatursensor unten",
+          "lower_humidity": "Luftfeuchtesensor unten",
+          "heater": "Schalter des Heizschützes",
+          "control_input": "Taster oder Betriebsschalter",
+          "light": "Dimmbares Saunalicht",
+          "upper_status": "Zusätzlicher Sensorstatus oben",
+          "lower_status": "Zusätzlicher Sensorstatus unten",
+          "heater_feedback": "Zusätzliche Heizrückmeldung",
+          "heater_power": "Leistungsmessung des Ofens",
+          "control_input_mode": "Bedienart",
+          "button_event_type": "Ereignis bei kurzer Betätigung",
+          "presence": "Präsenzsensor",
+          "audio_output": "Audioziel (vorbereitet)",
+          "presence_source": "Anwesenheit erkennen",
+          "environment_weather": "Wetterquelle",
+          "environment_temperature": "Außentemperatur",
+          "environment_humidity": "Relative Außenfeuchte",
+          "environment_absolute_humidity": "Absolute Außenfeuchte",
+          "environment_dew_point": "Taupunkt außen",
+          "environment_pressure": "Luftdruck",
+          "environment_wind_speed": "Windgeschwindigkeit",
+          "environment_wind_direction": "Windrichtung",
+          "environment_precipitation": "Niederschlagsintensität",
+          "environment_measurement_time": "Messzeitpunkt",
+          "environment_forecast_time": "Vorhersagezeitpunkt"
+        },
+        "data_description": {
+          "upper_temperature": "Hauptmessung für Heizregelung und Erkennung.",
+          "upper_humidity": "Mit der oberen Temperatur für Tür-, Personen- und Aufgusserkennung.",
+          "lower_temperature": "Zusätzliche Messposition; ersetzt die obere Messung bei deren Ausfall.",
+          "lower_humidity": "Mit der unteren Temperatur für die Erkennung. Mindestens ein vollständiges Messpaar ist erforderlich.",
+          "heater": "Schaltausgang des Heizschützes; meldet zugleich dessen Schalterstellung.",
+          "control_input": "Entkoppelter Bedieneingang, getrennt vom Ofen-Schaltausgang.",
+          "light": "Dimmbare Leuchte für Automatik und manuelle Bedienung.",
+          "upper_status": "Zusätzliche Diagnose im Archiv, ohne Steuerwirkung.",
+          "lower_status": "Zusätzliche Diagnose im Archiv, ohne Steuerwirkung.",
+          "heater_feedback": "Zusätzlicher binärer Heiznachweis. Der Heizschütz muss hier nicht erneut zugeordnet werden.",
+          "heater_power": "Gültige Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
+          "control_input_mode": "Taster: kurze Betätigung schaltet den Ofen, die Sitzungsgeste steuert die Sitzung. Betriebsschalter: Ein/Aus steuert die Sitzung.",
+          "button_event_type": "Ereignis der kurzen Betätigung. Leer: Shelly single_push oder single.",
+          "presence": "Präsenz-/Belegungsentität; beim FP300 nicht den PIR-Bewegungsausgang verwenden.",
+          "audio_output": "Noch ohne Audioausgabe.",
+          "presence_source": "Nur die Anwesenheit wechselt die Quelle. Tür und Aufguss werden immer aus Temperatur und Feuchte erkannt.",
+          "environment_weather": "Wetterzustand und verfügbare Wetterattribute; ohne Einfluss auf die Regelung.",
+          "environment_temperature": "Separater Außensensor statt des Temperaturattributs der Wetterquelle.",
+          "environment_humidity": "Separater Außensensor statt des Feuchteattributs der Wetterquelle.",
+          "environment_absolute_humidity": "Wassergehalt der Außenluft.",
+          "environment_dew_point": "Taupunkt der Außenluft.",
+          "environment_pressure": "Luftdruck der Wetterstation.",
+          "environment_wind_speed": "Windgeschwindigkeit der Wetterstation.",
+          "environment_wind_direction": "Windrichtung der Wetterstation.",
+          "environment_precipitation": "Niederschlag pro Stunde.",
+          "environment_measurement_time": "Zeitpunkt der Messwerte, nicht deren Abrufzeit.",
+          "environment_forecast_time": "Zeitpunkt der Vorhersagewerte."
+        }
+      },
+      "operation": {
+        "title": "Betrieb und Ofen",
+        "menu_options": {
+          "parameters_session_controls": "Sitzung und Taster",
+          "parameters_temperature_control": "Temperaturregelung",
+          "parameters_heater_feedback": "Schaltbestätigung und Schutz",
+          "parameters_temperature_estimation": "Aufheizprognose und Temperaturanstieg",
+          "parameters_oven_cooling": "Ofenkühlung",
+          "parameters_heater_accounting": "Heizzeit und Verbrauch"
+        }
+      },
+      "parameters_session_controls": {
+        "title": "Sitzung und Taster",
+        "data": {
+          "button_hold_seconds": "Taster zum Starten und Beenden halten",
+          "session_gap_minutes": "Sitzung nach Ausschalten fortsetzen",
+          "manual_override_minutes": "Rückkehr nach manueller Übersteuerung"
+        },
+        "data_description": {
+          "button_hold_seconds": "Erforderliche Haltezeit eines Binärtasters; Ereignistaster liefern die erkannte Geste selbst.",
+          "session_gap_minutes": "Innerhalb dieser Pause mit Lichtnachlauf setzt erneutes Einschalten dieselbe Sitzung fort.",
+          "manual_override_minutes": "Ofen- und Lichtübersteuerungen in Automatik enden spätestens nach dieser Zeit und bei passenden Zustandswechseln früher; die Betriebsart Manuell bleibt davon unberührt."
+        }
+      },
+      "parameters_temperature_control": {
+        "title": "Temperaturregelung",
+        "data": {
+          "sauna_min_temperature_c": "Mindesttemperatur für Sauna und Vorgaben",
+          "readiness_offset_c": "Abschalten über Solltemperatur",
+          "readiness_hysteresis_c": "Wiederheizen unter Solltemperatur",
+          "minimum_heating_minutes": "Mindestdauer eines Heizintervalls",
+          "thermostat_cooldown_minutes": "Heizpause nach Erreichen der Abschalttemperatur"
+        },
+        "data_description": {
+          "sauna_min_temperature_c": "Untergrenze für Temperaturvorgaben und für die Freigabe neuer Gänge durch eine gültige Messung.",
+          "readiness_offset_c": "Um diesen Abstand darf die normale Regelung die Solltemperatur überschreiten, bevor sie abschaltet.",
+          "readiness_hysteresis_c": "Um diesen Abstand muss die Temperatur unter den Sollwert fallen, bevor die normale Regelung wieder Wärme anfordert.",
+          "minimum_heating_minutes": "Hält die normale Heizung nach dem Einschalten mindestens so lange aktiv; Kühlung, Ausschalten und Schutz haben Vorrang.",
+          "thermostat_cooldown_minutes": "Sperrt das normale Wiederheizen nach einer temperaturbedingten Abschaltung für diese Zeit."
+        }
+      },
+      "parameters_heater_feedback": {
+        "title": "Schaltbestätigung und Schutz",
+        "data": {
+          "feedback_timeout_seconds": "Wartezeit auf Schaltbestätigung",
+          "fault_confirmation_seconds": "Schutzabschaltung nach anhaltender Störung"
+        },
+        "data_description": {
+          "feedback_timeout_seconds": "Begrenzt Wartezeiten auf Aktordienste und auf die Rückmeldung des angeforderten Schützzustands.",
+          "fault_confirmation_seconds": "Ein zentraler technischer Fehler verriegelt nach dieser Dauer die Schutzabschaltung; ungültige Regeltemperatur stoppt das Heizen schon vorher."
+        }
+      },
+      "parameters_temperature_estimation": {
+        "title": "Aufheizprognose und Temperaturanstieg",
+        "data": {
+          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
+        },
+        "data_description": {
+          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
+        }
+      },
+      "parameters_oven_cooling": {
+        "title": "Ofenkühlung",
+        "data": {
+          "after_run_minutes": "Kürzeste Ofenkühlung",
+          "oven_cooling_max_minutes": "Längste Ofenkühlung",
+          "oven_cooling_heat_idle_ratio": "Heizminuten je zusätzlicher Kühlminute",
+          "oven_cooling_half_life_minutes": "Nachwirkung früherer Heizzeiten"
+        },
+        "data_description": {
+          "after_run_minutes": "Grunddauer jeder Ofenkühlung nach einem bestätigten Gang.",
+          "oven_cooling_max_minutes": "Begrenzt die berechnete Kühlzeit; sie läuft nur bei bestätigtem ausgeschaltetem Schütz ab.",
+          "oven_cooling_heat_idle_ratio": "Die gewichtete Heizzeit wird durch diesen Wert geteilt, bevor Bereitschaftspausen abgezogen werden.",
+          "oven_cooling_half_life_minutes": "Nach dieser Zeit zählen frühere Heizzeiten und Bereitschaftspausen nur noch halb so stark für die Kühlzeit."
+        }
+      },
+      "parameters_heater_accounting": {
+        "title": "Heizzeit und Verbrauch",
+        "data": {
+          "power_heating_threshold_w": "Mindestleistung für gezählte Heizzeit",
+          "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
+          "heat_reset_minutes": "Heizzeitzähler nach Auszeit zurücksetzen"
+        },
+        "data_description": {
+          "power_heating_threshold_w": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
+          "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit geschätzt.",
+          "heat_reset_minutes": "Nach dieser durchgehend bestätigten Auszeit beginnt der Heizzeitzähler wieder bei null."
+        }
+      },
+      "sensors": {
+        "title": "Sensoren und Erkennung",
+        "menu_options": {
+          "parameters_validity_feedback": "Messwertgültigkeit",
+          "parameters_signals": "Messwertglättung",
+          "parameters_door": "Türöffnung und Türschluss",
+          "parameters_presence_evaluation": "Zeitfenster der Personenprüfung",
+          "parameters_presence_strong": "Deutliche Personenhinweise",
+          "parameters_presence_weak": "Schwache Personenhinweise nach Eintritt",
+          "parameters_infusion": "Aufgusserkennung",
+          "parameters_gang_confirmation": "Gangbestätigung",
+          "parameters_ventilation": "Lüften und Gangende"
+        }
+      },
+      "parameters_validity_feedback": {
+        "title": "Messwertgültigkeit",
+        "data": {
+          "sensor_timeout_seconds": "Höchstalter verwendbarer Messwerte"
+        },
+        "data_description": {
+          "sensor_timeout_seconds": "Ohne ausreichend frische Messung wird der Wert ungültig; fehlt dadurch die Regeltemperatur, pausiert die Heizung."
+        }
+      },
+      "parameters_signals": {
+        "title": "Messwertglättung",
+        "data": {
+          "median_seconds": "Glättungszeit für Messausreißer"
+        },
+        "data_description": {
+          "median_seconds": "Glättet Temperatur und Feuchte für Tür- und Personensignale sowie die Berechnung des Wassergehalts."
+        },
+        "description": "{description}"
+      },
+      "parameters_door": {
+        "title": "Türöffnung und Türschluss",
+        "data": {
+          "door_window_seconds": "Vergleichszeit für den Temperaturverlauf",
+          "door_humidity_seconds": "Vergleichszeit für den Feuchteabfall",
+          "door_open_slope": "Abkühlungsrate für eine Türöffnung",
+          "door_open_drop_c": "Mindestabkühlung für eine Türöffnung",
+          "door_open_humidity_upper": "Mindestabfall der Luftfeuchte oben",
+          "door_open_humidity_lower": "Mindestabfall der Luftfeuchte unten",
+          "door_open_hold_seconds": "Bestätigungszeit der Türöffnung",
+          "door_heating_slope": "Abkühlungsrate trotz Heizen",
+          "door_heating_hold_seconds": "Bestätigungszeit der Abkühlung trotz Heizen",
+          "door_close_slope": "Erwärmungsrate für den Türschluss",
+          "door_close_hold_seconds": "Bestätigungszeit des Türschlusses"
+        },
+        "data_description": {
+          "door_window_seconds": "Zeitraum zur Bewertung von Abkühlung bei Türöffnung und Erwärmung bei Türschluss.",
+          "door_humidity_seconds": "Zeitraum, in dem der ergänzende Feuchteverlust für eine Türöffnung gemessen wird.",
+          "door_open_slope": "Der Temperaturtrend muss unter diesem Wert liegen; negative Werte bedeuten Abkühlung.",
+          "door_open_drop_c": "Zusätzlich zum Öffnungsnachweis müssen alle beteiligten Messpositionen gegenüber ihrem vorherigen Höchstwert mindestens so weit abkühlen.",
+          "door_open_humidity_upper": "Erforderlicher Verlust in Prozentpunkten am oberen Messpunkt als Ergänzung zur Abkühlung.",
+          "door_open_humidity_lower": "Erforderlicher Verlust in Prozentpunkten am unteren Messpunkt als Ergänzung zur Abkühlung.",
+          "door_open_hold_seconds": "So lange muss der kombinierte Öffnungsnachweis aus Abkühlung und Feuchteverlust bestehen.",
+          "door_heating_slope": "Unterhalb dieser Rate ist bei durchgehend bestätigtem Heizen ein zusätzlicher Öffnungsnachweis ohne Feuchteverlust möglich.",
+          "door_heating_hold_seconds": "So lange muss der zusätzliche Öffnungsnachweis bestehen; eine Heizunterbrechung verwirft ihn.",
+          "door_close_slope": "Der Temperaturtrend aller noch auswertbaren beteiligten Messpositionen muss diesen Wert überschreiten.",
+          "door_close_hold_seconds": "So lange muss der Temperaturanstieg für einen Türschluss bestehen."
+        },
+        "description": "{description}"
+      },
+      "parameters_presence_evaluation": {
+        "title": "Zeitfenster der Personenprüfung",
+        "data": {
+          "person_step_seconds": "Abstand zwischen Personenprüfungen",
+          "strong_window_seconds": "Vergleichszeit für deutliche Personenhinweise",
+          "weak_window_seconds": "Vergleichszeit für schwache Personenhinweise"
+        },
+        "data_description": {
+          "person_step_seconds": "Abstand zwischen den Prüfungen; beide Vergleichszeiten müssen ohne Rest durch diesen Abstand teilbar sein.",
+          "strong_window_seconds": "Zeitraum für den gemeinsamen Anstieg von Luftfeuchte und Wassergehalt; muss ein Vielfaches des Prüfabstands sein.",
+          "weak_window_seconds": "Zeitraum für einen neuen Feuchteanstieg nach dem Eintritt; muss ein Vielfaches des Prüfabstands sein."
+        }
+      },
+      "parameters_presence_strong": {
+        "title": "Deutliche Personenhinweise",
+        "data": {
+          "strong_humidity_upper": "Mindestanstieg der Luftfeuchte oben",
+          "strong_humidity_lower": "Mindestanstieg der Luftfeuchte unten",
+          "strong_hold_seconds": "Bestätigungszeit deutlicher Personenhinweise"
+        },
+        "data_description": {
+          "strong_humidity_upper": "Erforderlicher Feuchtetrend am oberen Messpunkt für einen deutlichen Personenhinweis.",
+          "strong_humidity_lower": "Erforderlicher Feuchtetrend am unteren Messpunkt für einen deutlichen Personenhinweis.",
+          "strong_hold_seconds": "So lange müssen Feuchtetrend und zunehmender Wassergehalt gemeinsam nachgewiesen werden."
+        },
+        "description": "{description}"
+      },
+      "parameters_presence_weak": {
+        "title": "Schwache Personenhinweise nach Eintritt",
+        "data": {
+          "weak_humidity_upper": "Mindestanstieg der Luftfeuchte oben",
+          "weak_humidity_lower": "Mindestanstieg der Luftfeuchte unten",
+          "weak_hold_seconds": "Bestätigungszeit schwacher Personenhinweise"
+        },
+        "data_description": {
+          "weak_humidity_upper": "Erforderlicher Feuchtetrend am oberen Messpunkt für einen schwachen Personenhinweis nach dem Eintritt.",
+          "weak_humidity_lower": "Erforderlicher Feuchtetrend am unteren Messpunkt für einen schwachen Personenhinweis nach dem Eintritt.",
+          "weak_hold_seconds": "So lange muss der neue Feuchteanstieg zusammen mit zunehmendem Wassergehalt nachgewiesen werden."
+        },
+        "description": "{description}"
+      },
+      "parameters_infusion": {
+        "title": "Aufgusserkennung",
+        "data": {
+          "infusion_window_seconds": "Vergleichszeit für einen Aufguss",
+          "infusion_humidity": "Mindestanstieg der Luftfeuchte beim Aufguss",
+          "infusion_hold_seconds": "Bestätigungszeit des Aufgusssignals"
+        },
+        "data_description": {
+          "infusion_window_seconds": "Zeitraum für den Anstieg der relativen Luftfeuchte und des Wassergehalts.",
+          "infusion_humidity": "Erforderlicher Anstieg in Prozentpunkten innerhalb der Vergleichszeit an allen verfügbaren Messpositionen.",
+          "infusion_hold_seconds": "So lange müssen Feuchteanstieg und zunehmender Wassergehalt nachgewiesen werden."
+        },
+        "description": "{description}"
+      },
+      "parameters_gang_confirmation": {
+        "title": "Gangbestätigung",
+        "data": {
+          "confirmation_minutes": "Frist für Personenhinweis und Aufguss"
+        },
+        "data_description": {
+          "confirmation_minutes": "Begrenzt schwache Personenhinweise nach Türschluss und die Aufgussbestätigung ab Beginn eines vorläufigen Gangs."
+        },
+        "description": "{description}"
+      },
+      "parameters_ventilation": {
+        "title": "Lüften und Gangende",
+        "data": {
+          "vent_baseline_seconds": "Suchzeitraum für den Vergleich vor dem Lüften",
+          "vent_drop_upper": "Mindestabkühlung beim Lüften oben",
+          "vent_drop_lower": "Mindestabkühlung beim Lüften unten",
+          "vent_absolute_humidity_loss_percent": "Mindestabnahme des Wassergehalts",
+          "vent_hold_seconds": "Mindestöffnungszeit bei nur einer Messposition"
+        },
+        "data_description": {
+          "vent_baseline_seconds": "Bestimmt den Rückblick, aus dem das letzte vollständige Temperatur-/Feuchtepaar vor den Öffnungshinweisen als Vergleich gewählt wird.",
+          "vent_drop_upper": "Erforderlicher Temperaturverlust gegenüber dem gespeicherten Vergleich vor der Türöffnung.",
+          "vent_drop_lower": "Erforderlicher Temperaturverlust gegenüber dem gespeicherten Vergleich vor der Türöffnung.",
+          "vent_absolute_humidity_loss_percent": "Erforderlicher prozentualer Verlust gegenüber dem Wassergehalt vor der Türöffnung an allen beteiligten Messpositionen.",
+          "vent_hold_seconds": "Mit nur einer gültigen Messposition muss die Tür zusätzlich zu Temperatur- und Wasserverlust mindestens so lange offen sein."
+        },
+        "description": "{description}"
+      },
+      "light": {
+        "title": "Licht",
+        "menu_options": {
+          "parameters_light_device": "Helligkeitswert des Lichtgeräts",
+          "parameters_light_curve": "Licht nach Temperatur und Tageslicht",
+          "parameters_light_phases": "Ofenkühlung und Lichtnachlauf",
+          "parameters_light_transitions": "Lichtwechsel"
+        }
+      },
+      "parameters_light_device": {
+        "title": "Helligkeitswert des Lichtgeräts",
+        "data": {
+          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts"
+        },
+        "data_description": {
+          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
+        }
+      },
+      "parameters_light_curve": {
+        "title": "Licht nach Temperatur und Tageslicht",
+        "data": {
+          "light_reference_temperature_c": "Kaltpunkt der Lichtkurve",
+          "cooling_brightness_percent": "Helligkeit am Kaltpunkt",
+          "operation_brightness_percent": "Helligkeit bei Solltemperatur am Tag",
+          "night_brightness_percent": "Helligkeit bei Solltemperatur in der Nacht"
+        },
+        "data_description": {
+          "light_reference_temperature_c": "Ab dieser Temperatur verändert sich die Helligkeit linear bis zum Wert bei Solltemperatur.",
+          "cooling_brightness_percent": "Unterer Helligkeitswert der Temperaturkurve, auch bei fehlender Temperatur oder Solltemperatur.",
+          "operation_brightness_percent": "Tagesziel der Lichtkurve und normale Helligkeit während eines Saunagangs.",
+          "night_brightness_percent": "Nachtziel der Lichtkurve und normale Helligkeit im Saunagang; die Dämmerung verbindet Tag- und Nachtwert."
+        },
+        "description": "{description}"
+      },
+      "parameters_light_phases": {
+        "title": "Ofenkühlung und Lichtnachlauf",
+        "data": {
+          "after_run_brightness_percent": "Dimmhelligkeit bei Ofenkühlung",
+          "session_light_brightness_percent": "Helligkeit für „Hell“ und Lichtnachlauf"
+        },
+        "data_description": {
+          "after_run_brightness_percent": "Das Licht blendet zu Kühlbeginn auf diesen Wert ab und steigt danach bis Kühlende wieder zum temperaturabhängigen Ziel.",
+          "session_light_brightness_percent": "Gemeinsamer Helligkeitswert für die Wahl „Hell“ und den Lichtnachlauf nach Ausschalten."
+        }
+      },
+      "parameters_light_transitions": {
+        "title": "Lichtwechsel",
+        "data": {
+          "light_transition_seconds": "Dauer automatischer Lichtwechsel",
+          "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen"
+        },
+        "data_description": {
+          "light_transition_seconds": "Dauer der Überblendung bei automatischen Helligkeitswechseln; ohne Dauer wechselt das Licht unmittelbar.",
+          "light_output_hysteresis_percent": "Erweitert das Rundungsband für automatische ganze Prozentwerte; manuelle Wahl und fälliges Ausschalten umgehen es."
+        }
+      }
+    }
+  },
+  "selector": {
+    "control_input_mode": {
+      "options": {
+        "button": "Taster",
+        "switch": "Betriebsschalter"
+      }
+    },
+    "presence_source": {
+      "options": {
+        "proxy": "Aus Temperatur und Feuchte",
+        "ha_presence": "Mit Präsenzsensor"
+      }
+    }
+  }
+}
