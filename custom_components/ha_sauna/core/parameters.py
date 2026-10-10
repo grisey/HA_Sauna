@@ -86,7 +86,13 @@ LEGACY_PARAMETER_KEYS = frozenset(
 )
 # Current settings and read-compatibility metadata are deliberately separate.
 EDITABLE_DEFINITIONS = tuple(
-    ParameterDefinition(**spec)
+    ParameterDefinition(**{
+        **spec,
+        "default": next(
+            source["default"] for source in section("parameters")
+            if source["key"] == spec["default"]["parameter"]
+        ) if isinstance(spec["default"], dict) else spec["default"],
+    })
     for spec in sorted(section("parameters"), key=lambda spec: spec["order"])
 )
 DEFINITIONS = EDITABLE_DEFINITIONS + tuple(
@@ -114,6 +120,10 @@ class Parameters:
         # normal configuration write persists that effective value.
         supplied = self.values
         values = dict(supplied)
+        if "target_temperature_c" not in values:
+            values["target_temperature_c"] = values.get(
+                "standard_temperature_c", BY_KEY["standard_temperature_c"].default
+            )
         base = values.get("after_run_minutes")
         max_key = "oven_cooling_max_minutes"
         if (
@@ -141,6 +151,7 @@ class Parameters:
         for key in (
             "preset_start_c",
             "target_temperature_c",
+            "standard_temperature_c",
             "final_temperature_c",
         ):
             if checked[key] < sauna_minimum:
@@ -169,6 +180,7 @@ class Parameters:
         if key in {
             "preset_start_c",
             "target_temperature_c",
+            "standard_temperature_c",
             "final_temperature_c",
         }:
             return self.values["sauna_min_temperature_c"]

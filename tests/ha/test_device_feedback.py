@@ -711,6 +711,144 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertTrue(any(record["payload"]["heat"] is False
                             and record["session_id"] == "old" for record in commands))
 
+    def test_short_release_restoration_waits_for_slow_press_off_service(self):
+        async def exercise():
+            runtime, adapter, light = self.device(feedback_timeout_seconds=0.01)
+            runtime.configuration = replace(runtime.configuration, control_input_mode="button",
+                                            button_session_gesture="long")
+            runtime._reset_button_gestures()
+            runtime._set_control_mode("manual")
+            adapter.set_light_override(180 * 100 / 255)
+            calls, entered, release = [], asyncio.Event(), asyncio.Event()
+            restored = asyncio.Event()
+
+            async def light_call(service, data, **kwargs):
+                calls.append(service)
+                if service == "turn_off":
+                    entered.set()
+                    await release.wait()
+                    light[0] = state("off")
+                else:
+                    light[0] = state("on", round(data["brightness_pct"] * 255 / 100))
+                    restored.set()
+
+            adapter.light_call = light_call
+            # The existing deferred-output callback must re-evaluate the release.
+            async def revisit_output():
+                await adapter.apply_light(T0)
+
+            runtime.tick = AsyncMock(side_effect=revisit_output)
+            await runtime._handle_button_event("press", T0, refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertTrue(entered.is_set())
+            await runtime._handle_button_event("release", T0 + timedelta(milliseconds=1),
+                                               refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertEqual(calls, ["turn_off"])
+            release.set()
+            await adapter._light_service_task
+            await asyncio.wait_for(restored.wait(), timeout=1)
+            await adapter._light_service_task
+            self.assertEqual(calls, ["turn_off", "turn_on"])
+            self.assertEqual(light[0].state, "on")
+            self.assertEqual(light[0].attributes["brightness"], 180)
+            self.assertEqual(adapter.light_output.manual_brightness, 180 * 100 / 255)
+
+        asyncio.run(exercise())
+
+    def test_binary_short_preserves_light_when_switching_to_manual(self):
+        async def exercise():
+            runtime, adapter, light = self.device()
+            runtime.configuration = replace(runtime.configuration, control_input_mode="button",
+                                            button_session_gesture="long")
+            runtime._reset_button_gestures()
+            adapter.start_errors = lambda: []
+            calls = []
+
+            async def light_call(service, data, **kwargs):
+                calls.append(service)
+                light[0] = (state("off") if service == "turn_off" else
+                            state("on", round(data["brightness_pct"] * 255 / 100)))
+
+            adapter.light_call = light_call
+            await runtime._handle_button_event("on", T0, refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertEqual(light[0].state, "off")
+            await runtime._handle_button_event("off", T0 + timedelta(milliseconds=100),
+                                               refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertEqual(runtime.configuration.control_mode, "manual")
+            self.assertTrue(runtime.controller.heater_override)
+            self.assertIsNone(runtime.session)
+            self.assertEqual(calls, ["turn_off", "turn_on"])
+            self.assertAlmostEqual(light[0].attributes["brightness"], 180, delta=1)
+            self.assertEqual(adapter.light_output.manual_brightness, 180 * 100 / 255)
+
+        asyncio.run(exercise())
+
+    def test_unavailable_press_restores_light_without_creating_session(self):
+        async def exercise(native):
+            runtime, adapter, light = self.device()
+            runtime.configuration = replace(runtime.configuration, control_input_mode="button",
+                                            button_session_gesture="long")
+            runtime._reset_button_gestures()
+            calls = []
+
+            async def light_call(service, data, **kwargs):
+                calls.append(service)
+                light[0] = (state("off") if service == "turn_off" else
+                            state("on", round(data["brightness_pct"] * 255 / 100)))
+
+            adapter.light_call = light_call
+            await runtime._handle_button_event("press" if native else "on", T0,
+                                               refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertEqual(light[0].state, "off")
+            old, new = state("on"), state("unavailable")
+            old.domain = new.domain = "event" if native else "binary_sensor"
+            event = SimpleNamespace(data={"entity_id": BINDINGS["control_input"],
+                                          "old_state": old, "new_state": new})
+            action = adapter.physical_action(event)
+            self.assertEqual(action, "unavailable")
+            await runtime._handle_button_event(action, T0, refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertEqual(calls, ["turn_off", "turn_on"])
+            self.assertEqual(light[0].attributes["brightness"], 180)
+            self.assertIsNone(runtime.session)
+            self.assertIsNone(runtime._button.advance(T0 + timedelta(seconds=60), False))
+
+        for native in (False, True):
+            with self.subTest(native=native):
+                asyncio.run(exercise(native))
+
+    def test_gesture_reset_restores_press_light_and_preserves_manual_selection(self):
+        async def exercise():
+            runtime, adapter, light = self.device()
+            runtime.configuration = replace(runtime.configuration, control_input_mode="button",
+                                            button_session_gesture="long")
+            runtime._reset_button_gestures()
+            runtime._set_control_mode("manual")
+            adapter.set_light_override(180 * 100 / 255)
+
+            async def light_call(service, data, **kwargs):
+                light[0] = (state("off") if service == "turn_off" else
+                            state("on", round(data["brightness_pct"] * 255 / 100)))
+
+            adapter.light_call = light_call
+            await runtime._handle_button_event("press", T0, refresh_device=False)
+            await adapter.apply_light(T0)
+            self.assertEqual(light[0].state, "off")
+            runtime.configuration = replace(runtime.configuration, button_session_gesture="double")
+            runtime._reset_button_gestures()
+            await adapter.apply_light(T0)
+            self.assertEqual(light[0].state, "on")
+            self.assertEqual(light[0].attributes["brightness"], 180)
+            self.assertEqual(adapter.light_output.manual_brightness, 180 * 100 / 255)
+            await runtime._handle_button_event("release", T0, refresh_device=False)
+            self.assertIsNone(runtime.session)
+
+        asyncio.run(exercise())
+
     def test_held_button_retries_unconfirmed_off_and_keeps_fault_visible(self):
         async def exercise():
             runtime, adapter, light = self.device(feedback_timeout_seconds=0.2)

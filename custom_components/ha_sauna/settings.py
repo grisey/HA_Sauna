@@ -33,7 +33,10 @@ def program_parameters(parameters, profile, *, catalog=None):
     if profile not in allowed_profiles:
         raise ValueError("Ungültiges Temperaturprogramm")
     values = parameters.as_dict()
-    if profile in ("constant", "progressive"):
+    if profile == "constant":
+        values["target_temperature_c"] = values["standard_temperature_c"]
+        return Parameters(values), profile
+    if profile == "progressive":
         return Parameters(values), profile
     if profile in catalog_by_id:
         program = catalog_by_id[profile]
@@ -326,13 +329,6 @@ async def async_set_program(hass, entry, profile):
             profile,
             catalog=runtime.configuration.temperature_programs,
         )
-        if mode == "constant" and runtime.controller.target_temperature is not None:
-            parameters = Parameters(
-                {
-                    **parameters.as_dict(),
-                    "target_temperature_c": runtime.controller.target_temperature,
-                }
-            )
         await apply_temperature_parameters(
             runtime,
             parameters,
@@ -467,6 +463,7 @@ async def async_set_button_gesture(hass, entry, gesture):
         runtime.configuration = configuration
         runtime._reset_button_gestures()
         hass.config_entries.async_update_entry(entry, options=configuration.as_options())
+        await runtime._cycle()
         return configuration
 
 

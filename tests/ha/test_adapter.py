@@ -466,6 +466,32 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(form["type"], "form")
                     self.assertTrue(flat_fields(form["data_schema"]))
 
+    async def test_related_installation_fields_share_forms_and_return_to_area(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        groups = {
+            "temperature_control": ("operation", {"standard_temperature_c", "warmup_estimation_minutes"}),
+            "signals": ("sensors", {"sensor_timeout_seconds", "median_seconds"}),
+            "presence_evaluation": ("sensors", {"person_step_seconds", "confirmation_minutes"}),
+            "light_transitions": ("light", {"light_brightness_scale", "light_transition_seconds"}),
+        }
+        with (
+            patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry),
+            patch.object(self.hass.config_entries, "async_update_entry") as update,
+        ):
+            for subgroup, (area, expected) in groups.items():
+                with self.subTest(subgroup=subgroup):
+                    menu = await getattr(flow, f"async_step_{area}")()
+                    self.assertIn(f"parameters_{subgroup}", menu["menu_options"])
+                    step = getattr(flow, f"async_step_parameters_{subgroup}")
+                    form = await step()
+                    fields = {str(key) for key in flat_fields(form["data_schema"])}
+                    self.assertTrue(expected <= fields)
+                    values = {key: self.values[key] for key in fields}
+                    result = await step(values)
+                    self.assertEqual((result["type"], result["step_id"]), ("menu", area))
+            update.assert_not_called()
+
     async def test_installation_save_preserves_concurrent_panel_options(self):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
@@ -608,9 +634,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             menu = await flow.async_step_sensors()
             self.assertNotIn("parameters_presence_strong", menu["menu_options"])
+            self.assertNotIn("parameters_presence_evaluation", menu["menu_options"])
             self.assertIn("parameters_door", menu["menu_options"])
             rejected = await flow.async_step_parameters_presence_strong()
+            confirmation = await flow.async_step_parameters_presence_evaluation()
         self.assertEqual(rejected["reason"], "settings_unavailable")
+        self.assertEqual(confirmation["reason"], "settings_unavailable")
 
     async def test_panel_fields_cannot_be_submitted_as_basic_configuration(self):
         flow = self.module.SaunaOptionsFlow()

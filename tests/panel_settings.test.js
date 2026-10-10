@@ -24,7 +24,14 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
 const catalog = JSON.parse(
   fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
 );
-const values = Object.fromEntries(catalog.parameters.map((d) => [d.key, d.default]));
+const values = Object.fromEntries(
+  catalog.parameters.map((d) => [
+    d.key,
+    typeof d.default === "object"
+      ? catalog.parameters.find((source) => source.key === d.default.parameter).default
+      : d.default,
+  ]),
+);
 const makePanel = (admin) => {
   const container = { innerHTML: "" },
     controls = new Map(),

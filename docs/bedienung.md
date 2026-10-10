@@ -12,10 +12,17 @@ richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
 der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
 gilt unabhängig von der Temperaturwahl im Panel.
 
-Beim Gedrückthalten bestätigt helles Licht den Start bis zum Loslassen.
-Dafür muss der Taster Halten und Loslassen melden.
+Bei gewählter Haltegeste geht das Licht beim Drücken zunächst aus. Sobald die
+Haltezeit erreicht ist, bestätigt die eingestellte Einschalthelligkeit den Start
+bis zum Loslassen. Ein kurzer Druck stellt die vorherige Helligkeit wieder her
+und schaltet den Ofen. Dafür muss der Taster Drücken, Halten und Loslassen melden.
 
 ## Temperatur während der Sitzung ändern
+
+Beim Wechsel zu **Konstant** oder **Manuell** gilt die einstellbare
+Standardtemperatur aus der Integrationskonfiguration. Danach bleibt eine
+direkt gewählte Solltemperatur erhalten. Programme und Tastervorgaben behalten
+ihre eigenen Temperaturen.
 
 Eine direkte Sollwertänderung am Temperaturinstrument wirkt sofort und ersetzt das
 Temperaturprogramm durch einen konstanten Sollwert. Programm- und Schnellwahlen
@@ -87,7 +94,9 @@ abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
 Konfiguration gesperrt.
 
 Dieselbe Tastergeste beendet bei laufendem Betrieb die Sitzung sofort.
-Beim Gedrückthalten bleibt das Licht bis zur Loslassmeldung AUS;
+Bei gewählter Haltegeste wird zuvor ausgeschaltetes Licht beim Drücken mit der
+eingestellten Einschalthelligkeit eingeschaltet. Sobald die Haltezeit erreicht
+ist, bleibt es bis zur Loslassmeldung AUS;
 anschließend beginnt der Lichtnachlauf.
 
 Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;

@@ -2220,6 +2220,129 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(self.runtime.session.energy.estimated_kwh, .00625)
         self.assertEqual(self.runtime.session.energy.source, "mixed")
 
+    async def configure_light_gesture_button(self, native):
+        """Configure real input listeners and return their physical event sender."""
+        entity = "event.detached_button" if native else "binary_sensor.operator"
+        event_types = ["btn_down", "btn_up", "single_push", "double_push",
+                       "triple_push", "long_push"]
+        self.hass.states.async_set(
+            entity, "unknown" if native else "off",
+            {"event_type": None, "event_types": event_types} if native else {},
+        )
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "bindings": {**self.entry.options["bindings"], "control_input": entity},
+            "control_input_mode": "button", "button_session_gesture": "long",
+        })
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.now = self.runtime.device.input_started_at + timedelta(seconds=1)
+        self.runtime._clock = lambda: self.now
+
+        async def push(kind):
+            self.now += timedelta(milliseconds=100)
+            if native:
+                self.hass.states.async_set(entity, self.now.isoformat(), {
+                    "event_type": kind, "event_types": event_types,
+                })
+            elif kind == "long_push":
+                self.now += timedelta(seconds=self.runtime.configuration.parameters.values[
+                    "button_hold_seconds"
+                ])
+                await self.runtime.tick()
+            elif kind != "single_push":
+                self.hass.states.async_set(entity, "on" if kind == "btn_down" else "off")
+            await self.hass.async_block_till_done()
+
+        return push
+
+    async def check_press_light_feedback_and_short_restoration(self, native):
+        push = await self.configure_light_gesture_button(native)
+        # A short press retains the pre-existing manual brightness and ownership.
+        self.runtime._set_control_mode("manual")
+        await self.runtime.set_light_override(37)
+        await self.hass.async_block_till_done()
+        original = self.light.brightness
+        await push("btn_down")
+        self.assertFalse(self.light.is_on)
+        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 37)
+        await push("btn_up")
+        self.assertTrue(self.light.is_on)
+        self.assertAlmostEqual(self.light.brightness, original, delta=1)
+        await push("single_push")
+        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 37)
+        self.assertTrue(self.runtime.controller.heater_override)
+
+        # Starting a session first darkens an already lit room while pressed.
+        before = len(self.light.calls)
+        await push("btn_down")
+        self.assertFalse(self.light.is_on)
+        await push("long_push")
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertTrue(self.light.is_on)
+        self.assertEqual([call[0] for call in self.light.calls[before:]], ["off", "on"])
+        self.assertAlmostEqual(self.light.brightness, 255 * self.runtime.configuration.parameters.values[
+            "session_light_brightness_percent"
+        ] / 100, delta=1)
+        await push("btn_up")
+        await push("single_push")
+        identity = self.runtime.session.session_id
+        self.assertIsNone(self.runtime.controller.heater_override)
+
+        # The inverse prelude makes a session end visible even in a dark room.
+        await self.runtime.set_light_override(False)
+        await self.hass.async_block_till_done()
+        override_ends_at = self.runtime.device.light_output.manual_ends_at
+        await push("btn_down")
+        self.assertTrue(self.light.is_on)
+        self.assertAlmostEqual(self.light.brightness, 255 * self.runtime.configuration.parameters.values[
+            "session_light_brightness_percent"
+        ] / 100, delta=1)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+        await push("btn_up")
+        self.assertFalse(self.light.is_on)
+        await push("single_push")
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+        self.assertEqual(self.runtime.device.light_output.manual_ends_at, override_ends_at)
+        before = len(self.light.calls)
+        await push("btn_down")
+        self.assertTrue(self.light.is_on)
+        await push("long_push")
+        self.assertIsNone(self.runtime.session)
+        self.assertFalse(self.light.is_on)
+        self.assertEqual([call[0] for call in self.light.calls[before:]], ["on", "off"])
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        await push("btn_up")
+        self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
+
+    async def test_native_press_light_feedback_restores_short_and_confirms_long(self):
+        await self.check_press_light_feedback_and_short_restoration(native=True)
+
+    async def test_binary_press_light_feedback_restores_short_and_confirms_long(self):
+        await self.check_press_light_feedback_and_short_restoration(native=False)
+
+    async def test_selected_multi_click_has_no_press_light_feedback(self):
+        from custom_components.ha_sauna.settings import async_set_button_gesture
+
+        push = await self.configure_light_gesture_button(native=True)
+        for gesture in ("double", "triple"):
+            with self.subTest(gesture=gesture):
+                await async_set_button_gesture(self.hass, self.entry, gesture)
+                await self.runtime.set_light_override(37)
+                await self.hass.async_block_till_done()
+                before = list(self.light.calls)
+                original = self.light.brightness
+                await push("btn_down")
+                self.assertTrue(self.light.is_on)
+                self.assertEqual(self.light.brightness, original)
+                await push("btn_up")
+                self.assertEqual(self.light.calls, before)
+                self.assertEqual(self.runtime.device.light_output.manual_brightness, 37)
+                self.assertIsNone(self.runtime.session)
+
     async def test_detached_binary_short_toggles_manual_and_long_starts_with_bright_hold(self):
         from dataclasses import replace
 

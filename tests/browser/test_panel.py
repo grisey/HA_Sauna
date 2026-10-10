@@ -23,11 +23,12 @@ from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
 
 DEFAULT_PROGRAMS = section("programs")
-DEFAULT_PARAMETERS = {item["key"]: item["default"] for item in section("parameters")}
+DEFAULT_PARAMETERS = Parameters({}).as_dict()
 
 
 def default_css_color(role):

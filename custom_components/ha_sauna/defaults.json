@@ -8,7 +8,9 @@
       "allow_zero": false,
       "optional": false,
       "maximum": 100,
-      "default": 80,
+      "default": {
+        "parameter": "standard_temperature_c"
+      },
       "minimum": null,
       "integer": false,
       "description": "Eine direkte Temperaturwahl gilt sofort und ersetzt das Temperaturprogramm durch einen konstanten Sollwert.",
@@ -57,6 +59,25 @@
       "settings_group": "programs",
       "order": 3,
       "settings_subgroup": null
+    },
+    {
+      "key": "standard_temperature_c",
+      "label": "Standardtemperatur",
+      "unit": "°C",
+      "allow_zero": false,
+      "optional": false,
+      "maximum": 100,
+      "default": 90,
+      "minimum": null,
+      "integer": false,
+      "description": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
+      "group": "temperature",
+      "expert": false,
+      "step": 1,
+      "number_step": 1,
+      "settings_group": "operation",
+      "order": 7,
+      "settings_subgroup": "temperature_control"
     },
     {
       "key": "sauna_min_temperature_c",
@@ -303,7 +324,7 @@
       "number_step": 0.01,
       "settings_group": "sensors",
       "order": 48,
-      "settings_subgroup": "gang_confirmation"
+      "settings_subgroup": "presence_evaluation"
     },
     {
       "key": "session_gap_minutes",
@@ -379,7 +400,7 @@
       "number_step": 0.01,
       "settings_group": "sensors",
       "order": 22,
-      "settings_subgroup": "validity_feedback"
+      "settings_subgroup": "signals"
     },
     {
       "key": "feedback_timeout_seconds",
@@ -436,7 +457,7 @@
       "number_step": 0.01,
       "settings_group": "operation",
       "order": 14,
-      "settings_subgroup": "temperature_estimation"
+      "settings_subgroup": "temperature_control"
     },
     {
       "key": "grid_seconds",
@@ -1025,7 +1046,7 @@
       "number_step": 1,
       "settings_group": "light",
       "order": 54,
-      "settings_subgroup": "light_device"
+      "settings_subgroup": "light_transitions"
     },
     {
       "key": "cooling_brightness_percent",
@@ -1641,15 +1662,11 @@
       },
       {
         "id": "temperature_control",
-        "label": "Temperaturregelung"
+        "label": "Temperaturregelung und Aufheizen"
       },
       {
         "id": "heater_feedback",
         "label": "Schaltbestätigung und Schutz"
-      },
-      {
-        "id": "temperature_estimation",
-        "label": "Aufheizprognose und Temperaturanstieg"
       },
       {
         "id": "oven_cooling",
@@ -1660,13 +1677,9 @@
         "label": "Heizzeit und Verbrauch"
       },
       {
-        "id": "validity_feedback",
-        "label": "Alter der Messwerte"
-      },
-      {
         "id": "signals",
-        "label": "Messwertglättung",
-        "description": "Gemeinsame Aufbereitung von Temperatur und Feuchte für die Erkennung."
+        "label": "Messwerte",
+        "description": "Gültigkeit und Glättung von Temperatur und Feuchte für Regelung und Erkennung."
       },
       {
         "id": "door",
@@ -1675,8 +1688,9 @@
       },
       {
         "id": "presence_evaluation",
-        "label": "Auswertung der Personenerkennung",
-        "presence_sources": ["proxy"]
+        "label": "Personenerkennung und Gangbestätigung",
+        "presence_sources": ["proxy"],
+        "description": "Ein Personenhinweis eröffnet einen vorläufigen Gang; ein rechtzeitiger Aufguss bestätigt ihn."
       },
       {
         "id": "presence_strong",
@@ -1699,22 +1713,12 @@
         }
       },
       {
-        "id": "gang_confirmation",
-        "label": "Gangbestätigung",
-        "presence_sources": ["proxy"],
-        "description": "Ein Personenhinweis eröffnet einen vorläufigen Gang; ein rechtzeitiger Aufguss bestätigt ihn."
-      },
-      {
         "id": "ventilation",
         "label": "Lüften und Gangende",
         "descriptions": {
           "proxy": "Bestätigtes Durchlüften nach einer erneuten Türöffnung beendet den Gang. Die Tür darf offen bleiben.",
           "ha_presence": "Lüftungssignale bleiben Diagnosewerte. Für das Gangende zählen eine erneute Türöffnung und die Abwesenheitsmeldung des Präsenzsensors."
         }
-      },
-      {
-        "id": "light_device",
-        "label": "Helligkeitswert des Lichtgeräts"
       },
       {
         "id": "light_curve",
@@ -1727,7 +1731,7 @@
       },
       {
         "id": "light_transitions",
-        "label": "Lichtwechsel"
+        "label": "Lichtgerät und Lichtwechsel"
       },
       {
         "id": "temperature_choices",
