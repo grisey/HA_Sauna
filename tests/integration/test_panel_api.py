@@ -788,8 +788,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         runtime = self.entry.runtime_data
         temperature = runtime.configuration.bindings.values["upper_temperature"]
+        minimum = str(runtime.configuration.parameters.values["sauna_min_temperature_c"])
         self.hass.states.async_set(
-            temperature, "70", self.hass.states.get(temperature).attributes
+            temperature, minimum, self.hass.states.get(temperature).attributes
         )
         await self.hass.async_block_till_done()
         start = runtime._clock()
@@ -813,6 +814,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             await runtime.set_operation(True)
             await events(Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION)
             active = runtime.session.timeline.active
+            self.assertIsNotNone(active)
             options = dict(self.entry.options)
             configuration = runtime.configuration
             async with client.post(url + "/temperature", json={"target_temperature_c": 88}) as response:
@@ -830,7 +832,22 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((state["target_temperature"], state["next_gang_temperature"]), (76, 88))
             await events(Kind.DOOR_OPEN, Kind.VENTILATION)
             self.assertEqual(runtime.controller.target_temperature, 88)
-            await events(Kind.DOOR_CLOSE, Kind.INFUSION)
+            async with client.post(url + "/finish_phase", json={
+                "purpose": "after_run", "token": runtime.session.after_run.phase_id,
+            }) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertIsNone(runtime.session.after_run)
+            # Recognition requires a fresh value at or above the fixture's
+            # configured minimum, independently of the program's target.
+            self.hass.states.async_set(
+                temperature, minimum, self.hass.states.get(temperature).attributes,
+                force_update=True,
+            )
+            await self.hass.async_block_till_done()
+            # The exit opening belongs to the preceding gang/cooling context.
+            # Start the next gang through its own complete entry episode.
+            await events(Kind.DOOR_CLOSE, Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION)
+            self.assertIsNotNone(runtime.session.timeline.active)
             self.assertEqual(runtime.controller.target_temperature, 88)
             await events(Kind.DOOR_OPEN, Kind.VENTILATION)
             self.assertEqual(runtime.session.timeline.gang_count, 2)
