@@ -312,10 +312,9 @@ const geometry = {
   const chart = { prepared: new Map() };
   const model = p.historyModel(chart, session(120));
   const selected = model.series.get("upper:temperature").values;
-  assert.deepEqual(
-    selected.map((point) => point.source),
-    [records[1].payload, records[4].payload],
-  );
+  assert.equal(selected.length, 2);
+  assert.equal(selected[0].source, records[1].payload);
+  assert.equal(selected[1].source, records[4].payload);
   const curves = new HistoryCurves(new FakeCanvas(), { Path2DClass: FakePath2D });
   curves.update(model, geometry);
   const commands = curves.mainPaths.get("upper:temperature").path.commands;
