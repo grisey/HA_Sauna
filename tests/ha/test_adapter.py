@@ -193,7 +193,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             submitted = self.module.pack_binding_input(suggested)
             submitted["presence_sensors"].pop("presence_illuminance")
             result = await flow.async_step_binding_entities(submitted)
-            self.assertNotIn("presence_illuminance", result["data"]["bindings"])
+            self.assertNotIn("presence_illuminance", self.entry.options["bindings"])
         saved = {**self.entry.options["bindings"], "presence_illuminance": "sensor.external_lux"}
         values, errors = self.module.device_bindings(
             self.hass, {"presence_device": "presence"}, saved=saved
@@ -241,8 +241,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             # Corrections in the entity step remain authoritative.
             values["upper_humidity"] = self.inputs["upper_humidity"]
             result = await flow.async_step_binding_entities(self.module.pack_binding_input(values))
-        self.assertEqual(result["type"], "create_entry")
-        self.assertEqual(result["data"]["bindings"]["upper_humidity"], self.inputs["upper_humidity"])
+        self.assertEqual(result["type"], "menu")
+        self.assertEqual(self.entry.options["bindings"]["upper_humidity"], self.inputs["upper_humidity"])
 
     async def test_multiple_temperature_channels_require_explicit_position_selection(self):
         for entity in ("sensor.internal_temperature", "sensor.external_temperature"):
@@ -339,8 +339,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             # Repair the nested value; persisted bindings stay flat.
             submitted["upper_sensors"]["upper_humidity"] = self.inputs["upper_humidity"]
             result = await flow.async_step_binding_entities(submitted)
-        self.assertEqual(result["data"]["bindings"], self.inputs)
-        self.assertNotIn("upper_sensors", result["data"]["bindings"])
+        self.assertEqual(self.entry.options["bindings"], self.inputs)
+        self.assertNotIn("upper_sensors", self.entry.options["bindings"])
 
     async def test_binding_candidates_share_metadata_validation(self):
         from homeassistant.core import State
@@ -456,9 +456,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["menu_options"], ["bindings", *self.module.integration_groups()])
             for area in self.module.integration_groups():
                 menu = await getattr(flow, f"async_step_{area}")()
-                self.assertTrue(menu["menu_options"])
+                self.assertIn("init", menu["menu_options"])
                 for step in menu["menu_options"]:
                     form = await getattr(flow, f"async_step_{step}")()
+                    if step == "init":
+                        self.assertEqual(form, result)
+                        continue
                     self.assertEqual(form["type"], "form")
                     self.assertTrue(flat_fields(form["data_schema"]))
 
@@ -478,13 +481,13 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             submitted["after_run_minutes"] = 1
             result = await flow.async_step_parameters_oven_cooling(submitted)
         self.assertEqual(form["type"], "form")
-        self.assertEqual(result["type"], "create_entry")
-        self.assertIs(self.entry.options, before)
-        self.assertEqual(result["data"]["log_level"], "DEBUG")
-        self.assertEqual(result["data"]["parameters"]["target_temperature_c"], 81)
-        self.assertEqual(result["data"]["parameters"]["after_run_minutes"], 1)
+        self.assertEqual(result["type"], "menu")
+        self.assertIsNot(self.entry.options, before)
+        self.assertEqual(self.entry.options["log_level"], "DEBUG")
+        self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 81)
+        self.assertEqual(self.entry.options["parameters"]["after_run_minutes"], 1)
         self.assertEqual(
-            {key: value for key, value in result["data"].items() if key != "parameters"},
+            {key: value for key, value in self.entry.options.items() if key != "parameters"},
             {key: value for key, value in before.items() if key != "parameters"},
         )
 
@@ -499,7 +502,25 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             submitted = {d.key: self.entry.options["parameters"][d.key] for d in flow._definitions("oven_cooling")}
             self.entry.options["parameters"]["after_run_minutes"] = 3
             result = await flow.async_step_parameters_oven_cooling(submitted)
-        self.assertEqual(result["data"]["parameters"]["after_run_minutes"], 3)
+        self.assertEqual(self.entry.options["parameters"]["after_run_minutes"], 3)
+
+    async def test_navigation_and_unchanged_parameters_do_not_write_options(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        before = self.entry.options
+        with (
+            patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry),
+            patch.object(self.hass.config_entries, "async_update_entry") as update,
+        ):
+            await flow.async_step_init()
+            await flow.async_step_operation()
+            await flow.async_step_parameters_temperature_control()
+            values = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
+            result = await flow.async_step_parameters_temperature_control(values)
+            self.assertEqual(result["step_id"], "operation")
+            await flow.async_step_init()
+            update.assert_not_called()
+        self.assertIs(self.entry.options, before)
 
     async def test_installation_save_retains_implicit_legacy_cooling_limit(self):
         from custom_components.ha_sauna.core.parameters import BY_KEY
@@ -519,9 +540,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             submitted = {d.key: current.parameters.values[d.key] for d in flow._definitions("oven_cooling")}
             submitted["after_run_minutes"] = BY_KEY["after_run_minutes"].default
             result = await flow.async_step_parameters_oven_cooling(submitted)
-        self.assertEqual(result["type"], "create_entry")
-        self.assertEqual(result["data"]["parameters"]["oven_cooling_max_minutes"], old_duration)
-        self.assertNotIn("oven_cooling_max_minutes", self.entry.options["parameters"])
+        self.assertEqual(result["type"], "menu")
+        self.assertEqual(self.entry.options["parameters"]["oven_cooling_max_minutes"], old_duration)
+        self.assertNotIn("oven_cooling_max_minutes", raw)
 
     async def test_installation_dependency_failure_does_not_write(self):
         flow = self.module.SaunaOptionsFlow()
@@ -646,8 +667,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             result = await flow.async_step_binding_entities(self.module.pack_binding_input(self.inputs))
-            self.assertNotIn("upper_status", result["data"]["bindings"])
-            self.assertEqual(result["data"]["parameters"], self.values)
+            self.assertNotIn("upper_status", self.entry.options["bindings"])
+            self.assertEqual(self.entry.options["parameters"], self.values)
 
     async def test_binding_options_preserve_all_other_saved_values(self):
         from homeassistant.core import State
@@ -678,9 +699,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 flow.hass = self.hass
                 with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
                     result = await flow.async_step_binding_entities(self.module.pack_binding_input(inputs))
-                self.assertEqual(result["type"], "create_entry")
-                self.assertEqual(result["data"], {**original, "bindings": inputs})
-                self.assertEqual(self.entry.options, original)
+                self.assertEqual(result["type"], "menu")
+                self.assertEqual(self.entry.options, {**original, "bindings": inputs})
                 self.assertIs(runtime.configuration, configuration)
                 await runtime.close()
 
@@ -704,7 +724,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             form = await flow.async_step_binding_entities()
             submitted = form["data_schema"](self.module.pack_binding_input(bindings))
             result = await flow.async_step_binding_entities(self.module.pack_binding_input(submitted))
-            self.assertEqual(result["data"], before)
+            self.assertEqual(self.entry.options, before)
             # An error redisplay must also retain newly entered basic values.
             rejected = await flow.async_step_binding_entities(self.module.pack_binding_input({
                 **bindings, "presence_source": "proxy", "control_input_mode": "switch",
@@ -781,9 +801,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             rejected = await flow.async_step_binding_entities(self.module.pack_binding_input(self.inputs))
             self.assertEqual(rejected["errors"], {"presence_sensors": "entity_required"})
             result = await flow.async_step_binding_entities(self.module.pack_binding_input({**self.inputs, "presence_source": "proxy"}))
-        self.assertEqual(result["type"], "create_entry")
-        self.assertNotIn("presence", result["data"]["bindings"])
-        self.assertEqual(result["data"]["presence_source"], "proxy")
+        self.assertEqual(result["type"], "menu")
+        self.assertNotIn("presence", self.entry.options["bindings"])
+        self.assertEqual(self.entry.options["presence_source"], "proxy")
 
     async def test_setup_unload_without_device_transport_never_starts_session(self):
         from custom_components.ha_sauna import async_setup_entry, async_unload_entry

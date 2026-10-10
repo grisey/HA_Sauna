@@ -166,7 +166,7 @@ class PresentationTests(unittest.TestCase):
                 self.assertEqual(
                     steps["init"]["menu_options"][area["id"]], area["label"]
                 )
-                expected_menu = {}
+                expected_menu = {"init": "Zurück zur Übersicht"}
                 for subgroup in frontend["settings_subgroups"]:
                     fields = [
                         item for item in members
