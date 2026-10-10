@@ -176,21 +176,33 @@
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
       "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}",
       "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen.",
-      "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern."
+      "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern.",
+      "session_exists": "Eine betroffene Sauna hat noch eine laufende Sitzung.",
+      "integration_not_loaded": "Die betroffene Sauna muss zuerst erfolgreich geladen werden.",
+      "entity_changed": "Die Entität oder ihre Zuordnung wurde inzwischen geändert. Bitte erneut auswählen.",
+      "invalid_entity_id": "Die Entitäts-ID muss gültig sein und ihren bisherigen Typ behalten, zum Beispiel sensor.temperatur.",
+      "entity_id_in_use": "Diese Entitäts-ID ist bereits vergeben.",
+      "preview_changed": "Die Liste hat sich geändert. Bitte die neue Vorschau prüfen und erneut bestätigen.",
+      "reload_failed": "Eine betroffene Sauna konnte nicht neu geladen werden. Die aktuellen Entitäts-IDs und Zuordnungen bleiben gespeichert."
     },
     "abort": {
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
       "session_exists": "Geräte und dauerhafte Einstellungen sind erst nach Sitzungsende änderbar.",
-      "settings_unavailable": "Dieser Bereich ist für das gewählte Erkennungsverfahren nicht verfügbar."
+      "settings_unavailable": "Dieser Bereich ist für das gewählte Erkennungsverfahren nicht verfügbar.",
+      "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern.",
+      "integration_not_loaded": "Die betroffene Sauna muss zuerst erfolgreich geladen werden."
     },
     "step": {
       "init": {
         "title": "Sauna konfigurieren",
         "menu_options": {
+          "name": "Saunaname",
           "bindings": "Geräte und Erkennungsverfahren",
           "operation": "Betrieb und Ofen",
           "sensors": "Sensoren und Erkennung",
-          "light": "Licht"
+          "light": "Licht",
+          "rename_entity": "Entität umbenennen",
+          "cleanup_entities": "Entitäten bereinigen"
         }
       },
       "bindings": {
@@ -586,6 +598,46 @@
           }
         },
         "submit": "Speichern und zurück"
+      },
+      "name": {
+        "title": "Saunaname",
+        "data": {
+          "name": "Name"
+        },
+        "submit": "Speichern"
+      },
+      "rename_entity": {
+        "title": "Entität umbenennen",
+        "data": {
+          "entity_id": "Entität"
+        },
+        "submit": "Weiter"
+      },
+      "rename_entity_edit": {
+        "title": "Entität umbenennen",
+        "description": "`{entity_id}`\n\nSauna-Zuordnungen bleiben erhalten. Eine neue Entitäts-ID lädt betroffene Sauna-Instanzen neu; Ofen und Licht werden dabei ausgeschaltet. Verweise in anderen Automationen und Dashboards müssen dort geprüft werden.",
+        "data": {
+          "name": "Anzeigename",
+          "new_entity_id": "Entitäts-ID"
+        },
+        "data_description": {
+          "name": "Leer lassen, um den ursprünglichen Namen zu verwenden."
+        },
+        "submit": "Umbenennen"
+      },
+      "cleanup_entities": {
+        "title": "Entitäten bereinigen",
+        "description": "Diese {count} Entitäten werden von der Sauna nicht mehr bereitgestellt:\n\n{entities}\n\nEntfernt werden nur die Registereinträge. Gespeicherte Verläufe bleiben erhalten.",
+        "data": {
+          "confirm": "Die aufgeführten Entitäten entfernen"
+        },
+        "submit": "Weiter"
+      },
+      "cleanup_empty": {
+        "title": "Keine veralteten Entitäten",
+        "menu_options": {
+          "init": "Zurück zur Übersicht"
+        }
       }
     }
   },

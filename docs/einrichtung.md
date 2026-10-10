@@ -26,6 +26,23 @@ Den Vorrang der Messpositionen beschreibt
 mit fehlenden oder veralteten Messwerten
 [Ausfälle und Schutzabschaltung](betrieb.md#bei-sensorausfall-oder-schutzabschaltung).
 
+## Name und Entitäten verwalten
+
+**Saunaname** ändert den Namen des Geräts und der ausgewählten Sauna im Panel.
+Bei mehreren Saunen heißt der gemeinsame Seitenleisteneintrag weiterhin „Sauna“.
+
+**Entität umbenennen** umfasst eigene und zugeordnete Entitäten. Änderungen der
+Entitäts-ID führen die Zuordnungen aller betroffenen Sauna-Instanzen nach und
+laden diese neu; Ofen und Licht werden dabei ausgeschaltet. Anzeigenamen allein
+erfordern keinen Neustart. Außerhalb dieses Dialogs geänderte IDs werden nicht
+nachgeführt. Verweise in anderen Automationen und Dashboards bleiben außerhalb
+dieses Ablaufs.
+
+**Entitäten bereinigen** zeigt nicht mehr bereitgestellte Sauna-Entitäten vor
+dem Entfernen an. Erst die Bestätigung löscht deren Registereinträge.
+Weiterhin gültige, auch deaktivierte Entitäten und gespeicherte Verläufe bleiben
+erhalten.
+
 ## Gangerkennung festlegen
 
 Gänge werden entweder aus Temperatur und Feuchte oder mit einem direkten

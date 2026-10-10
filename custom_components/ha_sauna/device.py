@@ -503,11 +503,18 @@ class HADevice:
             return
         current_text = f"{measurement.value:.1f}".replace(".", ",")
         target_text = f"{target:.1f}".replace(".", ",")
+        config_entries = getattr(self.hass, "config_entries", None)
+        entry = (
+            config_entries.async_get_entry(self.runtime.archive.entry_id)
+            if config_entries is not None and self.runtime.archive is not None
+            else None
+        )
+        title = entry.title if entry is not None else "Sauna"
         persistent_notification.async_create(
             self.hass,
             "Bei eingeschaltetem Schütz ist kein Temperaturanstieg erkennbar. "
             f"Aktuell {current_text} °C, Soll {target_text} °C.",
-            title="Sauna: kein Temperaturanstieg",
+            title=f"{title}: kein Temperaturanstieg",
             notification_id=self._heating_progress_notification_id,
         )
         self._heating_progress_notified = True

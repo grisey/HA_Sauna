@@ -389,3 +389,12 @@ async def async_unload_entry(
         return False
     await runtime.close()
     return True
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: ConfigEntry[SaunaRuntime]
+) -> None:
+    """Die gemeinsame Seitenleiste an die verbleibenden Instanzen anpassen."""
+    from .frontend import register
+
+    await register(hass, exclude_entry_id=entry.entry_id)

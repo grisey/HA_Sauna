@@ -470,11 +470,13 @@ class PackagingTests(unittest.TestCase):
         }
         self.assertEqual(
             set(strings["options"]["step"]),
-            {"init", "bindings", "binding_entities", *areas, *(f"parameters_{key}" for key in subgroups)},
+            {"init", "bindings", "binding_entities", "name", "rename_entity",
+             "rename_entity_edit", "cleanup_entities", "cleanup_empty",
+             *areas, *(f"parameters_{key}" for key in subgroups)},
         )
         self.assertEqual(
             set(strings["options"]["step"]["init"]["menu_options"]),
-            {"bindings", *areas},
+            {"bindings", "name", "rename_entity", "cleanup_entities", *areas},
         )
         for scope, step in (("config", "entities"), ("options", "binding_entities")):
             form = strings[scope]["step"][step]

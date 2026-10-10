@@ -3693,17 +3693,53 @@ class SaunaPanel extends HTMLElement {
         --sauna-focus-current: var(--sauna-pending-focus, var(--sauna-main-focus, var(--sauna-card-focus, var(--accent))));
       }
       .program-pending[aria-hidden="true"] { visibility: hidden; }
-      .program-kind {
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-        margin: 10px 0;
+      .program-kind.segmented-mode {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin: 0 0 16px;
+      }
+      .program-kind button {
+        min-width: 0;
       }
       .program-form {
         margin: 0;
         padding: 12px;
         border: 1px solid var(--sauna-color-border, var(--divider-color));
         border-radius: 8px;
+      }
+      .temperature-automation .program-form {
+        padding: 0;
+        border: 0;
+      }
+      .program-row .program-form {
+        max-width: 36rem;
+      }
+      .program-form > .field:first-child {
+        margin-bottom: 14px;
+      }
+      .program-temperature-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      .program-form .program-count-field {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 5.5rem;
+        align-items: center;
+        gap: 12px;
+      }
+      .program-count-field > span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .program-count-field > input {
+        width: 5.5rem;
+        text-align: center;
+      }
+      .program-count-field .program-info {
+        flex: 0 0 auto;
       }
       .program-row + .program-row {
         border-top: 1px solid var(--sauna-color-border, var(--divider-color));
@@ -3753,7 +3789,7 @@ class SaunaPanel extends HTMLElement {
       }
       .program-step-fields {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(105px, 1fr));
         gap: 8px;
         margin-top: 10px;
       }
@@ -4037,7 +4073,7 @@ class SaunaPanel extends HTMLElement {
         .weather-values dd { font-size: 16px; }
       }
     </style><main>
-      <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
+      <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1 id="instance-title">Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
       <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select><span id="history-loading" role="status" hidden></span></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
@@ -4064,6 +4100,7 @@ class SaunaPanel extends HTMLElement {
       if (e.target.id !== "instance" && !this.state) return;
       if (e.target.id === "instance") {
         this.entry = e.target.value;
+        this.syncInstanceTitle();
         this.controlCommands = {};
         this.state = null;
         this.messages = {};
@@ -4448,6 +4485,8 @@ class SaunaPanel extends HTMLElement {
     const previousSessionId = this.state?.session?.timeline?.session_id || null,
       previousLastSessionId = this.state?.last_session?.timeline?.session_id || null;
     this.state = state;
+    if (state.title !== undefined || state.instances)
+      this.syncInstanceTitle(state.title, state.instances);
     this.reconcileControlCommands();
     const currentSessionId = state.session?.timeline?.session_id || null,
       lastSessionId = state.last_session?.timeline?.session_id || null;
@@ -4468,6 +4507,25 @@ class SaunaPanel extends HTMLElement {
       lastSessionId !== this.historyPendingFinalId
     )
       this.historyPendingFinalId = null;
+  }
+  syncInstanceTitle(title, instances = []) {
+    const select = this.$("#instance"),
+      options = Array.from(select?.options || []),
+      names = new Map(instances.map((item) => [item.entry_id, item.title]));
+    if (title !== undefined) names.set(this.entry, title);
+    let changed = false;
+    for (const option of options) {
+      const name = names.get(option.value);
+      if (name !== undefined && option.textContent !== name) {
+        option.textContent = name;
+        changed = true;
+      }
+    }
+    const option = options.find((item) => item.value === this.entry),
+      name = names.get(this.entry) ?? option?.textContent ?? "Sauna";
+    const heading = this.$("#instance-title");
+    if (heading && heading.textContent !== name) heading.textContent = name;
+    if (changed) this.selectMenu?.sync();
   }
   clearArchiveCaches() {
     this.historySelectionGeneration = (this.historySelectionGeneration || 0) + 1;
@@ -4512,6 +4570,7 @@ class SaunaPanel extends HTMLElement {
           return;
         }
         this.entry = instances[0].entry_id;
+        this.syncInstanceTitle();
       }
       const entry = this.entry;
       const state = await this.api(`/${entry}/state`);
@@ -6218,9 +6277,9 @@ class SaunaPanel extends HTMLElement {
         // Keep incomplete fields visible without explaining an older draft.
       }
     }
-    const kindButtons = `<div class="program-kind"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
+    const kindButtons = `<div class="program-kind segmented-mode" role="group" aria-label="Temperaturverteilung"><button type="button" data-action="program-kind:even" aria-pressed="${!manual}" ${disabled}>Gleichmäßig</button><button type="button" data-action="program-kind:steps" aria-pressed="${manual}" ${disabled}>Einzelne Stufen</button></div>`;
     const fields = manual
-      ? `<div class="row"><label class="field" for="free-step-count"><span>Anzahl der Temperaturstufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${esc(this.progressionDraft?.["free-step-count"] ?? count)}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
+      ? `<label class="field program-count-field" for="free-step-count"><span>Anzahl der Temperaturstufen ${this.distributionInfo("free", steps)}</span><input id="free-step-count" data-free-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${esc(this.progressionDraft?.["free-step-count"] ?? count)}" ${disabled}></label><div class="program-step-fields">${this.resizeSteps(
           steps,
           count,
         )
@@ -6229,7 +6288,7 @@ class SaunaPanel extends HTMLElement {
               `<label class="field" for="free-step-${index}">Stufe ${index + 1}${unitInput(`<input id="free-step-${index}" data-free-step="${index}" type="number" aria-label="Stufe ${index + 1} (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}>`, "°C")}</label>`,
           )
           .join("")}</div>`
-      : `<div class="row"><label class="field" for="progression-start">Starttemperatur${unitInput(`<input id="progression-start" type="number" aria-label="Starttemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}>`, "°C")}</label><label class="field" for="progression-end">Endtemperatur${unitInput(`<input id="progression-end" type="number" aria-label="Endtemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}>`, "°C")}</label><label class="field" for="progression-gangs"><span>Verteilung auf Saunagänge ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label></div>`;
+      : `<div class="program-temperature-fields"><label class="field" for="progression-start">Starttemperatur${unitInput(`<input id="progression-start" type="number" aria-label="Starttemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.start)}" ${disabled}>`, "°C")}</label><label class="field" for="progression-end">Endtemperatur${unitInput(`<input id="progression-end" type="number" aria-label="Endtemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(values.end)}" ${disabled}>`, "°C")}</label></div><label class="field program-count-field" for="progression-gangs"><span>Verteilung auf Saunagänge ${this.distributionInfo("free", distribution)}</span><input id="progression-gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(values.gangs)}" ${disabled}></label>`;
     return `<div class="program-form">${kindButtons}${fields}</div>`;
   }
   distributionInfo(id, steps) {
@@ -8681,10 +8740,10 @@ class SaunaPanel extends HTMLElement {
       count = Math.max(1, Math.min(bounds.gangMaximum, steps.length));
     const countId = `catalog-${program.id}-step-count`,
       distributionId = `catalog-${program.id}-distribution-gangs`;
-    const selector = `<div class="program-kind"><button type="button" data-action="catalog-kind:even:${esc(program.id)}" aria-pressed="${kind === "even"}" ${disabled}>Gleichmäßig</button><button type="button" data-action="catalog-kind:steps:${esc(program.id)}" aria-pressed="${kind === "steps"}" ${disabled}>Einzelne Stufen</button></div>`;
+    const selector = `<div class="program-kind segmented-mode" role="group" aria-label="Temperaturverteilung"><button type="button" data-action="catalog-kind:even:${esc(program.id)}" aria-pressed="${kind === "even"}" ${disabled}>Gleichmäßig</button><button type="button" data-action="catalog-kind:steps:${esc(program.id)}" aria-pressed="${kind === "steps"}" ${disabled}>Einzelne Stufen</button></div>`;
     const values =
       kind === "steps"
-        ? `<div class="row"><label class="field" for="${esc(countId)}"><span>Anzahl der Temperaturstufen ${this.distributionInfo(`catalog:${program.id}`, steps)}</span><input id="${esc(countId)}" data-program-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label></div><div class="program-step-fields">${this.resizeSteps(
+        ? `<label class="field program-count-field" for="${esc(countId)}"><span>Anzahl der Temperaturstufen ${this.distributionInfo(`catalog:${program.id}`, steps)}</span><input id="${esc(countId)}" data-program-step-count type="number" min="1" max="${bounds.gangMaximum}" step="1" value="${count}" ${disabled}></label><div class="program-step-fields">${this.resizeSteps(
             steps,
             count,
           )
@@ -8693,7 +8752,7 @@ class SaunaPanel extends HTMLElement {
                 `<label class="field" for="catalog-${esc(program.id)}-step-${index}">Stufe ${index + 1}${unitInput(`<input id="catalog-${esc(program.id)}-step-${index}" data-program-step="${index}" type="number" aria-label="Stufe ${index + 1} (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(value)}" ${disabled}>`, "°C")}</label>`,
             )
             .join("")}</div>`
-        : `<div class="row"><label class="field">Starttemperatur${unitInput(`<input data-program-field="start_c" type="number" aria-label="Starttemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}>`, "°C")}</label><label class="field">Endtemperatur${unitInput(`<input data-program-field="end_c" type="number" aria-label="Endtemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}>`, "°C")}</label><label class="field" for="${esc(distributionId)}"><span>Verteilung auf Saunagänge ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label></div>`;
+        : `<div class="program-temperature-fields"><label class="field">Starttemperatur${unitInput(`<input data-program-field="start_c" type="number" aria-label="Starttemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.start_c)}" ${disabled}>`, "°C")}</label><label class="field">Endtemperatur${unitInput(`<input data-program-field="end_c" type="number" aria-label="Endtemperatur (°C)" step="${this.temperatureStep()}" min="${bounds.minimum}" max="${bounds.maximum}" value="${esc(program.end_c)}" ${disabled}>`, "°C")}</label></div><label class="field program-count-field" for="${esc(distributionId)}"><span>Verteilung auf Saunagänge ${this.distributionInfo(`catalog:${program.id}`, this.distributedSteps(Number(program.start_c), Number(program.end_c), Number(program.distribution_gangs)))}</span><input id="${esc(distributionId)}" data-program-field="distribution_gangs" type="number" step="1" min="${bounds.gangMinimum}" max="${bounds.gangMaximum}" value="${esc(program.distribution_gangs)}" ${disabled}></label>`;
     const protectedProgram = [
       this.state.configuration.selected_program_id,
       this.state.configuration.button_program,

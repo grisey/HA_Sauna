@@ -127,21 +127,24 @@ def runtime_for(hass, entry_id):
     return runtime
 
 
+def visible_instances(request):
+    """Names of loaded instances the current user may read."""
+    return [
+        {"entry_id": entry.entry_id, "title": entry.title}
+        for entry in request.app[KEY_HASS].config_entries.async_entries(DOMAIN)
+        if getattr(entry, "runtime_data", None)
+        and not entry.runtime_data.closed
+        and can_read(request, entry.entry_id)
+    ]
+
+
 class InstancesView(HomeAssistantView):
     url = "/api/ha_sauna"
     name = "api:ha_sauna:instances"
     requires_auth = True
 
     async def get(self, request):
-        return self.json(
-            [
-                {"entry_id": entry.entry_id, "title": entry.title}
-                for entry in request.app[KEY_HASS].config_entries.async_entries(DOMAIN)
-                if getattr(entry, "runtime_data", None)
-                and not entry.runtime_data.closed
-                and can_read(request, entry.entry_id)
-            ]
-        )
+        return self.json(visible_instances(request))
 
 
 class StateView(HomeAssistantView):
@@ -165,6 +168,8 @@ class StateView(HomeAssistantView):
             )
             result = plain(
                     {
+                        "title": request.app[KEY_HASS].config_entries.async_get_entry(entry_id).title,
+                        "instances": visible_instances(request),
                         "now": now,
                         "phase": controller.phase,
                         "presence": runtime.presence_status,

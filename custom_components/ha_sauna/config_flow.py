@@ -17,6 +17,7 @@ from .const import CONF_BINDINGS, DOMAIN
 from .core.defaults import instance_default, section
 from .core.parameters import BY_KEY, EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .presentation import parameter_error
+from .maintenance_flow import MaintenanceOptionsMixin
 from .runtime import Configuration
 from .settings import parameter_change
 
@@ -352,7 +353,7 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return SaunaOptionsFlow()
 
 
-class SaunaOptionsFlow(OptionsFlow):
+class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
     """Anlagenwerte ändern und unabhängige Panel-Einstellungen erhalten."""
 
     def _has_session(self) -> bool:
@@ -382,7 +383,10 @@ class SaunaOptionsFlow(OptionsFlow):
     def _show_area_menu(self, area):
         if area == "init":
             return self.async_show_menu(
-                step_id="init", menu_options=["bindings", *integration_groups()]
+                step_id="init", menu_options=[
+                    "name", "bindings", *integration_groups(),
+                    "rename_entity", "cleanup_entities",
+                ]
             )
         return self.async_show_menu(
             step_id=area,

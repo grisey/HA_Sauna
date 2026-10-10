@@ -15,7 +15,11 @@ from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([SaunaThermostat(entry)])
+    async_add_entities(entities_for_entry(entry))
+
+
+def entities_for_entry(entry):
+    return [SaunaThermostat(entry)]
 
 
 class SaunaThermostat(SaunaEntity, ClimateEntity):
