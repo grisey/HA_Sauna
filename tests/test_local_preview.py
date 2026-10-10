@@ -272,8 +272,12 @@ class LocalPreviewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.preview.action("/preview/finish_phase", body)
         self.assertEqual(len(self.preview.c.session.after_run_history), 1)
-        for action in ("door_open", "on", "door_close", "door_open", "off", "door_close"):
+        for action in ("door_open", "on", "door_close", "door_open", "off"):
             self.preview.action("/simulate", {"action": action})
+        self.assertIsNotNone(self.preview.c.session.timeline.active)
+        self.assertIsNone(self.preview.c.session.after_run)
+        self.preview.action("/simulate", {"action": "ventilation_confirmed"})
+        self.preview.action("/simulate", {"action": "door_close"})
         next_phase = self.preview.c.session.after_run
         self.assertIsNotNone(next_phase)
         self.assertNotEqual(next_phase.phase_id, phase.phase_id)
