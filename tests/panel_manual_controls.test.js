@@ -160,7 +160,6 @@ const renderCurrent = (
     const { panel, calls } = makePanel({ control: true, program: true });
     panel.state.configuration = {
       button_program: "constant",
-      button_temperature_c: 80,
       button_session_gesture: "double",
       temperature_programs: [],
     };

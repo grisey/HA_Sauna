@@ -172,7 +172,6 @@
       "integer_required": "Bitte eine ganze Zahl eingeben.",
       "window_not_divisible": "Die Vergleichsdauer muss durch den Abstand der Auswertung teilbar sein.",
       "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Programmen.",
-      "button_temperature_invalid": "Die gespeicherte Tastertemperatur liegt außerhalb des neuen Regelbereichs.",
       "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
       "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}",

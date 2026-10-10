@@ -2256,6 +2256,93 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
         return push
 
+    async def check_button_program_start_and_short_overrides(self, *, native, profile, mode):
+        from custom_components.ha_sauna.settings import (
+            async_set_button_program,
+            async_set_control_mode,
+            async_set_parameters,
+            async_set_program_catalog,
+        )
+
+        await async_set_parameters(self.hass, self.entry, {
+            "target_temperature_c": 65, "standard_temperature_c": 83,
+        }, partial=True)
+        await self.hass.async_block_till_done()
+        push = await self.configure_light_gesture_button(native)
+        await async_set_program_catalog(self.hass, self.entry, [{
+            "id": "button_sequence", "name": "Tasterfolge",
+            "start_c": 76, "end_c": 88, "distribution_gangs": 4,
+        }])
+        await async_set_button_program(self.hass, self.entry, profile)
+        await async_set_control_mode(self.hass, self.entry, mode)
+        # Entering manual mode restores the central standard. Select a distinct
+        # live target afterwards through the production settings path.
+        await async_set_parameters(self.hass, self.entry, {
+            "target_temperature_c": 65,
+        }, partial=True)
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.runtime.controller.target_temperature, 65)
+        self.assertEqual(self.runtime.configuration.parameters.values["standard_temperature_c"], 83)
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_temperature", 60)
+        await push("btn_down")
+        await push("long_push")
+        await push("btn_up")
+        await push("single_push")  # Native release suffix must not toggle heat.
+
+        session = self.runtime.session
+        self.assertIsNotNone(session)
+        self.assertTrue(session.operation_enabled)
+        self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+        expected_target = 83 if profile == "constant" else 76
+        self.assertEqual(self.runtime.controller.target_temperature, expected_target)
+        self.assertEqual(self.runtime.configuration.program_mode,
+                         "constant" if profile == "constant" else "progressive")
+        self.assertEqual(self.runtime.configuration.selected_program_id,
+                         None if profile == "constant" else profile)
+        self.assertEqual(self.runtime.controller.program_mode,
+                         self.runtime.configuration.program_mode)
+        if profile != "constant":
+            self.assertEqual(self.runtime.controller.parameters.values["final_temperature_c"], 88)
+            self.assertEqual(self.runtime.controller.parameters.values["temperature_gangs"], 4)
+        self.assertTrue(self.heater.is_on)
+        parameters = self.runtime.configuration.parameters.as_dict()
+        program = (session.temperature_program_mode, session.temperature_program_gangs,
+                   session.temperature_program_start_gang_count,
+                   session.temperature_program_steps)
+        selected = self.runtime.configuration.selected_program_id
+        for override in (False, None, False, None):
+            await push("btn_down")
+            await push("btn_up")
+            await push("single_push")
+            self.assertIs(self.runtime.controller.heater_override, override)
+            self.assertEqual(self.heater.is_on, override is None)
+            self.assertEqual(self.runtime.session.session_id, session.session_id)
+            self.assertTrue(self.runtime.session.operation_enabled)
+            self.assertEqual(self.runtime.controller.target_temperature, expected_target)
+            self.assertEqual(self.runtime.configuration.selected_program_id, selected)
+            self.assertEqual(self.runtime.configuration.parameters.as_dict(), parameters)
+            current = self.runtime.session
+            self.assertEqual((current.temperature_program_mode, current.temperature_program_gangs,
+                              current.temperature_program_start_gang_count,
+                              current.temperature_program_steps), program)
+
+    async def test_native_named_button_program_starts_from_manual_and_short_preserves_it(self):
+        await self.check_button_program_start_and_short_overrides(
+            native=True, profile="button_sequence", mode="manual")
+
+    async def test_binary_named_button_program_starts_from_manual_and_short_preserves_it(self):
+        await self.check_button_program_start_and_short_overrides(
+            native=False, profile="button_sequence", mode="manual")
+
+    async def test_native_constant_button_start_uses_central_standard_and_short_preserves_it(self):
+        await self.check_button_program_start_and_short_overrides(
+            native=True, profile="constant", mode="automatic")
+
+    async def test_binary_constant_button_start_uses_central_standard_and_short_preserves_it(self):
+        await self.check_button_program_start_and_short_overrides(
+            native=False, profile="constant", mode="automatic")
+
     async def check_press_light_feedback_and_short_restoration(self, native):
         push = await self.configure_light_gesture_button(native)
         # A short press retains the pre-existing manual brightness and ownership.

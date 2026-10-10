@@ -165,25 +165,22 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(parameters.values["preset_start_c"], 71)
         self.assertEqual(parameters.values["readiness_hysteresis_c"], .25)
         configuration = Configuration(
-            Bindings(bindings()), parameters, button_temperature_c=82.5,
+            Bindings(bindings()), parameters,
             temperature_steps=(80.5, 81.49, 89.5),
         )
-        self.assertEqual(configuration.button_temperature_c, 83)
         self.assertEqual(configuration.temperature_steps, (81, 81, 90))
         self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
         runtime = SaunaRuntime(configuration, clock=lambda: T0)
         runtime.controller.set_temperature(74.375, T0)
         self.assertEqual(runtime.controller.temperature, 74.375)
 
-    def test_live_temperature_step_and_button_inputs_persist_whole_targets(self):
+    def test_live_temperature_and_step_inputs_persist_whole_targets(self):
         runtime = SaunaRuntime(Configuration(Bindings(bindings()), Parameters({})))
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
         hass = _FakeHass()
         asyncio.run(async_set_parameters(hass, entry, {"target_temperature_c": 80.5}, partial=True))
         self.assertEqual(runtime.controller.target_temperature, 81)
         self.assertEqual(entry.options["parameters"]["target_temperature_c"], 81)
-        asyncio.run(async_set_button_program(hass, entry, "constant", 82.5))
-        self.assertEqual(entry.options["button_temperature_c"], 83)
         asyncio.run(async_set_temperature_steps(hass, entry, [80.5, 82.5, 89.49]))
         self.assertEqual(runtime.configuration.temperature_steps, (81, 83, 89))
         self.assertEqual(entry.options["temperature_steps"], (81, 83, 89))
@@ -198,8 +195,6 @@ class ProgramConfigurationTests(unittest.TestCase):
             for key in ("target_temperature_c", "final_temperature_c", "preset_start_c"):
                 with self.subTest(value=value, key=key), self.assertRaises(ParameterError):
                     Parameters({key: value})
-            with self.assertRaises(ParameterError):
-                Configuration(Bindings(bindings()), Parameters({}), button_temperature_c=value)
         with self.assertRaises(ParameterError):
             Parameters({"sauna_min_temperature_c": 60.2, "target_temperature_c": 60.3})
 
@@ -350,110 +345,88 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(configuration.program_mode, "constant")
         self.assertEqual(configuration.parameters.values["final_temperature_c"], BY_KEY["final_temperature_c"].default)
 
-    def test_button_constant_temperature_is_frozen_and_legacy_current_is_normalized(self):
-        default = instance_default("button_temperature_c")
-        configuration = Configuration.from_options(options({"target_temperature_c": 83}))
-        self.assertEqual((configuration.button_program, configuration.button_temperature_c), ("constant", default))
-        current = Configuration.from_options(
-            options(
-                {"target_temperature_c": 83},
-                button_program="current",
-                selected_program_id="gipfelstuermer",
-            )
-        )
-        self.assertEqual(current.button_program, "gipfelstuermer")
-        fallback = Configuration.from_options(
-            options({"target_temperature_c": 83}, button_program="current")
-        )
+    def test_legacy_button_temperature_is_ignored_and_removed_from_options(self):
+        for legacy in (74, 99, None, True, "obsolete", -1):
+            with self.subTest(legacy=legacy):
+                saved = options(
+                    {"standard_temperature_c": 86, "target_temperature_c": 83},
+                    button_temperature_c=legacy,
+                )
+                loaded = Configuration.from_options(saved)
+                self.assertEqual(loaded.button_program, "constant")
+                self.assertEqual(loaded.parameters.values["standard_temperature_c"], 86)
+                self.assertEqual(loaded.parameters.values["target_temperature_c"], 83)
+                self.assertNotIn("button_temperature_c", loaded.as_options())
+                self.assertEqual(Configuration.from_options(loaded.as_options()), loaded)
+                self.assertEqual(saved["button_temperature_c"], legacy)
+        missing_standard = Configuration.from_options(options(button_temperature_c=99))
         self.assertEqual(
-            (fallback.button_program, fallback.button_temperature_c), ("constant", default)
+            missing_standard.parameters.values["standard_temperature_c"],
+            BY_KEY["standard_temperature_c"].default,
         )
-        explicit = Configuration.from_options(options(
-            {"target_temperature_c": 83}, button_temperature_c=74,
+
+    def test_legacy_current_button_program_is_normalized(self):
+        current = Configuration.from_options(options(
+            {"target_temperature_c": 83}, button_program="current",
+            selected_program_id="gipfelstuermer",
         ))
-        self.assertEqual(explicit.button_temperature_c, 74)
-        self.assertEqual(Configuration.from_options(explicit.as_options()), explicit)
+        self.assertEqual(current.button_program, "gipfelstuermer")
+        fallback = Configuration.from_options(options(
+            {"target_temperature_c": 83}, button_program="current",
+        ))
+        self.assertEqual(fallback.button_program, "constant")
 
-    def test_button_constant_temperature_is_independent_of_live_ui_target(self):
+    def test_button_program_selection_preserves_live_target_and_uses_latest_standard(self):
         configuration = Configuration(
-            Bindings(bindings()), Parameters({"target_temperature_c": 80}), button_temperature_c=72
+            Bindings(bindings()),
+            Parameters({"standard_temperature_c": 84, "target_temperature_c": 80}),
+            button_program="genusszeit",
         )
-        runtime = SaunaRuntime(configuration)
-        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        runtime = SaunaRuntime(configuration, clock=lambda: T0)
+        entry = SimpleNamespace(
+            runtime_data=runtime, options=configuration.as_options(), entry_id="standard"
+        )
         hass = _FakeHass()
-
-        asyncio.run(async_set_button_program(hass, entry, "constant", 74))
+        asyncio.run(async_set_button_program(hass, entry, "constant"))
         self.assertIsNone(runtime.session)
         self.assertEqual(runtime.controller.target_temperature, 80)
-        self.assertEqual(runtime.configuration.button_temperature_c, 74)
-        asyncio.run(
-            async_set_parameters(
-                hass, entry, {"target_temperature_c": 86}, partial=True
-            )
-        )
+        self.assertEqual(runtime.configuration.parameters.values["standard_temperature_c"], 84)
+        asyncio.run(async_set_parameters(
+            hass, entry, {"standard_temperature_c": 86}, partial=True,
+        ))
+        self.assertEqual(runtime.controller.target_temperature, 80)
+        self.assertEqual(entry.options["parameters"]["standard_temperature_c"], 86)
+        self.assertNotIn("button_temperature_c", entry.options)
+        asyncio.run(async_options_updated(hass, entry))
+        runtime = entry.runtime_data
+        asyncio.run(runtime._handle_button_event("long", runtime._clock()))
+        self.assertEqual(runtime.controller.target_temperature, 86)
 
-        self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 86)
-        self.assertEqual(runtime.configuration.button_temperature_c, 74)
-        self.assertEqual(entry.options["button_temperature_c"], 74)
-
-    def test_invalid_button_temperature_has_no_side_effects(self):
+    def test_invalid_button_program_has_no_side_effects(self):
         configuration = Configuration(Bindings(bindings()), Parameters({}))
         runtime = SaunaRuntime(configuration)
         entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
-        hass = _FakeHass()
-        before_configuration = runtime.configuration
         before_options = dict(entry.options)
-
-        with self.assertRaisesRegex(ParameterError, "target_temperature_c: too_small"):
-            asyncio.run(async_set_button_program(hass, entry, "constant", 59))
-
-        self.assertEqual(runtime.configuration, before_configuration)
+        with self.assertRaises(ValueError):
+            asyncio.run(async_set_button_program(_FakeHass(), entry, "missing"))
+        self.assertEqual(runtime.configuration, configuration)
         self.assertEqual(entry.options, before_options)
 
-    def test_raising_minimum_rejects_button_or_catalog_before_writing(self):
-        for configuration, minimum, error in (
-            (
-                Configuration(
-                    Bindings(bindings()),
-                    Parameters({"target_temperature_c": 90}),
-                    button_temperature_c=74,
-                ),
-                75,
-                "button_temperature_invalid",
-            ),
-            (
-                Configuration(
-                    Bindings(bindings()),
-                    Parameters({"target_temperature_c": 100}),
-                    button_temperature_c=80,
-                ),
-                75,
-                "program_catalog_invalid",
-            ),
-        ):
-            with self.subTest(minimum=minimum):
-                runtime = SaunaRuntime(configuration)
-                entry = SimpleNamespace(
-                    runtime_data=runtime, options=configuration.as_options()
-                )
-                before_configuration = runtime.configuration
-                before_options = dict(entry.options)
-
-                with self.assertRaisesRegex(ParameterError, error):
-                    asyncio.run(
-                        async_set_parameters(
-                            _FakeHass(),
-                            entry,
-                            {
-                                "sauna_min_temperature_c": minimum,
-                                "preset_start_c": minimum,
-                            },
-                            partial=True,
-                        )
-                    )
-
-                self.assertEqual(runtime.configuration, before_configuration)
-                self.assertEqual(entry.options, before_options)
+    def test_raising_minimum_rejects_catalog_before_writing(self):
+        configuration = Configuration(
+            Bindings(bindings()), Parameters({"target_temperature_c": 100}),
+        )
+        runtime = SaunaRuntime(configuration)
+        entry = SimpleNamespace(runtime_data=runtime, options=configuration.as_options())
+        before_options = dict(entry.options)
+        with self.assertRaisesRegex(ParameterError, "program_catalog_invalid"):
+            asyncio.run(async_set_parameters(
+                _FakeHass(), entry,
+                {"sauna_min_temperature_c": 75, "preset_start_c": 75},
+                partial=True,
+            ))
+        self.assertEqual(runtime.configuration, configuration)
+        self.assertEqual(entry.options, before_options)
 
     def test_button_program_change_observes_session_and_reconfiguration_locks(self):
         configuration = Configuration(Bindings(bindings()), Parameters({}))
@@ -462,11 +435,11 @@ class ProgramConfigurationTests(unittest.TestCase):
         hass = _FakeHass()
         runtime.reconfiguring = True
         with self.assertRaises(ConfigurationLocked):
-            asyncio.run(async_set_button_program(hass, entry, "constant", 75))
+            asyncio.run(async_set_button_program(hass, entry, "constant"))
         runtime.reconfiguring = False
         runtime._set_operation(True)
         with self.assertRaises(ConfigurationLocked):
-            asyncio.run(async_set_button_program(hass, entry, "constant", 75))
+            asyncio.run(async_set_button_program(hass, entry, "constant"))
 
     def test_legacy_session_light_duration_is_ignored(self):
         configuration = Configuration.from_options(

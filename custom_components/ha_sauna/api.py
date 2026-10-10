@@ -600,36 +600,20 @@ class ButtonProgramView(HomeAssistantView):
         entry = hass.config_entries.async_get_entry(entry_id)
         runtime_for(hass, entry_id)
         body = await json_body(request)
-        if not isinstance(body, dict) or set(body) not in (
-            {"profile"},
-            {"profile", "temperature_c"},
-        ):
+        if not isinstance(body, dict) or set(body) != {"profile"}:
             raise web.HTTPBadRequest(text="Tasterprogramm fehlt oder ist ungültig")
-        if "temperature_c" in body and (
-            isinstance(body["temperature_c"], bool)
-            or not isinstance(body["temperature_c"], (int, float))
-        ):
-            raise web.HTTPBadRequest(text="Tastertemperatur fehlt oder ist ungültig")
         try:
             configuration = await async_set_button_program(
-                hass, entry, body["profile"], body.get("temperature_c")
+                hass, entry, body["profile"]
             )
         except ConfigurationLocked as error:
             return self.json({"error": str(error)}, status_code=409)
-        except ParameterError:
-            return self.json(
-                {
-                    "error": "Tastertemperatur innerhalb des eingestellten Regelbereichs wählen."
-                },
-                status_code=400,
-            )
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=400)
         return self.json(
             {
                 "success": True,
                 "button_program": configuration.button_program,
-                "button_temperature_c": configuration.button_temperature_c,
             }
         )
 

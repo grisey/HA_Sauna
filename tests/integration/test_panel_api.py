@@ -850,9 +850,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             ("/control-mode", {"mode": "manual"}, "control_mode", "manual"),
             (
                 "/button-program",
-                {"profile": "constant", "temperature_c": 74},
-                "button_temperature_c",
-                74,
+                {"profile": "gipfelstuermer"},
+                "button_program",
+                "gipfelstuermer",
             ),
         )
         read_body = api.json_body
@@ -1104,16 +1104,17 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200, await response.text())
             async with client.post(
                 url + "/button-program",
-                json={"profile": "constant", "temperature_c": 81},
+                json={"profile": "constant"},
             ) as response:
                 self.assertEqual(response.status, 200, await response.text())
-                self.assertEqual((await response.json())["button_temperature_c"], 81)
+                self.assertEqual((await response.json())["button_program"], "constant")
             async with client.get(url + "/state") as response:
-                self.assertEqual(
-                    (await response.json())["configuration"]["button_temperature_c"],
-                    81,
+                self.assertNotIn(
+                    "button_temperature_c", (await response.json())["configuration"]
                 )
+            self.assertNotIn("button_temperature_c", self.entry.options)
             for body in (
+                {"profile": "constant", "temperature_c": 81},
                 {"profile": "constant", "temperature_c": "81"},
                 {"profile": "constant", "temperature_c": 1000},
                 {"profile": "standard_program", "temperature_c": 81},
