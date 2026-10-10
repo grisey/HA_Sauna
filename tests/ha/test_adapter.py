@@ -460,7 +460,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 for step in menu["menu_options"]:
                     form = await getattr(flow, f"async_step_{step}")()
                     if step == "init":
-                        self.assertEqual(form, result)
+                        self.assertEqual(form["type"], "menu")
+                        self.assertEqual(form["menu_options"], result["menu_options"])
                         continue
                     self.assertEqual(form["type"], "form")
                     self.assertTrue(flat_fields(form["data_schema"]))
@@ -559,6 +560,32 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         if result["errors"].get("base") == "parameter_dependency":
             self.assertIn("parameter", result["description_placeholders"])
             self.assertIn("reason", result["description_placeholders"])
+
+    async def test_reload_allows_navigation_but_preserves_pending_form_input(self):
+        from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+
+        runtime = self.entry.runtime_data = SaunaRuntime(Configuration.from_options(self.entry.options))
+        runtime.reconfiguring = True
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        before = self.entry.options
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            self.assertEqual((await flow.async_step_init())["type"], "menu")
+            self.assertEqual((await flow.async_step_operation())["type"], "menu")
+            await flow.async_step_parameters_temperature_control()
+            values = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
+            definition = next(d for d in flow._definitions("temperature_control") if d.key == "readiness_offset_c")
+            values[definition.key] += definition.step
+            form = await flow.async_step_parameters_temperature_control(values)
+            self.assertEqual(form["type"], "form")
+            self.assertEqual(form["errors"], {"base": "configuration_busy"})
+            marker = next(key for key in flat_fields(form["data_schema"]) if key.schema == definition.key)
+            self.assertEqual(marker.description["suggested_value"], values[definition.key])
+            form = await flow.async_step_bindings({})
+            self.assertEqual(form["step_id"], "binding_entities")
+            form = await flow.async_step_binding_entities(self.module.pack_binding_input(self.inputs))
+            self.assertEqual(form["errors"], {"base": "configuration_busy"})
+        self.assertIs(self.entry.options, before)
 
     async def test_installation_rechecks_session_before_save(self):
         from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime

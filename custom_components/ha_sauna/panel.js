@@ -9717,14 +9717,9 @@ class SaunaPanel extends HTMLElement {
     }
     if (action.startsWith("light:")) {
       const preset = action.slice(6),
-        value =
-          preset === "true"
-            ? true
-            : preset === "false"
-              ? false
-              : preset === "auto"
-                ? null
-                : "normal";
+        value = preset === "true" ? true : preset === "false" ? false : null;
+      if (preset !== "true" && preset !== "false" && preset !== "auto")
+        throw Error("Ungültige Lichtwahl");
       return this.submitLight(value);
     }
     if (action === "manual-light-overview") {

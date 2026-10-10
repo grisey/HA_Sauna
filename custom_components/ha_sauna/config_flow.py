@@ -359,13 +359,15 @@ class SaunaOptionsFlow(OptionsFlow):
         runtime = getattr(self.config_entry, "runtime_data", None)
         if runtime is None or runtime.closed:
             return False
-        if runtime.reconfiguring:
-            return True
         try:
             runtime.check_configuration_change()
         except ValueError:
             return True
         return False
+
+    def _is_reconfiguring(self) -> bool:
+        runtime = getattr(self.config_entry, "runtime_data", None)
+        return runtime is not None and runtime.reconfiguring
 
     async def async_step_init(self, user_input=None):
         if self._has_session():
@@ -435,7 +437,10 @@ class SaunaOptionsFlow(OptionsFlow):
         baseline = self._parameter_baselines.setdefault(
             subgroup, {key: effective.get(key) for key in keys}
         )
-        errors = {}
+        errors = (
+            {"base": "configuration_busy"}
+            if user_input is not None and self._is_reconfiguring() else {}
+        )
         group = next(
             item for item in section("frontend")["settings_subgroups"]
             if item["id"] == subgroup
@@ -445,7 +450,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 current.presence_source, group.get("description", "")
             )
         }
-        if user_input is not None:
+        if user_input is not None and not errors:
             try:
                 if set(user_input) - keys:
                     raise ParameterError("base", "unknown_parameter")
@@ -554,7 +559,9 @@ class SaunaOptionsFlow(OptionsFlow):
                 if key not in self._device_values:
                     suggested.pop(key, None)
             errors = errors or self._device_errors
-        if user_input is not None:
+        if user_input is not None and self._is_reconfiguring():
+            errors["base"] = "configuration_busy"
+        if user_input is not None and not errors:
             try:
                 input_options = {
                     key: user_input.get(

@@ -176,7 +176,8 @@
       "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
       "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}",
-      "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen."
+      "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen.",
+      "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern."
     },
     "abort": {
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
@@ -435,7 +436,7 @@
           "confirmation_minutes": "Frist für Personenhinweis und Aufguss"
         },
         "data_description": {
-          "confirmation_minutes": "Ab Türschluss gilt diese Frist für schwache Personenhinweise. Ab Beginn eines vorläufigen Saunagangs gilt sie erneut für dessen Bestätigung durch einen Aufguss."
+          "confirmation_minutes": "Ab Türschluss gilt eine gemeinsame Frist für Personenhinweise und die Bestätigung des Saunagangs durch einen Aufguss."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"
@@ -500,11 +501,11 @@
         "title": "Ofenkühlung und Lichtnachlauf",
         "data": {
           "after_run_brightness_percent": "Dimmhelligkeit bei Ofenkühlung",
-          "session_light_brightness_percent": "Helligkeit für „Hell“ und Lichtnachlauf"
+          "session_light_brightness_percent": "Helligkeit beim Einschalten und im Nachlauf"
         },
         "data_description": {
           "after_run_brightness_percent": "Das Licht blendet zu Kühlbeginn auf diesen Wert ab und steigt danach bis Kühlende wieder zum temperaturabhängigen Ziel.",
-          "session_light_brightness_percent": "Gemeinsamer Helligkeitswert für die Wahl „Hell“ und den Lichtnachlauf nach Ausschalten."
+          "session_light_brightness_percent": "Lichtwert für „Ein“, die Startbestätigung am Taster und den Lichtnachlauf."
         },
         "submit": "Speichern und zurück"
       },
