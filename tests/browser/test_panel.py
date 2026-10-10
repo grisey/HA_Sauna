@@ -1985,8 +1985,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(sensors.locator(f'input[name="{key}"]')).to_have_value(str(value))
         await expect(sensors.locator('input[name="door_open_slope"]')).to_have_value("-2.1")
         self.assertEqual(self.errors, [])
-        self.assertEqual(self.console_errors, [])
-        self.assertEqual(self.network_errors, [])
+        # HA reloads the runtime after configuration writes. The real state
+        # endpoint returns 503 during that interval; waitForConfiguration must
+        # recover, as the persisted values and refreshed fields above verify.
+        state_url = f"{self.url}/api/ha_sauna/{self.entry.entry_id}/state"
+        self.assertEqual(
+            self.network_errors, [(state_url, 503)] * len(self.network_errors))
+        self.assertEqual(self.console_errors, [
+            "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+        ] * len(self.network_errors))
+        self.assertEqual(await self.page.evaluate("window.testErrors"), [])
         self.assertEqual(self.ws_errors, [])
 
     async def test_design_settings_quantity_axes_and_mobile_navigation(self):
