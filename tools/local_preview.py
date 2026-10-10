@@ -110,6 +110,8 @@ class Preview:
             self.door(Kind.DOOR_OPEN)
             self.step(4)
             self.presence("off")
+            self.step(1)
+            self.door(Kind.VENTILATION)
             self.step(6)
             self.door(Kind.DOOR_CLOSE)
             self.step(160, temperature=79)
@@ -400,7 +402,7 @@ class Preview:
                 return {}
             if action != "step":
                 self.step(1)
-            if action in ("door_open", "door_close", "infusion"):
+            if action in ("door_open", "door_close", "infusion", "ventilation_confirmed"):
                 self.door(Kind(action))
             elif action in ("on", "off", "unavailable"):
                 self.presence(action)

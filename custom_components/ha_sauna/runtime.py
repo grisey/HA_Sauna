@@ -718,11 +718,20 @@ class SaunaRuntime:
         async with self._lock:
             if self.closed:
                 return
-            if self.configuration.presence_source == "ha_presence":
-                await self._drain_device_inputs()
-                self._deliver_detection(self._clock())
             self._record_presence(report)
-            if self.controller.observe_direct_presence(report, self._clock()):
+            direct = self.configuration.presence_source == "ha_presence"
+            accepted = self.controller.observe_direct_presence(
+                report, self._clock(), defer_evaluation=direct,
+            )
+            if direct:
+                # Catch-up recognition must use the report already received by
+                # this callback, without advancing past queued device inputs.
+                with self.controller.confirmation_batch(self._clock):
+                    with self.controller.direct_presence_catchup():
+                        await self._drain_device_inputs()
+                        self._deliver_detection(self._clock())
+                    await self._run_cycle()
+            elif accepted:
                 await self._run_cycle()
             self.notify()
 

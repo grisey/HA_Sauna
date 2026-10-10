@@ -139,6 +139,23 @@ class Timeline:
     rejected_start_sources: tuple[str, ...] = ()
 
     @property
+    def exit_ventilation(self) -> Event | None:
+        """Lüftungsbeleg innerhalb der aktuell zugeordneten Türöffnung."""
+        if self.door == Door.OPEN:
+            opening, ventilation = self.opening, self.open_ventilation
+        elif self.door == Door.CLOSED:
+            opening, ventilation = self.closed_opening, self.preparation
+            if (self.anchor is None or ventilation is None
+                    or ventilation.effective_at > self.anchor.effective_at):
+                return None
+        else:
+            return None
+        if (opening is None or ventilation is None
+                or ventilation.effective_at < opening.effective_at):
+            return None
+        return ventilation
+
+    @property
     def entry_cycle_available(self) -> bool:
         """A real, unused opening and closure can establish a new gang."""
         return bool(
@@ -266,6 +283,8 @@ def apply(state: Timeline, event: Event) -> Timeline:
                     and (state.anchor is None
                          or event.effective_at > state.anchor.effective_at))):
             raise ValueError("Abwesenheit gehört nicht zur Austrittsöffnung")
+        if state.exit_ventilation is None:
+            raise ValueError("Gangende benötigt bestätigtes Lüften der Austrittsöffnung")
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
         result = replace(state, active=None, completed=state.completed + (finished,),

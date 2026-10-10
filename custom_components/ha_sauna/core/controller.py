@@ -58,6 +58,7 @@ class Controller:
         self.presence_entity = presence_entity
         self.direct_presence = None
         self._direct_presence_history = []
+        self._direct_presence_catchup = 0
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
@@ -135,6 +136,15 @@ class Controller:
         if callable(received_at):
             received_at = utc(received_at())
         return max(at, received_at or at)
+
+    @contextmanager
+    def direct_presence_catchup(self):
+        """Resolve an exit only after queued inputs and the new report agree."""
+        self._direct_presence_catchup += 1
+        try:
+            yield
+        finally:
+            self._direct_presence_catchup -= 1
 
     def _record_recognition_gate(self, at):
         """Remember only admission results booked by this leading controller."""
@@ -1359,7 +1369,7 @@ class Controller:
         self._session = replace(session, thermostat=state)
         return decision
 
-    def observe_direct_presence(self, report, at):
+    def observe_direct_presence(self, report, at, *, defer_evaluation=False):
         """Use only the selected entity; absence alone never finishes a round."""
         if (self.presence_source != "ha_presence"
                 or report.source != self.presence_entity
@@ -1371,27 +1381,30 @@ class Controller:
             or report.effective_at < previous.effective_at
         ):
             return False
-        self.advance(at, evaluate=False)
+        if not defer_evaluation:
+            self.advance(at, evaluate=False)
         self.direct_presence = report
         self._direct_presence_history.append(report)
         if self._session is None:
             self._direct_presence_history = [report]
-        self._evaluate(at)
+        if not defer_evaluation:
+            self._evaluate(at)
         return True
 
     def _reconcile_direct_presence(self, at, *, entry_event=None):
         """Only a complete door closure can start a round with present occupancy.
 
-        Presence updates can finish a round after a new exit opening, but cannot
-        reuse an earlier entry cycle. Delayed closure uses occupancy at its
-        original time, without an invented waiting duration.
+        A current absence and confirmed ventilation of the same exit opening
+        finish a round. Delayed entry closure uses occupancy at its original
+        time, without reusing an earlier entry cycle or inventing a delay.
         """
         session = self._session
         report = (
             next((report for report in reversed(self._direct_presence_history)
                   if report.effective_at <= entry_event.effective_at
                   and report.received_at <= self._received_at(at)), None)
-            if entry_event is not None else self.direct_presence
+            if entry_event is not None and session is not None
+            and session.timeline.active is None else self.direct_presence
         )
         if (self.presence_source != "ha_presence" or session is None
                 or not session.operation_enabled or report is None
@@ -1412,7 +1425,10 @@ class Controller:
             kind = Kind.PRESENCE_CONFIRMED
             source = t.anchor
         else:
-            if (report.occupancy != "absent"
+            ventilation = t.exit_ventilation
+            if (self._direct_presence_catchup
+                    or report.occupancy != "absent"
+                    or ventilation is None
                     or report.effective_at < opening.effective_at
                     or (t.door == Door.CLOSED
                         and (t.anchor is None
@@ -1423,6 +1439,8 @@ class Controller:
             kind = Kind.PRESENCE_ENDED
             source = opening
         effective = max(source.effective_at, report.effective_at)
+        if kind == Kind.PRESENCE_ENDED:
+            effective = max(effective, ventilation.effective_at)
         if effective > at:
             return False
         self.process(Event(

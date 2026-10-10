@@ -662,6 +662,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
             await door("exit-open", Kind.DOOR_OPEN, 40)
             await presence("off", 50)
+            self.assertIsNotNone(runtime.session.timeline.active)
+            self.assertIsNone(runtime.session.after_run)
+            await door("exit-ventilation", Kind.VENTILATION, 55)
             await door("exit-close", Kind.DOOR_CLOSE, 60)
             clock[0] = start + timedelta(milliseconds=70)
             runtime.persist()

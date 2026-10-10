@@ -27,6 +27,10 @@ Sie kann bereits vor der Öffnung bestanden haben. Eine spätere Präsenzmeldung
 startet keinen Gang anhand einer früheren Türfolge. Bei verspäteter Türerkennung
 zählt der bereits empfangene Präsenzzustand zur ursprünglichen Schließzeit.
 Jeder Türvorgang begründet höchstens einen Übergang.
+Ein Gang endet erst bei Abwesenheit nach einer neuen Austrittsöffnung und
+bestätigtem Durchlüften derselben Öffnung. Die beiden Nachweise können in
+beliebiger Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
+vor dem vollständigen Nachweis verhindern das Gangende.
 Abwesenheit nach einer bereits geschlossenen Türfolge benötigt eine neue
 Austrittsöffnung. Eine verspätet empfangene Abwesenheitsmeldung bleibt gültig,
 wenn ihre Zustandszeit innerhalb der damaligen Öffnungsfolge liegt.
@@ -34,9 +38,9 @@ wenn ihre Zustandszeit innerhalb der damaligen Öffnungsfolge liegt.
 | Beleg | Wirkung |
 | --- | --- |
 | Vollständiger Türvorgang mit Anwesenheit und erfüllten Startbedingungen | Bestätigter Gang ab Türschluss, ohne Wartefrist oder erforderlichen Aufguss |
-| Nachfolgende Türöffnung mit zugehöriger Abwesenheit | Gangende ohne erforderlichen Türschluss |
+| Neue Türöffnung mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis, ohne erforderlichen Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
-| Durchlüften | Kein Gangende |
+| Durchlüften ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Ein Türvorgang unterhalb der Mindesttemperatur wird durch späteres Aufheizen

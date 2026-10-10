@@ -132,7 +132,7 @@ const events = {
   operation_off: "Betrieb ausgeschaltet",
   confirmation_expired: "Vorläufigen Gang aufgehoben",
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
-  presence_ended: "Gangende · Abwesenheit nach Türvorgang",
+  presence_ended: "Gangende · Abwesenheit und Durchlüften",
 };
 const gangConfirmed = (g) =>
   g.recognition_kind === "presence_confirmed" || !!g.infusion_events?.length;
@@ -6994,7 +6994,7 @@ class SaunaPanel extends HTMLElement {
             door_open: "Türöffnung erkannt",
             door_close: "Türschluss erkannt",
             presence_confirmed: "Türvorgang abgeschlossen · Präsenz belegt",
-            presence_ended: "Türvorgang abgeschlossen · Abwesenheit belegt",
+            presence_ended: "Austrittsöffnung · Abwesenheit und Durchlüften belegt",
             infusion: "Feuchteanstieg erkannt",
           }[e.kind] ||
           events[e.kind] ||
