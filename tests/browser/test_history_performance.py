@@ -35,7 +35,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
     async def test_cold_selection_starts_during_pending_status_and_reports_loading(self):
         identities = []
         for number in range(2):
-            self.now = self.base + timedelta(hours=number * 8)
+            self.now = self.base + timedelta(minutes=number * 30)
             # Refresh observations after the clock jump before the production
             # start guard checks their validity.
             for position in ("upper", "lower"):
@@ -53,7 +53,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                 "conditions": {}, "checks": {}, "holds": {},
             }, identity)
             self.runtime.archive.append("diagnostic", self.now, {"faults": {}}, identity)
-            self.now += timedelta(hours=6)
+            self.now += timedelta(seconds=10)
             await self.runtime.set_operation(False)
             self.now += timedelta(minutes=20)
             await self.runtime.tick()
