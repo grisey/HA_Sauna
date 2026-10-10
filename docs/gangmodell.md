@@ -27,6 +27,9 @@ Sie kann bereits vor der Öffnung bestanden haben. Eine spätere Präsenzmeldung
 startet keinen Gang anhand einer früheren Türfolge. Bei verspäteter Türerkennung
 zählt der bereits empfangene Präsenzzustand zur ursprünglichen Schließzeit.
 Jeder Türvorgang begründet höchstens einen Übergang.
+Abwesenheit nach einer bereits geschlossenen Türfolge benötigt eine neue
+Austrittsöffnung. Eine verspätet empfangene Abwesenheitsmeldung bleibt gültig,
+wenn ihre Zustandszeit innerhalb der damaligen Öffnungsfolge liegt.
 
 | Beleg | Wirkung |
 | --- | --- |

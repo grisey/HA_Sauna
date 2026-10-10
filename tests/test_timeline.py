@@ -161,6 +161,44 @@ class TimelineTests(unittest.TestCase):
         self.assertIsNotNone(state.active)
         self.assertEqual(len(state.completed), 0)
 
+    def direct_exit(self, *, closed):
+        state = apply(self.closed, e("present", Kind.PRESENCE_CONFIRMED, "21:15:51"))
+        state = apply(state, e("exit-open", Kind.DOOR_OPEN, "21:16:10"))
+        if closed:
+            state = apply(state, e("exit-close", Kind.DOOR_CLOSE, "21:16:20"))
+        return state
+
+    def test_closed_direct_exit_rejects_absence_from_after_its_closure(self):
+        state = self.direct_exit(closed=True)
+        with self.assertRaises(ValueError):
+            apply(state, e("later-absence", Kind.PRESENCE_ENDED,
+                           "21:17:00", effective="21:16:21"))
+        self.assertIsNotNone(state.active)
+        self.assertEqual(state.gang_count, 0)
+
+    def test_delayed_direct_exit_uses_original_absence_within_door_episode(self):
+        state = self.direct_exit(closed=True)
+        for effective in ("21:16:10", "21:16:15", "21:16:20"):
+            with self.subTest(effective=effective):
+                ended = apply(state, e("delayed-absence", Kind.PRESENCE_ENDED,
+                                       "21:17:00", effective=effective))
+                self.assertIsNone(ended.active)
+                self.assertEqual(ended.gang_count, 1)
+                self.assertEqual(ended.completed[0].ended_at, t("21:17:00"))
+
+    def test_direct_exit_with_open_door_needs_no_closure(self):
+        state = self.direct_exit(closed=False)
+        ended = apply(state, e("absence", Kind.PRESENCE_ENDED, "21:16:15"))
+        self.assertEqual(ended.door, Door.OPEN)
+        self.assertIsNone(ended.active)
+        self.assertEqual(ended.gang_count, 1)
+
+    def test_direct_exit_rejects_absence_from_before_its_opening(self):
+        state = self.direct_exit(closed=True)
+        with self.assertRaises(ValueError):
+            apply(state, e("earlier-absence", Kind.PRESENCE_ENDED,
+                           "21:17:00", effective="21:16:09"))
+
     def test_confirmed_ventilation_finishes_once(self):
         state = apply(self.active, e("water", Kind.INFUSION, "21:22:52"))
         state = apply(state, e("open", Kind.DOOR_OPEN, "21:27:15"))

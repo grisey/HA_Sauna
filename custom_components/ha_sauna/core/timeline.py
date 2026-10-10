@@ -261,6 +261,11 @@ def apply(state: Timeline, event: Event) -> Timeline:
                 or opening.event_id in state.rejected_start_sources
                 or opening.effective_at <= state.active.started_at):
             raise ValueError("Gangende benötigt eine neue Austrittsöffnung")
+        if (event.effective_at < opening.effective_at
+                or (state.door == Door.CLOSED
+                    and (state.anchor is None
+                         or event.effective_at > state.anchor.effective_at))):
+            raise ValueError("Abwesenheit gehört nicht zur Austrittsöffnung")
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
         result = replace(state, active=None, completed=state.completed + (finished,),

@@ -1414,6 +1414,9 @@ class Controller:
         else:
             if (report.occupancy != "absent"
                     or report.effective_at < opening.effective_at
+                    or (t.door == Door.CLOSED
+                        and (t.anchor is None
+                             or report.effective_at > t.anchor.effective_at))
                     or opening.event_id in t.rejected_start_sources
                     or opening.effective_at <= t.active.started_at):
                 return False

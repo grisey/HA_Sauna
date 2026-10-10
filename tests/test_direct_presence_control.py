@@ -79,8 +79,39 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.door(Kind.DOOR_OPEN, 5)
         self.door(Kind.DOOR_CLOSE, 6)
         self.assertIsNotNone(self.c.session.timeline.active)
-        self.report("off", 7)
+        self.report("off", 7, effective=5.5)
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
+
+    def test_absence_after_closed_door_cycle_cannot_reuse_that_exit(self):
+        self.start()
+        self.door(Kind.DOOR_OPEN, 5)
+        self.door(Kind.DOOR_CLOSE, 6)
+        self.report("off", 7)
+        self.c.advance(at(8))
+        self.assertIsNotNone(self.c.session.timeline.active)
+        self.assertIsNone(self.c.session.after_run)
+        self.assertEqual(self.c.session.timeline.completed, ())
+        self.assertFalse(any(e.kind == "gang_ended" for e in self.c.consumer_events))
+
+    def test_absence_before_delayed_exit_does_not_use_old_door_cycle(self):
+        self.start()
+        gang_id = self.c.session.timeline.active.gang_id
+        self.door(Kind.DOOR_OPEN, 5)
+        self.door(Kind.DOOR_CLOSE, 6)
+        self.report("off", 302)
+        self.assertEqual(self.c.session.timeline.active.gang_id, gang_id)
+        self.assertIsNone(self.c.session.after_run)
+        self.assertEqual(self.c.session.timeline.completed, ())
+        self.assertFalse(any(e.kind == "gang_ended" for e in self.c.consumer_events))
+
+        self.c.process(Event("real-exit-open", "s", Kind.DOOR_OPEN, at(301), at(303)))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.door, Door.OPEN)
+        self.assertEqual(self.c.session.timeline.gang_count, 1)
+        self.assertEqual(self.c.session.timeline.completed[0].gang_id, gang_id)
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(303))
+        self.assertEqual(self.c.session.after_run.requested_at, at(303))
+        self.assertEqual(sum(e.kind == "gang_ended" for e in self.c.consumer_events), 1)
 
     def test_delayed_opening_matches_absence_without_a_close(self):
         self.start()
@@ -363,6 +394,60 @@ class ProxyDoorControlTests(unittest.TestCase):
 
 
 class DirectPresenceRuntimeTests(unittest.TestCase):
+    def test_absence_before_delayed_exit_requests_cooling_only_on_real_opening(self):
+        import asyncio
+        from dataclasses import replace
+        from datetime import timedelta
+        from test_presence_regressions import START, _runtime
+        from custom_components.ha_sauna.bindings import Bindings
+        from custom_components.ha_sauna.runtime import SaunaRuntime
+
+        async def exercise():
+            clock = [START]
+            configuration = _runtime(clock).configuration
+            configuration = replace(configuration, presence_source="ha_presence",
+                bindings=Bindings({**configuration.bindings.values,
+                                   "presence": "binary_sensor.presence"}))
+            runtime = SaunaRuntime(configuration, clock=lambda: clock[0])
+            runtime.controller.set_temperature(70, START)
+            await runtime.set_operation(True)
+            sid = runtime.session.session_id
+
+            async def door(name, kind, effective, detected):
+                clock[0] = START + timedelta(seconds=detected)
+                await runtime.receive(Event(name, sid, kind,
+                    START + timedelta(seconds=effective), clock[0]))
+
+            async def presence(state, second):
+                clock[0] = START + timedelta(seconds=second)
+                await runtime.accept_presence(binary_presence(
+                    "binary_sensor.presence", state, clock[0], clock[0]))
+
+            await door("entry-open", Kind.DOOR_OPEN, 1, 1)
+            await presence("on", 2)
+            await door("entry-close", Kind.DOOR_CLOSE, 3, 3)
+            gang_id = runtime.session.timeline.active.gang_id
+            await door("unused-open", Kind.DOOR_OPEN, 5, 5)
+            await door("unused-close", Kind.DOOR_CLOSE, 6, 6)
+            await presence("off", 302)
+            self.assertEqual(runtime.session.timeline.active.gang_id, gang_id)
+            self.assertIsNone(runtime.session.after_run)
+            self.assertEqual(runtime.session.timeline.completed, ())
+            self.assertFalse(any(e.kind == "gang_ended" for e in runtime.consumer_events))
+
+            await door("real-exit-open", Kind.DOOR_OPEN, 301, 303)
+            self.assertIsNone(runtime.session.timeline.active)
+            self.assertEqual(runtime.session.timeline.door, Door.OPEN)
+            self.assertEqual(runtime.session.timeline.gang_count, 1)
+            self.assertEqual(runtime.session.timeline.completed[0].gang_id, gang_id)
+            self.assertEqual(runtime.session.timeline.completed[0].ended_at,
+                             START + timedelta(seconds=303))
+            self.assertEqual(runtime.session.after_run.requested_at,
+                             START + timedelta(seconds=303))
+            self.assertEqual(sum(e.kind == "gang_ended" for e in runtime.consumer_events), 1)
+
+        asyncio.run(exercise())
+
     def test_presence_before_delayed_entry_uses_only_the_real_door_cycle(self):
         import asyncio
         from dataclasses import replace
