@@ -2127,16 +2127,35 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           'ui.panel.config.integrations.config_flow.submit')""")
         await dialog.get_by_role("button", name=submit, exact=True).click()
         await expect(dialog.get_by_text("Gerätezuordnung prüfen", exact=True)).to_be_visible()
-        light_label = dialog.get_by_text("Lichtstärke am Präsenzsensor", exact=True)
-        if not await light_label.is_visible():
-            await dialog.get_by_text("Präsenz und Lichtstärke", exact=True).click()
+        presence_section = dialog.locator("ha-form-expandable").filter(
+            has=self.page.get_by_text("Präsenz und Lichtstärke", exact=True))
+        expansion = presence_section.locator("ha-expansion-panel")
+        summary = expansion.locator("#summary")
+        # Collapsed HA sections clip existing content; is_visible() on a label
+        # does not prove that its ancestor has expanded or finished animating.
+        if await summary.get_attribute("aria-expanded") != "true":
+            await summary.click()
+        await expect(expansion).to_have_js_property("expanded", True)
+        await expect(summary).to_have_attribute("aria-expanded", "true")
+        region = expansion.locator('[role="region"][aria-labelledby="summary"]')
+        await expect(region).to_have_attribute("aria-hidden", "false")
+        await expect(region).to_have_css("overflow", "visible")
+        await presence_section.scroll_into_view_if_needed()
+        light_label = presence_section.get_by_text("Lichtstärke am Präsenzsensor", exact=True)
+        presence_label = presence_section.get_by_text("Präsenzmeldung", exact=True)
         await expect(light_label).to_be_visible()
-        await expect(dialog.get_by_text("Präsenzmeldung", exact=True)).to_be_visible()
-        selectors = dialog.locator("ha-selector-entity")
+        await expect(presence_label).to_be_visible()
+        selectors = presence_section.locator("ha-selector-entity")
+        await expect(selectors).to_have_count(2)
         values = await selectors.evaluate_all("elements => elements.map(element => element.value)")
         self.assertIn(expected["presence"], values)
         self.assertIn(expected["presence_illuminance"], values)
-        await self.page.screenshot(path=str(screenshots / "device_assignments.png"), full_page=True)
+        for field in (presence_label, light_label, selectors.nth(0), selectors.nth(1)):
+            await expect(field).to_be_in_viewport(ratio=1)
+        await expect(summary).to_have_attribute("aria-expanded", "true")
+        await self.page.screenshot(
+            path=str(screenshots / "device_assignments.png"),
+            full_page=True, animations="disabled")
         before = self.entry.runtime_data.configuration.as_options()
         async with self.page.expect_response(lambda response:
                 "/api/config/config_entries/options/flow/" in response.url

@@ -64,8 +64,9 @@ Frühere Zustände und die tatsächlichen Schalterrückmeldungen bleiben erhalte
 Jede Sitzungsrevision enthält den damaligen Konfigurationsstand. Ein späterer
 Gerätewechsel schreibt die Herkunft alter Messungen nicht um.
 
-Fehlende oder veraltete Messungen bleiben Datenlücken. Für die Zeichnung
-verdichtete Kurven verändern die Originalwerte im Export nicht.
+Verlaufskurven verbinden vorhandene Messwerte auch über Messlücken hinweg.
+Die Zeichnung wird an die Bildschirmauflösung angepasst; Wertanzeige und
+Export verwenden weiterhin Originalmessungen.
 
 ### Nachträgliche Zuordnung im Verlauf
 

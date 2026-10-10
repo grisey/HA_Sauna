@@ -737,7 +737,11 @@ test("six-hour four-source cold pagination indexes each original once and reuses
   assert.equal(cache.records.length, 46804);
   assert.equal(requests, 10);
   assert.equal(indexedRecordReads, records.length, "earlier pages are never reindexed");
-  assert.equal(binVisits, records.length, "cold pages extend existing display bins");
+  assert.equal(
+    binVisits,
+    records.filter((record) => record.payload.value != null).length,
+    "cold pages index each available original into display bins once",
+  );
   const prepared = [...chart.prepared.values()];
   const readsBeforeWarm = indexedRecordReads;
   const binsBeforeWarm = binVisits;

@@ -280,9 +280,8 @@ const appearanceTickValues = (bounds) => {
   return values;
 };
 
-// Split before reducing points: a pixel-sized reduction must never hide a
-// missing measurement interval.  The cubic controls below are monotone, so
-// the display is calm without inventing peaks between measurements.
+// User-facing history joins available observations across reporting gaps.
+// Original missing/stale observations remain available to hover and exports.
 const historyMeasurementTtlSeconds = (panel, session) =>
   Number(
     session?.measurement_ttl_seconds ??
@@ -290,30 +289,9 @@ const historyMeasurementTtlSeconds = (panel, session) =>
       session?.configuration?.parameters?.sensor_timeout_seconds ??
       panel.state?.configuration?.parameters?.sensor_timeout_seconds,
   );
-const historySegments = (values, start, end, ttl) => {
-  const segments = [];
-  let segment = [];
-  for (const point of values) {
-    const time = point.time ?? stamp(point.received_at);
-    if (point.value == null) {
-      if (segment.length) segments.push(segment);
-      segment = [];
-      continue;
-    }
-    if (
-      segment.length &&
-      ttl &&
-      (point.displayGap ||
-        (!Object.hasOwn(point, "displayGap") &&
-          time - (segment.at(-1).time ?? stamp(segment.at(-1).received_at)) > ttl))
-    ) {
-      segments.push(segment);
-      segment = [];
-    }
-    segment.push(point);
-  }
-  if (segment.length) segments.push(segment);
-  return segments;
+const historySegments = (values) => {
+  const available = values.filter((point) => point.value != null);
+  return available.length ? [available] : [];
 };
 const reduceHistorySegment = (segment, x) => {
   const output = [];
@@ -1023,7 +1001,7 @@ class HistoryChart {
     )
       this.domain = this.panel.historyDomain();
     const panel = this.panel,
-      model = panel.historyModel(this, session);
+      model = panel.historyModel(this, session, geometry.canvas.cssWidth);
     this.model = model;
     panel.historyDetail = false;
     const chromeKey = panel.historyTitle(session);
@@ -7219,6 +7197,7 @@ class SaunaPanel extends HTMLElement {
       index = {
         records,
         series: new Map(),
+        curveSeries: new Map(),
         byKind: new Map(),
         display: new Map(),
         seriesState: new Map(),
@@ -7267,21 +7246,29 @@ class SaunaPanel extends HTMLElement {
       point.serial = ++state.revision;
       if (value != null) state.hasValue = true;
       index.seriesState.set(key, state);
-      const display = index.display.get(values);
-      if (rebuild || !values.length || values.at(-1).time <= time) {
-        values.push(point);
-        if (display) this.appendHistoryDisplay(display, point, values.length - 1);
-      } else {
-        values.splice(lowerBoundHistory(values, time), 0, point);
-        // Normal archive additions are chronological.  A late item or a
-        // duplicate that needs insertion is rare; rebuild only this series'
-        // display tree before it is next queried.
-        index.display.delete(values);
+      // Raw observations retain nulls for truthful hover readouts. The
+      // curve index shares only valid point objects, making a valid neighbour
+      // across even a long missing interval available by binary search.
+      const targets = [values];
+      if (value != null) {
+        const curveValues = index.curveSeries.get(key) || [];
+        index.curveSeries.set(key, curveValues);
+        targets.push(curveValues);
+      }
+      for (const target of targets) {
+        const display = index.display.get(target);
+        if (rebuild || !target.length || target.at(-1).time <= time) {
+          target.push(point);
+          if (display) this.appendHistoryDisplay(display, point, target.length - 1);
+        } else {
+          target.splice(lowerBoundHistory(target, time), 0, point);
+          index.display.delete(target);
+        }
       }
       index.series.set(key, values);
     }
     if (rebuild)
-      for (const values of index.series.values())
+      for (const values of [...index.series.values(), ...index.curveSeries.values()])
         values.sort((a, b) => a.time - b.time);
     index.indexedCount = records.length;
     return (this.chartDataIndex = index);
@@ -7323,12 +7310,8 @@ class SaunaPanel extends HTMLElement {
         lastIndex: index,
         first: point,
         last: point,
-        minimum: point.value == null ? null : point,
-        maximum: point.value == null ? null : point,
-        firstValid: point.value == null ? null : point,
-        lastValid: point.value == null ? null : point,
-        missing: point.value == null,
-        maximumGap: 0,
+        minimum: point,
+        maximum: point,
       };
       level.nodes.set(key, node);
       level.keys.push(key);
@@ -7336,14 +7319,6 @@ class SaunaPanel extends HTMLElement {
     }
     node.lastIndex = index;
     node.last = point;
-    if (point.value == null) {
-      node.missing = true;
-      return;
-    }
-    if (node.lastValid)
-      node.maximumGap = Math.max(node.maximumGap, point.time - node.lastValid.time);
-    node.lastValid = point;
-    if (!node.firstValid) node.firstValid = point;
     if (!node.minimum || point.value < node.minimum.value) node.minimum = point;
     if (!node.maximum || point.value > node.maximum.value) node.maximum = point;
   }
@@ -7358,94 +7333,68 @@ class SaunaPanel extends HTMLElement {
     }
     node.lastIndex = child.lastIndex;
     node.last = child.last;
-    node.missing ||= child.missing;
-    node.maximumGap = Math.max(
-      node.maximumGap,
-      child.maximumGap,
-      node.lastValid && child.firstValid
-        ? child.firstValid.time - node.lastValid.time
-        : 0,
-    );
-    if (!node.firstValid) node.firstValid = child.firstValid;
-    if (child.lastValid) node.lastValid = child.lastValid;
     if (child.minimum && (!node.minimum || child.minimum.value < node.minimum.value))
       node.minimum = child.minimum;
     if (child.maximum && (!node.maximum || child.maximum.value > node.maximum.value))
       node.maximum = child.maximum;
   }
-  historyDisplayValues(position, quantity, start, end, ttl, pixels) {
-    const values = this.series(position, quantity);
+  historyDisplayValues(position, quantity, start, end, _ttl, pixels) {
+    const values = this.historyCurveSeries(position, quantity);
     if (!values.length) return values;
-    // A dyadic bucket is at most two display pixels wide.  Its first, last
-    // and extrema remain visible; a null or timeout descends to raw points.
+    // Keep first/last/extrema per one-to-two-pixel bin. Missing observations
+    // and elapsed time do not disable reduction or split the user's curve.
     const width = Math.max(1, 2 ** Math.ceil(Math.log2((end - start) / pixels || 1)));
     const display = this.historyDisplay(values),
       level = this.historyDisplayLevel(display, width),
-      first = Math.max(0, lowerBoundNumber(level.keys, Math.floor(start / width)) - 1),
-      after = Math.min(
-        level.keys.length,
-        lowerBoundNumber(level.keys, Math.floor(end / width) + 1) + 1,
+      firstIndex = Math.max(0, lowerBoundHistory(values, start) - 1),
+      afterIndex = Math.min(values.length, lowerBoundHistory(values, end + 1) + 1),
+      first = lowerBoundNumber(level.keys, Math.floor(values[firstIndex].time / width)),
+      after = lowerBoundNumber(
+        level.keys,
+        Math.floor(values[afterIndex - 1].time / width) + 1,
       ),
       output = [];
-    let previous = null;
     for (let offset = first; offset < after; offset++) {
-      const node = level.nodes.get(level.keys[offset]);
+      let node = level.nodes.get(level.keys[offset]);
       if (!node) continue;
-      const displayGap = !!previous && !!ttl && node.first.time - previous.time > ttl;
-      const edge = node.first.time < start || node.last.time > end;
-      if (edge || node.missing || (ttl && node.maximumGap > ttl)) {
-        const firstRaw = edge
-            ? Math.max(node.firstIndex, lowerBoundHistory(values, start) - 1)
-            : node.firstIndex,
-          afterRaw = edge
-            ? Math.min(node.lastIndex + 1, lowerBoundHistory(values, end + 1) + 1)
-            : node.lastIndex + 1;
-        for (let index = firstRaw; index < afterRaw; index++) {
-          const point = values[index];
-          output.push({
-            time: point.time,
-            value: point.value,
-            source: point.source,
-            displayGap:
-              index === firstRaw
-                ? displayGap
-                : !!ttl && point.time - values[index - 1].time > ttl,
-          });
+      if (node.firstIndex < firstIndex || node.lastIndex >= afterIndex) {
+        // Reduce the clipped edge bin too. Only exact adjacent valid samples
+        // outside the viewport may contribute; older extrema must not leak in.
+        const left = Math.max(firstIndex, node.firstIndex),
+          right = Math.min(afterIndex, node.lastIndex + 1);
+        let minimum = values[left],
+          maximum = values[left];
+        for (let index = left + 1; index < right; index++) {
+          if (values[index].value < minimum.value) minimum = values[index];
+          if (values[index].value > maximum.value) maximum = values[index];
         }
-        previous = node.last;
-        continue;
+        node = {
+          first: values[left],
+          last: values[right - 1],
+          minimum,
+          maximum,
+          lastIndex: right - 1,
+        };
       }
-      // A changing viewport still uses the same interior aggregation bins.
-      // Retain their selected points instead of sorting and copying every bin
-      // on each wheel event or live tick. Appends change lastIndex; a late
-      // insertion discards this series' display tree in historyIndex().
+      // Retain unchanged interior selections across appends and navigation.
       let points = node.displayPoints;
-      if (
-        !points ||
-        node.displayLastIndex !== node.lastIndex ||
-        node.displayGap !== displayGap
-      ) {
-        const selected = [node.first, node.minimum, node.maximum, node.last]
-          .filter(Boolean)
-          .sort((a, b) => a.time - b.time);
+      if (!points || node.displayLastIndex !== node.lastIndex) {
+        const selected = [node.first, node.minimum, node.maximum, node.last].sort(
+          (a, b) => a.time - b.time,
+        );
         points = [];
         for (const point of selected)
-          if (points.at(-1)?.source !== point.source)
-            points.push({
-              time: point.time,
-              value: point.value,
-              source: point.source,
-              displayGap: point === selected[0] && displayGap,
-            });
+          if (points.at(-1)?.source !== point.source) points.push(point);
         node.displayPoints = points;
         node.displayLastIndex = node.lastIndex;
-        node.displayGap = displayGap;
       }
       for (const point of points)
         if (output.at(-1)?.source !== point.source) output.push(point);
-      previous = node.last;
     }
     return output;
+  }
+  historyCurveSeries(position, quantity) {
+    return this.chartDataIndex?.curveSeries.get(`${position}:${quantity}`) || [];
   }
   series(position, quantity) {
     return this.chartDataIndex?.series.get(`${position}:${quantity}`) || [];
@@ -7714,7 +7663,7 @@ class SaunaPanel extends HTMLElement {
     )}</div>`;
   }
   historyPreparedSeries(position, quantity, start, end, ttl, pixels, cache) {
-    const values = this.series(position, quantity),
+    const values = this.historyCurveSeries(position, quantity),
       state = this.chartDataIndex.seriesState?.get(`${position}:${quantity}`),
       first = Math.max(0, lowerBoundHistory(values, start) - 1),
       after = Math.min(values.length, lowerBoundHistory(values, end + 1) + 1),
@@ -7751,7 +7700,7 @@ class SaunaPanel extends HTMLElement {
     cache.set(name, result);
     return result;
   }
-  historyModel(chart, session) {
+  historyModel(chart, session, cssWidth = HISTORY_PLOT.width) {
     const [start, end] = this.window,
       left = HISTORY_PLOT.left,
       right = HISTORY_PLOT.right,
@@ -7771,7 +7720,7 @@ class SaunaPanel extends HTMLElement {
           start,
           end,
           ttl,
-          right - left,
+          Math.max(1, ((right - left) * cssWidth) / HISTORY_PLOT.width),
           chart.prepared,
         );
         series.set(`${position}:${quantity}`, entry);
