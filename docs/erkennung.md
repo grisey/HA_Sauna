@@ -8,7 +8,7 @@ und Aufgüsse stammen in beiden Verfahren aus Temperatur und Feuchte.
 | Türöffnung und Türschluss | Gemeinsame Erkennung aus den Messpaaren | Dieselbe Erkennung aus den Messpaaren |
 | Anwesenheit | Personensignale; zunächst vorläufiger Gang | Belegungszustand der zugeordneten Entität |
 | Aufguss | Bestätigt den Gang; weitere Aufgüsse werden erfasst | Erfassung im bereits bestätigten Gang |
-| Durchlüften | Nach Austrittsöffnung Nachweis für das Gangende | Diagnose; kein Gangende |
+| Durchlüften | Nach Austrittsöffnung Nachweis für das Gangende | Gemeinsam mit zugehöriger Abwesenheit Nachweis für das Gangende |
 
 **Sensoren und Erkennung** in der Integrationskonfiguration trennt
 Messwertaufbereitung, Türerkennung, Personenerkennung, Aufgüsse und Lüftung. Personenschwellen und
@@ -73,9 +73,9 @@ mit denselben gültigen Quellen fort; ein Quellenwechsel verwirft die Referenz.
 Temperaturerholung beginnt die Schließprüfung und beendet einen noch offenen
 Lüftungsnachweis.
 
-Ein bestätigter Lüftungsnachweis bleibt der Austrittsöffnung zugeordnet und kann
-beim Proxyverfahren den Gang bei offener Tür beenden. Bei direkter Präsenzführung
-bleibt der Präsenznachweis maßgeblich.
+Ein bestätigter Lüftungsnachweis bleibt der Austrittsöffnung zugeordnet. Beim
+Proxyverfahren genügt er zum Gangende; bei direkter Präsenzführung muss zusätzlich
+zugehörige Abwesenheit anliegen. Ein Türschluss ist dafür nicht erforderlich.
 
 ## Erkennungen bei Messlücken prüfen
 

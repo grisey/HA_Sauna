@@ -38,7 +38,7 @@ from .core.program_catalog import (
     migrate_legacy_programs,
 )
 from .core.temperature_program import temperature_steps as validate_temperature_steps
-from .core.timeline import Door, Event, Kind
+from .core.timeline import Event, Kind
 from .log import LEVELS, SaunaLog
 from .presentation import (
     EVENTS,
@@ -437,23 +437,10 @@ class SaunaRuntime:
             detector = self.detector
             session_id = self.session.session_id
 
-            def initialize_door():
-                if (
-                    self.session
-                    and self.session.timeline.door == Door.UNKNOWN
-                    and self.detector.active_positions
-                ):
-                    # Dokumentierte Anfangsannahme, kein erfundenes Türereignis.
-                    self.controller._session = replace(
-                        self.session,
-                        timeline=replace(self.session.timeline, door=Door.CLOSED),
-                    )
-
             index = 0
 
             def detected(detection):
                 nonlocal index
-                initialize_door()
                 i, index = index, index + 1
                 received_at = self._clock()
                 booking_at = max(detection.trace_at, self.controller._last_at or detection.trace_at)
@@ -496,7 +483,6 @@ class SaunaRuntime:
                 return True
 
             def after_sample(at):
-                initialize_door()
                 if self.controller._last_at is None or at >= self.controller._last_at:
                     self.controller.advance(at, finish_confirmation_batch=True)
 
@@ -521,9 +507,6 @@ class SaunaRuntime:
                 self._detector_heating_gates = self._detector_heating_gates[past[-1]:]
             self.controller.discard_recognition_context_before(sampled_at)
             self._sync_detector()
-            if self.session is None or self.session.session_id != session_id:
-                return
-            initialize_door()
 
     def _report_detector_availability(self):
         if self.detector is None or self.session is None:
@@ -735,11 +718,20 @@ class SaunaRuntime:
         async with self._lock:
             if self.closed:
                 return
-            if self.configuration.presence_source == "ha_presence":
-                await self._drain_device_inputs()
-                self._deliver_detection(self._clock())
             self._record_presence(report)
-            if self.controller.observe_direct_presence(report, self._clock()):
+            direct = self.configuration.presence_source == "ha_presence"
+            accepted = self.controller.observe_direct_presence(
+                report, self._clock(), defer_evaluation=direct,
+            )
+            if direct:
+                # Catch-up recognition must use the report already received by
+                # this callback, without advancing past queued device inputs.
+                with self.controller.confirmation_batch(self._clock):
+                    with self.controller.direct_presence_catchup():
+                        await self._drain_device_inputs()
+                        self._deliver_detection(self._clock())
+                    await self._run_cycle()
+            elif accepted:
                 await self._run_cycle()
             self.notify()
 

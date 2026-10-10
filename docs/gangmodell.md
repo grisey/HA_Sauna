@@ -14,6 +14,7 @@ Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließende
 Schließung. Beide Verfahren benötigen ihn für den Eintritt. Für den erkannten
 Austritt genügen eine neue Türöffnung und der passende Erkennungsnachweis;
 ein anschließender Türschluss ist nicht erforderlich.
+Der initiale Türzustand ist geschlossen; er ersetzt keinen Türvorgang.
 
 Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
 Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
@@ -21,16 +22,25 @@ Messfenster aus dem freigegebenen Zeitraum.
 
 ## Gang mit direktem Präsenzsensor erkennen
 
-Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
-und darf nicht vor der Öffnung liegen. Sie kann auch nach dem Türschluss
-eintreffen. Jeder Türvorgang begründet höchstens einen Übergang.
+Beim Schließen einer vollständigen Türfolge muss Anwesenheit anliegen.
+Sie kann bereits vor der Öffnung bestanden haben. Eine spätere Präsenzmeldung
+startet keinen Gang anhand einer früheren Türfolge. Bei verspäteter Türerkennung
+zählt der bereits empfangene Präsenzzustand zur ursprünglichen Schließzeit.
+Jeder Türvorgang begründet höchstens einen Übergang.
+Ein Gang endet erst bei Abwesenheit nach einer neuen Austrittsöffnung und
+bestätigtem Durchlüften derselben Öffnung. Die beiden Nachweise können in
+beliebiger Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
+vor dem vollständigen Nachweis verhindern das Gangende.
+Abwesenheit nach einer bereits geschlossenen Türfolge benötigt eine neue
+Austrittsöffnung. Eine verspätet empfangene Abwesenheitsmeldung bleibt gültig,
+wenn ihre Zustandszeit innerhalb der damaligen Öffnungsfolge liegt.
 
 | Beleg | Wirkung |
 | --- | --- |
 | Vollständiger Türvorgang mit Anwesenheit und erfüllten Startbedingungen | Bestätigter Gang ab Türschluss, ohne Wartefrist oder erforderlichen Aufguss |
-| Nachfolgende Türöffnung mit zugehöriger Abwesenheit | Gangende ohne erforderlichen Türschluss |
+| Neue Türöffnung mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis, ohne erforderlichen Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
-| Durchlüften | Kein Gangende |
+| Durchlüften ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
 Ein Türvorgang unterhalb der Mindesttemperatur wird durch späteres Aufheizen

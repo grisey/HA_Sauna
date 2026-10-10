@@ -102,6 +102,9 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
         await door("exit-open", Kind.DOOR_OPEN)
         await presence("off")
+        self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
+        self.assertIsNone(runtime.session.after_run)
+        await door("exit-ventilation", Kind.VENTILATION)
         self.assertIsNone(runtime.session.timeline.active)
         ended = runtime.session.timeline.completed[-1]
         self.assertEqual(runtime.session.timeline.door, "open")

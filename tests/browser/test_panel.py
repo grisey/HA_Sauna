@@ -2525,12 +2525,25 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         screenshots.mkdir(parents=True, exist_ok=True)
         await self.panel.get_by_role("button", name="Manuell steuern", exact=True).click()
         await expect(self.panel.locator('.light-instrument #manual-light-value-overview')).to_be_visible()
-        await self.panel.locator('[data-action="control-mode:automatic"]').click()
-        await self.panel.locator('#current [data-action="operation"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as automatic:
+            await self.panel.locator('[data-action="control-mode:automatic"]').click()
+        self.assertTrue((await automatic.value).ok)
+        async with self.page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
+            await self.panel.locator('#current [data-action="operation"]').click()
+        self.assertTrue((await started.value).ok)
         await expect(self.panel.locator('#current [data-light-status]')).to_have_count(0)
         field = self.panel.locator("#manual-light-value-overview")
-        await field.evaluate("input => { input.value = '60'; }")
-        await field.dispatch_event("change")
+        # Real slider input records its draft before a status redraw can reset
+        # the unfocused field to the observed brightness.
+        async with self.page.expect_response(lambda response: response.url.endswith("/light") and response.request.method == "POST") as changed:
+            await field.evaluate("""input => {
+                input.value = '60';
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            }""")
+        response = await changed.value
+        self.assertTrue(response.ok)
+        self.assertEqual(response.request.post_data_json, {"value": 60})
         status = self.panel.locator('#current [data-light-observation]')
         await expect(status).to_have_text("60 %")
         await self.panel.evaluate("p=>p.refresh()")
@@ -3516,16 +3529,45 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["parameters"]["final_temperature_c"],90)
         self.assertEqual(self.runtime.controller.target_temperature,next_target)
         self.assertEqual(self.entry.options["program_mode"],"progressive")
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=10000)
+        options_before_target = dict(self.entry.options)
+        configuration_before_target = self.runtime.configuration
+        session_program_before_target = (
+            self.runtime.session.temperature_program_mode,
+            self.runtime.session.temperature_program_gangs,
+            self.runtime.session.temperature_program_steps,
+            self.runtime.session.temperature_program_start_gang_count,
+        )
+        self.assertIsNone(self.runtime.session.timeline.active)
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
+        await expect(target_arc).to_have_attribute("aria-label", "Temperatur für den nächsten Gang einstellen")
+        await expect(self.panel.locator('#current .target-caption')).to_have_text("NÄCHSTER GANG")
         await target_arc.focus()
-        await target_arc.press("PageUp")
+        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
+            await target_arc.press("PageUp")
+        response = await result.value
+        self.assertTrue(response.ok)
+        saved = await response.json()
+        self.assertEqual((saved["target_temperature"], saved["next_gang_temperature"]), (80, 80))
         await self.panel.evaluate("p=>p.temperatureChange")
         await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
-        self.assertEqual(self.entry.options["program_mode"],"constant")
+        self.assertEqual(dict(self.entry.options), options_before_target)
+        self.assertIs(self.runtime.configuration, configuration_before_target)
+        self.assertEqual(self.entry.options["program_mode"],"progressive")
+        self.assertEqual((
+            self.runtime.session.temperature_program_mode,
+            self.runtime.session.temperature_program_gangs,
+            self.runtime.session.temperature_program_steps,
+            self.runtime.session.temperature_program_start_gang_count,
+        ), session_program_before_target)
+        self.assertIsNone(self.runtime.session.timeline.active)
+        self.assertEqual(self.runtime.controller.target_temperature, 80)
+        self.assertEqual(self.runtime.controller.next_gang_temperature, 80)
         await self.panel.get_by_role("button", name="Ändern", exact=True).click()
-        await self.panel.locator('[data-action="program-mode:individual"]').click()
+        await expect(self.panel.locator('#progression-start')).to_have_value("70")
+        await expect(self.panel.locator('#progression-end')).to_have_value("90")
         await self.panel.locator('#progression-gangs').fill("2")
-        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
+        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
             await self.panel.locator('[data-action="program-apply"]').click()
         response=await result.value
         self.assertTrue(response.ok)

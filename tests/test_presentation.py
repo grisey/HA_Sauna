@@ -50,6 +50,7 @@ class PresentationTests(unittest.TestCase):
         sauna.observe_direct_presence(binary_presence(
             sauna.presence_entity, "off", at(6), at(6),
         ), at(6))
+        sauna.process(event("exit-ventilation", Kind.VENTILATION, 6.5))
         sauna.process(event("exit-close", Kind.DOOR_CLOSE, 7))
         sauna.report_contactor(False, at(8))
         raw = plain(sauna.session)

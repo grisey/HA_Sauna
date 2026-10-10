@@ -26,8 +26,10 @@ Standardtemperatur aus der Integrationskonfiguration. Danach bleibt eine
 direkt gewählte Solltemperatur erhalten. Gespeicherte Programme behalten
 ihre eigenen Temperaturen.
 
-Eine direkte Sollwertänderung am Temperaturinstrument wirkt sofort und ersetzt das
-Temperaturprogramm durch einen konstanten Sollwert. Programm- und Schnellwahlen
+Bei **Konstant** wirkt eine Sollwertänderung am Temperaturinstrument sofort.
+Während eines Temperaturprogramms ändert das Instrument nur die Temperatur für
+den nächsten Gang. Ein laufender Gang behält seinen Sollwert. Nach dem
+angepassten Gang gelten wieder die ursprünglichen Programmstufen. Programm- und Schnellwahlen
 benötigen während der Sitzung **Programm übernehmen**; außerhalb gelten sie
 sofort. Gangzählung und laufende Zeiten bleiben erhalten.
 

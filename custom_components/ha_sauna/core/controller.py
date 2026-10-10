@@ -57,6 +57,8 @@ class Controller:
         self.presence_source = presence_source
         self.presence_entity = presence_entity
         self.direct_presence = None
+        self._direct_presence_history = []
+        self._direct_presence_catchup = 0
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
@@ -135,6 +137,15 @@ class Controller:
             received_at = utc(received_at())
         return max(at, received_at or at)
 
+    @contextmanager
+    def direct_presence_catchup(self):
+        """Resolve an exit only after queued inputs and the new report agree."""
+        self._direct_presence_catchup += 1
+        try:
+            yield
+        finally:
+            self._direct_presence_catchup -= 1
+
     def _record_recognition_gate(self, at):
         """Remember only admission results booked by this leading controller."""
         session = self._session
@@ -162,6 +173,10 @@ class Controller:
                 if gate[0] <= at]
         if past:
             self._gang_temperature_gates = self._gang_temperature_gates[past[-1]:]
+        past = [index for index, report in enumerate(self._direct_presence_history)
+                if report.effective_at <= at]
+        if past:
+            self._direct_presence_history = self._direct_presence_history[past[-1]:]
 
     def _recognition_context_current(self, at):
         """A later OFF/cooling boundary retires an earlier recognition stretch."""
@@ -201,6 +216,9 @@ class Controller:
 
     @property
     def target_temperature(self) -> float | None:
+        return self._temperature_target()
+
+    def _temperature_target(self, *, next_gang=False) -> float | None:
         start = self.parameters.values.get("target_temperature_c")
         if self.control_mode == "manual":
             return start
@@ -213,7 +231,16 @@ class Controller:
         )
         if mode != "progressive" or start is None or end is None:
             return start
+        if (not next_gang and session and session.timeline.active is not None
+                and session.timeline.active.gang_id == session.active_gang_temperature_id):
+            return session.active_gang_temperature_c
+        if session and session.next_gang_temperature_c is not None:
+            active = session.timeline.active
+            if next_gang or active is None or active.gang_id != session.next_gang_temperature_blocked_by:
+                return session.next_gang_temperature_c
         completed = session.timeline.gang_count if session else 0
+        if next_gang and session and session.timeline.active is not None:
+            completed += 1
         base_anchor = session.temperature_base_gang_count if session else 0
         program_anchor = session.temperature_program_start_gang_count if session else 0
         if session and session.temperature_base_c is not None:
@@ -239,6 +266,35 @@ class Controller:
         return TemperatureProgram(start, end, remaining, steps).target(
             elapsed_after_base
         )
+
+    @property
+    def next_gang_temperature(self) -> float | None:
+        return self._temperature_target(next_gang=True)
+
+    def set_next_gang_temperature(self, value, at):
+        """Override one forthcoming actual gang without changing its program."""
+        parameters = Parameters({**self.parameters.as_dict(), "target_temperature_c": value})
+        self.advance(at, evaluate=False)
+        session = self._session
+        if (session is None or self.control_mode != "automatic"
+                or (session.temperature_program_mode or self.program_mode) != "progressive"):
+            raise ValueError("Ein laufendes Temperaturprogramm ist erforderlich")
+        active = session.timeline.active
+        # A new choice during an overridden gang must retain that gang's target.
+        if (active is not None and session.next_gang_temperature_c is not None
+                and active.gang_id != session.next_gang_temperature_blocked_by):
+            session = replace(
+                session,
+                active_gang_temperature_c=session.next_gang_temperature_c,
+                active_gang_temperature_id=active.gang_id,
+            )
+        self._session = replace(
+            session,
+            next_gang_temperature_c=parameters.values["target_temperature_c"],
+            next_gang_temperature_blocked_by=active.gang_id if active else None,
+        )
+        self._latch_readiness(utc(at))
+        self._evaluate(utc(at))
 
     def update_temperature_parameters(
         self,
@@ -282,6 +338,14 @@ class Controller:
             new_program = True
         if self._session and (changed or explicit_target or new_program or form_changed):
             completed = self._session.timeline.gang_count
+            if explicit_target or new_program:
+                self._session = replace(
+                    self._session,
+                    next_gang_temperature_c=None,
+                    next_gang_temperature_blocked_by=None,
+                    active_gang_temperature_c=None,
+                    active_gang_temperature_id=None,
+                )
             if explicit_target:
                 # A direct setpoint deliberately remains fixed for later gangs.
                 self._session = replace(
@@ -816,6 +880,27 @@ class Controller:
             # episode to a current person search after operation/cooling resumes.
             timeline = replace(timeline, anchor=None, preparation=None)
         self._session = replace(previous, timeline=timeline)
+        if (previous.active_gang_temperature_id is not None
+                and (timeline.active is None
+                     or timeline.active.gang_id != previous.active_gang_temperature_id)):
+            self._session = replace(
+                self._session,
+                active_gang_temperature_c=None,
+                active_gang_temperature_id=None,
+            )
+        if previous.next_gang_temperature_c is not None:
+            completed_ids = {gang.gang_id for gang in previous.timeline.completed}
+            if any(
+                gang.gang_id not in completed_ids
+                and gang.confirmation == Confirmation.CONFIRMED
+                and gang.gang_id != previous.next_gang_temperature_blocked_by
+                for gang in timeline.completed
+            ):
+                self._session = replace(
+                    self._session,
+                    next_gang_temperature_c=None,
+                    next_gang_temperature_blocked_by=None,
+                )
         active = timeline.active
         # A person signal is only provisional.  The latch is consumed when an
         # infusion actually confirms the gang, so a retracted signal can keep
@@ -864,6 +949,8 @@ class Controller:
                 self._create_session_light(
                     self._session.session_id, event.booking_at, ends_at
                 )
+        if event.kind == Kind.DOOR_CLOSE:
+            self._reconcile_direct_presence(event.booking_at, entry_event=event)
         self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
@@ -1282,7 +1369,7 @@ class Controller:
         self._session = replace(session, thermostat=state)
         return decision
 
-    def observe_direct_presence(self, report, at):
+    def observe_direct_presence(self, report, at, *, defer_evaluation=False):
         """Use only the selected entity; absence alone never finishes a round."""
         if (self.presence_source != "ha_presence"
                 or report.source != self.presence_entity
@@ -1294,18 +1381,31 @@ class Controller:
             or report.effective_at < previous.effective_at
         ):
             return False
-        self.advance(at, evaluate=False)
+        if not defer_evaluation:
+            self.advance(at, evaluate=False)
         self.direct_presence = report
-        self._evaluate(at)
+        self._direct_presence_history.append(report)
+        if self._session is None:
+            self._direct_presence_history = [report]
+        if not defer_evaluation:
+            self._evaluate(at)
         return True
 
-    def _reconcile_direct_presence(self, at):
-        """Entry needs both door edges; exit needs an opening and absence.
+    def _reconcile_direct_presence(self, at, *, entry_event=None):
+        """Only a complete door closure can start a round with present occupancy.
 
-        No waiting duration is invented. An unavailable report never establishes
-        an exit. A used door cycle cannot start or end another round.
+        A current absence and confirmed ventilation of the same exit opening
+        finish a round. Delayed entry closure uses occupancy at its original
+        time, without reusing an earlier entry cycle or inventing a delay.
         """
-        session, report = self._session, self.direct_presence
+        session = self._session
+        report = (
+            next((report for report in reversed(self._direct_presence_history)
+                  if report.effective_at <= entry_event.effective_at
+                  and report.received_at <= self._received_at(at)), None)
+            if entry_event is not None and session is not None
+            and session.timeline.active is None else self.direct_presence
+        )
         if (self.presence_source != "ha_presence" or session is None
                 or not session.operation_enabled or report is None
                 or not report.available or report.received_at > self._received_at(at)):
@@ -1313,25 +1413,34 @@ class Controller:
         t = session.timeline
         opening = t.opening if t.door == Door.OPEN else t.closed_opening
         if (opening is None
-                or report.effective_at < opening.effective_at
                 or self.recognition_context_at(opening.effective_at)[1] is not None
                 or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
-            if (not t.entry_cycle_available
+            if (entry_event is None or not t.entry_cycle_available
+                    or t.anchor.event_id != entry_event.event_id
                     or report.occupancy != "present" or self._gang_start_blocked(session)
                     or not self._gang_anchor_allowed_at(t.anchor.effective_at)):
                 return False
             kind = Kind.PRESENCE_CONFIRMED
             source = t.anchor
         else:
-            if (report.occupancy != "absent"
+            ventilation = t.exit_ventilation
+            if (self._direct_presence_catchup
+                    or report.occupancy != "absent"
+                    or ventilation is None
+                    or report.effective_at < opening.effective_at
+                    or (t.door == Door.CLOSED
+                        and (t.anchor is None
+                             or report.effective_at > t.anchor.effective_at))
                     or opening.event_id in t.rejected_start_sources
                     or opening.effective_at <= t.active.started_at):
                 return False
             kind = Kind.PRESENCE_ENDED
             source = opening
         effective = max(source.effective_at, report.effective_at)
+        if kind == Kind.PRESENCE_ENDED:
+            effective = max(effective, ventilation.effective_at)
         if effective > at:
             return False
         self.process(Event(
@@ -1596,7 +1705,10 @@ class Controller:
                     booking_at=now,
                 )
                 self._session = replace(
-                    self._session, timeline=apply(session.timeline, event)
+                    self._session,
+                    timeline=apply(session.timeline, event),
+                    active_gang_temperature_c=None,
+                    active_gang_temperature_id=None,
                 )
         elif deadline.purpose == "after_run":
             phase = session.after_run

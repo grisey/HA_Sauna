@@ -32,6 +32,23 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(self.closed.preparation, self.vent)
         self.assertIsNone(self.closed.open_ventilation)
 
+    def test_initial_closed_door_does_not_invent_an_entry_cycle(self):
+        self.assertEqual(self.empty.door, Door.CLOSED)
+        self.assertIsNone(self.empty.anchor)
+        self.assertIsNone(self.empty.opening)
+        self.assertIsNone(self.empty.closed_opening)
+        self.assertEqual(self.empty.processed, ())
+        self.assertFalse(self.empty.entry_cycle_available)
+        with self.assertRaises(ValueError):
+            apply(self.empty, e("unpaired-close", Kind.DOOR_CLOSE, "21:15:00"))
+
+    def test_explicit_historical_unknown_door_remains_unknown(self):
+        unknown = Timeline("s", t("18:55:42"), door=Door.UNKNOWN)
+        self.assertEqual(unknown.door, Door.UNKNOWN)
+        self.assertFalse(unknown.entry_cycle_available)
+        with self.assertRaises(ValueError):
+            apply(unknown, self.person)
+
     def test_person_creates_provisional_gang_with_provenance(self):
         gang = self.active.active
         self.assertEqual(gang.confirmation, Confirmation.PROVISIONAL)
@@ -144,6 +161,126 @@ class TimelineTests(unittest.TestCase):
         self.assertIsNotNone(state.active)
         self.assertEqual(len(state.completed), 0)
 
+    def direct_exit(self, *, closed, ventilated=True):
+        state = apply(self.closed, e("present", Kind.PRESENCE_CONFIRMED, "21:15:51"))
+        state = apply(state, e("exit-open", Kind.DOOR_OPEN, "21:16:10"))
+        if ventilated:
+            state = apply(state, e("exit-vent", Kind.VENTILATION, "21:16:12"))
+        if closed:
+            state = apply(state, e("exit-close", Kind.DOOR_CLOSE, "21:16:20"))
+        return state
+
+    def test_direct_exit_requires_ventilation_of_its_opening(self):
+        for closed in (False, True):
+            with self.subTest(closed=closed):
+                state = self.direct_exit(closed=closed, ventilated=False)
+                self.assertIsNone(state.exit_ventilation)
+                with self.assertRaises(ValueError):
+                    apply(state, e("absence", Kind.PRESENCE_ENDED,
+                                   "21:17:00", effective="21:16:15"))
+                self.assertIsNotNone(state.active)
+                self.assertEqual(state.completed, ())
+
+    def test_direct_ventilation_is_evidence_without_ending_the_gang(self):
+        for closed in (False, True):
+            with self.subTest(closed=closed):
+                state = self.direct_exit(closed=closed)
+                self.assertEqual(state.exit_ventilation.event_id, "exit-vent")
+                self.assertIsNotNone(state.active)
+                self.assertEqual(state.completed, ())
+
+    def test_exit_ventilation_rejects_original_time_before_opening(self):
+        state = self.direct_exit(closed=False, ventilated=False)
+        state = apply(state, e("stale-vent", Kind.VENTILATION,
+                               "21:16:15", effective="21:16:09"))
+        self.assertIsNone(state.exit_ventilation)
+        with self.assertRaises(ValueError):
+            apply(state, e("absence", Kind.PRESENCE_ENDED, "21:16:16"))
+        state = apply(state, e("exit-close", Kind.DOOR_CLOSE, "21:16:20"))
+        self.assertIsNone(state.exit_ventilation)
+        with self.assertRaises(ValueError):
+            apply(state, e("delayed-absence", Kind.PRESENCE_ENDED,
+                           "21:17:00", effective="21:16:16"))
+
+    def test_closed_exit_ventilation_rejects_original_time_after_closure(self):
+        state = self.direct_exit(closed=False, ventilated=False)
+        state = apply(state, e("vent", Kind.VENTILATION, "21:16:22"))
+        state = apply(state, e("delayed-close", Kind.DOOR_CLOSE,
+                               "21:16:23", effective="21:16:20"))
+        self.assertIsNone(state.exit_ventilation)
+        with self.assertRaises(ValueError):
+            apply(state, e("delayed-absence", Kind.PRESENCE_ENDED,
+                           "21:17:00", effective="21:16:15"))
+
+    def test_new_opening_discards_previous_exit_ventilation(self):
+        state = self.direct_exit(closed=True)
+        self.assertIsNotNone(state.exit_ventilation)
+        state = apply(state, e("next-open", Kind.DOOR_OPEN, "21:16:30"))
+        self.assertIsNone(state.exit_ventilation)
+        self.assertIsNone(state.preparation)
+        self.assertIsNone(state.open_ventilation)
+        with self.assertRaises(ValueError):
+            apply(state, e("absence", Kind.PRESENCE_ENDED, "21:16:31"))
+        state = apply(state, e("next-vent", Kind.VENTILATION, "21:16:32"))
+        self.assertEqual(state.exit_ventilation.event_id, "next-vent")
+        ended = apply(state, e("current-absence", Kind.PRESENCE_ENDED, "21:16:33"))
+        self.assertIsNone(ended.active)
+        self.assertEqual(ended.gang_count, 1)
+
+    def test_exit_ventilation_needs_the_corresponding_opening(self):
+        for door in (Door.OPEN, Door.CLOSED, Door.UNKNOWN):
+            with self.subTest(door=door):
+                state = Timeline("s", t("18:55:42"), door=door,
+                                 open_ventilation=self.vent, preparation=self.vent,
+                                 anchor=self.closed.anchor)
+                self.assertIsNone(state.exit_ventilation)
+
+    def test_closed_direct_exit_rejects_absence_from_after_its_closure(self):
+        state = self.direct_exit(closed=True)
+        with self.assertRaises(ValueError):
+            apply(state, e("later-absence", Kind.PRESENCE_ENDED,
+                           "21:17:00", effective="21:16:21"))
+        self.assertIsNotNone(state.active)
+        self.assertEqual(state.gang_count, 0)
+
+    def test_delayed_direct_exit_uses_original_absence_within_door_episode(self):
+        state = self.direct_exit(closed=True)
+        for effective in ("21:16:10", "21:16:15", "21:16:20"):
+            with self.subTest(effective=effective):
+                ended = apply(state, e("delayed-absence", Kind.PRESENCE_ENDED,
+                                       "21:17:00", effective=effective))
+                self.assertIsNone(ended.active)
+                self.assertEqual(ended.gang_count, 1)
+                self.assertEqual(ended.completed[0].ended_at, t("21:17:00"))
+
+    def test_delayed_exit_ventilation_uses_original_time_within_closed_episode(self):
+        for effective in ("21:16:10", "21:16:15", "21:16:20"):
+            with self.subTest(effective=effective):
+                state = self.direct_exit(closed=False, ventilated=False)
+                ventilation = e("delayed-vent", Kind.VENTILATION,
+                                "21:16:30", effective=effective)
+                state = apply(state, ventilation)
+                state = apply(state, e("delayed-close", Kind.DOOR_CLOSE,
+                                       "21:16:31", effective="21:16:20"))
+                self.assertEqual(state.exit_ventilation, ventilation)
+                ended = apply(state, e("delayed-absence", Kind.PRESENCE_ENDED,
+                                       "21:17:00", effective="21:16:20"))
+                self.assertIsNone(ended.active)
+                self.assertEqual(ended.completed[0].ended_at, t("21:17:00"))
+
+    def test_direct_exit_with_open_door_needs_no_closure(self):
+        state = self.direct_exit(closed=False)
+        ended = apply(state, e("absence", Kind.PRESENCE_ENDED, "21:16:15"))
+        self.assertEqual(ended.door, Door.OPEN)
+        self.assertIsNone(ended.active)
+        self.assertEqual(ended.gang_count, 1)
+
+    def test_direct_exit_rejects_absence_from_before_its_opening(self):
+        state = self.direct_exit(closed=True)
+        with self.assertRaises(ValueError):
+            apply(state, e("earlier-absence", Kind.PRESENCE_ENDED,
+                           "21:17:00", effective="21:16:09"))
+
     def test_confirmed_ventilation_finishes_once(self):
         state = apply(self.active, e("water", Kind.INFUSION, "21:22:52"))
         state = apply(state, e("open", Kind.DOOR_OPEN, "21:27:15"))
@@ -214,14 +351,16 @@ class TimelineTests(unittest.TestCase):
             apply(self.active, e("x", Kind.INFUSION, "21:18:00"))
 
     def test_no_activation_with_unknown_or_open_door(self):
+        unknown = Timeline("s", t("18:55:42"), door=Door.UNKNOWN)
         opened = apply(self.empty, e("o", Kind.DOOR_OPEN, "21:00:00"))
-        for state in (self.empty, opened):
+        for state in (unknown, opened):
             with self.subTest(door=state.door), self.assertRaises(ValueError):
                 apply(state, self.person)
 
     def test_every_proxy_start_requires_both_door_edges(self):
         known_closed = Timeline("s", t("18:55:42"), door=Door.CLOSED)
-        bare_close = apply(self.empty, e("close-only", Kind.DOOR_CLOSE, "21:15:00"))
+        unknown = Timeline("s", t("18:55:42"), door=Door.UNKNOWN)
+        bare_close = apply(unknown, e("close-only", Kind.DOOR_CLOSE, "21:15:00"))
         opened = apply(self.empty, e("open-only", Kind.DOOR_OPEN, "21:15:00"))
         for state in (self.empty, known_closed, bare_close, opened):
             for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
