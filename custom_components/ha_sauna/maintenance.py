@@ -44,7 +44,7 @@ def expected_entities(entry):
     return {
         (platform, entity.unique_id)
         for platform in ("number", "sensor", "switch", "climate", "button")
-        for entity in import_module(f".{platform}", __package__).entities_for_entry(entry)
+        for entity in import_module(f"{__package__}.{platform}").entities_for_entry(entry)
     }
 
 

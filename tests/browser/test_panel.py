@@ -2217,6 +2217,65 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.title, "Gartensauna")
         from homeassistant.helpers import entity_registry as er
         registry = er.async_get(self.hass)
+        from homeassistant.helpers import device_registry as dr
+        from custom_components.ha_sauna.rename_selection import rename_groups
+
+        device = dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self.entry.entry_id,
+            identifiers={("fixture", "rename-heater")}, name="Ofenrelais Prüffixture",
+        )
+        heater_entry = registry.async_get(self.heater.entity_id)
+        self.assertIsNotNone(heater_entry)
+        registry.async_update_entity(heater_entry.entity_id, device_id=device.id)
+        selected_before = registry.async_get(self.operation)
+        options_before = dict(self.entry.options)
+        runtime_before = self.entry.runtime_data
+        rename = rename_groups(self.hass, self.entry)
+        controls = rename["own:controls"]
+        controls_label = f"{controls['label']} ({len(controls['entities'])})"
+        external = rename[f"device:{device.id}"]
+        external_label = f"{external['label']} ({len(external['entities'])})"
+        await menu.get_by_text("Entität umbenennen", exact=True).click()
+        group_picker = dialog.locator("ha-selector-select")
+        await group_picker.locator("ha-select").click()
+        await expect(group_picker.get_by_text(controls_label, exact=True)).to_be_visible()
+        await expect(group_picker.get_by_text(external_label, exact=True)).to_be_visible()
+        await self.page.screenshot(path=str(screenshots / "options_rename_groups.png"), full_page=True)
+        await group_picker.get_by_text(controls_label, exact=True).click()
+        await dialog.get_by_role("button", name="Weiter", exact=True).click()
+        await expect(dialog.get_by_text("Entität auswählen", exact=True)).to_be_visible()
+        picker = dialog.locator("ha-selector-entity ha-entity-picker")
+        await expect(picker).to_be_visible()
+        await picker.click()
+        search = picker.locator("input:visible").first
+        await expect(search).to_be_visible()
+        await search.fill("Saunabetrieb")
+        operation_option = picker.get_by_text("Saunabetrieb", exact=False).last
+        await expect(operation_option).to_be_visible()
+        await self.page.screenshot(path=str(screenshots / "options_rename_search.png"), full_page=True)
+        await operation_option.click()
+        await expect(dialog.locator("ha-selector-entity")).to_have_js_property("value", self.operation)
+        await dialog.get_by_role("button", name="Weiter", exact=True).click()
+        entity_id_input = dialog.get_by_role("textbox", name=re.compile(r"^Entitäts-ID"))
+        await expect(entity_id_input).to_have_value(self.operation)
+        await self.page.screenshot(path=str(screenshots / "options_rename_edit.png"), full_page=True)
+        # Back from a deliberately edited draft must never rename the entity.
+        await dialog.get_by_role("textbox", name=re.compile(r"^Anzeigename")).fill("Nicht speichern")
+        await dialog.locator("ha-selector-boolean ha-switch, ha-selector-boolean ha-checkbox").click()
+        await dialog.get_by_role("button", name="Umbenennen", exact=True).click()
+        await expect(dialog.get_by_text("Entität auswählen", exact=True)).to_be_visible()
+        await dialog.locator("ha-selector-boolean ha-switch, ha-selector-boolean ha-checkbox").click()
+        await dialog.get_by_role("button", name="Weiter", exact=True).click()
+        await expect(dialog.locator("ha-selector-select")).to_be_visible()
+        group_picker = dialog.locator("ha-selector-select")
+        await group_picker.locator("ha-select").click()
+        await group_picker.get_by_text("Zurück zur Übersicht", exact=True).click()
+        await dialog.get_by_role("button", name="Weiter", exact=True).click()
+        await expect(menu.get_by_text("Entität umbenennen", exact=True)).to_be_visible()
+        self.assertEqual(registry.async_get(self.operation), selected_before)
+        self.assertEqual(dict(self.entry.options), options_before)
+        self.assertIs(self.entry.runtime_data, runtime_before)
+        self.assertEqual(await dialog.evaluate("dialog => dialog._step.flow_id"), flow_id)
         retired = registry.async_get_or_create(
             "sensor", "ha_sauna", f"{self.entry.entry_id}_obsolete_example",
             config_entry=self.entry, suggested_object_id="obsolete_example",
@@ -2232,6 +2291,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(menu.get_by_text("Entitäten bereinigen", exact=True)).to_be_visible()
         self.assertIsNone(registry.async_get(retired.entity_id))
+        await menu.get_by_text("Entitäten bereinigen", exact=True).click()
+        await expect(dialog.get_by_text("Keine veralteten Entitäten", exact=True)).to_be_visible()
+        self.assertEqual(await dialog.evaluate("dialog => dialog._step.step_id"), "cleanup_empty")
+        await self.page.screenshot(path=str(screenshots / "options_cleanup_empty.png"), full_page=True)
+        await menu.get_by_text("Zurück zur Übersicht", exact=True).click()
+        await expect(menu.get_by_text("Entitäten bereinigen", exact=True)).to_be_visible()
+        self.assertEqual(await dialog.evaluate("dialog => dialog._step.flow_id"), flow_id)
         self.assertEqual(self.errors, [])
 
     async def test_native_device_selection_assigns_presence_and_illuminance(self):

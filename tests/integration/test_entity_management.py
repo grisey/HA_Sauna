@@ -12,6 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 
+from custom_components.ha_sauna.rename_selection import rename_groups
 from custom_components.ha_sauna.const import DOMAIN
 from custom_components.ha_sauna.maintenance import (
     MaintenanceError,
@@ -235,6 +236,12 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "rename_entity"}
         )
+        group = next(key for key, value in rename_groups(self.hass, entry).items()
+                     if selected in value["entities"])
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"group": group}
+        )
+        self.assertEqual(flow["step_id"], "rename_entity_select")
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"entity_id": selected.entity_id}
         )
@@ -251,6 +258,74 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.registry.async_get(selected.entity_id))
         self.assertIsNotNone(self.hass.states.get(new_id))
         self.assertEqual(dict(entry.options), before)
+
+    async def test_grouped_rename_keeps_disabled_entities_and_back_navigation(self):
+        entry = await create_sauna(self.hass)
+        selected = next(
+            item for item in er.async_entries_for_config_entry(self.registry, entry.entry_id)
+            if item.unique_id.endswith("_target_temperature_c")
+        )
+        selected = self.registry.async_update_entity(
+            selected.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        await self.hass.async_block_till_done()
+        self.assertIsNone(self.hass.states.get(selected.entity_id))
+        groups = rename_groups(self.hass, entry)
+        group = next(key for key, value in groups.items() if selected in value["entities"])
+        self.assertNotEqual(group, "own:controls")
+        self.assertGreater(len(groups), 3)
+        flow = await self.hass.config_entries.options.async_init(entry.entry_id)
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "rename_entity"}
+        )
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"group": group}
+        )
+        fields = {str(key): value for key, value in flow["data_schema"].schema.items()}
+        self.assertIn(selected.entity_id, [
+            option["value"] for option in fields["inactive_entity_id"].config["options"]
+        ])
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"inactive_entity_id": selected.entity_id}
+        )
+        self.assertEqual(flow["step_id"], "rename_entity_edit")
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"back": True}
+        )
+        self.assertEqual(flow["step_id"], "rename_entity_select")
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"back": True}
+        )
+        self.assertEqual(flow["step_id"], "rename_entity")
+        result = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"group": "back"}
+        )
+        self.assertEqual(result["step_id"], "init")
+        self.assertEqual(self.registry.async_get(selected.entity_id), selected)
+
+    async def test_rename_groups_limit_native_picker_to_selected_group(self):
+        entry, relay = await self.relay_sauna()
+        foreign = self.registry.async_get_or_create(
+            "sensor", "unrelated", "unrelated-picker-source",
+            suggested_object_id="unrelated_picker_source",
+        )
+        groups = rename_groups(self.hass, entry)
+        selected = self.registry.async_get(relay.entity_id)
+        group = next(key for key, value in groups.items() if selected in value["entities"])
+        self.assertTrue(group.startswith("entity:"))
+        self.assertNotIn(foreign.entity_id, [
+            entity.entity_id for value in groups.values() for entity in value["entities"]
+        ])
+        flow = await self.hass.config_entries.options.async_init(entry.entry_id)
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "rename_entity"}
+        )
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"group": group}
+        )
+        fields = {str(key): value for key, value in flow["data_schema"].schema.items()}
+        self.assertEqual(fields["entity_id"].selector_type, "entity")
+        self.assertEqual(fields["entity_id"].config["include_entities"], [relay.entity_id])
 
     async def test_name_only_rename_does_not_reload(self):
         entry, relay = await self.relay_sauna()
@@ -358,6 +433,12 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "rename_entity"}
         )
+        group = next(key for key, value in rename_groups(self.hass, entry).items()
+                     if selected in value["entities"])
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"group": group}
+        )
+        self.assertEqual(flow["step_id"], "rename_entity_select")
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"entity_id": selected.entity_id}
         )

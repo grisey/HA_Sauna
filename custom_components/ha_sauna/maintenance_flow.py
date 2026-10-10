@@ -10,9 +10,10 @@ from .maintenance import (
     async_rename_entity,
     async_rename_sauna,
     cleanup_candidates,
-    manageable_entities,
     remove_entities,
 )
+
+from .rename_selection import rename_groups
 
 
 class MaintenanceOptionsMixin:
@@ -39,36 +40,87 @@ class MaintenanceOptionsMixin:
     async def async_step_rename_entity(self, user_input=None):
         if self._has_session():
             return self.async_abort(reason="session_exists")
-        entities = manageable_entities(self.hass, self.config_entry)
+        self._rename_selected = None
+        groups = rename_groups(self.hass, self.config_entry)
         errors = {}
         if user_input is not None:
-            selected = next((
-                entity for entity in entities if entity.entity_id == user_input.get("entity_id")
-            ), None)
-            if selected is None:
-                errors["entity_id"] = "entity_changed"
-            else:
-                self._rename_selected = selected
-                return await self.async_step_rename_entity_edit()
+            if user_input.get("group") == "back":
+                return self._show_area_menu("init")
+            if user_input.get("group") in groups:
+                self._rename_group = user_input["group"]
+                return await self.async_step_rename_entity_select()
+            errors["group"] = "entity_changed"
         return self.async_show_form(
             step_id="rename_entity",
             data_schema=vol.Schema({
-                vol.Required("entity_id"): selector.SelectSelector({
+                vol.Required("group"): selector.SelectSelector({
                     "options": [
-                        {"value": entity.entity_id, "label": (
-                            f"{entity.name or entity.original_name or entity.entity_id} · {entity.entity_id}"
-                        )}
-                        for entity in entities
-                    ],
+                        {"value": key, "label": f"{group['label']} ({len(group['entities'])})"}
+                        for key, group in groups.items()
+                    ] + [{"value": "back", "label": "Zurück zur Übersicht"}],
                     "mode": "dropdown",
                 }),
             }),
             errors=errors,
         )
 
+    async def async_step_rename_entity_select(self, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        if user_input is not None and user_input.get("back"):
+            return await self.async_step_rename_entity()
+        group = rename_groups(self.hass, self.config_entry).get(
+            getattr(self, "_rename_group", None)
+        )
+        if group is None:
+            return await self.async_step_rename_entity()
+        entities = group["entities"]
+        errors = {}
+        if user_input is not None:
+            choices = [user_input[key] for key in ("entity_id", "inactive_entity_id")
+                       if user_input.get(key)]
+            selected = next((entity for entity in entities
+                             if len(choices) == 1 and entity.entity_id == choices[0]), None)
+            if selected is None:
+                errors["base"] = "entity_changed"
+            else:
+                self._rename_selected = selected
+                return await self.async_step_rename_entity_edit()
+        active = [entity.entity_id for entity in entities
+                  if self.hass.states.get(entity.entity_id) is not None]
+        inactive = [entity for entity in entities if entity.entity_id not in active]
+        fields = {}
+        if active:
+            fields[vol.Optional("entity_id")] = selector.EntitySelector({
+                "include_entities": active,
+            })
+        # HA's native entity picker uses states. Registry-only entries need a
+        # separate labelled selector so disabled entities remain discoverable.
+        if inactive:
+            fields[vol.Optional("inactive_entity_id")] = selector.SelectSelector({
+                "options": [
+                    {"value": entity.entity_id, "label": (
+                        f"{entity.name or entity.original_name or entity.entity_id} · {entity.entity_id}"
+                    )} for entity in sorted(inactive, key=lambda item: (
+                        (item.name or item.original_name or item.entity_id).casefold(), item.entity_id,
+                    ))
+                ],
+                "mode": "dropdown",
+            })
+        fields[vol.Optional("back", default=False)] = selector.BooleanSelector()
+        return self.async_show_form(
+            step_id="rename_entity_select",
+            data_schema=vol.Schema(fields),
+            description_placeholders={"group": group["label"]},
+            errors=errors,
+        )
+
     async def async_step_rename_entity_edit(self, user_input=None):
         if self._has_session():
             return self.async_abort(reason="session_exists")
+        if user_input is not None and user_input.get("back"):
+            self._rename_selected = None
+            return await self.async_step_rename_entity_select()
         selected = getattr(self, "_rename_selected", None)
         if selected is None:
             return await self.async_step_rename_entity()
@@ -95,7 +147,8 @@ class MaintenanceOptionsMixin:
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema({
                     vol.Optional("name"): selector.TextSelector(),
-                    vol.Required("new_entity_id"): selector.TextSelector(),
+                    vol.Optional("new_entity_id"): selector.TextSelector(),
+                    vol.Optional("back", default=False): selector.BooleanSelector(),
                 }),
                 user_input if user_input is not None else {
                     "name": selected.name or selected.original_name or "",
@@ -124,7 +177,7 @@ class MaintenanceOptionsMixin:
         except MaintenanceError as error:
             return self.async_abort(reason=error.code)
         if not self._cleanup_preview:
-            return self.async_show_menu(step_id="cleanup_empty", menu_options=["init"])
+            return await self.async_step_cleanup_empty()
         return self.async_show_form(
             step_id="cleanup_entities",
             data_schema=vol.Schema({
@@ -141,3 +194,8 @@ class MaintenanceOptionsMixin:
             },
             errors=errors,
         )
+
+    async def async_step_cleanup_empty(self, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        return self.async_show_menu(step_id="cleanup_empty", menu_options=["init"])

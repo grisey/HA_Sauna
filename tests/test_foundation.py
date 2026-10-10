@@ -471,7 +471,7 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(
             set(strings["options"]["step"]),
             {"init", "bindings", "binding_entities", "name", "rename_entity",
-             "rename_entity_edit", "cleanup_entities", "cleanup_empty",
+             "rename_entity_select", "rename_entity_edit", "cleanup_entities", "cleanup_empty",
              *areas, *(f"parameters_{key}" for key in subgroups)},
         )
         self.assertEqual(
