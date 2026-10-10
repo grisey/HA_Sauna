@@ -16,7 +16,8 @@ Endzeitpunkt wird nicht erfunden. Sie setzt den Ofenbetrieb nicht fort.
 
 ## Sitzungen exportieren
 
-Der ZIP-Download unter **Einstellungen** erfordert Administratorrechte.
+**Archiv als ZIP herunterladen** unter **Einstellungen → Daten und Wartung**
+erfordert Administratorrechte.
 Er enthält einen konsistenten Stand, auch während einer laufenden Aufzeichnung.
 
 | Datei | Inhalt |

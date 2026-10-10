@@ -5,7 +5,8 @@
 Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
-Die unter **Sitzung starten und beenden** gewählte Tastergeste startet Automatik
+Die unter **Einstellungen → Programme und Start → Sitzung starten und beenden**
+gewählte Tastergeste startet Automatik
 mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Die Auswahl
 richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
 der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
@@ -92,11 +93,12 @@ er benötigt ausdrückliches Einschalten. Die unterbrochene Sitzung bleibt im
 | --- | --- |
 | Programmbibliothek | **Fertig** ändert nur den Entwurf; erst **Programme speichern** übernimmt den gesamten Katalog. Nach Sitzungsende auch ohne Administratorrechte. |
 | Darstellung | Auch die Rücksetzung ändert nur den Entwurf; Speichern wirkt für alle Benutzer der Sauna. |
-| Anlagenparameter und Gerätezuordnungen | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
+| Anlagenwerte und Gerätezuordnungen in der Integrationskonfiguration | Administratorrechte und vollständiges Sitzungsende erforderlich. Die aktuelle Temperaturwahl bleibt erhalten. |
 
 Die gemeinsame Instrumentenform kann für Temperatur, Luftfeuchte und Licht
-einzeln überschrieben werden.
+einzeln überschrieben werden. Die konstanten Temperaturen der Schnellwahl werden
+ebenfalls unter **Darstellung** eingestellt.
 
 Offene oder nach Speicherfehlern verbliebene Entwürfe werden durch Sitzungsende
 nicht übernommen. Protokollstufe und Darstellung bleiben während der Sitzung
-änderbar. [Umfang der Rücksetzungen](parameter.md#standardwerte-wiederherstellen)
+änderbar. [Umfang der Rücksetzungen](parameter.md#werkseinstellungen)

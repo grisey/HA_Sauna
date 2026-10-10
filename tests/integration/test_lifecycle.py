@@ -37,14 +37,26 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         preserved = entry.runtime_data.configuration.as_options()
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
-        self.assertEqual(flow["type"], "form")
+        self.assertEqual(flow["type"], "menu")
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "bindings"})
         self.assertEqual(flow["step_id"], "bindings")
         result = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], dict(entry.options["bindings"]))
         self.assertEqual(result["type"], "create_entry")
         await self.hass.async_block_till_done()
         self.assertEqual(entry.runtime_data.configuration.as_options(), preserved)
-        await async_set_parameters(self.hass, entry, {"session_gap_minutes": 7}, partial=True)
+        flow = await self.hass.config_entries.options.async_init(entry.entry_id)
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "operation"})
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "parameters_session_controls"})
+        values = {definition.key: preserved["parameters"][definition.key]
+                  for definition in EDITABLE_DEFINITIONS
+                  if definition.settings_subgroup == "session_controls"}
+        result = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {**values, "session_gap_minutes": 7})
+        self.assertEqual(result["type"], "create_entry")
         await self.hass.async_block_till_done()
         self.assertEqual(entry.runtime_data.configuration.parameters.values["session_gap_minutes"], 7)
         preserved["parameters"]["session_gap_minutes"] = 7
@@ -65,7 +77,19 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
         switch = next(e.entity_id for e in entities if e.unique_id.endswith("_operation"))
         number = next(e.entity_id for e in entities if e.unique_id.endswith("_session_gap_minutes"))
+        pending = await self.hass.config_entries.options.async_init(entry.entry_id)
+        pending = await self.hass.config_entries.options.async_configure(
+            pending["flow_id"], {"next_step_id": "operation"})
+        pending = await self.hass.config_entries.options.async_configure(
+            pending["flow_id"], {"next_step_id": "parameters_session_controls"})
+        pending_values = {definition.key: entry.options["parameters"][definition.key]
+                          for definition in EDITABLE_DEFINITIONS
+                          if definition.settings_subgroup == "session_controls"}
         await self.hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+        rejected = await self.hass.config_entries.options.async_configure(
+            pending["flow_id"], {**pending_values, "session_gap_minutes": 9})
+        self.assertEqual(rejected["type"], "abort")
+        self.assertEqual(rejected["reason"], "session_exists")
         session_id = runtime.session.session_id
         self.assertTrue(runtime.session.operation_enabled)
         self.assertEqual(self.hass.states.get(switch).state, "on")
@@ -104,6 +128,8 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         original = entry.options["bindings"]["upper_temperature"]
         self.hass.states.async_set("sensor.replacement", "31", self.hass.states.get(original).attributes)
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "bindings"})
         self.assertEqual(flow["step_id"], "bindings")
         bindings = {**entry.options["bindings"], "upper_temperature": "sensor.replacement"}
         await self.hass.config_entries.options.async_configure(flow["flow_id"], bindings)

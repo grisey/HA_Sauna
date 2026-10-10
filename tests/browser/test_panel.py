@@ -1909,92 +1909,108 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.network_errors, [])
         self.assertEqual(self.ws_errors, [])
 
-    async def test_detection_settings_follow_configured_presence_and_preserve_hidden_values(self):
+    async def test_native_ha_options_menu_and_heating_form(self):
+        # HA config registers the real integration page and options-flow HTTP API.
+        # Selectors follow frontend's ha-config-entry-row, step-flow-menu and
+        # ha-selector-number components, not an injected replacement dialog.
+        self.assertTrue(await async_setup_component(self.hass, "config", {}))
+        await self.hass.async_block_till_done()
+        await self.page.reload()
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True).click()
+        await expect(self.page).to_have_url(re.compile(r"/config/integrations/integration/ha_sauna$"))
+        row = self.page.locator("ha-config-entry-row").filter(has_text=self.entry.title)
+        await expect(row).to_be_visible(timeout=30000)
+        configure = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
+          'ui.panel.config.integrations.config_entry.configure')""")
+        self.assertTrue(configure)
+        await row.get_by_role("button", name=configure, exact=True).click()
+        dialog = self.page.locator("dialog-data-entry-flow")
+        menu = dialog.locator("step-flow-menu")
+        groups = section("frontend")["settings_groups"]
+        for group in groups:
+            if group.get("surface") == "integration":
+                await expect(menu.get_by_text(group["label"], exact=True)).to_be_visible()
+        screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "screenshots"
+        screenshots.mkdir(parents=True, exist_ok=True)
+        await self.page.screenshot(path=str(screenshots / "options_menu.png"), full_page=True)
+        area = next(group for group in groups if group["id"] == "operation")
+        await menu.get_by_text(area["label"], exact=True).click()
+        subgroup = next(group for group in section("frontend")["settings_subgroups"]
+                        if group["id"] == "temperature_control")
+        await menu.get_by_text(subgroup["label"], exact=True).click()
+        fields = [item for item in section("parameters")
+                  if item["settings_subgroup"] == subgroup["id"]
+                  and item["minimum"] != item["maximum"]]
+        await expect(dialog.locator("ha-selector-number")).to_have_count(len(fields))
+        for definition in fields:
+            label = re.compile(re.escape(definition["label"]))
+            field = dialog.get_by_role("spinbutton", name=label)
+            await expect(field).to_be_visible()
+            await expect(field).to_have_value(format(self.entry.runtime_data.configuration.parameters.values[definition["key"]], "g"))
+            selector = dialog.locator("ha-selector-number").filter(
+                has=self.page.get_by_role("spinbutton", name=label))
+            await expect(selector.get_by_text(definition["unit"], exact=True)).to_be_visible()
+        await self.page.screenshot(path=str(screenshots / "options_heating.png"), full_page=True)
+        definition = next(item for item in fields if item["key"] == "readiness_offset_c")
+        before = self.entry.runtime_data.configuration.as_options()
+        changed = before["parameters"][definition["key"]] + definition["number_step"]
+        await dialog.get_by_role("spinbutton", name=re.compile(re.escape(definition["label"]))).fill(str(changed))
+        submit = await self.page.evaluate("""() => {
+          const hass = document.querySelector('home-assistant').hass;
+          return hass.localize('component.ha_sauna.options.step.parameters_temperature_control.submit') ||
+            hass.localize('ui.panel.config.integrations.config_flow.submit');
+        }""")
+        self.assertTrue(submit)
+        async with self.page.expect_response(lambda response:
+                "/api/config/config_entries/options/flow/" in response.url
+                and response.request.method == "POST") as response:
+            await dialog.get_by_role("button", name=submit, exact=True).click()
+        saved = await response.value
+        self.assertTrue(saved.ok)
+        self.assertEqual((await saved.json())["type"], "create_entry")
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        before["parameters"][definition["key"]] = changed
+        self.assertEqual(self.runtime.configuration.as_options(), before)
+        self.assertEqual(self.errors, [])
+
+    async def test_installation_settings_belong_to_ha_options_and_preserve_hidden_values(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         from test_presence_runtime import PresenceRuntimeIntegrationTests
 
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        link = self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True)
+        await expect(link).to_have_attribute("href", "/config/integrations/integration/ha_sauna")
+        for group in ("operation", "sensors", "light"):
+            await expect(self.panel.locator(f'[data-action="settings-section:{group}"]')).to_have_count(0)
         saved_proxy = {"confirmation_minutes": 17.25, "strong_humidity_upper": 0.73}
         await async_set_parameters(self.hass, self.entry, saved_proxy, partial=True)
         await self.hass.async_block_till_done()
-        self.runtime = self.entry.runtime_data
-        await self.panel.evaluate("p => p.refresh(true)")
-        self.assertEqual(self.runtime.configuration.presence_source, "proxy")
-        await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        await self.open_settings_section("sensors")
-        sensors = self.panel.locator("#settings-sensors")
-        await expect(sensors.locator("strong").first).to_have_text("Temperatur und Feuchte")
-        await expect(sensors.locator("summary", has_text="Experteneinstellungen")).to_have_count(0)
-        definitions = section("parameters")
-        proxy_keys = [item["key"] for item in definitions if item.get("settings_subgroup") in
-                      {"presence_strong", "presence_weak", "gang_confirmation"}]
-        shared_keys = [item["key"] for item in definitions if item.get("settings_subgroup") in
-                       {"door", "infusion", "ventilation"}]
-        for key in proxy_keys + shared_keys:
-            await expect(sensors.locator(f'input[name="{key}"]')).to_be_visible()
-        infusion_info = sensors.locator('[data-action="program-info:parameter-group:infusion"]')
-        infusion_popup = sensors.locator('[id="info-parameter-group:infusion"]')
-        await infusion_info.click()
-        await expect(infusion_popup).to_be_visible()
-        await expect(infusion_popup).to_contain_text("vorläufigen Gang")
-        await infusion_info.press("Escape")
-        await expect(infusion_popup).to_be_hidden()
-
-        # Reuse the real HA presence fixture: an occupancy binary sensor and an
-        # options update consumed by the integration's configuration listener.
         self.runtime = await PresenceRuntimeIntegrationTests.configure(self)
-        await self.panel.evaluate("p => p.refresh(true)")
-        self.assertEqual(self.runtime.configuration.presence_source, "ha_presence")
-        await expect(sensors.locator("strong").first).to_have_text("Präsenzsensor")
-        for key in proxy_keys:
-            await expect(sensors.locator(f'input[name="{key}"]')).to_have_count(0)
-        for key in shared_keys:
-            await expect(sensors.locator(f'input[name="{key}"]')).to_be_visible()
-        await infusion_info.click()
-        await expect(infusion_popup).to_be_visible()
-        await expect(infusion_popup).to_contain_text("beginnen und beenden keinen Gang")
-        await infusion_info.press("Escape")
-        ventilation_info = sensors.locator('[data-action="program-info:parameter-group:ventilation"]')
-        await ventilation_info.click()
-        await expect(sensors.locator('[id="info-parameter-group:ventilation"]')).to_contain_text(
-            "Diagnosewerte")
-        await ventilation_info.press("Escape")
-
-        await sensors.locator('input[name="door_open_slope"]').fill("-2.1")
-        async with self.page.expect_response(lambda response: response.url.endswith("/parameters")
-                                            and response.request.method == "POST") as saved:
-            await sensors.locator('button[form="settings-parameters"]').click()
-        response = await saved.value
-        self.assertTrue(response.ok)
-        for key, value in saved_proxy.items():
-            self.assertEqual(response.request.post_data_json[key], value)
+        flow = await self.hass.config_entries.options.async_init(self.entry.entry_id)
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "sensors"})
+        self.assertNotIn("parameters_presence_strong", flow["menu_options"])
+        self.assertIn("parameters_door", flow["menu_options"])
+        flow = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {"next_step_id": "parameters_door"})
+        values = {item["key"]: self.entry.options["parameters"][item["key"]]
+                  for item in section("parameters")
+                  if item["settings_subgroup"] == "door" and item["minimum"] != item["maximum"]}
+        result = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], {**values, "door_open_slope": -2.1})
+        self.assertEqual(result["type"], "create_entry")
         await self.hass.async_block_till_done()
-        await expect(self.panel).to_have_js_property("busy", False)
+        self.runtime = self.entry.runtime_data
         self.assertEqual(self.entry.options["parameters"]["door_open_slope"], -2.1)
         for key, value in saved_proxy.items():
             self.assertEqual(self.entry.options["parameters"][key], value)
-
-        self.hass.config_entries.async_update_entry(self.entry, options={
-            **self.entry.options, "presence_source": "proxy"})
-        await self.hass.async_block_till_done()
-        self.runtime = self.entry.runtime_data
         await self.panel.evaluate("p => p.refresh(true)")
-        await expect(sensors.locator("strong").first).to_have_text("Temperatur und Feuchte")
-        for key in proxy_keys + shared_keys:
-            await expect(sensors.locator(f'input[name="{key}"]')).to_be_visible()
-        for key, value in saved_proxy.items():
-            await expect(sensors.locator(f'input[name="{key}"]')).to_have_value(str(value))
-        await expect(sensors.locator('input[name="door_open_slope"]')).to_have_value("-2.1")
+        await expect(link).to_be_visible()
+        await expect(self.panel.locator('input[name="door_open_slope"]')).to_have_count(0)
         self.assertEqual(self.errors, [])
-        # HA reloads the runtime after configuration writes. The real state
-        # endpoint returns 503 during that interval; waitForConfiguration must
-        # recover, as the persisted values and refreshed fields above verify.
-        state_url = f"{self.url}/api/ha_sauna/{self.entry.entry_id}/state"
-        self.assertEqual(
-            self.network_errors, [(state_url, 503)] * len(self.network_errors))
-        self.assertEqual(self.console_errors, [
-            "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
-        ] * len(self.network_errors))
-        self.assertEqual(await self.page.evaluate("window.testErrors"), [])
         self.assertEqual(self.ws_errors, [])
 
     async def test_design_settings_quantity_axes_and_mobile_navigation(self):
@@ -2011,7 +2027,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.panel.locator('[data-settings-section]:visible').count(), 1)
         self.assertEqual(await self.panel.evaluate("""p => p.state.parameters.filter(d => {
           const fields=p.shadowRoot.querySelectorAll(`#parameters input[name="${d.key}"]`);
-          if (d.settings_group === "programs") return fields.length !== 0;
+          if (d.settings_group !== "appearance") return fields.length !== 0;
           return fields.length!==1 || fields[0].form?.id!=="settings-parameters";
         }).map(d=>d.key)"""), [])
         await editor.locator('[data-appearance-color="series_temperature"]').fill("#E64AEB")
@@ -2030,15 +2046,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(toggle).to_have_attribute("aria-expanded", "false")
         await expect(self.panel.locator(".settings-navigation")).to_be_hidden()
         await expect(toggle).to_be_focused()
-        await self.open_settings_section("sensors")
-        await self.open_parameter_group("door_open_drop_c")
-        await expect(self.panel.locator('input[name="door_open_drop_c"]')).to_be_visible()
-        mobile_info = self.panel.locator('[data-action="program-info:parameter:door_open_drop_c"]')
-        mobile_field = self.panel.locator('input[name="door_open_drop_c"]')
+        await self.open_settings_section("appearance")
+        await self.open_parameter_group("preset_step_c")
+        await expect(self.panel.locator('input[name="preset_step_c"]')).to_be_visible()
+        mobile_info = self.panel.locator('[data-action="program-info:parameter:preset_step_c"]')
+        mobile_field = self.panel.locator('input[name="preset_step_c"]')
         await mobile_info.scroll_into_view_if_needed()
         field_before_info = await mobile_field.bounding_box()
         await mobile_info.click()
-        mobile_help = self.panel.locator('#help-door_open_drop_c')
+        mobile_help = self.panel.locator('#help-preset_step_c')
         await expect(mobile_help).to_be_visible()
         help_box = await mobile_help.bounding_box()
         self.assertGreaterEqual(help_box["x"], 0)
@@ -2136,14 +2152,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           .filter(definition => definition.settings_group === 'programs')
           .filter(definition => panel.shadowRoot.querySelector(`#parameters input[name="${definition.key}"]`))
           .map(definition => definition.key)"""), [])
-        target = self.panel.locator('#parameters input[name="readiness_offset_c"]')
-        await self.open_parameter_group("readiness_offset_c")
+        target = self.panel.locator('#parameters input[name="preset_step_c"]')
+        await self.open_parameter_group("preset_step_c")
         await target.fill("55.5")
         before = await target.element_handle()
         await self.panel.evaluate("""p => {
           const state = structuredClone(p.state);
           for (const definition of state.parameters) {
-            if (definition.key === "readiness_offset_c") {
+            if (definition.key === "preset_step_c") {
               definition.minimum = 50;
               definition.maximum = 95;
               definition.step = 1;
@@ -2657,9 +2673,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await info_button.click()
         await expect(popup).to_be_hidden()
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        for section, link in (("sensors", "Sensoren und Geräte zuordnen"), ("maintenance", "Home-Assistant-Protokoll öffnen")):
-            await self.open_settings_section(section)
-            await expect(self.panel.get_by_role("link", name=link)).to_have_css("color", "rgb(255, 255, 255)")
+        await expect(self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True)).to_have_css("color", "rgb(255, 255, 255)")
+        await self.open_settings_section("maintenance")
+        await expect(self.panel.get_by_role("link", name="Home-Assistant-Protokoll öffnen")).to_have_css("color", "rgb(255, 255, 255)")
         await self.open_settings_section("appearance")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
         await chart.hover(position={"x": sample_x, "y": 200})
@@ -2831,9 +2847,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(plot.locator(".diagnostic-legend")).to_have_css("color", "rgb(66, 165, 255)")
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await editor.locator('[data-action="appearance-discard"]').click()
-        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
+        await expect(self.panel.locator('input[name="preset_start_c"]')).to_be_disabled()
         await self.open_settings_section("maintenance")
-        await expect(self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True)).to_be_disabled()
+        await expect(self.panel.get_by_role("button", name="Werkseinstellungen wiederherstellen", exact=True)).to_be_disabled()
         async with self.page.expect_download() as result:
             await self.open_settings_section("maintenance")
             await self.panel.locator('[data-action="export"]').click()
@@ -2942,7 +2958,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(width=width):
                 await self.page.set_viewport_size({"width": width, "height": 720})
                 await self.panel.locator('.main-tabs [data-action="settings"]').click()
-                await self.open_settings_section("operation")
+                await self.open_settings_section("appearance")
                 content = self.panel.locator(".settings-content")
                 await content.evaluate("node => { node.scrollTop = 0; node.querySelectorAll('details').forEach(item => item.open = true); }")
                 header = self.panel.locator("header")
@@ -3133,8 +3149,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         settings = self.panel.locator("#settings")
         await expect(settings.locator("#program-library [data-program-id]").first).to_be_visible(timeout=10000)
         await expect(settings.locator("#button-program")).to_be_visible()
-        await self.open_parameter_group("sauna_min_temperature_c")
-        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_be_disabled()
+        await self.open_parameter_group("preset_start_c")
+        await expect(self.panel.locator('input[name="preset_start_c"]')).to_be_disabled()
         await expect(self.panel.locator('input[name="target_temperature_c"]')).to_have_count(0)
         self.assertTrue(await self.panel.locator('#parameters input[name]').evaluate_all(
             "inputs => inputs.length > 0 && inputs.every(input => input.disabled)"))
@@ -3147,9 +3163,9 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           finally { panel.updateParameters = update; }
         }"""), 0)
         await expect(self.panel.locator('input[name="temperature_increase_c"]')).to_have_count(0)
-        await self.open_parameter_group("sensor_timeout_seconds")
-        help_text = self.panel.locator('#help-sensor_timeout_seconds')
-        help_button = self.panel.locator('[data-action="program-info:parameter:sensor_timeout_seconds"]')
+        await self.open_parameter_group("preset_step_c")
+        help_text = self.panel.locator('#help-preset_step_c')
+        help_button = self.panel.locator('[data-action="program-info:parameter:preset_step_c"]')
         await expect(help_text).to_be_hidden()
         await help_button.click()
         await expect(help_text).to_be_visible()
@@ -3194,22 +3210,22 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="details"]').click()
         await self.panel.locator('[data-action="settings"]').click()
         settings = self.panel.locator("#settings")
-        await self.open_parameter_group("sensor_timeout_seconds")
-        await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_be_enabled()
-        await self.open_settings_section("light")
+        await self.open_parameter_group("preset_step_c")
+        await expect(self.panel.locator('input[name="preset_step_c"]')).to_be_enabled()
+        await self.open_settings_section("appearance")
         await expect(self.panel.locator('input[name="session_light_minutes"]')).to_have_count(0)
         await expect(self.panel.locator("#details [data-door-status]")).to_have_text("Türerkennung ruht")
         await expect(self.panel.locator("#details")).to_contain_text("Außerhalb einer Saunasitzung werden keine Türbewegungen ausgewertet.")
-        await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_value(str(DEFAULT_PARAMETERS["session_light_brightness_percent"]))
+        await expect(self.panel.locator('input[name="session_light_brightness_percent"]')).to_have_count(0)
         self.assertLessEqual(await self.panel.evaluate("p=>p.shadowRoot.querySelector('main').scrollWidth"),390)
         bindings = dict(self.entry.options["bindings"])
-        await self.open_parameter_group("sensor_timeout_seconds")
-        await self.panel.locator('input[name="sensor_timeout_seconds"]').fill("45")
+        await self.open_parameter_group("preset_step_c")
+        await self.panel.locator('input[name="preset_step_c"]').fill("45")
         await self.open_settings_section("maintenance")
-        await self.panel.get_by_role("button", name="Standardwerte wiederherstellen", exact=True).click()
+        await self.panel.get_by_role("button", name="Werkseinstellungen wiederherstellen", exact=True).click()
         await expect(self.panel.locator('#log-level')).to_have_value(section("instance")["log_level"], timeout=15000)
-        await expect(self.panel.locator('input[name="sensor_timeout_seconds"]')).to_have_value(str(DEFAULT_PARAMETERS["sensor_timeout_seconds"]))
-        await expect(self.panel.locator('input[name="sauna_min_temperature_c"]')).to_have_value(str(DEFAULT_PARAMETERS["sauna_min_temperature_c"]))
+        await expect(self.panel.locator('input[name="preset_step_c"]')).to_have_value(str(DEFAULT_PARAMETERS["preset_step_c"]))
+        await expect(self.panel.locator('input[name="preset_start_c"]')).to_have_value(str(DEFAULT_PARAMETERS["preset_start_c"]))
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()

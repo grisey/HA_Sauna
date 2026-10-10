@@ -110,7 +110,7 @@ class PresentationTests(unittest.TestCase):
         self.assertNotIn("Grundgerüst", json.dumps(strings))
         self.assertNotIn("Testsession", json.dumps(strings))
 
-    def test_panel_parameter_labels_and_help_come_from_the_catalog(self):
+    def test_parameter_labels_and_help_come_from_the_catalog(self):
         catalog = {item["key"]: item for item in section("parameters")}
         self.assertEqual({definition.key for definition in EDITABLE_DEFINITIONS}, set(catalog))
         for definition in EDITABLE_DEFINITIONS:
@@ -120,9 +120,51 @@ class PresentationTests(unittest.TestCase):
                 self.assertEqual(definition.description, expected["description"])
                 self.assertTrue(definition.label and definition.description and definition.group)
 
+    def test_integration_parameter_translations_follow_catalog_ownership_and_text(self):
+        root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
+        strings = json.loads((root / "strings.json").read_text())
+        steps = strings["options"]["step"]
+        frontend = section("frontend")
+        catalog = section("parameters")
+        for area in frontend["settings_groups"]:
+            if area.get("surface", "panel") != "integration":
+                continue
+            members = [
+                item for item in catalog
+                if item["settings_group"] == area["id"]
+                and item["minimum"] != item["maximum"]
+            ]
+            with self.subTest(area=area["id"]):
+                self.assertEqual(steps[area["id"]]["title"], area["label"])
+                self.assertEqual(
+                    steps["init"]["menu_options"][area["id"]], area["label"]
+                )
+                expected_menu = {}
+                for subgroup in frontend["settings_subgroups"]:
+                    fields = [
+                        item for item in members
+                        if item["settings_subgroup"] == subgroup["id"]
+                    ]
+                    if not fields:
+                        continue
+                    step_id = f"parameters_{subgroup['id']}"
+                    expected_menu[step_id] = subgroup["label"]
+                    self.assertEqual(steps[step_id]["title"], subgroup["label"])
+                    self.assertEqual(
+                        steps[step_id]["data"],
+                        {item["key"]: item["label"] for item in fields},
+                    )
+                    self.assertEqual(
+                        steps[step_id]["data_description"],
+                        {item["key"]: item["description"] for item in fields},
+                    )
+                self.assertEqual(steps[area["id"]]["menu_options"], expected_menu)
+
     def test_configuration_and_measurement_errors_are_distinct_german_messages(self):
         text=configuration_message(["sensor_timeout_seconds","feedback_timeout_seconds"])
-        self.assertIn("Höchstalter eines Messwerts",text)
+        catalog = {item["key"]: item for item in section("parameters")}
+        for key in ("sensor_timeout_seconds", "feedback_timeout_seconds"):
+            self.assertIn(catalog[key]["label"], text)
         self.assertNotIn("_seconds",text)
         self.assertIn("veraltet",fault_message("upper_temperature","measurement_stale"))
         self.assertIn("noch nicht eingestellt",fault_message("upper_temperature","validity_unconfigured"))

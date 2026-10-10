@@ -11,10 +11,9 @@ deaktiviert sein. Externe Lichttaster werden als manuelle Eingriffe ausgewertet.
 
 ## Sensoren und Geräte zuordnen
 
-Die Integrationskonfiguration enthält Gerätezuordnung, Bedieneingang und
-Erkennungsverfahren. Betriebsparameter, Programme, Licht und Darstellung werden
-in der Sauna-Oberfläche eingestellt. Eine Änderung der Gerätezuordnung erhält
-diese Einstellungen.
+Die Home-Assistant-Integrationskonfiguration enthält **Geräte und Erkennungsverfahren**
+einschließlich Bedieneingang. Eine Änderung der Zuordnung
+erhält die gespeicherten Anlagenwerte, Programme und Darstellung.
 
 Erforderlich sind mindestens ein vollständiges Temperatur-/Feuchtepaar,
 Heizschütz, Bedieneingang und dimmbares Licht. Temperatur und Feuchte eines
@@ -39,6 +38,17 @@ Beide Verfahren benötigen zum Beginn eine erkannte
 Türöffnung mit anschließendem Türschluss. Zum Ende genügen eine erneute
 Öffnung und der passende Abwesenheits- oder Lüftungsnachweis. Die [Gangerkennung](gangmodell.md) beschreibt die
 Bedingungen beider Verfahren.
+
+## Anlagenwerte einstellen
+
+Die Integrationskonfiguration gliedert die dauerhaft wirksamen Anlagenwerte in
+**Betrieb und Ofen**, **Sensoren und Erkennung** sowie **Licht**. Die jeweiligen
+Untergruppen enthalten Regelung, Erkennung und Lichtautomatik.
+Änderungen erfordern Administratorrechte und eine vollständig beendete Sitzung.
+
+Programme, Taster- und Startvorgaben sowie Darstellung bleiben unter
+**Einstellungen** im Sauna-Panel. Die aktuelle Temperaturwahl und vorübergehende
+Ofen- oder Lichtwahl werden in der Steuerungsansicht bedient.
 
 [Einstellungen und Rücksetzungen](parameter.md) ·
 [Sitzung starten und bedienen](bedienung.md)

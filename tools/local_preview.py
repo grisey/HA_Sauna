@@ -426,6 +426,12 @@ class Preview:
         elif path.endswith("/appearance"):
             appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
             return {"appearance": appearance}
+        elif path.endswith("/parameters"):
+            if not self.admin:
+                raise ValueError("Administratorrechte erforderlich")
+            if not isinstance(body, dict) or not body:
+                raise ValueError("Ungültige Einstellungen")
+            asyncio.run(async_set_parameters(self.hass, self.entry, body, partial=True))
         elif path.endswith("/temperature"):
             if not body or set(body) - LIVE_TEMPERATURE_KEYS:
                 raise ValueError("Ungültige Temperatureinstellung")
@@ -481,6 +487,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send(result)
         else:
             self.send_error(404)
+
+    def do_PATCH(self):
+        if urlparse(self.path).path != "/preview/parameters":
+            self.send_error(405)
+            return
+        self.do_POST()
 
     def do_POST(self):
         try:

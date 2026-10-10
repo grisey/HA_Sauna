@@ -175,7 +175,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             expected.as_options(),
         )
 
-    async def test_setup_and_options_expose_only_basic_configuration(self):
+    async def test_setup_and_binding_form_expose_only_hardware_configuration(self):
         expected = {role.key for role in ROLES} | {
             "control_input_mode", "button_event_type", "presence_source",
         }
@@ -184,12 +184,129 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            form = await flow.async_step_init()
+            form = await flow.async_step_bindings()
         self.assertEqual(form["step_id"], "bindings")
         self.assertEqual({str(key) for key in form["data_schema"].schema}, expected)
         for current in (self.flow, flow):
             self.assertFalse(hasattr(current, "async_step_parameters"))
             self.assertFalse(hasattr(current, "async_step_logging"))
+
+    async def test_options_menu_uses_catalog_ownership(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            result = await flow.async_step_init()
+            self.assertEqual(result["type"], "menu")
+            self.assertEqual(result["menu_options"], ["bindings", *self.module.integration_groups()])
+            for area in self.module.integration_groups():
+                menu = await getattr(flow, f"async_step_{area}")()
+                self.assertTrue(menu["menu_options"])
+                for step in menu["menu_options"]:
+                    form = await getattr(flow, f"async_step_{step}")()
+                    self.assertEqual(form["type"], "form")
+                    self.assertTrue(form["data_schema"].schema)
+
+    async def test_installation_save_preserves_concurrent_panel_options(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            form = await flow.async_step_parameters_oven_cooling()
+            definitions = flow._definitions("oven_cooling")
+            submitted = {d.key: self.values[d.key] for d in definitions}
+            self.entry.options = {
+                **self.entry.options,
+                "log_level": "DEBUG",
+                "parameters": {**self.entry.options["parameters"], "target_temperature_c": 81},
+            }
+            before = self.entry.options
+            submitted["after_run_minutes"] = 1
+            result = await flow.async_step_parameters_oven_cooling(submitted)
+        self.assertEqual(form["type"], "form")
+        self.assertEqual(result["type"], "create_entry")
+        self.assertIs(self.entry.options, before)
+        self.assertEqual(result["data"]["log_level"], "DEBUG")
+        self.assertEqual(result["data"]["parameters"]["target_temperature_c"], 81)
+        self.assertEqual(result["data"]["parameters"]["after_run_minutes"], 1)
+        self.assertEqual(
+            {key: value for key, value in result["data"].items() if key != "parameters"},
+            {key: value for key, value in before.items() if key != "parameters"},
+        )
+
+    async def test_installation_forms_use_saved_values_and_preserve_unchanged_fields(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        self.entry.options["parameters"]["after_run_minutes"] = 2
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            form = await flow.async_step_parameters_oven_cooling()
+            marker = next(key for key in form["data_schema"].schema if key.schema == "after_run_minutes")
+            self.assertEqual(marker.description["suggested_value"], 2)
+            submitted = {d.key: self.entry.options["parameters"][d.key] for d in flow._definitions("oven_cooling")}
+            self.entry.options["parameters"]["after_run_minutes"] = 3
+            result = await flow.async_step_parameters_oven_cooling(submitted)
+        self.assertEqual(result["data"]["parameters"]["after_run_minutes"], 3)
+
+    async def test_installation_save_retains_implicit_legacy_cooling_limit(self):
+        from custom_components.ha_sauna.core.parameters import BY_KEY
+        from custom_components.ha_sauna.runtime import Configuration
+
+        old_duration = BY_KEY["oven_cooling_max_minutes"].default + 1
+        raw = dict(self.entry.options["parameters"])
+        raw["after_run_minutes"] = old_duration
+        raw.pop("oven_cooling_max_minutes", None)
+        self.entry.options = {**self.entry.options, "parameters": raw}
+        current = Configuration.from_options(self.entry.options)
+        self.assertEqual(current.parameters.values["oven_cooling_max_minutes"], old_duration)
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            await flow.async_step_parameters_oven_cooling()
+            submitted = {d.key: current.parameters.values[d.key] for d in flow._definitions("oven_cooling")}
+            submitted["after_run_minutes"] = BY_KEY["after_run_minutes"].default
+            result = await flow.async_step_parameters_oven_cooling(submitted)
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(result["data"]["parameters"]["oven_cooling_max_minutes"], old_duration)
+        self.assertNotIn("oven_cooling_max_minutes", self.entry.options["parameters"])
+
+    async def test_installation_dependency_failure_does_not_write(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            await flow.async_step_parameters_temperature_control()
+            submitted = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
+            submitted["sauna_min_temperature_c"] = 100
+            before = self.entry.options
+            result = await flow.async_step_parameters_temperature_control(submitted)
+        self.assertEqual(result["type"], "form")
+        self.assertTrue(result["errors"])
+        self.assertIs(self.entry.options, before)
+        if result["errors"].get("base") == "parameter_dependency":
+            self.assertIn("parameter", result["description_placeholders"])
+            self.assertIn("reason", result["description_placeholders"])
+
+    async def test_installation_rechecks_session_before_save(self):
+        from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
+
+        runtime = self.entry.runtime_data = SaunaRuntime(Configuration.from_options(self.entry.options))
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            await flow.async_step_parameters_oven_cooling()
+            values = {d.key: self.values[d.key] for d in flow._definitions("oven_cooling")}
+            with patch.object(type(runtime), "session", new_callable=PropertyMock, return_value=object()):
+                result = await flow.async_step_parameters_oven_cooling(values)
+        self.assertEqual(result["reason"], "session_exists")
+        self.assertEqual(self.entry.options["parameters"], self.values)
+
+    async def test_presence_method_hides_inapplicable_installation_groups(self):
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        self.entry.options["presence_source"] = "ha_presence"
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            menu = await flow.async_step_sensors()
+            self.assertNotIn("parameters_presence_strong", menu["menu_options"])
+            self.assertIn("parameters_door", menu["menu_options"])
+            rejected = await flow.async_step_parameters_presence_strong()
+        self.assertEqual(rejected["reason"], "settings_unavailable")
 
     async def test_panel_fields_cannot_be_submitted_as_basic_configuration(self):
         flow = self.module.SaunaOptionsFlow()
@@ -205,7 +322,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 result = await self.flow.async_step_user({"name": "Testsauna", **inputs})
                 self.assertEqual(result["errors"], {"base": "unknown_binding"})
                 with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-                    result = await flow.async_step_init(inputs)
+                    result = await flow.async_step_bindings(inputs)
                 self.assertEqual(result["errors"], {"base": "unknown_binding"})
                 self.assertEqual(self.entry.options["parameters"], self.values)
 
@@ -304,7 +421,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 flow = self.module.SaunaOptionsFlow()
                 flow.hass = self.hass
                 with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-                    result = await flow.async_step_init(inputs)
+                    result = await flow.async_step_bindings(inputs)
                 self.assertEqual(result["type"], "create_entry")
                 self.assertEqual(result["data"], {**original, "bindings": inputs})
                 self.assertEqual(self.entry.options, original)
@@ -328,7 +445,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            form = await flow.async_step_init()
+            form = await flow.async_step_bindings()
             submitted = form["data_schema"](bindings)
             result = await flow.async_step_bindings(submitted)
             self.assertEqual(result["data"], before)
@@ -371,11 +488,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            self.assertEqual((await flow.async_step_init())["type"], "form")
+            self.assertEqual((await flow.async_step_init())["type"], "menu")
             # A session can start while the configuration form is open.
             with patch.object(type(runtime), "session", new_callable=PropertyMock, return_value=object()):
                 for inputs in (None, self.inputs):
-                    result = await flow.async_step_init(inputs)
+                    result = await flow.async_step_bindings(inputs)
                     self.assertEqual(result["reason"], "session_exists")
         self.assertEqual(self.entry.options["bindings"], self.inputs)
 
@@ -384,7 +501,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            result = await flow.async_step_init(self.inputs)
+            result = await flow.async_step_bindings(self.inputs)
         self.assertEqual(result["errors"], {"heater": "heater_already_used"})
 
     async def test_presence_entity_required_only_for_ha_source(self):
@@ -404,9 +521,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            rejected = await flow.async_step_init(self.inputs)
+            rejected = await flow.async_step_bindings(self.inputs)
             self.assertEqual(rejected["errors"], {"presence": "entity_required"})
-            result = await flow.async_step_init({**self.inputs, "presence_source": "proxy"})
+            result = await flow.async_step_bindings({**self.inputs, "presence_source": "proxy"})
         self.assertEqual(result["type"], "create_entry")
         self.assertNotIn("presence", result["data"]["bindings"])
         self.assertEqual(result["data"]["presence_source"], "proxy")

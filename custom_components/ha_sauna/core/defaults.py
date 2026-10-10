@@ -185,13 +185,15 @@ def _groups(groups, name):
         _object(
             group, {"id", "label"}, name,
             optional=("description", "descriptions", "presence_sources")
-            if name == "settings_subgroups" else (),
+            if name == "settings_subgroups" else ("surface",),
         )
         if any(
             not isinstance(group[key], str) or not group[key].strip()
             for key in ("id", "label", "description") if key in group
         ):
             raise ValueError(f"defaults.json: invalid {name}")
+        if "surface" in group and group["surface"] not in ("panel", "integration"):
+            raise ValueError(f"defaults.json: invalid {name} surface")
         sources = group.get("presence_sources")
         if sources is not None and (
             not isinstance(sources, list)

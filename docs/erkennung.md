@@ -10,8 +10,8 @@ und Aufgüsse stammen in beiden Verfahren aus Temperatur und Feuchte.
 | Aufguss | Bestätigt den Gang; weitere Aufgüsse werden erfasst | Erfassung im bereits bestätigten Gang |
 | Durchlüften | Nach Austrittsöffnung Nachweis für das Gangende | Diagnose; kein Gangende |
 
-Die Einstellungen trennen Messwertaufbereitung, Türerkennung,
-Personenerkennung, Aufgüsse und Lüftung. Personenschwellen und
+**Sensoren und Erkennung** in der Integrationskonfiguration trennt
+Messwertaufbereitung, Türerkennung, Personenerkennung, Aufgüsse und Lüftung. Personenschwellen und
 Aufgussbestätigungsfrist erscheinen nur beim indirekten Verfahren.
 Ihre gespeicherten Werte bleiben beim Verfahrenswechsel erhalten.
 Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).

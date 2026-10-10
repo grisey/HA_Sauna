@@ -1,5 +1,21 @@
 # Einstellungen und Entitäten
 
+## Wo Einstellungen geändert werden
+
+| Ort | Bereich und Inhalt |
+| --- | --- |
+| Home-Assistant-Integrationskonfiguration | **Geräte und Erkennungsverfahren**: Sensoren, Schaltausgänge, Bedieneingang und Erkennungsverfahren. |
+| Home-Assistant-Integrationskonfiguration | **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**: dauerhaft wirksame Anlagenwerte, nach Funktion in Untergruppen gegliedert. |
+| Sauna-Panel → **Einstellungen** | **Programme und Start**: Programmbibliothek sowie Taster- und Startvorgaben. |
+| Sauna-Panel → **Einstellungen** | **Darstellung**: Instrumente und konstante Temperaturen der Schnellwahl. |
+| Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, Protokollierung und Zurücksetzen. |
+| Sauna-Panel → **Einstellungen** | **Persönlich**: Sauna als Startseite des aktuellen Home-Assistant-Profils. |
+| Sauna-Panel → Steuerung | Aktuelle Temperaturwahl und vorübergehende Ofen- oder Lichtwahl. |
+
+Gespeicherte Anlagenwerte gelten unmittelbar für den Betrieb und bleiben nach
+einem Neustart erhalten. Gerätezuordnungen und Anlagenwerte sind mit
+Administratorrechten nach vollständigem Sitzungsende änderbar.
+
 ## Entitätsrollen
 
 | Rolle | Geeignete Entität |
@@ -41,10 +57,6 @@ HA-Aktualisierungszeit bleiben getrennt.
 
 ## Betriebsparameter abstimmen
 
-Standardwerte, zulässige Grenzen und Programmvorlagen stehen im
-[zentralen Katalog](../custom_components/ha_sauna/defaults.json).
-Gespeicherte Anlagenwerte haben Vorrang.
-
 | Einstellung | Zusammenhang |
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
@@ -60,14 +72,17 @@ Zusammenhänge: [Heizregelung und Licht](betrieb.md),
 
 ## Fehler im Home-Assistant-Protokoll untersuchen
 
-Die Protokollstufe wirkt sofort auf das Home-Assistant-Protokoll.
+Die Protokollstufe unter **Daten und Wartung → Protokollierung** wirkt sofort auf
+das Home-Assistant-Protokoll.
 Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 
-## Standardwerte wiederherstellen
+## Werkseinstellungen
 
-Zurückgesetzt werden Betriebsparameter, Programmbibliothek, Betriebsart,
-aktuelle Temperaturwahl, Tastervorgabe und Protokollstufe.
+**Daten und Wartung → Werkseinstellungen wiederherstellen** setzt Betriebsparameter,
+Programmbibliothek, Betriebsart, aktuelle Temperaturwahl, Tastervorgabe,
+Temperaturschnellwahl und Protokollstufe zurück.
 
-Erhalten bleiben Erkennungsverfahren, Gerätezuordnungen, Taster-/Schalterart samt Ereignistyp,
-Darstellung und Archiv. Die Darstellung hat eine eigene Rücksetzung.
+Erhalten bleiben Gerätezuordnungen, Erkennungsverfahren, Taster-/Schalterart samt
+Ereignistyp sowie Farben, Instrumente, Diagramme und Archiv. Farben, Instrumente
+und Diagramme haben eine eigene Rücksetzung unter **Darstellung**.
 Alle Rücksetzungen der Betriebsparameter sind erst nach Sitzungsende möglich.

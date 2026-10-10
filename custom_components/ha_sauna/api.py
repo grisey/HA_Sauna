@@ -383,11 +383,37 @@ class ParametersView(HomeAssistantView):
             return self.json({"error": str(error)}, status_code=409)
         return self.json({"success": True, "parameters": parameters})
 
+    async def patch(self, request, entry_id):
+        """Merge an administrator's edits with the current serialized settings."""
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime_for(hass, entry_id)
+        body = await json_body(request)
+        try:
+            if not isinstance(body, dict) or not body:
+                raise ParameterError("base", "invalid_parameters")
+            parameters = await async_set_parameters(
+                hass,
+                hass.config_entries.async_get_entry(entry_id),
+                body,
+                partial=True,
+            )
+        except ParameterError as error:
+            return self.json({"error": parameter_error(error)}, status_code=400)
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        return self.json({"success": True, "parameters": parameters})
+
 
 class TemperatureView(ParametersView):
     url = "/api/ha_sauna/{entry_id}/temperature"
     name = "api:ha_sauna:temperature"
     partial = True
+
+    async def patch(self, request, entry_id):
+        """Keep the temperature endpoint restricted to its existing POST API."""
+        raise web.HTTPMethodNotAllowed("PATCH", ["POST"])
 
 
 class ResetParametersView(HomeAssistantView):

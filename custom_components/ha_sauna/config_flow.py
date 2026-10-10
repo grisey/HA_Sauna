@@ -1,4 +1,4 @@
-"""Grundkonfiguration und Hardwarezuordnung der Sauna-Integration."""
+"""Gerätezuordnung und dauerhafte Anlagenwerte der Sauna-Integration."""
 
 from __future__ import annotations
 
@@ -12,9 +12,11 @@ from homeassistant.helpers import selector
 
 from .bindings import ROLES, BindingError, Bindings, metadata_error, validate_metadata
 from .const import CONF_BINDINGS, DOMAIN
-from .core.defaults import instance_default
-from .core.parameters import Parameters
+from .core.defaults import instance_default, section
+from .core.parameters import BY_KEY, EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
+from .presentation import parameter_error
 from .runtime import Configuration
+from .settings import parameter_change
 
 
 def internal_control_source(hass: HomeAssistant, key: str, entity_id: str) -> bool:
@@ -171,12 +173,14 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class SaunaOptionsFlow(OptionsFlow):
-    """Grundkonfiguration ändern und Panel-Einstellungen erhalten."""
+    """Anlagenwerte ändern und unabhängige Panel-Einstellungen erhalten."""
 
     def _has_session(self) -> bool:
         runtime = getattr(self.config_entry, "runtime_data", None)
         if runtime is None or runtime.closed:
             return False
+        if runtime.reconfiguring:
+            return True
         try:
             runtime.check_configuration_change()
         except ValueError:
@@ -184,7 +188,126 @@ class SaunaOptionsFlow(OptionsFlow):
         return False
 
     async def async_step_init(self, user_input=None):
-        return await self.async_step_bindings(user_input)
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        return self.async_show_menu(
+            step_id="init", menu_options=["bindings", *integration_groups()]
+        )
+
+    async def _async_step_area(self, area, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        return self.async_show_menu(
+            step_id=area,
+            menu_options=[
+                f"parameters_{group['id']}"
+                for group in section("frontend")["settings_subgroups"]
+                if self._definitions(group["id"], area=area)
+            ],
+        )
+
+    def _definitions(self, subgroup, *, area=None):
+        source = self.config_entry.options.get("presence_source", instance_default("presence_source"))
+        group = next(
+            item for item in section("frontend")["settings_subgroups"]
+            if item["id"] == subgroup
+        )
+        if source not in group.get("presence_sources", ("proxy", "ha_presence")):
+            return ()
+        areas = integration_groups()
+        return tuple(
+            definition for definition in EDITABLE_DEFINITIONS
+            if definition.settings_group in areas
+            and (area is None or definition.settings_group == area)
+            and definition.settings_subgroup == subgroup
+            and definition.key not in LIVE_TEMPERATURE_KEYS
+            and definition.minimum != definition.maximum
+        )
+
+    async def _async_step_parameters(self, subgroup, user_input=None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
+        definitions = self._definitions(subgroup)
+        if not definitions:
+            return self.async_abort(reason="settings_unavailable")
+        current = Configuration.from_options(self.config_entry.options)
+        effective = current.parameters.as_dict()
+        keys = {definition.key for definition in definitions}
+        if not hasattr(self, "_parameter_baselines"):
+            self._parameter_baselines = {}
+        if user_input is None:
+            self._parameter_baselines[subgroup] = {
+                key: effective.get(key) for key in keys
+            }
+        baseline = self._parameter_baselines.setdefault(
+            subgroup, {key: effective.get(key) for key in keys}
+        )
+        errors = {}
+        group = next(
+            item for item in section("frontend")["settings_subgroups"]
+            if item["id"] == subgroup
+        )
+        placeholders = {
+            "description": group.get("descriptions", {}).get(
+                current.presence_source, group.get("description", "")
+            )
+        }
+        if user_input is not None:
+            try:
+                if set(user_input) - keys:
+                    raise ParameterError("base", "unknown_parameter")
+                for definition in definitions:
+                    if not definition.optional and definition.key not in user_input:
+                        raise ParameterError(definition.key, "required")
+                    if definition.key in user_input:
+                        definition.validate(user_input[definition.key])
+                edits = {
+                    key: value for key, value in user_input.items()
+                    if value != baseline.get(key)
+                }
+                change = parameter_change(
+                    current, edits, partial=True, explicit_target=False
+                )
+                candidate = {
+                    **self.config_entry.options,
+                    "parameters": {
+                        **current.parameters.as_dict(),
+                        **{key: change.configuration.parameters.values[key] for key in edits},
+                    },
+                }
+                Configuration.from_options(candidate)
+            except ParameterError as error:
+                if error.key in keys:
+                    errors[error.key] = error.code
+                else:
+                    errors["base"] = "parameter_dependency"
+                    definition = BY_KEY.get(error.key)
+                    placeholders.update({
+                        "parameter": definition.label if definition else "Anlagenwerte",
+                        "reason": parameter_error(error),
+                    })
+            except ValueError:
+                errors["base"] = "invalid_configuration"
+            else:
+                return self.async_create_entry(title="", data=candidate)
+        fields = {}
+        for definition in definitions:
+            marker = vol.Optional if definition.optional else vol.Required
+            fields[marker(definition.key)] = selector.NumberSelector({
+                "min": definition.minimum if definition.minimum is not None else 0,
+                "max": definition.maximum,
+                "step": definition.step,
+                "unit_of_measurement": definition.unit,
+                "mode": "box",
+            })
+        return self.async_show_form(
+            step_id=f"parameters_{subgroup}",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(fields), user_input if user_input is not None else effective
+            ),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
 
     async def async_step_bindings(self, user_input: dict[str, Any] | None = None):
         if self._has_session():
@@ -256,3 +379,33 @@ class SaunaOptionsFlow(OptionsFlow):
             ),
             errors=errors,
         )
+
+
+def integration_groups():
+    """The catalog owns which settings belong to installation configuration."""
+    return tuple(
+        group["id"] for group in section("frontend")["settings_groups"]
+        if group.get("surface") == "integration"
+    )
+
+
+def _area_step(area):
+    async def step(self, user_input=None):
+        return await self._async_step_area(area, user_input)
+    return step
+
+
+def _parameter_step(subgroup):
+    async def step(self, user_input=None):
+        return await self._async_step_parameters(subgroup, user_input)
+    return step
+
+
+# Home Assistant dispatches named steps; the catalog supplies their identities.
+for _area in integration_groups():
+    setattr(SaunaOptionsFlow, f"async_step_{_area}", _area_step(_area))
+for _subgroup in section("frontend")["settings_subgroups"]:
+    setattr(
+        SaunaOptionsFlow, f"async_step_parameters_{_subgroup['id']}",
+        _parameter_step(_subgroup["id"]),
+    )
