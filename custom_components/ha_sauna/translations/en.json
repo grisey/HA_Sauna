@@ -609,7 +609,17 @@
       "rename_entity": {
         "title": "Entität umbenennen",
         "data": {
-          "entity_id": "Entität"
+          "group": "Bereich oder Gerät"
+        },
+        "submit": "Weiter"
+      },
+      "rename_entity_select": {
+        "title": "Entität auswählen",
+        "description": "{group}",
+        "data": {
+          "entity_id": "Aktive Entität",
+          "inactive_entity_id": "Deaktivierte oder nicht geladene Entität",
+          "back": "Zurück zur Bereichsauswahl"
         },
         "submit": "Weiter"
       },
@@ -618,7 +628,8 @@
         "description": "`{entity_id}`\n\nSauna-Zuordnungen bleiben erhalten. Eine neue Entitäts-ID lädt betroffene Sauna-Instanzen neu; Ofen und Licht werden dabei ausgeschaltet. Verweise in anderen Automationen und Dashboards müssen dort geprüft werden.",
         "data": {
           "name": "Anzeigename",
-          "new_entity_id": "Entitäts-ID"
+          "new_entity_id": "Entitäts-ID",
+          "back": "Zurück zur Entitätsauswahl"
         },
         "data_description": {
           "name": "Leer lassen, um den ursprünglichen Namen zu verwenden."

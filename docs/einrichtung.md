@@ -31,7 +31,8 @@ mit fehlenden oder veralteten Messwerten
 **Saunaname** ändert den Namen des Geräts und der ausgewählten Sauna im Panel.
 Bei mehreren Saunen heißt der gemeinsame Seitenleisteneintrag weiterhin „Sauna“.
 
-**Entität umbenennen** umfasst eigene und zugeordnete Entitäten. Änderungen der
+**Entität umbenennen** ordnet eigene Entitäten nach Funktionsbereichen und
+zugeordnete Entitäten nach Geräten beziehungsweise Rollen. Änderungen der
 Entitäts-ID führen die Zuordnungen aller betroffenen Sauna-Instanzen nach und
 laden diese neu; Ofen und Licht werden dabei ausgeschaltet. Anzeigenamen allein
 erfordern keinen Neustart. Außerhalb dieses Dialogs geänderte IDs werden nicht

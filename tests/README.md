@@ -43,7 +43,7 @@ Die HA-Prüfungen verwenden eine eigene Python-Umgebung gemäß Workflow.
 Installation wie im HA-Job:
 
 ```sh
-python -m pip install 'homeassistant==2026.9.2' 'securetar==2026.4.1' 'cronsim==2.7'
+python -m pip install 'homeassistant==2026.10.0' 'securetar==2026.4.1' 'cronsim==2.7'
 ```
 
 Danach werden Adapter und Integration getrennt ausgeführt. `HA_TEST_REQUIRED=1`
