@@ -381,7 +381,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         for role in ("upper_temperature", "lower_temperature"):
                             entity = baseline["bindings"][role]
                             self.hass.states.async_set(
-                                entity, "85", self.hass.states.get(entity).attributes
+                                entity, str(runtime.controller.thermostat_target),
+                                self.hass.states.get(entity).attributes,
                             )
                         await self.hass.async_block_till_done()
                         self.assertEqual(runtime.controller.phase, "bereit")

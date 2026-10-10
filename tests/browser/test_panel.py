@@ -3366,16 +3366,24 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await expect(target_arc).to_be_visible(timeout=10000)
         await expect(target_arc).to_have_attribute("aria-label", "Solltemperatur einstellen")
+        standard = self.entry.runtime_data.configuration.parameters.values["standard_temperature_c"]
+        await expect(target_arc).to_have_attribute("aria-valuenow", f"{standard:g}")
         await target_arc.focus()
         await expect(target_arc).to_have_css("opacity", "0.35")
         async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await target_arc.press("PageDown")
-        await expect(target_arc).to_have_attribute("aria-valuenow", "70", timeout=10000)
+        minimum = float(await target_arc.get_attribute("aria-valuemin"))
+        decreased = max(minimum, standard - 10 * section("frontend")["temperature_dial_step_c"])
+        await expect(target_arc).to_have_attribute("aria-valuenow", f"{decreased:g}", timeout=10000)
         await self.panel.locator('[data-action="program-mode:individual"]').click()
         await self.panel.evaluate(
             "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
         )
         await expect(self.panel.locator("#progression-end")).to_be_visible()
+        # This program has explicit sample endpoints, independent of the factory target.
+        async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
+            await self.panel.locator('#progression-start').fill("70")
+            await self.panel.locator('#progression-start').press("Tab")
         async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await self.panel.locator('#progression-end').fill("86")
             await self.panel.locator('#progression-end').press("Tab")
