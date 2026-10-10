@@ -53,6 +53,8 @@ function panel(api) {
     "#event-list": { innerHTML: "" },
     "#detection-plots": { innerHTML: "" },
     "#control-history": { innerHTML: "" },
+    "#plots": { innerHTML: "" },
+    "#history-overview": { replaceChildren() {} },
   };
   const p = Object.assign(new Panel(), {
     entry: "e",
@@ -114,7 +116,7 @@ function historyUiPanel(api) {
     nodes,
     select(id) {
       for (const callback of listeners.get("change") || [])
-        callback({ target: { id: "session", value: id } });
+        callback({ target: { id: "session", value: id, matches: () => false } });
     },
   };
 }

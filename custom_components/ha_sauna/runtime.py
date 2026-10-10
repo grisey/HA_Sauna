@@ -1260,14 +1260,23 @@ class SaunaRuntime:
                 raise ValueError("Lichtsteuerung ist nicht verfügbar")
             observation = self.device.light_observation
             actual = observation["brightness_percent"]
-            if observation["available"] and (
-                (value is False and actual == 0)
-                or (value is True and actual > 0)
-                or (
-                    not isinstance(value, bool)
-                    and isinstance(value, (int, float))
-                    and value == round(actual)
+            manual_target = self.device.manual_light_feedback_target
+
+            def matches(brightness):
+                return (
+                    (value is False and brightness == 0)
+                    or (value is True and brightness > 0)
+                    or (
+                        not isinstance(value, bool)
+                        and isinstance(value, (int, float))
+                        and value == round(brightness)
+                    )
                 )
+
+            if (
+                observation["available"]
+                and matches(actual)
+                and (manual_target is None or matches(manual_target))
             ):
                 return
             now = self._clock()
@@ -1314,7 +1323,11 @@ class SaunaRuntime:
                 if self.controller.control_mode == "manual"
                 else self.controller.contactor
             )
-            if isinstance(value, bool) and value is current:
+            if (
+                isinstance(value, bool)
+                and value is current
+                and self.controller.heater_override in (None, value)
+            ):
                 return self.controller.last_decision
             self._validate_heater_override(value)
             decision = self.controller.set_heater_override(value, now)

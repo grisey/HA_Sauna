@@ -3581,9 +3581,9 @@ class SaunaPanel extends HTMLElement {
         background: transparent;
         color: var(--danger-text);
       }
-      .control-status-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sauna-control-gap); margin-bottom: var(--sauna-control-gap); }
-      .control-status-row .state-line { flex: 1 1 auto; min-width: 0; }
-      .control-status-row .control-mode { flex: 0 0 auto; max-width: 100%; }
+      .control-status-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; margin-bottom: var(--sauna-control-gap); }
+      .control-status-row .state-line { grid-column: 1; min-width: 0; }
+      .control-status-row .control-mode { grid-column: 2; justify-self: center; max-width: 100%; }
       .manual-controls {
         margin-top: 16px;
       }
@@ -5254,7 +5254,9 @@ class SaunaPanel extends HTMLElement {
       "#current",
       this.renderControlView({
         modeControls,
-        stateLine: manualMode ? "" : stateLine,
+        stateLine: manualMode
+          ? `<div class="state-line"><div class="phase-time"><strong class="phase" aria-label="Temperaturregelung ${heater.manual === true ? "Ein" : "Aus"}">${heater.manual === true ? "Ein" : "Aus"}</strong></div></div>`
+          : stateLine,
         overviewLightTimer,
         operation,
         temperatureAutomation,
@@ -9215,11 +9217,11 @@ class SaunaPanel extends HTMLElement {
         confirmed =
           command.value === null
             ? control?.manual === null
-            : typeof command.value === "boolean"
-              ? this.outputState(key) === command.value
-              : control?.observation?.available &&
-                Math.round(control.observation.brightness_percent) ===
-                  Math.round(control.manual_feedback_target ?? command.value);
+            : control?.manual === command.manualTarget &&
+              Number.isFinite(control.manual_feedback_target) &&
+              control?.observation?.available &&
+              Math.round(control.observation.brightness_percent) ===
+                Math.round(control.manual_feedback_target);
       }
       const ended =
         (key === "heater" || key === "light") &&
@@ -9248,6 +9250,14 @@ class SaunaPanel extends HTMLElement {
       stage: "sending",
       mode: this.state.configuration?.control_mode,
       session: this.state.session?.timeline?.session_id ?? null,
+      manualTarget:
+        key !== "light"
+          ? undefined
+          : value === true
+            ? this.state.configuration.parameters?.session_light_brightness_percent
+            : value === false
+              ? 0
+              : value,
     };
     this.controlCommands ??= {};
     this.controlCommands[key] = command;

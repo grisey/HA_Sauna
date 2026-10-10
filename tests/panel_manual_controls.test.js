@@ -212,6 +212,7 @@ const renderCurrent = (
       command = deferred(),
       refreshes = [];
     const p = fixture.panel;
+    p.state.configuration.parameters = { session_light_brightness_percent: 50 };
     p.state.manual_controls = {
       heater: {
         manual: false,
@@ -256,7 +257,11 @@ const renderCurrent = (
                 commanded: true,
                 observation: { available: true, on: true },
               }
-            : { manual: 50, observation: { available: true, brightness_percent: 50 } },
+            : {
+                manual: 50,
+                manual_feedback_target: 50,
+                observation: { available: true, brightness_percent: 50 },
+              },
       },
     });
     assert.equal(
@@ -355,6 +360,52 @@ const renderCurrent = (
       null,
       "device brightness resolution must not leave a completed selection pending",
     );
+  }
+  {
+    const { panel: p } = makePanel(enabled);
+    p.state.configuration.parameters = { session_light_brightness_percent: 0 };
+    p.state.manual_controls = {
+      light: {
+        manual: 0,
+        manual_feedback_target: 0,
+        observation: { available: true, brightness_percent: 0 },
+      },
+    };
+    await p.action("light:true");
+    p.acceptState({ ...p.state });
+    assert.equal(
+      p.pendingControlCommand("light"),
+      null,
+      "an ON selection with a configured zero brightness settles at its actual target",
+    );
+    await p.action("light:false");
+    await p.submitLight(42);
+    await p.action("light:false");
+    p.acceptState({
+      ...p.state,
+      manual_controls: {
+        light: {
+          manual: 42,
+          manual_feedback_target: 40,
+          observation: { available: true, brightness_percent: 0 },
+        },
+      },
+    });
+    assert.ok(
+      p.pendingControlCommand("light"),
+      "old OFF observation cannot confirm OFF while the server still reports a conflicting manual target",
+    );
+    p.acceptState({
+      ...p.state,
+      manual_controls: {
+        light: {
+          manual: 0,
+          manual_feedback_target: 0,
+          observation: { available: true, brightness_percent: 0 },
+        },
+      },
+    });
+    assert.equal(p.pendingControlCommand("light"), null);
   }
   {
     const { panel: p } = makePanel(enabled),
@@ -595,6 +646,21 @@ const renderCurrent = (
   );
   const automatic = renderCurrent("automatic"),
     manual = renderCurrent("manual");
+  assert.match(
+    manual,
+    /class="control-status-row"[^]*aria-label="Temperaturregelung Aus">Aus/,
+  );
+  for (const on of [false, true]) {
+    const thermostat = renderCurrent("manual", {
+      heater: { manual: true, observation: { available: true, on } },
+    });
+    assert.match(
+      thermostat,
+      /aria-label="Temperaturregelung Ein">Ein/,
+      "manual operating status stays on while the enabled thermostat cycles its relay",
+    );
+    assert.doesNotMatch(thermostat, /data-phase="manuell"/);
+  }
   assert.match(automatic, /Temperaturwahl/);
   assert.match(automatic, /id="program-choice-body" >/);
   assert.doesNotMatch(automatic, /program-current|data-action="program-toggle"/);
