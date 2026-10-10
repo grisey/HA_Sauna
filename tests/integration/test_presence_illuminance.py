@@ -1,4 +1,5 @@
 """Illuminance keeps original HA reports in the session archive only."""
+import asyncio
 import json
 import sqlite3
 import unittest
@@ -67,6 +68,47 @@ class PresenceIlluminanceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved, [payload for _, payload in records])
         finally:
             Path(exported).unlink()
+
+    async def test_physical_start_before_queued_report_preserves_start_snapshot(self):
+        now = self.runtime._clock()
+        self.runtime._clock = lambda: now
+        old = self.hass.states.get(self.source)
+        control = self.runtime.device.bindings["control_input"]
+
+        async def both_received():
+            while len(self.runtime._pending_device_inputs) < 2:
+                await asyncio.sleep(0)
+
+        # Queue actual HA state events behind the runtime lock so both are
+        # consumed in one FIFO drain before the cycle persists its state.
+        async with self.runtime._lock:
+            self.hass.states.async_set(
+                control, now.isoformat(),
+                {**self.hass.states.get(control).attributes, "event_type": "single_push"},
+            )
+            self.hass.states.async_set(self.source, "37.125", self.attrs)
+            reported = self.hass.states.get(self.source)
+            await asyncio.wait_for(both_received(), 3)
+            self.assertEqual(
+                [event.data["entity_id"]
+                 for _, event in self.runtime._pending_device_inputs],
+                [control, self.source],
+            )
+        await self.hass.async_block_till_done()
+        self.assertTrue(self.runtime.session.operation_enabled)
+        retain_session(self.runtime)
+        records = await self.readings()
+        self.assertEqual(len(records), 2)
+        for (session_id, payload), state, snapshot in zip(
+            records, (old, reported), (True, False), strict=True,
+        ):
+            self.assertEqual(session_id, self.runtime.session.session_id)
+            self.assertEqual(payload["source"], self.source)
+            self.assertEqual(payload["state"], state.state)
+            self.assertEqual(payload["attributes"], dict(state.attributes))
+            self.assertEqual(payload["session_start_snapshot"], snapshot)
+            for key in ("last_changed", "last_updated", "last_reported"):
+                self.assertEqual(payload[key], getattr(state, key).isoformat())
 
     async def test_no_session_no_recording_and_no_light_control_input(self):
         now = self.runtime._clock()

@@ -66,9 +66,9 @@ ROLES = (
     ),
     Role("light", "Dimmbares Saunalicht", ("light",)),
     Role("control_input", "Taster oder Betriebsschalter", ("event", "binary_sensor")),
-    Role("presence", "Präsenzentität", ("binary_sensor",), optional=True),
+    Role("presence", "Präsenzmeldung", ("binary_sensor",), optional=True),
     Role(
-        "presence_illuminance", "Helligkeit am Präsenzsensor", ("sensor",),
+        "presence_illuminance", "Lichtstärke am Präsenzsensor", ("sensor",),
         "illuminance", "lx", optional=True,
     ),
     Role("audio_output", "Audioziel (vorbereitet)", ("media_player",), optional=True),

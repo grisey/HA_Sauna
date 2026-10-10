@@ -166,6 +166,50 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         form = await self.flow.async_step_user({"name": "Sauna", "presence_device": "presence"})
         self.assertEqual(form["errors"], self.module.binding_form_errors(errors))
 
+    async def test_existing_presence_device_adds_missing_lux_and_preserves_manual_assignment(self):
+        self.add_device_entity("binary_sensor.occupied", "presence", {
+            "device_class": "occupancy",
+        })
+        self.add_device_entity("sensor.device_lux", "presence", {
+            "device_class": "illuminance", "unit_of_measurement": "lx",
+        })
+        self.add_device_entity("sensor.external_lux", "external", {
+            "device_class": "illuminance", "unit_of_measurement": "lx",
+        })
+        self.entry.options["bindings"] = {**self.inputs, "presence": "binary_sensor.occupied"}
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
+            form = await flow.async_step_bindings({"presence_device": "presence"})
+            suggested = {
+                str(key): key.description.get("suggested_value")
+                for key in flat_fields(form["data_schema"])
+                if key.description
+            }
+            self.assertEqual(suggested["presence"], "binary_sensor.occupied")
+            self.assertEqual(suggested["presence_illuminance"], "sensor.device_lux")
+            self.assertFalse(form["errors"])
+            # The optional suggestion can still be removed before saving.
+            submitted = self.module.pack_binding_input(suggested)
+            submitted["presence_sensors"].pop("presence_illuminance")
+            result = await flow.async_step_binding_entities(submitted)
+            self.assertNotIn("presence_illuminance", result["data"]["bindings"])
+        saved = {**self.entry.options["bindings"], "presence_illuminance": "sensor.external_lux"}
+        values, errors = self.module.device_bindings(
+            self.hass, {"presence_device": "presence"}, saved=saved
+        )
+        self.assertEqual(values, saved)
+        self.assertFalse(errors)
+        self.add_device_entity("sensor.second_device_lux", "presence", {
+            "device_class": "illuminance", "unit_of_measurement": "lx",
+        })
+        values, errors = self.module.device_bindings(
+            self.hass, {"presence_device": "presence"}, saved=self.entry.options["bindings"]
+        )
+        self.assertEqual(values["presence"], "binary_sensor.occupied")
+        self.assertNotIn("presence_illuminance", values)
+        self.assertEqual(errors, {"presence_illuminance": "ambiguous_entity"})
+
     async def test_device_options_preserve_corrections_and_replace_only_changed_position(self):
         self.registry_entries[self.inputs["upper_temperature"]] = SimpleNamespace(
             device_id="original", platform="test"
@@ -704,7 +748,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             # A session can start while the configuration form is open.
             with patch.object(type(runtime), "session", new_callable=PropertyMock, return_value=object()):
                 for inputs in (None, self.inputs):
-                    result = await flow.async_step_binding_entities(self.module.pack_binding_input(inputs))
+                    submitted = None if inputs is None else self.module.pack_binding_input(inputs)
+                    result = await flow.async_step_binding_entities(submitted)
                     self.assertEqual(result["reason"], "session_exists")
         self.assertEqual(self.entry.options["bindings"], self.inputs)
 

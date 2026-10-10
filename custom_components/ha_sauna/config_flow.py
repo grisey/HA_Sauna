@@ -129,7 +129,7 @@ def device_schema(hass: HomeAssistant, *, include_name=False, saved=None) -> vol
 
 
 def device_bindings(hass: HomeAssistant, devices, *, saved=None):
-    """Suggest only unique compatible entities; changed devices replace their roles."""
+    """Fill missing roles uniquely; preserve assigned roles on unchanged devices."""
     saved = saved or {}
     values = dict(saved)
     errors = {}
@@ -138,9 +138,12 @@ def device_bindings(hass: HomeAssistant, devices, *, saved=None):
     states = hass.states.async_all()
     for device_key, keys in DEVICE_ROLES.items():
         device_id = devices.get(device_key)
-        if not device_id or device_id == previous.get(device_key):
+        if not device_id:
             continue
+        same_device = device_id == previous.get(device_key)
         for key in keys:
+            if same_device and key in saved:
+                continue
             values.pop(key, None)
             candidates = []
             for state in states:

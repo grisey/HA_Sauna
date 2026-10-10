@@ -19,9 +19,14 @@ from archive_performance_fixture import (
 )
 from harness import retain_session
 
+# Performance-fixture contract with ArchiveView's projection=history page size.
+# A full final page requires one additional empty page to close pagination.
+HISTORY_PAGE_LIMIT = 5000
+
 
 class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
     # Reuse setup and cleanup, without inheriting/collecting BrowserTests' tests.
+    # Both setups register addAsyncCleanup; neither defines asyncTearDown.
     with_recorder = True
     set_source = panel_fixture.BrowserTests.set_source
     asyncSetUp = panel_fixture.BrowserTests.asyncSetUp
@@ -67,7 +72,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
             self.panel = self.page.locator("ha-sauna-panel")
             await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
             with patch.object(archive_module.sqlite3, "connect", before_connect if mode == "before" else connect):
-                await self.panel.evaluate("""(p) => {
+                await self.panel.evaluate("""(p, expectedRecords) => {
                     performance.clearResourceTimings();
                     performance.setResourceTimingBufferSize(1000);
                     const m = window.historyBenchmark = {
@@ -84,11 +89,15 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                     p.renderHistory = function(...args) {
                         const began = performance.now();
                         try { return render.apply(this, args); }
+                        catch (error) { m.error = error.stack || String(error); throw error; }
                         finally {
                             m.renderMilliseconds += performance.now() - began;
                             m.renderCalls++;
                             const curves = this.historyChart?.curves;
                             if (curves && !curves.benchmarkWrapped) {
+                                // Creation returns before the initial-render
+                                // RAF. The constructor never calls update, so
+                                // this hook includes the very first curve draw.
                                 curves.benchmarkWrapped = true;
                                 const update = curves.update;
                                 curves.update = function(...args) {
@@ -102,7 +111,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                             }
                             if (m.fullDrawAt == null && !this.historyLoad &&
                                 this.cache.get('volume')?.finalSynced &&
-                                this.chartDataIndex?.indexedCount === 46804 &&
+                                this.chartDataIndex?.indexedCount === expectedRecords &&
                                 curves?.mainPaths.size > 0) {
                                 m.fullDrawAt = performance.now();
                                 requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -114,11 +123,30 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                     p.selected = 'volume';
                     p.historySelectionGeneration = (p.historySelectionGeneration || 0) + 1;
                     p.setPanelView('history');
-                    p.startHistoryLoad();
-                }""")
+                    Promise.resolve(p.startHistoryLoad()).then(() => {
+                        if (p.messages?.history) m.error = String(p.messages.history);
+                        // Loader finalization is synchronous after scheduling
+                        // the final archive RAF. Allow chart creation plus its
+                        // initial RAF, then fail with state instead of waiting
+                        // two minutes when a hook or record count is wrong.
+                        requestAnimationFrame(() => requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                if (m.fullDrawAt == null) m.error = JSON.stringify({
+                                    message: 'loader settled without full curve draw',
+                                    records: p.shown?.records.length,
+                                    indexed: p.chartDataIndex?.indexedCount,
+                                    final: p.cache.get('volume')?.finalSynced,
+                                    paths: p.historyChart?.curves.mainPaths.size,
+                                    loading: !!p.historyLoad
+                                });
+                            });
+                        }));
+                    });
+                }""", ORIGINAL_RECORD_COUNT)
                 await self.page.wait_for_function(
-                    "window.historyBenchmark?.fullFrameAt != null", timeout=120000,
+                    "window.historyBenchmark?.fullFrameAt != null || window.historyBenchmark?.error", timeout=120000,
                 )
+                self.assertIsNone(await self.page.evaluate("window.historyBenchmark.error || null"))
                 result = await self.panel.evaluate("""async p => {
                     const m = window.historyBenchmark;
                     m.observer.disconnect();
@@ -152,7 +180,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result["coldCache"])
             self.assertEqual(result["records"], ORIGINAL_RECORD_COUNT)
             self.assertEqual(result["indexedRecords"], ORIGINAL_RECORD_COUNT)
-            self.assertEqual(result["pages"], 10)
+            self.assertEqual(result["pages"], ORIGINAL_RECORD_COUNT // HISTORY_PAGE_LIMIT + 1)
             self.assertGreater(result["paintedPixels"], 100)
             self.assertGreater(result["curveCalls"], 0)
             self.assertGreater(result["decodedBodyBytes"], 1_000_000)

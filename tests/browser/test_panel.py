@@ -2027,11 +2027,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await row.get_by_role("button", name=configure, exact=True).click()
         dialog = self.page.locator("dialog-data-entry-flow")
         await dialog.locator("step-flow-menu").get_by_text("Geräte und Erkennungsverfahren", exact=True).click()
-        device_selector = dialog.locator("ha-selector-select").filter(has_text="Präsenzsensor")
-        await device_selector.get_by_role("combobox").click()
-        await self.page.get_by_role("option", name="Präsenzsensor Prüffixture", exact=True).click()
         screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "screenshots"
         screenshots.mkdir(parents=True, exist_ok=True)
+        await self.page.screenshot(path=str(screenshots / "device_selection.png"), full_page=True)
+        device_selector = dialog.locator("ha-selector-select").filter(has_text="Präsenzsensor")
+        # Native HA dropdowns use a picker button, not a text combobox.
+        await device_selector.locator("ha-select").click()
+        await device_selector.get_by_text("Präsenzsensor Prüffixture", exact=True).click()
         await self.page.screenshot(path=str(screenshots / "device_selection.png"), full_page=True)
         submit = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
           'ui.panel.config.integrations.config_flow.submit')""")

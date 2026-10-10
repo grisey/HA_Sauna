@@ -373,6 +373,8 @@ class SaunaRuntime:
                 "proxy", session_id, now, now, True, "no_proxy_evidence",
             ))
         if session_id and self.archive:
+            if self.device and "presence_illuminance" in self.configuration.bindings.values:
+                self.device.archive_illuminance_snapshot(self._clock())
             self.archive.append("presence_source", self._clock(), {
                 "configured_source": self.configuration.presence_source,
                 "effective_source": self.configuration.presence_source,
@@ -893,8 +895,6 @@ class SaunaRuntime:
         if self.archive is None:
             return
         now = self._clock()
-        if self.device and "presence_illuminance" in self.configuration.bindings.values:
-            self.device.archive_illuminance_snapshot(now)
         phase_key = (
             self.session.session_id if self.session else None,
             self.controller.phase,
