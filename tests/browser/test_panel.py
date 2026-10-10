@@ -165,10 +165,29 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.open_settings_section(section)
         await field.evaluate("input => {for(let node=input.parentElement;node;node=node.parentElement)if(node.tagName==='DETAILS')node.open=true;}")
 
+    def dropdown_trigger(self, select):
+        return select.locator("xpath=following-sibling::button[1]")
+
+    async def select_dropdown(self, select, value):
+        trigger = self.dropdown_trigger(select)
+        await expect(trigger).to_be_visible()
+        if await trigger.get_attribute("aria-expanded") != "true":
+            await trigger.click()
+        choice = await select.evaluate("""(select, value) => {
+            const index = [...select.options].findIndex(option => option.value === value);
+            return {index, label: select.options[index]?.label};
+        }""", value)
+        self.assertGreaterEqual(choice["index"], 0)
+        menu_id = await trigger.get_attribute("aria-controls")
+        menu = select.page.locator(f'#{menu_id}')
+        option = menu.get_by_role("option", name=choice["label"], exact=True)
+        await option.and_(menu.locator(f'[data-select-index="{choice["index"]}"]')).click()
+        await expect(select).to_have_value(value)
+
     async def test_shared_dropdown_keyboard_pointer_and_native_selection(self):
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await self.open_settings_section("programs")
-        program = self.panel.locator("#button-program")
+        program = self.dropdown_trigger(self.panel.locator("#button-program"))
         start_info = self.panel.locator('[data-action="program-info:button-start"]')
         await start_info.scroll_into_view_if_needed()
         program_before_info = await program.bounding_box()
@@ -194,51 +213,78 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(program).not_to_have_attribute("aria-controls", popup_id)
         await self.open_settings_section("maintenance")
         select = self.panel.locator("#log-level")
+        trigger = self.dropdown_trigger(select)
         menu = self.panel.locator('.sauna-select-menu[role="listbox"]')
-        await select.select_option("INFO")
+        await self.select_dropdown(select, "INFO")
         await select.evaluate("select => {select.testEvents = []; for (const kind of ['input', 'change']) select.addEventListener(kind, event => select.testEvents.push(event.type)); select.querySelector('[value=DEBUG]').disabled = true;}")
-        await select.click()
+        await trigger.click()
         await expect(menu).to_be_visible()
-        await expect(select).to_be_focused()
-        await expect(select).to_have_attribute("aria-expanded", "true")
+        await expect(trigger).to_be_focused()
+        await expect(trigger).to_have_attribute("aria-expanded", "true")
         await expect(menu.get_by_role("option", name="Detaillierte Diagnose", exact=True)).to_have_attribute("aria-disabled", "true")
-        radius = await select.evaluate("element => getComputedStyle(element).borderRadius")
+        radius = await trigger.evaluate("element => getComputedStyle(element).borderRadius")
         await expect(menu).to_have_css("border-radius", radius)
-        await select.press("Home")
+        await trigger.press("Home")
         await expect(menu.locator('[data-active="true"]')).to_contain_text("Fehler")
-        await select.press("ArrowDown")
-        await select.press("End")
+        await trigger.press("ArrowDown")
+        await trigger.press("End")
         await expect(menu.locator('[data-active="true"]')).to_contain_text("Betriebsereignisse")
-        await select.press("ArrowUp")
-        await select.press("Escape")
+        await trigger.press("ArrowUp")
+        await trigger.press("Escape")
         await expect(menu).to_have_count(0)
-        await expect(select).to_be_focused()
+        await expect(trigger).to_be_focused()
         await expect(select).to_have_value("INFO")
         self.assertEqual(await select.evaluate("select => select.testEvents"), [])
-        await select.press("f")
+        await trigger.press("f")
         await expect(menu.locator('[data-active="true"]')).to_contain_text("Fehler")
-        await select.press("Enter")
+        await trigger.press("Enter")
         await expect(select).to_have_value("ERROR")
         self.assertEqual(await select.evaluate("select => select.testEvents"), ["input", "change"])
-        await select.click()
+        await trigger.click()
         await menu.get_by_role("option", name="Betriebsereignisse", exact=True).click()
         await expect(select).to_have_value("INFO")
-        await expect(select).to_be_focused()
-        await select.click()
+        await expect(trigger).to_be_focused()
+        await trigger.click()
         await select.evaluate("select => {select.testEvents = [];}")
-        await select.press("ArrowUp")
-        await select.press("Tab")
+        await trigger.press("ArrowUp")
+        await trigger.press("Tab")
         await expect(menu).to_have_count(0)
-        await expect(select).not_to_be_focused()
+        await expect(trigger).not_to_be_focused()
         await expect(select).to_have_value("ERROR")
         self.assertEqual(await select.evaluate("select => select.testEvents"), ["input", "change"])
-        await select.click()
+        await trigger.click()
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await expect(menu).to_have_count(0)
-        await select.click()
-        await select.select_option("ERROR")
+        await trigger.click()
+        await self.select_dropdown(select, "ERROR")
         await expect(menu).to_have_count(0)
         await expect(select).to_have_value("ERROR")
+        self.assertEqual(self.errors, [])
+
+    async def test_shared_dropdown_has_one_visible_trigger_and_handles_f4(self):
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.open_settings_section("maintenance")
+        select = self.panel.locator("#log-level")
+        trigger = self.dropdown_trigger(select)
+        menu = self.panel.locator('.sauna-select-menu[role="listbox"]')
+        before = await select.input_value()
+        await trigger.click()
+        await expect(menu).to_have_count(1)
+        await expect(menu).to_be_visible()
+        await expect(select).to_be_hidden()
+        await expect(select).to_have_attribute("tabindex", "-1")
+        await expect(select).to_have_attribute("aria-hidden", "true")
+        await expect(trigger).to_have_attribute("role", "combobox")
+        self.assertEqual(await trigger.evaluate("element => element.tagName"), "BUTTON")
+        await trigger.press("F4")
+        await expect(menu).to_have_count(0)
+        await expect(trigger).to_be_focused()
+        await trigger.press("F4")
+        await expect(menu).to_have_count(1)
+        await expect(menu).to_be_visible()
+        await trigger.press("Escape")
+        await expect(menu).to_have_count(0)
+        await expect(select).to_have_value(before)
         self.assertEqual(self.errors, [])
 
     async def test_shared_dropdown_touch_stays_inside_mobile_viewport(self):
@@ -255,7 +301,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await panel.locator('[data-action="settings-menu"]').tap()
             await panel.locator('[data-action="settings-section:maintenance"]').tap()
             select = panel.locator("#log-level")
-            await select.tap()
+            trigger = self.dropdown_trigger(select)
+            await trigger.tap()
             menu = panel.get_by_role("listbox", name="Umfang", exact=True)
             await expect(menu).to_be_visible()
             box = await menu.bounding_box()
@@ -266,7 +313,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             index = await select.evaluate("select => [...select.options].findIndex(option => option.value === 'ERROR')")
             await menu.locator(f'[data-select-index="{index}"]').tap()
             await expect(select).to_have_value("ERROR")
-            await expect(select).to_be_focused()
+            await expect(trigger).to_be_focused()
             await expect(menu).to_have_count(0)
         finally:
             await context.close()
@@ -396,7 +443,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(panel.get_by_role('slider', name='Lichthelligkeit einstellen')).to_be_disabled()
             await panel.locator('.main-tabs [data-action="settings"]').click()
             await expect(panel.locator('#program-library [data-program-id]').first).to_be_visible()
-            await expect(panel.locator('#button-program')).to_be_visible()
+            await expect(self.dropdown_trigger(panel.locator('#button-program'))).to_be_visible()
             self.assertEqual(await panel.locator('#parameters').count(), 0)
             self.assertEqual(await panel.locator('[data-action="export"]').count(), 0)
             await panel.locator('.main-tabs [data-action="overview"]').click()
@@ -586,11 +633,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await panel.locator('[data-action="zoom-in"]').click()
                     window = await panel.evaluate("p => [...p.window]")
                     session_select = panel.locator("#session")
-                    await session_select.click()
+                    await self.dropdown_trigger(session_select).click()
                     await panel.evaluate("p => p.refresh()")
                     await expect(session_select).to_be_enabled()
                     await page.keyboard.press("Escape")
-                    await session_select.click()
+                    await self.dropdown_trigger(session_select).click()
                     await page.keyboard.press("Escape")
                     self.assertTrue(
                         await panel.evaluate("""p => {
@@ -641,13 +688,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await panel.evaluate("p => [...p.window]"), window)
                 await chart.dispose()
                 session_select = panel.locator("#session")
-                await session_select.click()
+                await self.dropdown_trigger(session_select).click()
                 await page.keyboard.press("Escape")
-                await session_select.click()
+                await self.dropdown_trigger(session_select).click()
                 await page.keyboard.press("ArrowDown")
                 await page.keyboard.press("Enter")
                 await expect(session_select).to_have_value(identity)
-                await session_select.click()
+                await self.dropdown_trigger(session_select).click()
                 await page.keyboard.press("Escape")
                 await panel.evaluate("""async p => {
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
@@ -730,8 +777,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         })
         await self.page.reload()
         await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
-        await expect(self.panel.locator('#instance')).to_be_visible()
-        await self.panel.locator('#instance').select_option(self.entry.entry_id)
+        await expect(self.dropdown_trigger(self.panel.locator('#instance'))).to_be_visible()
+        await self.select_dropdown(self.panel.locator('#instance'), self.entry.entry_id)
         await expect(self.panel.locator('[data-target-arc][role="slider"]')).to_have_attribute("aria-valuenow", "80")
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
         await expect(self.panel.locator('#parameters')).to_be_visible()
@@ -762,7 +809,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         try:
             await self.panel.evaluate("p => { p.switchTestPoll = p.refresh(); }")
             await asyncio.wait_for(old_started.wait(), 10)
-            await self.panel.locator('#instance').select_option(second.entry_id)
+            await self.select_dropdown(self.panel.locator('#instance'), second.entry_id)
             await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
             self.assertEqual(await self.panel.locator('#parameters').count(), 0)
             self.assertEqual(await self.panel.locator('#current [data-action="operation"]').count(), 0)
@@ -801,7 +848,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await expect(field).to_have_value(definition["default"])
             selected[name] = next(value for value in definition["options"]
                                   if value != definition["default"])
-            await field.select_option(selected[name])
+            await self.select_dropdown(field, selected[name])
         self.assertEqual(self.runtime.configuration.appearance["instruments"],
                          {name: definition["default"] for name, definition in definitions.items()})
         await expect(editor.locator("#appearance-status")).to_contain_text("Vorschau")
@@ -1651,7 +1698,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna.settings import async_set_appearance, async_set_control_mode
 
         appearance = self.runtime.configuration.as_options()["appearance"]
-        appearance["instruments"]["light"] = "linear"
+        for name in ("temperature", "humidity", "light"):
+            appearance["instruments"][name] = "linear"
         await async_set_appearance(self.hass, self.entry, appearance)
         for admin in (True, False):
             with self.subTest(admin=admin):
@@ -1679,6 +1727,46 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await expect(field).to_have_attribute("type", "range")
                     await expect(field).to_be_disabled()
                     self.assertIsNone(self.runtime.session)
+                    for width in (1440, 390):
+                        with self.subTest(admin=admin, width=width):
+                            await page.set_viewport_size({"width": width, "height": 844})
+                            geometry = await panel.evaluate("""p => {
+                              const box = node => {
+                                const r = node.getBoundingClientRect();
+                                return {left:r.left, right:r.right, top:r.top,
+                                  bottom:r.bottom, centerY:(r.top+r.bottom)/2};
+                              };
+                              return [...p.shadowRoot.querySelectorAll('#current [data-instrument-style="linear"]')].map(tile => ({
+                                key:tile.dataset.instrument, tile:box(tile),
+                                reading:box(tile.querySelector('.linear-reading')),
+                                rail:box(tile.querySelector('.linear-rail')),
+                                symbol:box(tile.querySelector('.linear-symbol')),
+                                ticks:[...tile.querySelectorAll('.linear-ticks span')]
+                                  .filter(node => getComputedStyle(node).display !== 'none')
+                                  .map(node => ({...box(node), edge:node.dataset.tickDensity === 'edge'}))
+                              }));
+                            }""")
+                            self.assertEqual([item["key"] for item in geometry],
+                                             ["temperature", "humidity", "light"])
+                            for item in geometry:
+                                tile = item["tile"]
+                                self.assertLessEqual(item["reading"]["right"], item["rail"]["left"])
+                                self.assertLessEqual(item["rail"]["right"], item["symbol"]["left"])
+                                for name in ("reading", "rail", "symbol"):
+                                    self.assertGreaterEqual(item[name]["left"], tile["left"])
+                                    self.assertLessEqual(item[name]["right"], tile["right"])
+                                    self.assertAlmostEqual(item[name]["centerY"], item["rail"]["centerY"], delta=2)
+                                ticks = sorted(item["ticks"], key=lambda tick: tick["left"])
+                                self.assertEqual(sum(tick["edge"] for tick in ticks), 2)
+                                for tick in ticks:
+                                    self.assertGreaterEqual(tick["left"], tile["left"])
+                                    self.assertLessEqual(tick["right"], tile["right"])
+                                for left, right in zip(ticks, ticks[1:]):
+                                    self.assertLessEqual(left["right"], right["left"])
+                            for previous, current in zip(geometry, geometry[1:]):
+                                self.assertLessEqual(previous["tile"]["bottom"], current["tile"]["top"])
+                                self.assertAlmostEqual(previous["rail"]["left"], current["rail"]["left"], delta=1)
+                                self.assertAlmostEqual(previous["rail"]["right"], current["rail"]["right"], delta=1)
                     async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as entered:
                         await panel.get_by_role("button", name="Manuell steuern", exact=True).click()
                     self.assertTrue((await entered.value).ok)
@@ -2039,7 +2127,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
           'ui.panel.config.integrations.config_flow.submit')""")
         await dialog.get_by_role("button", name=submit, exact=True).click()
         await expect(dialog.get_by_text("Gerätezuordnung prüfen", exact=True)).to_be_visible()
-        await dialog.get_by_text("Präsenz und Lichtstärke", exact=True).click()
+        light_label = dialog.get_by_text("Lichtstärke am Präsenzsensor", exact=True)
+        if not await light_label.is_visible():
+            await dialog.get_by_text("Präsenz und Lichtstärke", exact=True).click()
+        await expect(light_label).to_be_visible()
+        await expect(dialog.get_by_text("Präsenzmeldung", exact=True)).to_be_visible()
         selectors = dialog.locator("ha-selector-entity")
         values = await selectors.evaluate_all("elements => elements.map(element => element.value)")
         self.assertIn(expected["presence"], values)
@@ -2327,7 +2419,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             for _ in range(3):
                 await self.panel.evaluate("p => p.refresh()")
             self.assertEqual(requests, [])
-            await self.panel.locator("#session").select_option(old_id)
+            await self.select_dropdown(self.panel.locator("#session"), old_id)
             await expect(self.panel.locator("svg.session-chart")).to_be_visible()
             self.assertEqual(await self.panel.evaluate("p => p.historySelectionId()"), old_id)
             self.assertEqual(requests, [])
@@ -2411,14 +2503,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         gesture = self.panel.locator('#button-session-gesture')
         async with self.page.expect_response(lambda response: response.url.endswith("/button-gesture")
                                             and response.request.method == "POST") as gesture_saved:
-            await gesture.select_option("double")
+            await self.select_dropdown(gesture, "double")
         self.assertTrue((await gesture_saved.value).ok)
         self.assertEqual(self.entry.options["button_session_gesture"], "double")
         await self.panel.evaluate("p => p.refresh()")
         await expect(gesture).to_have_value("double")
         async with self.page.expect_response(lambda response: response.url.endswith("/button-program")
                                             and response.request.method == "POST") as result:
-            await self.panel.locator('#button-program').select_option(DEFAULT_PROGRAMS[-2]["id"])
+            await self.select_dropdown(self.panel.locator('#button-program'), DEFAULT_PROGRAMS[-2]["id"])
         self.assertTrue((await result.value).ok)
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options['button_program'], DEFAULT_PROGRAMS[-2]["id"])
@@ -2714,7 +2806,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         for before, after in zip(*humidity_positions):
             for coordinate in ("x", "y"):
                 self.assertAlmostEqual(before[coordinate], after[coordinate], delta=0.1)
-        await self.panel.locator("#session").hover()
+        await self.dropdown_trigger(self.panel.locator("#session")).hover()
         await expect(self.panel.locator("#tooltip")).to_be_hidden()
         legend_hidden = await self.panel.locator("#history-legends").bounding_box()
         plot_hidden = await chart.bounding_box()
@@ -2950,7 +3042,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="history"]').click()
         await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_be_attached(timeout=15000)
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
-        await self.panel.locator("#session").select_option(identity)
+        await self.select_dropdown(self.panel.locator("#session"), identity)
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
         self.assertEqual(await self.panel.locator('[data-gang-id]').get_attribute("data-start"), start)
         tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
@@ -2974,7 +3066,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await expect(
                     panel.locator(f'#session option[value="{identity}"]')
                 ).to_be_attached(timeout=15000)
-                await panel.locator("#session").select_option(identity)
+                await self.select_dropdown(panel.locator("#session"), identity)
                 await panel.evaluate("""async p => {
                   while (p.busy) await new Promise(resolve => setTimeout(resolve, 10));
                   if (p.historyLoad) await p.historyLoad.promise;
@@ -3019,7 +3111,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
               };
               const right = main.getBoundingClientRect().right;
               return {main: box(main), host: box(p), view: p.view,
-                sessionSelect: box(p.$('#session')),
+                sessionSelect: box(p.$('#session').nextElementSibling),
                 sessionRow: box(p.$('#session').parentElement),
                 overflowingNodes: [...main.querySelectorAll('*')]
                   .filter(node => {
@@ -3231,7 +3323,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('[data-action="settings"]').click()
         settings = self.panel.locator("#settings")
         await expect(settings.locator("#program-library [data-program-id]").first).to_be_visible(timeout=10000)
-        await expect(settings.locator("#button-program")).to_be_visible()
+        await expect(self.dropdown_trigger(settings.locator("#button-program"))).to_be_visible()
         await self.open_parameter_group("preset_start_c")
         await expect(self.panel.locator('input[name="preset_start_c"]')).to_be_disabled()
         await expect(self.panel.locator('input[name="target_temperature_c"]')).to_have_count(0)
@@ -3265,7 +3357,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.panel.locator('header h1').click()
         await expect(help_text).to_be_hidden()
         await self.open_settings_section("maintenance")
-        await self.panel.locator('#log-level').select_option("DEBUG")
+        await self.select_dropdown(self.panel.locator('#log-level'), "DEBUG")
         async with self.page.expect_response(lambda response: response.url.endswith("/logging") and response.request.method == "POST") as result:
             await self.panel.locator('[data-action="logging"]').click()
         self.assertTrue((await result.value).ok)

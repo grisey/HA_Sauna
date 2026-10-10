@@ -568,8 +568,10 @@ class Archive:
             if cached is not None and cached[0] == identity:
                 self._projection_cache.move_to_end(session_id)
                 return cached[1]
-            # Legacy snapshots need the complete evidence stream once per
-            # saved state, independently of pagination. Originals stay intact.
+            # Legacy snapshots need all phase/session evidence and heater
+            # contact reports once per saved state, independently of pagination.
+            # Other source roles are not consumed by project_archive; filter
+            # them before materializing/decoding their original payloads.
             evidence = (
                 {
                     "kind": r["kind"],
@@ -577,7 +579,9 @@ class Archive:
                     "payload": json.loads(r["payload"]),
                 }
                 for r in db.execute(
-                    "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? AND kind IN ('phase','source_state','session') ORDER BY id",
+                    "SELECT kind,received_at,payload FROM records WHERE entry_id=? AND session_id=? "
+                    "AND (kind IN ('phase','session') OR (kind='source_state' "
+                    "AND json_extract(payload,'$.role')='heater')) ORDER BY id",
                     (self.entry_id, session_id),
                 )
             )

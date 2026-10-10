@@ -1089,6 +1089,8 @@ class SaunaSelectMenu {
     this.document = panel.ownerDocument;
     this.window = this.document.defaultView;
     this.listeners = [];
+    this.models = new Map();
+    this.triggers = new WeakMap();
     this.serial = 0;
     this.search = "";
   }
@@ -1101,27 +1103,28 @@ class SaunaSelectMenu {
     const selectFrom = (event) =>
       event
         .composedPath()
-        .find((node) => node.tagName === "SELECT" && this.root.contains(node));
+        .map((node) => this.triggers.get(node))
+        .find(Boolean);
     listen(this.root, "pointerdown", (event) => {
-      if (this.menu && event.composedPath().includes(this.menu)) {
-        event.preventDefault();
-        return;
-      }
-      const select = selectFrom(event);
-      if (!this.supports(select) || event.button > 0) return;
-      event.preventDefault();
-      this.pointerOpened = select;
-      select.focus({ preventScroll: true });
-      this.select === select ? this.close() : this.open(select);
+      if (this.menu && event.composedPath().includes(this.menu)) event.preventDefault();
     });
     listen(this.root, "click", (event) => {
-      const select = selectFrom(event);
-      if (this.supports(select)) {
+      let select = selectFrom(event);
+      if (
+        !select &&
+        !event
+          .composedPath()
+          .some((node) => ["BUTTON", "A", "INPUT", "TEXTAREA"].includes(node.tagName))
+      ) {
+        const label = event.composedPath().find((node) => node.tagName === "LABEL");
+        if (this.models.has(label?.control)) select = label.control;
+      }
+      if (select) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (this.pointerOpened !== select)
-          this.select === select ? this.close() : this.open(select);
-        this.pointerOpened = null;
+        if (!this.supports(select)) return;
+        this.models.get(select).trigger.focus({ preventScroll: true });
+        this.select === select ? this.close() : this.open(select);
       } else {
         const option = event
           .composedPath()
@@ -1134,60 +1137,138 @@ class SaunaSelectMenu {
       const select = selectFrom(event);
       if (this.supports(select)) this.key(event, select);
     });
-    listen(this.root, "change", (event) => {
-      if (event.target === this.select) this.close();
-    });
-    listen(this.document, "pointerdown", (event) => {
+    for (const type of ["input", "change"])
+      listen(this.root, type, (event) => {
+        if (!this.models.has(event.target)) return;
+        this.syncAttributes(event.target);
+        if (event.target === this.select) this.close();
+      });
+    const outside = (event) => {
       if (
         this.select &&
-        !event.composedPath().includes(this.select) &&
+        !event.composedPath().includes(this.models.get(this.select)?.trigger) &&
         !event.composedPath().includes(this.menu)
       )
         this.close();
-    });
-    listen(this.document, "focusin", (event) => {
-      if (
-        this.select &&
-        !event.composedPath().includes(this.select) &&
-        !event.composedPath().includes(this.menu)
-      )
-        this.close();
-    });
-    listen(this.document, "scroll", (event) => {
-      if (this.select && event.target !== this.menu) this.place();
-    });
-    listen(this.root, "scroll", (event) => {
-      if (this.select && event.target !== this.menu) this.place();
-    });
+    };
+    listen(this.document, "pointerdown", outside);
+    listen(this.document, "focusin", outside);
+    for (const target of [this.document, this.root])
+      listen(target, "scroll", (event) => {
+        if (this.select && event.target !== this.menu) this.place();
+      });
     listen(this.window, "resize", () => this.place());
     if (this.window.visualViewport) {
       listen(this.window.visualViewport, "resize", () => this.place());
       listen(this.window.visualViewport, "scroll", () => this.place());
     }
     this.observer = new MutationObserver((records) => {
-      if (!this.select) return;
-      if (
-        !this.select.isConnected ||
-        !this.supports(this.select) ||
-        !this.select.getClientRects().length
-      )
-        return this.close();
-      if (records.some((record) => this.select.contains(record.target))) this.render();
+      this.sync();
+      if (this.select && records.some((record) => this.select.contains(record.target)))
+        this.render();
     });
     this.observer.observe(this.root, {
       subtree: true,
       childList: true,
+      characterData: true,
       attributes: true,
-      attributeFilter: ["disabled", "hidden", "label", "value"],
+      attributeFilter: [
+        "disabled",
+        "hidden",
+        "label",
+        "value",
+        "selected",
+        "class",
+        "style",
+        "aria-label",
+        "aria-labelledby",
+        "aria-describedby",
+      ],
     });
+    this.sync();
   }
   disconnect() {
     this.close();
     this.observer?.disconnect();
     this.listeners.splice(0).forEach((remove) => remove());
+    for (const select of this.models.keys()) this.restore(select);
   }
   supports(select) {
     return !!select && !select.disabled && !select.multiple && select.size <= 1;
+  }
+  isTrigger(node) {
+    return this.triggers.has(node);
+  }
+  hasFocus(select) {
+    const trigger = this.models.get(select)?.trigger;
+    return !!trigger && this.root.activeElement === trigger;
+  }
+  restore(select) {
+    const record = this.models.get(select);
+    if (!record) return;
+    if (this.select === select) this.close();
+    for (const [name, value] of record.attributes)
+      value == null ? select.removeAttribute(name) : select.setAttribute(name, value);
+    select.removeAttribute("data-sauna-select-model");
+    record.trigger.remove();
+    this.triggers.delete(record.trigger);
+    this.models.delete(select);
+  }
+  sync() {
+    for (const select of this.models.keys())
+      if (!this.root.contains(select) || select.multiple || select.size > 1)
+        this.restore(select);
+    for (const select of this.root.querySelectorAll("select")) {
+      if (select.multiple || select.size > 1) continue;
+      if (!this.models.has(select)) {
+        const trigger = this.document.createElement("button");
+        trigger.type = "button";
+        trigger.id = `sauna-select-trigger-${++this.serial}`;
+        trigger.setAttribute("role", "combobox");
+        trigger.setAttribute("aria-haspopup", "listbox");
+        this.models.set(select, {
+          trigger,
+          attributes: new Map(
+            ["tabindex", "aria-hidden"].map((name) => [
+              name,
+              select.getAttribute(name),
+            ]),
+          ),
+        });
+        this.triggers.set(trigger, select);
+      }
+      const trigger = this.models.get(select).trigger;
+      if (select.nextSibling !== trigger) {
+        const focused = this.hasFocus(select);
+        select.after(trigger);
+        if (focused) trigger.focus({ preventScroll: true });
+      }
+      this.syncAttributes(select);
+    }
+    if (
+      this.select &&
+      (!this.supports(this.select) ||
+        !this.models.get(this.select)?.trigger.getClientRects().length)
+    )
+      this.close();
+  }
+  setAttribute(node, name, value) {
+    if (value == null) {
+      if (node.hasAttribute(name)) node.removeAttribute(name);
+    } else if (node.getAttribute(name) !== String(value))
+      node.setAttribute(name, String(value));
+  }
+  label(select) {
+    const labels = [...(select.labels || [])].map((label) => {
+      const clone = label.cloneNode(true);
+      clone
+        .querySelectorAll("select, input, textarea, button")
+        .forEach((control) => control.remove());
+      return clone.textContent.trim();
+    });
+    return (
+      select.getAttribute("aria-label") || labels.filter(Boolean).join(" ") || "Auswahl"
+    );
   }
   available(option) {
     return (
@@ -1198,31 +1279,17 @@ class SaunaSelectMenu {
     );
   }
   open(select) {
+    if (!this.supports(select) || !this.models.has(select)) return;
     this.close();
     this.select = select;
     this.active = select.selectedIndex;
-    this.savedAttributes = new Map(
-      ["aria-expanded", "aria-controls", "aria-activedescendant"].map((name) => [
-        name,
-        select.getAttribute(name),
-      ]),
-    );
     this.menu = this.document.createElement("div");
     this.menu.className = "sauna-select-menu";
     this.menu.id = `sauna-select-menu-${++this.serial}`;
     this.menu.setAttribute("role", "listbox");
-    const label = select.labels?.[0]?.cloneNode(true);
-    label
-      ?.querySelectorAll("select, input, textarea, button")
-      .forEach((control) => control.remove());
-    this.menu.setAttribute(
-      "aria-label",
-      select.getAttribute("aria-label") || label?.textContent.trim() || "Auswahl",
-    );
+    this.menu.setAttribute("aria-label", this.label(select));
     this.menu.setAttribute("popover", "manual");
     this.root.append(this.menu);
-    select.setAttribute("aria-expanded", "true");
-    select.setAttribute("aria-controls", this.menu.id);
     this.render();
     this.menu.showPopover?.();
     this.place();
@@ -1236,18 +1303,44 @@ class SaunaSelectMenu {
     this.menu?.remove();
     this.menu = null;
     if (select) {
-      for (const [name, value] of this.savedAttributes)
-        value == null ? select.removeAttribute(name) : select.setAttribute(name, value);
-      if (focus && select.isConnected) select.focus({ preventScroll: true });
+      this.syncAttributes(select);
+      const trigger = this.models.get(select)?.trigger;
+      if (focus && trigger?.isConnected) trigger.focus({ preventScroll: true });
     }
     this.search = "";
   }
-  syncAttributes(select = this.select) {
-    if (!select || select !== this.select || !this.menu) return;
-    select.setAttribute("aria-expanded", "true");
-    select.setAttribute("aria-controls", this.menu.id);
-    if (this.active >= 0)
-      select.setAttribute("aria-activedescendant", `${this.menu.id}-${this.active}`);
+  syncAttributes(select) {
+    const record = this.models.get(select);
+    if (!record) return;
+    const trigger = record.trigger;
+    // The renderer may replace model attributes from the next markup.
+    if (!select.hasAttribute("data-sauna-select-model"))
+      for (const name of record.attributes.keys())
+        record.attributes.set(name, select.getAttribute(name));
+    this.setAttribute(select, "data-sauna-select-model", "");
+    this.setAttribute(select, "tabindex", "-1");
+    this.setAttribute(select, "aria-hidden", "true");
+    this.setAttribute(
+      trigger,
+      "class",
+      `${select.className} sauna-select-trigger`.trim(),
+    );
+    this.setAttribute(trigger, "style", select.getAttribute("style"));
+    this.setAttribute(trigger, "aria-label", this.label(select));
+    for (const name of ["aria-labelledby", "aria-describedby", "title"])
+      this.setAttribute(trigger, name, select.getAttribute(name));
+    this.setAttribute(trigger, "disabled", select.disabled ? "" : null);
+    this.setAttribute(trigger, "hidden", select.hidden ? "" : null);
+    const text = select.selectedOptions[0]?.label || "";
+    if (trigger.textContent !== text) trigger.textContent = text;
+    const expanded = this.select === select && !!this.menu;
+    this.setAttribute(trigger, "aria-expanded", String(expanded));
+    this.setAttribute(trigger, "aria-controls", expanded ? this.menu.id : null);
+    this.setAttribute(
+      trigger,
+      "aria-activedescendant",
+      expanded && this.active >= 0 ? `${this.menu.id}-${this.active}` : null,
+    );
   }
   render() {
     if (!this.select) return;
@@ -1278,11 +1371,7 @@ class SaunaSelectMenu {
       row.textContent = option.label;
       this.menu.append(row);
     });
-    if (this.active >= 0)
-      this.select.setAttribute(
-        "aria-activedescendant",
-        `${this.menu.id}-${this.active}`,
-      );
+    this.syncAttributes(this.select);
     this.place();
     this.menu
       .querySelector('[data-active="true"]')
@@ -1290,7 +1379,7 @@ class SaunaSelectMenu {
   }
   place() {
     if (!this.select || !this.menu) return;
-    const rect = this.select.getBoundingClientRect();
+    const rect = this.models.get(this.select).trigger.getBoundingClientRect();
     if (!rect.width || !rect.height) return this.close();
     const viewport = this.window.visualViewport;
     const width = viewport?.width || this.window.innerWidth,
@@ -1336,6 +1425,12 @@ class SaunaSelectMenu {
         event.preventDefault();
         this.close(true);
       }
+      return;
+    }
+    if (event.key === "F4") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.select === select ? this.close(true) : this.open(select);
       return;
     }
     const navigation = ["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(
@@ -1598,7 +1693,8 @@ class SaunaPanel extends HTMLElement {
       if (current.data !== next.data) current.data = next.data;
       return current;
     }
-    const focused = this.shadowRoot.activeElement === current;
+    const focused =
+      this.shadowRoot.activeElement === current || this.selectMenu?.hasFocus(current);
     if (focused && current.nodeName === "SELECT") {
       this.patchAttributes(current, next);
       return current;
@@ -1618,15 +1714,18 @@ class SaunaPanel extends HTMLElement {
       this.optionSignature(current) === this.optionSignature(next)
     ) {
       if (current.value !== next.value) current.value = next.value;
+      this.selectMenu?.syncAttributes(current);
       return current;
     }
     if (current.nodeName === "INPUT" || current.nodeName === "TEXTAREA") {
       if (current.value !== next.value) current.value = next.value;
       if ("checked" in current) current.checked = next.checked;
     }
-    const oldChildren = [...current.childNodes],
+    const oldChildren = [...current.childNodes].filter(
+        (child) => !this.selectMenu?.isTrigger(child),
+      ),
       used = new Set();
-    let cursor = current.firstChild;
+    let cursor = oldChildren[0] || null;
     for (const nextChild of [...next.childNodes]) {
       const key = this.nodeKey(nextChild);
       let match = key
@@ -1647,8 +1746,10 @@ class SaunaPanel extends HTMLElement {
       }
       if (match !== cursor) current.insertBefore(match, cursor);
       cursor = match.nextSibling;
+      while (cursor && this.selectMenu?.isTrigger(cursor)) cursor = cursor.nextSibling;
     }
     for (const child of oldChildren) if (!used.has(child)) child.remove();
+    this.selectMenu?.syncAttributes(current);
     return current;
   }
   updateMarkup(selector, markup) {
@@ -1661,6 +1762,7 @@ class SaunaPanel extends HTMLElement {
     const next = target.cloneNode(false);
     next.innerHTML = markup;
     this.patchNode(target, next);
+    this.selectMenu?.sync();
     this.syncInfo();
   }
   async api(path, method = "GET", body) {
@@ -2076,8 +2178,13 @@ class SaunaPanel extends HTMLElement {
     if (this.appearanceDraft) return;
     for (const name of Object.keys(this.appearanceCatalog().instruments || {})) {
       const input = this.$(`[data-appearance-instrument="${name}"]`);
-      if (input && input !== this.shadowRoot.activeElement)
+      if (
+        input &&
+        input !== this.shadowRoot.activeElement &&
+        !this.selectMenu?.hasFocus(input)
+      )
         input.value = this.instrumentSelection(name);
+      this.selectMenu?.syncAttributes(input);
     }
     for (const definition of this.appearanceCatalog().colors || []) {
       const input = this.$(`[data-appearance-color="${definition.id}"]`);
@@ -2286,7 +2393,7 @@ class SaunaPanel extends HTMLElement {
         flex: 0 0 auto;
       }
       .header-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-      .header-context select {
+      .header-context :is(select, .sauna-select-trigger) {
         max-width: 100%;
       }
       h1 {
@@ -2335,17 +2442,26 @@ class SaunaPanel extends HTMLElement {
       .input-unit { flex: 0 0 auto; padding-inline-end: 13px; color: var(--sauna-card-muted-text, var(--secondary-text-color)); white-space: nowrap; }
       .number-input:has(input:focus-visible) { outline: 2px solid var(--sauna-focus-current); outline-offset: 3px; }
       .number-input input:focus-visible { outline: none; }
-      #session {
+      #session, #session + .sauna-select-trigger {
         min-width: 0;
         max-width: 100%;
       }
-      select {
+      select, .sauna-select-trigger {
         appearance: none;
         padding-inline-end: 40px;
         background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
         background-position: right 21px center, right 16px center;
         background-size: 5px 5px;
         background-repeat: no-repeat;
+      }
+      select[data-sauna-select-model] { display: none !important; }
+      .sauna-select-trigger {
+        text-align: start;
+        font: inherit;
+        min-height: 0;
+        background-color: var(--sauna-color-card-background, var(--card-background-color));
+        border-color: var(--sauna-color-border, var(--divider-color));
+        box-shadow: none;
       }
       .sauna-select-menu {
         position: fixed;
@@ -2667,7 +2783,7 @@ class SaunaPanel extends HTMLElement {
         .card {
           padding: 16px;
         }
-        header select {
+        header :is(select, .sauna-select-trigger) {
           max-width: 180px;
         }
       }
@@ -3454,7 +3570,7 @@ class SaunaPanel extends HTMLElement {
         .card {
           padding: 14px;
         }
-        header select {
+        header :is(select, .sauna-select-trigger) {
           max-width: 110px;
         }
         .state-line,
@@ -3791,7 +3907,7 @@ class SaunaPanel extends HTMLElement {
       .program-pending { background: transparent; padding: 12px 0 0; }
       .program-actions { margin-top: 12px; border-top: 0; padding-top: 0; }
       .history-controls { margin: 0 0 16px; }
-      .history-controls select { max-width: 100%; font-weight: 600; }
+      .history-controls :is(select, .sauna-select-trigger) { max-width: 100%; font-weight: 600; }
       .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); }
       .history-overview { background: transparent; border-radius: var(--sauna-control-radius); }
       .control-history-inspection > div { padding: 16px; border-radius: var(--sauna-control-radius); border: 1px solid var(--sauna-color-border); background: var(--sauna-surface-section); box-shadow: var(--sauna-shadow-section); }
@@ -3864,20 +3980,31 @@ class SaunaPanel extends HTMLElement {
       .dial .tick { font-size: 11px; font-weight: 450; opacity: .85; }
       .humidity-symbol { fill: color-mix(in srgb, var(--measurement-color) 12%, transparent); stroke: var(--measurement-color); stroke-width: 1.2; opacity: .75; }
       .light-symbol { fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
-      .linear-scale .light-symbol { grid-area: caption; justify-self: center; width: 22px; height: 22px; margin-top: 10px; }
       .light-instrument { --accent: var(--sauna-color-series-light); }
       .measurement-instrument { min-width: 0; text-align: center; }
-      .linear-instrument { padding: 16px 20px; border-radius: var(--sauna-control-radius); background: var(--sauna-surface-recessed); box-shadow: var(--sauna-shadow-section); }
-      .linear-reading { margin: 0 0 22px; font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; line-height: 1.25; }
+      .measurement-instrument[data-instrument-style="linear"] { padding: 12px 16px; border: 1px solid var(--sauna-color-border, var(--divider-color)); border-radius: var(--sauna-control-radius); background: linear-gradient(135deg, var(--sauna-color-card-background, var(--card-background-color)), var(--sauna-color-page-background, var(--primary-background-color))); box-shadow: var(--sauna-shadow-section); }
+      .measurement-instrument[data-instrument-style="linear"] > h2 { margin: 0 0 2px; text-align: left; }
+      .linear-instrument { display: grid; grid-template-columns: 100px minmax(0, 1fr) 22px; align-items: center; gap: 16px; }
+      .linear-reading { margin: 0; color: var(--measurement-color); text-align: left; white-space: nowrap; font-size: 31px; font-weight: 550; letter-spacing: -.8px; font-variant-numeric: tabular-nums; line-height: 1.25; }
+      .linear-symbol { width: 22px; height: 22px; fill: none; stroke: var(--measurement-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
       .linear-reading > span { font-size: 15px; font-weight: 400; letter-spacing: 0; }
-      .linear-scale { display: grid; grid-template-areas: "track" "ticks" "caption"; grid-template-columns: minmax(0, 1fr); align-items: center; margin-bottom: 4px; }
+      .linear-scale { container: linear-scale / inline-size; display: grid; grid-template-areas: "caption" "track" "ticks"; grid-template-columns: minmax(0, 1fr); grid-template-rows: 17px 28px 18px; align-items: center; min-width: 0; }
       .linear-rail { grid-area: track; height: 8px; border-radius: 10px; background: var(--sauna-color-border); overflow: hidden; }
       .linear-rail i { display: block; height: 100%; border-radius: inherit; background: var(--measurement-color); }
-      .linear-ticks { grid-area: ticks; position: relative; height: 18px; margin-top: 6px; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
+      .linear-ticks { grid-area: ticks; position: relative; height: 18px; margin-top: 0; color: var(--sauna-card-muted-text); font-size: 10px; font-variant-numeric: tabular-nums; }
       .linear-ticks span { position: absolute; transform: translateX(-50%); }
+      .linear-ticks [data-tick-density="middle"] { display: none; }
+      @container linear-scale (max-width: 220px) {
+        .linear-ticks [data-tick-density="detail"] { display: none; }
+        .linear-ticks [data-tick-density="middle"] { display: inline; }
+      }
+      @container linear-scale (max-width: 110px) {
+        .linear-ticks [data-tick-density="middle"] { display: none; }
+      }
       .instrument-slider { margin: 4px auto 0; max-width: 240px; width: 100%; }
       .linear-scale .instrument-slider { display: contents; }
-      .linear-scale .instrument-slider label { grid-area: caption; justify-content: center; gap: 8px; margin: 10px 0 0; }
+      .linear-scale .instrument-slider label { grid-area: caption; justify-content: flex-end; gap: 6px; margin: 0; font-size: 11px; }
+      .linear-scale .instrument-slider output { font-size: 12px; }
       .instrument-slider label { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px; color: var(--sauna-card-muted-text); font-size: 12px; }
       .instrument-slider output { color: var(--sauna-card-text); font-size: 14px; font-variant-numeric: tabular-nums; }
       input.instrument-range { display: block; appearance: none; box-sizing: border-box; width: 100%; max-width: none; min-width: 0; padding: 0; margin: 0; height: 28px; border: 0; background: transparent; cursor: pointer; }
@@ -3907,11 +4034,15 @@ class SaunaPanel extends HTMLElement {
       .weather-instrument time { margin-inline-start: auto; color: var(--sauna-card-muted-text); font-size: 11px; white-space: nowrap; }
       .appearance-instruments { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
       .appearance-instruments label { display: grid; gap: 7px; font-size: 13px; }
-      .appearance-instruments select { width: 100%; min-width: 0; }
+      .appearance-instruments :is(select, .sauna-select-trigger) { width: 100%; min-width: 0; }
       @container (max-width: 450px) {
         .gauges { grid-template-columns: minmax(0, 1fr); }
         .weather-instrument { grid-template-columns: 70px minmax(0, 1fr); gap: 8px 12px; padding: 12px; }
-        .linear-instrument { padding: 14px; }
+        .measurement-instrument[data-instrument-style="linear"] { padding: 10px 12px; }
+        .linear-instrument { grid-template-columns: 88px minmax(0, 1fr) 18px; gap: 12px; }
+        .linear-reading { font-size: 25px; }
+        .linear-reading > span { font-size: 13px; }
+        .linear-symbol { width: 18px; height: 18px; }
         .weather-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
         .weather-values dd { font-size: 16px; }
       }
@@ -4640,6 +4771,7 @@ class SaunaPanel extends HTMLElement {
       this.historyOptionsSignature = options;
     }
     if (select.value !== this.selected) select.value = this.selected;
+    this.selectMenu?.syncAttributes(select);
   }
   startHistoryLoad() {
     if (
@@ -5227,15 +5359,23 @@ class SaunaPanel extends HTMLElement {
           100,
       ),
     );
-    const color = `series_${key}`;
+    const color = `series_${key}`,
+      symbol = {
+        temperature:
+          '<path d="M9 14.5V5a3 3 0 0 1 6 0v9.5a5 5 0 1 1-6 0Z"/><path d="M12 8v10"/>',
+        humidity: '<path d="M12 3C10 7 5 11 5 15a7 7 0 0 0 14 0c0-4-5-8-7-12Z"/>',
+        light: '<path d="M9 18h6m-5 3h4M8 15a6 6 0 1 1 8 0v3H8Z"/>',
+      }[key];
     return `<div class="linear-instrument" style="--measurement-color:${this.appearanceColor(valid ? color : "status_unknown")}"><div class="linear-reading" ${key === "light" ? "data-light-observation" : ""}>${num(reading, key === "light" ? 0 : 1)} <span>${unit}</span></div><div class="linear-scale"><div class="linear-rail" aria-hidden="true"><i style="width:${fraction}%"></i></div><div class="linear-ticks" aria-hidden="true">${appearanceTickValues(
       bounds,
     )
       .map(
-        (value) =>
-          `<span style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${num(value)}</span>`,
+        (value, index, ticks) =>
+          `<span data-tick-density="${index === 0 || index === ticks.length - 1 ? "edge" : "detail"}" style="left:${((value - bounds.minimum) / (bounds.maximum - bounds.minimum)) * 100}%">${num(value)}</span>`,
       )
-      .join("")}</div>${control}</div></div>`;
+      .join(
+        "",
+      )}<span data-tick-density="middle" style="left:50%">${num((bounds.minimum + bounds.maximum) / 2)}</span></div>${control}</div><svg class="linear-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg></div>`;
   }
   linearTargetControl(value, bounds) {
     if (!bounds) return "";
@@ -5280,7 +5420,7 @@ class SaunaPanel extends HTMLElement {
               unit: "%",
               bounds: { minimum: 0, maximum: 100 },
               valid: available,
-              control: `<div class="instrument-slider"><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div><svg class="light-symbol" viewBox="0 0 24 24" aria-hidden="true">${symbol}</svg>`,
+              control: `<div class="instrument-slider"><input id="manual-light-value-overview" data-manual-light-value class="instrument-range" type="range" min="0" max="100" step="${this.frontendStep("brightness_step_percent")}" value="${sliderValue}" aria-label="Lichthelligkeit einstellen" ${allowed ? "" : "disabled"}></div>`,
             })
           : dial(
               reading,

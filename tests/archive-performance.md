@@ -80,8 +80,16 @@ Alle vorhandenen Messwertdatensätze bleiben unverändert.
 
 Gemessen werden erste Seite, sämtliche Folgeseiten, vollständiger kalter und
 warmer Abruf sowie Zeit und Aufrufzahl der Legacy-Projektion einschließlich
-Belegabruf und Decodierung. Kalt darf genau ein vollständiger Belegabruf erfolgen,
-warm keiner; alle Antworten müssen identisch bleiben. Zusätzlich prüft der Fall
-die semantische Gleichheit einer Projektion, der nur `source_state`-Belege mit
-Rolle `heater` sowie sämtliche `phase`- und `session`-Belege übergeben werden.
-Dies ist ein Filter-Nachweis im Test, keine Änderung des produktiven Lesepfads.
+Belegabruf und Decodierung. Auf derselben Datenbank werden die eingefrorene
+frühere Belegabfrage und die produktive gefilterte Abfrage jeweils kalt und warm
+ausgeführt. Vor jedem kalten Lauf wird der Projektionscache geleert. Sämtliche
+Antworten aller vier Läufe müssen einschließlich Originalmesswerten und
+Phasenprojektion identisch sein.
+
+Die produktive Abfrage behält alle `phase`- und `session`-Belege sowie
+`source_state`-Belege mit Rolle `heater`. Andere Quellenrollen werden von der
+Legacy-Projektion nicht ausgewertet und daher nicht mehr als Pythonobjekte
+decodiert. Im synthetischen Szenario sinken die kalt decodierten Belege von
+44.312 auf 1.108; warm erfolgt in beiden Varianten kein erneuter Belegabruf.
+Der Test prüft diese Decodiermengen anhand der tatsächlich erzeugten Belegarten.
+Der konservative Cache-Identitätscheck und das Datenbankschema bleiben erhalten.
