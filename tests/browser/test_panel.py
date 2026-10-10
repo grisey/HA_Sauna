@@ -2525,12 +2525,25 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         screenshots.mkdir(parents=True, exist_ok=True)
         await self.panel.get_by_role("button", name="Manuell steuern", exact=True).click()
         await expect(self.panel.locator('.light-instrument #manual-light-value-overview')).to_be_visible()
-        await self.panel.locator('[data-action="control-mode:automatic"]').click()
-        await self.panel.locator('#current [data-action="operation"]').click()
+        async with self.page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as automatic:
+            await self.panel.locator('[data-action="control-mode:automatic"]').click()
+        self.assertTrue((await automatic.value).ok)
+        async with self.page.expect_response(lambda response: response.url.endswith("/control") and response.request.method == "POST") as started:
+            await self.panel.locator('#current [data-action="operation"]').click()
+        self.assertTrue((await started.value).ok)
         await expect(self.panel.locator('#current [data-light-status]')).to_have_count(0)
         field = self.panel.locator("#manual-light-value-overview")
-        await field.evaluate("input => { input.value = '60'; }")
-        await field.dispatch_event("change")
+        # Real slider input records its draft before a status redraw can reset
+        # the unfocused field to the observed brightness.
+        async with self.page.expect_response(lambda response: response.url.endswith("/light") and response.request.method == "POST") as changed:
+            await field.evaluate("""input => {
+                input.value = '60';
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            }""")
+        response = await changed.value
+        self.assertTrue(response.ok)
+        self.assertEqual(response.request.post_data_json, {"value": 60})
         status = self.panel.locator('#current [data-light-observation]')
         await expect(status).to_have_text("60 %")
         await self.panel.evaluate("p=>p.refresh()")
