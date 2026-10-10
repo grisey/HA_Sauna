@@ -1730,43 +1730,82 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     for width in (1440, 390):
                         with self.subTest(admin=admin, width=width):
                             await page.set_viewport_size({"width": width, "height": 844})
-                            geometry = await panel.evaluate("""p => {
-                              const box = node => {
-                                const r = node.getBoundingClientRect();
-                                return {left:r.left, right:r.right, top:r.top,
-                                  bottom:r.bottom, centerY:(r.top+r.bottom)/2};
-                              };
-                              return [...p.shadowRoot.querySelectorAll('#current [data-instrument-style="linear"]')].map(tile => ({
-                                key:tile.dataset.instrument, tile:box(tile),
-                                reading:box(tile.querySelector('.linear-reading')),
-                                rail:box(tile.querySelector('.linear-rail')),
-                                symbol:box(tile.querySelector('.linear-symbol')),
-                                ticks:[...tile.querySelectorAll('.linear-ticks span')]
-                                  .filter(node => getComputedStyle(node).display !== 'none')
-                                  .map(node => ({...box(node), edge:node.dataset.tickDensity === 'edge'}))
-                              }));
-                            }""")
-                            self.assertEqual([item["key"] for item in geometry],
-                                             ["temperature", "humidity", "light"])
-                            for item in geometry:
-                                tile = item["tile"]
-                                self.assertLessEqual(item["reading"]["right"], item["rail"]["left"])
-                                self.assertLessEqual(item["rail"]["right"], item["symbol"]["left"])
-                                for name in ("reading", "rail", "symbol"):
-                                    self.assertGreaterEqual(item[name]["left"], tile["left"])
-                                    self.assertLessEqual(item[name]["right"], tile["right"])
-                                    self.assertAlmostEqual(item[name]["centerY"], item["rail"]["centerY"], delta=2)
-                                ticks = sorted(item["ticks"], key=lambda tick: tick["left"])
-                                self.assertEqual(sum(tick["edge"] for tick in ticks), 2)
-                                for tick in ticks:
-                                    self.assertGreaterEqual(tick["left"], tile["left"])
-                                    self.assertLessEqual(tick["right"], tile["right"])
-                                for left, right in zip(ticks, ticks[1:]):
-                                    self.assertLessEqual(left["right"], right["left"])
-                            for previous, current in zip(geometry, geometry[1:]):
-                                self.assertLessEqual(previous["tile"]["bottom"], current["tile"]["top"])
-                                self.assertAlmostEqual(previous["rail"]["left"], current["rail"]["left"], delta=1)
-                                self.assertAlmostEqual(previous["rail"]["right"], current["rail"]["right"], delta=1)
+                            geometry = None
+                            try:
+                                geometry = await panel.evaluate("""async p => {
+                                  const box = node => {
+                                    const r = node.getBoundingClientRect();
+                                    return {x:r.x, y:r.y, width:r.width, height:r.height,
+                                      left:r.left, right:r.right, top:r.top,
+                                      bottom:r.bottom, centerY:(r.top+r.bottom)/2};
+                                  };
+                                  const measure = () => [...p.shadowRoot.querySelectorAll('#current [data-instrument-style="linear"]')].map(tile => ({
+                                    key:tile.dataset.instrument, tile:box(tile),
+                                    reading:box(tile.querySelector('.linear-reading')),
+                                    rail:box(tile.querySelector('.linear-rail')),
+                                    symbol:box(tile.querySelector('.linear-symbol')),
+                                    ticks:[...tile.querySelectorAll('.linear-ticks span')]
+                                      .filter(node => getComputedStyle(node).display !== 'none')
+                                      .map(node => ({...box(node), edge:node.dataset.tickDensity === 'edge'}))
+                                  }));
+                                  return await new Promise((resolve, reject) => {
+                                    let previous, frame;
+                                    const timeout = setTimeout(() => {
+                                      cancelAnimationFrame(frame);
+                                      reject(new Error(`Instrument layout did not stabilize: ${JSON.stringify(previous)}`));
+                                    }, 5000);
+                                    const sample = () => {
+                                      const current = measure();
+                                      if (previous && JSON.stringify(current) === JSON.stringify(previous)) {
+                                        clearTimeout(timeout);
+                                        resolve(current);
+                                        return;
+                                      }
+                                      previous = current;
+                                      frame = requestAnimationFrame(sample);
+                                    };
+                                    frame = requestAnimationFrame(sample);
+                                  });
+                                }""")
+                                self.assertEqual([item["key"] for item in geometry],
+                                                 ["temperature", "humidity", "light"])
+                                for item in geometry:
+                                    tile = item["tile"]
+                                    self.assertLessEqual(item["reading"]["right"], item["rail"]["left"])
+                                    self.assertLessEqual(item["rail"]["right"], item["symbol"]["left"])
+                                    for name in ("reading", "rail", "symbol"):
+                                        detail = f"instrument={item['key']} element={name}; rectangles={geometry!r}"
+                                        self.assertGreaterEqual(item[name]["left"], tile["left"], msg=detail)
+                                        self.assertLessEqual(item[name]["right"], tile["right"], msg=detail)
+                                        self.assertAlmostEqual(item[name]["centerY"], item["rail"]["centerY"], delta=2, msg=detail)
+                                    ticks = sorted(item["ticks"], key=lambda tick: tick["left"])
+                                    self.assertEqual(sum(tick["edge"] for tick in ticks), 2)
+                                    for tick in ticks:
+                                        self.assertGreaterEqual(tick["left"], tile["left"])
+                                        self.assertLessEqual(tick["right"], tile["right"])
+                                    for left, right in zip(ticks, ticks[1:]):
+                                        self.assertLessEqual(left["right"], right["left"])
+                                for previous, current in zip(geometry, geometry[1:]):
+                                    self.assertLessEqual(previous["tile"]["bottom"], current["tile"]["top"])
+                                    self.assertAlmostEqual(previous["rail"]["left"], current["rail"]["left"], delta=1)
+                                    self.assertAlmostEqual(previous["rail"]["right"], current["rail"]["right"], delta=1)
+                            except Exception as error:
+                                artifact_dir = (os.environ.get("HA_SAUNA_BROWSER_ARTIFACTS")
+                                                or os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR"))
+                                if artifact_dir:
+                                    screenshots = Path(artifact_dir) / "manual-control-layout"
+                                    try:
+                                        screenshots.mkdir(parents=True, exist_ok=True)
+                                        await page.screenshot(
+                                            path=str(screenshots / f"admin-{admin}-width-{width}.png"),
+                                            full_page=True,
+                                        )
+                                    except Exception as screenshot_error:
+                                        print("LAYOUT_SCREENSHOT_ERROR", screenshot_error)
+                                raise AssertionError(
+                                    f"Manual controls layout admin={admin}, width={width}; "
+                                    f"rectangles={geometry!r}: {error}"
+                                ) from error
                     async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as entered:
                         await panel.get_by_role("button", name="Manuell steuern", exact=True).click()
                     self.assertTrue((await entered.value).ok)

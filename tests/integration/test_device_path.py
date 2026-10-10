@@ -1123,6 +1123,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         }, partial=True)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
+        self.base = self.now = self.runtime._clock()
         self.runtime._clock = lambda: self.now
         await async_set_control_mode(self.hass, self.entry, "manual")
         values = self.runtime.configuration.parameters.values
