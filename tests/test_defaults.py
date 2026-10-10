@@ -91,6 +91,21 @@ class DefaultsTests(unittest.TestCase):
         data["setup"] = {"program_mode": "constant", "control_input_mode": "switch"}
         self.assertIs(validate_catalog(data), data)
 
+    def test_detection_group_scope_requires_known_sources_and_complete_hints(self):
+        for metadata in (
+            {"presence_sources": ["combined"]},
+            {"presence_sources": []},
+            {"presence_sources": ["proxy", "proxy"]},
+            {"presence_sources": "proxy"},
+            {"descriptions": {"proxy": "Hinweis"}},
+            {"descriptions": {"proxy": "Hinweis", "ha_presence": ""}},
+        ):
+            with self.subTest(metadata=metadata):
+                data = load_catalog()
+                data["frontend"]["settings_subgroups"][0].update(metadata)
+                with self.assertRaises(ValueError):
+                    validate_catalog(data)
+
     def test_catalog_rejects_invalid_defaults_before_consumer_imports(self):
         mutations = (
             lambda data: data["parameters"].append(deepcopy(data["parameters"][0])),

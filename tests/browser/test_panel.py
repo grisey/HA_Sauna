@@ -1909,6 +1909,86 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.network_errors, [])
         self.assertEqual(self.ws_errors, [])
 
+    async def test_detection_settings_follow_configured_presence_and_preserve_hidden_values(self):
+        from custom_components.ha_sauna.settings import async_set_parameters
+        from test_presence_runtime import PresenceRuntimeIntegrationTests
+
+        saved_proxy = {"confirmation_minutes": 17.25, "strong_humidity_upper": 0.73}
+        await async_set_parameters(self.hass, self.entry, saved_proxy, partial=True)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        await self.panel.evaluate("p => p.refresh(true)")
+        self.assertEqual(self.runtime.configuration.presence_source, "proxy")
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.open_settings_section("sensors")
+        sensors = self.panel.locator("#settings-sensors")
+        await expect(sensors.locator("strong").first).to_have_text("Temperatur und Feuchte")
+        await expect(sensors.locator("summary", has_text="Experteneinstellungen")).to_have_count(0)
+        definitions = section("parameters")
+        proxy_keys = [item["key"] for item in definitions if item.get("settings_subgroup") in
+                      {"presence_strong", "presence_weak", "gang_confirmation"}]
+        shared_keys = [item["key"] for item in definitions if item.get("settings_subgroup") in
+                       {"door", "infusion", "ventilation"}]
+        for key in proxy_keys + shared_keys:
+            await expect(sensors.locator(f'input[name="{key}"]')).to_be_visible()
+        infusion_info = sensors.locator('[data-action="program-info:parameter-group:infusion"]')
+        infusion_popup = sensors.locator('[id="info-parameter-group:infusion"]')
+        await infusion_info.click()
+        await expect(infusion_popup).to_be_visible()
+        await expect(infusion_popup).to_contain_text("vorläufigen Gang")
+        await infusion_info.press("Escape")
+        await expect(infusion_popup).to_be_hidden()
+
+        # Reuse the real HA presence fixture: an occupancy binary sensor and an
+        # options update consumed by the integration's configuration listener.
+        self.runtime = await PresenceRuntimeIntegrationTests.configure(self)
+        await self.panel.evaluate("p => p.refresh(true)")
+        self.assertEqual(self.runtime.configuration.presence_source, "ha_presence")
+        await expect(sensors.locator("strong").first).to_have_text("Präsenzsensor")
+        for key in proxy_keys:
+            await expect(sensors.locator(f'input[name="{key}"]')).to_have_count(0)
+        for key in shared_keys:
+            await expect(sensors.locator(f'input[name="{key}"]')).to_be_visible()
+        await infusion_info.click()
+        await expect(infusion_popup).to_be_visible()
+        await expect(infusion_popup).to_contain_text("beginnen und beenden keinen Gang")
+        await infusion_info.press("Escape")
+        ventilation_info = sensors.locator('[data-action="program-info:parameter-group:ventilation"]')
+        await ventilation_info.click()
+        await expect(sensors.locator('[id="info-parameter-group:ventilation"]')).to_contain_text(
+            "Diagnosewerte")
+        await ventilation_info.press("Escape")
+
+        await sensors.locator('input[name="door_open_slope"]').fill("-2.1")
+        async with self.page.expect_response(lambda response: response.url.endswith("/parameters")
+                                            and response.request.method == "POST") as saved:
+            await sensors.locator('button[form="settings-parameters"]').click()
+        response = await saved.value
+        self.assertTrue(response.ok)
+        for key, value in saved_proxy.items():
+            self.assertEqual(response.request.post_data_json[key], value)
+        await self.hass.async_block_till_done()
+        await expect(self.panel).to_have_js_property("busy", False)
+        self.assertEqual(self.entry.options["parameters"]["door_open_slope"], -2.1)
+        for key, value in saved_proxy.items():
+            self.assertEqual(self.entry.options["parameters"][key], value)
+
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options, "presence_source": "proxy"})
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        await self.panel.evaluate("p => p.refresh(true)")
+        await expect(sensors.locator("strong").first).to_have_text("Temperatur und Feuchte")
+        for key in proxy_keys + shared_keys:
+            await expect(sensors.locator(f'input[name="{key}"]')).to_be_visible()
+        for key, value in saved_proxy.items():
+            await expect(sensors.locator(f'input[name="{key}"]')).to_have_value(str(value))
+        await expect(sensors.locator('input[name="door_open_slope"]')).to_have_value("-2.1")
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.console_errors, [])
+        self.assertEqual(self.network_errors, [])
+        self.assertEqual(self.ws_errors, [])
+
     async def test_design_settings_quantity_axes_and_mobile_navigation(self):
         screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "design"
         screenshots.mkdir(parents=True, exist_ok=True)

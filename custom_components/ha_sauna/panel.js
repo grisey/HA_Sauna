@@ -5415,16 +5415,31 @@ class SaunaPanel extends HTMLElement {
         : "Nicht verfügbar";
       const assertion =
         item.assertion === "provisional_proxy"
-          ? "Vorläufiger Proxy"
+          ? "Vorläufiger Hinweis aus Temperatur und Feuchte"
           : item.assertion === "proxy_retraction"
-            ? "Proxy zurückgenommen; keine beobachtete Abwesenheit"
+            ? "Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit"
             : "Direkte Präsenz";
-      return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${item.reason ? ` · ${item.reason}` : ""}`;
+      const reason = {
+        no_proxy_evidence: "Noch kein Personenhinweis",
+        source_unavailable: "Messquelle nicht verfügbar",
+        unavailable: "Sensor nicht verfügbar",
+        unknown: "Sensorzustand unbekannt",
+        missing: "Sensor fehlt",
+        gang_retracted: "Vorläufiger Gang aufgehoben",
+        gang_ended: "Gang beendet",
+        ...events,
+      }[item.reason];
+      return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${reason ? ` · ${reason}` : ""}`;
     };
-    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Gewünschte Quelle</dt><dd>${presence?.configured_source === "ha_presence" ? "Präsenzsensor" : "Proxy"}</dd><dt>Wirksame Quelle</dt><dd>${presence?.effective_source === "ha_presence" ? "Präsenzsensor + Türevent" : "Proxy"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
+    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Eingestellte Personenerkennung</dt><dd>${(this.state.configuration?.presence_source || presence?.configured_source) === "ha_presence" ? "Präsenzsensor" : "Temperatur und Feuchte"}</dd><dt>Wirksame Personenerkennung</dt><dd>${presence?.effective_source === "ha_presence" ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
       presence?.external || {},
     )
-      .map(([source, item]) => `<dt>${esc(source)}</dt><dd>${esc(report(item))}</dd>`)
+      .map(([source, item]) => {
+        const leading =
+          presence?.effective_source === "ha_presence" &&
+          source === this.state.configuration?.bindings?.presence;
+        return `<dt>${leading ? "Führender Präsenzsensor" : "Beobachtete Quelle"} · ${esc(source)}</dt><dd>${esc(report(item))}</dd>`;
+      })
       .join(
         "",
       )}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl></div>`;
@@ -8164,6 +8179,58 @@ class SaunaPanel extends HTMLElement {
     this.$("#detection-plots").innerHTML = html;
     this.revealEventTarget("marker");
   }
+  sensorSettingsOverview() {
+    const direct = this.state.configuration.presence_source === "ha_presence";
+    const description = direct
+      ? "Der Präsenzsensor meldet Anwesenheit und Abwesenheit. Temperatur und Feuchte liefern weiterhin Tür- und Aufgussereignisse. Die Schwellen der indirekten Personenerkennung sind hier nicht wirksam."
+      : "Temperatur und Feuchte liefern Hinweise auf Personen sowie Tür- und Aufgussereignisse. Personenhinweise eröffnen einen vorläufigen Gang; ein Aufguss bestätigt ihn.";
+    return `<div class="card"><h2>Messung und Geräte</h2><p>Personenerkennung: <strong>${direct ? "Präsenzsensor" : "Temperatur und Feuchte"}</strong> ${this.infoButton("presence-method", "Personenerkennung erklären", description)}</p><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a><p><a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a></p></div>`;
+  }
+  settingsParameterGroup({ id }) {
+    const state = this.state;
+    // Program values are edited through the catalog or the temperature choice.
+    if (!state.permissions?.admin || id === "programs") return "";
+    const source = state.configuration.presence_source || "proxy";
+    const subgroups = state.frontend_defaults.settings_subgroups || [];
+    const entries = state.parameters
+      .filter((d) => {
+        const group = subgroups.find((group) => group.id === d.settings_subgroup);
+        return (
+          d.settings_group === id &&
+          (!group?.presence_sources || group.presence_sources.includes(source))
+        );
+      })
+      .sort((a, b) => a.order - b.order);
+    if (!entries.length) return "";
+    const field = (d) =>
+      `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}</div>`;
+    const groupFields = (members, expert) => {
+      const grouped = subgroups
+        .map((group) => {
+          const fields = members.filter((d) => d.settings_subgroup === group.id);
+          if (!fields.length) return "";
+          const description = group.descriptions?.[source] || group.description;
+          const heading = `${esc(group.label)}${description ? ` ${this.infoButton(`parameter-group:${group.id}`, `${group.label} erklären`, description)}` : ""}`;
+          return expert
+            ? `<details class="expert-group"><summary>${heading}</summary><div class="forms">${fields.map(field).join("")}</div></details>`
+            : `<section class="parameter-section" aria-labelledby="parameter-group-${esc(group.id)}"><h3 id="parameter-group-${esc(group.id)}">${heading}</h3><div class="forms">${fields.map(field).join("")}</div></section>`;
+        })
+        .join("");
+      const ungrouped = members.filter(
+        (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
+      );
+      return (
+        grouped +
+        (ungrouped.length
+          ? `<div class="forms parameter-section">${ungrouped.map(field).join("")}</div>`
+          : "")
+      );
+    };
+    // Detection settings are grouped by their function, including expert fields.
+    const regular = entries.filter((d) => id === "sensors" || !d.expert);
+    const experts = entries.filter((d) => id !== "sensors" && d.expert);
+    return `<div class="card settings-parameters-card">${groupFields(regular, false)}${experts.length ? `<details class="expert-group"><summary>Experteneinstellungen</summary>${groupFields(experts, true)}</details>` : ""}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
+  }
   drawSettings() {
     if (!this.state) {
       this.renderStateLoading();
@@ -8172,52 +8239,13 @@ class SaunaPanel extends HTMLElement {
     const state = this.state,
       admin = !!state.permissions?.admin;
     if (this.settingsEntry !== this.entry || this.settingsAdmin !== admin) {
-      const field = (d) =>
-        `<div class="field"><span><label for="parameter-${esc(d.key)}">${esc(d.label)}</label> ${this.infoButton(`parameter:${d.key}`, `${d.label} erklären`, d.description, `help-${d.key}`)}</span>${unitInput(`<input id="parameter-${esc(d.key)}" form="settings-parameters" type="number" aria-label="${esc(d.label)} (${esc(d.unit)})" name="${esc(d.key)}" aria-describedby="help-${esc(d.key)}" step="${d.step}" min="${d.minimum ?? ""}" max="${d.maximum ?? ""}" value="${esc(state.configuration.parameters[d.key] ?? "")}" ${d.optional ? "" : "required"}>`, d.unit)}</div>`;
       const groups = state.frontend_defaults.settings_groups.filter(
         ({ id }) => admin || ["programs", "personal"].includes(id),
       );
-      const parameterGroup = ({ id }) => {
-        // Program values are edited through the catalog or the temperature choice.
-        if (id === "programs") return "";
-        const entries = state.parameters
-          .filter((d) => d.settings_group === id)
-          .sort((a, b) => a.order - b.order);
-        if (!admin || !entries.length) return "";
-        const regular = entries.filter((d) => !d.expert),
-          experts = entries.filter((d) => d.expert),
-          subgroups = state.frontend_defaults.settings_subgroups || [],
-          regularFields = subgroups
-            .map((group) => {
-              const members = regular.filter((d) => d.settings_subgroup === group.id);
-              return members.length
-                ? `<section class="parameter-section" aria-labelledby="parameter-group-${esc(group.id)}"><h3 id="parameter-group-${esc(group.id)}">${esc(group.label)}</h3><div class="forms">${members.map(field).join("")}</div></section>`
-                : "";
-            })
-            .join(""),
-          ungrouped = regular.filter(
-            (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
-          ),
-          expertFields =
-            subgroups
-              .map((group) => {
-                const members = experts.filter((d) => d.settings_subgroup === group.id);
-                return members.length
-                  ? `<details class="expert-group"><summary>${esc(group.label)}</summary><div class="forms">${members.map(field).join("")}</div></details>`
-                  : "";
-              })
-              .join("") +
-            `<div class="forms">${experts
-              .filter(
-                (d) => !subgroups.some((group) => group.id === d.settings_subgroup),
-              )
-              .map(field)
-              .join("")}</div>`;
-        return `<div class="card settings-parameters-card">${regularFields}${ungrouped.length ? `<div class="forms parameter-section">${ungrouped.map(field).join("")}</div>` : ""}${experts.length ? `<details class="expert-group"><summary>Experteneinstellungen</summary>${expertFields}</details>` : ""}<button type="submit" form="settings-parameters" class="confirm">Einstellungen speichern</button></div>`;
-      };
+      const parameterGroup = (group) => this.settingsParameterGroup(group);
       const contents = {
         programs: `<div class="card settings-programs"><h2>Programme</h2><div id="program-library"></div></div><div class="card"><h2>Start über Taster oder Betriebsschalter</h2><div id="button-settings"></div></div>`,
-        sensors: `<div class="card"><h2>Messung und Geräte</h2><a href="/config/integrations/integration/ha_sauna">Sensoren und Geräte zuordnen</a><p><a href="/config/integrations/integration/ha_sauna">Umgebung zuordnen</a></p></div>`,
+        sensors: this.sensorSettingsOverview(),
         appearance: admin ? this.appearanceSettingsMarkup() : "",
         maintenance: `<div class="card"><h2>Sitzungsarchiv</h2><p class="muted">Sitzungen mit bestätigtem Saunagang bleiben gespeichert. Versuche ohne Gang werden beim Abschluss verworfen.</p><button class="confirm" data-action="export">Archiv als ZIP herunterladen</button><div id="archive-management"></div></div><div class="card"><h2>Protokollierung</h2><p class="muted">Home-Assistant-Protokoll: custom_components.ha_sauna. Die Stufe ist jederzeit änderbar; das Sitzungsarchiv bleibt unabhängig davon.</p><div class="row"><label for="log-level">Protokollstufe</label><select id="log-level"><option value="ERROR">ERROR · Fehler</option><option value="INFO">INFO · Betriebsereignisse (Standard)</option><option value="DEBUG">DEBUG · Detaillierte Diagnose</option></select><button data-action="logging" class="confirm">Übernehmen</button></div><p class="muted">INFO enthält Fehler, Warnungen, Zustandswechsel und Schaltbefehle. DEBUG ergänzt Messwerte und Ereignisprüfungen.</p><a href="/config/logs">Home-Assistant-Protokoll öffnen</a></div><div class="card"><h2>Grundeinstellungen zurücksetzen</h2><p class="muted">Setzt Parameter, Temperaturprogramm und Protokollierung auf Standardwerte zurück. Sensor-, Geräte- und Tasterzuordnungen, Darstellung und Sitzungsarchiv bleiben erhalten.</p><button class="stop" data-action="reset-settings">Standardwerte wiederherstellen</button><p id="settings-reset-status" class="muted" role="status"></p></div>`,
         personal: `<div class="card"><h2>Persönliche Startseite</h2><p class="muted">Nur für das aktuelle Home-Assistant-Profil.</p><button data-action="default-page" class="confirm">Als Startseite festlegen</button><p id="start-page-status" class="muted" role="status"></p></div>`,
@@ -8227,9 +8255,28 @@ class SaunaPanel extends HTMLElement {
       if (admin) this.$("#log-level").value = state.configuration.log_level;
       this.settingsEntry = this.entry;
       this.settingsAdmin = admin;
+      this.settingsPresenceSource = state.configuration.presence_source;
+      this.sensorSettingsDraft = {};
       this.programDraft = null;
       this.programEditor = null;
       this.programLibraryNeedsRender = true;
+    }
+    if (admin && this.settingsPresenceSource !== state.configuration.presence_source) {
+      const section = this.$("#settings-sensors");
+      if (section) {
+        this.sensorSettingsDraft ||= {};
+        for (const input of section.querySelectorAll("input[data-edited]"))
+          this.sensorSettingsDraft[input.name] = input.value;
+        section.innerHTML =
+          this.sensorSettingsOverview() +
+          this.settingsParameterGroup({ id: "sensors" });
+        for (const input of section.querySelectorAll("input[name]")) {
+          if (!Object.hasOwn(this.sensorSettingsDraft, input.name)) continue;
+          input.value = this.sensorSettingsDraft[input.name];
+          input.dataset.edited = "true";
+        }
+      }
+      this.settingsPresenceSource = state.configuration.presence_source;
     }
     this.selectSettingsSection(this.settingsSection);
     for (const d of state.parameters) {

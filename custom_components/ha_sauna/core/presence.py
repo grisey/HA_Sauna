@@ -61,15 +61,17 @@ class PresenceObservation:
 
 
 class PresenceProjection:
-    """Proxy führt; direkte Belegung bleibt bis zur Gangregelung Beobachtung.
+    """Indirekte Belegung und externe Meldungen getrennt bereitstellen.
 
     Meldungen können aus dem Archiv eingelesen werden. IDs bleiben auch beim
     Neuladen gleich; der erneut festgestellte Empfang erzeugt kein neues Ereignis.
+    Der Controller führt die gewählte Gangerkennung; diese Projektion sammelt
+    deren indirekte Belege und die externen Sensormeldungen.
     """
 
     def __init__(self, active_source: str = "proxy"):
         if active_source != "proxy":
-            raise ValueError("Direkter Präsenzbetrieb benötigt noch Fachentscheidungen")
+            raise ValueError("Die direkte Gangerkennung wird vom Controller geführt")
         self.active_source = active_source
         self.reports: dict[str, PresenceReport] = {}
         self.current: PresenceReport | None = None

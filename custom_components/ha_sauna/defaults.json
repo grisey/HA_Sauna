@@ -296,14 +296,14 @@
       "default": 12,
       "minimum": null,
       "integer": false,
-      "description": "Frist ab dem zugeordneten Gangbeginn: Ohne Aufguss wird der vorläufige Saunagang aufgehoben. Gilt nur für die Proxyerkennung, nicht bei direkter Präsenz.",
+      "description": "Frist ab Gangbeginn für den bestätigenden Aufguss. Ohne Aufguss wird der vorläufige Gang zurückgenommen.",
       "group": "operation",
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "operation",
+      "settings_group": "sensors",
       "order": 16,
-      "settings_subgroup": "session_controls"
+      "settings_subgroup": "gang_confirmation"
     },
     {
       "key": "session_gap_minutes",
@@ -334,7 +334,7 @@
       "default": 2,
       "minimum": null,
       "integer": false,
-      "description": "Erforderliche Druckdauer zum Beenden der Sitzung bei einem binären Saunataster.",
+      "description": "Haltezeit zum Starten oder Beenden einer Sitzung bei einem binären Taster. Shelly-Ereignistaster melden die Geste selbst.",
       "group": "operation",
       "expert": false,
       "step": "any",
@@ -396,9 +396,9 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "operation",
       "order": 21,
-      "settings_subgroup": "validity_feedback"
+      "settings_subgroup": "heater_feedback"
     },
     {
       "key": "fault_confirmation_seconds",
@@ -415,9 +415,9 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "operation",
       "order": 22,
-      "settings_subgroup": "validity_feedback"
+      "settings_subgroup": "heater_feedback"
     },
     {
       "key": "warmup_estimation_minutes",
@@ -434,7 +434,7 @@
       "expert": false,
       "step": "any",
       "number_step": 0.01,
-      "settings_group": "sensors",
+      "settings_group": "operation",
       "order": 23,
       "settings_subgroup": "temperature_estimation"
     },
@@ -797,7 +797,7 @@
       "number_step": 1,
       "settings_group": "sensors",
       "order": 42,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "gang_confirmation"
     },
     {
       "key": "strong_window_seconds",
@@ -809,14 +809,14 @@
       "default": 60,
       "minimum": 1,
       "integer": true,
-      "description": "Zeitraum für Temperatur- und Luftfeuchtetrends bei deutlichen Hinweisen auf Personen.",
+      "description": "Vergleichszeitraum für Feuchtetrend und Wassergehalt bei deutlichen Personensignalen.",
       "group": "detection",
       "expert": true,
       "step": 1,
       "number_step": 1,
       "settings_group": "sensors",
       "order": 43,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_strong"
     },
     {
       "key": "strong_humidity_upper",
@@ -835,7 +835,7 @@
       "number_step": 0.01,
       "settings_group": "sensors",
       "order": 44,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_strong"
     },
     {
       "key": "strong_humidity_lower",
@@ -854,7 +854,7 @@
       "number_step": 0.01,
       "settings_group": "sensors",
       "order": 45,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_strong"
     },
     {
       "key": "strong_hold_seconds",
@@ -873,7 +873,7 @@
       "number_step": 1,
       "settings_group": "sensors",
       "order": 46,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_strong"
     },
     {
       "key": "weak_window_seconds",
@@ -885,14 +885,14 @@
       "default": 120,
       "minimum": 1,
       "integer": true,
-      "description": "Vergleichszeitraum für schwache Personensignale nach Türöffnung und anschließender Schließung. Bestätigtes Durchlüften ist nicht erforderlich.",
+      "description": "Vergleichszeitraum für einen neuen Feuchteanstieg nach Türöffnung und Türschluss.",
       "group": "detection",
       "expert": true,
       "step": 1,
       "number_step": 1,
       "settings_group": "sensors",
       "order": 47,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_weak"
     },
     {
       "key": "weak_humidity_upper",
@@ -911,7 +911,7 @@
       "number_step": 0.01,
       "settings_group": "sensors",
       "order": 48,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_weak"
     },
     {
       "key": "weak_humidity_lower",
@@ -930,7 +930,7 @@
       "number_step": 0.01,
       "settings_group": "sensors",
       "order": 49,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_weak"
     },
     {
       "key": "weak_hold_seconds",
@@ -949,7 +949,7 @@
       "number_step": 1,
       "settings_group": "sensors",
       "order": 50,
-      "settings_subgroup": "presence"
+      "settings_subgroup": "presence_weak"
     },
     {
       "key": "infusion_window_seconds",
@@ -961,7 +961,7 @@
       "default": 10,
       "minimum": 1,
       "integer": true,
-      "description": "Zeitraum, in dem Luftfeuchteanstieg und Temperaturänderung eines Aufgusses bewertet werden.",
+      "description": "Vergleichszeitraum für den Anstieg relativer Feuchte und absoluten Wassergehalts.",
       "group": "detection",
       "expert": true,
       "step": 1,
@@ -1571,22 +1571,37 @@
       "default": {
         "label": "Gemeinsame Darstellung",
         "default": "round",
-        "options": ["round", "linear"]
+        "options": [
+          "round",
+          "linear"
+        ]
       },
       "temperature": {
         "label": "Temperatur",
         "default": "inherit",
-        "options": ["inherit", "round", "linear"]
+        "options": [
+          "inherit",
+          "round",
+          "linear"
+        ]
       },
       "humidity": {
         "label": "Luftfeuchte",
         "default": "inherit",
-        "options": ["inherit", "round", "linear"]
+        "options": [
+          "inherit",
+          "round",
+          "linear"
+        ]
       },
       "light": {
         "label": "Licht",
         "default": "inherit",
-        "options": ["inherit", "round", "linear"]
+        "options": [
+          "inherit",
+          "round",
+          "linear"
+        ]
       }
     },
     "precision": {
@@ -1641,6 +1656,14 @@
         "label": "Ofen und Heizzeit"
       },
       {
+        "id": "heater_feedback",
+        "label": "Rückmeldung und Schutz"
+      },
+      {
+        "id": "temperature_estimation",
+        "label": "Temperaturauswertung"
+      },
+      {
         "id": "oven_cooling",
         "label": "Ofenkühlung"
       },
@@ -1650,31 +1673,57 @@
       },
       {
         "id": "validity_feedback",
-        "label": "Gültigkeit und Rückmeldung"
-      },
-      {
-        "id": "temperature_estimation",
-        "label": "Temperaturauswertung"
+        "label": "Messwertgültigkeit"
       },
       {
         "id": "signals",
-        "label": "Signalverarbeitung"
+        "label": "Messwertaufbereitung",
+        "description": "Gemeinsame Grundlage für Tür-, Personen- und Aufgusssignale aus Temperatur und Feuchte."
       },
       {
         "id": "door",
-        "label": "Tür"
+        "label": "Türerkennung",
+        "description": "Öffnen und Schließen werden in beiden Verfahren aus Temperatur und Feuchte erkannt. Ein Präsenzsensor ersetzt diese Türerkennung nicht."
       },
       {
-        "id": "ventilation",
-        "label": "Lüften"
+        "id": "gang_confirmation",
+        "label": "Personenerkennung und Gangbestätigung",
+        "presence_sources": [
+          "proxy"
+        ],
+        "description": "Personensignale eröffnen nach Türöffnung und Türschluss einen vorläufigen Gang. Ein Aufguss bestätigt ihn innerhalb der Frist."
       },
       {
-        "id": "presence",
-        "label": "Präsenz"
+        "id": "presence_strong",
+        "label": "Deutliche Personensignale",
+        "presence_sources": [
+          "proxy"
+        ],
+        "description": "Feuchtetrend und zunehmender Wassergehalt im vollständigen Messfenster."
+      },
+      {
+        "id": "presence_weak",
+        "label": "Schwache Personensignale nach Türschluss",
+        "presence_sources": [
+          "proxy"
+        ],
+        "description": "Empfindlichere Prüfung auf einen neuen Feuchteanstieg nach dem Eintritt."
       },
       {
         "id": "infusion",
-        "label": "Aufguss"
+        "label": "Aufgusserkennung",
+        "descriptions": {
+          "proxy": "Ein Aufguss bestätigt einen vorläufigen Gang oder eröffnet ihn nach vollständigem Eintritt. Weitere Aufgüsse werden dem Gang zugeordnet.",
+          "ha_presence": "Aufgüsse werden innerhalb eines durch Präsenz bestätigten Gangs erfasst. Sie beginnen und beenden keinen Gang."
+        }
+      },
+      {
+        "id": "ventilation",
+        "label": "Lüftungserkennung",
+        "descriptions": {
+          "proxy": "Bestätigtes Durchlüften nach einer erneuten Türöffnung beendet den Gang. Die Tür darf offen bleiben.",
+          "ha_presence": "Lüftungssignale bleiben Diagnosewerte. Für das Gangende zählen eine erneute Türöffnung und die Abwesenheitsmeldung des Präsenzsensors."
+        }
       },
       {
         "id": "brightness",
@@ -1687,6 +1736,13 @@
       {
         "id": "temperature_choices",
         "label": "Temperaturauswahl"
+      },
+      {
+        "id": "presence",
+        "label": "Personenerkennung",
+        "presence_sources": [
+          "proxy"
+        ]
       }
     ],
     "control_button_height_px": 42,

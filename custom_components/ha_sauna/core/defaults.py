@@ -182,11 +182,30 @@ def _groups(groups, name):
         raise ValueError(f"defaults.json: invalid {name}")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
     identities = set()
     for group in groups:
-        _object(group, {"id", "label"}, name)
+        _object(
+            group, {"id", "label"}, name,
+            optional=("description", "descriptions", "presence_sources")
+            if name == "settings_subgroups" else (),
+        )
         if any(
-            not isinstance(group[key], str) or not group[key].strip() for key in group
+            not isinstance(group[key], str) or not group[key].strip()
+            for key in ("id", "label", "description") if key in group
         ):
             raise ValueError(f"defaults.json: invalid {name}")
+        sources = group.get("presence_sources")
+        if sources is not None and (
+            not isinstance(sources, list)
+            or not sources
+            or any(source not in ("proxy", "ha_presence") for source in sources)
+            or len(set(sources)) != len(sources)
+        ):
+            raise ValueError(f"defaults.json: invalid {name} presence_sources")
+        if "descriptions" in group:
+            descriptions = group["descriptions"]
+            _object(descriptions, {"proxy", "ha_presence"}, f"{name} descriptions")
+            if any(not isinstance(value, str) or not value.strip()
+                   for value in descriptions.values()):
+                raise ValueError(f"defaults.json: invalid {name} descriptions")
         if group["id"] in identities:
             raise ValueError(f"defaults.json: duplicate {name}")
         identities.add(group["id"])

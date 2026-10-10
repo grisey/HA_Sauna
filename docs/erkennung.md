@@ -1,9 +1,20 @@
 # Türöffnung, Aufguss und Durchlüften erkennen
 
-Tür-, Personen-, Aufguss- und Lüftungssignale entstehen aus den zugeordneten
-Temperatur-/Feuchtepaaren. Beobachtungsfenster, Schwellen und Bestätigungsdauern
-stammen aus den [Parametern](parameter.md). Ihre Wirkung auf einen Gang beschreibt
-die [Gangerkennung](gangmodell.md).
+Die gewählte Gangerkennung bestimmt den Anwesenheitsnachweis. Türereignisse
+und Aufgüsse stammen in beiden Verfahren aus Temperatur und Feuchte.
+
+| Erkennung | Aus Temperatur und Feuchte | Mit Präsenzsensor |
+| --- | --- | --- |
+| Türöffnung und Türschluss | Gemeinsame Erkennung aus den Messpaaren | Dieselbe Erkennung aus den Messpaaren |
+| Anwesenheit | Personensignale; zunächst vorläufiger Gang | Belegungszustand der zugeordneten Entität |
+| Aufguss | Bestätigt den Gang; weitere Aufgüsse werden erfasst | Erfassung im bereits bestätigten Gang |
+| Durchlüften | Nach Austrittsöffnung Nachweis für das Gangende | Diagnose; kein Gangende |
+
+Die Einstellungen trennen Messwertaufbereitung, Türerkennung,
+Personenerkennung, Aufgüsse und Lüftung. Personenschwellen und
+Aufgussbestätigungsfrist erscheinen nur beim indirekten Verfahren.
+Ihre gespeicherten Werte bleiben beim Verfahrenswechsel erhalten.
+Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
 
 ## Öffnen und Schließen der Tür
 

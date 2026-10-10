@@ -66,8 +66,8 @@ Der Datenumfang des Sitzungsarchivs bleibt unverändert.
 ## Standardwerte wiederherstellen
 
 Zurückgesetzt werden Betriebsparameter, Programmbibliothek, Betriebsart,
-aktuelle Temperaturwahl, Tastervorgabe, Präsenzquelle und Protokollstufe.
+aktuelle Temperaturwahl, Tastervorgabe und Protokollstufe.
 
-Erhalten bleiben Gerätezuordnungen, Taster-/Schalterart samt Ereignistyp,
+Erhalten bleiben Erkennungsverfahren, Gerätezuordnungen, Taster-/Schalterart samt Ereignistyp,
 Darstellung und Archiv. Die Darstellung hat eine eigene Rücksetzung.
 Alle Rücksetzungen der Betriebsparameter sind erst nach Sitzungsende möglich.
