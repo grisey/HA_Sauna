@@ -126,6 +126,24 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.registry.async_get(first.entity_id))
         self.assertIsNotNone(self.registry.async_get(second.entity_id))
 
+    async def test_cleanup_waits_for_queued_configuration_change(self):
+        entry = await create_sauna(self.hass)
+        retired = self.obsolete(entry)
+        before = dict(entry.options)
+        self.hass.config_entries.async_update_entry(entry, options={
+            **before,
+            "bindings": {
+                key: value for key, value in before["bindings"].items()
+                if not key.startswith("lower_")
+            },
+        })
+        # No event-loop turn: the options listener has not set busy yet.
+        with self.assertRaises(MaintenanceError) as error:
+            cleanup_candidates(self.hass, entry)
+        self.assertEqual(error.exception.code, "configuration_busy")
+        self.assertIsNotNone(self.registry.async_get(retired.entity_id))
+        await self.hass.async_block_till_done()
+
     async def test_cleanup_preserves_loaded_and_bound_obsolete_entities(self):
         entry = await create_sauna(self.hass)
         bound = self.obsolete(entry, "bound_source")
@@ -463,7 +481,9 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(entry.title, "Gartensauna")
         self.assertIs(entry.runtime_data, runtime)
-        device = dr.async_get(self.hass).async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+        device = dr.async_get(self.hass).async_get_device_by_identifier(
+            (DOMAIN, entry.entry_id), entry.entry_id
+        )
         self.assertEqual(device.name_by_user or device.name, "Gartensauna")
         token = await credentials(self.hass)
         base = f"http://127.0.0.1:{self.hass.http.server_port}/api/ha_sauna"

@@ -33,6 +33,10 @@ def _check_idle(entry):
             raise MaintenanceError("configuration_busy")
         if runtime.session is not None:
             raise MaintenanceError("session_exists")
+        if Configuration.from_options(entry.options).as_options() != runtime.configuration.as_options():
+            # The options callback may be queued but not yet have set its
+            # reconfiguration flag. Do not preview the old entity set then.
+            raise MaintenanceError("configuration_busy")
 
 
 def expected_entities(entry):
@@ -109,7 +113,7 @@ async def async_rename_sauna(hass, entry, name):
         raise MaintenanceError("required")
     name = name.strip()
     registry = dr.async_get(hass)
-    device = registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    device = registry.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
     if device is not None:
         registry.async_update_device(device.id, name=name, name_by_user=name)
     hass.config_entries.async_update_entry(entry, title=name)

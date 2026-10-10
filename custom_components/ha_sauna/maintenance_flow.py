@@ -1,5 +1,7 @@
 """Options steps for explicit names, entity IDs and confirmed cleanup."""
 
+from html import escape
+
 import voluptuous as vol
 from homeassistant.helpers import selector
 
@@ -131,6 +133,8 @@ class MaintenanceOptionsMixin:
             description_placeholders={
                 "entities": "\n".join(
                     f"- `{entity.entity_id}`"
+                    + (f" — {escape(entity.name or entity.original_name)}"
+                       if entity.name or entity.original_name else "")
                     for entity in self._cleanup_preview
                 ),
                 "count": str(len(self._cleanup_preview)),
