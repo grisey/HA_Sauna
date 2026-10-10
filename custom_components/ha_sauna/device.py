@@ -18,7 +18,10 @@ from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core import power
 from .core.button import NATIVE_BUTTON_EVENTS
-from .core.light import normal_brightness, phase_target
+from .core.light import normal_brightness
+from .core.light_control import (
+    light_phase, light_plan, select_light, validate_light_selection,
+)
 from .core.light_output import LightOutput, LightQuantizer
 from .core.models import Measurement, Position, Quantity
 from .core.timeline import Door, Kind
@@ -1119,48 +1122,11 @@ class HADevice:
             return
         phase = self._light_phase(now)
         key, name, ends_at = phase
-        after_run = (
-            self.runtime.controller.session.after_run
-            if self.runtime.controller.session
-            else None
-        )
-        phase_paused = (
-            name == "nachlauf"
-            and after_run is not None
-            and not after_run.pending_start
-            and after_run.ends_at is None
-        )
         state = self.hass.states.get(self.bindings["light"])
         actual = self._light_brightness(state)
-        if name == "aus":
-            # Außerhalb der Sitzung ist die automatische Grundlage AUS. Das
-            # verhindert, dass ein gerade abgelaufener 50-%-Nachlauf beim
-            # Zurückkehren von einer manuellen Raumlichtwahl wieder auftaucht.
-            target = 0.0
-        elif name == "session_light":
-            target = 0.0
-        else:
-            normal = self.normal_light_brightness()
-            target = phase_target(
-                name,
-                self.runtime.controller.temperature,
-                self.runtime.controller.target_temperature,
-                self.runtime.configuration.parameters,
-                normal,
-            )
-        plan = self.light_output.update(
-            now,
-            key,
-            name,
-            target,
-            actual,
-            ends_at,
-            phase_paused=phase_paused,
-            phase_brightness_percent=(
-                self.runtime.controller.light_after_run.brightness_percent
-                if name == "session_light"
-                else None
-            ),
+        plan = light_plan(
+            self.light_output, self.runtime.controller, now, actual,
+            self.normal_light_brightness(),
         )
         # Kurve und Istwert behalten ihre Genauigkeit. Nur die gemeinsame
         # Befehlsgrundlage für Dienst, Echo und Archiv wird quantisiert.
@@ -1753,41 +1719,7 @@ class HADevice:
         return True if brightness is None else brightness * 100 / 255
 
     def _light_phase(self, now=None):
-        """Führt Licht strikt aus dem Controllerzustand und seinen Objekten ab."""
-        controller = self.runtime.controller
-        light_after_run = controller.light_after_run
-        if controller.control_mode == "manual" and (
-            light_after_run is None
-            or (now is not None and now >= light_after_run.ends_at)
-        ):
-            # Im manuellen Betrieb verändern Gang- und Heizphasen die explizite
-            # Lichtwahl nicht. Nur der Betriebsartwechsel gibt sie wieder frei.
-            return (("manual",), "manual", None)
-        if light_after_run is not None:
-            key = (
-                "session_light",
-                light_after_run.session_id,
-                light_after_run.started_at,
-            )
-            # Das Objekt bleibt als Sitzungsnachweis erhalten, die logische
-            # Lichtphase endet aber exakt mit seiner Frist. Ein noch
-            # ausstehender OFF-Service wird unabhängig in ``apply_light``
-            # abgewickelt, damit ein neuer manueller Befehl nicht den alten
-            # ``session_light``-Schlüssel erbt.
-            if now is not None and now >= light_after_run.ends_at:
-                return (("aus",), "aus", None)
-            return (key, "session_light", light_after_run.ends_at)
-        session = controller.session
-        if session is None or not session.operation_enabled:
-            return (("aus",), "aus", None)
-        phase = controller.phase
-        if phase == "nachlauf" and session.after_run is not None:
-            return (
-                (session.session_id, phase, session.after_run.phase_id),
-                phase,
-                session.after_run.ends_at,
-            )
-        return ((session.session_id, phase), phase, None)
+        return light_phase(self.runtime.controller, now)
 
     @property
     def light_observation(self):
@@ -1831,25 +1763,8 @@ class HADevice:
 
     def set_light_override(self, value, *, at=None):
         """Manuelle Lichtwahl bis zum Rückkehrpunkt oder Fristablauf halten."""
-        if value not in (None, True, False, "normal"):
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or (isinstance(value, int) and not 0 <= value <= 100)
-                or (isinstance(value, float) and not isfinite(value))
-                or not 0 <= value <= 100
-            ):
-                raise ValueError("Lichtwert muss zwischen 0 und 100 Prozent liegen.")
-        # Die Runtime ruft diese Methode vor ihrem nächsten Regelzyklus auf.
-        # Deshalb muss der aktuelle Controller-Schlüssel hier mitgegeben
-        # werden, statt den möglicherweise alten Planner-Schlüssel zu erben.
+        validate_light_selection(value)
         now = self.runtime._clock() if at is None else at
-        ends_at = (
-            now + timedelta(minutes=self.values["manual_override_minutes"])
-            if self.runtime.controller.control_mode == "automatic" and value is not None
-            else None
-        )
-        phase_key = self._light_phase(now)[0]
         light_after_run = self.runtime.controller.light_after_run
         if (
             value is not None
@@ -1864,29 +1779,11 @@ class HADevice:
                 light_after_run.session_id,
                 light_after_run.started_at,
             )
-            # Der Timer ist fachlich beendet, auch wenn seine AUS-Ausgabe für
-            # die neue manuelle Wahl übersprungen wird. LightOutput besitzt
-            # dafür keine eigene Ablaufzeit und erhält den Grundwert hier vom
-            # führenden Adapter.
-            self.light_output.finish_automatic()
-        if value is None:
-            self.light_output.return_to_automatic()
-        elif value is True:
-            self.light_output.set_manual(
-                self.values["session_light_brightness_percent"],
-                phase_key=phase_key,
-                ends_at=ends_at,
-            )
-        elif value is False:
-            self.light_output.set_manual(0, phase_key=phase_key, ends_at=ends_at)
-        elif value == "normal":
-            self.light_output.set_manual(
-                self.normal_light_brightness(),
-                phase_key=phase_key,
-                ends_at=ends_at,
-            )
-        else:
-            self.light_output.set_manual(value, phase_key=phase_key, ends_at=ends_at)
+        self.light_output.parameters = self.runtime.configuration.parameters
+        select_light(
+            self.light_output, self.runtime.controller, value, now,
+            self.normal_light_brightness(),
+        )
         self._light_override_dirty = True
 
     def begin_button_hold_light(self, session_id, *, starting=False):

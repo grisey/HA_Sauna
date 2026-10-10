@@ -28,6 +28,17 @@ const refresh = async (reset = false) => {
     ? "admin"
     : "user";
   document.querySelector("#scenario").value = panel.state.preview_scenario;
+  const feedback = panel.state.preview_feedback;
+  document.querySelectorAll("[data-feedback]").forEach((choice) => {
+    const value = JSON.parse(choice.dataset.feedback);
+    choice.setAttribute(
+      "aria-pressed",
+      feedback.following ? value === "follow" : value === feedback.on,
+    );
+  });
+  document.querySelector("#feedback-status").textContent = feedback.following
+    ? "Folgt der Steuerung"
+    : `Fest vorgegeben: ${feedback.on === null ? "Unbekannt" : feedback.on ? "Ein" : "Aus"}`;
   const button = panel.state.preview_button;
   for (const gesture of ["short", "double", "triple", "hold"])
     document.querySelector(`[data-sim="button_${gesture}"]`).disabled = button.pressed;

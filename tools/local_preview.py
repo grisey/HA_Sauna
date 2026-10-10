@@ -25,6 +25,9 @@ from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS, measurement_window
+from custom_components.ha_sauna.core.light import normal_brightness
+from custom_components.ha_sauna.core.light_control import light_plan, select_light
+from custom_components.ha_sauna.core.light_output import LightOutput, LightQuantizer
 from custom_components.ha_sauna.core.parameters import (
     EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, Parameters,
 )
@@ -55,8 +58,8 @@ class Preview:
         self.records = []
         self.sessions = {}
         self.decision_cursor = self.consumer_cursor = 0
-        self.light = 0 if scenario == "manuell" else 35
-        self.light_manual = 0 if scenario == "manuell" else None
+        self.light = 0
+        self.sun_elevation = None
         self.humidity = 24.5
         self.follow_feedback = True
         self.button_pressed = False
@@ -77,6 +80,10 @@ class Preview:
             async_update_entry=self.save_options,
         ))
         self.c = self.runtime.controller
+        self.light_output = LightOutput(self.c.parameters)
+        self.light_quantizer = LightQuantizer()
+        if scenario == "manuell":
+            self.select_light(0)
         self.now -= timedelta(seconds=HISTORY_CONTEXT_SECONDS)
         self.c.set_temperature(58, self.now)
         self.sample()
@@ -191,6 +198,7 @@ class Preview:
             demand = bool(self.c.last_decision and self.c.last_decision.heat)
             self.c.report_contactor(demand, self.now)
             self.c.report_heating(demand, self.now)
+        self.sample_light()
         self.runtime.persist()
         for d in self.c.decisions[self.decision_cursor:]:
             self.record("decision", d)
@@ -227,8 +235,6 @@ class Preview:
         if action == "button_release":
             asyncio.run(self.button_event("release"))
             self.button_pressed = False
-            if self.c.light_after_run is not None:
-                self.light = self.c.parameters.values["session_light_brightness_percent"]
         else:
             if self.button_pressed:
                 raise ValueError("Der Taster ist noch gedrückt. Zuerst loslassen.")
@@ -240,8 +246,7 @@ class Preview:
                 self.step(self.c.parameters.values["button_hold_seconds"])
                 asyncio.run(self.button_event("long"))
         if previous_mode != self.c.control_mode:
-            self.light_manual = 0 if self.c.control_mode == "manual" else None
-            self.light = 0 if self.light_manual == 0 else 35
+            self.select_light(0 if self.c.control_mode == "manual" else None)
         self.sample()
 
     def door(self, kind):
@@ -256,6 +261,39 @@ class Preview:
         asyncio.run(self.runtime.accept_presence(report))
         self.record("presence", report)
         self.sample()
+
+    @property
+    def light_manual(self):
+        return self.light_output.manual_brightness
+
+    def normal_light(self):
+        return normal_brightness(self.sun_elevation, self.c.parameters)
+
+    def select_light(self, value):
+        self.light_output.parameters = self.c.parameters
+        select_light(self.light_output, self.c, value, self.now, self.normal_light())
+
+    def sample_light(self):
+        output = self.light_output
+        output.parameters = self.c.parameters
+        if self.c.control_mode == "manual":
+            output.keep_manual()
+        else:
+            output.expire_manual(self.now)
+        if (self.runtime.button_start_hold_active
+                or self.runtime._button_hold_session_id is not None):
+            output.return_to_automatic()
+            self.light = self.observed_light()
+            return
+        after_run = self.c.light_after_run
+        if (self.c.control_mode == "manual"
+                and (after_run is None or self.now >= after_run.ends_at)
+                and output.manual_brightness is None):
+            return
+        plan = light_plan(output, self.c, self.now, self.light, self.normal_light())
+        self.light = self.light_quantizer.quantize(
+            plan, self.c.parameters.values["light_output_hysteresis_percent"],
+        )
 
     def observed_light(self):
         if self.runtime.button_start_hold_active:
@@ -333,11 +371,16 @@ class Preview:
                 "override_ends_at":c.heater_override_ends_at,
                 "automatic":c.automatic_decision.heat if c.automatic_decision else None},
                 "light":{"observation":{"available":True,"brightness_percent":light_observation},
-                         "manual":self.light_manual, "automatic":35, "normal":35}},
+                         "manual":self.light_manual,
+                         "override_ends_at":self.light_output.manual_ends_at,
+                         "automatic":self.light_output.last_automatic_brightness,
+                         "normal":self.normal_light()}},
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
         result["permissions"]["admin"] = self.admin
-        return result if self.admin else public_state(result)
+        result = result if self.admin else public_state(result)
+        result["preview_feedback"] = {"following": self.follow_feedback, "on": c.contactor}
+        return result
 
     def action(self, path, body):
         if path == "/simulate":
@@ -362,9 +405,15 @@ class Preview:
             elif action == "temperature":
                 self.c.set_temperature(float(body["value"]), self.now)
             elif action == "feedback":
-                self.follow_feedback = False
-                self.c.report_contactor(body["value"], self.now)
-                self.c.report_heating(body["value"], self.now)
+                value = body["value"]
+                if value == "follow":
+                    self.follow_feedback = True
+                elif value is None or isinstance(value, bool):
+                    self.follow_feedback = False
+                    self.c.report_contactor(value, self.now)
+                    self.c.report_heating(value, self.now)
+                else:
+                    raise ValueError("Ungültige Ofenrückmeldung")
             else:
                 raise ValueError("Unbekannter Simulationseingang")
         elif path.endswith("/control"):
@@ -373,8 +422,7 @@ class Preview:
             previous_mode = self.c.control_mode
             asyncio.run(async_set_control_mode(self.hass, self.entry, body["mode"]))
             if previous_mode != self.c.control_mode:
-                self.light_manual = 0 if self.c.control_mode == "manual" else None
-                self.light = 0 if self.light_manual == 0 else 35
+                self.select_light(0 if self.c.control_mode == "manual" else None)
             self.sample()
             return {"configuration":self.runtime.configuration.as_options()}
         elif path.endswith("/finish_phase"):
@@ -396,18 +444,6 @@ class Preview:
             asyncio.run(self.runtime.set_heater_override(body["value"]))
         elif path.endswith("/light"):
             value = body["value"]
-            if value is None:
-                brightness = None
-            elif value is True:
-                brightness = self.c.parameters.values["session_light_brightness_percent"]
-            elif value is False:
-                brightness = 0
-            elif value == "normal":
-                brightness = 35
-            elif isinstance(value, (int, float)) and 0 <= value <= 100:
-                brightness = value
-            else:
-                raise ValueError("Ungültiger Lichtwert")
             actual = self.observed_light()
             unchanged = (
                 (value is False and actual == 0)
@@ -416,8 +452,7 @@ class Preview:
                     and value == round(actual))
             )
             if not unchanged:
-                self.light_manual = brightness
-                self.light = 35 if brightness is None else brightness
+                self.select_light(value)
         elif path.endswith("/button-gesture"):
             if not isinstance(body, dict) or set(body) != {"gesture"}:
                 raise ValueError("Tastergeste fehlt oder ist ungültig")

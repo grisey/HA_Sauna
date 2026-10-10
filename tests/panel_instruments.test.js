@@ -411,6 +411,33 @@ test("failed light gesture releases its draft and returns to observed brightness
   assert.equal(rendered.at(-1), 20);
 });
 
+test("light gesture discards its draft when the session ends before release", async () => {
+  const { p, calls, svg, captures } = lightPanel(),
+    rendered = [];
+  p.state.configuration.control_mode = "automatic";
+  p.state.operation_enabled = true;
+  p.state.session = { timeline: { session_id: "light-session" } };
+  p.drawCurrent = () => rendered.push(p.lightTargetValue());
+  p.beginLightDrag(pointer(3, 224.25, 204.25), svg);
+  assert.equal(p.lightTargetValue(), 100);
+  const stopped = clone(p.state);
+  stopped.operation_enabled = false;
+  stopped.session = null;
+  stopped.manual_controls.light.observation.brightness_percent = 0;
+  p.acceptState(stopped);
+  await p.endLightDrag({ pointerId: 3 });
+  assert.equal(calls.length, 0, "unavailable control sends no command");
+  assert.equal(p.lightInteraction, null);
+  assert.equal(p.manualLightDraft, null);
+  assert.equal(captures.size, 0);
+  assert.equal(rendered.at(-1), 0);
+  const observed = clone(p.state);
+  observed.manual_controls.light.observation.brightness_percent = 35;
+  p.acceptState(observed);
+  p.drawCurrent();
+  assert.equal(rendered.at(-1), 35, "later feedback remains authoritative");
+});
+
 test("failed older light request cannot discard a newer edit", async () => {
   const { p } = lightPanel();
   let reject;

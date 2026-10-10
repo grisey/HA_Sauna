@@ -9135,7 +9135,6 @@ class SaunaPanel extends HTMLElement {
       : null;
   }
   async submitLight(value) {
-    if (!this.manualControlAvailability().light) return;
     const light = this.state?.manual_controls?.light,
       observation = light?.observation,
       same =
@@ -9149,6 +9148,7 @@ class SaunaPanel extends HTMLElement {
       revision = this.manualLightRevision || 0,
       request = (this.manualLightRequest = (this.manualLightRequest || 0) + 1);
     try {
+      if (!this.manualControlAvailability().light) return;
       if (!same) await this.api(`/${entry}/light`, "POST", { value });
     } finally {
       if (
