@@ -16,18 +16,20 @@ DISPLAY_PRECISION = section("appearance")["precision"]
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    async_add_entities(entities_for_entry(entry))
+
+
+def entities_for_entry(entry):
     bindings = entry.runtime_data.configuration.bindings.values
-    async_add_entities(
-        [
-            SaunaPhase(entry),
-            SaunaEnergy(entry),
-            *(
-                SaunaAbsoluteHumidity(entry, position)
-                for position in Position
-                if f"{position.value}_temperature" in bindings
-            ),
-        ]
-    )
+    return [
+        SaunaPhase(entry),
+        SaunaEnergy(entry),
+        *(
+            SaunaAbsoluteHumidity(entry, position)
+            for position in Position
+            if f"{position.value}_temperature" in bindings
+        ),
+    ]
 
 
 class SaunaAbsoluteHumidity(SaunaEntity, SensorEntity):

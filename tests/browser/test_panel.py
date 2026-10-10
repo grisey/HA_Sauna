@@ -2208,6 +2208,30 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await menu.get_by_text("Zurück zur Übersicht", exact=True).click()
         await expect(menu.get_by_text(area["label"], exact=True)).to_be_visible()
         self.assertEqual(await dialog.evaluate("dialog => dialog._step.flow_id"), flow_id)
+        await menu.get_by_text("Saunaname", exact=True).click()
+        await expect(dialog.locator("ha-selector-text")).to_have_count(1)
+        await self.page.screenshot(path=str(screenshots / "options_name.png"), full_page=True)
+        await dialog.get_by_role("textbox", name=re.compile(r"^Name")).fill("Gartensauna")
+        await dialog.get_by_role("button", name="Speichern", exact=True).click()
+        await expect(menu.get_by_text("Saunaname", exact=True)).to_be_visible()
+        self.assertEqual(self.entry.title, "Gartensauna")
+        from homeassistant.helpers import entity_registry as er
+        registry = er.async_get(self.hass)
+        retired = registry.async_get_or_create(
+            "sensor", "ha_sauna", f"{self.entry.entry_id}_obsolete_example",
+            config_entry=self.entry, suggested_object_id="obsolete_example",
+        )
+        await menu.get_by_text("Entitäten bereinigen", exact=True).click()
+        await expect(dialog.get_by_text(retired.entity_id, exact=True)).to_be_visible()
+        await self.page.screenshot(path=str(screenshots / "options_cleanup_preview.png"), full_page=True)
+        await dialog.get_by_role("button", name="Weiter", exact=True).click()
+        await expect(menu.get_by_text("Entitäten bereinigen", exact=True)).to_be_visible()
+        self.assertIsNotNone(registry.async_get(retired.entity_id))
+        await menu.get_by_text("Entitäten bereinigen", exact=True).click()
+        await dialog.locator("ha-selector-boolean ha-switch, ha-selector-boolean ha-checkbox").click()
+        await dialog.get_by_role("button", name="Weiter", exact=True).click()
+        await expect(menu.get_by_text("Entitäten bereinigen", exact=True)).to_be_visible()
+        self.assertIsNone(registry.async_get(retired.entity_id))
         self.assertEqual(self.errors, [])
 
     async def test_native_device_selection_assigns_presence_and_illuminance(self):

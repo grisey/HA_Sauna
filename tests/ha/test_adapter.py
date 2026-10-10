@@ -453,7 +453,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             result = await flow.async_step_init()
             self.assertEqual(result["type"], "menu")
-            self.assertEqual(result["menu_options"], ["bindings", *self.module.integration_groups()])
+            areas = {group["id"] for group in self.module.section("frontend")["settings_groups"]}
+            self.assertEqual(
+                [item for item in result["menu_options"] if item in areas],
+                list(self.module.integration_groups()),
+            )
             for area in self.module.integration_groups():
                 menu = await getattr(flow, f"async_step_{area}")()
                 self.assertIn("init", menu["menu_options"])

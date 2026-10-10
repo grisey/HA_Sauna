@@ -10,9 +10,11 @@ from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities(
-        SaunaNumber(entry, definition) for definition in EDITABLE_DEFINITIONS
-    )
+    async_add_entities(entities_for_entry(entry))
+
+
+def entities_for_entry(entry):
+    return [SaunaNumber(entry, definition) for definition in EDITABLE_DEFINITIONS]
 
 
 class SaunaNumber(SaunaEntity, NumberEntity):

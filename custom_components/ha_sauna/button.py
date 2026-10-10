@@ -6,7 +6,11 @@ from .entity import SaunaEntity
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([SaunaReset(entry)])
+    async_add_entities(entities_for_entry(entry))
+
+
+def entities_for_entry(entry):
+    return [SaunaReset(entry)]
 
 
 class SaunaReset(SaunaEntity, ButtonEntity):

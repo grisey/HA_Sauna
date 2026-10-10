@@ -1900,6 +1900,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_temperature_progress_notifies_once_despite_measured_zero_power(self):
         await self.configure_feedback(power_sensor=True, warmup_window_minutes=5)
+        self.hass.config_entries.async_update_entry(self.entry, title="Gartensauna")
+        await self.hass.async_block_till_done()
         await self.set_source("upper_temperature", 40)
         await self.set_source("lower_temperature", 40)
         await self.runtime.set_operation(True)
@@ -1911,6 +1913,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 await self.set_source("lower_temperature", 40)
                 await self.runtime.tick()
             self.assertEqual(create.call_count, 1)
+            self.assertEqual(
+                create.call_args.kwargs["title"], "Gartensauna: kein Temperaturanstieg"
+            )
             self.assertTrue(self.heater.is_on)
             self.assertIs(self.runtime.device.contactor_feedback(), True)
             self.assertEqual(self.runtime.device.heating_observation["power_w"], 0)
