@@ -175,6 +175,9 @@ test("empty history clears the retained overview and every visible sink", () => 
   };
   let destroyed = 0;
   const panel = Object.assign(Object.create(Panel.prototype), {
+    sessions: [],
+    selected: "live",
+    state: {},
     historyChart: { destroy: () => destroyed++ },
     $: node,
     updateMarkup: (selector, html) => {
@@ -190,6 +193,10 @@ test("empty history clears the retained overview and every visible sink", () => 
   for (const selector of ["#gangs", "#event-list", "#detection-plots"])
     assert.equal(node(selector).innerHTML, "");
   assert.match(node("#plots").innerHTML, /Noch keine Sitzungsdaten/);
+  panel.selected = "recorded-session";
+  panel.clearHistoryDisplay();
+  assert.match(node("#plots").innerHTML, /role="status".*Lade Sitzungsverlauf/);
+  assert.doesNotMatch(node("#plots").innerHTML, /Noch keine Sitzungsdaten/);
 });
 
 test("an entry change withdraws all old controls until its matching state arrives", async () => {

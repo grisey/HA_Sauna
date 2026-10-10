@@ -118,8 +118,10 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.action("/preview/light", {"value":55})
         state = self.preview.state()["manual_controls"]["light"]
         self.assertIsNotNone(state["override_ends_at"])
+        self.assertEqual(state["manual_feedback_target"], 55)
         self.preview.step(self.preview.c.parameters.seconds("manual_override_minutes") + 1)
         self.assertIsNone(self.preview.light_manual)
+        self.assertIsNone(self.preview.state()["manual_controls"]["light"]["manual_feedback_target"])
         self.preview.step(self.preview.c.parameters.values["light_transition_seconds"] + 1)
         self.assertEqual(self.preview.light, round(self.preview.normal_light()))
 
@@ -155,6 +157,20 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertTrue(self.preview.c.last_decision.heat)
         self.preview.action("/preview/heater", {"value":False})
         self.assertFalse(self.preview.c.last_decision.heat)
+
+    def test_user_sees_manual_enablement_when_thermostat_needs_no_heat(self):
+        self.preview.admin = False
+        self.preview.reset("manuell")
+        temperature = (self.preview.c.target_temperature
+                       + self.preview.c.parameters.values["readiness_offset_c"])
+        self.preview.action("/simulate", {"action":"temperature", "value":temperature})
+        self.preview.action("/preview/heater", {"value":True})
+        state = self.preview.state()
+        self.assertNotIn("decision", state)
+        heater = state["manual_controls"]["heater"]
+        self.assertIs(heater["manual"], True)
+        self.assertIs(heater["commanded"], False)
+        self.assertIs(heater["observation"]["on"], False)
 
     def test_manual_mode_enters_with_both_selections_off_and_does_not_restore_them(self):
         self.preview.action("/preview/control", {"enabled":False})

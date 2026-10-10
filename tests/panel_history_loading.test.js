@@ -53,6 +53,8 @@ function panel(api) {
     "#event-list": { innerHTML: "" },
     "#detection-plots": { innerHTML: "" },
     "#control-history": { innerHTML: "" },
+    "#plots": { innerHTML: "" },
+    "#history-overview": { replaceChildren() {} },
   };
   const p = Object.assign(new Panel(), {
     entry: "e",
@@ -85,6 +87,110 @@ function panel(api) {
   });
   return { p, nodes };
 }
+
+function historyUiPanel(api) {
+  const { p, nodes } = panel(api);
+  const listeners = new Map();
+  Object.assign(nodes, {
+    "#message": { className: "", textContent: "" },
+    "#history-loading": { hidden: true, textContent: "" },
+    "#plots": {
+      innerHTML: "",
+      attributes: {},
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+      },
+    },
+    "#history-overview": { replaceChildren() {} },
+  });
+  p.shadowRoot.addEventListener = (kind, callback) => {
+    listeners.set(kind, [...(listeners.get(kind) || []), callback]);
+  };
+  // Install the real selection listener and keep the production message,
+  // placeholder, cache and loader methods. Only the DOM and curve drawing are
+  // represented by this fixture; no selection/loading rule is duplicated.
+  p.shell();
+  p.message = Panel.prototype.message;
+  return {
+    p,
+    nodes,
+    select(id) {
+      for (const callback of listeners.get("change") || [])
+        callback({ target: { id: "session", value: id, matches: () => false } });
+    },
+  };
+}
+
+test("warm selection clears loading state while an older selection still waits", async () => {
+  const cold = deferred();
+  const requests = [];
+  const { p, nodes, select } = historyUiPanel(async (request) => {
+    requests.push(request);
+    if (request.includes("session_id=warm")) return page([1], null, "warm", true);
+    if (request.includes("session_id=cold")) return cold.promise;
+    throw Error(request);
+  });
+  p.state = { ...state(), session: null, operation_enabled: false };
+  p.sessions = [{ session_id: "warm" }, { session_id: "cold" }];
+  p.historyListStale = false;
+  select("warm");
+  await p.historyLoad.promise;
+  assert.equal(p.historyCache("warm").finalSynced, true);
+  select("cold");
+  const pending = p.historyLoad.promise;
+  assert.equal(nodes["#history-loading"].hidden, false);
+  assert.equal(nodes["#plots"].attributes["aria-busy"], "true");
+  assert.equal(p.shown, null);
+
+  select("warm");
+  assert.equal(p.historyLoad, null);
+  assert.equal(p.shown.session.timeline.session_id, "warm");
+  assert.equal(nodes["#history-loading"].hidden, true);
+  assert.equal(nodes["#history-loading"].textContent, "");
+  assert.equal(nodes["#plots"].attributes["aria-busy"], "false");
+  assert.equal(
+    requests.length,
+    2,
+    "the warm selection makes no status or archive request",
+  );
+
+  cold.resolve(page([2], null, "cold", true));
+  await pending;
+  assert.equal(p.shown.session.timeline.session_id, "warm");
+  assert.equal(nodes["#history-loading"].hidden, true);
+  assert.equal(nodes["#plots"].attributes["aria-busy"], "false");
+});
+
+test("first archive page failure replaces the loading placeholder and clears busy state", async () => {
+  const response = deferred();
+  const { p, nodes, select } = historyUiPanel(async (request) => {
+    assert.match(request, /session_id=old/);
+    return response.promise;
+  });
+  p.state = { ...state(), session: null, operation_enabled: false };
+  p.sessions = [{ session_id: "old" }];
+  p.historyListStale = false;
+  select("old");
+  const pending = p.historyLoad.promise;
+  assert.match(nodes["#plots"].innerHTML, /Lade Sitzungsverlauf/);
+  assert.equal(nodes["#history-loading"].hidden, false);
+  const failure = Error("synthetic first page failure");
+  response.reject(failure);
+  await pending;
+
+  assert.equal(p.messages.history, failure);
+  assert.match(nodes["#message"].textContent, /synthetic first page failure/);
+  assert.match(nodes["#plots"].innerHTML, /konnte nicht geladen werden/);
+  assert.doesNotMatch(
+    nodes["#plots"].innerHTML,
+    /Lade Sitzungsverlauf|Noch keine Sitzungsdaten/,
+  );
+  assert.equal(nodes["#history-loading"].hidden, true);
+  assert.equal(nodes["#history-loading"].textContent, "");
+  assert.equal(nodes["#plots"].attributes["aria-busy"], "false");
+  assert.equal(p.historyLoad, null);
+  assert.equal(p.historyCache("old").after, 0);
+});
 
 test("status polling is live during operation and sparse while idle", () => {
   const { p } = panel(async () => ({}));

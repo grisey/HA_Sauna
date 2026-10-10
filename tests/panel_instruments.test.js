@@ -380,18 +380,23 @@ test("light keyboard uses configured steps, bounds and actual-value no-op", asyn
     await p.keyLightTarget({ key, preventDefault() {} });
     assert.equal(calls.at(-1)[2].value, expected);
   }
-  const before = calls.length;
-  await p.keyLightTarget({
+  // Completed/no-op input is a separate state from the unresolved End request.
+  const { p: settled, calls: settledCalls } = lightPanel();
+  await settled.keyLightTarget({
     key: "Enter",
     preventDefault() {
       assert.fail("unhandled key");
     },
   });
-  await p.submitLight(20);
-  await p.submitLight(true);
-  assert.equal(calls.length, before, "actual brightness and already-on are no-ops");
-  await p.submitLight(null);
-  assert.equal(calls.at(-1)[2].value, null, "return to automatic remains a command");
+  await settled.submitLight(20);
+  await settled.submitLight(true);
+  assert.equal(settledCalls.length, 0, "actual brightness and already-on are no-ops");
+  await settled.submitLight(null);
+  assert.equal(
+    settledCalls.at(-1)[2].value,
+    null,
+    "return to automatic remains a command",
+  );
 });
 
 test("failed light gesture releases its draft and returns to observed brightness", async () => {

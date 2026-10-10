@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -187,10 +188,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             path.unlink()
 
     async def test_session_and_records_share_one_read_snapshot(self):
-        # WAL lets a real second connection commit between the two SELECTs;
-        # production's DELETE journal may instead delay that writer.
-        with closing(sqlite3.connect(self.archive.path)) as db:
-            db.execute("PRAGMA journal_mode=WAL")
+        # The production journal permits a second connection to commit while
+        # the reader retains a consistent session/record snapshot.
         at = T0 + timedelta(seconds=20)
         finished = plain(replace(self.c.session, ended_at=at))
         finished["configuration"] = self.config
@@ -217,6 +216,69 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["session"]["ended_at"], latest_record["ended_at"])
         self.assertIsNone(result["session"]["ended_at"])
         self.assertEqual(archive.read("s")["session"]["ended_at"], at.isoformat())
+
+    async def test_long_history_snapshot_does_not_block_queued_writer(self):
+        with closing(sqlite3.connect(self.archive.path)) as reader:
+            reader.execute("BEGIN")
+            before = reader.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+            self.record(1)
+            await asyncio.wait_for(self.archive.flush(), 2)
+            self.assertIsNone(self.archive.failure)
+            self.assertEqual(reader.execute("SELECT COUNT(*) FROM records").fetchone()[0], before)
+        with closing(sqlite3.connect(self.archive.path)) as reader:
+            self.assertEqual(reader.execute("SELECT COUNT(*) FROM records").fetchone()[0], before + 1)
+
+    async def test_backup_pause_checkpoints_committed_wal_into_standalone_file(self):
+        # Keep another connection open so SQLite cannot auto-checkpoint on the
+        # writer connection's close, as it can when there are no history readers.
+        with closing(sqlite3.connect(self.archive.path)) as reader:
+            reader.execute("SELECT COUNT(*) FROM records").fetchone()
+            self.record(1)
+            await self.archive.flush()
+            wal = Path(str(self.archive.path) + "-wal")
+            self.assertGreater(wal.stat().st_size, 0)
+            await self.archive.pre_backup()
+            try:
+                snapshot = Path(self.temp.name) / "standalone.sqlite"
+                shutil.copyfile(self.archive.path, snapshot)
+                with closing(sqlite3.connect(snapshot)) as restored:
+                    count = restored.execute("SELECT COUNT(*) FROM records WHERE kind='measurement'").fetchone()[0]
+                self.assertEqual(count, 1)
+                self.assertEqual(wal.stat().st_size, 0)
+            finally:
+                self.archive.release_backup()
+
+    async def test_writer_logs_original_exception_once_until_recovery(self):
+        original = self.archive._write
+        with patch.object(self.archive, "_write", side_effect=sqlite3.OperationalError("database is locked")):
+            with self.assertLogs("custom_components.ha_sauna.archive", level="ERROR") as captured:
+                self.record(1)
+                await self.archive.queue.join()
+                with self.assertRaises(sqlite3.OperationalError):
+                    await self.archive.flush()
+            self.assertEqual(len(captured.records), 1)
+            self.assertIn("database is locked", captured.output[0])
+            self.assertIsNotNone(captured.records[0].exc_info)
+        self.archive._write = original
+        await self.archive.flush()
+
+    async def test_backup_rejects_busy_checkpoint_and_releases_writer(self):
+        connect = sqlite3.connect
+        with closing(connect(self.archive.path)) as reader:
+            reader.execute("BEGIN")
+            reader.execute("SELECT COUNT(*) FROM records").fetchone()
+            self.record(1)
+            await self.archive.flush()
+            with patch(
+                "custom_components.ha_sauna.archive.sqlite3.connect",
+                side_effect=lambda *args, **kwargs: connect(*args, **kwargs, timeout=0.01),
+            ):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "aktiven Leser"):
+                    await self.archive.pre_backup()
+            self.assertTrue(self.archive.resume.is_set())
+        self.record(2)
+        await self.archive.flush()
+        self.assertIsNone(self.archive.failure)
 
     async def test_cancelled_reader_does_not_poison_archive_writer(self):
         await self.archive.pre_backup()

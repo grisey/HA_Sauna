@@ -95,6 +95,8 @@ def manual_controls(runtime):
                 "on": runtime.controller.contactor,
             },
             "manual": runtime.controller.heater_override,
+            "commanded": runtime.controller.last_decision.heat
+            if runtime.controller.last_decision else None,
             "override_ends_at": plain(runtime.controller.heater_override_ends_at),
             "automatic": runtime.controller.automatic_decision.heat
             if runtime.controller.automatic_decision
@@ -104,6 +106,8 @@ def manual_controls(runtime):
             "observation": runtime.device.light_observation if runtime.device
             else {"available": False, "brightness_percent": None},
             "manual": light.manual_brightness if light else None,
+            "manual_feedback_target": runtime.device.manual_light_feedback_target
+            if runtime.device else None,
             "override_ends_at": plain(light.manual_ends_at) if light else None,
             "automatic": light.last_automatic_brightness if light else None,
             "normal": runtime.device.normal_light_brightness()

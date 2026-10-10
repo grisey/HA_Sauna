@@ -1005,6 +1005,48 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.controller.heater_override_ends_at)
         self.assertTrue(self.heater.is_on)
 
+    async def test_automatic_heater_counterselection_before_feedback_revokes_on(self):
+        await self.runtime.set_operation(True)
+        await self.runtime.set_heater_override(False)
+        await self.hass.async_block_till_done()
+        self.assertFalse(self.runtime.controller.contactor)
+        calls = len(self.heater.calls)
+        self.heater.respond = False
+        with patch.object(self.heater, "async_write_ha_state"):
+            await self.runtime.set_heater_override(True)
+            self.assertTrue(self.heater.is_on)
+            self.assertFalse(self.runtime.controller.contactor)
+            self.assertIs(self.runtime.controller.heater_override, True)
+            await self.runtime.set_heater_override(False)
+            self.assertIs(self.runtime.controller.heater_override, False)
+            self.assertFalse(self.heater.is_on)
+            self.assertEqual(self.heater.calls[calls:], [True, False])
+        self.heater.async_write_ha_state()
+        await self.hass.async_block_till_done()
+        self.assertFalse(self.runtime.controller.contactor)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+
+    async def test_light_counterselection_before_feedback_revokes_on(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        for mode in ("automatic", "manual"):
+            await async_set_control_mode(self.hass, self.entry, mode)
+            for value in (False, 0):
+                with self.subTest(mode=mode, value=value):
+                    self.light.defer_state_writes = True
+                    calls = len(self.light.calls)
+                    await self.runtime.set_light_override(42)
+                    self.assertTrue(self.light.is_on)
+                    self.assertEqual(self.runtime.device.light_observation["brightness_percent"], 0)
+                    await self.runtime.set_light_override(value)
+                    self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+                    self.assertFalse(self.light.is_on)
+                    self.assertEqual([call[0] for call in self.light.calls[calls:]], ["on", "off"])
+                    self.light.defer_state_writes = False
+                    self.light.async_write_ha_state()
+                    await self.hass.async_block_till_done()
+                    self.assertEqual(self.runtime.device.light_observation["brightness_percent"], 0)
+
     async def test_matching_light_feedback_is_noop_but_external_selection_still_overrides(self):
         self.assertFalse(self.light.is_on)
         await self.runtime.set_light_override(False)
