@@ -359,32 +359,47 @@ class SaunaOptionsFlow(OptionsFlow):
         runtime = getattr(self.config_entry, "runtime_data", None)
         if runtime is None or runtime.closed:
             return False
-        if runtime.reconfiguring:
-            return True
         try:
             runtime.check_configuration_change()
         except ValueError:
             return True
         return False
 
+    def _is_reconfiguring(self) -> bool:
+        runtime = getattr(self.config_entry, "runtime_data", None)
+        return runtime is not None and runtime.reconfiguring
+
     async def async_step_init(self, user_input=None):
         if self._has_session():
             return self.async_abort(reason="session_exists")
-        return self.async_show_menu(
-            step_id="init", menu_options=["bindings", *integration_groups()]
-        )
+        return self._show_area_menu("init")
 
     async def _async_step_area(self, area, user_input=None):
         if self._has_session():
             return self.async_abort(reason="session_exists")
+        return self._show_area_menu(area)
+
+    def _show_area_menu(self, area):
+        if area == "init":
+            return self.async_show_menu(
+                step_id="init", menu_options=["bindings", *integration_groups()]
+            )
         return self.async_show_menu(
             step_id=area,
             menu_options=[
                 f"parameters_{group['id']}"
                 for group in section("frontend")["settings_subgroups"]
                 if self._definitions(group["id"], area=area)
-            ],
+            ] + ["init"],
         )
+
+    def _save_and_return(self, candidate, area):
+        """Persist through HA's options listener without ending navigation."""
+        if candidate != self.config_entry.options:
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, options=candidate
+            )
+        return self._show_area_menu(area)
 
     def _definitions(self, subgroup, *, area=None):
         source = self.config_entry.options.get("presence_source", instance_default("presence_source"))
@@ -422,7 +437,10 @@ class SaunaOptionsFlow(OptionsFlow):
         baseline = self._parameter_baselines.setdefault(
             subgroup, {key: effective.get(key) for key in keys}
         )
-        errors = {}
+        errors = (
+            {"base": "configuration_busy"}
+            if user_input is not None and self._is_reconfiguring() else {}
+        )
         group = next(
             item for item in section("frontend")["settings_subgroups"]
             if item["id"] == subgroup
@@ -432,7 +450,7 @@ class SaunaOptionsFlow(OptionsFlow):
                 current.presence_source, group.get("description", "")
             )
         }
-        if user_input is not None:
+        if user_input is not None and not errors:
             try:
                 if set(user_input) - keys:
                     raise ParameterError("base", "unknown_parameter")
@@ -469,7 +487,10 @@ class SaunaOptionsFlow(OptionsFlow):
             except ValueError:
                 errors["base"] = "invalid_configuration"
             else:
-                return self.async_create_entry(title="", data=candidate)
+                return self._save_and_return(
+                    candidate if edits else self.config_entry.options,
+                    definitions[0].settings_group,
+                )
         fields = {}
         for definition in definitions:
             marker = vol.Optional if definition.optional else vol.Required
@@ -503,6 +524,7 @@ class SaunaOptionsFlow(OptionsFlow):
             data_schema=self.add_suggested_values_to_schema(
                 device_schema(self.hass, saved=saved), binding_devices(self.hass, saved)
             ),
+            last_step=False,
         )
 
     async def async_step_binding_entities(self, user_input: dict[str, Any] | None = None):
@@ -537,7 +559,9 @@ class SaunaOptionsFlow(OptionsFlow):
                 if key not in self._device_values:
                     suggested.pop(key, None)
             errors = errors or self._device_errors
-        if user_input is not None:
+        if user_input is not None and self._is_reconfiguring():
+            errors["base"] = "configuration_busy"
+        if user_input is not None and not errors:
             try:
                 input_options = {
                     key: user_input.get(
@@ -575,10 +599,7 @@ class SaunaOptionsFlow(OptionsFlow):
             except BindingError as error:
                 errors[error.key] = error.code
             else:
-                return self.async_create_entry(
-                    title="",
-                    data=candidate,
-                )
+                return self._save_and_return(candidate, "init")
         return self.async_show_form(
             step_id="binding_entities",
             data_schema=self.add_suggested_values_to_schema(

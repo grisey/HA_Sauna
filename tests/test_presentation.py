@@ -153,6 +153,7 @@ class PresentationTests(unittest.TestCase):
         steps = strings["options"]["step"]
         frontend = section("frontend")
         catalog = section("parameters")
+        expected_steps = set()
         for area in frontend["settings_groups"]:
             if area.get("surface", "panel") != "integration":
                 continue
@@ -166,7 +167,7 @@ class PresentationTests(unittest.TestCase):
                 self.assertEqual(
                     steps["init"]["menu_options"][area["id"]], area["label"]
                 )
-                expected_menu = {}
+                expected_menu = {"init": "Zurück zur Übersicht"}
                 for subgroup in frontend["settings_subgroups"]:
                     fields = [
                         item for item in members
@@ -175,6 +176,7 @@ class PresentationTests(unittest.TestCase):
                     if not fields:
                         continue
                     step_id = f"parameters_{subgroup['id']}"
+                    expected_steps.add(step_id)
                     expected_menu[step_id] = subgroup["label"]
                     self.assertEqual(steps[step_id]["title"], subgroup["label"])
                     self.assertEqual(
@@ -186,6 +188,13 @@ class PresentationTests(unittest.TestCase):
                         {item["key"]: item["description"] for item in fields},
                     )
                 self.assertEqual(steps[area["id"]]["menu_options"], expected_menu)
+        for filename in ("strings.json", "translations/de.json", "translations/en.json"):
+            with self.subTest(filename=filename):
+                translated = json.loads((root / filename).read_text())["options"]["step"]
+                self.assertEqual(
+                    {step for step in translated if step.startswith("parameters_")},
+                    expected_steps,
+                )
 
     def test_configuration_and_measurement_errors_are_distinct_german_messages(self):
         text=configuration_message(["sensor_timeout_seconds","feedback_timeout_seconds"])

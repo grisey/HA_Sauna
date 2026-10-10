@@ -179,6 +179,7 @@ def public_configuration(options):
         "sauna_min_temperature_c",
         "preset_count",
         "preset_start_c",
+        "standard_temperature_c",
         "preset_step_c",
         "session_light_brightness_percent",
     )

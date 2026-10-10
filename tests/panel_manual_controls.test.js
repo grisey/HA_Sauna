@@ -718,10 +718,7 @@ const renderCurrent = (
   assert.doesNotMatch(automatic, /data-door-status|environment-status/);
   assert.doesNotMatch(manual, /Temperaturwahl|program-types|temperature-presets/);
   assert.match(manual, /data-light-arc/);
-  assert.doesNotMatch(
-    manual,
-    /id="manual-light-value-overview"|Gedimmt|Hell<\/button>/,
-  );
+  assert.doesNotMatch(manual, /id="manual-light-value-overview"/);
   assert.match(manual, /data-action="light:true"[^>]*>Ein<\/button>/);
   assert.doesNotMatch(
     manual,
@@ -859,9 +856,7 @@ const renderCurrent = (
                     "/entry-1/light",
                     "POST",
                     {
-                      value: { auto: null, false: false, normal: "normal", true: true }[
-                        preset
-                      ],
+                      value: { auto: null, false: false, true: true }[preset],
                     },
                   ],
                 ]
@@ -1291,7 +1286,6 @@ const renderCurrent = (
     assert.match(observed, /data-action="heater:false" aria-pressed="true"/);
     assert.match(observed, /data-action="light:true" aria-pressed="true"/);
     assert.match(observed, /data-action="light:false" aria-pressed="false"/);
-    assert.doesNotMatch(observed, /light:normal|Gedimmt/);
   }
   for (const manualValue of [true, false, null]) {
     const unknown = renderCurrent(

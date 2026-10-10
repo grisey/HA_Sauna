@@ -15,7 +15,7 @@ from custom_components.ha_sauna.core.defaults import (
     section,
     validate_catalog,
 )
-from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, ParameterError, Parameters
 
 
 class DefaultsTests(unittest.TestCase):
@@ -171,8 +171,9 @@ class DefaultsTests(unittest.TestCase):
 
     def test_catalog_views_are_detached_and_every_setting_has_group_metadata(self):
         catalog = section("parameters")
+        original = deepcopy(catalog[0]["default"])
         catalog[0]["default"] = -1
-        self.assertGreater(section("parameters")[0]["default"], 0)
+        self.assertEqual(section("parameters")[0]["default"], original)
         group_ids = {group["id"] for group in section("frontend")["settings_groups"]}
         self.assertTrue(
             all(d.settings_group in group_ids for d in EDITABLE_DEFINITIONS)
@@ -199,6 +200,29 @@ class DefaultsTests(unittest.TestCase):
             "Manuelle Lichtänderungen",
             BY_KEY["operation_brightness_percent"].description,
         )
+
+    def test_missing_standard_migrates_to_saved_minimum_but_explicit_value_is_checked(self):
+        minimum = BY_KEY["standard_temperature_c"].default + 5
+        saved = {
+            "sauna_min_temperature_c": minimum,
+            "preset_start_c": minimum,
+            "target_temperature_c": minimum + 1,
+            "final_temperature_c": minimum,
+        }
+        migrated = Parameters(saved)
+        self.assertEqual(migrated.values["standard_temperature_c"], minimum)
+        self.assertEqual(migrated.values["target_temperature_c"], minimum + 1)
+        self.assertEqual(Parameters(migrated.as_dict()), migrated)
+        initial = Parameters({k: v for k, v in saved.items() if k != "target_temperature_c"})
+        self.assertEqual(initial.values["target_temperature_c"], minimum)
+        fractional = Parameters({
+            **saved, "sauna_min_temperature_c": minimum + .2,
+            "preset_start_c": minimum + 1, "final_temperature_c": minimum + 1,
+        })
+        self.assertEqual(fractional.values["standard_temperature_c"], minimum + 1)
+        with self.assertRaises(ParameterError) as raised:
+            Parameters({**saved, "standard_temperature_c": minimum - 1})
+        self.assertEqual(raised.exception.key, "standard_temperature_c")
 
     def test_button_temperature_default_is_independent_of_current_parameters(self):
         expected = section("instance")["button_temperature_c"]
@@ -257,6 +281,8 @@ catalog = defaults.load_catalog()
 for spec in catalog["parameters"]:
     if spec["key"] == "session_gap_minutes":
         spec["default"] = 21
+    if spec["key"] == "standard_temperature_c":
+        spec["default"] = 88
 catalog["instance"]["log_level"] = "DEBUG"
 catalog["programs"][0]["start_c"] = 81
 catalog["appearance"]["scales"]["temperature"]["default"]["minimum"] = 35
@@ -272,6 +298,8 @@ saved["log_level"] = "ERROR"
 saved["temperature_programs"][0]["start_c"] = 82
 saved["appearance"]["scales"]["temperature"]["minimum"] = 42
 loaded = Configuration.from_options(saved)
+assert Parameters({}).values["target_temperature_c"] == 88
+assert legacy.parameters.values["target_temperature_c"] == 80
 assert legacy.program_mode == loaded.program_mode == "constant"
 assert legacy.parameters.values["session_gap_minutes"] == 21
 assert loaded.parameters.values["session_gap_minutes"] == 17

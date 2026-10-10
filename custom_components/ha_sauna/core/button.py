@@ -73,7 +73,7 @@ class ButtonGestures:
     def handle(self, event: str, operation_enabled: bool, now: datetime) -> str | None:
         """Accept one normalized event and return its single semantic action."""
         if event == "unavailable":
-            if self._binary_press:
+            if self._gesture_active:
                 # A gap cannot prove continuous pressure. An already emitted
                 # HOLD still needs the eventual confirmed release to start its
                 # light timer; an unconfirmed gesture has no remaining action.

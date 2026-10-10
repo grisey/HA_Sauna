@@ -1,5 +1,6 @@
 """Konfiguration der Temperaturprogramme ohne Laufzeitkopplung."""
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 import unittest
 from types import SimpleNamespace
@@ -24,6 +25,8 @@ from custom_components.ha_sauna.settings import (
     async_set_button_program,
     async_set_button_gesture,
     async_set_parameters,
+    async_set_control_mode,
+    async_set_program,
     async_set_program_catalog,
     async_set_temperature_steps,
     program_parameters,
@@ -557,6 +560,96 @@ class ProgramConfigurationTests(unittest.TestCase):
         selected, mode = program_parameters(parameters, "progressive")
         self.assertEqual(mode, "progressive")
         self.assertEqual(selected, parameters)
+
+    def test_missing_target_uses_standard_and_saved_target_takes_precedence(self):
+        default = BY_KEY["standard_temperature_c"].default
+        self.assertEqual(Parameters({}).values["target_temperature_c"], default)
+        self.assertEqual(
+            Parameters({"standard_temperature_c": 86}).values["target_temperature_c"],
+            86,
+        )
+        self.assertEqual(
+            Parameters({"standard_temperature_c": 86, "target_temperature_c": 74})
+            .values["target_temperature_c"],
+            74,
+        )
+
+    def test_constant_selection_uses_configured_standard_temperature(self):
+        for standard in (BY_KEY["standard_temperature_c"].default, 86):
+            with self.subTest(standard=standard):
+                parameters = Parameters({
+                    "target_temperature_c": 74,
+                    "standard_temperature_c": standard,
+                })
+                selected, mode = program_parameters(parameters, "constant")
+                self.assertEqual(mode, "constant")
+                self.assertEqual(selected.values["target_temperature_c"], standard)
+                self.assertEqual(parameters.values["target_temperature_c"], 74)
+                self.assertEqual(
+                    selected.values["final_temperature_c"],
+                    parameters.values["final_temperature_c"],
+                )
+
+    def test_entering_manual_uses_standard_without_replacing_later_choice(self):
+        runtime = SaunaRuntime(Configuration.from_options(options({
+            "standard_temperature_c": 87, "target_temperature_c": 74,
+        })))
+        runtime._set_control_mode("manual")
+        self.assertEqual(runtime.controller.target_temperature, 87)
+        self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 87)
+        changed = Parameters({
+            **runtime.configuration.parameters.as_dict(), "target_temperature_c": 82,
+        })
+        runtime.controller.update_temperature_parameters(changed, runtime._clock())
+        runtime.configuration = replace(runtime.configuration, parameters=changed)
+        runtime._set_control_mode("manual")
+        self.assertEqual(runtime.controller.target_temperature, 82)
+        runtime._set_control_mode("automatic")
+        runtime._set_control_mode("manual")
+        self.assertEqual(runtime.controller.target_temperature, 87)
+
+    def test_named_program_restores_its_temperatures_after_manual_mode(self):
+        async def exercise():
+            runtime = SaunaRuntime(Configuration.from_options(options({
+                "standard_temperature_c": 89,
+            })), clock=lambda: T0)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=runtime.configuration.as_options()
+            )
+            hass = _FakeHass()
+            program = runtime.configuration.temperature_programs[0]
+            await async_set_program(hass, entry, program.id)
+            original = runtime.configuration.parameters.as_dict()
+            original_target = runtime.controller.target_temperature
+            await async_set_control_mode(hass, entry, "manual")
+            self.assertEqual(runtime.controller.target_temperature, 89)
+            self.assertEqual(runtime.configuration.selected_program_id, program.id)
+            await async_set_control_mode(hass, entry, "automatic")
+            self.assertEqual(runtime.configuration.parameters.as_dict(), original)
+            self.assertEqual(runtime.controller.target_temperature, original_target)
+            self.assertEqual(runtime.configuration.selected_program_id, program.id)
+            self.assertEqual(entry.options["selected_program_id"], program.id)
+            self.assertEqual(entry.options["parameters"], original)
+            reloaded = Configuration.from_options(entry.options)
+            self.assertEqual(reloaded.parameters.as_dict(), original)
+            self.assertEqual(reloaded.selected_program_id, program.id)
+
+        asyncio.run(exercise())
+
+    def test_standard_temperature_obeys_shared_bounds_and_rounding(self):
+        self.assertNotIn("standard_temperature_c", LIVE_TEMPERATURE_KEYS)
+        minimum = BY_KEY["sauna_min_temperature_c"].default
+        maximum = BY_KEY["target_temperature_c"].maximum
+        for value in (minimum - .1, maximum + .1):
+            with self.subTest(value=value), self.assertRaises(ParameterError):
+                Parameters({"standard_temperature_c": value})
+        parameters = Parameters({"standard_temperature_c": 86.5})
+        self.assertEqual(parameters.values["standard_temperature_c"], 87)
+        self.assertEqual(parameters.minimum_for("standard_temperature_c"), minimum)
+        self.assertEqual(BY_KEY["standard_temperature_c"].settings_group, "operation")
+        self.assertEqual(
+            BY_KEY["standard_temperature_c"].settings_subgroup, "temperature_control"
+        )
 
     def test_catalog_program_supplies_existing_controller_values(self):
         configuration = Configuration.from_options(options())

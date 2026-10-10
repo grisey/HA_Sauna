@@ -33,6 +33,7 @@ _PARAMETER_KEYS = frozenset(
         "preset_step_c",
         "preset_count",
         "target_temperature_c",
+        "standard_temperature_c",
         "final_temperature_c",
         "temperature_gangs",
         "fault_confirmation_seconds",
@@ -329,7 +330,12 @@ def validate_catalog(catalog):
                 if _number(step, f"{key}.{name}") <= 0:
                     raise ValueError(f"defaults.json: invalid input step for {key}")
             value = spec["default"]
-            if value is None:
+            if isinstance(value, dict):
+                if key != "target_temperature_c" or value != {
+                    "parameter": "standard_temperature_c"
+                }:
+                    raise ValueError(f"defaults.json: invalid default reference for {key}")
+            elif value is None:
                 raise ValueError(f"defaults.json: missing default for {key}")
             else:
                 _number(value, key)
@@ -352,7 +358,14 @@ def validate_catalog(catalog):
         if section_keys != expected_keys:
             raise ValueError(f"defaults.json: invalid consumer keys in {section_name}")
     values = {key: spec["default"] for key, spec in definitions.items()}
-    for key in ("preset_start_c", "target_temperature_c", "final_temperature_c"):
+    if isinstance(values["target_temperature_c"], dict):
+        values["target_temperature_c"] = values["standard_temperature_c"]
+        if values["target_temperature_c"] > definitions["target_temperature_c"]["maximum"]:
+            raise ValueError("defaults.json: standard temperature exceeds target maximum")
+    for key in (
+        "preset_start_c", "target_temperature_c", "standard_temperature_c",
+        "final_temperature_c",
+    ):
         if values[key] < values["sauna_min_temperature_c"]:
             raise ValueError(f"defaults.json: {key} below sauna minimum")
     if values["oven_cooling_max_minutes"] < values["after_run_minutes"]:
@@ -537,9 +550,9 @@ def instance_default(key, *, setup=False, parameters=None):
         parameter = value["parameter"]
         if parameters is not None and parameter in parameters:
             return deepcopy(parameters[parameter])
-        return next(
-            deepcopy(spec["default"])
-            for spec in _CATALOG["parameters"]
-            if spec["key"] == parameter
-        )
+        definitions = {spec["key"]: spec for spec in _CATALOG["parameters"]}
+        default = definitions[parameter]["default"]
+        if isinstance(default, dict):
+            default = definitions[default["parameter"]]["default"]
+        return deepcopy(default)
     return deepcopy(value)

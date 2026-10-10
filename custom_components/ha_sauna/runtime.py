@@ -1127,7 +1127,7 @@ class SaunaRuntime:
             self.device.refresh(now)
         session = self.session
         if session is None and self.controller.control_mode != "manual":
-            self._set_control_mode("manual")
+            self._set_control_mode("manual", preserve_light=True)
             if self.save_configuration:
                 self.save_configuration(self.configuration)
         # The current model has only the active Ofenkühlung (`after_run`).
@@ -1161,6 +1161,8 @@ class SaunaRuntime:
         return self.controller.set_heater_override(value, now)
 
     def _reset_button_gestures(self):
+        if getattr(self, "device", None) is not None:
+            self.device.release_button_press_light()
         self._button = ButtonGestures(
             timedelta(seconds=self.configuration.parameters.values["button_hold_seconds"]),
             self.configuration.button_session_gesture,
@@ -1184,6 +1186,11 @@ class SaunaRuntime:
         """Apply one already-normalized gesture; caller owns ``_lock``."""
         enabled = bool(self.session and self.session.operation_enabled)
         gesture_at = now if received_at is None else received_at
+        if self.device is not None:
+            if event in ("press", "on") and self.configuration.button_session_gesture == "long":
+                self.device.begin_button_press_light(now, starting=not enabled)
+            elif event in ("release", "off", "unavailable"):
+                self.device.release_button_press_light()
         for action in self._button.handle_actions(event, enabled, gesture_at):
             await self._apply_button_action(
                 action, now, refresh_device=refresh_device,
@@ -1239,7 +1246,7 @@ class SaunaRuntime:
             await self._cycle()
             return result
 
-    def _set_control_mode(self, mode):
+    def _set_control_mode(self, mode, *, preserve_light=False):
         """Apply a mode and its output initialization while holding the lock."""
         if self.reconfiguring:
             raise ValueError(
@@ -1247,8 +1254,43 @@ class SaunaRuntime:
             )
         previous_mode = self.controller.control_mode
         self.controller.set_control_mode(mode)
+        if previous_mode != mode and mode == "manual":
+            parameters = Parameters({
+                **self.configuration.parameters.as_dict(),
+                "target_temperature_c": self.configuration.parameters.values[
+                    "standard_temperature_c"
+                ],
+            })
+            self.controller.update_temperature_parameters(parameters, self._clock())
+            self.configuration = replace(self.configuration, parameters=parameters)
+            if self.device:
+                self.device.values = parameters.values
+        elif previous_mode != mode and self.configuration.selected_program_id is not None:
+            program = next(
+                item for item in self.configuration.temperature_programs
+                if item.id == self.configuration.selected_program_id
+            )
+            parameters, program_mode = program_parameters(
+                self.configuration.parameters, program.id,
+                catalog=self.configuration.temperature_programs,
+            )
+            self.controller.update_temperature_parameters(
+                parameters, self._clock(), program_mode=program_mode,
+                new_program=True, temperature_steps=program.temperature_steps,
+            )
+            self.configuration = replace(
+                self.configuration, parameters=parameters, program_mode=program_mode,
+                temperature_steps=program.temperature_steps,
+            )
+            if self.device:
+                self.device.values = parameters.values
         if previous_mode != mode and self.device:
-            self.device.set_light_override(0 if mode == "manual" else None)
+            brightness = 0
+            if preserve_light:
+                brightness = self.device.button_press_original_brightness
+                if brightness is None:
+                    brightness = self.device.light_observation["brightness_percent"]
+            self.device.set_light_override((brightness or 0) if mode == "manual" else None)
         self.configuration = replace(self.configuration, control_mode=mode)
         return self.configuration
 

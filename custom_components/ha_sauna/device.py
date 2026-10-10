@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
 
@@ -32,6 +33,15 @@ from .core.warmup import (
     historical_warmup_rate,
 )
 from .presentation import FAULTS, configuration_message
+
+
+@dataclass
+class _ButtonPressLight:
+    started_at: datetime
+    original_percent: float
+    starting: bool
+    session_id: str | None
+    restoring: bool = False
 
 
 class HADevice:
@@ -104,6 +114,7 @@ class HADevice:
         self.last_input_occurred_at = None
         self._button_hold_session_id = None
         self._button_hold_starting = False
+        self._button_press_light = None
         if runtime.controller.control_mode == "manual":
             self.set_light_override(0)
 
@@ -263,6 +274,12 @@ class HADevice:
             return None
         old, new = event.data.get("old_state"), event.data.get("new_state")
         source = new if new is not None else old
+        if (
+            self.runtime.configuration.control_input_mode == "button"
+            and source is not None and source.domain == "event"
+            and (new is None or new.state in ("unknown", "unavailable"))
+        ):
+            return "unavailable"
         if (
             self.runtime.configuration.control_input_mode == "button"
             and source is not None
@@ -1111,6 +1128,9 @@ class HADevice:
         if self._button_hold_session_id is not None:
             await self.show_button_hold_light(now, self._button_hold_session_id)
             return
+        if self._button_press_light is not None:
+            await self.show_button_press_light(now)
+            return
         if not await self._finish_expired_session_light(now):
             return
         light_after_run = self.runtime.controller.light_after_run
@@ -1773,6 +1793,7 @@ class HADevice:
     def set_light_override(self, value, *, at=None):
         """Manuelle Lichtwahl bis zum Rückkehrpunkt oder Fristablauf halten."""
         validate_light_selection(value)
+        self._button_press_light = None
         now = self.runtime._clock() if at is None else at
         light_after_run = self.runtime.controller.light_after_run
         if (
@@ -1795,8 +1816,57 @@ class HADevice:
         )
         self._light_override_dirty = True
 
+    @property
+    def button_press_original_brightness(self):
+        press = self._button_press_light
+        return press.original_percent if press is not None else None
+
+    def begin_button_press_light(self, now, *, starting):
+        """Preview a held gesture without changing the planner's light choice."""
+        if self._button_hold_session_id is not None:
+            return
+        previous = self._button_press_light
+        if previous is not None:
+            original = previous.original_percent
+        else:
+            observation = self.light_observation
+            if not observation["available"]:
+                return
+            original = observation["brightness_percent"]
+        self._button_press_light = _ButtonPressLight(
+            now, original, starting,
+            self.runtime.session.session_id if self.runtime.session else None,
+        )
+
+    def release_button_press_light(self):
+        """Restore an unconfirmed press; the planner keeps its original deadline."""
+        if self._button_press_light is not None:
+            self._button_press_light.restoring = True
+
+    async def show_button_press_light(self, now):
+        press = self._button_press_light
+        brightness = (
+            press.original_percent if press.restoring else 0 if press.starting
+            else press.original_percent or self.values["session_light_brightness_percent"]
+        )
+        service = "turn_on" if brightness > 0 else "turn_off"
+        brightness = brightness if service == "turn_on" else None
+        await self._show_button_light(
+            now, phase="button_press",
+            key=("button_press", press.started_at, press.restoring, service, brightness),
+            service=service, brightness=brightness, session_id=press.session_id,
+        )
+        if (
+            press is self._button_press_light and press.restoring
+            and not self._light_service_is_pending()
+            and self._light_state_signature(self.hass.states.get(self.bindings["light"]))
+            == self._light_command_signature(service, brightness)
+        ):
+            self._button_press_light = None
+
     def begin_button_hold_light(self, session_id, *, starting=False):
         """Mark acknowledgement for regular output after the heater command."""
+        self._button_press_light = None
         self._button_hold_session_id = session_id
         self._button_hold_starting = starting
         self.light_output.return_to_automatic()
@@ -1811,8 +1881,14 @@ class HADevice:
             if self._button_hold_starting else None
         )
         service = "turn_on" if self._button_hold_starting else "turn_off"
-        target = self._light_command_signature(service, brightness)
         key = ("button_hold", session_id, service, brightness)
+        return await self._show_button_light(
+            now, phase="button_hold", key=key, service=service,
+            brightness=brightness, session_id=session_id,
+        )
+
+    async def _show_button_light(self, now, *, phase, key, service, brightness, session_id):
+        target = self._light_command_signature(service, brightness)
         state = self.hass.states.get(self.bindings["light"])
         if (
             not self._light_service_is_pending()
@@ -1828,11 +1904,11 @@ class HADevice:
         sent = await self._send_light_command(
             now,
             key=key,
-            phase="button_hold",
+            phase=phase,
             service=service,
             brightness=brightness,
             session_id=session_id,
-            purpose="button_hold",
+            purpose=phase,
         )
         if sent and self._light_state_signature(
             self.hass.states.get(self.bindings["light"])

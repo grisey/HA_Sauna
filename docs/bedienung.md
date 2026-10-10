@@ -12,10 +12,17 @@ richtet sich nach den Ereignismeldungen des Tasters. Einmaliges Drücken bleibt
 der direkten Ofensteuerung vorbehalten. Die Tastervorgabe
 gilt unabhängig von der Temperaturwahl im Panel.
 
-Beim Gedrückthalten bestätigt helles Licht den Start bis zum Loslassen.
-Dafür muss der Taster Halten und Loslassen melden.
+Bei gewählter Haltegeste geht das Licht beim Drücken zunächst aus. Sobald die
+Haltezeit erreicht ist, bestätigt die eingestellte Einschalthelligkeit den Start
+bis zum Loslassen. Ein kurzer Druck stellt die vorherige Helligkeit wieder her
+und schaltet den Ofen. Dafür muss der Taster Drücken, Halten und Loslassen melden.
 
 ## Temperatur während der Sitzung ändern
+
+Beim Wechsel zu **Konstant** oder **Manuell** gilt die einstellbare
+Standardtemperatur aus der Integrationskonfiguration. Danach bleibt eine
+direkt gewählte Solltemperatur erhalten. Programme und Tastervorgaben behalten
+ihre eigenen Temperaturen.
 
 Eine direkte Sollwertänderung am Temperaturinstrument wirkt sofort und ersetzt das
 Temperaturprogramm durch einen konstanten Sollwert. Programm- und Schnellwahlen
@@ -60,7 +67,7 @@ Lichtnachlauf. Eine spätere Raumlichtwahl startet keinen neuen Nachlauf.
 
 Die Betriebsart **Manuell** ist mit normalen Bedienrechten nach vollständigem
 Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
-Ofen und Licht beginnen beim Wechsel und nach einem Home-Assistant-Neustart
+Ofen und Licht beginnen beim Wechsel über das Panel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
 Ofen-EIN aktiviert die Temperaturregelung um den am Instrument eingestellten
@@ -71,7 +78,8 @@ Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
 zeigt weiterhin die tatsächliche Ofenrückmeldung.
 
 Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
-und schaltet die Temperaturregelung um. Auch manuelles EIN benötigt eine gültige
+und schaltet die Temperaturregelung um; die vorherige Helligkeit bleibt erhalten.
+Auch manuelles EIN benötigt eine gültige
 Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 
@@ -87,7 +95,9 @@ abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
 Konfiguration gesperrt.
 
 Dieselbe Tastergeste beendet bei laufendem Betrieb die Sitzung sofort.
-Beim Gedrückthalten bleibt das Licht bis zur Loslassmeldung AUS;
+Bei gewählter Haltegeste wird zuvor ausgeschaltetes Licht beim Drücken mit der
+eingestellten Einschalthelligkeit eingeschaltet. Sobald die Haltezeit erreicht
+ist, bleibt es bis zur Loslassmeldung AUS;
 anschließend beginnt der Lichtnachlauf.
 
 Nach einem Home-Assistant-Neustart setzt sich der Ofenbetrieb nicht fort;

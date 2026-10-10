@@ -53,7 +53,7 @@ keine Türhilfe.
 | Aufheizen und Bereit | Linear von der Helligkeit bei kalter Sauna am Kaltpunkt der Lichtkurve zum Tag- oder Nachtwert bei Solltemperatur. |
 | Saunagang | Tag- oder Nachtwert bei Solltemperatur. |
 | Ofenkühlung | Zunächst Dimmhelligkeit bei Ofenkühlung, danach über die Restzeit linear zum temperaturabhängigen Ziel. |
-| Betrieb-AUS | Helligkeit für „Hell“ und Lichtnachlauf bis zum Fristende, dann AUS. |
+| Betrieb-AUS | Eingestellte Nachlaufhelligkeit bis zum Fristende, dann AUS. |
 
 Das Helligkeitsziel bei Solltemperatur und im Saunagang geht während der
 bürgerlichen Dämmerung zwischen Tag- und Nachtwert über. Thermostatgrenzen

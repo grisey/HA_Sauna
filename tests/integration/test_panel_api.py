@@ -381,7 +381,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         for role in ("upper_temperature", "lower_temperature"):
                             entity = baseline["bindings"][role]
                             self.hass.states.async_set(
-                                entity, "85", self.hass.states.get(entity).attributes
+                                entity, str(runtime.controller.thermostat_target),
+                                self.hass.states.get(entity).attributes,
                             )
                         await self.hass.async_block_till_done()
                         self.assertEqual(runtime.controller.phase, "bereit")
@@ -1496,6 +1497,45 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/heater", json={"value": None}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             self.assertIsNone(runtime.controller.heater_override)
+
+    async def test_constant_program_api_applies_standard_then_preserves_explicit_choice(self):
+        """Follow the panel action through persistence, live control and reload."""
+        options = dict(self.entry.options)
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **options,
+            "parameters": {**options["parameters"], "standard_temperature_c": 87},
+        })
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        await runtime.set_operation(True)
+        session_id = runtime.session.session_id
+        url = self.base + "/" + self.entry.entry_id
+        program = runtime.configuration.temperature_programs[0]
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/program", json={"profile": program.id}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            self.assertEqual(runtime.controller.target_temperature, program.start_c)
+            async with client.post(url + "/program", json={"profile": "constant"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                result = await response.json()
+            self.assertEqual(result["parameters"]["target_temperature_c"], 87)
+            self.assertEqual(runtime.controller.target_temperature, 87)
+            self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 87)
+            self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 87)
+            self.assertIsNone(runtime.configuration.selected_program_id)
+            self.assertEqual(runtime.session.session_id, session_id)
+            async with client.post(url + "/temperature", json={"target_temperature_c": 82}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await runtime.tick()
+            self.assertEqual(runtime.controller.target_temperature, 82)
+            self.assertEqual(runtime.configuration.parameters.values["standard_temperature_c"], 87)
+            async with client.get(url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual((await response.json())["target_temperature"], 82)
+        self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.entry.runtime_data.controller.target_temperature, 82)
+        self.assertEqual(self.entry.options["parameters"]["standard_temperature_c"], 87)
 
     async def test_program_post_reports_runtime_selection_for_every_program_form(self):
         runtime = self.entry.runtime_data

@@ -176,7 +176,8 @@
       "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
       "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}",
-      "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen."
+      "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen.",
+      "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern."
     },
     "abort": {
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
@@ -204,17 +205,18 @@
           "upper_device": "Passende Messwerte werden automatisch zugeordnet. Ohne Geräteauswahl ist eine einzelne Zuordnung möglich.",
           "lower_device": "Zweite Messposition; mindestens eine Position benötigt Temperatur und Feuchte.",
           "presence_device": "Ordnet die Präsenzmeldung und, falls vorhanden, die Lichtstärke zu."
-        }
+        },
+        "submit": "Weiter"
       },
       "operation": {
         "title": "Betrieb und Ofen",
         "menu_options": {
           "parameters_session_controls": "Sitzung und Taster",
-          "parameters_temperature_control": "Temperaturregelung",
+          "parameters_temperature_control": "Temperaturregelung und Aufheizen",
           "parameters_heater_feedback": "Schaltbestätigung und Schutz",
-          "parameters_temperature_estimation": "Aufheizprognose und Temperaturanstieg",
           "parameters_oven_cooling": "Ofenkühlung",
-          "parameters_heater_accounting": "Heizzeit und Verbrauch"
+          "parameters_heater_accounting": "Heizzeit und Verbrauch",
+          "init": "Zurück zur Übersicht"
         }
       },
       "parameters_session_controls": {
@@ -228,24 +230,30 @@
           "button_hold_seconds": "Erforderliche Haltezeit eines Binärtasters; Ereignistaster liefern die erkannte Geste selbst.",
           "session_gap_minutes": "Innerhalb dieser Pause mit Lichtnachlauf setzt erneutes Einschalten dieselbe Sitzung fort.",
           "manual_override_minutes": "In Automatik endet eine manuelle Ofen- oder Lichtwahl spätestens nach dieser Zeit, bei einem passenden Zustandswechsel früher. Die Betriebsart Manuell ist davon unabhängig."
-        }
+        },
+        "submit": "Speichern und zurück"
       },
       "parameters_temperature_control": {
-        "title": "Temperaturregelung",
+        "title": "Temperaturregelung und Aufheizen",
         "data": {
           "sauna_min_temperature_c": "Mindesttemperatur",
           "readiness_offset_c": "Heizung aus bei Solltemperatur plus",
           "readiness_hysteresis_c": "Heizung ein bei Solltemperatur minus",
           "minimum_heating_minutes": "Mindestheizzeit",
-          "thermostat_cooldown_minutes": "Heizpause nach Abschalten"
+          "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
+          "standard_temperature_c": "Standardtemperatur",
+          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
         },
         "data_description": {
           "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
           "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. Mindestheizzeit und Heizen während eines Saunagangs haben Vorrang.",
           "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein, sobald die Heizpause abgelaufen ist.",
           "minimum_heating_minutes": "Nach dem Einschalten bleibt der Ofen mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
-          "thermostat_cooldown_minutes": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten."
-        }
+          "thermostat_cooldown_minutes": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten.",
+          "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
+          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
+        },
+        "submit": "Speichern und zurück"
       },
       "parameters_heater_feedback": {
         "title": "Schaltbestätigung und Schutz",
@@ -256,16 +264,8 @@
         "data_description": {
           "feedback_timeout_seconds": "So lange wird auf den Abschluss eines Schaltbefehls oder die Rückmeldung des angeforderten Schützzustands gewartet.",
           "fault_confirmation_seconds": "Ein zentraler technischer Fehler verriegelt nach dieser Dauer die Schutzabschaltung; ungültige Regeltemperatur stoppt das Heizen schon vorher."
-        }
-      },
-      "parameters_temperature_estimation": {
-        "title": "Aufheizprognose und Temperaturanstieg",
-        "data": {
-          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
         },
-        "data_description": {
-          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
-        }
+        "submit": "Speichern und zurück"
       },
       "parameters_oven_cooling": {
         "title": "Ofenkühlung",
@@ -280,7 +280,8 @@
           "oven_cooling_max_minutes": "Begrenzt die berechnete Kühlzeit. Sie läuft nur ab, solange das Schütz nachweislich ausgeschaltet ist.",
           "oven_cooling_heat_idle_ratio": "Die gewichtete Heizzeit wird durch diesen Wert geteilt, bevor Bereitschaftspausen abgezogen werden.",
           "oven_cooling_half_life_minutes": "Nach dieser Zeit zählen frühere Heizzeiten und Bereitschaftspausen nur noch halb so stark für die Kühlzeit."
-        }
+        },
+        "submit": "Speichern und zurück"
       },
       "parameters_heater_accounting": {
         "title": "Heizzeit und Verbrauch",
@@ -293,40 +294,34 @@
           "power_heating_threshold_w": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
           "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit geschätzt.",
           "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null."
-        }
+        },
+        "submit": "Speichern und zurück"
       },
       "sensors": {
         "title": "Sensoren und Erkennung",
         "menu_options": {
-          "parameters_validity_feedback": "Alter der Messwerte",
-          "parameters_signals": "Messwertglättung",
+          "parameters_signals": "Messwerte",
           "parameters_door": "Türöffnung und Türschluss",
-          "parameters_presence_evaluation": "Auswertung der Personenerkennung",
+          "parameters_presence_evaluation": "Personenerkennung und Gangbestätigung",
           "parameters_presence_strong": "Deutliche Personenhinweise",
           "parameters_presence_weak": "Schwache Personenhinweise nach Eintritt",
           "parameters_infusion": "Aufgusserkennung",
-          "parameters_gang_confirmation": "Gangbestätigung",
-          "parameters_ventilation": "Lüften und Gangende"
-        }
-      },
-      "parameters_validity_feedback": {
-        "title": "Alter der Messwerte",
-        "data": {
-          "sensor_timeout_seconds": "Höchstalter der Messwerte"
-        },
-        "data_description": {
-          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
+          "parameters_ventilation": "Lüften und Gangende",
+          "init": "Zurück zur Übersicht"
         }
       },
       "parameters_signals": {
-        "title": "Messwertglättung",
+        "title": "Messwerte",
         "data": {
-          "median_seconds": "Glättungszeit für Messausreißer"
+          "median_seconds": "Glättungszeit für Messausreißer",
+          "sensor_timeout_seconds": "Höchstalter der Messwerte"
         },
         "data_description": {
-          "median_seconds": "Glättet Temperatur und Feuchte für Tür- und Personensignale sowie die Berechnung des Wassergehalts."
+          "median_seconds": "Glättet Temperatur und Feuchte für Tür- und Personensignale sowie die Berechnung des Wassergehalts.",
+          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
         },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "parameters_door": {
         "title": "Türöffnung und Türschluss",
@@ -356,20 +351,25 @@
           "door_close_slope": "Der Temperaturtrend aller noch auswertbaren beteiligten Messpositionen muss diesen Wert überschreiten.",
           "door_close_hold_seconds": "So lange muss der Temperaturanstieg für einen Türschluss bestehen."
         },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "parameters_presence_evaluation": {
-        "title": "Auswertung der Personenerkennung",
+        "title": "Personenerkennung und Gangbestätigung",
         "data": {
           "person_step_seconds": "Auswertungsabstand der Personenerkennung",
           "strong_window_seconds": "Vergleichszeit für deutliche Personenhinweise",
-          "weak_window_seconds": "Vergleichszeit für schwache Personenhinweise"
+          "weak_window_seconds": "Vergleichszeit für schwache Personenhinweise",
+          "confirmation_minutes": "Frist für Personenhinweis und Aufguss"
         },
         "data_description": {
           "person_step_seconds": "In diesem Abstand wird der Feuchteanstieg ausgewertet. Beide Vergleichszeiten müssen ganzzahlige Vielfache dieses Abstands sein.",
           "strong_window_seconds": "Über diesen Zeitraum wird der Anstieg von relativer und absoluter Feuchte ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
-          "weak_window_seconds": "Über diesen Zeitraum wird ein neuer Feuchteanstieg nach Türöffnung und Türschluss ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein."
-        }
+          "weak_window_seconds": "Über diesen Zeitraum wird ein neuer Feuchteanstieg nach Türöffnung und Türschluss ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
+          "confirmation_minutes": "Ab Türschluss gilt eine gemeinsame Frist für Personenhinweise und die Bestätigung des Saunagangs durch einen Aufguss."
+        },
+        "submit": "Speichern und zurück",
+        "description": "{description}"
       },
       "parameters_presence_strong": {
         "title": "Deutliche Personenhinweise",
@@ -383,7 +383,8 @@
           "strong_humidity_lower": "Erforderlicher Anstieg in Prozentpunkten pro Minute am unteren Messpunkt für einen deutlichen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
           "strong_hold_seconds": "So lange müssen Feuchtetrend und zunehmender Wassergehalt gemeinsam nachgewiesen werden."
         },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "parameters_presence_weak": {
         "title": "Schwache Personenhinweise nach Eintritt",
@@ -397,7 +398,8 @@
           "weak_humidity_lower": "Erforderlicher Anstieg in Prozentpunkten pro Minute am unteren Messpunkt für einen schwachen Personenhinweis. Gleichzeitig muss die absolute Feuchte zunehmen.",
           "weak_hold_seconds": "So lange muss der neue Feuchteanstieg zusammen mit zunehmendem Wassergehalt nachgewiesen werden."
         },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "parameters_infusion": {
         "title": "Aufgusserkennung",
@@ -411,17 +413,8 @@
           "infusion_humidity": "Erforderlicher Anstieg in Prozentpunkten innerhalb der Vergleichszeit an allen verfügbaren Messpositionen.",
           "infusion_hold_seconds": "So lange müssen Feuchteanstieg und zunehmender Wassergehalt nachgewiesen werden."
         },
-        "description": "{description}"
-      },
-      "parameters_gang_confirmation": {
-        "title": "Gangbestätigung",
-        "data": {
-          "confirmation_minutes": "Frist für Personenhinweis und Aufguss"
-        },
-        "data_description": {
-          "confirmation_minutes": "Ab Türschluss gilt diese Frist für schwache Personenhinweise. Ab Beginn eines vorläufigen Saunagangs gilt sie erneut für dessen Bestätigung durch einen Aufguss."
-        },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "parameters_ventilation": {
         "title": "Lüften und Gangende",
@@ -439,24 +432,16 @@
           "vent_absolute_humidity_loss_percent": "Erforderlicher prozentualer Verlust gegenüber dem Wassergehalt vor der Türöffnung an allen beteiligten Messpositionen.",
           "vent_hold_seconds": "Mit nur einer gültigen Messposition muss die Tür zusätzlich zu Temperatur- und Wasserverlust mindestens so lange offen sein."
         },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "light": {
         "title": "Licht",
         "menu_options": {
-          "parameters_light_device": "Helligkeitswert des Lichtgeräts",
           "parameters_light_curve": "Licht nach Temperatur und Tageslicht",
           "parameters_light_phases": "Ofenkühlung und Lichtnachlauf",
-          "parameters_light_transitions": "Lichtwechsel"
-        }
-      },
-      "parameters_light_device": {
-        "title": "Helligkeitswert des Lichtgeräts",
-        "data": {
-          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts"
-        },
-        "data_description": {
-          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
+          "parameters_light_transitions": "Lichtgerät und Lichtwechsel",
+          "init": "Zurück zur Übersicht"
         }
       },
       "parameters_light_curve": {
@@ -473,29 +458,34 @@
           "operation_brightness_percent": "Tagesziel der Lichtkurve und normale Helligkeit während eines Saunagangs.",
           "night_brightness_percent": "Nachtziel der Lichtkurve und normale Helligkeit im Saunagang; die Dämmerung verbindet Tag- und Nachtwert."
         },
-        "description": "{description}"
+        "description": "{description}",
+        "submit": "Speichern und zurück"
       },
       "parameters_light_phases": {
         "title": "Ofenkühlung und Lichtnachlauf",
         "data": {
           "after_run_brightness_percent": "Dimmhelligkeit bei Ofenkühlung",
-          "session_light_brightness_percent": "Helligkeit für „Hell“ und Lichtnachlauf"
+          "session_light_brightness_percent": "Helligkeit beim Einschalten und im Nachlauf"
         },
         "data_description": {
           "after_run_brightness_percent": "Das Licht blendet zu Kühlbeginn auf diesen Wert ab und steigt danach bis Kühlende wieder zum temperaturabhängigen Ziel.",
-          "session_light_brightness_percent": "Gemeinsamer Helligkeitswert für die Wahl „Hell“ und den Lichtnachlauf nach Ausschalten."
-        }
+          "session_light_brightness_percent": "Lichtwert für „Ein“, die Startbestätigung am Taster und den Lichtnachlauf."
+        },
+        "submit": "Speichern und zurück"
       },
       "parameters_light_transitions": {
-        "title": "Lichtwechsel",
+        "title": "Lichtgerät und Lichtwechsel",
         "data": {
           "light_transition_seconds": "Dauer automatischer Lichtwechsel",
-          "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen"
+          "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen",
+          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts"
         },
         "data_description": {
           "light_transition_seconds": "Dauer der Überblendung bei automatischen Helligkeitswechseln; ohne Dauer wechselt das Licht unmittelbar.",
-          "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort."
-        }
+          "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort.",
+          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
+        },
+        "submit": "Speichern und zurück"
       },
       "binding_entities": {
         "title": "Gerätezuordnung prüfen",
@@ -595,7 +585,8 @@
               "environment_forecast_time": "Zeitpunkt der Vorhersagewerte."
             }
           }
-        }
+        },
+        "submit": "Speichern und zurück"
       }
     }
   },

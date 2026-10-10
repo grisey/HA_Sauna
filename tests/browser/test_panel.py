@@ -23,11 +23,12 @@ from homeassistant.helpers.service import async_get_all_descriptions
 from homeassistant.components.http.config import async_get_and_load_store
 from playwright.async_api import async_playwright, expect
 from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 
 
 DEFAULT_PROGRAMS = section("programs")
-DEFAULT_PARAMETERS = {item["key"]: item["default"] for item in section("parameters")}
+DEFAULT_PARAMETERS = Parameters({}).as_dict()
 
 
 def default_css_color(role):
@@ -2125,6 +2126,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             raise
         await self.page.screenshot(path=str(screenshots / "options_menu.png"), full_page=True)
         area = next(group for group in groups if group["id"] == "operation")
+        flow_id = await dialog.evaluate("dialog => dialog._step.flow_id")
+        for area_id in ("operation", "sensors", "light"):
+            visited = next(group for group in groups if group["id"] == area_id)
+            await menu.get_by_text(visited["label"], exact=True).click()
+            await expect(menu.get_by_text("Zurück zur Übersicht", exact=True)).to_be_visible()
+            await menu.get_by_text("Zurück zur Übersicht", exact=True).click()
+            await expect(menu.get_by_text(area["label"], exact=True)).to_be_visible()
+            self.assertEqual(await dialog.evaluate("dialog => dialog._step.flow_id"), flow_id)
         await menu.get_by_text(area["label"], exact=True).click()
         subgroup = next(group for group in section("frontend")["settings_subgroups"]
                         if group["id"] == "temperature_control")
@@ -2158,11 +2167,47 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await dialog.get_by_role("button", name=submit, exact=True).click()
         saved = await response.value
         self.assertTrue(saved.ok)
-        self.assertEqual((await saved.json())["type"], "create_entry")
+        result = await saved.json()
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         before["parameters"][definition["key"]] = changed
         self.assertEqual(self.runtime.configuration.as_options(), before)
+        await menu.get_by_text(subgroup["label"], exact=True).click()
+        field = dialog.get_by_role("spinbutton", name=re.compile(re.escape(definition["label"])))
+        await expect(field).to_have_value(format(changed, "g"))
+        await field.fill("")
+        await dialog.get_by_role("button", name=submit, exact=True).click()
+        await expect(dialog.locator("step-flow-form ha-alert")).to_be_visible()
+        self.assertEqual(await dialog.evaluate("dialog => dialog._step.step_id"), "parameters_temperature_control")
+        self.assertEqual(self.runtime.configuration.as_options(), before)
+        await field.fill(str(changed))
+        unchanged_runtime = self.entry.runtime_data
+        async with self.page.expect_response(lambda response:
+                "/api/config/config_entries/options/flow/" in response.url
+                and response.request.method == "POST") as response:
+            await dialog.get_by_role("button", name=submit, exact=True).click()
+        result = await (await response.value).json()
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data, unchanged_runtime)
+        self.assertEqual(self.runtime.configuration.as_options(), before)
+        controls = next(group for group in section("frontend")["settings_subgroups"]
+                        if group["id"] == "session_controls")
+        await menu.get_by_text(controls["label"], exact=True).click()
+        await expect(dialog.locator("step-flow-form")).to_be_visible()
+        async with self.page.expect_response(lambda response:
+                "/api/config/config_entries/options/flow/" in response.url
+                and response.request.method == "POST") as response:
+            await dialog.get_by_role("button", name="Speichern und zurück", exact=True).click()
+        result = await (await response.value).json()
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
+        await self.hass.async_block_till_done()
+        self.assertIs(self.entry.runtime_data, unchanged_runtime)
+        self.assertEqual(self.runtime.configuration.as_options(), before)
+        await menu.get_by_text("Zurück zur Übersicht", exact=True).click()
+        await expect(menu.get_by_text(area["label"], exact=True)).to_be_visible()
+        self.assertEqual(await dialog.evaluate("dialog => dialog._step.flow_id"), flow_id)
         self.assertEqual(self.errors, [])
 
     async def test_native_device_selection_assigns_presence_and_illuminance(self):
@@ -2209,8 +2254,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await device_selector.locator("ha-select").click()
         await device_selector.get_by_text("Präsenzsensor Prüffixture", exact=True).click()
         await self.page.screenshot(path=str(screenshots / "device_selection.png"), full_page=True)
-        submit = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
-          'ui.panel.config.integrations.config_flow.submit')""")
+        submit = "Weiter"
         await dialog.get_by_role("button", name=submit, exact=True).click()
         await expect(dialog.get_by_text("Gerätezuordnung prüfen", exact=True)).to_be_visible()
         presence_section = dialog.locator("ha-form-expandable").filter(
@@ -2243,13 +2287,17 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             path=str(screenshots / "device_assignments.png"),
             full_page=True, animations="disabled")
         before = self.entry.runtime_data.configuration.as_options()
+        flow_id = await dialog.evaluate("dialog => dialog._step.flow_id")
+        submit = "Speichern und zurück"
         async with self.page.expect_response(lambda response:
                 "/api/config/config_entries/options/flow/" in response.url
                 and response.request.method == "POST") as response:
             await dialog.get_by_role("button", name=submit, exact=True).click()
         saved = await response.value
         self.assertTrue(saved.ok)
-        self.assertEqual((await saved.json())["type"], "create_entry")
+        result = await saved.json()
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "init", flow_id))
+        await expect(dialog.locator("step-flow-menu").get_by_text("Geräte und Erkennungsverfahren", exact=True)).to_be_visible()
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         before["bindings"].update(expected)
@@ -2281,7 +2329,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                   if item["settings_subgroup"] == "door" and item["minimum"] != item["maximum"]}
         result = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {**values, "door_open_slope": -2.1})
-        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "sensors", flow["flow_id"]))
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.assertEqual(self.entry.options["parameters"]["door_open_slope"], -2.1)
@@ -3318,16 +3366,26 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
         await expect(target_arc).to_be_visible(timeout=10000)
         await expect(target_arc).to_have_attribute("aria-label", "Solltemperatur einstellen")
+        standard = self.entry.runtime_data.configuration.parameters.values["standard_temperature_c"]
+        await expect(target_arc).to_have_attribute("aria-valuenow", f"{standard:g}")
         await target_arc.focus()
         await expect(target_arc).to_have_css("opacity", "0.35")
         async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await target_arc.press("PageDown")
-        await expect(target_arc).to_have_attribute("aria-valuenow", "70", timeout=10000)
+        minimum = float(await target_arc.get_attribute("aria-valuemin"))
+        decreased = max(minimum, standard - 10 * section("frontend")["temperature_dial_step_c"])
+        await expect(target_arc).to_have_attribute("aria-valuenow", f"{decreased:g}", timeout=10000)
         await self.panel.locator('[data-action="program-mode:individual"]').click()
         await self.panel.evaluate(
             "async panel => { while (panel.programRequest) await new Promise(resolve => setTimeout(resolve, 10)); }"
         )
         await expect(self.panel.locator("#progression-end")).to_be_visible()
+        # This program has explicit sample endpoints, independent of the factory target.
+        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as start_result:
+            await self.panel.locator('#progression-start').fill("70")
+            await self.panel.locator('#progression-start').press("Tab")
+        self.assertTrue((await start_result.value).ok)
+        await expect(self.panel.locator('#progression-start')).to_have_value("70")
         async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await self.panel.locator('#progression-end').fill("86")
             await self.panel.locator('#progression-end').press("Tab")
@@ -3504,8 +3562,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.open_settings_section("maintenance")
         await self.panel.get_by_role("button", name="Werkseinstellungen wiederherstellen", exact=True).click()
         await expect(self.panel.locator('#log-level')).to_have_value(section("instance")["log_level"], timeout=15000)
-        await expect(self.panel.locator('input[name="preset_step_c"]')).to_have_value(str(DEFAULT_PARAMETERS["preset_step_c"]))
-        await expect(self.panel.locator('input[name="preset_start_c"]')).to_have_value(str(DEFAULT_PARAMETERS["preset_start_c"]))
+        await expect(self.panel.locator('input[name="preset_step_c"]')).to_have_value(format(DEFAULT_PARAMETERS["preset_step_c"], "g"))
+        await expect(self.panel.locator('input[name="preset_start_c"]')).to_have_value(format(DEFAULT_PARAMETERS["preset_start_c"], "g"))
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.options["bindings"], bindings)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
