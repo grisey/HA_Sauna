@@ -3144,7 +3144,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.locator('[data-action="history"]').click()
-        await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_be_attached(timeout=15000)
+        await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_contain_text(" · beendet", timeout=15000)
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
         await self.select_dropdown(self.panel.locator("#session"), identity)
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)
