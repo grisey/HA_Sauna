@@ -15,7 +15,7 @@ from custom_components.ha_sauna.core.defaults import (
     section,
     validate_catalog,
 )
-from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, ParameterError, Parameters
 
 
 class DefaultsTests(unittest.TestCase):
@@ -200,6 +200,29 @@ class DefaultsTests(unittest.TestCase):
             "Manuelle Lichtänderungen",
             BY_KEY["operation_brightness_percent"].description,
         )
+
+    def test_missing_standard_migrates_to_saved_minimum_but_explicit_value_is_checked(self):
+        minimum = BY_KEY["standard_temperature_c"].default + 5
+        saved = {
+            "sauna_min_temperature_c": minimum,
+            "preset_start_c": minimum,
+            "target_temperature_c": minimum + 1,
+            "final_temperature_c": minimum,
+        }
+        migrated = Parameters(saved)
+        self.assertEqual(migrated.values["standard_temperature_c"], minimum)
+        self.assertEqual(migrated.values["target_temperature_c"], minimum + 1)
+        self.assertEqual(Parameters(migrated.as_dict()), migrated)
+        initial = Parameters({k: v for k, v in saved.items() if k != "target_temperature_c"})
+        self.assertEqual(initial.values["target_temperature_c"], minimum)
+        fractional = Parameters({
+            **saved, "sauna_min_temperature_c": minimum + .2,
+            "preset_start_c": minimum + 1, "final_temperature_c": minimum + 1,
+        })
+        self.assertEqual(fractional.values["standard_temperature_c"], minimum + 1)
+        with self.assertRaises(ParameterError) as raised:
+            Parameters({**saved, "standard_temperature_c": minimum - 1})
+        self.assertEqual(raised.exception.key, "standard_temperature_c")
 
     def test_button_temperature_default_is_independent_of_current_parameters(self):
         expected = section("instance")["button_temperature_c"]

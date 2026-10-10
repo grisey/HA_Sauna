@@ -31,7 +31,12 @@ const catalog = JSON.parse(
   fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
 );
 const defaults = Object.fromEntries(
-  catalog.parameters.map(({ key, default: value }) => [key, value]),
+  catalog.parameters.map(({ key, default: value }) => [
+    key,
+    typeof value === "object"
+      ? catalog.parameters.find((source) => source.key === value.parameter).default
+      : value,
+  ]),
 );
 const configuration = { ...catalog.instance };
 const makePanel = ({ admin = true, locked = false } = {}) => {

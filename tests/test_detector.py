@@ -25,7 +25,12 @@ from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
 def detection_parameters(**values):
-    return Parameters({**parameters().as_dict(), "sensor_timeout_seconds": 10, **values})
+    baseline = parameters().as_dict()
+    baseline["standard_temperature_c"] = max(
+        baseline["standard_temperature_c"],
+        values.get("sauna_min_temperature_c", baseline["sauna_min_temperature_c"]),
+    )
+    return Parameters({**baseline, "sensor_timeout_seconds": 10, **values})
 
 
 def measurement(pos, quantity, value, second, source=None, measured=None):

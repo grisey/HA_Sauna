@@ -67,7 +67,7 @@ Lichtnachlauf. Eine spätere Raumlichtwahl startet keinen neuen Nachlauf.
 
 Die Betriebsart **Manuell** ist mit normalen Bedienrechten nach vollständigem
 Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
-Ofen und Licht beginnen beim Wechsel und nach einem Home-Assistant-Neustart
+Ofen und Licht beginnen beim Wechsel über das Panel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
 Ofen-EIN aktiviert die Temperaturregelung um den am Instrument eingestellten
@@ -78,7 +78,8 @@ Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
 zeigt weiterhin die tatsächliche Ofenrückmeldung.
 
 Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
-und schaltet die Temperaturregelung um. Auch manuelles EIN benötigt eine gültige
+und schaltet die Temperaturregelung um; die vorherige Helligkeit bleibt erhalten.
+Auch manuelles EIN benötigt eine gültige
 Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 

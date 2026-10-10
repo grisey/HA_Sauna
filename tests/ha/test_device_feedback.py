@@ -66,10 +66,10 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertEqual(manual_controls(runtime)["light"]["observation"],
                          {"available": False, "brightness_percent": None})
 
-    def device(self, **parameters):
+    def device(self, *, bindings=BINDINGS, **parameters):
         from custom_components.ha_sauna.device import HADevice
 
-        configuration = Configuration(BINDINGS, Parameters(parameters))
+        configuration = Configuration(bindings, Parameters(parameters))
         runtime = SaunaRuntime(configuration, lambda: T0)
         light = [state("on", 180)]
         hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity: light[0]))
@@ -758,11 +758,22 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_binary_short_preserves_light_when_switching_to_manual(self):
         async def exercise():
-            runtime, adapter, light = self.device()
+            runtime, adapter, light = self.device(
+                target_temperature_c=80, sensor_timeout_seconds=30,
+                feedback_timeout_seconds=2, fault_confirmation_seconds=5,
+            )
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()
-            adapter.start_errors = lambda: []
+            for role in ("heater", "heater_feedback"):
+                adapter.ingest(role, state("off"), T0, initial=True)
+            for position in ("upper", "lower"):
+                adapter.ingest(f"{position}_temperature", state("70", unit="°C"),
+                               T0, initial=True)
+                adapter.ingest(f"{position}_humidity", state("30", unit="%"),
+                               T0, initial=True)
+            adapter.refresh(T0)
+            self.assertEqual(adapter.start_errors(), [])
             calls = []
 
             async def light_call(service, data, **kwargs):
@@ -788,7 +799,10 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_unavailable_press_restores_light_without_creating_session(self):
         async def exercise(native):
-            runtime, adapter, light = self.device()
+            bindings = Bindings({**BINDINGS.values, "control_input": (
+                "event.operator" if native else BINDINGS.values["control_input"]
+            )})
+            runtime, adapter, light = self.device(bindings=bindings)
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()
@@ -806,7 +820,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             self.assertEqual(light[0].state, "off")
             old, new = state("on"), state("unavailable")
             old.domain = new.domain = "event" if native else "binary_sensor"
-            event = SimpleNamespace(data={"entity_id": BINDINGS["control_input"],
+            event = SimpleNamespace(data={"entity_id": bindings.values["control_input"],
                                           "old_state": old, "new_state": new})
             action = adapter.physical_action(event)
             self.assertEqual(action, "unavailable")
@@ -823,7 +837,9 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_gesture_reset_restores_press_light_and_preserves_manual_selection(self):
         async def exercise():
-            runtime, adapter, light = self.device()
+            runtime, adapter, light = self.device(bindings=Bindings({
+                **BINDINGS.values, "control_input": "event.operator",
+            }))
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()

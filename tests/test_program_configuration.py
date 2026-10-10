@@ -25,6 +25,8 @@ from custom_components.ha_sauna.settings import (
     async_set_button_program,
     async_set_button_gesture,
     async_set_parameters,
+    async_set_control_mode,
+    async_set_program,
     async_set_program_catalog,
     async_set_temperature_steps,
     program_parameters,
@@ -605,6 +607,34 @@ class ProgramConfigurationTests(unittest.TestCase):
         runtime._set_control_mode("automatic")
         runtime._set_control_mode("manual")
         self.assertEqual(runtime.controller.target_temperature, 87)
+
+    def test_named_program_restores_its_temperatures_after_manual_mode(self):
+        async def exercise():
+            runtime = SaunaRuntime(Configuration.from_options(options({
+                "standard_temperature_c": 89,
+            })), clock=lambda: T0)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=runtime.configuration.as_options()
+            )
+            hass = _FakeHass()
+            program = runtime.configuration.temperature_programs[0]
+            await async_set_program(hass, entry, program.id)
+            original = runtime.configuration.parameters.as_dict()
+            original_target = runtime.controller.target_temperature
+            await async_set_control_mode(hass, entry, "manual")
+            self.assertEqual(runtime.controller.target_temperature, 89)
+            self.assertEqual(runtime.configuration.selected_program_id, program.id)
+            await async_set_control_mode(hass, entry, "automatic")
+            self.assertEqual(runtime.configuration.parameters.as_dict(), original)
+            self.assertEqual(runtime.controller.target_temperature, original_target)
+            self.assertEqual(runtime.configuration.selected_program_id, program.id)
+            self.assertEqual(entry.options["selected_program_id"], program.id)
+            self.assertEqual(entry.options["parameters"], original)
+            reloaded = Configuration.from_options(entry.options)
+            self.assertEqual(reloaded.parameters.as_dict(), original)
+            self.assertEqual(reloaded.selected_program_id, program.id)
+
+        asyncio.run(exercise())
 
     def test_standard_temperature_obeys_shared_bounds_and_rounding(self):
         self.assertNotIn("standard_temperature_c", LIVE_TEMPERATURE_KEYS)

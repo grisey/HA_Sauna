@@ -1265,6 +1265,25 @@ class SaunaRuntime:
             self.configuration = replace(self.configuration, parameters=parameters)
             if self.device:
                 self.device.values = parameters.values
+        elif previous_mode != mode and self.configuration.selected_program_id is not None:
+            program = next(
+                item for item in self.configuration.temperature_programs
+                if item.id == self.configuration.selected_program_id
+            )
+            parameters, program_mode = program_parameters(
+                self.configuration.parameters, program.id,
+                catalog=self.configuration.temperature_programs,
+            )
+            self.controller.update_temperature_parameters(
+                parameters, self._clock(), program_mode=program_mode,
+                new_program=True, temperature_steps=program.temperature_steps,
+            )
+            self.configuration = replace(
+                self.configuration, parameters=parameters, program_mode=program_mode,
+                temperature_steps=program.temperature_steps,
+            )
+            if self.device:
+                self.device.values = parameters.values
         if previous_mode != mode and self.device:
             brightness = 0
             if preserve_light:

@@ -219,7 +219,7 @@ class ManualModeTests(unittest.TestCase):
         )
         self.start(controller)
         controller.set_heater_override(True, at(1))
-        controller.set_temperature(81, at(2))
+        controller.set_temperature(controller.thermostat_target, at(2))
         controller.advance(at(63))
         self.assertTrue(controller.heater_override)
         self.assertEqual(controller.phase, "aus")
@@ -238,7 +238,7 @@ class ManualModeTests(unittest.TestCase):
         self.reject_session_event(controller, "close", Kind.DOOR_CLOSE, 2)
         self.reject_session_event(controller, "person", Kind.PERSON_STRONG, 3)
         self.reject_session_event(controller, "infusion", Kind.INFUSION, 4)
-        controller.set_temperature(81, at(5))
+        controller.set_temperature(controller.thermostat_target, at(5))
         controller.advance(at(66))
 
         self.assertEqual(controller.phase, "aus")
@@ -253,7 +253,7 @@ class ManualModeTests(unittest.TestCase):
         self.reject_session_event(controller, "close", Kind.DOOR_CLOSE, 2)
         self.reject_session_event(controller, "person", Kind.PERSON_STRONG, 3)
         self.reject_session_event(controller, "infusion", Kind.INFUSION, 4)
-        controller.set_temperature(81, at(5))
+        controller.set_temperature(controller.thermostat_target, at(5))
         controller.protection.add("confirmed_controller_failure")
         controller.advance(at(66))
 

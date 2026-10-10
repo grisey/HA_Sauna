@@ -241,7 +241,7 @@
           "readiness_hysteresis_c": "Heizung ein bei Solltemperatur minus",
           "minimum_heating_minutes": "Mindestheizzeit",
           "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
-          "standard_temperature_c": "Default temperature",
+          "standard_temperature_c": "Standardtemperatur",
           "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
         },
         "data_description": {
@@ -250,7 +250,7 @@
           "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein, sobald die Heizpause abgelaufen ist.",
           "minimum_heating_minutes": "Nach dem Einschalten bleibt der Ofen mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
           "thermostat_cooldown_minutes": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten.",
-          "standard_temperature_c": "Target temperature when switching to Constant or Manual. A temperature selected afterwards remains in effect; programs use their own temperatures.",
+          "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
           "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
         },
         "submit": "Speichern und zurück"

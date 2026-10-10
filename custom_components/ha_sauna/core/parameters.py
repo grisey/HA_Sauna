@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from math import isfinite
+from math import ceil, isfinite
 from types import MappingProxyType
 
 from .defaults import section
@@ -148,6 +148,14 @@ class Parameters:
             raise ParameterError("oven_cooling_max_minutes", "too_small")
 
         sauna_minimum = checked["sauna_min_temperature_c"]
+        # Older installations can have a minimum above the newly introduced
+        # standard. Only a missing standard is raised to that saved minimum.
+        if "standard_temperature_c" not in supplied:
+            checked["standard_temperature_c"] = max(
+                checked["standard_temperature_c"], ceil(sauna_minimum)
+            )
+            if "target_temperature_c" not in supplied:
+                checked["target_temperature_c"] = checked["standard_temperature_c"]
         for key in (
             "preset_start_c",
             "target_temperature_c",
