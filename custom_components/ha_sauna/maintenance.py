@@ -165,6 +165,7 @@ async def async_rename_entity(hass, entry, selected, new_entity_id, name):
         for candidate in candidates.values():
             Configuration.from_options(candidate)
         runtimes = []
+        locked_runtimes = {}
         unloaded = []
         registry = er.async_get(hass)
         async with AsyncExitStack() as locks:
@@ -173,8 +174,16 @@ async def async_rename_entity(hass, entry, selected, new_entity_id, name):
                 if runtime is not None and not runtime.closed:
                     await locks.enter_async_context(runtime._lock)
                     runtimes.append(runtime)
+                    locked_runtimes[item.entry_id] = runtime
             _check_rename(hass, entry, selected, new_entity_id)
             for item in affected:
+                if (
+                    item.entry_id in locked_runtimes
+                    and getattr(item, "runtime_data", None) is not locked_runtimes[item.entry_id]
+                ):
+                    raise MaintenanceError("configuration_busy")
+                if item.options != snapshots[item.entry_id]:
+                    raise MaintenanceError("entity_changed")
                 _check_idle(item)
                 if item.state not in (ConfigEntryState.LOADED, ConfigEntryState.NOT_LOADED):
                     raise MaintenanceError("integration_not_loaded")
