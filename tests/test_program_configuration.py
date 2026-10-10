@@ -2,10 +2,13 @@
 import asyncio
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
+import tempfile
 import unittest
 from types import SimpleNamespace
 
 from custom_components.ha_sauna import async_options_updated
+from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.const import CONF_BINDINGS, CONF_PARAMETERS
 from custom_components.ha_sauna.core.defaults import instance_default
@@ -51,6 +54,65 @@ def options(parameters=None, **configuration):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_live_target_only_preserves_named_program_options_and_archive(self):
+        async def exercise(directory):
+            runtime = SaunaRuntime(Configuration.from_options(options()), clock=lambda: T0)
+            entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+            hass = _FakeHass()
+            await async_set_program(hass, entry, runtime.configuration.temperature_programs[0].id)
+            runtime._set_operation(True)
+            configuration = runtime.configuration
+            saved_options = entry.options
+            archive = Archive(Path(directory) / "next-gang.sqlite", "next-gang")
+            runtime.archive = archive
+            try:
+                await async_set_parameters(hass, entry, {"target_temperature_c": 88.5}, partial=True)
+                self.assertIs(runtime.configuration, configuration)
+                self.assertIs(entry.options, saved_options)
+                self.assertEqual(runtime.configuration.selected_program_id, configuration.selected_program_id)
+                self.assertEqual(runtime.controller.temperature_steps, configuration.temperature_steps)
+                self.assertEqual(runtime.session.next_gang_temperature_c, 89)
+                self.assertEqual(runtime.controller.target_temperature, 89)
+                self.assertEqual(runtime.controller.next_gang_temperature, 89)
+                self.assertEqual(runtime.session.timeline.gang_count, 0)
+                await archive.flush()
+                stored = archive.read(runtime.session.session_id)["session"]
+                self.assertEqual(stored["next_gang_temperature_c"], 89)
+                self.assertEqual(stored["configuration"], plain(configuration.as_options()))
+                for value in (True, float("nan"),
+                              configuration.parameters.minimum_for("target_temperature_c") - .1,
+                              BY_KEY["target_temperature_c"].maximum + .1):
+                    session = runtime.session
+                    with self.subTest(value=value), self.assertRaises(ParameterError):
+                        await async_set_parameters(hass, entry, {"target_temperature_c": value}, partial=True)
+                    self.assertIs(runtime.session, session)
+                    self.assertIs(runtime.configuration, configuration)
+                    self.assertIs(entry.options, saved_options)
+            finally:
+                await archive.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            asyncio.run(exercise(directory))
+
+    def test_constant_and_manual_target_only_choices_remain_immediate(self):
+        async def exercise(mode):
+            runtime = SaunaRuntime(Configuration.from_options(options(
+                program_mode="constant", control_mode=mode,
+            )), clock=lambda: T0)
+            entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
+            if mode == "automatic":
+                runtime._set_operation(True)
+            await async_set_parameters(_FakeHass(), entry, {"target_temperature_c": 88.5}, partial=True)
+            self.assertEqual(runtime.controller.target_temperature, 89)
+            self.assertEqual(entry.options["parameters"]["target_temperature_c"], 89)
+            self.assertEqual(runtime.configuration.program_mode, "constant")
+            if runtime.session:
+                self.assertIsNone(runtime.session.next_gang_temperature_c)
+
+        for mode in ("automatic", "manual"):
+            with self.subTest(mode=mode):
+                asyncio.run(exercise(mode))
+
     def test_button_session_gesture_roundtrip_and_validation(self):
         baseline = Configuration.from_options(options())
         self.assertEqual(baseline.button_session_gesture,

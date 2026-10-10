@@ -247,6 +247,45 @@ async def _async_set_parameters_locked(
         raise ConfigurationLocked(
             "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
         )
+    if (
+        partial and isinstance(values, Mapping)
+        and set(values) == {"target_temperature_c"}
+        and explicit_target is None and program_mode is None and not new_program
+        and runtime.controller.control_mode == "automatic"
+        and runtime.session
+        and (runtime.session.temperature_program_mode
+             or runtime.controller.program_mode) == "progressive"
+    ):
+        # A live instrument edit belongs to one upcoming gang, not to the
+        # saved program. Validate through the same parameter bounds/rounding.
+        parameters = Parameters({
+            **runtime.configuration.parameters.as_dict(), **values,
+        })
+        now = runtime._clock()
+        runtime.controller.advance(now, evaluate=False)
+        runtime.persist_completed_sessions()
+        if runtime.session:
+            before = runtime.controller.next_gang_temperature
+            target = parameters.values["target_temperature_c"]
+            runtime.controller.set_next_gang_temperature(target, now)
+            runtime.log.info(
+                "temperature_settings", "Temperatur für den nächsten Gang: %s °C.",
+                target,
+            )
+            if runtime.archive:
+                runtime.archive.append(
+                    "parameter_change", now,
+                    {
+                        "next_gang_temperature_before": before,
+                        "next_gang_temperature_after": target,
+                        "target_after": runtime.controller.target_temperature,
+                        "mode_after": runtime.configuration.program_mode,
+                    },
+                    runtime.session.session_id,
+                )
+            runtime._archive_signature = None
+            await runtime._cycle()
+            return runtime.configuration.parameters.as_dict()
     change = parameter_change(
         runtime.configuration, values, partial=partial,
         explicit_target=explicit_target, program_mode=program_mode,
@@ -269,9 +308,6 @@ async def _async_set_parameters_locked(
             runtime,
             parameters,
             explicit_target=explicit_target,
-            # Jede direkte Sollwahl beendet ein laufendes Programm auch
-            # dauerhaft; der Controller allein speichert diesen Standard
-            # außerhalb einer Sitzung nicht.
             program_mode=selected_mode,
             new_program=new_program or mode_changed,
             selected_program_id=(

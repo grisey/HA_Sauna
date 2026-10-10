@@ -201,6 +201,9 @@ class Controller:
 
     @property
     def target_temperature(self) -> float | None:
+        return self._temperature_target()
+
+    def _temperature_target(self, *, next_gang=False) -> float | None:
         start = self.parameters.values.get("target_temperature_c")
         if self.control_mode == "manual":
             return start
@@ -213,7 +216,16 @@ class Controller:
         )
         if mode != "progressive" or start is None or end is None:
             return start
+        if (not next_gang and session and session.timeline.active is not None
+                and session.timeline.active.gang_id == session.active_gang_temperature_id):
+            return session.active_gang_temperature_c
+        if session and session.next_gang_temperature_c is not None:
+            active = session.timeline.active
+            if next_gang or active is None or active.gang_id != session.next_gang_temperature_blocked_by:
+                return session.next_gang_temperature_c
         completed = session.timeline.gang_count if session else 0
+        if next_gang and session and session.timeline.active is not None:
+            completed += 1
         base_anchor = session.temperature_base_gang_count if session else 0
         program_anchor = session.temperature_program_start_gang_count if session else 0
         if session and session.temperature_base_c is not None:
@@ -239,6 +251,35 @@ class Controller:
         return TemperatureProgram(start, end, remaining, steps).target(
             elapsed_after_base
         )
+
+    @property
+    def next_gang_temperature(self) -> float | None:
+        return self._temperature_target(next_gang=True)
+
+    def set_next_gang_temperature(self, value, at):
+        """Override one forthcoming actual gang without changing its program."""
+        parameters = Parameters({**self.parameters.as_dict(), "target_temperature_c": value})
+        self.advance(at, evaluate=False)
+        session = self._session
+        if (session is None or self.control_mode != "automatic"
+                or (session.temperature_program_mode or self.program_mode) != "progressive"):
+            raise ValueError("Ein laufendes Temperaturprogramm ist erforderlich")
+        active = session.timeline.active
+        # A new choice during an overridden gang must retain that gang's target.
+        if (active is not None and session.next_gang_temperature_c is not None
+                and active.gang_id != session.next_gang_temperature_blocked_by):
+            session = replace(
+                session,
+                active_gang_temperature_c=session.next_gang_temperature_c,
+                active_gang_temperature_id=active.gang_id,
+            )
+        self._session = replace(
+            session,
+            next_gang_temperature_c=parameters.values["target_temperature_c"],
+            next_gang_temperature_blocked_by=active.gang_id if active else None,
+        )
+        self._latch_readiness(utc(at))
+        self._evaluate(utc(at))
 
     def update_temperature_parameters(
         self,
@@ -282,6 +323,14 @@ class Controller:
             new_program = True
         if self._session and (changed or explicit_target or new_program or form_changed):
             completed = self._session.timeline.gang_count
+            if explicit_target or new_program:
+                self._session = replace(
+                    self._session,
+                    next_gang_temperature_c=None,
+                    next_gang_temperature_blocked_by=None,
+                    active_gang_temperature_c=None,
+                    active_gang_temperature_id=None,
+                )
             if explicit_target:
                 # A direct setpoint deliberately remains fixed for later gangs.
                 self._session = replace(
@@ -816,6 +865,27 @@ class Controller:
             # episode to a current person search after operation/cooling resumes.
             timeline = replace(timeline, anchor=None, preparation=None)
         self._session = replace(previous, timeline=timeline)
+        if (previous.active_gang_temperature_id is not None
+                and (timeline.active is None
+                     or timeline.active.gang_id != previous.active_gang_temperature_id)):
+            self._session = replace(
+                self._session,
+                active_gang_temperature_c=None,
+                active_gang_temperature_id=None,
+            )
+        if previous.next_gang_temperature_c is not None:
+            completed_ids = {gang.gang_id for gang in previous.timeline.completed}
+            if any(
+                gang.gang_id not in completed_ids
+                and gang.confirmation == Confirmation.CONFIRMED
+                and gang.gang_id != previous.next_gang_temperature_blocked_by
+                for gang in timeline.completed
+            ):
+                self._session = replace(
+                    self._session,
+                    next_gang_temperature_c=None,
+                    next_gang_temperature_blocked_by=None,
+                )
         active = timeline.active
         # A person signal is only provisional.  The latch is consumed when an
         # infusion actually confirms the gang, so a retracted signal can keep
@@ -1596,7 +1666,10 @@ class Controller:
                     booking_at=now,
                 )
                 self._session = replace(
-                    self._session, timeline=apply(session.timeline, event)
+                    self._session,
+                    timeline=apply(session.timeline, event),
+                    active_gang_temperature_c=None,
+                    active_gang_temperature_id=None,
                 )
         elif deadline.purpose == "after_run":
             phase = session.after_run

@@ -222,6 +222,89 @@ assert.match(
     "the confirmed direct target clears its temporary constant draft",
   );
 
+  {
+    const configuration = {
+      control_mode: "automatic",
+      program_mode: "progressive",
+      selected_program_id: "saved-program",
+      temperature_steps: [76, 83, 91],
+      parameters: { target_temperature_c: 76, final_temperature_c: 91 },
+    };
+    const selection = { mode: "individual" };
+    const progression = { start: "77", end: "92", gangs: "4" };
+    const steps = [77, 84, 92];
+    const save = { name: "Entwurf" };
+    const requests = [];
+    const progressivePanel = Object.assign(Object.create(Panel.prototype), {
+      entry: "progressive-entry",
+      state: {
+        ...state,
+        target_temperature: 76,
+        next_gang_temperature: 83,
+        session: { temperature_program_mode: "progressive" },
+        configuration,
+      },
+      programSelectionDraft: selection,
+      progressionDraft: progression,
+      freeProgramKind: "steps",
+      freeProgramStepsDraft: steps,
+      programSaveState: save,
+      programChoiceOpen: true,
+      api: async (...args) => {
+        requests.push(args);
+        return {
+          ...configuration,
+          target_temperature: 76,
+          next_gang_temperature: args[2].target_temperature_c,
+        };
+      },
+      refresh: async () => {},
+      drawCurrent: () => {},
+      $: () => null,
+      svgCoordinates: (_svg, x, y) => ({ x, y }),
+    });
+    const preserveProgram = () => {
+      assert.equal(progressivePanel.state.target_temperature, 76);
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(progressivePanel.state.configuration)),
+        configuration,
+        "a live instrument change preserves the selected progressive program",
+      );
+      assert.equal(progressivePanel.programSelectionDraft, selection);
+      assert.equal(progressivePanel.progressionDraft, progression);
+      assert.equal(progressivePanel.freeProgramStepsDraft, steps);
+      assert.equal(progressivePanel.freeProgramKind, "steps");
+      assert.equal(progressivePanel.programSaveState, save);
+      assert.equal(progressivePanel.programChoiceOpen, true);
+    };
+    progressivePanel.beginTemperatureDrag(
+      { pointerId: 21, clientX: 224.25, clientY: 204.25, preventDefault() {} },
+      svg,
+    );
+    await progressivePanel.endTemperatureDrag({ pointerId: 21 });
+    assert.equal(progressivePanel.state.next_gang_temperature, 100);
+    preserveProgram();
+    await progressivePanel.commitLinearTarget(88);
+    assert.equal(progressivePanel.state.next_gang_temperature, 88);
+    preserveProgram();
+    await progressivePanel.keyTemperatureTarget({
+      key: "ArrowUp",
+      preventDefault() {},
+    });
+    const keyboardTarget = 88 + frontendDefaults.temperature_dial_step_c;
+    assert.equal(progressivePanel.state.next_gang_temperature, keyboardTarget);
+    preserveProgram();
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(requests)),
+      [100, 88, keyboardTarget].map((value) => [
+        "/progressive-entry/temperature",
+        "POST",
+        { target_temperature_c: value },
+      ]),
+      "round, linear and keyboard controls all change the next gang",
+    );
+  }
+
   let releaseFirst;
   const sent = [];
   panel.api = async (...args) => {

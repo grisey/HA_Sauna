@@ -729,7 +729,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(self.entry.options), original_options)
         self.assertIsNone(self.entry.runtime_data.session)
 
-    async def test_full_settings_preserve_free_program_but_direct_target_replaces_it(self):
+    async def test_full_settings_and_next_gang_target_preserve_free_program(self):
         from datetime import timedelta
         from custom_components.ha_sauna.core.timeline import Event, Kind
 
@@ -762,10 +762,80 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 runtime.controller.process(Event(str(index), runtime.session.session_id, kind, at, at))
             self.assertEqual(runtime.session.timeline.gang_count, 1)
             self.assertEqual(runtime.controller.target_temperature, 86)
+            options = dict(self.entry.options)
+            configuration = runtime.configuration
             async with client.post(url + "/temperature", json={"target_temperature_c": 80}) as response:
                 self.assertEqual(response.status, 200, await response.text())
-            self.assertEqual(runtime.configuration.program_mode, "constant")
-            self.assertIsNone(runtime.configuration.temperature_steps)
+                result = await response.json()
+            await self.hass.async_block_till_done()
+            self.assertIs(runtime.configuration, configuration)
+            self.assertEqual(dict(self.entry.options), options)
+            self.assertEqual(result["target_temperature"], 80)
+            self.assertEqual(result["next_gang_temperature"], 80)
+            self.assertEqual(runtime.configuration.program_mode, "progressive")
+            self.assertEqual(runtime.configuration.temperature_steps, (80, 86, 90))
+
+    async def test_live_target_changes_one_next_gang_and_resumes_selected_program(self):
+        from datetime import timedelta
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        catalog = list(self.entry.options["temperature_programs"])
+        catalog.append({"id": "next-gang-test", "name": "Testfolge",
+                        "temperature_steps": [76, 83, 91]})
+        self.hass.config_entries.async_update_entry(
+            self.entry, options={**self.entry.options, "temperature_programs": catalog}
+        )
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        temperature = runtime.configuration.bindings.values["upper_temperature"]
+        self.hass.states.async_set(
+            temperature, "70", self.hass.states.get(temperature).attributes
+        )
+        await self.hass.async_block_till_done()
+        start = runtime._clock()
+        now = start
+        runtime._clock = lambda: now
+        sequence = 0
+
+        async def events(*kinds):
+            nonlocal now, sequence
+            for kind in kinds:
+                sequence += 1
+                now = start + timedelta(milliseconds=sequence)
+                await runtime.receive(Event(
+                    f"next-gang:{sequence}", runtime.session.session_id, kind, now, now
+                ))
+
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/program", json={"profile": "next-gang-test"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await runtime.set_operation(True)
+            await events(Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION)
+            active = runtime.session.timeline.active
+            options = dict(self.entry.options)
+            configuration = runtime.configuration
+            async with client.post(url + "/temperature", json={"target_temperature_c": 88}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                result = await response.json()
+            await self.hass.async_block_till_done()
+            self.assertEqual(result["target_temperature"], 76)
+            self.assertEqual(result["next_gang_temperature"], 88)
+            self.assertEqual(runtime.session.timeline.active, active)
+            self.assertIs(runtime.configuration, configuration)
+            self.assertEqual(dict(self.entry.options), options)
+            self.assertEqual(runtime.configuration.selected_program_id, "next-gang-test")
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertEqual((state["target_temperature"], state["next_gang_temperature"]), (76, 88))
+            await events(Kind.DOOR_OPEN, Kind.VENTILATION)
+            self.assertEqual(runtime.controller.target_temperature, 88)
+            await events(Kind.DOOR_CLOSE, Kind.INFUSION)
+            self.assertEqual(runtime.controller.target_temperature, 88)
+            await events(Kind.DOOR_OPEN, Kind.VENTILATION)
+            self.assertEqual(runtime.session.timeline.gang_count, 2)
+            self.assertEqual(runtime.controller.target_temperature, 91)
+            self.assertEqual(runtime.configuration.temperature_steps, (76, 83, 91))
 
     async def test_archive_cursor_rejects_sqlite_overflow(self):
         runtime = self.entry.runtime_data
@@ -1525,8 +1595,14 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 87)
             self.assertIsNone(runtime.configuration.selected_program_id)
             self.assertEqual(runtime.session.session_id, session_id)
-            async with client.post(url + "/temperature", json={"target_temperature_c": 82}) as response:
+            async with client.post(url + "/program", json={"profile": program.id}) as response:
                 self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/program", json={"target_temperature_c": 82}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                result = await response.json()
+            self.assertEqual(result["program_mode"], "constant")
+            self.assertIsNone(result["selected_program_id"])
+            self.assertIsNone(result["temperature_steps"])
             await runtime.tick()
             self.assertEqual(runtime.controller.target_temperature, 82)
             self.assertEqual(runtime.configuration.parameters.values["standard_temperature_c"], 87)

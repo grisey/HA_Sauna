@@ -5185,11 +5185,11 @@ class SaunaPanel extends HTMLElement {
     const targetValue =
         this.temperatureInteraction?.value ??
         this.linearTargetDraft ??
-        s.target_temperature,
+        this.temperatureControlValue(),
       targetPoint =
         temperatureScale && this.temperatureArcPoint(targetValue, temperatureScale);
     const targetControl = temperatureScale
-      ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="Soll ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">SOLL</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
+      ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="${this.temperatureControlsNextGang() ? "Temperatur für den nächsten Gang einstellen" : "Solltemperatur einstellen"}" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="${this.temperatureControlsNextGang() ? "Nächster Gang" : "Soll"} ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">${this.temperatureControlsNextGang() ? "NÄCHSTER GANG" : "SOLL"}</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
       : "";
     const programs = Array.isArray(s.configuration.temperature_programs)
       ? s.configuration.temperature_programs
@@ -5453,7 +5453,7 @@ class SaunaPanel extends HTMLElement {
     if (!bounds) return "";
     const allowed = this.state.permissions?.temperature && !this.programRequest,
       scale = this.appearanceScale("temperature") || bounds;
-    return `<div class="instrument-slider"><label for="linear-target-temperature">Soll <output data-linear-target>${num(value)} °C</output></label><input id="linear-target-temperature" class="instrument-range" type="range" min="${scale.minimum}" max="${scale.maximum}" step="${this.temperatureStep("temperature_dial_step_c")}" value="${Math.max(bounds.minimum, Math.min(bounds.maximum, value))}" aria-label="Solltemperatur einstellen" ${allowed ? "" : "disabled"}></div>`;
+    return `<div class="instrument-slider"><label for="linear-target-temperature">${this.temperatureControlsNextGang() ? "Nächster Gang" : "Soll"} <output data-linear-target>${num(value)} °C</output></label><input id="linear-target-temperature" class="instrument-range" type="range" min="${scale.minimum}" max="${scale.maximum}" step="${this.temperatureStep("temperature_dial_step_c")}" value="${Math.max(bounds.minimum, Math.min(bounds.maximum, value))}" aria-label="${this.temperatureControlsNextGang() ? "Temperatur für den nächsten Gang einstellen" : "Solltemperatur einstellen"}" ${allowed ? "" : "disabled"}></div>`;
   }
   async commitLinearTarget(value) {
     const entry = this.entry,
@@ -5662,11 +5662,14 @@ class SaunaPanel extends HTMLElement {
     if (!this.state?.permissions?.temperature) return;
     value = this.roundTargetTemperature(value);
     if (this.programRequest) return;
-    this.programSelectionDraft = { mode: "constant" };
-    this.freeProgramKind = null;
-    this.freeProgramStepsDraft = null;
-    this.programSaveState = null;
-    clearTimeout(this.programSavedTimer);
+    const nextGang = this.temperatureControlsNextGang();
+    if (!nextGang) {
+      this.programSelectionDraft = { mode: "constant" };
+      this.freeProgramKind = null;
+      this.freeProgramStepsDraft = null;
+      this.programSaveState = null;
+      clearTimeout(this.programSavedTimer);
+    }
     const entry = this.entry,
       generation = this.generation,
       previous = this.temperatureChange,
@@ -5684,20 +5687,35 @@ class SaunaPanel extends HTMLElement {
       if (this.entry !== entry || this.generation !== generation) return;
       this.state.configuration = {
         ...this.state.configuration,
-        program_mode: "constant",
-        selected_program_id: null,
-        temperature_steps: null,
+        program_mode:
+          saved?.program_mode ||
+          (nextGang ? this.state.configuration.program_mode : "constant"),
+        selected_program_id: Object.hasOwn(saved || {}, "selected_program_id")
+          ? saved.selected_program_id
+          : nextGang
+            ? this.state.configuration.selected_program_id
+            : null,
+        temperature_steps: Object.hasOwn(saved || {}, "temperature_steps")
+          ? saved.temperature_steps
+          : nextGang
+            ? this.state.configuration.temperature_steps
+            : null,
         parameters: {
           ...this.state.configuration.parameters,
-          ...(saved?.parameters || { target_temperature_c: value }),
+          ...(saved?.parameters || (nextGang ? {} : { target_temperature_c: value })),
         },
       };
-      this.state.target_temperature = value;
+      this.state.target_temperature =
+        saved?.target_temperature ?? (nextGang ? this.state.target_temperature : value);
+      this.state.next_gang_temperature =
+        saved?.next_gang_temperature ?? (nextGang ? value : null);
       this.programRevision = (this.programRevision || 0) + 1;
-      if (this.programSelectionDraft?.mode === "constant")
-        this.programSelectionDraft = null;
-      if (this.progressionDraft === draft) this.progressionDraft = null;
-      this.programChoiceOpen = false;
+      if (!nextGang) {
+        if (this.programSelectionDraft?.mode === "constant")
+          this.programSelectionDraft = null;
+        if (this.progressionDraft === draft) this.progressionDraft = null;
+        this.programChoiceOpen = false;
+      }
       await this.refresh(true);
       return saved?.parameters;
     })();
@@ -5707,6 +5725,19 @@ class SaunaPanel extends HTMLElement {
     } finally {
       if (this.temperatureChange === change) this.temperatureChange = null;
     }
+  }
+  temperatureControlsNextGang() {
+    return (
+      !!this.state?.session &&
+      this.state.configuration?.control_mode !== "manual" &&
+      (this.state.session.temperature_program_mode ||
+        this.state.configuration?.program_mode) === "progressive"
+    );
+  }
+  temperatureControlValue() {
+    return this.temperatureControlsNextGang()
+      ? (this.state.next_gang_temperature ?? this.state.target_temperature)
+      : this.state?.target_temperature;
   }
   temperatureDefinition() {
     return this.state?.parameters?.find((d) => d.key === "target_temperature_c");
@@ -6001,7 +6032,6 @@ class SaunaPanel extends HTMLElement {
       body,
       nextSubmission;
     if (choice.mode === "constant" && Number.isFinite(choice.temperature)) {
-      path = "temperature";
       body = { target_temperature_c: this.roundTargetTemperature(choice.temperature) };
     } else if (choice.mode !== "individual")
       body = { profile: choice.mode === "program" ? choice.id : "constant" };
@@ -6636,7 +6666,7 @@ class SaunaPanel extends HTMLElement {
       return;
     const bounds = this.targetArcBounds();
     if (!bounds) return;
-    const current = this.clampArcTemperature(this.state.target_temperature, bounds),
+    const current = this.clampArcTemperature(this.temperatureControlValue(), bounds),
       step = this.temperatureStep("temperature_dial_step_c");
     const next = {
       ArrowLeft: current - step,
