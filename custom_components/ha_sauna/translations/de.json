@@ -627,7 +627,7 @@
       },
       "cleanup_entities": {
         "title": "Entitäten bereinigen",
-        "description": "Diese {count} Entitäten werden von der Sauna nicht mehr bereitgestellt:\n\n{entities}\n\nEntfernt werden nur die Registereinträge. Gespeicherte Verläufe bleiben erhalten.",
+        "description": "Nicht mehr bereitgestellte Entitäten ({count}):\n\n{entities}\n\nEntfernt werden nur die Registereinträge. Gespeicherte Verläufe bleiben erhalten.",
         "data": {
           "confirm": "Die aufgeführten Entitäten entfernen"
         },
