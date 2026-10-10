@@ -49,6 +49,7 @@ class Preview:
         self.reset("verlauf")
 
     def reset(self, scenario):
+        self.archive_revision = getattr(self, "archive_revision", 0) + 1
         self.scenario = scenario
         self.now = datetime(2026, 10, 8, 16, 0, tzinfo=UTC)
         self.records = []
@@ -302,7 +303,7 @@ class Preview:
                 "updated_at": self.now,
             },
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
-            "archive_revision":0, "preview_scenario":self.scenario,
+            "archive_revision":self.archive_revision, "preview_scenario":self.scenario,
             "preview_button":{"pressed":self.button_pressed,
                               "hold_seconds":c.parameters.values["button_hold_seconds"],
                               "start_hold":self.runtime.button_start_hold_active},

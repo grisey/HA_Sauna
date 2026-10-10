@@ -23,6 +23,32 @@ class ThermostatTests(unittest.TestCase):
         args.update(kwargs)
         return evaluate(state or ThermostatState(), **args)
 
+    def test_pure_hysteresis_ignores_session_inputs_and_all_heating_timers(self):
+        state = ThermostatState(demand=True, cooldown_until=T0 + timedelta(hours=1))
+        state, decision = self.decide(
+            state, pure_hysteresis=True, temperature=85, heating_since=T0,
+            heating_active=True,
+            inputs=ControlInputs(gang_heat_demand=True, temporary_door_heat=True),
+        )
+        self.assertFalse(decision.heat)
+        self.assertIsNone(state.cooldown_until)
+        state, decision = self.decide(
+            state, pure_hysteresis=True, temperature=77,
+            inputs=ControlInputs(cooling=True),
+        )
+        self.assertTrue(decision.heat)
+        self.assertIsNone(state.cooldown_until)
+
+    def test_pure_hysteresis_retains_interlocks(self):
+        for args in ({"protection": ("fault",)}, {"inhibits": ("fault",)},
+                     {"temperature": None}, {"temperature": float("nan")},
+                     {"temperature": float("inf")}, {"enabled": False}):
+            with self.subTest(args=args):
+                _, decision = self.decide(
+                    ThermostatState(demand=True), pure_hysteresis=True, **args
+                )
+                self.assertFalse(decision.heat)
+
     def test_hysteresis_and_cooldown_are_separate_from_operation(self):
         state, decision = self.decide()
         self.assertTrue(decision.heat)

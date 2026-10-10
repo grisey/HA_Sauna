@@ -45,8 +45,8 @@ In Automatik endet eine vorübergehende Ofenwahl bei Rückgabe, Phasenwechsel,
 Ofen-AUS unterbricht auch Gangheizung und Mindestheizzeit. Ofen-EIN bleibt der
 [Heizfreigabe und Ofenkühlung](betrieb.md#heizpriorität) untergeordnet.
 
-Die Ein-/Aus-Tasten zeigen die Rückmeldung des Geräts. Eine bereits erreichte
-Wahl erzeugt keine Übersteuerung und verlängert keine Frist. **Automatik**
+Die Ein-/Aus-Tasten zeigen die Rückmeldung des Geräts. In Automatik erzeugt eine
+bereits erreichte Wahl keine Übersteuerung und verlängert keine Frist. **Automatik**
 beendet die jeweilige Übersteuerung auch bei unverändertem Gerätezustand.
 
 Während einer Sitzung wechselt ein kurzer Tasterdruck die vorübergehende
@@ -63,9 +63,16 @@ Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
 Ofen und Licht beginnen beim Wechsel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
+Ofen-EIN aktiviert die Temperaturregelung um den am Instrument eingestellten
+Sollwert. Sie verwendet dieselben Hystereseabstände wie die Automatik, jedoch
+ohne Mindestheizzeit oder Heizpause. Ofen-AUS beendet die Regelung sofort.
+Gangheizung, Türhilfe, Kühlung und Lichtautomatik bleiben deaktiviert.
+Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
+zeigt weiterhin die tatsächliche Ofenrückmeldung.
+
 Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
-und schaltet den Ofen um. Auch manuelles EIN benötigt eine gültige Regeltemperatur
-und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
+und schaltet die Temperaturregelung um. Auch manuelles EIN benötigt eine gültige
+Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 
 Manuelle Bedienung erzeugt keine Sitzung und keine Schaltaufzeichnung im

@@ -1779,21 +1779,67 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.runtime.configuration.control_mode, "manual")
                     self.assertIsNone(self.runtime.session)
                     self.assertEqual(self.entry.options["control_mode"], "manual")
-                    async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as heated:
-                        await panel.locator('.manual-heater [data-action="heater:true"]').click()
-                    self.assertTrue((await heated.value).ok)
-                    self.assertIsNone(self.runtime.session)
-                    self.assertTrue(self.heater.is_on)
-                    await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("aria-pressed", "true")
-                    self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
-                    self.assertEqual([item for item in writes if item[0] in ("control", "heater")], [("heater", {"value": True})])
-                    async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as cooled:
-                        await panel.locator('.manual-heater [data-action="heater:false"]').click()
-                    self.assertTrue((await cooled.value).ok)
-                    self.assertIsNone(self.runtime.session)
-                    self.assertFalse(self.heater.is_on)
-                    await expect(panel.locator('.manual-heater [data-action="heater:false"]')).to_have_attribute("aria-pressed", "true")
-                    self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
+                    for style in ("linear", "round"):
+                        with self.subTest(admin=admin, temperature_style=style):
+                            appearance["instruments"]["temperature"] = style
+                            await async_set_appearance(self.hass, self.entry, appearance)
+                            await panel.evaluate("p => p.refresh()")
+                            target = panel.get_by_role("slider", name="Solltemperatur einstellen", exact=True)
+                            await expect(target).to_be_visible()
+                            await expect(target).to_be_enabled()
+                            bounds = await panel.evaluate("p => p.targetArcBounds()")
+                            minimum, maximum = bounds["minimum"], bounds["maximum"]
+                            temperature = (minimum + maximum) / 2
+                            await self.set_source("upper_temperature", temperature)
+                            offset = self.runtime.configuration.parameters.values["readiness_offset_c"]
+                            self.assertLess(minimum + offset, temperature)
+                            self.assertGreater(maximum - self.runtime.configuration.parameters.values["readiness_hysteresis_c"], temperature)
+
+                            async def choose_target(value):
+                                async with page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST") as changed:
+                                    await target.press("End" if value == maximum else "Home")
+                                self.assertTrue((await changed.value).ok)
+                                await page.wait_for_function(
+                                    "p => !p.busy && !p.programRequest && !p.temperatureInteraction",
+                                    arg=await panel.element_handle(), timeout=10000,
+                                )
+                                if style == "linear":
+                                    await expect(target).to_have_value(str(value), timeout=10000)
+                                else:
+                                    await expect(target).to_have_attribute("aria-valuenow", str(value), timeout=10000)
+                                self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], value)
+                                self.assertEqual(self.runtime.controller.target_temperature, value)
+
+                            await choose_target(maximum)
+                            async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as heated:
+                                await panel.locator('.manual-heater [data-action="heater:true"]').click()
+                            self.assertTrue((await heated.value).ok)
+                            self.assertTrue(self.heater.is_on)
+                            await choose_target(minimum)
+                            self.assertFalse(self.heater.is_on)
+                            self.assertTrue(self.runtime.controller.heater_override)
+                            await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("aria-pressed", "false")
+                            await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("data-regulation-selected", "true")
+                            self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
+                            # OFF must revoke the thermostat while its contactor is already off.
+                            async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as cooled:
+                                await panel.locator('.manual-heater [data-action="heater:false"]').click()
+                            self.assertTrue((await cooled.value).ok)
+                            self.assertFalse(self.runtime.controller.heater_override)
+                            self.assertFalse(self.heater.is_on)
+                            await expect(panel.locator('.manual-heater [data-action="heater:false"]')).to_have_attribute("aria-pressed", "true")
+                            await expect(panel.locator('.manual-heater [data-action="heater:false"]')).to_have_attribute("data-regulation-selected", "true")
+                            await self.set_source("upper_temperature", minimum - self.runtime.configuration.parameters.values["readiness_hysteresis_c"] - 1)
+                            self.assertFalse(self.heater.is_on)
+                            await self.set_source("upper_temperature", temperature)
+                            self.assertIsNone(self.runtime.session)
+                            self.assertIsNone(self.runtime.detector)
+                            self.assertAlmostEqual(self.light.brightness, 255 * .6, delta=1)
+                    self.assertEqual([item for item in writes if item[0] in ("control", "heater")],
+                                     [("heater", {"value": True}), ("heater", {"value": False})] * 2)
+                    appearance["instruments"]["temperature"] = "linear"
+                    await async_set_appearance(self.hass, self.entry, appearance)
+                    await panel.evaluate("p => p.refresh()")
                     await expect(panel.locator('#current [data-action="operation"]')).to_have_count(0)
                     await expect(panel.locator('#current .control-main [data-action="control-mode:automatic"]')).to_be_enabled()
                     async with page.expect_response(lambda response: response.url.endswith("/control-mode") and response.request.method == "POST") as automatic:

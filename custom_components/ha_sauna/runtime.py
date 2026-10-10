@@ -1121,9 +1121,7 @@ class SaunaRuntime:
         if self.device:
             self.device.values = parameters.values
 
-    def _toggle_button_heater_override(
-        self, now, *, refresh_device=True, repeat_manual_click=False
-    ):
+    def _toggle_button_heater_override(self, now, *, refresh_device=True):
         """Toggle the physical-button override while the runtime lock is held."""
         if self.device and refresh_device:
             self.device.refresh(now)
@@ -1147,7 +1145,9 @@ class SaunaRuntime:
             return self.controller.set_heater_override(None, now)
         if self.controller.control_mode != "manual" and cooling_or_after_run:
             return self.controller.set_heater_override(True, now)
-        if repeat_manual_click and session is None:
+        if self.controller.control_mode == "manual":
+            # A thermostat may currently be satisfied (contactor OFF) while
+            # remaining enabled. The button toggles its enabled state.
             current = self.controller.heater_override
         elif self.device:
             known = self.device.contactor_feedback()
@@ -1184,17 +1184,12 @@ class SaunaRuntime:
         """Apply one already-normalized gesture; caller owns ``_lock``."""
         enabled = bool(self.session and self.session.operation_enabled)
         gesture_at = now if received_at is None else received_at
-        for index, action in enumerate(
-            self._button.handle_actions(event, enabled, gesture_at)
-        ):
+        for action in self._button.handle_actions(event, enabled, gesture_at):
             await self._apply_button_action(
                 action, now, refresh_device=refresh_device,
-                repeat_manual_click=index > 0,
             )
 
-    async def _apply_button_action(
-        self, action, now, *, refresh_device=True, repeat_manual_click=False
-    ):
+    async def _apply_button_action(self, action, now, *, refresh_device=True):
         """Apply a semantic button action; caller owns ``_lock``."""
         if action in (START_STANDARD_PROGRAM, START_HOLD):
             if self._button_hold_session_id is not None:
@@ -1219,7 +1214,6 @@ class SaunaRuntime:
         elif action == HEATER_TOGGLE_OVERRIDE:
             self._toggle_button_heater_override(
                 now, refresh_device=refresh_device,
-                repeat_manual_click=repeat_manual_click,
             )
         elif action == END_HOLD and self.session is not None:
             session_id = self.session.session_id
@@ -1315,7 +1309,12 @@ class SaunaRuntime:
             now = self._clock()
             if self.device:
                 self.device.refresh(now)
-            if isinstance(value, bool) and value is self.controller.contactor:
+            current = (
+                self.controller.heater_override
+                if self.controller.control_mode == "manual"
+                else self.controller.contactor
+            )
+            if isinstance(value, bool) and value is current:
                 return self.controller.last_decision
             self._validate_heater_override(value)
             decision = self.controller.set_heater_override(value, now)

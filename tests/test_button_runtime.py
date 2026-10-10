@@ -148,6 +148,18 @@ class ButtonRuntimeTests(unittest.TestCase):
         self.runtime.save_configuration.assert_called()
         self.assertEqual(self.runtime.controller.completed_sessions, ())
 
+    def test_short_toggles_manual_enable_while_temperature_is_satisfied(self):
+        values = self.runtime.configuration.parameters.values
+        self.runtime.controller.set_temperature(
+            values["target_temperature_c"] + values["readiness_offset_c"], self.now
+        )
+        for enabled in (True, False, True):
+            self._event("short", 1)
+            self.assertEqual(self.runtime.controller.heater_override, enabled)
+            self.assertFalse(self.runtime.controller.last_decision.heat)
+            self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.controller.completed_sessions, ())
+
     def test_long_manual_start_switches_to_automatic_and_holds_acknowledgement(self):
         self.runtime._set_control_mode("manual")
         self.runtime.controller.set_temperature(70, self.now)

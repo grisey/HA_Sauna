@@ -1110,6 +1110,118 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.runtime.session.operation_enabled)
             self.assertEqual(self.heater.is_on, value)
 
+    async def test_manual_climate_regulates_live_target_without_session_or_recording(self):
+        import json
+        import zipfile
+        from custom_components.ha_sauna.settings import (
+            async_set_control_mode,
+            async_set_parameters,
+        )
+
+        await async_set_parameters(self.hass, self.entry, {
+            "minimum_heating_minutes": 5, "thermostat_cooldown_minutes": 5,
+        }, partial=True)
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        self.runtime._clock = lambda: self.now
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        values = self.runtime.configuration.parameters.values
+        target = values["target_temperature_c"]
+        restart = target - values["readiness_hysteresis_c"]
+        stop = target + values["readiness_offset_c"]
+        await self.set_source("upper_temperature", restart - 1)
+        await self.runtime.set_light_override(35)
+        await self.hass.async_block_till_done()
+        self.light.calls.clear()
+        self.heater.calls.clear()
+
+        async def climate(service, **data):
+            await self.hass.services.async_call(
+                "climate", service, {"entity_id": self.climate, **data}, blocking=True
+            )
+            await self.hass.async_block_till_done()
+
+        await climate("turn_on")
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.hass.states.get(self.climate).state, "heat")
+        self.assertEqual(self.hass.states.get(self.climate).attributes["hvac_action"], "heating")
+        # Both edges occur before either configured five-minute timer could expire.
+        self.now += timedelta(seconds=1)
+        await self.set_source("upper_temperature", stop)
+        self.assertFalse(self.heater.is_on)
+        self.assertTrue(self.runtime.controller.heater_override)
+        self.assertEqual(self.hass.states.get(self.climate).state, "heat")
+        self.assertEqual(self.hass.states.get(self.climate).attributes["hvac_action"], "idle")
+        self.now += timedelta(seconds=1)
+        await self.set_source("upper_temperature", restart)
+        self.assertTrue(self.heater.is_on)
+        self.assertEqual(self.heater.calls, [True, False, True])
+
+        # Changing the shared target changes real output in the same service call.
+        lower_target = restart - values["readiness_offset_c"] - 1
+        await climate("set_temperature", temperature=lower_target)
+        self.assertFalse(self.heater.is_on)
+        self.assertEqual(self.runtime.configuration.parameters.values["target_temperature_c"], lower_target)
+        self.assertEqual(self.hass.states.get(self.climate).attributes["temperature"], lower_target)
+        await climate("set_temperature", temperature=target)
+        self.assertTrue(self.heater.is_on)
+        await self.set_source("upper_temperature", stop)
+        self.assertFalse(self.heater.is_on)
+        # OFF must revoke enablement even when the contactor is already off.
+        await climate("turn_off")
+        self.assertFalse(self.runtime.controller.heater_override)
+        self.assertEqual(self.hass.states.get(self.climate).state, "off")
+        await self.set_source("upper_temperature", restart - 1)
+        self.assertFalse(self.heater.is_on)
+
+        self.assertIsNone(self.runtime.session)
+        self.assertIsNone(self.runtime.detector)
+        self.assertEqual(self.runtime.controller.completed_sessions, ())
+        self.assertIsNone(self.runtime.controller.light_after_run)
+        self.assertEqual(self.hass.states.get(self.operation).state, "off")
+        self.assertEqual(self.light.calls, [])
+        self.assertAlmostEqual(self.light.brightness, 255 * .35, delta=1)
+        self.assertIsNone(self.runtime.device.light_output.manual_ends_at)
+        path = await self.runtime.archive.export()
+        try:
+            with zipfile.ZipFile(path) as archive:
+                records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
+                self.assertEqual(archive.read("sessions.jsonl"), b"")
+            # Idle measurement context remains available; no manual run is recorded.
+            self.assertTrue(records)
+            self.assertEqual({record["kind"] for record in records}, {"measurement"})
+            self.assertTrue(all(record["session_id"] is None for record in records))
+        finally:
+            path.unlink()
+
+    async def test_manual_enable_is_not_skipped_when_external_contactor_is_already_on(self):
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        values = self.runtime.configuration.parameters.values
+        await self.set_source(
+            "upper_temperature", values["target_temperature_c"] - values["readiness_hysteresis_c"] - 1
+        )
+        # An externally closed contactor has not yet accepted the safety OFF.
+        self.heater.accept_commands = False
+        try:
+            self.heater._attr_is_on = True
+            self.heater.async_write_ha_state()
+            self.hass.states.async_set("binary_sensor.actual_heating", "on")
+            await self.hass.async_block_till_done()
+            self.assertTrue(self.heater.is_on)
+            self.assertFalse(self.runtime.controller.heater_override)
+            await self.hass.services.async_call(
+                "climate", "turn_on", {"entity_id": self.climate}, blocking=True
+            )
+            await self.hass.async_block_till_done()
+            self.assertTrue(self.runtime.controller.heater_override)
+            self.assertTrue(self.runtime.controller.last_decision.heat)
+            self.assertEqual(self.hass.states.get(self.climate).state, "heat")
+            self.assertIsNone(self.runtime.session)
+        finally:
+            self.heater.accept_commands = True
+
     async def test_manual_idle_heater_requires_feedback_and_revokes_on_sensor_loss(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
 

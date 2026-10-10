@@ -3909,6 +3909,7 @@ class SaunaPanel extends HTMLElement {
       .output-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
       .output-toggle button { background: transparent; border-color: transparent; border-radius: calc(var(--sauna-control-radius) - 3px); color: var(--sauna-card-muted-text); box-shadow: none; }
       .output-toggle button[aria-pressed="true"] { box-shadow: var(--sauna-shadow-control); }
+      .output-toggle button[data-regulation-selected="true"] { outline: 2px solid var(--sauna-card-muted-text); outline-offset: -3px; }
       @container output-controls (max-width: 280px) {
         .manual-controls .manual-section { grid-template-columns: minmax(0, 1fr); gap: 8px; }
         .manual-selection { gap: 8px; }
@@ -5093,10 +5094,9 @@ class SaunaPanel extends HTMLElement {
         s.target_temperature,
       targetPoint =
         temperatureScale && this.temperatureArcPoint(targetValue, temperatureScale);
-    const targetControl =
-      !manualMode && temperatureScale
-        ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="Soll ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">SOLL</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
-        : "";
+    const targetControl = temperatureScale
+      ? `${arcBounds ? `<path class="target-temperature-track" data-target-arc="true" d="${temperatureDial.path}" role="slider" tabindex="${permissions.temperature && !this.programRequest ? 0 : -1}" aria-label="Solltemperatur einstellen" aria-valuemin="${arcBounds.minimum}" aria-valuemax="${arcBounds.maximum}" aria-valuenow="${Math.max(arcBounds.minimum, Math.min(arcBounds.maximum, targetValue))}" aria-valuetext="Soll ${num(targetValue, 1)} °C" aria-disabled="${!permissions.temperature || !!this.programRequest}"/>` : ""}<circle class="target-temperature-handle" ${arcBounds ? 'data-target-arc="true"' : 'data-inert-target="true"'} cx="${targetPoint.x}" cy="${targetPoint.y}" r="9"/><text class="target-caption" x="150" y="193" text-anchor="middle">SOLL</text><text class="target-reading" x="150" y="211" text-anchor="middle" dominant-baseline="central">${num(targetValue, 1)}<tspan class="reading-unit" dx="4">°C</tspan></text>`
+      : "";
     const programs = Array.isArray(s.configuration.temperature_programs)
       ? s.configuration.temperature_programs
       : [];
@@ -5169,7 +5169,7 @@ class SaunaPanel extends HTMLElement {
       ]
         .map(
           ([on, label]) =>
-            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${label}</button>`,
+            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${manualMode && key === "heater" ? ` data-regulation-selected="${(selected === true) === on}" aria-label="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}; Ofen ${observed == null ? "unbekannt" : observed ? "Ein" : "Aus"}"` : ""}${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : manualMode && key === "heater" ? ` title="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${label}</button>`,
         )
         .join("")}</div></div></section>`;
     const heaterControls = outputControls(
@@ -5239,9 +5239,7 @@ class SaunaPanel extends HTMLElement {
                 unit: "°C",
                 bounds: temperatureScale,
                 valid: quality(measurementPosition, "temperature") === "current",
-                control: !manualMode
-                  ? this.linearTargetControl(targetValue, arcBounds)
-                  : "",
+                control: this.linearTargetControl(targetValue, arcBounds),
               })
             : dial(
                 value(measurementPosition, "temperature"),
@@ -9591,7 +9589,12 @@ class SaunaPanel extends HTMLElement {
         value = preset === "true" ? true : preset === "false" ? false : null;
       if (preset !== "true" && preset !== "false" && preset !== "auto")
         throw Error("Ungültige Ofensteuerung");
-      if (value != null && this.outputState("heater") === value) return;
+      if (
+        this.state.configuration.control_mode !== "manual" &&
+        value != null &&
+        this.outputState("heater") === value
+      )
+        return;
       const entry = this.entry,
         generation = this.generation,
         request = (this.heaterRequestSerial = (this.heaterRequestSerial || 0) + 1);

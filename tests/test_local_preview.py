@@ -308,6 +308,21 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.action("/simulate", {"action":"scenario:manuell"})
         self.assertEqual(self.preview.state()["preview_scenario"], "manuell")
 
+    def test_scenario_reset_invalidates_the_previous_archive_without_creating_sessions(self):
+        previous = self.preview.state()
+        session_id = previous["session"]["timeline"]["session_id"]
+        self.assertIsNotNone(self.preview.archive(session_id))
+        self.preview.action("/simulate", {"action":"scenario:manuell"})
+        current = self.preview.state()
+        self.assertGreater(current["archive_revision"], previous["archive_revision"])
+        self.assertIsNone(current["session"])
+        self.assertIsNone(current["last_session"])
+        self.assertEqual(self.preview.archive(), [])
+        self.assertIsNone(self.preview.archive(session_id))
+        self.preview.action("/preview/heater", {"value":True})
+        self.assertEqual(self.preview.state()["archive_revision"], current["archive_revision"])
+        self.assertEqual(self.preview.archive(), [])
+
     def test_program_choices_use_existing_runtime_settings_without_session_reset(self):
         self.preview.admin = False
         session_id = self.preview.c.session.session_id

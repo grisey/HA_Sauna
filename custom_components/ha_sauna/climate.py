@@ -35,6 +35,12 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
 
     @property
     def hvac_mode(self):
+        if self.runtime.controller.control_mode == "manual":
+            return (
+                HVACMode.HEAT
+                if self.runtime.controller.heater_override is True
+                else HVACMode.OFF
+            )
         return (
             HVACMode.HEAT
             if self.runtime.session and self.runtime.session.operation_enabled
@@ -75,13 +81,16 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode):
         if hvac_mode not in self.hvac_modes:
             raise ValueError("Unbekannter Betriebsmodus")
-        await self.runtime.set_operation(hvac_mode == HVACMode.HEAT)
+        if self.runtime.controller.control_mode == "manual":
+            await self.runtime.set_heater_override(hvac_mode == HVACMode.HEAT)
+        else:
+            await self.runtime.set_operation(hvac_mode == HVACMode.HEAT)
 
     async def async_turn_on(self):
-        await self.runtime.set_operation(True)
+        await self.async_set_hvac_mode(HVACMode.HEAT)
 
     async def async_turn_off(self):
-        await self.runtime.set_operation(False)
+        await self.async_set_hvac_mode(HVACMode.OFF)
 
     async def async_set_temperature(self, **kwargs):
         await async_set_entity_parameter(
