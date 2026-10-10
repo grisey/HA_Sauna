@@ -964,6 +964,75 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         return heater
 
+    async def test_standard_user_sees_manual_enablement_separately_from_heater_demand(self):
+        await self.attach_reporting_heater()
+        user = await self.hass.auth.async_create_user(
+            "Manual thermostat", group_ids=[GROUP_ID_USER]
+        )
+        token = await self.hass.auth.async_create_refresh_token(
+            user, client_id="http://localhost/"
+        )
+        headers = {
+            "Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)
+        }
+        runtime = self.entry.runtime_data
+        target = runtime.controller.target_temperature
+        parameters = runtime.configuration.parameters.values
+        temperatures = (
+            (target + parameters["readiness_offset_c"], False),
+            (target - parameters["readiness_hysteresis_c"], True),
+        )
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=headers) as client:
+            async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for temperature, commanded in temperatures:
+                for role in ("upper_temperature", "lower_temperature"):
+                    entity_id = runtime.configuration.bindings.values[role]
+                    state = self.hass.states.get(entity_id)
+                    self.hass.states.async_set(entity_id, str(temperature), state.attributes)
+                await self.hass.async_block_till_done()
+                async with client.post(url + "/heater", json={"value": True}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    heater = (await response.json())["manual_controls"]["heater"]
+                    self.assertIs(heater["manual"], True)
+                    self.assertIs(heater["commanded"], commanded)
+                await self.hass.async_block_till_done()
+                async with client.get(url + "/state") as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    state = await response.json()
+                    self.assertNotIn("decision", state)
+                    heater = state["manual_controls"]["heater"]
+                    self.assertIs(heater["manual"], True)
+                    self.assertIs(heater["commanded"], commanded)
+                    self.assertIs(heater["observation"]["on"], commanded)
+
+    async def test_manual_light_feedback_target_uses_device_resolution(self):
+        from custom_components.ha_sauna.settings import async_set_parameters
+        from custom_components.ha_sauna.presentation import public_state
+
+        await async_set_parameters(
+            self.hass, self.entry, {"light_brightness_scale": 10}, partial=True
+        )
+        await self.hass.async_block_till_done()
+        url = self.base + "/" + self.entry.entry_id
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/control-mode", json={"mode": "manual"}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            async with client.post(url + "/light", json={"value": 42}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                light = (await response.json())["manual_controls"]["light"]
+                self.assertEqual(light["manual"], 42)
+                self.assertEqual(light["manual_feedback_target"], 40)
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+                self.assertEqual(
+                    public_state(state)["manual_controls"]["light"]["manual_feedback_target"], 40
+                )
+            async with client.post(url + "/light", json={"value": None}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertIsNone((await response.json())["manual_controls"]["light"]["manual_feedback_target"])
+
     async def test_standard_user_manual_controls_explicit_mode_and_override_active_session(self):
         await self.attach_reporting_heater()
         user = await self.hass.auth.async_create_user(

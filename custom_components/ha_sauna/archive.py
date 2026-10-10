@@ -129,7 +129,7 @@ class Archive:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as db, db:
             db.executescript("""
-                PRAGMA journal_mode=DELETE;
+                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 INSERT OR IGNORE INTO metadata VALUES ('schema', '1');
                 CREATE TABLE IF NOT EXISTS records (
@@ -240,15 +240,17 @@ class Archive:
                     result = await asyncio.to_thread(self._erase, payload[0], payload[1])
                     if not future.cancelled():
                         future.set_result(result)
+                elif kind == "pause":
+                    await asyncio.to_thread(self._checkpoint_backup)
                 self.failure = None
                 if kind == "fence":
                     payload.set_result(None)
-                elif kind == "pause":
+                elif kind == "pause" and not payload.cancelled():
                     payload.set_result(None)
                     await self.resume.wait()
             except Exception as error:
                 if kind != "erase" or not isinstance(error, (KeyError, ValueError)):
-                    self.failure = error
+                    self._report_failure(error)
                 if kind == "record":
                     self.failed_records.append(payload)
                 elif kind in {"fence", "pause", "erase"} and not future.cancelled():
@@ -267,10 +269,28 @@ class Archive:
             try:
                 await asyncio.to_thread(self._write, self.failed_records[0])
             except Exception as error:
-                self.failure = error
+                self._report_failure(error)
                 return False
             self.failed_records.popleft()
         return True
+
+    def _report_failure(self, error):
+        if (type(error), str(error)) != (type(self.failure), str(self.failure)):
+            _LOGGER.error(
+                "Saunaarchiv konnte nicht geschrieben werden (%s): %s",
+                type(error).__name__, error,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+        self.failure = error
+
+    def _checkpoint_backup(self):
+        # A paused writer must leave a standalone main database for HA's file
+        # backup. Never acknowledge the pause while committed pages remain in
+        # a WAL held by an older reader.
+        with closing(sqlite3.connect(self.path)) as db:
+            busy, _, _ = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if busy:
+                raise sqlite3.OperationalError("Archiv-Backup durch aktiven Leser blockiert")
 
     def _write(self, record):
         kind, at, payload, session_id = record
@@ -428,6 +448,7 @@ class Archive:
             # Closing rejects new records, but its queued writes may still be
             # running. Finish them before the backup may copy this database.
             await asyncio.shield(self._close_task)
+            await asyncio.to_thread(self._checkpoint_backup)
             return
         if not self.resume.is_set():
             raise RuntimeError("Archiv wird bereits gesichert")

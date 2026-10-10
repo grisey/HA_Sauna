@@ -32,6 +32,78 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = panel_fixture.BrowserTests.asyncSetUp
     cleanup_browser = panel_fixture.BrowserTests.cleanup_browser
 
+    async def test_cold_selection_starts_during_pending_status_and_reports_loading(self):
+        identities = []
+        for number in range(2):
+            self.now = self.base + timedelta(hours=number * 8)
+            await self.runtime.set_operation(True)
+            retain_session(self.runtime)
+            identity = self.runtime.session.session_id
+            identities.append(identity)
+            await self.set_source("upper_temperature", 70 + number)
+            await self.set_source("upper_humidity", 20 + number)
+            # Use the production archive writer and real admin projection with
+            # different record kinds, including the normal-view marker evidence.
+            self.runtime.archive.append("detector_trace", self.now, {
+                "at": self.now, "signals": [], "channels": ["upper"],
+                "metrics": {"upper": {"door_temperature_slope": -1.0}},
+                "conditions": {}, "checks": {}, "holds": {},
+            }, identity)
+            self.runtime.archive.append("diagnostic", self.now, {"faults": {}}, identity)
+            self.now += timedelta(hours=6)
+            await self.runtime.set_operation(False)
+            self.now += timedelta(minutes=20)
+            await self.runtime.tick()
+            await self.runtime.archive.flush()
+            self.assertIsNone(self.runtime.session)
+
+        await self.panel.evaluate("p => p.refresh(true)")
+        await self.panel.locator('.main-tabs [data-action="history"]').click()
+        await expect(self.panel.locator("canvas.history-curves")).to_be_visible(timeout=15000)
+        await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+        self.assertFalse(await self.panel.evaluate("(p, id) => p.cache.has(id)", identities[0]))
+
+        state_started, release_state = asyncio.Event(), asyncio.Event()
+        archive_started, release_archive = asyncio.Event(), asyncio.Event()
+
+        async def hold_state(route):
+            state_started.set()
+            await release_state.wait()
+            await route.continue_()
+
+        async def hold_archive(route):
+            archive_started.set()
+            await release_archive.wait()
+            await route.continue_()
+
+        await self.page.route("**/api/ha_sauna/*/state", hold_state)
+        await self.page.route(f"**/archive?session_id={identities[0]}&**", hold_archive)
+        try:
+            await self.panel.evaluate("p => { void p.refresh(true); }")
+            await asyncio.wait_for(state_started.wait(), timeout=10)
+            # select_option dispatches the native input/change events consumed
+            # by the same handler as the custom dropdown; no direct loader call.
+            await self.panel.locator("#session").select_option(identities[0], force=True)
+            await asyncio.wait_for(archive_started.wait(), timeout=10)
+            self.assertFalse(release_state.is_set(), "archive starts independently of status")
+            await expect(self.panel.locator("#plots")).not_to_contain_text("Noch keine Sitzungsdaten")
+            await expect(self.panel.locator('#history [role="status"]').filter(has_text="Lade").first).to_be_visible()
+            release_archive.set()
+            await expect(self.panel.locator("canvas.history-curves")).to_be_visible(timeout=15000)
+            await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
+            kinds = await self.panel.evaluate("p => [...new Set(p.shown.records.map(r => r.kind))]")
+            self.assertIn("measurement", kinds)
+            self.assertIn("detector_trace", kinds)
+            self.assertIn("diagnostic", kinds)
+            self.assertEqual(await self.panel.evaluate("p => p.shown.session.timeline.session_id"), identities[0])
+            self.assertTrue(await self.panel.evaluate("(p, id) => p.cache.get(id).finalSynced", identities[0]))
+        finally:
+            release_state.set()
+            release_archive.set()
+            await self.page.unroute("**/api/ha_sauna/*/state", hold_state)
+            await self.page.unroute(f"**/archive?session_id={identities[0]}&**", hold_archive)
+        self.assertEqual(self.errors, [])
+
     async def test_chromium_cold_archive_before_after(self):
         await self.runtime.set_operation(True)
         retain_session(self.runtime)

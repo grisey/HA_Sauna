@@ -1722,6 +1722,15 @@ class HADevice:
         return light_phase(self.runtime.controller, now)
 
     @property
+    def manual_light_feedback_target(self):
+        """Project the same representable brightness expected from manual output."""
+        value = self.light_output.manual_brightness
+        if value is None:
+            return None
+        signature = self._light_command_signature("turn_on", round(value))
+        return 0.0 if signature[0] == "off" else signature[1] * 100 / 255
+
+    @property
     def light_observation(self):
         """Expose measured brightness; an unavailable report is never zero."""
         entity_id = self.bindings.get("light")

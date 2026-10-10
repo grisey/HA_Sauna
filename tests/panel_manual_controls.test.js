@@ -199,6 +199,217 @@ const renderCurrent = (
     assert.match(markup, /id="button-program"/);
   }
   const enabled = { admin: true, heater: true, light: true };
+  const deferred = () => {
+    let resolve, reject;
+    const promise = new Promise((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  };
+  for (const key of ["heater", "light"]) {
+    const fixture = makePanel(enabled),
+      command = deferred(),
+      refreshes = [];
+    const p = fixture.panel;
+    p.state.manual_controls = {
+      heater: {
+        manual: false,
+        commanded: false,
+        observation: { available: true, on: false },
+      },
+      light: { manual: 0, observation: { available: true, brightness_percent: 0 } },
+    };
+    const observed = JSON.stringify(p.state.manual_controls);
+    p.refresh = async (requested) => refreshes.push(requested);
+    p.api = (...args) => {
+      fixture.calls.push(args);
+      return command.promise;
+    };
+    const request = p.action(`${key}:true`);
+    assert.equal(p.pendingControlCommand(key).stage, "sending");
+    assert.match(p.controlCommandAttributes(key, true), /aria-busy="true"/);
+    assert.equal(
+      JSON.stringify(p.state.manual_controls),
+      observed,
+      "sending must not replace measured feedback with optimistic output",
+    );
+    await p.action(`${key}:true`);
+    assert.equal(fixture.calls.length, 1, "duplicate pending selection is not resent");
+    command.resolve({ success: true });
+    await request;
+    assert.equal(p.pendingControlCommand(key).stage, "waiting");
+    assert.ok(refreshes.every((requested) => requested === true));
+    p.acceptState({ ...p.state });
+    assert.ok(
+      p.pendingControlCommand(key),
+      "old OFF feedback cannot confirm an ON command",
+    );
+    p.acceptState({
+      ...p.state,
+      manual_controls: {
+        ...p.state.manual_controls,
+        [key]:
+          key === "heater"
+            ? {
+                manual: true,
+                commanded: true,
+                observation: { available: true, on: true },
+              }
+            : { manual: 50, observation: { available: true, brightness_percent: 50 } },
+      },
+    });
+    assert.equal(
+      p.pendingControlCommand(key),
+      null,
+      "fresh matching feedback completes the command",
+    );
+  }
+  for (const key of ["heater", "light"]) {
+    const fixture = makePanel(enabled),
+      first = deferred();
+    const p = fixture.panel;
+    p.state.configuration.control_mode = "automatic";
+    p.state.session = { timeline: { session_id: "active" } };
+    p.state.manual_controls = {
+      heater: { manual: null, observation: { available: true, on: false } },
+      light: { manual: null, observation: { available: true, brightness_percent: 0 } },
+    };
+    p.api = (...args) => {
+      fixture.calls.push(args);
+      return fixture.calls.length === 1
+        ? first.promise
+        : Promise.resolve({ success: true });
+    };
+    const on = p.action(`${key}:true`);
+    await p.action(`${key}:false`);
+    assert.equal(
+      fixture.calls.length,
+      2,
+      "OFF cancels pending ON even while physical feedback already says OFF",
+    );
+    assert.equal(fixture.calls[1][2].value, false);
+    const off = p.pendingControlCommand(key);
+    first.resolve({ success: true });
+    await on;
+    assert.equal(
+      p.pendingControlCommand(key),
+      off,
+      "late ON completion must not replace the newer OFF request",
+    );
+  }
+  {
+    const { panel: p } = makePanel(enabled);
+    p.state.manual_controls = {
+      heater: {
+        manual: false,
+        commanded: false,
+        observation: { available: true, on: false },
+      },
+    };
+    await p.action("heater:true");
+    p.acceptState({
+      ...p.state,
+      manual_controls: {
+        heater: {
+          manual: true,
+          commanded: false,
+          observation: { available: true, on: false },
+        },
+      },
+    });
+    assert.equal(
+      p.pendingControlCommand("heater"),
+      null,
+      "an enabled satisfied thermostat completes without waiting for relay ON",
+    );
+  }
+  {
+    const { panel: p } = makePanel(enabled),
+      command = deferred();
+    p.api = () => command.promise;
+    const request = p.action("heater:true");
+    const rejected = assert.rejects(request, /command rejected/);
+    command.reject(Error("command rejected"));
+    await rejected;
+    assert.equal(p.pendingControlCommand("heater"), null);
+  }
+  {
+    const { panel: p } = makePanel(enabled, "42");
+    p.state.manual_controls = {
+      light: { manual: 0, observation: { available: true, brightness_percent: 0 } },
+    };
+    await p.action("manual-light-overview");
+    p.acceptState({
+      ...p.state,
+      manual_controls: {
+        light: {
+          manual: 42,
+          manual_feedback_target: 40,
+          observation: { available: true, brightness_percent: 40 },
+        },
+      },
+    });
+    assert.equal(
+      p.pendingControlCommand("light"),
+      null,
+      "device brightness resolution must not leave a completed selection pending",
+    );
+  }
+  {
+    const { panel: p } = makePanel(enabled),
+      stale = deferred(),
+      fresh = deferred();
+    let reads = 0;
+    Object.assign(p, {
+      isConnected: true,
+      shadowRoot: {},
+      refresh: Panel.prototype.refresh,
+      $: (selector) => (selector === "#history" ? { hidden: true } : null),
+      syncHistoryProjection() {},
+      applyAppearance() {},
+      syncNavigation() {},
+      drawSettings() {},
+      syncAppearanceEditor() {},
+      scheduleRefresh() {},
+      api: (path) =>
+        path.endsWith("/state")
+          ? ++reads === 1
+            ? stale.promise
+            : fresh.promise
+          : Promise.resolve({ success: true }),
+    });
+    const before = p.state;
+    const polling = p.refresh();
+    await p.action("heater:true");
+    assert.equal(
+      p.refreshPending,
+      true,
+      "command queues a read behind an existing poll",
+    );
+    stale.resolve({ ...before, marker: "old" });
+    await polling;
+    assert.equal(reads, 2, "the busy poll must drain the requested refresh");
+    assert.equal(
+      p.state,
+      before,
+      "a poll started before the command must not overwrite its result",
+    );
+    fresh.resolve({
+      ...before,
+      marker: "fresh",
+      manual_controls: {
+        heater: {
+          manual: true,
+          commanded: true,
+          observation: { available: true, on: true },
+        },
+      },
+    });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    assert.equal(p.state.marker, "fresh");
+    assert.equal(p.pendingControlCommand("heater"), null);
+  }
   let { panel, calls } = makePanel(enabled);
   await panel.action("heater:true");
   await panel.action("heater:false");

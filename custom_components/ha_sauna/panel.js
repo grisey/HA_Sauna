@@ -1590,6 +1590,7 @@ class SaunaPanel extends HTMLElement {
     clearTimeout(this.historyWheelTimer);
     this.timer = null;
     this.generation++;
+    this.controlCommands = {};
     this.historyLoad = null;
     this.historyListStale = true;
     this.pendingEventFocus = null;
@@ -1614,7 +1615,11 @@ class SaunaPanel extends HTMLElement {
     const state = this.state,
       now = stamp(state?.now),
       lightAfterRun = stamp(state?.light_after_run?.ends_at);
-    return state?.operation_enabled || state?.session || lightAfterRun > now
+    return state?.operation_enabled ||
+      state?.session ||
+      lightAfterRun > now ||
+      state?.configuration?.control_mode === "manual" ||
+      Object.keys(this.controlCommands || {}).length
       ? 2000
       : 10000;
   }
@@ -2832,7 +2837,7 @@ class SaunaPanel extends HTMLElement {
         position: relative;
       }
       .chart {
-        height: 520px;
+        height: clamp(280px, 44dvh, 400px);
         width: 100%;
         touch-action: pan-y;
         user-select: none;
@@ -3059,7 +3064,7 @@ class SaunaPanel extends HTMLElement {
       }
       @media (max-width: 800px) {
         .chart {
-          height: 420px;
+          height: clamp(280px, 42dvh, 340px);
         }
         .detector-chart {
           height: 180px;
@@ -3884,7 +3889,8 @@ class SaunaPanel extends HTMLElement {
       .program-named-choice { padding: 12px 14px; }
       .program-pending { background: transparent; padding: 12px 0 0; }
       .program-actions { margin-top: 12px; border-top: 0; padding-top: 0; }
-      .history-controls { margin: 0 0 16px; }
+      .history-controls { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0 0 16px; }
+      #history-loading { margin-left: auto; font-size: 12px; color: var(--sauna-card-muted-text); white-space: nowrap; }
       .history-controls :is(select, .sauna-select-trigger) { max-width: 100%; font-weight: 600; }
       .history-stack, .detector-chart { background: var(--sauna-color-chart-background); border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); box-shadow: 0 2px 3px rgb(0 0 0 / .3), 0 7px 16px -5px rgb(0 0 0 / .45); }
       .history-overview { background: transparent; border-radius: var(--sauna-control-radius); }
@@ -3919,6 +3925,11 @@ class SaunaPanel extends HTMLElement {
       .output-toggle button[data-action$=":false"] { --output-surface: var(--sauna-feedback-off-surface); --output-ink: var(--sauna-feedback-off-ink); --output-focus: var(--sauna-feedback-off-focus); }
       .output-toggle button[aria-pressed="true"] { background: var(--output-surface); border-color: var(--output-surface); color: var(--output-ink); --sauna-button-hover: var(--output-focus); --sauna-focus-current: var(--output-focus); }
       .instrument-arc-track[aria-disabled="true"], .instrument-arc-track[aria-disabled="true"] + .instrument-arc-handle { cursor: default; }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+      button[data-command-pending] { position: relative; }
+      button[data-command-pending]::after { content: ""; position: absolute; inset: auto 8px 5px; height: 2px; background: currentColor; opacity: .65; animation: command-wait 1.2s ease-in-out infinite alternate; }
+      @keyframes command-wait { from { opacity: .25; transform: scaleX(.45); } to { opacity: .8; transform: scaleX(1); } }
+      @media (prefers-reduced-motion: reduce) { button[data-command-pending]::after { animation: none; } }
       .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
       .control-history-lanes { min-width: 660px; }
       .control-track { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 18px; margin: 16px 0; font-size: 13px; }
@@ -4029,7 +4040,7 @@ class SaunaPanel extends HTMLElement {
       <header><div class="header-brand"><button class="header-icon" data-action="menu" aria-label="Home-Assistant-Seitenleiste umschalten" title="Home-Assistant-Seitenleiste umschalten" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><h1>Sauna</h1></div><nav class="tabs main-tabs" id="main-navigation" aria-label="Ansicht"><button data-action="overview" aria-current="page">Steuerung</button><button data-action="history">Verlauf</button><button data-action="details">Details</button><button data-action="settings">Einstellungen</button></nav><div class="header-context"><select id="instance" aria-label="Sauna auswählen"></select><button class="header-icon" data-action="fullscreen" aria-label="Vollbild" title="Vollbild" hidden><svg data-fullscreen-icon="enter" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><svg data-fullscreen-icon="exit" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/></svg></button></div></header>
       <nav class="tabs detail-tabs" aria-label="Detailansicht" hidden><button data-action="detail" aria-current="page">Betrieb & Fristen</button><button data-action="detail-history">Detailverlauf</button><button data-action="diagnostics">Erkennungskontrolle</button></nav>
       <div id="message" role="alert"></div><section id="current" aria-live="polite"><p>Lade Saunadaten …</p></section><section id="details" hidden></section>
-      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
+      <section id="history" hidden><div class="plot-panel history-panel"><div class="history-controls"><select id="session" aria-label="Saunasitzung auswählen"><option value="live">Letzte Sitzung</option></select><span id="history-loading" role="status" hidden></span></div><div class="history-plot-frame"><div id="plots"></div><div id="history-navigation"><button data-action="zoom-out" aria-label="Verkleinern">−</button><div id="history-overview" class="history-overview" aria-label="Übersicht der gesamten Saunasitzung"></div><button data-action="zoom-in" aria-label="Vergrößern">＋</button><div class="history-window-caption"><button data-action="reset-zoom" aria-label="Gesamte Saunasitzung" title="Gesamte Sitzung anzeigen">1×</button></div></div></div>
         <div class="history-inspection" id="history-inspection"><div class="history-readout"><div id="tooltip" role="group" aria-label="Werte am markierten Zeitpunkt" hidden></div></div><div id="history-legends">${this.historyLegendMarkup()}</div></div></div><div id="control-history" hidden></div><div id="detection-plots" hidden></div><div id="gangs"></div><div id="event-list"></div>
       </section><section id="settings" hidden></section>
     </main>`;
@@ -4053,6 +4064,7 @@ class SaunaPanel extends HTMLElement {
       if (e.target.id !== "instance" && !this.state) return;
       if (e.target.id === "instance") {
         this.entry = e.target.value;
+        this.controlCommands = {};
         this.state = null;
         this.messages = {};
         this.message(null);
@@ -4121,7 +4133,9 @@ class SaunaPanel extends HTMLElement {
         this.invalidateHistoryIndex();
         this.zoom = 1;
         this.window = null;
-        this.refresh(true);
+        this.showHistoryCache();
+        this.drawHistory("archive");
+        this.startHistoryLoad();
       }
       if (["button-program", "button-temperature"].includes(e.target.id))
         this.runPanelAction(() => this.action("button-program"));
@@ -4432,6 +4446,7 @@ class SaunaPanel extends HTMLElement {
     const previousSessionId = this.state?.session?.timeline?.session_id || null,
       previousLastSessionId = this.state?.last_session?.timeline?.session_id || null;
     this.state = state;
+    this.reconcileControlCommands();
     const currentSessionId = state.session?.timeline?.session_id || null,
       lastSessionId = state.last_session?.timeline?.session_id || null;
     if (
@@ -4480,6 +4495,7 @@ class SaunaPanel extends HTMLElement {
     this.busy = true;
     const generation = this.generation;
     const programRevision = this.programRevision || 0;
+    const controlRevision = this.controlRevision || 0;
     const appearanceRevision = this.appearanceRevision || 0;
     try {
       if (!this.entry) {
@@ -4502,6 +4518,7 @@ class SaunaPanel extends HTMLElement {
         entry !== this.entry ||
         !this.isConnected ||
         programRevision !== (this.programRevision || 0) ||
+        controlRevision !== (this.controlRevision || 0) ||
         appearanceRevision !== (this.appearanceRevision || 0) ||
         (this.archiveRevision !== undefined &&
           (state.archive_revision ?? 0) < this.archiveRevision)
@@ -4752,6 +4769,13 @@ class SaunaPanel extends HTMLElement {
     if (select.value !== this.selected) select.value = this.selected;
     this.selectMenu?.syncAttributes(select);
   }
+  syncHistoryLoading() {
+    const node = this.$("#history-loading");
+    if (!node) return;
+    node.hidden = !this.historyLoad;
+    node.textContent = this.historyLoad ? "Wird geladen …" : "";
+    this.$("#plots")?.setAttribute?.("aria-busy", String(!!this.historyLoad));
+  }
   startHistoryLoad() {
     if (
       !this.state ||
@@ -4779,6 +4803,7 @@ class SaunaPanel extends HTMLElement {
     if (this.historyLoad?.key === key) return this.historyLoad.promise;
     const load = { key, count: 0, sessionId: initialId };
     this.historyLoad = load;
+    this.syncHistoryLoading();
     const current = () =>
       this.historyLoad === load &&
       generation === this.generation &&
@@ -4870,7 +4895,10 @@ class SaunaPanel extends HTMLElement {
       } catch (error) {
         if (current()) this.message(error, "history");
       } finally {
-        if (this.historyLoad === load) this.historyLoad = null;
+        if (this.historyLoad === load) {
+          this.historyLoad = null;
+          this.syncHistoryLoading();
+        }
         this.trimHistoryCaches();
       }
     })();
@@ -5011,8 +5039,8 @@ class SaunaPanel extends HTMLElement {
     const operation = manualMode
       ? ""
       : sessionGap
-        ? `<div class="operation-control split"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="tile operation primary" data-action="operation" ${canStart ? "" : "disabled"}>Fortsetzen</button></div>`
-        : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation" ${canStart ? "" : "disabled"}>${s.operation_enabled ? "Ausschalten" : "Einschalten"}</button>${finishPhase}</div>`;
+        ? `<div class="operation-control split"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="tile operation primary" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", true, "Fortsetzen")}</button></div>`
+        : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", !s.operation_enabled, s.operation_enabled ? "Ausschalten" : "Einschalten")}</button>${finishPhase}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
     const availabilityHint = availabilityLine;
@@ -5154,7 +5182,7 @@ class SaunaPanel extends HTMLElement {
       canManualLight = manualControls.brightness;
     const modeControls = session
       ? ""
-      : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Automatik</button><button data-action="control-mode:manual" aria-pressed="${manualMode}" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell</button></div>`;
+      : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
     const outputControls = (
       key,
       title,
@@ -5163,13 +5191,13 @@ class SaunaPanel extends HTMLElement {
       canControl,
       blockedOnReason = "",
     ) =>
-      `<section class="manual-section manual-${key}"><div class="manual-heading"><h3>${title}</h3></div><div class="manual-selection">${manualMode ? "" : `<div class="control-auto"><button data-action="${key}:auto" aria-pressed="${selected == null}" ${canControl ? "" : "disabled"}>Automatik</button></div>`}<div class="output-toggle" role="group" aria-label="${title}">${[
+      `<section class="manual-section manual-${key}"><div class="manual-heading"><h3>${title}</h3></div><div class="manual-selection">${manualMode ? "" : `<div class="control-auto"><button data-action="${key}:auto" aria-pressed="${selected == null}"${this.controlCommandAttributes(key, null)} ${canControl ? "" : "disabled"}>${this.controlCommandLabel(key, null, "Automatik")}</button></div>`}<div class="output-toggle" role="group" aria-label="${title}">${[
         [false, "Aus"],
         [true, "Ein"],
       ]
         .map(
           ([on, label]) =>
-            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${manualMode && key === "heater" ? ` data-regulation-selected="${(selected === true) === on}" aria-label="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}; Ofen ${observed == null ? "unbekannt" : observed ? "Ein" : "Aus"}"` : ""}${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : manualMode && key === "heater" ? ` title="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${label}</button>`,
+            `<button data-action="${key}:${on}" aria-pressed="${observed === on}"${this.controlCommandAttributes(key, on)}${manualMode && key === "heater" ? ` data-regulation-selected="${(selected === true) === on}" aria-label="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}; Ofen ${observed == null ? "unbekannt" : observed ? "Ein" : "Aus"}"` : ""}${on && blockedOnReason ? ` title="${esc(blockedOnReason)}"` : manualMode && key === "heater" ? ` title="Temperaturregelung ${label}${(selected === true) === on ? ", gewählt" : ""}"` : ""} ${canControl && !(on && blockedOnReason) ? "" : "disabled"}>${this.controlCommandLabel(key, on, label)}</button>`,
         )
         .join("")}</div></div></section>`;
     const heaterControls = outputControls(
@@ -5189,7 +5217,7 @@ class SaunaPanel extends HTMLElement {
     );
     const manualEntry =
       !session && !manualMode
-        ? `<section class="manual-section manual-controls manual-entry"><h3>Ofen und Licht</h3><button data-action="manual-entry" ${permissions.control && !modeLocked ? "" : "disabled"}>Manuell steuern</button></section>`
+        ? `<section class="manual-section manual-controls manual-entry"><h3>Ofen und Licht</h3><button data-action="manual-entry"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell steuern")}</button></section>`
         : "";
     const overviewLightTimer =
       !session && s.phase_timer?.kind === "session_light"
@@ -5409,7 +5437,7 @@ class SaunaPanel extends HTMLElement {
               0,
               "light",
             );
-    return `<section class="light-instrument measurement-instrument" data-instrument="light" data-instrument-style="${style}"><h2>Licht</h2>${graphic}${available ? "" : '<small class="instrument-notice">Rückmeldung fehlt</small>'}</section>`;
+    return `<section class="light-instrument measurement-instrument"${this.pendingControlCommand("light") ? ' aria-busy="true"' : ""} data-instrument="light" data-instrument-style="${style}"><h2>Licht${this.pendingControlCommand("light") ? '<span aria-hidden="true"> …</span><span class="sr-only" role="status"> – Rückmeldung ausstehend</span>' : ""}</h2>${graphic}${available ? "" : '<small class="instrument-notice">Rückmeldung fehlt</small>'}</section>`;
   }
   weatherMarkup() {
     const environment = this.state.environment;
@@ -6663,7 +6691,9 @@ class SaunaPanel extends HTMLElement {
     }
     this.updateMarkup(
       "#plots",
-      '<div class="card empty">Noch keine Sitzungsdaten. Wähle eine frühere Saunasitzung oder schalte den Betrieb ein.</div>',
+      this.historySelectionId() || this.historyLoad || this.sessions == null
+        ? '<div class="card empty" role="status">Lade Sitzungsverlauf …</div>'
+        : '<div class="card empty">Noch keine Sitzungsdaten.</div>',
     );
     for (const selector of [
       "#gangs",
@@ -9134,6 +9164,107 @@ class SaunaPanel extends HTMLElement {
       ? observation.brightness_percent > 0
       : null;
   }
+  pendingControlCommand(key) {
+    const command = this.controlCommands?.[key];
+    return command &&
+      command.entry === this.entry &&
+      command.generation === this.generation
+      ? command
+      : null;
+  }
+  controlCommandAttributes(key, value) {
+    const command = this.pendingControlCommand(key);
+    if (!command || command.value !== value) return "";
+    const text =
+      command.stage === "sending" ? "Auftrag wird gesendet" : "Rückmeldung ausstehend";
+    return ` data-command-pending="${command.stage}" aria-busy="true" aria-description="${text}"`;
+  }
+  controlCommandLabel(key, value, label) {
+    return this.pendingControlCommand(key)?.value === value
+      ? `${label}<span aria-hidden="true"> …</span><span class="sr-only" role="status"> – ${this.pendingControlCommand(key).stage === "sending" ? "Auftrag wird gesendet" : "Rückmeldung ausstehend"}</span>`
+      : label;
+  }
+  reconcileControlCommands() {
+    const state = this.state;
+    for (const [key, command] of Object.entries(this.controlCommands || {})) {
+      if (command !== this.pendingControlCommand(key)) {
+        delete this.controlCommands[key];
+        continue;
+      }
+      if (command.stage === "sending") continue;
+      const control = state?.manual_controls?.[key];
+      let confirmed = false;
+      if (key === "operation") confirmed = state.operation_enabled === command.value;
+      else if (key === "control-mode")
+        confirmed = state.configuration.control_mode === command.value;
+      else if (key === "heater") {
+        confirmed =
+          control?.manual === command.value &&
+          typeof control?.commanded === "boolean" &&
+          this.outputState(key) === control.commanded;
+      } else if (key === "light") {
+        confirmed =
+          command.value === null
+            ? control?.manual === null
+            : typeof command.value === "boolean"
+              ? this.outputState(key) === command.value
+              : control?.observation?.available &&
+                Math.round(control.observation.brightness_percent) ===
+                  Math.round(control.manual_feedback_target ?? command.value);
+      }
+      const ended =
+        (key === "heater" || key === "light") &&
+        (command.mode !== state.configuration?.control_mode ||
+          command.session !== (state.session?.timeline?.session_id ?? null));
+      const failed = (state.issues || []).some(({ key: issue }) =>
+        key === "heater"
+          ? [
+              "heater_service_unavailable",
+              "heater_feedback_mismatch",
+              "heater_feedback_unavailable",
+              "heater_still_heating",
+            ].includes(issue)
+          : key === "light" &&
+            ["operation_light", "after_run_light", "session_light"].includes(issue),
+      );
+      if (confirmed || ended || failed) delete this.controlCommands[key];
+    }
+  }
+  async sendControlCommand(key, value, path, body) {
+    if (this.pendingControlCommand(key)?.value === value) return;
+    const command = {
+      value,
+      entry: this.entry,
+      generation: this.generation,
+      stage: "sending",
+      mode: this.state.configuration?.control_mode,
+      session: this.state.session?.timeline?.session_id ?? null,
+    };
+    this.controlCommands ??= {};
+    this.controlCommands[key] = command;
+    this.controlRevision = (this.controlRevision || 0) + 1;
+    this.drawCurrent();
+    const current = () => this.pendingControlCommand(key) === command;
+    try {
+      await this.api(`/${command.entry}/${path}`, "POST", body);
+      if (!current()) return;
+      command.stage = "waiting";
+      this.controlRevision++;
+      this.drawCurrent();
+      // A poll that started before the command cannot acknowledge its result.
+      // Queue a fresh read even if another read is still in flight.
+      await this.refresh(true);
+    } catch (error) {
+      if (current()) {
+        delete this.controlCommands[key];
+        this.controlRevision++;
+        this.drawCurrent();
+        // A failed response does not prove the physical command was not applied.
+        void this.refresh(true);
+        throw error;
+      }
+    }
+  }
   async submitLight(value) {
     const light = this.state?.manual_controls?.light,
       observation = light?.observation,
@@ -9149,7 +9280,8 @@ class SaunaPanel extends HTMLElement {
       request = (this.manualLightRequest = (this.manualLightRequest || 0) + 1);
     try {
       if (!this.manualControlAvailability().light) return;
-      if (!same) await this.api(`/${entry}/light`, "POST", { value });
+      if (!same || this.pendingControlCommand("light"))
+        await this.sendControlCommand("light", value, "light", { value });
     } finally {
       if (
         this.entry === entry &&
@@ -9162,7 +9294,7 @@ class SaunaPanel extends HTMLElement {
       }
     }
     if (this.entry !== entry || this.generation !== generation) return;
-    await this.refresh();
+    await this.refresh(true);
   }
   lightTargetValue() {
     const observation = this.state?.manual_controls?.light?.observation;
@@ -9549,8 +9681,7 @@ class SaunaPanel extends HTMLElement {
       const mode = action.slice(13);
       if (mode !== "automatic" && mode !== "manual")
         throw Error("Ungültiger Betriebsmodus");
-      await this.api(`/${this.entry}/control-mode`, "POST", { mode });
-      await this.refresh();
+      await this.sendControlCommand("control-mode", mode, "control-mode", { mode });
       return;
     }
     if (action.startsWith("settings-section:")) {
@@ -9592,22 +9723,11 @@ class SaunaPanel extends HTMLElement {
       if (
         this.state.configuration.control_mode !== "manual" &&
         value != null &&
-        this.outputState("heater") === value
+        this.outputState("heater") === value &&
+        !this.pendingControlCommand("heater")
       )
         return;
-      const entry = this.entry,
-        generation = this.generation,
-        request = (this.heaterRequestSerial = (this.heaterRequestSerial || 0) + 1);
-      const current = () =>
-        this.entry === entry &&
-        this.generation === generation &&
-        this.heaterRequestSerial === request;
-      try {
-        await this.api(`/${entry}/heater`, "POST", { value });
-        if (current()) await this.refresh();
-      } catch (error) {
-        if (current()) throw error;
-      }
+      await this.sendControlCommand("heater", value, "heater", { value });
       return;
     }
     if (action.startsWith("end-phase:")) {
@@ -9628,10 +9748,8 @@ class SaunaPanel extends HTMLElement {
       return;
     }
     if (action === "operation") {
-      await this.api(`/${this.entry}/control`, "POST", {
-        enabled: !this.state.operation_enabled,
-      });
-      await this.refresh();
+      const enabled = !this.state.operation_enabled;
+      await this.sendControlCommand("operation", enabled, "control", { enabled });
     }
     if (action === "zoom-in" || action === "zoom-out") {
       this.ensureHistoryWindow();
