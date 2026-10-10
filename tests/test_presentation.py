@@ -9,7 +9,8 @@ from test_cooling import at, controller
 from test_foundation import event
 
 from custom_components.ha_sauna.archive import plain
-from custom_components.ha_sauna.core.parameters import DEFINITIONS
+from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.log import SaunaLog
@@ -93,18 +94,31 @@ class PresentationTests(unittest.TestCase):
         self.assertIsNone(public_session(None))
         self.assertIsNone(public_phase_projection(None))
 
-    def test_all_settings_have_the_same_labels_and_help_in_both_ha_forms(self):
-        root=Path(__file__).resolve().parents[1]/"custom_components/ha_sauna"
-        strings=json.loads((root/"strings.json").read_text())
-        self.assertEqual(strings,json.loads((root/"translations/de.json").read_text()))
-        for section in ("config","options"):
-            fields=strings[section]["step"]["parameters"]
-            for d in DEFINITIONS:
-                self.assertEqual(fields["data"][d.key], d.label)
-                self.assertEqual(fields["data_description"][d.key], d.description)
-                self.assertTrue(d.description and d.group)
+    def test_basic_configuration_shares_labels_and_help_in_both_ha_forms(self):
+        root = Path(__file__).resolve().parents[1] / "custom_components/ha_sauna"
+        strings = json.loads((root / "strings.json").read_text())
+        setup = strings["config"]["step"]["user"]
+        options = strings["options"]["step"]["bindings"]
+        for key in options["data"]:
+            with self.subTest(key=key):
+                self.assertEqual(setup["data"][key], options["data"][key])
+                self.assertEqual(
+                    setup["data_description"][key], options["data_description"][key]
+                )
+                self.assertTrue(options["data"][key])
+                self.assertTrue(options["data_description"][key])
         self.assertNotIn("Grundgerüst", json.dumps(strings))
         self.assertNotIn("Testsession", json.dumps(strings))
+
+    def test_panel_parameter_labels_and_help_come_from_the_catalog(self):
+        catalog = {item["key"]: item for item in section("parameters")}
+        self.assertEqual({definition.key for definition in EDITABLE_DEFINITIONS}, set(catalog))
+        for definition in EDITABLE_DEFINITIONS:
+            with self.subTest(key=definition.key):
+                expected = catalog[definition.key]
+                self.assertEqual(definition.label, expected["label"])
+                self.assertEqual(definition.description, expected["description"])
+                self.assertTrue(definition.label and definition.description and definition.group)
 
     def test_configuration_and_measurement_errors_are_distinct_german_messages(self):
         text=configuration_message(["sensor_timeout_seconds","feedback_timeout_seconds"])

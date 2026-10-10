@@ -454,9 +454,18 @@ class PackagingTests(unittest.TestCase):
         strings = json.loads((folder / "strings.json").read_text())
         translated = json.loads((folder / "translations/de.json").read_text())
         self.assertEqual(strings, translated)
-        self.assertEqual(set(strings["config"]["step"]["parameters"]["data"]),
-                         {d.key for d in DEFINITIONS} | {"program_mode", "button_program", "button_temperature_c"})
-        self.assertEqual(set(strings["options"]["step"]["bindings"]["data"]), {r.key for r in ROLES} | {"control_input_mode", "button_event_type", "presence_source"})
+        basic_fields = {role.key for role in ROLES} | {
+            "control_input_mode", "button_event_type", "presence_source",
+        }
+        self.assertEqual(set(strings["config"]["step"]), {"user"})
+        self.assertEqual(set(strings["options"]["step"]), {"bindings"})
+        self.assertEqual(
+            set(strings["config"]["step"]["user"]["data"]),
+            basic_fields | {"name"},
+        )
+        self.assertEqual(
+            set(strings["options"]["step"]["bindings"]["data"]), basic_fields,
+        )
 
     def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"

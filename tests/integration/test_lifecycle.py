@@ -3,7 +3,8 @@ from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
+from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, ParameterError
+from custom_components.ha_sauna.settings import async_set_parameters
 
 from harness import create_sauna, start_hass
 
@@ -36,16 +37,14 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         preserved = entry.runtime_data.configuration.as_options()
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
-        form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
-        editable_keys = {definition.key for definition in EDITABLE_DEFINITIONS
-                         if definition.settings_group != "programs"}
-        values = {
-            key: value
-            for key, value in entry.options["parameters"].items()
-            if key in editable_keys
-        }
-        values["session_gap_minutes"] = 7
-        await self.hass.config_entries.options.async_configure(form["flow_id"], values)
+        self.assertEqual(flow["type"], "form")
+        self.assertEqual(flow["step_id"], "bindings")
+        result = await self.hass.config_entries.options.async_configure(
+            flow["flow_id"], dict(entry.options["bindings"]))
+        self.assertEqual(result["type"], "create_entry")
+        await self.hass.async_block_till_done()
+        self.assertEqual(entry.runtime_data.configuration.as_options(), preserved)
+        await async_set_parameters(self.hass, entry, {"session_gap_minutes": 7}, partial=True)
         await self.hass.async_block_till_done()
         self.assertEqual(entry.runtime_data.configuration.parameters.values["session_gap_minutes"], 7)
         preserved["parameters"]["session_gap_minutes"] = 7
@@ -71,12 +70,12 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(runtime.session.operation_enabled)
         self.assertEqual(self.hass.states.get(switch).state, "on")
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
-        self.assertEqual(flow["type"], "menu")
-        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "parameters"})
         self.assertEqual(flow["type"], "abort")
         self.assertEqual(flow["reason"], "session_exists")
         self.assertIs(entry.runtime_data, runtime)
         self.assertEqual(runtime.session.session_id, session_id)
+        with self.assertRaises(ValueError):
+            await async_set_parameters(self.hass, entry, {"session_gap_minutes": 9}, partial=True)
         with self.assertRaises(ValueError):
             await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
         self.assertEqual(entry.options["parameters"]["session_gap_minutes"], 2.5)
@@ -105,9 +104,9 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         original = entry.options["bindings"]["upper_temperature"]
         self.hass.states.async_set("sensor.replacement", "31", self.hass.states.get(original).attributes)
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
-        form = await self.hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "bindings"})
+        self.assertEqual(flow["step_id"], "bindings")
         bindings = {**entry.options["bindings"], "upper_temperature": "sensor.replacement"}
-        await self.hass.config_entries.options.async_configure(form["flow_id"], bindings)
+        await self.hass.config_entries.options.async_configure(flow["flow_id"], bindings)
         await self.hass.async_block_till_done()
         saved_id = entry.entry_id
         await self.hass.async_stop(force=True)
@@ -230,7 +229,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.hass.config_entries.async_unload(entry.entry_id))
         self.assertTrue(runtime.closed)
 
-    async def test_invalid_selection_and_values_create_no_entry(self):
+    async def test_invalid_selection_and_panel_values_preserve_configuration(self):
         from harness import seed_sources
         bindings = seed_sources(self.hass)
         flow = await self.hass.config_entries.flow.async_init("ha_sauna", context={"source": "user"})
@@ -238,14 +237,21 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         result = await self.hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Test", **bad})
         self.assertEqual(result["errors"], {"lower_temperature": "duplicate_sensor"})
         self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [])
-        await self.hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Test", **bindings})
-        from homeassistant.data_entry_flow import InvalidData
-        values = {d.key: d.default for d in EDITABLE_DEFINITIONS}
-        values.update(session_gap_minutes=2.5)
-        with self.assertRaises(InvalidData):
-            await self.hass.config_entries.flow.async_configure(flow["flow_id"], {**values, "session_gap_minutes": -1})
-        self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [])
-        result = await self.hass.config_entries.flow.async_configure(flow["flow_id"], {**values, "session_gap_minutes": 0})
-        self.assertEqual(result["type"], "form")
-        self.assertEqual(result["errors"], {"session_gap_minutes": "positive"})
-        self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [])
+        result = await self.hass.config_entries.flow.async_configure(
+            flow["flow_id"], {"name": "Test", **bindings})
+        self.assertEqual(result["type"], "create_entry")
+        await self.hass.async_block_till_done()
+        entry = result["result"]
+        original = entry.runtime_data.configuration.as_options()
+        runtime = entry.runtime_data
+        for value in (-1, 0):
+            with self.subTest(session_gap_minutes=value):
+                with self.assertRaises(ParameterError) as invalid:
+                    await async_set_parameters(
+                        self.hass, entry, {"session_gap_minutes": value}, partial=True)
+                self.assertEqual(invalid.exception.key, "session_gap_minutes")
+                self.assertEqual(invalid.exception.code, "positive")
+                self.assertIs(entry.runtime_data, runtime)
+                self.assertEqual(entry.runtime_data.configuration.as_options(), original)
+                self.assertEqual(dict(entry.options), original)
+                self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [entry])
