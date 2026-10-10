@@ -32,6 +32,23 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(self.closed.preparation, self.vent)
         self.assertIsNone(self.closed.open_ventilation)
 
+    def test_initial_closed_door_does_not_invent_an_entry_cycle(self):
+        self.assertEqual(self.empty.door, Door.CLOSED)
+        self.assertIsNone(self.empty.anchor)
+        self.assertIsNone(self.empty.opening)
+        self.assertIsNone(self.empty.closed_opening)
+        self.assertEqual(self.empty.processed, ())
+        self.assertFalse(self.empty.entry_cycle_available)
+        with self.assertRaises(ValueError):
+            apply(self.empty, e("unpaired-close", Kind.DOOR_CLOSE, "21:15:00"))
+
+    def test_explicit_historical_unknown_door_remains_unknown(self):
+        unknown = Timeline("s", t("18:55:42"), door=Door.UNKNOWN)
+        self.assertEqual(unknown.door, Door.UNKNOWN)
+        self.assertFalse(unknown.entry_cycle_available)
+        with self.assertRaises(ValueError):
+            apply(unknown, self.person)
+
     def test_person_creates_provisional_gang_with_provenance(self):
         gang = self.active.active
         self.assertEqual(gang.confirmation, Confirmation.PROVISIONAL)
@@ -214,14 +231,16 @@ class TimelineTests(unittest.TestCase):
             apply(self.active, e("x", Kind.INFUSION, "21:18:00"))
 
     def test_no_activation_with_unknown_or_open_door(self):
+        unknown = Timeline("s", t("18:55:42"), door=Door.UNKNOWN)
         opened = apply(self.empty, e("o", Kind.DOOR_OPEN, "21:00:00"))
-        for state in (self.empty, opened):
+        for state in (unknown, opened):
             with self.subTest(door=state.door), self.assertRaises(ValueError):
                 apply(state, self.person)
 
     def test_every_proxy_start_requires_both_door_edges(self):
         known_closed = Timeline("s", t("18:55:42"), door=Door.CLOSED)
-        bare_close = apply(self.empty, e("close-only", Kind.DOOR_CLOSE, "21:15:00"))
+        unknown = Timeline("s", t("18:55:42"), door=Door.UNKNOWN)
+        bare_close = apply(unknown, e("close-only", Kind.DOOR_CLOSE, "21:15:00"))
         opened = apply(self.empty, e("open-only", Kind.DOOR_OPEN, "21:15:00"))
         for state in (self.empty, known_closed, bare_close, opened):
             for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):

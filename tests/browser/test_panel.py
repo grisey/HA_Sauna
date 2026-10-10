@@ -3516,16 +3516,45 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["parameters"]["final_temperature_c"],90)
         self.assertEqual(self.runtime.controller.target_temperature,next_target)
         self.assertEqual(self.entry.options["program_mode"],"progressive")
+        await expect(self.panel.locator("#program-choice-body")).to_be_hidden(timeout=10000)
+        options_before_target = dict(self.entry.options)
+        configuration_before_target = self.runtime.configuration
+        session_program_before_target = (
+            self.runtime.session.temperature_program_mode,
+            self.runtime.session.temperature_program_gangs,
+            self.runtime.session.temperature_program_steps,
+            self.runtime.session.temperature_program_start_gang_count,
+        )
+        self.assertIsNone(self.runtime.session.timeline.active)
         target_arc=self.panel.locator('[data-target-arc][role="slider"]')
+        await expect(target_arc).to_have_attribute("aria-label", "Temperatur für den nächsten Gang einstellen")
+        await expect(self.panel.locator('#current .target-caption')).to_have_text("NÄCHSTER GANG")
         await target_arc.focus()
-        await target_arc.press("PageUp")
+        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
+            await target_arc.press("PageUp")
+        response = await result.value
+        self.assertTrue(response.ok)
+        saved = await response.json()
+        self.assertEqual((saved["target_temperature"], saved["next_gang_temperature"]), (80, 80))
         await self.panel.evaluate("p=>p.temperatureChange")
         await expect(target_arc).to_have_attribute("aria-valuenow", "80", timeout=10000)
-        self.assertEqual(self.entry.options["program_mode"],"constant")
+        self.assertEqual(dict(self.entry.options), options_before_target)
+        self.assertIs(self.runtime.configuration, configuration_before_target)
+        self.assertEqual(self.entry.options["program_mode"],"progressive")
+        self.assertEqual((
+            self.runtime.session.temperature_program_mode,
+            self.runtime.session.temperature_program_gangs,
+            self.runtime.session.temperature_program_steps,
+            self.runtime.session.temperature_program_start_gang_count,
+        ), session_program_before_target)
+        self.assertIsNone(self.runtime.session.timeline.active)
+        self.assertEqual(self.runtime.controller.target_temperature, 80)
+        self.assertEqual(self.runtime.controller.next_gang_temperature, 80)
         await self.panel.get_by_role("button", name="Ändern", exact=True).click()
-        await self.panel.locator('[data-action="program-mode:individual"]').click()
+        await expect(self.panel.locator('#progression-start')).to_have_value("70")
+        await expect(self.panel.locator('#progression-end')).to_have_value("90")
         await self.panel.locator('#progression-gangs').fill("2")
-        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as result:
+        async with self.page.expect_response(lambda response: response.url.endswith(temperature_url) and response.request.method == "POST") as result:
             await self.panel.locator('[data-action="program-apply"]').click()
         response=await result.value
         self.assertTrue(response.ok)

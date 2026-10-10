@@ -124,7 +124,7 @@ class Gang:
 class Timeline:
     session_id: str
     session_started_at: datetime
-    door: Door = Door.UNKNOWN
+    door: Door = Door.CLOSED
     anchor: Event | None = None
     opening: Event | None = None
     closed_opening: Event | None = None

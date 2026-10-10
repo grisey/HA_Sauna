@@ -14,6 +14,7 @@ Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließende
 Schließung. Beide Verfahren benötigen ihn für den Eintritt. Für den erkannten
 Austritt genügen eine neue Türöffnung und der passende Erkennungsnachweis;
 ein anschließender Türschluss ist nicht erforderlich.
+Der initiale Türzustand ist geschlossen; er ersetzt keinen Türvorgang.
 
 Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
 Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
@@ -21,9 +22,11 @@ Messfenster aus dem freigegebenen Zeitraum.
 
 ## Gang mit direktem Präsenzsensor erkennen
 
-Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
-und darf nicht vor der Öffnung liegen. Sie kann auch nach dem Türschluss
-eintreffen. Jeder Türvorgang begründet höchstens einen Übergang.
+Beim Schließen einer vollständigen Türfolge muss Anwesenheit anliegen.
+Sie kann bereits vor der Öffnung bestanden haben. Eine spätere Präsenzmeldung
+startet keinen Gang anhand einer früheren Türfolge. Bei verspäteter Türerkennung
+zählt der bereits empfangene Präsenzzustand zur ursprünglichen Schließzeit.
+Jeder Türvorgang begründet höchstens einen Übergang.
 
 | Beleg | Wirkung |
 | --- | --- |

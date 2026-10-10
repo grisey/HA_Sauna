@@ -57,6 +57,7 @@ class Controller:
         self.presence_source = presence_source
         self.presence_entity = presence_entity
         self.direct_presence = None
+        self._direct_presence_history = []
         self.parameters = parameters
         self.program_mode = program_mode
         self.control_mode = control_mode
@@ -162,6 +163,10 @@ class Controller:
                 if gate[0] <= at]
         if past:
             self._gang_temperature_gates = self._gang_temperature_gates[past[-1]:]
+        past = [index for index, report in enumerate(self._direct_presence_history)
+                if report.effective_at <= at]
+        if past:
+            self._direct_presence_history = self._direct_presence_history[past[-1]:]
 
     def _recognition_context_current(self, at):
         """A later OFF/cooling boundary retires an earlier recognition stretch."""
@@ -934,6 +939,8 @@ class Controller:
                 self._create_session_light(
                     self._session.session_id, event.booking_at, ends_at
                 )
+        if event.kind == Kind.DOOR_CLOSE:
+            self._reconcile_direct_presence(event.booking_at, entry_event=event)
         self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
@@ -1366,16 +1373,26 @@ class Controller:
             return False
         self.advance(at, evaluate=False)
         self.direct_presence = report
+        self._direct_presence_history.append(report)
+        if self._session is None:
+            self._direct_presence_history = [report]
         self._evaluate(at)
         return True
 
-    def _reconcile_direct_presence(self, at):
-        """Entry needs both door edges; exit needs an opening and absence.
+    def _reconcile_direct_presence(self, at, *, entry_event=None):
+        """Only a complete door closure can start a round with present occupancy.
 
-        No waiting duration is invented. An unavailable report never establishes
-        an exit. A used door cycle cannot start or end another round.
+        Presence updates can finish a round after a new exit opening, but cannot
+        reuse an earlier entry cycle. Delayed closure uses occupancy at its
+        original time, without an invented waiting duration.
         """
-        session, report = self._session, self.direct_presence
+        session = self._session
+        report = (
+            next((report for report in reversed(self._direct_presence_history)
+                  if report.effective_at <= entry_event.effective_at
+                  and report.received_at <= self._received_at(at)), None)
+            if entry_event is not None else self.direct_presence
+        )
         if (self.presence_source != "ha_presence" or session is None
                 or not session.operation_enabled or report is None
                 or not report.available or report.received_at > self._received_at(at)):
@@ -1383,12 +1400,12 @@ class Controller:
         t = session.timeline
         opening = t.opening if t.door == Door.OPEN else t.closed_opening
         if (opening is None
-                or report.effective_at < opening.effective_at
                 or self.recognition_context_at(opening.effective_at)[1] is not None
                 or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
-            if (not t.entry_cycle_available
+            if (entry_event is None or not t.entry_cycle_available
+                    or t.anchor.event_id != entry_event.event_id
                     or report.occupancy != "present" or self._gang_start_blocked(session)
                     or not self._gang_anchor_allowed_at(t.anchor.effective_at)):
                 return False
@@ -1396,6 +1413,7 @@ class Controller:
             source = t.anchor
         else:
             if (report.occupancy != "absent"
+                    or report.effective_at < opening.effective_at
                     or opening.event_id in t.rejected_start_sources
                     or opening.effective_at <= t.active.started_at):
                 return False

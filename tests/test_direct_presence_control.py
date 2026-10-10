@@ -6,7 +6,7 @@ from test_foundation import event
 
 from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, Door, Event, Kind
 
 
 class DirectPresenceControlTests(unittest.TestCase):
@@ -33,7 +33,8 @@ class DirectPresenceControlTests(unittest.TestCase):
 
     def test_presence_and_unpaired_closure_cannot_start(self):
         self.report("on", 1)
-        self.door(Kind.DOOR_CLOSE, 2)
+        with self.assertRaises(ValueError):
+            self.door(Kind.DOOR_CLOSE, 2)
         self.c.advance(at(200))
         self.assertIsNone(self.c.session.timeline.active)
         self.assertFalse(self.c.regulation_inputs.temporary_door_heat)
@@ -109,11 +110,100 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertFalse(self.c.regulation_inputs.gang_heat_demand)
         self.assertEqual(self.c.session.timeline.gang_count, 0)
 
-    def test_existing_presence_does_not_lend_itself_to_later_entry(self):
+    def test_initial_closed_door_does_not_establish_an_entry_cycle(self):
+        timeline = self.c.session.timeline
+        self.assertEqual(timeline.door, Door.CLOSED)
+        self.assertIsNone(timeline.anchor)
+        self.assertIsNone(timeline.opening)
+        self.assertIsNone(timeline.closed_opening)
+        self.assertFalse(timeline.entry_cycle_available)
+        self.report("on", 1)
+        self.assertIsNone(self.c.session.timeline.active)
+
+    def test_existing_presence_at_complete_entry_starts_at_close(self):
         self.report("on", 1)
         self.door(Kind.DOOR_OPEN, 2)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.door(Kind.DOOR_CLOSE, 3)
+        self.assertEqual(self.c.session.timeline.active.started_at, at(3))
+        self.assertEqual(self.c.session.timeline.active.confirmation, Confirmation.CONFIRMED)
+
+    def test_presence_before_delayed_entry_does_not_use_old_door_cycle(self):
+        self.report("off", 0)
+        self.door(Kind.DOOR_OPEN, 1)
+        self.door(Kind.DOOR_CLOSE, 2)
+        self.assertIsNone(self.c.session.timeline.active)
+
+        # The real opening precedes ON, but reaches the controller later.
+        self.report("on", 302)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertFalse(any(e.kind == "gang_confirmed" for e in self.c.consumer_events))
+        self.c.process(Event("real-open", "s", Kind.DOOR_OPEN, at(301), at(303)))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.c.process(Event("real-close", "s", Kind.DOOR_CLOSE, at(304), at(305)))
+
+        gang = self.c.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(gang.start_source_event_id, "real-close")
+        self.assertEqual(gang.started_at, at(304))
+        self.assertEqual(gang.detected_at, at(305))
+        self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events), 1)
+
+    def test_late_presence_receipt_alone_does_not_book_a_closed_entry(self):
+        self.door(Kind.DOOR_OPEN, 1)
         self.door(Kind.DOOR_CLOSE, 3)
         self.assertIsNone(self.c.session.timeline.active)
+        self.report("on", 20, effective=2)
+        self.c.advance(at(21))
+        self.assertIsNone(self.c.session.timeline.active)
+        self.assertFalse(any(e.kind == "gang_confirmed" for e in self.c.consumer_events))
+        self.door(Kind.DOOR_OPEN, 22)
+        self.assertIsNone(self.c.session.timeline.active)
+        self.door(Kind.DOOR_CLOSE, 23)
+        gang = self.c.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(gang.started_at, at(23))
+        self.assertEqual(gang.detected_at, at(23))
+        self.assertEqual(gang.start_source_event_id, f"{Kind.DOOR_CLOSE}:23")
+
+    def test_presence_level_at_close_controls_entry(self):
+        for state, expected in (("on", True), ("off", False),
+                                ("unknown", False), ("unavailable", False)):
+            with self.subTest(state=state):
+                self.setUp()
+                self.report("on", 0)
+                self.door(Kind.DOOR_OPEN, 1)
+                self.report(state, 2)
+                self.assertIsNone(self.c.session.timeline.active)
+                self.door(Kind.DOOR_CLOSE, 3)
+                self.assertEqual(self.c.session.timeline.active is not None, expected)
+                self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events),
+                                 int(expected))
+                if expected:
+                    self.assertEqual(self.c.session.timeline.active.started_at, at(3))
+
+    def test_delayed_close_uses_presence_level_at_effective_closure(self):
+        for before_close, after_close, expected in (("on", "off", True),
+                                                   ("off", "on", False)):
+            with self.subTest(before_close=before_close, after_close=after_close):
+                self.setUp()
+                self.door(Kind.DOOR_OPEN, 1)
+                self.report(before_close, 2)
+                self.report(after_close, 5)
+                self.c.process(Event("late-close", "s", Kind.DOOR_CLOSE, at(4), at(6)))
+                self.assertEqual(self.c.session.timeline.active is not None, expected)
+                self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events),
+                                 int(expected))
+                self.assertEqual(self.c.session.timeline.completed, ())
+                if expected:
+                    self.assertEqual(self.c.session.timeline.active.started_at, at(4))
+                    self.assertEqual(self.c.session.timeline.active.detected_at, at(6))
+                    self.assertEqual(self.c.session.timeline.active.start_source_event_id,
+                                     "late-close")
+                    self.c.advance(at(7))
+                    self.assertIsNotNone(self.c.session.timeline.active)
+                    self.assertEqual(self.c.session.timeline.gang_count, 0)
 
     def test_minimum_temperature_blocks_entry_but_not_exit(self):
         self.c.set_temperature(25, at(0))
@@ -133,7 +223,8 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.gang_count, 1)
 
     def test_proxy_cannot_start_and_infusion_only_annotates(self):
-        self.door(Kind.DOOR_CLOSE, 1)
+        with self.assertRaises(ValueError):
+            self.door(Kind.DOOR_CLOSE, 1)
         for i, kind in enumerate((Kind.PERSON_STRONG, Kind.INFUSION), 2):
             self.assertFalse(self.door(kind, i).changed)
         self.door(Kind.DOOR_OPEN, 5)
@@ -180,7 +271,8 @@ class ProxyDoorControlTests(unittest.TestCase):
         for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
             with self.subTest(kind=kind):
                 c = controller(confirmation_minutes=1)
-                c.process(event("bare-close", Kind.DOOR_CLOSE, 1))
+                with self.assertRaises(ValueError):
+                    c.process(event("bare-close", Kind.DOOR_CLOSE, 1))
                 self.assertFalse(c.recognition_allowed(kind))
                 self.assertEqual(c.process(event("bare-signal", kind, 2)).reason,
                                  "entry_context_missing")
@@ -271,6 +363,65 @@ class ProxyDoorControlTests(unittest.TestCase):
 
 
 class DirectPresenceRuntimeTests(unittest.TestCase):
+    def test_presence_before_delayed_entry_uses_only_the_real_door_cycle(self):
+        import asyncio
+        from dataclasses import replace
+        from datetime import timedelta
+        from test_presence_regressions import START, _runtime
+        from custom_components.ha_sauna.bindings import Bindings
+        from custom_components.ha_sauna.runtime import SaunaRuntime
+
+        async def exercise():
+            clock = [START]
+            configuration = _runtime(clock).configuration
+            configuration = replace(configuration, presence_source="ha_presence",
+                bindings=Bindings({**configuration.bindings.values,
+                                   "presence": "binary_sensor.presence"}))
+            runtime = SaunaRuntime(configuration, clock=lambda: clock[0])
+            runtime.controller.set_temperature(70, START)
+            await runtime.set_operation(True)
+            sid = runtime.session.session_id
+
+            async def door(name, kind, effective, detected):
+                clock[0] = START + timedelta(seconds=detected)
+                await runtime.receive(Event(name, sid, kind,
+                    START + timedelta(seconds=effective), clock[0]))
+
+            async def presence(state, second):
+                clock[0] = START + timedelta(seconds=second)
+                await runtime.accept_presence(binary_presence(
+                    "binary_sensor.presence", state, clock[0], clock[0]))
+
+            await presence("off", 0)
+            await door("unused-open", Kind.DOOR_OPEN, 1, 1)
+            await door("unused-close", Kind.DOOR_CLOSE, 2, 2)
+            self.assertIsNone(runtime.session.timeline.active)
+            await presence("on", 302)
+            self.assertIsNone(runtime.session.timeline.active)
+            self.assertFalse(any(e.kind == "gang_confirmed" for e in runtime.consumer_events))
+            await door("real-open", Kind.DOOR_OPEN, 301, 303)
+            self.assertIsNone(runtime.session.timeline.active)
+            await door("real-close", Kind.DOOR_CLOSE, 304, 305)
+            gang = runtime.session.timeline.active
+            self.assertIsNotNone(gang)
+            self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
+            self.assertEqual(gang.start_source_event_id, "real-close")
+            self.assertEqual(gang.started_at, START + timedelta(seconds=304))
+            self.assertEqual(gang.detected_at, START + timedelta(seconds=305))
+            self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
+
+            await door("exit-open", Kind.DOOR_OPEN, 400, 400)
+            await presence("off", 401)
+            self.assertIsNone(runtime.session.timeline.active)
+            self.assertEqual(runtime.session.timeline.gang_count, 1)
+            self.assertEqual(runtime.session.timeline.completed[0].start_source_event_id,
+                             "real-close")
+            self.assertEqual(runtime.session.timeline.completed[0].ended_at,
+                             START + timedelta(seconds=401))
+            self.assertEqual(sum(e.kind == "gang_ended" for e in runtime.consumer_events), 1)
+
+        asyncio.run(exercise())
+
     def test_selected_source_drives_controller_archive_and_status(self):
         import asyncio
         from dataclasses import replace
