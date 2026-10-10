@@ -3381,9 +3381,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         )
         await expect(self.panel.locator("#progression-end")).to_be_visible()
         # This program has explicit sample endpoints, independent of the factory target.
-        async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
+        async with self.page.expect_response(lambda response: response.url.endswith(program_url) and response.request.method == "POST") as start_result:
             await self.panel.locator('#progression-start').fill("70")
             await self.panel.locator('#progression-start').press("Tab")
+        self.assertTrue((await start_result.value).ok)
+        await expect(self.panel.locator('#progression-start')).to_have_value("70")
         async with self.page.expect_response(lambda response: response.url.endswith("/temperature") and response.request.method == "POST"):
             await self.panel.locator('#progression-end').fill("86")
             await self.panel.locator('#progression-end').press("Tab")
