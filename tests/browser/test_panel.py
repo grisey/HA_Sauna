@@ -674,7 +674,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     for _ in range(3):
                         await panel.evaluate("p => p.refresh()")
                     self.assertEqual(archive_requests, [])
-                    self.assertEqual(await panel.locator("#history-loading").count(), 0)
+                    await expect(panel.locator("#history-loading")).to_be_hidden()
+                    await expect(panel.locator("#plots")).to_have_attribute("aria-busy", "false")
                     self.assertEqual(
                         await panel.locator("svg.session-chart").bounding_box(), chart_box
                     )

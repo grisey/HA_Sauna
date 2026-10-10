@@ -4126,6 +4126,8 @@ class SaunaPanel extends HTMLElement {
         this.selected = e.target.value;
         this.historySelectionGeneration = (this.historySelectionGeneration || 0) + 1;
         this.historyLoad = null;
+        this.syncHistoryLoading();
+        this.message(null, "history");
         this.shown = null;
         this.clearHistoryDisplay();
         this.highlightedEventId = null;
@@ -4777,6 +4779,7 @@ class SaunaPanel extends HTMLElement {
     this.$("#plots")?.setAttribute?.("aria-busy", String(!!this.historyLoad));
   }
   startHistoryLoad() {
+    this.syncHistoryLoading();
     if (
       !this.state ||
       !this.isConnected ||
@@ -4803,6 +4806,7 @@ class SaunaPanel extends HTMLElement {
     if (this.historyLoad?.key === key) return this.historyLoad.promise;
     const load = { key, count: 0, sessionId: initialId };
     this.historyLoad = load;
+    this.message(null, "history");
     this.syncHistoryLoading();
     const current = () =>
       this.historyLoad === load &&
@@ -4893,7 +4897,10 @@ class SaunaPanel extends HTMLElement {
         }
         if (current()) this.message(null, "history");
       } catch (error) {
-        if (current()) this.message(error, "history");
+        if (current()) {
+          this.message(error, "history");
+          if (!this.shown) this.clearHistoryDisplay();
+        }
       } finally {
         if (this.historyLoad === load) {
           this.historyLoad = null;
@@ -6691,9 +6698,11 @@ class SaunaPanel extends HTMLElement {
     }
     this.updateMarkup(
       "#plots",
-      this.historySelectionId() || this.historyLoad || this.sessions == null
-        ? '<div class="card empty" role="status">Lade Sitzungsverlauf …</div>'
-        : '<div class="card empty">Noch keine Sitzungsdaten.</div>',
+      this.messages?.history
+        ? '<div class="card empty">Sitzungsverlauf konnte nicht geladen werden.</div>'
+        : this.historySelectionId() || this.historyLoad || this.sessions == null
+          ? '<div class="card empty" role="status">Lade Sitzungsverlauf …</div>'
+          : '<div class="card empty">Noch keine Sitzungsdaten.</div>',
     );
     for (const selector of [
       "#gangs",

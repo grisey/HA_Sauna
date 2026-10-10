@@ -36,12 +36,15 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
         identities = []
         for number in range(2):
             self.now = self.base + timedelta(hours=number * 8)
+            # Refresh observations after the clock jump before the production
+            # start guard checks their validity.
+            for position in ("upper", "lower"):
+                await self.set_source(f"{position}_temperature", 70 + number)
+                await self.set_source(f"{position}_humidity", 20 + number)
             await self.runtime.set_operation(True)
             retain_session(self.runtime)
             identity = self.runtime.session.session_id
             identities.append(identity)
-            await self.set_source("upper_temperature", 70 + number)
-            await self.set_source("upper_humidity", 20 + number)
             # Use the production archive writer and real admin projection with
             # different record kinds, including the normal-view marker evidence.
             self.runtime.archive.append("detector_trace", self.now, {
