@@ -133,7 +133,7 @@ test("fractional quick-preset spacing exposes unique whole-degree commands", asy
   );
   await p.action("preset:81");
   assert.deepEqual(plain(calls[0]), [
-    "/entry/program",
+    "/entry/temperature",
     "POST",
     { target_temperature_c: 81 },
   ]);
@@ -438,7 +438,7 @@ test("an off-session preset updates the directly visible temperature selection",
   assert.doesNotMatch(current(), /program-current|data-action="program-toggle"/);
   await p.action("preset:75");
   assert.deepEqual(plain(calls), [
-    ["/entry/program", "POST", { target_temperature_c: 75 }],
+    ["/entry/temperature", "POST", { target_temperature_c: 75 }],
   ]);
   assert.equal(p.state.target_temperature, 75);
   assert.equal(p.programDirty(), false);
