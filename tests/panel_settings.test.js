@@ -81,7 +81,7 @@ for (const definition of catalog.parameters) {
   );
 }
 panel.drawSettings();
-assert.match(container.innerHTML, /Anlage konfigurieren/);
+assert.match(container.innerHTML, /Sauna konfigurieren/);
 assert.match(
   container.innerHTML,
   /href="\/config\/integrations\/integration\/ha_sauna"/,
@@ -102,7 +102,7 @@ panel.drawSettings();
 assert.equal(edited.value, "7", "refresh preserves a display draft");
 const normal = makePanel(false);
 normal.panel.drawSettings();
-assert.doesNotMatch(normal.container.innerHTML, /Anlage konfigurieren/);
+assert.doesNotMatch(normal.container.innerHTML, /Sauna konfigurieren/);
 assert.doesNotMatch(
   normal.container.innerHTML,
   /settings-section:(appearance|maintenance)/,

@@ -13,7 +13,7 @@ deaktiviert sein. Externe Lichttaster werden als manuelle Eingriffe ausgewertet.
 
 Die Home-Assistant-Integrationskonfiguration enthält **Geräte und Erkennungsverfahren**
 einschließlich Bedieneingang. Eine Änderung der Zuordnung
-erhält die gespeicherten Anlagenwerte, Programme und Darstellung.
+erhält die gespeicherten Einstellungen, Programme und Darstellung.
 
 Erforderlich sind mindestens ein vollständiges Temperatur-/Feuchtepaar,
 Heizschütz, Bedieneingang und dimmbares Licht. Temperatur und Feuchte eines
@@ -39,9 +39,9 @@ Türöffnung mit anschließendem Türschluss. Zum Ende genügen eine erneute
 Öffnung und der passende Abwesenheits- oder Lüftungsnachweis. Die [Gangerkennung](gangmodell.md) beschreibt die
 Bedingungen beider Verfahren.
 
-## Anlagenwerte einstellen
+## Betrieb, Erkennung und Licht einstellen
 
-Die Integrationskonfiguration gliedert die dauerhaft wirksamen Anlagenwerte in
+Die Integrationskonfiguration gliedert die dauerhaften Einstellungen in
 **Betrieb und Ofen**, **Sensoren und Erkennung** sowie **Licht**. Die jeweiligen
 Untergruppen enthalten Regelung, Erkennung und Lichtautomatik.
 Änderungen erfordern Administratorrechte und eine vollständig beendete Sitzung.

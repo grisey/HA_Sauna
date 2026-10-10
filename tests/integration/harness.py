@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 
 from custom_components.ha_sauna.bindings import ROLES
+from custom_components.ha_sauna.config_flow import pack_binding_input
 from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
 from custom_components.ha_sauna.settings import async_set_parameters
 
@@ -88,7 +89,10 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
                 hass.states.async_set(entity_id, "off", {})
     flow = await hass.config_entries.flow.async_init("ha_sauna", context={"source": "user"})
     assert flow["step_id"] == "user", flow
-    result = await hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Testsauna", "control_input_mode": "switch", **bindings})
+    flow = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], {"name": "Testsauna"})
+    assert flow["step_id"] == "entities", flow
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], pack_binding_input({"name": "Testsauna", "control_input_mode": "switch", **bindings}))
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()
     entry = result["result"]

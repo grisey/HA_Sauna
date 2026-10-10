@@ -118,6 +118,24 @@ class PresentationTests(unittest.TestCase):
                 self.assertTrue(options["data_description"][key])
         self.assertNotIn("Grundgerüst", json.dumps(strings))
         self.assertNotIn("Testsession", json.dumps(strings))
+        setup_entities = strings["config"]["step"]["entities"]
+        options_entities = strings["options"]["step"]["binding_entities"]
+        for part in ("data", "data_description"):
+            self.assertEqual(
+                {key: value for key, value in setup_entities[part].items() if key != "name"},
+                options_entities[part],
+            )
+        self.assertEqual(setup_entities["sections"], options_entities["sections"])
+        from custom_components.ha_sauna.bindings import ROLES
+        translated = set(options_entities["data"])
+        for group in options_entities["sections"].values():
+            self.assertTrue(group["name"])
+            self.assertEqual(set(group["data"]), set(group["data_description"]))
+            self.assertFalse(translated.intersection(group["data"]))
+            translated.update(group["data"])
+        self.assertEqual(translated, {role.key for role in ROLES} | {
+            "control_input_mode", "button_event_type", "presence_source",
+        })
 
     def test_parameter_labels_and_help_come_from_the_catalog(self):
         catalog = {item["key"]: item for item in section("parameters")}

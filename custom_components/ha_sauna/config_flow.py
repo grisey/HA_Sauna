@@ -7,10 +7,12 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import section as form_section
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .bindings import ROLES, BindingError, Bindings, metadata_error, validate_metadata
+from .bindings import ROLE_BY_KEY, ROLES, BindingError, Bindings, metadata_error, validate_metadata
 from .const import CONF_BINDINGS, DOMAIN
 from .core.defaults import instance_default, section
 from .core.parameters import BY_KEY, EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
@@ -30,7 +32,132 @@ def internal_control_source(hass: HomeAssistant, key: str, entity_id: str) -> bo
     return entry is not None and entry.platform == DOMAIN
 
 
-def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=None) -> vol.Schema:
+DEVICE_ROLES = {
+    "upper_device": ("upper_temperature", "upper_humidity", "upper_status"),
+    "lower_device": ("lower_temperature", "lower_humidity", "lower_status"),
+    "presence_device": ("presence", "presence_illuminance"),
+}
+
+
+BINDING_SECTIONS = {
+    "upper_sensors": DEVICE_ROLES["upper_device"],
+    "lower_sensors": DEVICE_ROLES["lower_device"],
+    "presence_sensors": DEVICE_ROLES["presence_device"],
+    "additional_devices": ("heater_feedback", "heater_power", "audio_output"),
+    "environment": tuple(role.key for role in ROLES if role.key.startswith("environment_")),
+}
+BINDING_SECTION_BY_KEY = {
+    key: group for group, keys in BINDING_SECTIONS.items() for key in keys
+}
+
+
+def pack_binding_input(values):
+    """Pack flat configuration values into the native form section payload."""
+    packed = {group: {} for group in BINDING_SECTIONS}
+    for key, value in values.items():
+        if group := BINDING_SECTION_BY_KEY.get(key):
+            packed[group][key] = value
+        else:
+            packed[key] = value
+    return packed
+
+
+def unpack_binding_input(values):
+    """Flatten only declared section fields; leave unexpected keys for validation."""
+    unpacked = {}
+    for key, value in values.items():
+        if key in BINDING_SECTION_BY_KEY:
+            raise BindingError("base", "unknown_binding")
+        if key not in BINDING_SECTIONS:
+            unpacked[key] = value
+            continue
+        if not isinstance(value, dict) or set(value) - set(BINDING_SECTIONS[key]):
+            raise BindingError("base", "unknown_binding")
+        unpacked.update(value)
+    return unpacked
+
+
+def binding_form_errors(errors):
+    """Native sections display errors on their heading, keeping them visible."""
+    return {BINDING_SECTION_BY_KEY.get(key, key): value for key, value in errors.items()}
+
+
+def binding_devices(hass: HomeAssistant, saved) -> dict[str, str]:
+    """Use the primary measurement as device suggestion; keep manual corrections."""
+    registry = er.async_get(hass)
+    result = {}
+    for device_key, keys in DEVICE_ROLES.items():
+        entity_id = saved.get(keys[0])
+        entry = registry.async_get(entity_id) if entity_id else None
+        if entry is not None and entry.device_id:
+            result[device_key] = entry.device_id
+    return result
+
+
+def device_schema(hass: HomeAssistant, *, include_name=False, saved=None) -> vol.Schema:
+    fields = {}
+    if include_name:
+        fields[vol.Required("name")] = selector.TextSelector()
+    registry = er.async_get(hass)
+    states = hass.states.async_all()
+    previous_devices = binding_devices(hass, saved or {})
+    for device_key, keys in DEVICE_ROLES.items():
+        devices = set()
+        # Generic status entities alone do not identify a measurement device.
+        measurement_keys = tuple(key for key in keys if not key.endswith("_status"))
+        for state in states:
+            entry = registry.async_get(state.entity_id)
+            if entry is None or not entry.device_id:
+                continue
+            if any(metadata_error(ROLE_BY_KEY[key], state.entity_id, state.attributes) is None
+                   and not internal_control_source(hass, key, state.entity_id)
+                   for key in measurement_keys):
+                devices.add(entry.device_id)
+        previous = previous_devices.get(device_key)
+        if previous:
+            devices.add(previous)
+        device_registry = dr.async_get(hass) if devices else None
+        options = []
+        for device_id in sorted(devices):
+            device = device_registry.async_get(device_id)
+            label = (device.name_by_user or device.name or device_id) if device else device_id
+            options.append({"value": device_id, "label": label})
+        fields[vol.Optional(device_key)] = selector.SelectSelector({
+            "options": options, "mode": "dropdown",
+        })
+    return vol.Schema(fields)
+
+
+def device_bindings(hass: HomeAssistant, devices, *, saved=None):
+    """Suggest only unique compatible entities; changed devices replace their roles."""
+    saved = saved or {}
+    values = dict(saved)
+    errors = {}
+    previous = binding_devices(hass, saved)
+    registry = er.async_get(hass)
+    states = hass.states.async_all()
+    for device_key, keys in DEVICE_ROLES.items():
+        device_id = devices.get(device_key)
+        if not device_id or device_id == previous.get(device_key):
+            continue
+        for key in keys:
+            values.pop(key, None)
+            candidates = []
+            for state in states:
+                entry = registry.async_get(state.entity_id)
+                if entry is not None and entry.device_id == device_id and (
+                    metadata_error(ROLE_BY_KEY[key], state.entity_id, state.attributes) is None
+                    and not internal_control_source(hass, key, state.entity_id)
+                ):
+                    candidates.append(state.entity_id)
+            if len(candidates) == 1:
+                values[key] = candidates[0]
+            elif len(candidates) > 1:
+                errors[key] = "ambiguous_entity"
+    return values, errors
+
+
+def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=None, errors=None) -> vol.Schema:
     fields: dict = {}
     saved = saved or {}
     states = hass.states.async_all()
@@ -77,7 +204,30 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
             ] = selector.SelectSelector(
                 {"options": ["proxy", "ha_presence"], "translation_key": "presence_source"}
             )
-    return vol.Schema(fields)
+    grouped = {}
+    for marker, field in fields.items():
+        key = str(marker)
+        group = BINDING_SECTION_BY_KEY.get(key)
+        if group is None:
+            grouped[marker] = field
+            continue
+        group_marker = vol.Required(group)
+        if group_marker in grouped:
+            continue
+        keys = BINDING_SECTIONS[group]
+        complete = True
+        if group in ("upper_sensors", "lower_sensors"):
+            complete = all(saved.get(key) for key in keys[:2])
+        elif group == "presence_sensors":
+            complete = bool(saved.get("presence"))
+        collapsed = complete and not any(key in (errors or {}) for key in keys)
+        if group in ("upper_sensors", "lower_sensors") and (errors or {}).get("base") == "sensor_pair_required":
+            collapsed = False
+        grouped[group_marker] = form_section(
+            vol.Schema({marker: value for marker, value in fields.items() if str(marker) in keys}),
+            {"collapsed": collapsed},
+        )
+    return vol.Schema(grouped)
 
 
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any], *, saved=None) -> Bindings:
@@ -128,6 +278,30 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             name = user_input.get("name", "")
+            if not isinstance(name, str) or not name.strip():
+                errors["name"] = "required"
+            else:
+                self._device_values, self._device_errors = device_bindings(self.hass, user_input)
+                self._device_values["name"] = name.strip()
+                return await self.async_step_entities()
+        return self.async_show_form(
+            step_id="user",
+            data_schema=self.add_suggested_values_to_schema(
+                device_schema(self.hass, include_name=True), user_input
+            ),
+            errors=errors,
+        )
+
+    async def async_step_entities(self, user_input: dict[str, Any] | None = None):
+        errors = {}
+        if user_input is not None:
+            try:
+                user_input = unpack_binding_input(user_input)
+            except BindingError as error:
+                errors[error.key] = error.code
+                user_input = None
+        if user_input is not None:
+            name = user_input.get("name", "")
             name = name.strip() if isinstance(name, str) else ""
             try:
                 if not name:
@@ -158,12 +332,15 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title=name, data={}, options=configuration.as_options()
                 )
+        suggested = user_input if user_input is not None else getattr(self, "_device_values", {})
+        errors = errors or (getattr(self, "_device_errors", {}) if user_input is None else {})
         return self.async_show_form(
-            step_id="user",
+            step_id="entities",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(self.hass, include_name=True, saved=user_input), user_input
+                binding_schema(self.hass, include_name=True, saved=suggested, errors=errors),
+                pack_binding_input(suggested)
             ),
-            errors=errors,
+            errors=binding_form_errors(errors),
         )
 
     @staticmethod
@@ -312,7 +489,29 @@ class SaunaOptionsFlow(OptionsFlow):
     async def async_step_bindings(self, user_input: dict[str, Any] | None = None):
         if self._has_session():
             return self.async_abort(reason="session_exists")
+        saved = self.config_entry.options[CONF_BINDINGS]
+        if user_input is not None:
+            self._device_values, self._device_errors = device_bindings(
+                self.hass, user_input, saved=saved
+            )
+            return await self.async_step_binding_entities()
+        return self.async_show_form(
+            step_id="bindings",
+            data_schema=self.add_suggested_values_to_schema(
+                device_schema(self.hass, saved=saved), binding_devices(self.hass, saved)
+            ),
+        )
+
+    async def async_step_binding_entities(self, user_input: dict[str, Any] | None = None):
+        if self._has_session():
+            return self.async_abort(reason="session_exists")
         errors = {}
+        if user_input is not None:
+            try:
+                user_input = unpack_binding_input(user_input)
+            except BindingError as error:
+                errors[error.key] = error.code
+                user_input = None
         saved = {
             **self.config_entry.options[CONF_BINDINGS],
             **{
@@ -327,8 +526,14 @@ class SaunaOptionsFlow(OptionsFlow):
                 )},
                 **user_input,
             }
-            if user_input is not None else saved
+            if user_input is not None else {**saved, **getattr(self, "_device_values", saved)}
         )
+        if user_input is None and hasattr(self, "_device_values"):
+            # Removed roles from a changed device must not return via saved suggestions.
+            for key in ROLE_BY_KEY:
+                if key not in self._device_values:
+                    suggested.pop(key, None)
+            errors = errors or self._device_errors
         if user_input is not None:
             try:
                 input_options = {
@@ -372,12 +577,12 @@ class SaunaOptionsFlow(OptionsFlow):
                     data=candidate,
                 )
         return self.async_show_form(
-            step_id="bindings",
+            step_id="binding_entities",
             data_schema=self.add_suggested_values_to_schema(
-                binding_schema(self.hass, saved={**saved, **suggested}),
-                suggested,
+                binding_schema(self.hass, saved=suggested, errors=errors),
+                pack_binding_input(suggested),
             ),
-            errors=errors,
+            errors=binding_form_errors(errors),
         )
 
 

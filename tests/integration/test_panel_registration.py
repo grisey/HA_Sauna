@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from custom_components.ha_sauna.const import DOMAIN
+from custom_components.ha_sauna.config_flow import pack_binding_input
 from custom_components.ha_sauna.frontend import register
 from harness import seed_sources, start_hass
 
@@ -56,13 +57,16 @@ class PanelRegistrationTests(unittest.IsolatedAsyncioTestCase):
             flow = await hass.config_entries.flow.async_init(
                 DOMAIN, context={"source": "user"})
             self.assertEqual(flow["step_id"], "user")
+            flow = await hass.config_entries.flow.async_configure(
+                flow["flow_id"], {"name": "Testsauna"})
+            self.assertEqual(flow["step_id"], "entities")
             with patch(
                 "custom_components.ha_sauna.frontend.register",
                 side_effect=RuntimeError("synthetic panel registration failure"),
             ):
                 result = await hass.config_entries.flow.async_configure(
                     flow["flow_id"],
-                    {"name": "Testsauna", "control_input_mode": "switch", **bindings},
+                    pack_binding_input({"name": "Testsauna", "control_input_mode": "switch", **bindings}),
                 )
                 self.assertEqual(result["type"], "create_entry")
                 await hass.async_block_till_done()

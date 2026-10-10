@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
+from custom_components.ha_sauna.config_flow import pack_binding_input
 from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, ParameterError
 from custom_components.ha_sauna.settings import async_set_parameters
 
@@ -41,8 +42,10 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "bindings"})
         self.assertEqual(flow["step_id"], "bindings")
+        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {})
+        self.assertEqual(flow["step_id"], "binding_entities")
         result = await self.hass.config_entries.options.async_configure(
-            flow["flow_id"], dict(entry.options["bindings"]))
+            flow["flow_id"], pack_binding_input(entry.options["bindings"]))
         self.assertEqual(result["type"], "create_entry")
         await self.hass.async_block_till_done()
         self.assertEqual(entry.runtime_data.configuration.as_options(), preserved)
@@ -131,8 +134,10 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "bindings"})
         self.assertEqual(flow["step_id"], "bindings")
+        flow = await self.hass.config_entries.options.async_configure(flow["flow_id"], {})
+        self.assertEqual(flow["step_id"], "binding_entities")
         bindings = {**entry.options["bindings"], "upper_temperature": "sensor.replacement"}
-        await self.hass.config_entries.options.async_configure(flow["flow_id"], bindings)
+        await self.hass.config_entries.options.async_configure(flow["flow_id"], pack_binding_input(bindings))
         await self.hass.async_block_till_done()
         saved_id = entry.entry_id
         await self.hass.async_stop(force=True)
@@ -259,12 +264,15 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         from harness import seed_sources
         bindings = seed_sources(self.hass)
         flow = await self.hass.config_entries.flow.async_init("ha_sauna", context={"source": "user"})
+        flow = await self.hass.config_entries.flow.async_configure(
+            flow["flow_id"], {"name": "Test"})
+        self.assertEqual(flow["step_id"], "entities")
         bad = {**bindings, "lower_temperature": bindings["upper_temperature"]}
-        result = await self.hass.config_entries.flow.async_configure(flow["flow_id"], {"name": "Test", **bad})
-        self.assertEqual(result["errors"], {"lower_temperature": "duplicate_sensor"})
+        result = await self.hass.config_entries.flow.async_configure(flow["flow_id"], pack_binding_input({"name": "Test", **bad}))
+        self.assertEqual(result["errors"], {"lower_sensors": "duplicate_sensor"})
         self.assertEqual(self.hass.config_entries.async_entries("ha_sauna"), [])
         result = await self.hass.config_entries.flow.async_configure(
-            flow["flow_id"], {"name": "Test", **bindings})
+            flow["flow_id"], pack_binding_input({"name": "Test", **bindings}))
         self.assertEqual(result["type"], "create_entry")
         await self.hass.async_block_till_done()
         entry = result["result"]

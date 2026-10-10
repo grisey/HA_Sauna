@@ -653,3 +653,123 @@ test("fixed user and admin panels navigate an archive while its first page loads
     assert.ok(p.historyDomain()[0] > Date.parse("2031-01-01"));
   }
 });
+
+test("six-hour four-source cold pagination indexes each original once and reuses warm geometry", async () => {
+  const { performance } = require("node:perf_hooks");
+  const origin = Date.parse("2032-01-01T00:00:00Z");
+  const records = [];
+  for (let second = -900; second <= 6 * 3600 + 900; second += 2)
+    for (const position of ["upper", "lower"])
+      for (const quantity of ["temperature", "humidity"]) {
+        const value = second % 997 === 0 ? null : 40.125 + (second % 101) / 8;
+        records.push({
+          id: records.length + 1,
+          kind: "measurement",
+          payload: {
+            position,
+            quantity,
+            received_at: new Date(origin + second * 1000).toISOString(),
+            value,
+            raw_value: value == null ? null : String(value),
+          },
+        });
+      }
+  const archived = {
+    timeline: {
+      session_id: "volume",
+      session_started_at: new Date(origin).toISOString(),
+    },
+    ended_at: new Date(origin + 6 * 3600 * 1000).toISOString(),
+    measurement_ttl_seconds: 5,
+  };
+  let requests = 0,
+    bytes = 0,
+    parseMilliseconds = 0,
+    preparationMilliseconds = 0,
+    indexedRecordReads = 0,
+    binVisits = 0;
+  const chart = { prepared: new Map() };
+  const { p } = panel(async (request) => {
+    if (request.endsWith("/archive")) return [{ session_id: "volume" }];
+    requests++;
+    const after = Number(
+      new URL(request, "http://synthetic.test").searchParams.get("after"),
+    );
+    const rows = records.slice(after, after + 5000);
+    const wire = JSON.stringify({
+      session: archived,
+      phase_projection: { intervals: [] },
+      records: rows,
+      next_after: rows.length === 5000 ? rows.at(-1).id : null,
+    });
+    bytes += Buffer.byteLength(wire);
+    const start = performance.now();
+    const decoded = JSON.parse(wire);
+    parseMilliseconds += performance.now() - start;
+    return decoded;
+  });
+  p.selected = "volume";
+  p.historySessionId = "volume";
+  p.positions = new Set(["upper", "lower"]);
+  p.window = [origin - 900000, origin + (6 * 3600 + 900) * 1000];
+  const cache = p.historyCache("volume");
+  cache.records = new Proxy(cache.records, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) indexedRecordReads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const append = p.appendHistoryDisplayLevel;
+  p.appendHistoryDisplayLevel = function (...args) {
+    binVisits++;
+    return append.apply(this, args);
+  };
+  p.drawHistory = function () {
+    const start = performance.now();
+    this.historyIndex(this.shown.records);
+    this.historyModel(chart, this.shown.session);
+    preparationMilliseconds += performance.now() - start;
+  };
+  const start = performance.now();
+  await p.startHistoryLoad();
+  const coldMilliseconds = performance.now() - start;
+  assert.equal(p.errors.history, null);
+  assert.equal(cache.records.length, 46804);
+  assert.equal(requests, 10);
+  assert.equal(indexedRecordReads, records.length, "earlier pages are never reindexed");
+  assert.equal(binVisits, records.length, "cold pages extend existing display bins");
+  const prepared = [...chart.prepared.values()];
+  const readsBeforeWarm = indexedRecordReads;
+  const binsBeforeWarm = binVisits;
+  await p.startHistoryLoad();
+  p.drawHistory();
+  assert.equal(requests, 10, "a completed warm archive performs no requests");
+  assert.equal(indexedRecordReads, readsBeforeWarm);
+  assert.equal(binVisits, binsBeforeWarm);
+  assert.ok(
+    [...chart.prepared.values()].every((value, index) => value === prepared[index]),
+  );
+  for (const position of p.positions)
+    for (const quantity of ["temperature", "humidity"])
+      for (const point of p.series(position, quantity)) {
+        assert.equal(point.time, Date.parse(point.source.received_at));
+        assert.equal(point.value, point.source.value);
+      }
+  console.log(
+    "HISTORY_VOLUME_BENCHMARK " +
+      JSON.stringify({
+        records: records.length,
+        sessionHours: 6,
+        sources: 4,
+        pages: requests,
+        responseBytes: bytes,
+        indexedRecordReads,
+        binVisits,
+        coldMilliseconds,
+        parseMilliseconds,
+        preparationMilliseconds,
+        scope:
+          "production pagination, JSON decode, index and display preparation; excludes network and browser paint",
+      }),
+  );
+});

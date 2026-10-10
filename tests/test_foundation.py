@@ -458,7 +458,7 @@ class PackagingTests(unittest.TestCase):
         basic_fields = {role.key for role in ROLES} | {
             "control_input_mode", "button_event_type", "presence_source",
         }
-        self.assertEqual(set(strings["config"]["step"]), {"user"})
+        self.assertEqual(set(strings["config"]["step"]), {"user", "entities"})
         areas = {
             group["id"] for group in section("frontend")["settings_groups"]
             if group.get("surface", "panel") == "integration"
@@ -470,19 +470,18 @@ class PackagingTests(unittest.TestCase):
         }
         self.assertEqual(
             set(strings["options"]["step"]),
-            {"init", "bindings", *areas, *(f"parameters_{key}" for key in subgroups)},
+            {"init", "bindings", "binding_entities", *areas, *(f"parameters_{key}" for key in subgroups)},
         )
         self.assertEqual(
             set(strings["options"]["step"]["init"]["menu_options"]),
             {"bindings", *areas},
         )
-        self.assertEqual(
-            set(strings["config"]["step"]["user"]["data"]),
-            basic_fields | {"name"},
-        )
-        self.assertEqual(
-            set(strings["options"]["step"]["bindings"]["data"]), basic_fields,
-        )
+        for scope, step in (("config", "entities"), ("options", "binding_entities")):
+            form = strings[scope]["step"][step]
+            translated_fields = set(form["data"])
+            for group in form["sections"].values():
+                translated_fields.update(group["data"])
+            self.assertEqual(translated_fields, basic_fields | ({"name"} if scope == "config" else set()))
 
     def test_ha_transport_is_confined_to_device_adapter(self):
         folder = ROOT / "custom_components/ha_sauna"

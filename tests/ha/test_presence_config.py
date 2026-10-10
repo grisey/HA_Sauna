@@ -13,13 +13,19 @@ class PresenceConfigTests(unittest.IsolatedAsyncioTestCase):
         from custom_components.ha_sauna import config_flow as module
 
         hass = SimpleNamespace(states=SimpleNamespace(async_all=lambda: []))
-        keys = [marker.schema for marker in module.binding_schema(hass).schema]
+        schema = module.binding_schema(hass)
+        keys = []
+        for marker, value in schema.schema.items():
+            if hasattr(value, "schema"):
+                keys.extend(str(key) for key in value.schema.schema)
+            else:
+                keys.append(str(marker))
         for sequence in (
             ["upper_temperature", "upper_humidity", "upper_status"],
             ["lower_temperature", "lower_humidity", "lower_status"],
-            ["heater", "heater_feedback", "heater_power"],
+            ["heater_feedback", "heater_power", "audio_output"],
             ["control_input", "control_input_mode", "button_event_type"],
-            ["presence", "presence_source"],
+            ["presence", "presence_illuminance", "presence_source"],
         ):
             with self.subTest(sequence=sequence):
                 start = keys.index(sequence[0])

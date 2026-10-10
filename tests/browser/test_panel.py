@@ -1919,7 +1919,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.page.reload()
         await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        await self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True).click()
+        await self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True).click()
         await expect(self.page).to_have_url(re.compile(r"/config/integrations/integration/ha_sauna$"))
         row = self.page.locator("ha-config-entry-row").filter(has_text=self.entry.title)
         await expect(row).to_be_visible(timeout=30000)
@@ -1991,12 +1991,78 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.configuration.as_options(), before)
         self.assertEqual(self.errors, [])
 
+    async def test_native_device_selection_assigns_presence_and_illuminance(self):
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        device = dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self.entry.entry_id,
+            identifiers={("fixture", "presence-device")}, name="Präsenzsensor Prüffixture",
+        )
+        expected = {}
+        for role, domain, device_class, unit, value in (
+            ("presence", "binary_sensor", "occupancy", None, "off"),
+            ("presence_illuminance", "sensor", "illuminance", "lx", "42.25"),
+        ):
+            entity = er.async_get(self.hass).async_get_or_create(
+                domain, "fixture", role, config_entry=self.entry, device_id=device.id,
+                original_name=role, suggested_object_id="fixture_" + role,
+            )
+            attrs = {"device_class": device_class}
+            if unit:
+                attrs["unit_of_measurement"] = unit
+            self.hass.states.async_set(entity.entity_id, value, attrs)
+            expected[role] = entity.entity_id
+        self.assertTrue(await async_setup_component(self.hass, "logger", {}))
+        self.assertTrue(await async_setup_component(self.hass, "config", {}))
+        await self.hass.async_block_till_done()
+        await self.page.reload()
+        await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+        await self.panel.locator('.main-tabs [data-action="settings"]').click()
+        await self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True).click()
+        row = self.page.locator("ha-config-entry-row").filter(has_text=self.entry.title)
+        await expect(row).to_be_visible(timeout=30000)
+        configure = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
+          'ui.panel.config.integrations.config_entry.configure')""")
+        await row.get_by_role("button", name=configure, exact=True).click()
+        dialog = self.page.locator("dialog-data-entry-flow")
+        await dialog.locator("step-flow-menu").get_by_text("Geräte und Erkennungsverfahren", exact=True).click()
+        device_selector = dialog.locator("ha-selector-select").filter(has_text="Präsenzsensor")
+        await device_selector.get_by_role("combobox").click()
+        await self.page.get_by_role("option", name="Präsenzsensor Prüffixture", exact=True).click()
+        screenshots = Path(os.environ.get("HA_SAUNA_BROWSER_ARTIFACT_DIR", tempfile.mkdtemp())) / "screenshots"
+        screenshots.mkdir(parents=True, exist_ok=True)
+        await self.page.screenshot(path=str(screenshots / "device_selection.png"), full_page=True)
+        submit = await self.page.evaluate("""() => document.querySelector('home-assistant').hass.localize(
+          'ui.panel.config.integrations.config_flow.submit')""")
+        await dialog.get_by_role("button", name=submit, exact=True).click()
+        await expect(dialog.get_by_text("Gerätezuordnung prüfen", exact=True)).to_be_visible()
+        await dialog.get_by_text("Präsenz und Lichtstärke", exact=True).click()
+        selectors = dialog.locator("ha-selector-entity")
+        values = await selectors.evaluate_all("elements => elements.map(element => element.value)")
+        self.assertIn(expected["presence"], values)
+        self.assertIn(expected["presence_illuminance"], values)
+        await self.page.screenshot(path=str(screenshots / "device_assignments.png"), full_page=True)
+        before = self.entry.runtime_data.configuration.as_options()
+        async with self.page.expect_response(lambda response:
+                "/api/config/config_entries/options/flow/" in response.url
+                and response.request.method == "POST") as response:
+            await dialog.get_by_role("button", name=submit, exact=True).click()
+        saved = await response.value
+        self.assertTrue(saved.ok)
+        self.assertEqual((await saved.json())["type"], "create_entry")
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        before["bindings"].update(expected)
+        self.assertEqual(self.runtime.configuration.as_options(), before)
+        self.assertEqual(self.errors, [])
+
     async def test_installation_settings_belong_to_ha_options_and_preserve_hidden_values(self):
         from custom_components.ha_sauna.settings import async_set_parameters
         from test_presence_runtime import PresenceRuntimeIntegrationTests
 
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        link = self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True)
+        link = self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True)
         await expect(link).to_have_attribute("href", "/config/integrations/integration/ha_sauna")
         for group in ("operation", "sensors", "light"):
             await expect(self.panel.locator(f'[data-action="settings-section:{group}"]')).to_have_count(0)
@@ -2688,7 +2754,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await info_button.click()
         await expect(popup).to_be_hidden()
         await self.panel.locator('.main-tabs [data-action="settings"]').click()
-        await expect(self.panel.get_by_role("link", name="Anlage konfigurieren", exact=True)).to_have_css("color", "rgb(0, 0, 0)")
+        await expect(self.panel.get_by_role("link", name="Sauna konfigurieren", exact=True)).to_have_css("color", "rgb(0, 0, 0)")
         await self.open_settings_section("maintenance")
         await expect(self.panel.get_by_role("link", name="Home-Assistant-Protokoll öffnen")).to_have_css("color", "rgb(255, 255, 255)")
         await self.open_settings_section("appearance")

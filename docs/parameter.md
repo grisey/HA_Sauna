@@ -5,15 +5,15 @@
 | Ort | Bereich und Inhalt |
 | --- | --- |
 | Home-Assistant-Integrationskonfiguration | **Geräte und Erkennungsverfahren**: Sensoren, Schaltausgänge, Bedieneingang und Erkennungsverfahren. |
-| Home-Assistant-Integrationskonfiguration | **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**: dauerhaft wirksame Anlagenwerte, nach Funktion in Untergruppen gegliedert. |
+| Home-Assistant-Integrationskonfiguration | **Betrieb und Ofen**, **Sensoren und Erkennung**, **Licht**: dauerhafte Einstellungen, nach Funktion in Untergruppen gegliedert. |
 | Sauna-Panel → **Einstellungen** | **Programme und Start**: Programmbibliothek sowie Taster- und Startvorgaben. |
 | Sauna-Panel → **Einstellungen** | **Darstellung**: Instrumente und konstante Temperaturen der Schnellwahl. |
 | Sauna-Panel → **Einstellungen** | **Daten und Wartung**: Archiv, Protokollierung und Zurücksetzen. |
 | Sauna-Panel → **Einstellungen** | **Persönlich**: Sauna als Startseite des aktuellen Home-Assistant-Profils. |
 | Sauna-Panel → Steuerung | Aktuelle Temperaturwahl und vorübergehende Ofen- oder Lichtwahl. |
 
-Gespeicherte Anlagenwerte gelten unmittelbar für den Betrieb und bleiben nach
-einem Neustart erhalten. Gerätezuordnungen und Anlagenwerte sind mit
+Die Einstellungen für Betrieb, Erkennung und Licht gelten unmittelbar und bleiben
+nach einem Neustart erhalten. Sie und die Gerätezuordnungen sind mit
 Administratorrechten nach vollständigem Sitzungsende änderbar.
 
 ## Entitätsrollen
@@ -28,7 +28,15 @@ Administratorrechten nach vollständigem Sitzungsende änderbar.
 | Unabhängiger Heiznachweis, optional | `switch` oder `binary_sensor` |
 | Ofenleistung, optional | `sensor`, Klasse `power`, W oder kW |
 | Sensorstatus, optional | `binary_sensor` oder klassen- und einheitenloser Statussensor |
+| Lichtstärke am Präsenzsensor, optional | `sensor`, Klasse `illuminance`, lx |
 | Präsenz, optional | `binary_sensor`, Klasse `occupancy`, `presence` oder `motion` |
+
+Nach Auswahl eines Sensorgeräts werden eindeutig passende Entitäten zugeordnet.
+Bei mehreren passenden Messkanälen bleibt die Auswahl offen; einzelne Zuordnungen
+können korrigiert werden.
+
+Die Lichtstärke des Präsenzsensors wird ausschließlich zur Sitzung archiviert,
+mit Originalzustand, Einheit und HA-Zeitstempeln. Sie beeinflusst die Lichtsteuerung nicht.
 
 Mindestens ein vollständiges Temperatur-/Feuchtepaar ist erforderlich.
 Beide Werte müssen denselben Messort abbilden, auch für die Berechnung der
@@ -61,8 +69,8 @@ HA-Aktualisierungszeit bleiben getrennt.
 | --- | --- |
 | Solltemperaturen | Gemeinsame Grenzen für direkte Wahl, Programme und Tastervorgabe. Eingaben und Zwischenstufen werden auf ganze Grad gerundet; ab einem halben Grad aufwärts. |
 | Helligkeitsskala | Muss dem konfigurierten Maximalwert des Lichtgeräts entsprechen, damit eigene Befehle und Geräterückmeldungen zusammenpassen. |
-| Personenprüffenster | Müssen ganzzahlige Vielfache des Personen-Prüfabstands sein. |
-| Höchstalter eines Messwerts | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
+| Vergleichszeiten der Personenerkennung | Müssen ganzzahlige Vielfache des Auswertungsabstands sein. |
+| Höchstalter der Messwerte | Muss die regulären Meldeabstände der jeweiligen Quelle abdecken. |
 
 [Ausfälle und Schutzabschaltung](betrieb.md#bei-sensorausfall-oder-schutzabschaltung)
 

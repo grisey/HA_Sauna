@@ -41,6 +41,7 @@ class HADevice:
         }
         self.values = runtime.configuration.parameters.values
         self.states = {}
+        self._illuminance_session_recorded = None
         self._button_event_types = None
         self.source_received_at = {}
         self.measurements = {}
@@ -137,6 +138,10 @@ class HADevice:
             ):
                 self._button_event_types = tuple(event_types)
         self.source_received_at[role] = received_at
+        if role == "presence_illuminance":
+            if not initial:
+                self._archive_illuminance(received_at)
+            return
         if initial and role == "control_input" and state is not None:
             self.last_input_event = state.state
         if role in (
@@ -209,6 +214,33 @@ class HADevice:
                 },
                 self.runtime.session.session_id,
             )
+
+    def _archive_illuminance(self, at, *, snapshot=False):
+        """Keep the original light reading separate from regulation measurements."""
+        session = self.runtime.session
+        if self.runtime.archive is None or session is None:
+            return
+        state = self.states.get("presence_illuminance")
+        self.runtime.archive.append(
+            "illuminance", at,
+            {
+                "source": self.bindings["presence_illuminance"],
+                "state": state.state if state else "unavailable",
+                "attributes": dict(state.attributes) if state else {},
+                "last_changed": state.last_changed if state else None,
+                "last_updated": state.last_updated if state else None,
+                "last_reported": state.last_reported if state else None,
+                "session_start_snapshot": snapshot,
+            },
+            session.session_id,
+        )
+        self._illuminance_session_recorded = session.session_id
+
+    def archive_illuminance_snapshot(self, at):
+        session = self.runtime.session
+        if (session is not None
+                and session.session_id != self._illuminance_session_recorded):
+            self._archive_illuminance(at, snapshot=True)
 
     @property
     def available_button_session_gestures(self):

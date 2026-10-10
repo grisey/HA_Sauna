@@ -496,25 +496,43 @@ class Archive:
                     "upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"
                 ) if key in bindings
             )
-            context_filter = ""
-            context_args = ()
+            # Keep session and context lookups as separate indexed streams.
+            # An OR over session_id and JSON predicates makes SQLite walk
+            # unrelated retained records again for every page. Union IDs
+            # first so only this page's original payloads are materialized.
+            streams = [
+                "SELECT id FROM records WHERE entry_id=? AND session_id=? AND id>?"
+                + kind_filter
+            ]
+            stream_args = [self.entry_id, session_id, after, *(kinds or ())]
             if sources:
-                context_filter = (
-                    " OR (kind='measurement' AND ("
+                source_filter = (
+                    " AND ("
                     + " OR ".join(
                         "(json_extract(payload,'$.source')=? AND json_extract(payload,'$.position')=? "
                         "AND json_extract(payload,'$.quantity')=?)" for _ in sources
                     ) + ")"
-                    " AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
-                    " AND (julianday(received_at)<=julianday(?) OR julianday(received_at)>=julianday(?)))"
                 )
-                context_args = (*(value for source in sources for value in source),
-                                window["started_at"], window["ended_at"],
-                                started.isoformat(), (ended or current).isoformat())
+                # The middle of the session is already covered by its own
+                # stream. Both inclusive edges retain the old boundary rule;
+                # UNION removes records present in more than one stream.
+                if kinds is None or "measurement" in kinds:
+                    for first, last in (
+                        (window["started_at"], started.isoformat()),
+                        ((ended or current).isoformat(), window["ended_at"]),
+                    ):
+                        streams.append(
+                            "SELECT id FROM records INDEXED BY records_measurement_context "
+                            "WHERE entry_id=? AND kind='measurement' "
+                            "AND julianday(received_at) BETWEEN julianday(?) AND julianday(?) "
+                            "AND id>?" + source_filter
+                        )
+                        stream_args.extend((self.entry_id, first, last, after))
+                        stream_args.extend(value for source in sources for value in source)
             records = db.execute(
-                "SELECT * FROM records WHERE entry_id=? AND (session_id=?"
-                + context_filter + ") AND id>?" + kind_filter + " ORDER BY id LIMIT ?",
-                (self.entry_id, session_id, *context_args, after, *(kinds or ()), limit),
+                "SELECT * FROM records WHERE id IN ("
+                + " UNION ".join(streams) + " ORDER BY id LIMIT ?) ORDER BY id",
+                (*stream_args, limit),
             ).fetchall()
             if session.get("base_phases"):
                 projection = project_session(session, row["updated_at"])
