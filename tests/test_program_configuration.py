@@ -64,6 +64,7 @@ class ProgramConfigurationTests(unittest.TestCase):
             configuration = runtime.configuration
             saved_options = entry.options
             archive = Archive(Path(directory) / "next-gang.sqlite", "next-gang")
+            await archive.start()
             runtime.archive = archive
             try:
                 await async_set_parameters(hass, entry, {"target_temperature_c": 88.5}, partial=True)
@@ -75,7 +76,7 @@ class ProgramConfigurationTests(unittest.TestCase):
                 self.assertEqual(runtime.controller.target_temperature, 89)
                 self.assertEqual(runtime.controller.next_gang_temperature, 89)
                 self.assertEqual(runtime.session.timeline.gang_count, 0)
-                await archive.flush()
+                await asyncio.wait_for(archive.flush(), timeout=10)
                 stored = archive.read(runtime.session.session_id)["session"]
                 self.assertEqual(stored["next_gang_temperature_c"], 89)
                 self.assertEqual(stored["configuration"], plain(configuration.as_options()))
