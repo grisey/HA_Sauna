@@ -575,7 +575,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await flow.async_step_parameters_temperature_control()
             values = {d.key: self.values[d.key] for d in flow._definitions("temperature_control")}
             definition = next(d for d in flow._definitions("temperature_control") if d.key == "readiness_offset_c")
-            values[definition.key] += definition.step
+            values[definition.key] += definition.number_step
             form = await flow.async_step_parameters_temperature_control(values)
             self.assertEqual(form["type"], "form")
             self.assertEqual(form["errors"], {"base": "configuration_busy"})
