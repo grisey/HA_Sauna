@@ -1253,8 +1253,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         })
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
-        self.base = self.now = self.runtime._clock()
-        self.runtime._clock = lambda: self.now
+        # HA presence transitions and injected door observations use the same clock.
         await async_set_control_mode(self.hass, self.entry, "manual")
         c = self.runtime.controller
         target = c.target_temperature
@@ -1265,22 +1264,20 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.heater.calls.clear()
         self.light.calls.clear()
 
-        async def door(name, kind, second):
-            self.now = self.base + timedelta(seconds=second)
-            await self.runtime.receive(Event(name, identity, kind, self.now, self.now))
+        async def door(name, kind):
+            now = self.runtime._clock()
+            await self.runtime.receive(Event(name, identity, kind, now, now))
             await self.hass.async_block_till_done()
 
-        self.now = self.base + timedelta(seconds=1)
         await self.set_source("presence", "on")
-        await door("entry-open", Kind.DOOR_OPEN, 2)
-        await door("entry-close", Kind.DOOR_CLOSE, 3)
+        await door("entry-open", Kind.DOOR_OPEN)
+        await door("entry-close", Kind.DOOR_CLOSE)
         self.assertIsNotNone(self.runtime.session.timeline.active)
-        await door("infusion", Kind.INFUSION, 4)
+        await door("infusion", Kind.INFUSION)
         self.assertFalse(self.heater.is_on)
-        await door("exit", Kind.DOOR_OPEN, 5)
-        self.now = self.base + timedelta(seconds=6)
+        await door("exit", Kind.DOOR_OPEN)
         await self.set_source("presence", "off")
-        await door("ventilation", Kind.VENTILATION, 7)
+        await door("ventilation", Kind.VENTILATION)
         self.assertEqual(self.runtime.session.timeline.gang_count, 1)
         self.assertEqual(c.target_temperature, target)
         self.assertTrue(c.heater_override)
@@ -1288,12 +1285,12 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.heater.calls, [])
         self.assertEqual(self.light.calls, [])
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 35)
-        self.now = self.base + timedelta(seconds=8)
         await self.set_source("upper_temperature", c.thermostat_restart_temperature)
         self.assertTrue(self.heater.is_on)
         await self.runtime.set_light_override(40)
-        self.now = self.base + timedelta(seconds=9)
+        before_off = self.runtime._clock()
         await self.runtime.set_heater_override(False)
+        after_off = self.runtime._clock()
         self.assertFalse(self.heater.is_on)
         self.assertIsNone(self.runtime.session)
         self.assertIsNone(c.light_after_run)
@@ -1301,7 +1298,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.archive.flush()
         saved = self.runtime.archive.read(identity)
         self.assertEqual(saved["session"]["configuration"]["control_mode"], "manual")
-        self.assertEqual(saved["session"]["ended_at"], self.now.isoformat())
+        ended_at = datetime.fromisoformat(saved["session"]["ended_at"])
+        self.assertLessEqual(before_off, ended_at)
+        self.assertLessEqual(ended_at, after_off)
         records = saved["records"]
         self.assertEqual([r["payload"]["value"] for r in records if r["kind"] == "manual_heater"],
                          [True, False])

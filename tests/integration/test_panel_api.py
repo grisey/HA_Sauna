@@ -307,6 +307,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     await runtime.set_heater_override(mode == "manual")
                     await runtime.set_light_override(80)
                     await self.hass.async_block_till_done()
+                    recording_id = runtime.session.session_id
                     ends_at = (
                         start + timedelta(seconds=seconds)
                         if mode == "automatic"
@@ -368,7 +369,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(light.calls[-1][1]["brightness"], cold_brightness)
                     else:
                         self.assertTrue(runtime.controller.heater_override)
-                        self.assertIsNone(runtime.session)
+                        self.assertEqual(runtime.session.session_id, recording_id)
                         self.assertTrue(heater.is_on)
                         self.assertEqual(
                             runtime.device.light_output.manual_brightness, 80

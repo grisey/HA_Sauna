@@ -826,7 +826,7 @@ const renderCurrent = (
           );
         assert.equal(
           /data-action="control-mode:/.test(html),
-          !scenario.session,
+          scenario.mode === "manual" || !scenario.session,
           context,
         );
         assert.deepEqual(
