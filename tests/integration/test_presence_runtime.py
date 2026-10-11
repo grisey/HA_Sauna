@@ -135,6 +135,67 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(runtime.session.timeline.active)
         self.assertEqual(runtime.session.timeline.gang_count, 0)
 
+    async def test_temperature_wait_and_return_during_cooling_through_ha_inputs(self):
+        runtime = await self.configure()
+        source = runtime.configuration.bindings.values["presence"]
+        minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
+
+        async def temperature(value):
+            for role in ("upper_temperature", "lower_temperature"):
+                entity_id = runtime.configuration.bindings.values[role]
+                state = self.hass.states.get(entity_id)
+                self.hass.states.async_set(entity_id, str(value), state.attributes)
+            await self.hass.async_block_till_done()
+
+        async def presence(value):
+            self.hass.states.async_set(source, value)
+            await self.hass.async_block_till_done()
+
+        async def door(name, kind):
+            now = runtime._clock()
+            await runtime.receive(Event(name, runtime.session.session_id, kind, now, now))
+            await self.hass.async_block_till_done()
+
+        await temperature(minimum - 1)
+        await runtime.set_operation(True)
+        await door("entry-open", Kind.DOOR_OPEN)
+        await door("entry-close", Kind.DOOR_CLOSE)
+        self.assertIsNone(runtime.session.timeline.active)
+        threshold_before = runtime._clock()
+        await temperature(minimum)
+        first = runtime.session.timeline.active
+        self.assertIsNotNone(first)
+        self.assertGreaterEqual(first.started_at, threshold_before)
+        self.assertLessEqual(first.started_at, runtime._clock())
+
+        await door("first-exit", Kind.DOOR_OPEN)
+        await presence("off")
+        await temperature(minimum - 2)
+        await door("first-ventilation", Kind.VENTILATION)
+        self.assertEqual(runtime.session.timeline.gang_count, 1)
+        self.assertIsNotNone(runtime.session.after_run)
+
+        await presence("on")
+        await door("return-close", Kind.DOOR_CLOSE)
+        self.assertIsNone(runtime.session.timeline.active)
+        self.assertIsNotNone(runtime.session.after_run)
+        await temperature(minimum)
+        second = runtime.session.timeline.active
+        self.assertIsNotNone(second)
+        self.assertNotEqual(second.gang_id, first.gang_id)
+        self.assertIsNone(runtime.session.after_run)
+
+        await door("second-exit", Kind.DOOR_OPEN)
+        await presence("off")
+        await door("second-ventilation", Kind.VENTILATION)
+        self.assertEqual(runtime.session.timeline.gang_count, 2)
+        await runtime.archive.flush()
+        records = runtime.archive.read(runtime.session.session_id)["records"]
+        events = [item["payload"]["kind"] for item in records
+                  if item["kind"] == "consumer_event"]
+        self.assertEqual(events.count("gang_started"), 2)
+        self.assertEqual(events.count("gang_ended"), 2)
+
     async def test_reload_same_on_updates_status_but_does_not_redeliver(self):
         runtime = await self.configure()
         source = runtime.configuration.bindings.values["presence"]

@@ -75,7 +75,8 @@ Lüftungsnachweis.
 
 Ein bestätigter Lüftungsnachweis bleibt der Austrittsöffnung zugeordnet. Beim
 Proxyverfahren genügt er zum Gangende; bei direkter Präsenzführung muss zusätzlich
-zugehörige Abwesenheit anliegen. Ein Türschluss ist dafür nicht erforderlich.
+zugehörige Abwesenheit während dieser Öffnungsphase anliegen. Ein späterer
+Türschluss begrenzt die Öffnungsphase; spätere neue Abwesenheit gehört ihr nicht an.
 
 ## Erkennungen bei Messlücken prüfen
 

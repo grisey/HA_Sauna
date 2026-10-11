@@ -532,7 +532,7 @@ class Detector:
     ):
         p = self.p
         if not enabled or not gang_permitted:
-            # An OFF/cooling stretch cannot leave a later weak-person opportunity.
+            # An operation-OFF stretch cannot leave a later weak-person opportunity.
             # Door observation itself continues without inventing an edge.
             self.weak_anchor_at = None
         elif (

@@ -4,21 +4,22 @@ Die gewählte Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
 direkten Präsenzsensor oder aus [Temperatur und Feuchte](erkennung.md)
 (Proxyverfahren).
 
-## Wann ein Gang beginnen kann
+## Eintritt, Aufenthalt und Verlassen
 
-Bei beiden Erkennungsverfahren benötigt ein neuer Gang Betrieb-EIN, keine angeforderte
-oder laufende Ofenkühlung und eine frische, gültige
-[Regeltemperatur](betrieb.md#aufheizen-und-bereitschaft) ab der eingestellten
-Mindesttemperatur.
-Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließender
-Schließung. Beide Verfahren benötigen ihn für den Eintritt. Für den erkannten
-Austritt genügen eine neue Türöffnung und der passende Erkennungsnachweis;
-ein anschließender Türschluss ist nicht erforderlich.
-Der initiale Türzustand ist geschlossen; er ersetzt keinen Türvorgang.
+Türöffnung und Türschluss werden unabhängig von der Mindesttemperatur erkannt.
+Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
 
-Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
-Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
-Messfenster aus dem freigegebenen Zeitraum.
+| Situation | Gangerkennung |
+| --- | --- |
+| Noch kein Gang | Eintritt und Anwesenheitsnachweis; Beginn frühestens bei gültiger Regeltemperatur ab der Mindesttemperatur |
+| Gang läuft | Aufgüsse und Gangende bleiben auch unterhalb der Mindesttemperatur erkennbar |
+| Ofenkühlung läuft | Ein erkannter neuer Gang beendet die Kühlung |
+| Betrieb-AUS | Keine neuen Gänge |
+
+Beim Eintritt folgt auf die Öffnung der Türschluss. Beim Verlassen wird die Tür
+zum Durchlüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
+offene Tür kann mit dem anschließenden Türschluss einen neuen Eintritt belegen.
+Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
 ## Gang mit direktem Präsenzsensor erkennen
 
@@ -26,7 +27,10 @@ Beim Schließen einer vollständigen Türfolge muss Anwesenheit anliegen.
 Sie kann bereits vor der Öffnung bestanden haben. Eine spätere Präsenzmeldung
 startet keinen Gang anhand einer früheren Türfolge. Bei verspäteter Türerkennung
 zählt der bereits empfangene Präsenzzustand zur ursprünglichen Schließzeit.
-Jeder Türvorgang begründet höchstens einen Übergang.
+Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
+belegte Eintritt bei anhaltender Präsenz erhalten. Der Gang beginnt beim Erreichen
+der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
+Abwesenheit oder ein unbekannter Präsenzzustand unterbrechen diesen Nachweis.
 Ein Gang endet erst bei Abwesenheit nach einer neuen Austrittsöffnung und
 bestätigtem Durchlüften derselben Öffnung. Die beiden Nachweise können in
 beliebiger Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
@@ -37,14 +41,12 @@ wenn ihre Zustandszeit innerhalb der damaligen Öffnungsfolge liegt.
 
 | Beleg | Wirkung |
 | --- | --- |
-| Vollständiger Türvorgang mit Anwesenheit und erfüllten Startbedingungen | Bestätigter Gang ab Türschluss, ohne Wartefrist oder erforderlichen Aufguss |
-| Neue Türöffnung mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis, ohne erforderlichen Türschluss |
+| Eintritt mit Anwesenheit und erreichter Mindesttemperatur | Bestätigter Gang, ohne Wartefrist oder erforderlichen Aufguss |
+| Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis während dieser Öffnungsphase |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
 | Durchlüften ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
-Ein Türvorgang unterhalb der Mindesttemperatur wird durch späteres Aufheizen
-nicht nachträglich zum Gangbeginn.
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
 
@@ -64,19 +66,18 @@ Proxyverfahren und keine Tür-Mindestheizhilfe.
 | Bestätigtes Durchlüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
 | Betrieb-AUS | Ende des offenen Gangs |
 
-Als Beginn gilt die passende Türschließung derselben Sitzung und Türöffnung,
-wenn zu diesem Zeitpunkt die Temperaturfreigabe bestand. Ein ungenutzter
-Türbezug verfällt bei unterbrochener Temperaturfreigabe oder veraltetem Messwert.
-Ohne gültigen, ungenutzten Türbezug beginnt kein Gang. Das gilt auch für ein
-deutliches Personensignal oder einen Aufguss.
+Als Beginn gilt die passende Türschließung, frühestens jedoch der Beginn des
+anschließenden gültigen Temperaturbereichs ab Mindesttemperatur. Die
+Personen- und Aufgussnachweise müssen zu diesem Eintritt gehören. Ohne gültigen,
+ungenutzten Türbezug beginnt kein Gang.
 
 Die Aufgussbestätigungsfrist läuft ab Gangbeginn einschließlich ihres
 Endzeitpunkts. Auch ein Gangbeginn allein durch Aufguss muss innerhalb dieser
-Frist ab Türschluss liegen. Nach Ablauf oder Rücknahme benötigt ein neuer Gang
+Frist ab möglichem Gangbeginn liegen. Nach Ablauf oder Rücknahme benötigt ein neuer Gang
 einen neuen vollständigen Eintritt.
 
-Bestätigtes Durchlüften nach der Austrittsöffnung beendet den Gang auch bei
-offener Tür; Gangzählung und Ofenkühlung folgen dann. Eine kurze Türöffnung
+Bestätigtes Durchlüften während der Austrittsöffnung beendet den Gang;
+Gangzählung und Ofenkühlung folgen dann. Eine kurze Türöffnung
 ohne bestätigtes Durchlüften beendet keinen Gang.
 
 ## Gang zählen und nächste Temperaturstufe beginnen

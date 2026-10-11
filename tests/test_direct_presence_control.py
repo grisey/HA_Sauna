@@ -71,7 +71,7 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(7))
         self.assertEqual(self.c.session.after_run.requested_at, at(7))
         self.door(Kind.DOOR_CLOSE, 8)
-        self.assertFalse(self.c.session.timeline.entry_cycle_available)
+        self.assertTrue(self.c.session.timeline.entry_cycle_available)
         self.report("on", 9)
         self.assertIsNone(self.c.session.timeline.active)
         self.assertEqual(self.c.session.timeline.gang_count, 1)
@@ -355,7 +355,7 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.report("on", 2)
         self.door(Kind.DOOR_CLOSE, 3)
         self.c.set_temperature(70, at(4))
-        self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.active.started_at, at(4))
         self.door(Kind.DOOR_OPEN, 5)
         self.report("on", 6)
         self.door(Kind.DOOR_CLOSE, 7)
@@ -432,26 +432,19 @@ class ProxyDoorControlTests(unittest.TestCase):
                 self.assertEqual(c.session.timeline.active.start_basis, "door_close")
                 self.assertFalse(c.session.timeline.entry_cycle_available)
 
-    def test_proxy_cycle_cannot_cross_operation_or_temperature_invalidation(self):
-        for invalidation in ("operation", "temperature"):
-            with self.subTest(invalidation=invalidation):
-                c = controller()
-                c.process(event("o", Kind.DOOR_OPEN, 1))
-                if invalidation == "operation":
-                    c.set_operation(False, at(2))
-                    c.set_operation(True, at(3))
-                    c.process(event("c", Kind.DOOR_CLOSE, 4))
-                else:
-                    c.process(event("c", Kind.DOOR_CLOSE, 2))
-                    c.set_temperature(25, at(3))
-                    c.set_temperature(70, at(4))
-                self.assertFalse(c.recognition_allowed(Kind.INFUSION))
-                self.assertFalse(c.process(event("stale", Kind.INFUSION, 5)).changed)
-                self.assertIsNone(c.session.timeline.active)
-                c.process(event("new-o", Kind.DOOR_OPEN, 6))
-                c.process(event("new-c", Kind.DOOR_CLOSE, 7))
-                c.process(event("new-water", Kind.INFUSION, 8))
-                self.assertEqual(c.session.timeline.active.started_at, at(7))
+    def test_proxy_cycle_cannot_cross_operation_off(self):
+        c = controller()
+        c.process(event("o", Kind.DOOR_OPEN, 1))
+        c.set_operation(False, at(2))
+        c.set_operation(True, at(3))
+        c.process(event("c", Kind.DOOR_CLOSE, 4))
+        self.assertFalse(c.recognition_allowed(Kind.INFUSION))
+        self.assertFalse(c.process(event("stale", Kind.INFUSION, 5)).changed)
+        self.assertIsNone(c.session.timeline.active)
+        c.process(event("new-o", Kind.DOOR_OPEN, 6))
+        c.process(event("new-c", Kind.DOOR_CLOSE, 7))
+        c.process(event("new-water", Kind.INFUSION, 8))
+        self.assertEqual(c.session.timeline.active.started_at, at(7))
 
     def test_expired_proxy_entry_cannot_be_restarted_by_infusion(self):
         c = controller(confirmation_minutes=1)

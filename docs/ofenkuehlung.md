@@ -16,7 +16,8 @@ bestätigtes Schütz-AUS startet die Uhr und legt die Kühldauer fest. Diese ble
 für den Kühlzyklus unverändert. Nur bestätigte AUS-Zeit zählt; Schütz-EIN oder
 unbekannte Rückmeldung pausieren die Uhr, ohne die Heizsperre aufzuheben.
 
-Vorzeitiges Beenden gibt die reguläre Steuerung wieder frei. Es verkürzt ebenso
+Ein erkannter neuer Gang beendet die Kühlung und gibt die reguläre Steuerung
+wieder frei. Dasselbe gilt für das manuelle Beenden. Dies verkürzt ebenso
 wie Betrieb-AUS den Bemessungszeitraum für die nächste Kühlung nicht: Nur eine
 vollständig durchlaufene Kühlung setzt dessen Beginn auf ihren Abschluss.
 

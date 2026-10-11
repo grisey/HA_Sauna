@@ -302,10 +302,12 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(state.completed[0].ended_at, vent.booking_at)
         self.assertIs(apply(state, close), state)
         self.assertIn(vent, state.processed)
-        self.assertFalse(state.entry_cycle_available)
+        self.assertTrue(state.entry_cycle_available)
         for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
-            with self.subTest(kind=kind), self.assertRaises(ValueError):
-                apply(state, e("reuse", kind, "21:29:01"))
+            with self.subTest(kind=kind):
+                returned = apply(state, e("return", kind, "21:29:01"))
+                self.assertEqual(returned.active.started_at, close.effective_at)
+                self.assertEqual(returned.completed, state.completed)
 
     def test_repeated_infusion_keeps_first_confirmation_time(self):
         state = apply(self.active, e("w1", Kind.INFUSION, "21:22:52"))
@@ -367,7 +369,7 @@ class TimelineTests(unittest.TestCase):
                 with self.subTest(door=state.door, kind=kind), self.assertRaises(ValueError):
                     apply(state, e("signal", kind, "21:19:15"))
 
-    def test_expired_entry_and_intervening_door_cycle_cannot_be_reused(self):
+    def test_closure_during_old_gang_differs_from_entry_after_its_retraction(self):
         for close_before_expiry in (False, True):
             with self.subTest(close_before_expiry=close_before_expiry):
                 state = apply(self.active, e("o", Kind.DOOR_OPEN, "21:20:00"))
@@ -377,10 +379,14 @@ class TimelineTests(unittest.TestCase):
                 if not close_before_expiry:
                     state = apply(state, e("c", Kind.DOOR_CLOSE, "21:20:30"))
                 self.assertIsNone(state.active)
-                self.assertFalse(state.entry_cycle_available)
                 for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
-                    with self.subTest(kind=kind), self.assertRaises(ValueError):
-                        apply(state, e("reuse", kind, "21:20:40"))
+                    with self.subTest(kind=kind):
+                        if close_before_expiry:
+                            with self.assertRaises(ValueError):
+                                apply(state, e("reuse", kind, "21:20:40"))
+                        else:
+                            entered = apply(state, e("new-entry", kind, "21:20:40"))
+                            self.assertEqual(entered.active.started_at, t("21:20:30"))
                 state = apply(state, e("new-o", Kind.DOOR_OPEN, "21:21:00"))
                 state = apply(state, e("new-c", Kind.DOOR_CLOSE, "21:21:10"))
                 state = apply(state, e("new-water", Kind.INFUSION, "21:21:20"))
@@ -440,7 +446,10 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(result.retracted, (self.active.active,))
         self.assertIsNotNone(result.open_ventilation)
         result = apply(result, e("c", Kind.DOOR_CLOSE, "21:28:30"))
-        self.assertFalse(result.entry_cycle_available)
+        self.assertTrue(result.entry_cycle_available)
+        result = apply(result, e("return", Kind.PERSON_STRONG, "21:28:31"))
+        self.assertEqual(result.active.started_at, t("21:28:30"))
+        self.assertEqual(result.retracted, (self.active.active,))
 
     def test_ventilation_requires_an_open_episode(self):
         with self.assertRaises(ValueError):
