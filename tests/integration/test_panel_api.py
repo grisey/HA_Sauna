@@ -1149,11 +1149,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(runtime.session)
             async with client.post(url + "/heater", json={"value": True}) as response:
                 self.assertEqual(response.status, 200, await response.text())
-            self.assertIsNone(runtime.session)
+            self.assertIsNotNone(runtime.session)
             self.assertTrue(runtime.controller.heater_override)
             async with client.post(url + "/control", json={"enabled": True}) as response:
                 self.assertEqual(response.status, 409, await response.text())
-            self.assertIsNone(runtime.session)
+            self.assertIsNotNone(runtime.session)
             await runtime.set_operation(False)
             async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
                 self.assertEqual(response.status, 200, await response.text())

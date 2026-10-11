@@ -5030,7 +5030,7 @@ class SaunaPanel extends HTMLElement {
       }[s.heating_observation?.source] || "Rückmeldung fehlt";
     const permissions = s.permissions || {};
     const manualMode = s.configuration.control_mode === "manual";
-    const modeLocked = !!s.configuration_locked;
+    const modeLocked = !!s.configuration_locked && !manualMode;
     const canStart =
       permissions.control && (s.operation_enabled || !s.start_errors.length);
     const sessionGap = !s.operation_enabled
@@ -5247,7 +5247,7 @@ class SaunaPanel extends HTMLElement {
     const manualControls = this.manualControlAvailability(),
       canManualHeater = manualControls.heater,
       canManualLight = manualControls.brightness;
-    const modeControls = session
+    const modeControls = session && !manualMode
       ? ""
       : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
     const outputControls = (
@@ -9562,7 +9562,9 @@ class SaunaPanel extends HTMLElement {
       (action === "manual-light-overview" && !manualControls.brightness) ||
       (action.startsWith("heater:") && !manualControls.heater) ||
       (action.startsWith("control-mode:") &&
-        (!permissions.control || this.state.configuration_locked)) ||
+        (!permissions.control ||
+          (this.state.configuration_locked &&
+            this.state.configuration.control_mode !== "manual"))) ||
       (action.startsWith("end-phase:") &&
         (!permissions.control || !action.startsWith("end-phase:after_run:"))) ||
       (action === "reset-settings" &&

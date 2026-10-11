@@ -120,6 +120,75 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
             await self.archive.flush()
             self.assertIsNotNone(self.archive.read("live"))
 
+    async def test_manual_on_off_recording_keeps_only_confirmed_gangs(self):
+        for confirmed in (False, True):
+            with self.subTest(confirmed=confirmed):
+                now = T0
+                runtime = SaunaRuntime(
+                    Configuration(bindings(), parameters(), control_mode="manual"), lambda: now,
+                )
+                runtime.archive = self.archive
+                c = runtime.controller
+                c.set_temperature(c.target_temperature - 5, now)
+                await runtime.set_heater_override(True)
+                identity = runtime.session.session_id
+                self.assertIsNotNone(runtime.detector)
+                if confirmed:
+                    for second, kind in enumerate((Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION), 1):
+                        now = T0 + timedelta(seconds=second)
+                        await runtime.receive(event(kind.value, kind, second, session=identity))
+                for second, temperature in ((4, c.thermostat_target),
+                                            (5, c.thermostat_restart_temperature)):
+                    now = T0 + timedelta(seconds=second)
+                    c.set_temperature(temperature, now)
+                    await runtime.tick()
+                    self.assertEqual(runtime.session.session_id, identity)
+                now = T0 + timedelta(seconds=6)
+                await runtime.set_heater_override(False)
+                self.assertIsNone(runtime.session)
+                self.assertIsNone(runtime.detector)
+                self.assertIsNone(c.light_after_run)
+                self.assertEqual(c.completed_sessions[-1].ended_at, now)
+                await self.archive.flush()
+                saved = self.archive.read(identity)
+                if not confirmed:
+                    self.assertIsNone(saved)
+                    continue
+                self.assertEqual(saved["session"]["configuration"]["control_mode"], "manual")
+                self.assertEqual(len(saved["session"]["timeline"]["completed"]), 1)
+                commands = [r for r in saved["records"] if r["kind"] == "manual_heater"]
+                self.assertEqual([r["payload"]["value"] for r in commands], [True, False])
+                self.assertEqual({r["session_id"] for r in commands}, {identity})
+
+    async def test_physical_start_archives_manual_context_before_applying_button_program(self):
+        from dataclasses import replace
+
+        now = T0
+        config = Configuration(bindings(), parameters(), control_mode="manual")
+        program = config.temperature_programs[0]
+        config = replace(config, button_program=program.id)
+        runtime = SaunaRuntime(config, lambda: now)
+        runtime.archive = self.archive
+        runtime.controller.set_temperature(80, now)
+        await runtime.set_heater_override(True)
+        identity = runtime.session.session_id
+        for second, kind in enumerate((Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION), 1):
+            now = T0 + timedelta(seconds=second)
+            await runtime.receive(event(kind.value, kind, second, session=identity))
+        now = T0 + timedelta(seconds=4)
+        async with runtime.serialized():
+            await runtime._handle_button_event("long", now)
+            await runtime._cycle()
+        await self.archive.flush()
+        saved = self.archive.read(identity)["session"]
+        self.assertEqual(saved["configuration"]["control_mode"], "manual")
+        self.assertEqual(saved["ended_at"], now.isoformat())
+        self.assertEqual(runtime.configuration.control_mode, "automatic")
+        self.assertEqual(runtime.configuration.selected_program_id, program.id)
+        self.assertEqual(runtime.controller.target_temperature, program.start_c)
+        self.assertNotEqual(runtime.session.session_id, identity)
+        self.assertIsNone(runtime.controller.light_after_run)
+
     async def test_consumer_event_lookup_uses_partial_index_and_same_identities(self):
         self.archive.append("consumer_event", T0, {"event_id": "receipt"})
         self.archive.append("consumer_event", T0, {"event_id": "in-session"}, "s")

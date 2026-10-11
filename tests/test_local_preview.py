@@ -188,14 +188,14 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.action("/preview/control-mode", {"mode":"manual"})
         self.preview.action("/preview/heater", {"value":True})
         self.preview.action("/preview/light", {"value":True})
-        self.assertIsNone(self.preview.c.session)
+        self.assertIsNotNone(self.preview.c.session)
         with self.assertRaises(ValueError):
             self.preview.action("/preview/control", {"enabled":True})
         self.preview.action("/preview/control-mode", {"mode":"automatic"})
         self.assertIsNone(self.preview.state()["manual_controls"]["heater"]["manual"])
         self.assertIsNone(self.preview.state()["manual_controls"]["light"]["manual"])
 
-    def test_explicit_manual_entry_for_both_roles_without_extra_sessions(self):
+    def test_manual_recording_for_both_roles_without_session_controls(self):
         for admin in (False, True):
             with self.subTest(admin=admin):
                 self.preview.reset("archiv")
@@ -210,8 +210,8 @@ class LocalPreviewTests(unittest.TestCase):
                 self.assertIsNone(self.preview.c.session)
                 self.assertEqual(self.preview.light, 60)
                 self.preview.action("/preview/heater", {"value":True})
-                self.assertIsNone(self.preview.c.session)
-                self.assertFalse(self.preview.state()["operation_enabled"])
+                self.assertIsNotNone(self.preview.c.session)
+                self.assertTrue(self.preview.state()["operation_enabled"])
                 self.assertTrue(self.preview.c.last_decision.heat)
                 self.preview.action("/preview/heater", {"value":False})
                 self.assertIsNone(self.preview.c.session)

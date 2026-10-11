@@ -1861,7 +1861,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                             self.assertTrue(self.runtime.controller.heater_override)
                             await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("aria-pressed", "false")
                             await expect(panel.locator('.manual-heater [data-action="heater:true"]')).to_have_attribute("data-regulation-selected", "true")
-                            self.assertFalse(await panel.evaluate("p => p.state.operation_enabled"))
+                            self.assertTrue(await panel.evaluate("p => p.state.operation_enabled"))
+                            self.assertIsNotNone(self.runtime.session)
+                            await expect(panel.locator('#current [data-action="operation"]')).to_have_count(0)
+                            await expect(panel.locator('[data-action="control-mode:automatic"]')).to_be_enabled()
                             # OFF must revoke the thermostat while its contactor is already off.
                             async with page.expect_response(lambda response: response.url.endswith("/heater") and response.request.method == "POST") as cooled:
                                 await panel.locator('.manual-heater [data-action="heater:false"]').click()

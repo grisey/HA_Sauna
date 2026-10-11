@@ -206,16 +206,18 @@ class Controller:
             and self.recognition_allowed(kind)
         )
 
-    def set_control_mode(self, control_mode: str) -> None:
+    def set_control_mode(self, control_mode: str, at: datetime | None = None) -> None:
         """Choose the regulation mode before starting the next session."""
         if control_mode not in CONTROL_MODES:
             raise ValueError("Ungültiger Betriebsmodus")
-        if self._session is not None:
+        if self.control_mode == control_mode:
+            return
+        if self._session is not None and self.control_mode == "automatic":
             raise ValueError(
                 "Der Betriebsmodus kann nur ohne laufende Session geändert werden"
             )
-        if self.control_mode == control_mode:
-            return
+        if self._session is not None:
+            self.finish_session(at or self._last_at, light_after_run=False)
         self.control_mode = control_mode
         self._clear_heater_override()
         if control_mode == "manual":
@@ -224,6 +226,11 @@ class Controller:
     @property
     def session(self) -> Session | None:
         return self._session
+
+    @property
+    def automatic_operation_enabled(self) -> bool:
+        return bool(self.control_mode == "automatic" and self._session
+                    and self._session.operation_enabled)
 
     @property
     def target_temperature(self) -> float | None:
@@ -477,9 +484,12 @@ class Controller:
     def begin_session(self, session_id: str, at: datetime) -> Session:
         if self.control_mode == "manual":
             raise ValueError(
-                "Im manuellen Modus gibt es keine Saunasitzung. "
-                "Zuerst zur Automatik wechseln."
+                "Im manuellen Modus beginnt die Aufzeichnung mit Ofen Ein."
             )
+        return self._begin_recording(session_id, at)
+
+    def _begin_recording(self, session_id: str, at: datetime) -> Session:
+        """Shared observation lifetime; manual heater selection owns its boundary."""
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
@@ -514,8 +524,13 @@ class Controller:
     def set_operation(
         self, enabled: bool, at: datetime, *, session_id: str | None = None
     ):
+        if enabled and self.control_mode == "manual":
+            raise ValueError(
+                "Im manuellen Modus beginnt die Aufzeichnung mit Ofen Ein."
+            )
         at = utc(at)
         self.advance(at, evaluate=False)
+        recording_id = self._session.session_id if self._session else None
         if not enabled:
             self._clear_heater_override()
             self._door_request_pending = False
@@ -540,7 +555,9 @@ class Controller:
                     at, self._received_at(at), booking_at=at,
                 )
             )
-        self._evaluate(at)
+        if not enabled and self.control_mode == "manual" and self._session is not None:
+            self._complete_session(at, light_after_run=False)
+        self._evaluate(at, decision_session_id=recording_id)
         return self._session
 
     def validate_heater_override(self, heat: bool | None):
@@ -578,6 +595,15 @@ class Controller:
         self.advance(at, evaluate=False)
         previous_override = self.heater_override
         self.heater_override = heat
+        if self.control_mode == "manual":
+            if heat is True:
+                if self._session is None:
+                    self._begin_recording(uuid4().hex, at)
+                else:
+                    self._evaluate(at)
+            else:
+                self.set_operation(False, at)
+            return self.last_decision
         if heat is False:
             self._drop_manual_heating_demand()
             self._door_request_pending = False
@@ -1327,6 +1353,8 @@ class Controller:
     @property
     def regulation_inputs(self):
         session = self._session
+        if self.control_mode == "manual":
+            return ControlInputs()
         return ControlInputs(
             gang_heat_demand=bool(
                 session and session.timeline.active
@@ -1519,6 +1547,9 @@ class Controller:
         phase_key = self._current_phase_key()
         if self.heater_override is True and not self._manual_heating_allowed():
             self._clear_heater_override()
+            if self.control_mode == "manual" and self._session is not None:
+                self.set_operation(False, at)
+                return self.last_decision
             # Nach Entzug der Einschaltfreigabe die führende automatische
             # Entscheidung einschließlich übergeordneter Kühlung neu bestimmen.
             return self._evaluate(at, decision_session_id=decision_session_id)
@@ -1614,6 +1645,7 @@ class Controller:
     def finish_session(self, at: datetime, *, light_after_run=True):
         """End a session immediately, including an active gang, and archive it."""
         at = utc(at)
+        light_after_run = light_after_run and self.control_mode == "automatic"
         if self._session is None:
             raise ValueError("Es läuft keine Session.")
         session_id = self._session.session_id

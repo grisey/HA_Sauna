@@ -20,8 +20,7 @@ class SaunaOperation(SaunaEntity, SwitchEntity):
 
     @property
     def is_on(self):
-        session = self.runtime.session
-        return bool(session and session.operation_enabled)
+        return self.runtime.controller.automatic_operation_enabled
 
     async def async_turn_on(self, **kwargs):
         await self.runtime.set_operation(True)

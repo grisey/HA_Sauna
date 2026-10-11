@@ -1019,14 +1019,9 @@ class SaunaRuntime:
         if (
             physical
             and enabled
-            and not (self.session and self.session.operation_enabled)
             and self.controller.control_mode == "manual"
         ):
-            if self.session:
-                self.controller.finish_session(at, light_after_run=False)
-            # The old session still belongs to the old control configuration.
-            self.persist_completed_sessions()
-            self._set_control_mode("automatic")
+            self._set_control_mode("automatic", at=at)
             self.log.info(
                 "button_control_mode",
                 "Saunataster startet das Standardprogramm im Automatikbetrieb.",
@@ -1101,10 +1096,10 @@ class SaunaRuntime:
             and self.controller.control_mode != "manual"
         ):
             if self.controller.heater_override is False and cooling_or_after_run:
-                return self.controller.set_heater_override(True, now)
-            return self.controller.set_heater_override(None, now)
+                return self._set_heater_override(True, now)
+            return self._set_heater_override(None, now)
         if self.controller.control_mode != "manual" and cooling_or_after_run:
-            return self.controller.set_heater_override(True, now)
+            return self._set_heater_override(True, now)
         if self.controller.control_mode == "manual":
             # A thermostat may currently be satisfied (contactor OFF) while
             # remaining enabled. The button toggles its enabled state.
@@ -1117,8 +1112,7 @@ class SaunaRuntime:
             if current is None and self.controller.last_decision is not None:
                 current = self.controller.last_decision.heat
         value = not bool(current)
-        self._validate_heater_override(value)
-        return self.controller.set_heater_override(value, now)
+        return self._set_heater_override(value, now)
 
     def _reset_button_gestures(self):
         if getattr(self, "device", None) is not None:
@@ -1144,7 +1138,7 @@ class SaunaRuntime:
 
     async def _handle_button_event(self, event, now, *, received_at=None, refresh_device=True):
         """Apply one already-normalized gesture; caller owns ``_lock``."""
-        enabled = bool(self.session and self.session.operation_enabled)
+        enabled = self.controller.automatic_operation_enabled
         gesture_at = now if received_at is None else received_at
         if self.device is not None:
             if event in ("press", "on") and self.configuration.button_session_gesture == "long":
@@ -1206,14 +1200,16 @@ class SaunaRuntime:
             await self._cycle()
             return result
 
-    def _set_control_mode(self, mode, *, preserve_light=False):
+    def _set_control_mode(self, mode, *, preserve_light=False, at=None):
         """Apply a mode and its output initialization while holding the lock."""
         if self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
             )
         previous_mode = self.controller.control_mode
-        self.controller.set_control_mode(mode)
+        self.controller.set_control_mode(mode, self._clock() if at is None else at)
+        # Closing a manual recording must retain its manual configuration.
+        self.persist_completed_sessions()
         if previous_mode != mode and mode == "manual":
             parameters = Parameters({
                 **self.configuration.parameters.as_dict(),
@@ -1331,18 +1327,22 @@ class SaunaRuntime:
                 and self.controller.heater_override in (None, value)
             ):
                 return self.controller.last_decision
-            self._validate_heater_override(value)
-            decision = self.controller.set_heater_override(value, now)
-            self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
-            if self.archive:
-                self.archive.append(
-                    "manual_heater",
-                    now,
-                    {"value": value, "decision": plain(decision)},
-                    self.session.session_id if self.session else None,
-                )
+            decision = self._set_heater_override(value, now)
             await self._cycle()
             return decision
+
+    def _set_heater_override(self, value, now):
+        """UI and physical inputs share command validation and archive assignment."""
+        self._validate_heater_override(value)
+        previous_id = self.session.session_id if self.session else None
+        decision = self.controller.set_heater_override(value, now)
+        self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
+        if self.archive:
+            self.archive.append(
+                "manual_heater", now, {"value": value, "decision": plain(decision)},
+                self.session.session_id if self.session else previous_id,
+            )
+        return decision
 
     async def finish_phase(self, purpose, token):
         async with self.serialized():
@@ -1414,7 +1414,7 @@ class SaunaRuntime:
                     try:
                         await self._apply_button_action(
                             self._button.advance(
-                                now, bool(self.session and self.session.operation_enabled)
+                                now, self.controller.automatic_operation_enabled
                             ),
                             now,
                         )

@@ -336,7 +336,7 @@ class HADevice:
             # Shelly meldet Drücken, Loslassen und die fertige Klickauswertung.
             # Nur die kurze Klickauswertung umschalten, niemals dreifach.
             return None
-        return not bool(self.runtime.session and self.runtime.session.operation_enabled)
+        return not self.runtime.controller.automatic_operation_enabled
 
     def binary_state(self, role):
         state = self.states.get(role)

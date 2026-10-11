@@ -88,9 +88,11 @@ Auch manuelles EIN benötigt eine gültige
 Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 
-Manuelle Bedienung erzeugt keine Sitzung und keine Schaltaufzeichnung im
-Sauna-Archiv. Messkurven im Vor- und Nachlauf automatischer Sitzungen bleiben
-erhalten.
+Ofen-EIN beginnt eine Aufzeichnung, Ofen-AUS beendet sie. Thermostatzyklen
+unterbrechen sie nicht. Tür, Anwesenheit, Gänge und Aufgüsse werden nach
+denselben [Erkennungsregeln](gangmodell.md) erfasst, ohne Ofen oder Licht zu
+steuern. Für die Speicherung gelten dieselben [Archivregeln](speicherung.md)
+wie im Automatikbetrieb.
 
 ## Ausschalten oder sofort beenden
 
