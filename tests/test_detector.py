@@ -310,6 +310,59 @@ class DetectorTests(unittest.TestCase):
         weak = next(event for event in events if event.kind is Kind.PERSON_WEAK)
         self.assertEqual(weak.effective_at, T0 + timedelta(seconds=5))
 
+    def test_cold_entry_keeps_weak_detection_available_after_warming(self):
+        detector = self._entry_detector()
+        c = Controller(Parameters(detector.p))
+        minimum = c.parameters.values["sauna_min_temperature_c"]
+        c.set_temperature(minimum - 1, T0)
+        c.begin_session("s", T0)
+        warm_at = int(c.parameters.seconds("confirmation_minutes")) + 10
+        observed = []
+
+        def received(detection):
+            observed.append(detection)
+            c.process(Event(
+                f"detected:{detection.kind}:{detection.trace_at}", "s",
+                detection.kind, detection.effective_at, detection.detected_at,
+                detection.trace_at,
+            ), recognition_at=detection.trace_at)
+
+        # Entry occurs below the minimum. The room warms later, while a new
+        # moisture rise provides indirect evidence of an occupant inside.
+        entry_values = ((minimum - 1, 40), (minimum - 3, 38),
+                        (minimum - 5, 36), (minimum - 3, 38), (minimum - 1, 40))
+        for second in range(warm_at + 5):
+            now = T0 + timedelta(seconds=second)
+            temperature, humidity = (
+                entry_values[second] if second < len(entry_values) else (
+                    minimum if second >= warm_at else minimum - 1,
+                    40 + max(0, second - warm_at) * .2,
+                )
+            )
+            c.set_temperature(temperature, now)
+            for position in detector.positions:
+                detector.accept(measurement(position, Quantity.TEMPERATURE,
+                                            temperature, second))
+                detector.accept(measurement(position, Quantity.HUMIDITY,
+                                            humidity, second))
+            detector.advance(
+                now, enabled=True, allowed=c.recognition_allowed,
+                allowed_at=c.recognition_allowed_at,
+                recognition_context=c.recognition_context_at,
+                on_detection=received,
+            )
+            if second < warm_at:
+                self.assertIsNone(c.session.timeline.active)
+
+        self.assertEqual(
+            [item.kind for item in observed if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
+            [Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
+        )
+        self.assertIn(Kind.PERSON_WEAK, [item.kind for item in observed])
+        self.assertIsNotNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.active.started_at,
+                         T0 + timedelta(seconds=warm_at))
+
     def test_close_recovers_when_lower_humidity_drops_out(self):
         detector = self._entry_detector()
         events = self._opened_entry_episode(detector)

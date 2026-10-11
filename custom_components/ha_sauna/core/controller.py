@@ -829,14 +829,14 @@ class Controller:
                 door_open=event.kind == Kind.DOOR_OPEN,
                 enabled=(previous.operation_enabled and observed_enabled and context_current
                          and self.control_mode == "automatic"
-                         and self.presence_source == "proxy"
-                         and self._gang_temperature_blocked() is None
-                         and self._gang_temperature_blocked_at(event.effective_at) is None),
+                         and self.presence_source == "proxy"),
                 gang_active=previous.timeline.active is not None,
                 cooling=previous.after_run is not None,
             )
             self.door_request = transition.state
-            if transition.request and self.feedback is not True:
+            if (transition.request and self.feedback is not True
+                    and self._gang_temperature_blocked() is None
+                    and self._gang_temperature_blocked_at(event.effective_at) is None):
                 self._door_request_pending = True
         blocked = (
             self._gang_start_blocked(previous)

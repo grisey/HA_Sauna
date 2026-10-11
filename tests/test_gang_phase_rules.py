@@ -131,6 +131,26 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertFalse(self.c.regulation_inputs.temporary_door_heat)
         self.assertIsNone(self.c.session.timeline.active)
 
+    def test_temperature_at_closure_controls_door_heating_not_door_observation(self):
+        self.c.presence_source = "proxy"
+        self.c.set_temperature(self.minimum - 1, at(0))
+        self.door(Kind.DOOR_OPEN, 1)
+        self.c.set_temperature(self.minimum, at(2))
+        self.door(Kind.DOOR_CLOSE, 3)
+        self.assertTrue(self.c.regulation_inputs.temporary_door_heat)
+        self.assertIsNone(self.c.session.timeline.active)
+
+    def test_new_gang_ends_cooling_without_clearing_a_heater_fault(self):
+        self.enter()
+        self.leave_for_ventilation()
+        self.c.protection.add("heater_service_unavailable")
+        self.presence("on", 8)
+        self.door(Kind.DOOR_CLOSE, 9)
+        self.assertIsNotNone(self.c.session.timeline.active)
+        self.assertIsNone(self.c.session.after_run)
+        self.assertFalse(self.c.last_decision.heat)
+        self.assertIn("heater_service_unavailable", self.c.protection)
+
     def test_indirect_return_during_cooling_needs_occupancy_evidence(self):
         self.c.presence_source = "proxy"
         self.door(Kind.DOOR_OPEN, 1)

@@ -831,7 +831,10 @@ class Detector:
         trace["conditions"]["infusion"] = infusion if infusion_check else None
         if self._edge("infusion", sustained):
             emit(Kind.INFUSION)
-        weak_opportunity = (
+        # In operation the controller owns entry and its admission window.
+        # A cold entry may wait for the minimum temperature beyond the original
+        # closure window. The standalone measurement replay has no controller.
+        weak_opportunity = allowed(Kind.PERSON_WEAK) if allowed is not None else (
             self.weak_anchor_at is not None
             and now
             <= self.weak_anchor_at + timedelta(minutes=p["confirmation_minutes"])
