@@ -790,7 +790,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             await adapter.apply_light(T0)
             self.assertEqual(runtime.configuration.control_mode, "manual")
             self.assertTrue(runtime.controller.heater_override)
-            self.assertIsNone(runtime.session)
+            self.assertIsNotNone(runtime.session)
             self.assertEqual(calls, ["turn_off", "turn_on"])
             self.assertAlmostEqual(light[0].attributes["brightness"], 180, delta=1)
             self.assertEqual(adapter.light_output.manual_brightness, 180 * 100 / 255)

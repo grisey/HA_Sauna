@@ -1333,7 +1333,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.runtime.controller.heater_override)
             self.assertTrue(self.runtime.controller.last_decision.heat)
             self.assertEqual(self.hass.states.get(self.climate).state, "heat")
-            self.assertIsNone(self.runtime.session)
+            self.assertIsNotNone(self.runtime.session)
         finally:
             self.heater.accept_commands = True
 
@@ -1357,7 +1357,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.controller.heater_override)
         self.assertIsNone(self.runtime.session)
 
-    async def test_manual_idle_failed_switch_on_is_monitored_without_session(self):
+    async def test_failed_manual_switch_on_revokes_enablement_and_ends_recording(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
 
         await async_set_control_mode(self.hass, self.entry, "manual")
@@ -2435,7 +2435,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.light.is_on)
         self.assertAlmostEqual(self.light.brightness, original, delta=1)
         await push("single_push")
-        self.assertIsNone(self.runtime.session)
+        self.assertIsNotNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.automatic_operation_enabled)
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 37)
         self.assertTrue(self.runtime.controller.heater_override)
 
@@ -2515,7 +2516,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source("control_input", "on")
             self.now += timedelta(seconds=.1)
             await self.set_source("control_input", "off")
-            self.assertIsNone(self.runtime.session)
+            self.assertEqual(self.runtime.session is not None, value)
             self.assertEqual(self.heater.is_on, value)
             self.assertEqual(self.runtime.configuration.control_mode, "manual")
         await self.set_source("control_input", "on")
@@ -2603,7 +2604,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         self.assertFalse(any(self.heater.calls))
         await push("single_push")
-        self.assertIsNone(self.runtime.session)
+        self.assertIsNotNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.automatic_operation_enabled)
         self.assertTrue(self.heater.is_on)
         await push("btn_down")
         await push("long_push")

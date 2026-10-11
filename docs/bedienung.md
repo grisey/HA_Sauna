@@ -71,7 +71,7 @@ Lichtnachlauf. Eine spätere Raumlichtwahl startet keinen neuen Nachlauf.
 ## Dauerhaft manuell betreiben
 
 Die Betriebsart **Manuell** ist mit normalen Bedienrechten nach vollständigem
-Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
+Ende einer automatischen Sitzung wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
 Ofen und Licht beginnen beim Wechsel über das Panel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 

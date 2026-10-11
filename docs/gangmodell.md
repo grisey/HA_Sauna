@@ -4,6 +4,9 @@ Die gewählte Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
 direkten Präsenzsensor oder aus [Temperatur und Feuchte](erkennung.md)
 (Proxyverfahren).
 
+Die Erkennungsregeln gelten auch während der manuellen Aufzeichnung.
+Heizanforderungen, Ofenkühlung und Temperaturstufen wirken nur in Automatik.
+
 ## Eintritt, Aufenthalt und Verlassen
 
 Türöffnung und Türschluss werden unabhängig von der Mindesttemperatur erkannt.

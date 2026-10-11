@@ -1949,7 +1949,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await expect(self.panel.locator(f'.manual-{output} [data-action="{output}:auto"]')).to_have_count(0)
             self.assertIs(self.runtime.controller.heater_override, True)
             self.assertGreater(self.runtime.device.light_output.manual_brightness, 0)
-            self.assertIsNone(self.runtime.session)
+            self.assertIsNotNone(self.runtime.session)
             await expect(self.panel.locator('.manual-light [data-action="light:normal"]')).to_have_count(0)
         finally:
             self.heater.accept_commands = True

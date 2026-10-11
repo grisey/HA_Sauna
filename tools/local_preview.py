@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG
-from custom_components.ha_sauna.archive import plain
+from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
@@ -153,6 +153,10 @@ class Preview:
 
     def save_session(self, session, configuration):
         saved = plain(session)
+        if session.ended_at is not None and not session_has_gangs(saved):
+            if self.sessions.pop(session.session_id, None) is not None:
+                self.archive_revision += 1
+            return
         saved["configuration"] = configuration
         saved["measurement_ttl_seconds"] = configuration["parameters"]["sensor_timeout_seconds"]
         self.sessions[session.session_id] = {

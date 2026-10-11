@@ -331,20 +331,21 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertTrue(all(r["kind"] in ("measurement", "source_snapshot", "phase")
                             for r in public["records"]))
 
-    def test_preview_button_short_uses_real_gestures_without_starting_a_session(self):
+    def test_preview_button_short_bounds_manual_recording(self):
         self.preview.reset("manuell")
         for expected in (True, False):
             self.preview.action("/simulate", {"action":"button_short"})
             self.assertEqual(self.preview.c.last_decision.heat, expected)
-            self.assertIsNone(self.preview.c.session)
+            self.assertEqual(self.preview.c.session is not None, expected)
             self.assertEqual(self.preview.c.control_mode, "manual")
         self.preview.reset("archiv")
         self.preview.action("/simulate", {"action":"button_short"})
         self.assertEqual(self.preview.c.control_mode, "manual")
-        self.assertIsNone(self.preview.c.session)
+        self.assertIsNotNone(self.preview.c.session)
+        self.assertFalse(self.preview.c.automatic_operation_enabled)
         self.assertTrue(self.preview.c.last_decision.heat)
 
-    def test_native_multiple_press_selection_starts_and_ends_without_short_start(self):
+    def test_native_multiple_press_starts_automatic_from_manual_recording(self):
         for gesture in ("double", "triple"):
             with self.subTest(gesture=gesture):
                 self.preview.reset("manuell")
@@ -354,7 +355,8 @@ class LocalPreviewTests(unittest.TestCase):
                 self.assertEqual(saved["button_session_gesture"], gesture)
                 self.assertEqual(self.preview.entry.options["button_session_gesture"], gesture)
                 self.preview.action("/simulate", {"action":"button_short"})
-                self.assertIsNone(self.preview.c.session)
+                self.assertIsNotNone(self.preview.c.session)
+                self.assertFalse(self.preview.c.automatic_operation_enabled)
                 self.preview.action("/simulate", {"action":f"button_{gesture}"})
                 self.assertIsNotNone(self.preview.c.session)
                 self.assertEqual(self.preview.c.control_mode, "automatic")
@@ -418,6 +420,8 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertIsNone(self.preview.archive(session_id))
         self.preview.action("/preview/heater", {"value":True})
         self.assertEqual(self.preview.state()["archive_revision"], current["archive_revision"])
+        self.assertEqual(len(self.preview.archive()), 1)
+        self.preview.action("/preview/heater", {"value":False})
         self.assertEqual(self.preview.archive(), [])
 
     def test_program_choices_use_existing_runtime_settings_without_session_reset(self):

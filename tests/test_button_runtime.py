@@ -240,7 +240,8 @@ class ButtonRuntimeTests(unittest.TestCase):
                 self.setUp()
                 self.runtime.controller.set_temperature(70, self.now)
                 asyncio.run(gesture(duration))
-                self.assertEqual(self.runtime.session is not None, duration >= 2)
+                self.assertIsNotNone(self.runtime.session)
+                self.assertEqual(self.runtime.controller.automatic_operation_enabled, duration >= 2)
                 self.assertEqual(
                     self.runtime.controller.last_decision.heat, True
                 )
