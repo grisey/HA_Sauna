@@ -270,6 +270,80 @@ const renderCurrent = (
     );
   }
   for (const key of ["heater", "light"]) {
+    for (const value of [true, false]) {
+      const { panel: p } = makePanel(enabled);
+      const brightness = defaults.parameters.find(
+        ({ key }) => key === "session_light_brightness_percent",
+      ).default;
+      const recording = { timeline: { session_id: "manual-recording" } };
+      const control = (observed) =>
+        key === "heater"
+          ? {
+              manual: value,
+              commanded: value,
+              observation: { available: true, on: observed },
+            }
+          : {
+              manual: value ? brightness : 0,
+              manual_feedback_target: value ? brightness : 0,
+              observation: {
+                available: true,
+                brightness_percent: observed ? brightness : 0,
+              },
+            };
+      p.state.configuration.parameters = {
+        session_light_brightness_percent: brightness,
+      };
+      p.state.session = value ? null : recording;
+      p.state.manual_controls = { [key]: control(!value) };
+      if (key === "heater") p.state.manual_controls.heater.manual = !value;
+      await p.action(`${key}:${value}`);
+      p.acceptState({
+        ...p.state,
+        session: value ? recording : null,
+        manual_controls: { [key]: control(!value) },
+      });
+      assert.equal(
+        p.pendingControlCommand(key)?.stage,
+        "waiting",
+        `${key} ${value}: manual recording changes do not confirm physical output`,
+      );
+      assert.match(p.controlCommandLabel(key, value, "Schalten"), / …/);
+      assert.match(p.controlCommandAttributes(key, value), /aria-busy="true"/);
+      p.acceptState({ ...p.state });
+      assert.ok(p.pendingControlCommand(key), "unchanged feedback keeps waiting");
+      p.acceptState({
+        ...p.state,
+        manual_controls: { [key]: control(value) },
+      });
+      assert.equal(p.pendingControlCommand(key), null);
+      assert.doesNotMatch(p.controlCommandLabel(key, value, "Schalten"), / …/);
+    }
+  }
+  for (const end of ["mode", "entry", "failure", "automatic-session"]) {
+    const { panel: p } = makePanel(enabled);
+    if (end === "automatic-session") {
+      p.state.configuration.control_mode = "automatic";
+      p.state.session = { timeline: { session_id: "automatic-session" } };
+    }
+    p.state.manual_controls = {
+      heater: {
+        manual: false,
+        commanded: false,
+        observation: { available: true, on: false },
+      },
+    };
+    await p.action("heater:true");
+    const next = { ...p.state };
+    if (end === "mode") next.configuration = { control_mode: "automatic" };
+    else if (end === "entry") p.entry = "another-entry";
+    else if (end === "failure") next.issues = [{ key: "heater_feedback_mismatch" }];
+    else next.session = null;
+    p.acceptState(next);
+    assert.equal(p.pendingControlCommand("heater"), null, end);
+    assert.equal(p.controlCommands.heater, undefined, end);
+  }
+  for (const key of ["heater", "light"]) {
     const fixture = makePanel(enabled),
       first = deferred();
     const p = fixture.panel;
@@ -826,7 +900,7 @@ const renderCurrent = (
           );
         assert.equal(
           /data-action="control-mode:/.test(html),
-          !scenario.session,
+          scenario.mode === "manual" || !scenario.session,
           context,
         );
         assert.deepEqual(
@@ -1054,12 +1128,16 @@ const renderCurrent = (
     "a regular user sends one atomic heater command",
   );
   calls.length = 0;
+  panel.state.session = { timeline: {} };
+  panel.state.operation_enabled = true;
+  panel.state.configuration_locked = true;
   await panel.action("control-mode:automatic");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["/entry-1/control-mode", "POST", { mode: "automatic" }],
   ]);
   calls.length = 0;
-  panel.state.configuration_locked = true;
+  // The API spy does not deliver the following automatic session's state.
+  panel.state.configuration = { control_mode: "automatic" };
   await panel.action("control-mode:manual");
   await panel.action("manual-light-overview");
   await panel.action("details");

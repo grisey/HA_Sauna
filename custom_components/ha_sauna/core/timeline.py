@@ -124,7 +124,7 @@ class Gang:
 class Timeline:
     session_id: str
     session_started_at: datetime
-    door: Door = Door.UNKNOWN
+    door: Door = Door.CLOSED
     anchor: Event | None = None
     opening: Event | None = None
     closed_opening: Event | None = None
@@ -137,6 +137,23 @@ class Timeline:
     # Aufgehobene Erkennungen sind Diagnosedaten, keine abgeschlossenen Gänge.
     retracted: tuple[Gang, ...] = ()
     rejected_start_sources: tuple[str, ...] = ()
+
+    @property
+    def exit_ventilation(self) -> Event | None:
+        """Lüftungsbeleg innerhalb der aktuell zugeordneten Türöffnung."""
+        if self.door == Door.OPEN:
+            opening, ventilation = self.opening, self.open_ventilation
+        elif self.door == Door.CLOSED:
+            opening, ventilation = self.closed_opening, self.preparation
+            if (self.anchor is None or ventilation is None
+                    or ventilation.effective_at > self.anchor.effective_at):
+                return None
+        else:
+            return None
+        if (opening is None or ventilation is None
+                or ventilation.effective_at < opening.effective_at):
+            return None
+        return ventilation
 
     @property
     def entry_cycle_available(self) -> bool:
@@ -159,7 +176,7 @@ class Timeline:
         object.__setattr__(self, "session_started_at", utc(self.session_started_at))
 
 
-def apply(state: Timeline, event: Event) -> Timeline:
+def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = None) -> Timeline:
     """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
     `active` umfasst vorläufige und bestätigte Gänge. Vorbereitung gehört zur
@@ -210,11 +227,10 @@ def apply(state: Timeline, event: Event) -> Timeline:
             preparation=state.open_ventilation,
             open_ventilation=None,
         )
-        if ((state.active is not None
-             and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED)
-                or (state.opening is not None
-                    and state.opening.event_id in state.rejected_start_sources)):
-            # A door cycle observed during this gang cannot become a new entry.
+        if state.active is not None:
+            # Closing while the old gang still runs is not a new entry.
+            # After leaving and ventilating, a later closure can instead belong
+            # to the next occupant returning through the still open door.
             result = replace(result, rejected_start_sources=(
                 *state.rejected_start_sources, event.event_id,
             ))
@@ -234,15 +250,19 @@ def apply(state: Timeline, event: Event) -> Timeline:
             anchor = state.anchor
             if event.effective_at < anchor.effective_at:
                 raise ValueError("Gangerkennung liegt vor dem zugehörigen Türschluss")
+            start = utc(gang_start_at) if gang_start_at is not None else anchor.effective_at
+            if not anchor.effective_at <= start <= event.effective_at:
+                raise ValueError("Gangbeginn benötigt Türschluss und erfüllte Startbedingungen")
             gang = Gang(
                 gang_id=f"{state.session_id}:{event.event_id}",
                 session_id=state.session_id,
-                started_at=anchor.effective_at,
+                started_at=start,
                 detected_at=event.detected_at,
                 start_source_event_id=anchor.event_id,
                 recognition_event_id=event.event_id,
                 recognition_kind=event.kind,
-                start_basis="door_close",
+                start_basis=("door_close" if start == anchor.effective_at
+                             else "minimum_temperature"),
                 preparation_event_id=(
                     state.preparation.event_id if state.preparation else None
                 ),
@@ -261,6 +281,13 @@ def apply(state: Timeline, event: Event) -> Timeline:
                 or opening.event_id in state.rejected_start_sources
                 or opening.effective_at <= state.active.started_at):
             raise ValueError("Gangende benötigt eine neue Austrittsöffnung")
+        if (event.effective_at < opening.effective_at
+                or (state.door == Door.CLOSED
+                    and (state.anchor is None
+                         or event.effective_at > state.anchor.effective_at))):
+            raise ValueError("Abwesenheit gehört nicht zur Austrittsöffnung")
+        if state.exit_ventilation is None:
+            raise ValueError("Gangende benötigt bestätigtes Lüften der Austrittsöffnung")
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
         result = replace(state, active=None, completed=state.completed + (finished,),

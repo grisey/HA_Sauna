@@ -5,7 +5,8 @@
 Sitzungen mit mindestens einem bestätigten Gang bleiben mit ihren Originaldaten
 ohne Altersbegrenzung erhalten. Sitzungen ohne bestätigten Gang werden nach dem
 Abschluss verworfen; dieselbe Bereinigung erfolgt beim Integrationsstart für
-ältere Sitzungen ohne bestätigten Gang.
+ältere Sitzungen ohne bestätigten Gang. Das gilt auch für Aufzeichnungen im
+manuellen Modus.
 
 Das Archiv umfasst Messungen **15 Minuten vor und nach der Sitzung**.
 Außerhalb dieser Fenster werden keine sitzungslosen Messreihen dauerhaft

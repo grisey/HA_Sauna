@@ -195,7 +195,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         # Integrate that known interval independently at the actual OFF time.
         from math import log
         heat_seconds = (self.runtime.session.after_run.started_at - self.base).total_seconds()
-        expected_seconds = 30 + 900 / log(2) * (1 - 2 ** (-heat_seconds / 900)) / 2
+        parameters = self.runtime.configuration.parameters
+        half_life = parameters.seconds("oven_cooling_half_life_minutes")
+        ratio = parameters.values["oven_cooling_heat_idle_ratio"]
+        expected_seconds = min(
+            parameters.seconds("oven_cooling_max_minutes"),
+            parameters.seconds("after_run_minutes")
+            + half_life / log(2) * (1 - 2 ** (-heat_seconds / half_life)) / ratio,
+        )
         self.assertAlmostEqual(
             self.runtime.session.after_run.duration_seconds, expected_seconds, places=5
         )
@@ -938,11 +945,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_light_externally(True, 128)
         output = self.runtime.device.light_output
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
-        ends_at = output.manual_ends_at
+        ends_at = self.now + timedelta(
+            seconds=self.runtime.configuration.parameters.seconds("manual_override_minutes")
+        )
+        self.assertEqual(output.manual_ends_at, ends_at)
         self.light.async_write_ha_state()  # state_report, not another choice
         await self.hass.async_block_till_done()
         self.assertEqual(output.manual_ends_at, ends_at)
-        await self.time(600)
+        await self.time((ends_at - self.base).total_seconds())
         self.assertIsNone(output.manual_brightness)
 
     async def test_external_light_off_is_the_same_manual_selection(self):
@@ -951,7 +961,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_light_externally(False)
         output = self.runtime.device.light_output
         self.assertEqual(output.manual_brightness, 0)
-        self.assertEqual(output.manual_ends_at, self.now + timedelta(minutes=10))
+        self.assertEqual(output.manual_ends_at, self.now + timedelta(
+            seconds=self.runtime.configuration.parameters.seconds("manual_override_minutes")
+        ))
 
     async def test_external_light_selection_is_indefinite_in_manual_mode(self):
         from dataclasses import replace
@@ -1122,7 +1134,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                          {"available": False, "on": None})
         self.assertNotIn(self.heater.entity_id, str(public["manual_controls"]))
 
-    async def test_manual_idle_switches_hardware_without_creating_session(self):
+    async def test_manual_heater_choices_bound_recording_and_preserve_operation_controls(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
 
         await async_set_control_mode(self.hass, self.entry, "manual")
@@ -1131,15 +1143,16 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
             self.assertEqual(self.heater.is_on, value)
             self.assertEqual(self.heater.calls[-1], value)
-            self.assertIsNone(self.runtime.session)
+            self.assertEqual(self.runtime.session is not None, value)
             self.assertEqual(self.hass.states.get(self.operation).state, "off")
+        identity = self.runtime.session.session_id
         await self.time(10)
-        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.session.session_id, identity)
         await self.runtime.set_light_override(42)
-        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.session.session_id, identity)
         with self.assertRaises(ValueError):
             await self.runtime.set_operation(True)
-        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.session.session_id, identity)
         await async_set_control_mode(self.hass, self.entry, "automatic")
         await self.hass.services.async_call(
             "switch", "turn_on", {"entity_id": self.operation}, blocking=True
@@ -1152,7 +1165,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.runtime.session.operation_enabled)
             self.assertEqual(self.heater.is_on, value)
 
-    async def test_manual_climate_regulates_live_target_without_session_or_recording(self):
+    async def test_manual_climate_cycles_share_recording_and_empty_recording_is_discarded(self):
         import json
         import zipfile
         from custom_components.ha_sauna.settings import (
@@ -1185,6 +1198,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.hass.async_block_till_done()
 
         await climate("turn_on")
+        identity = self.runtime.session.session_id
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.hass.states.get(self.climate).state, "heat")
         self.assertEqual(self.hass.states.get(self.climate).attributes["hvac_action"], "heating")
@@ -1210,6 +1224,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.heater.is_on)
         await self.set_source("upper_temperature", stop)
         self.assertFalse(self.heater.is_on)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertIsNotNone(self.runtime.detector)
         # OFF must revoke enablement even when the contactor is already off.
         await climate("turn_off")
         self.assertFalse(self.runtime.controller.heater_override)
@@ -1219,7 +1235,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(self.runtime.session)
         self.assertIsNone(self.runtime.detector)
-        self.assertEqual(self.runtime.controller.completed_sessions, ())
+        self.assertEqual([s.session_id for s in self.runtime.controller.completed_sessions], [identity])
         self.assertIsNone(self.runtime.controller.light_after_run)
         self.assertEqual(self.hass.states.get(self.operation).state, "off")
         self.assertEqual(self.light.calls, [])
@@ -1230,12 +1246,79 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             with zipfile.ZipFile(path) as archive:
                 records = [json.loads(line) for line in archive.read("records.jsonl").splitlines()]
                 self.assertEqual(archive.read("sessions.jsonl"), b"")
-            # Idle measurement context remains available; no manual run is recorded.
+            # Without a confirmed gang the completed recording is discarded; context stays.
             self.assertTrue(records)
             self.assertEqual({record["kind"] for record in records}, {"measurement"})
             self.assertTrue(all(record["session_id"] is None for record in records))
         finally:
             path.unlink()
+
+    async def test_manual_presence_and_ventilation_record_gang_without_switching_heater_or_light(self):
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.settings import async_set_control_mode
+
+        source = "binary_sensor.manual_presence"
+        self.hass.states.async_set(source, "off", {"device_class": "occupancy"})
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options, "presence_source": "ha_presence",
+            "bindings": {**self.entry.options["bindings"], "presence": source},
+        })
+        await self.hass.async_block_till_done()
+        self.runtime = self.entry.runtime_data
+        # HA presence transitions and injected door observations use the same clock.
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        c = self.runtime.controller
+        target = c.target_temperature
+        await self.set_source("upper_temperature", target)
+        await self.runtime.set_light_override(35)
+        await self.runtime.set_heater_override(True)
+        identity = self.runtime.session.session_id
+        self.heater.calls.clear()
+        self.light.calls.clear()
+
+        async def door(name, kind):
+            now = self.runtime._clock()
+            await self.runtime.receive(Event(name, identity, kind, now, now))
+            await self.hass.async_block_till_done()
+
+        await self.set_source("presence", "on")
+        await door("entry-open", Kind.DOOR_OPEN)
+        await door("entry-close", Kind.DOOR_CLOSE)
+        self.assertIsNotNone(self.runtime.session.timeline.active)
+        await door("infusion", Kind.INFUSION)
+        self.assertFalse(self.heater.is_on)
+        await door("exit", Kind.DOOR_OPEN)
+        await self.set_source("presence", "off")
+        await door("ventilation", Kind.VENTILATION)
+        self.assertEqual(self.runtime.session.timeline.gang_count, 1)
+        self.assertEqual(c.target_temperature, target)
+        self.assertTrue(c.heater_override)
+        self.assertIsNone(self.runtime.session.after_run)
+        self.assertEqual(self.heater.calls, [])
+        self.assertEqual(self.light.calls, [])
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 35)
+        await self.set_source("upper_temperature", c.thermostat_restart_temperature)
+        self.assertTrue(self.heater.is_on)
+        await self.runtime.set_light_override(40)
+        before_off = self.runtime._clock()
+        await self.runtime.set_heater_override(False)
+        after_off = self.runtime._clock()
+        self.assertFalse(self.heater.is_on)
+        self.assertIsNone(self.runtime.session)
+        self.assertIsNone(c.light_after_run)
+        self.assertAlmostEqual(self.light.brightness, 255 * .4, delta=1)
+        await self.runtime.archive.flush()
+        saved = self.runtime.archive.read(identity)
+        self.assertEqual(saved["session"]["configuration"]["control_mode"], "manual")
+        ended_at = datetime.fromisoformat(saved["session"]["ended_at"])
+        self.assertLessEqual(before_off, ended_at)
+        self.assertLessEqual(ended_at, after_off)
+        records = saved["records"]
+        self.assertEqual([r["payload"]["value"] for r in records if r["kind"] == "manual_heater"],
+                         [True, False])
+        self.assertEqual([r["payload"]["value"] for r in records if r["kind"] == "manual_light"], [40])
+        self.assertTrue(any(r["kind"] == "consumer_event" and
+                            r["payload"]["kind"] == "gang_ended" for r in records))
 
     async def test_manual_enable_is_not_skipped_when_external_contactor_is_already_on(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
@@ -1261,7 +1344,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.runtime.controller.heater_override)
             self.assertTrue(self.runtime.controller.last_decision.heat)
             self.assertEqual(self.hass.states.get(self.climate).state, "heat")
-            self.assertIsNone(self.runtime.session)
+            self.assertIsNotNone(self.runtime.session)
         finally:
             self.heater.accept_commands = True
 
@@ -1285,7 +1368,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.runtime.controller.heater_override)
         self.assertIsNone(self.runtime.session)
 
-    async def test_manual_idle_failed_switch_on_is_monitored_without_session(self):
+    async def test_failed_manual_switch_on_revokes_enablement_and_ends_recording(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
 
         await async_set_control_mode(self.hass, self.entry, "manual")
@@ -1659,33 +1742,56 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("upper_temperature", self.runtime.device.faults)
         self.assertFalse(self.heater.is_on)
 
-    async def prepare_temperature_reporting_gap(self, validity_seconds):
+    async def prepare_temperature_reporting_gap(self):
         from custom_components.ha_sauna.core.display import phase_timer
+        from custom_components.ha_sauna.core.parameters import Parameters
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
-            "sensor_timeout_seconds": validity_seconds, "fault_confirmation_seconds": 120,
-            "minimum_heating_minutes": 10}}
+            "minimum_heating_minutes": Parameters({}).values["minimum_heating_minutes"]}}
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_temperature", 70)
+            await self.set_source(f"{position}_humidity", 25)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        self.now = self.base + timedelta(seconds=610)
-        await self.set_source("upper_temperature", 70)
+        minimum = self.runtime.configuration.parameters.seconds("minimum_heating_minutes")
+        until = self.base + timedelta(seconds=minimum + 1)
+        # The production timer runs every second. Keep observations fresh on
+        # that path throughout the actual minimum-heating interval.
+        while self.now < until:
+            self.now = min(self.now + timedelta(seconds=1), until)
+            for position in ("upper", "lower"):
+                await self.set_source(f"{position}_temperature", 70)
+                await self.set_source(f"{position}_humidity", 25)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+            self.assertTrue(self.heater.is_on)
+            self.assertFalse(self.runtime.controller.protection)
+        self.assertEqual(len(self.runtime.session.heating.intervals), 1)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "heating")
         self.heater.calls.clear()
 
+    async def advance_temperature_reporting_gap(self, seconds):
+        until = self.now + timedelta(seconds=seconds)
+        while self.now < until:
+            self.now = min(self.now + timedelta(seconds=1), until)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+
     async def test_suitable_validity_preserves_completed_minimum_heating_across_reporting_gap(self):
         from custom_components.ha_sauna.core.display import phase_timer
-        await self.prepare_temperature_reporting_gap(30)
+        await self.prepare_temperature_reporting_gap()
         started_at = self.runtime.session.heating.intervals[0].started_at
-        await self.time(616)
+        validity = self.runtime.configuration.parameters.values["sensor_timeout_seconds"]
+        await self.advance_temperature_reporting_gap(validity / 2)
         self.assertEqual(self.runtime.controller.temperature, 70)
         self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
         self.assertFalse(self.runtime.controller.protection)
-        self.now = self.base + timedelta(seconds=616.2)
+        await self.advance_temperature_reporting_gap(validity / 4)
         await self.set_source("upper_temperature", 71)
         self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
@@ -1694,24 +1800,35 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.session.heating.intervals[0].started_at, started_at)
         self.assertIsNone(self.runtime.session.heating.intervals[0].ended_at)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "heating")
-        self.assertAlmostEqual(self.runtime.session.heating.elapsed_seconds, 616.2, places=3)
+        self.assertAlmostEqual(
+            self.runtime.session.heating.elapsed_seconds,
+            (self.now - started_at).total_seconds(), places=3,
+        )
 
-    async def test_too_short_validity_causes_real_switching_and_new_minimum_heating(self):
+    async def test_expired_validity_causes_real_switching_and_new_minimum_heating(self):
         from custom_components.ha_sauna.core.display import phase_timer
-        await self.prepare_temperature_reporting_gap(5)
-        await self.time(616)
+        await self.prepare_temperature_reporting_gap()
+        parameters = self.runtime.configuration.parameters
+        await self.advance_temperature_reporting_gap(
+            parameters.values["sensor_timeout_seconds"] + 1
+        )
         self.assertIsNone(self.runtime.controller.temperature)
         self.assertFalse(self.heater.is_on)
         self.assertEqual(self.runtime.controller.last_decision.reason, "upper_temperature_unavailable")
         self.assertFalse(self.runtime.controller.protection)
-        self.now = self.base + timedelta(seconds=616.2)
+        await self.advance_temperature_reporting_gap(
+            parameters.values["fault_confirmation_seconds"] / 2
+        )
         await self.set_source("upper_temperature", 71)
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.heater.calls, [False, True])
         self.assertEqual(len(self.runtime.session.heating.intervals), 2)
         self.assertEqual(self.runtime.session.heating.intervals[-1].started_at, self.now)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "minimum_heating")
-        self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
+        self.assertEqual(
+            phase_timer(self.runtime.controller, self.now)["seconds"],
+            parameters.seconds("minimum_heating_minutes"),
+        )
 
     async def test_expired_temperature_stops_immediately_and_persistent_failure_latches(self):
         await self.runtime.set_operation(True)
@@ -2363,7 +2480,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.light.is_on)
         self.assertAlmostEqual(self.light.brightness, original, delta=1)
         await push("single_push")
-        self.assertIsNone(self.runtime.session)
+        self.assertIsNotNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.automatic_operation_enabled)
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 37)
         self.assertTrue(self.runtime.controller.heater_override)
 
@@ -2443,7 +2561,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             await self.set_source("control_input", "on")
             self.now += timedelta(seconds=.1)
             await self.set_source("control_input", "off")
-            self.assertIsNone(self.runtime.session)
+            self.assertEqual(self.runtime.session is not None, value)
             self.assertEqual(self.heater.is_on, value)
             self.assertEqual(self.runtime.configuration.control_mode, "manual")
         await self.set_source("control_input", "on")
@@ -2531,7 +2649,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.session)
         self.assertFalse(any(self.heater.calls))
         await push("single_push")
-        self.assertIsNone(self.runtime.session)
+        self.assertIsNotNone(self.runtime.session)
+        self.assertFalse(self.runtime.controller.automatic_operation_enabled)
         self.assertTrue(self.heater.is_on)
         await push("btn_down")
         await push("long_push")

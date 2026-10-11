@@ -287,10 +287,7 @@ test("a session draft keeps its cancel and apply actions after the session ends"
             };
             return {};
           }
-          assert.equal(
-            path,
-            choice === "preset" ? "/entry/temperature" : "/entry/program",
-          );
+          assert.equal(path, "/entry/program");
           return {};
         },
       );
@@ -373,13 +370,7 @@ test("a session draft keeps its cancel and apply actions after the session ends"
               ["/entry/program", "/entry/temperature"].includes(path),
             ),
           ),
-          [
-            [
-              choice === "preset" ? "/entry/temperature" : "/entry/program",
-              "POST",
-              expected,
-            ],
-          ],
+          [["/entry/program", "POST", expected]],
         );
         assert.equal(p.programDirty(), false);
         if (choice === "preset") {
@@ -431,7 +422,7 @@ test("session presets only change the chosen temperature until apply", async () 
         plain(calls),
         outcome === "cancel"
           ? []
-          : [["/entry/temperature", "POST", { target_temperature_c: 75 }]],
+          : [["/entry/program", "POST", { target_temperature_c: 75 }]],
       );
     }
 });

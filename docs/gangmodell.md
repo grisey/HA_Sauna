@@ -4,37 +4,53 @@ Die gewählte Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
 direkten Präsenzsensor oder aus [Temperatur und Feuchte](erkennung.md)
 (Proxyverfahren).
 
-## Wann ein Gang beginnen kann
+Die Erkennungsregeln gelten auch während der manuellen Aufzeichnung.
+Heizanforderungen, Ofenkühlung und Temperaturstufen wirken nur in Automatik.
 
-Bei beiden Erkennungsverfahren benötigt ein neuer Gang Betrieb-EIN, keine angeforderte
-oder laufende Ofenkühlung und eine frische, gültige
-[Regeltemperatur](betrieb.md#aufheizen-und-bereitschaft) ab der eingestellten
-Mindesttemperatur.
-Ein vollständiger Türvorgang besteht aus erkannter Öffnung und anschließender
-Schließung. Beide Verfahren benötigen ihn für den Eintritt. Für den erkannten
-Austritt genügen eine neue Türöffnung und der passende Erkennungsnachweis;
-ein anschließender Türschluss ist nicht erforderlich.
+## Eintritt, Aufenthalt und Verlassen
 
-Ein späterer Temperaturabfall beendet einen aktiven Gang nicht; Aufgüsse und
-Enderkennung bleiben möglich. Nach einer Freigabe verwendet die Erkennung neue
-Messfenster aus dem freigegebenen Zeitraum.
+Türöffnung und Türschluss werden unabhängig von der Mindesttemperatur erkannt.
+Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
+
+| Situation | Gangerkennung |
+| --- | --- |
+| Noch kein Gang | Eintritt und Anwesenheitsnachweis; Beginn frühestens bei gültiger Regeltemperatur ab der Mindesttemperatur |
+| Gang läuft | Aufgüsse und Gangende bleiben auch unterhalb der Mindesttemperatur erkennbar |
+| Ofenkühlung läuft | Ein erkannter neuer Gang beendet die Kühlung |
+| Betrieb-AUS | Keine neuen Gänge |
+
+Beim Eintritt folgt auf die Öffnung der Türschluss. Beim Verlassen wird die Tür
+zum Durchlüften geöffnet und offengelassen. Die spätere Rückkehr durch diese
+offene Tür kann mit dem anschließenden Türschluss einen neuen Eintritt belegen.
+Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 
 ## Gang mit direktem Präsenzsensor erkennen
 
-Die zugehörige Präsenzmeldung muss von der gewählten Entität stammen
-und darf nicht vor der Öffnung liegen. Sie kann auch nach dem Türschluss
-eintreffen. Jeder Türvorgang begründet höchstens einen Übergang.
+Beim Schließen einer vollständigen Türfolge muss Anwesenheit anliegen.
+Sie kann bereits vor der Öffnung bestanden haben. Entscheidend ist die gemeldete
+Zustandszeit, unabhängig von der Verarbeitungsreihenfolge. Erst nach dem
+Türschluss beginnende Anwesenheit verwendet diese Türfolge nicht erneut.
+Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
+belegte Eintritt bei anhaltender Präsenz erhalten. Der Gang beginnt beim Erreichen
+der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
+Abwesenheit oder ein unbekannter Präsenzzustand unterbrechen diesen Nachweis.
+Ein Gang endet erst bei einer neuen Austrittsöffnung, bestätigtem Durchlüften
+derselben Öffnung und anliegender Abwesenheit. Diese kann bereits vor dem
+thermischen Öffnungshinweis gemeldet sein. Die Nachweise können in beliebiger
+Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
+vor dem vollständigen Nachweis verhindern das Gangende.
+Abwesenheit nach einer bereits geschlossenen Türfolge benötigt eine neue
+Austrittsöffnung. Eine verspätet empfangene Abwesenheitsmeldung bleibt gültig,
+wenn sie Abwesenheit während der damaligen Öffnungsfolge belegt.
 
 | Beleg | Wirkung |
 | --- | --- |
-| Vollständiger Türvorgang mit Anwesenheit und erfüllten Startbedingungen | Bestätigter Gang ab Türschluss, ohne Wartefrist oder erforderlichen Aufguss |
-| Nachfolgende Türöffnung mit zugehöriger Abwesenheit | Gangende ohne erforderlichen Türschluss |
+| Eintritt mit Anwesenheit und erreichter Mindesttemperatur | Bestätigter Gang, ohne Wartefrist oder erforderlichen Aufguss |
+| Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis während dieser Öffnungsphase |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
-| Durchlüften | Kein Gangende |
+| Durchlüften ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
 
-Ein Türvorgang unterhalb der Mindesttemperatur wird durch späteres Aufheizen
-nicht nachträglich zum Gangbeginn.
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
 
@@ -54,25 +70,24 @@ Proxyverfahren und keine Tür-Mindestheizhilfe.
 | Bestätigtes Durchlüften nach Austrittsöffnung | Gangende zum Buchungszeitpunkt der Lüftungsbestätigung |
 | Betrieb-AUS | Ende des offenen Gangs |
 
-Als Beginn gilt die passende Türschließung derselben Sitzung und Türöffnung,
-wenn zu diesem Zeitpunkt die Temperaturfreigabe bestand. Ein ungenutzter
-Türbezug verfällt bei unterbrochener Temperaturfreigabe oder veraltetem Messwert.
-Ohne gültigen, ungenutzten Türbezug beginnt kein Gang. Das gilt auch für ein
-deutliches Personensignal oder einen Aufguss.
+Als Beginn gilt die passende Türschließung, frühestens jedoch der Beginn des
+anschließenden gültigen Temperaturbereichs ab Mindesttemperatur. Die
+Personen- und Aufgussnachweise müssen zu diesem Eintritt gehören. Ohne gültigen,
+ungenutzten Türbezug beginnt kein Gang.
 
 Die Aufgussbestätigungsfrist läuft ab Gangbeginn einschließlich ihres
 Endzeitpunkts. Auch ein Gangbeginn allein durch Aufguss muss innerhalb dieser
-Frist ab Türschluss liegen. Nach Ablauf oder Rücknahme benötigt ein neuer Gang
+Frist ab möglichem Gangbeginn liegen. Nach Ablauf oder Rücknahme benötigt ein neuer Gang
 einen neuen vollständigen Eintritt.
 
-Bestätigtes Durchlüften nach der Austrittsöffnung beendet den Gang auch bei
-offener Tür; Gangzählung und Ofenkühlung folgen dann. Eine kurze Türöffnung
+Bestätigtes Durchlüften während der Austrittsöffnung beendet den Gang;
+er wird gezählt und löst in Automatik die Ofenkühlung aus. Eine kurze Türöffnung
 ohne bestätigtes Durchlüften beendet keinen Gang.
 
 ## Gang zählen und nächste Temperaturstufe beginnen
 
 Nur beendete, bestätigte Gänge zählen, jeweils einmal und unabhängig vom
-Endgrund. Gleichzeitig folgt die nächste Stufe des
+Endgrund. In Automatik folgt gleichzeitig die nächste Stufe des
 [Temperaturprogramms](bedienung.md#temperatur-während-der-sitzung-ändern).
 Beginn und zugeordnete Aufgüsse bleiben erhalten.
 

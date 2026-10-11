@@ -29,6 +29,129 @@ def gang(c, index, start):
     c.report_heating(False, at(start + 3))
 
 
+class NextGangTemperatureTests(unittest.TestCase):
+    def controller(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, after_run_minutes=.1)
+        c.program_mode = "progressive"
+        return c
+
+    def start(self, c, index, start):
+        if index > 1:
+            c.process(event(f"previous-close-{index}", Kind.DOOR_CLOSE, start - 2))
+        c.process(event(f"entry-{index}", Kind.DOOR_OPEN, start - 1))
+        c.process(event(f"close-{index}", Kind.DOOR_CLOSE, start))
+        c.process(event(f"infusion-{index}", Kind.INFUSION, start + 1))
+
+    def finish(self, c, index, start):
+        c.process(event(f"exit-{index}", Kind.DOOR_OPEN, start + 2))
+        c.process(event(f"vent-{index}", Kind.VENTILATION, start + 3))
+        c.report_contactor(False, at(start + 3))
+        c.report_heating(False, at(start + 3))
+
+    def test_choice_without_active_gang_returns_to_unchanged_program(self):
+        c = self.controller()
+        parameters = c.parameters
+        c.set_next_gang_temperature(88, at(1))
+        self.assertEqual(c.target_temperature, 88)
+        self.assertEqual(c.next_gang_temperature, 88)
+        gang(c, 1, 10)
+        self.assertEqual(c.target_temperature, 85)
+        self.assertIsNone(c.session.next_gang_temperature_c)
+        self.assertIs(c.parameters, parameters)
+        self.assertEqual(c.program_mode, "progressive")
+        self.assertEqual(c.session.timeline.gang_count, 1)
+
+    def test_choice_during_active_gang_waits_for_its_end(self):
+        c = self.controller()
+        self.start(c, 1, 10)
+        self.assertEqual(c.next_gang_temperature, 85)
+        c.set_next_gang_temperature(88, at(11))
+        self.assertEqual(c.target_temperature, 80)
+        self.assertEqual(c.next_gang_temperature, 88)
+        self.finish(c, 1, 10)
+        self.assertEqual(c.target_temperature, 88)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 90)
+
+    def test_new_choice_during_overridden_gang_keeps_its_target(self):
+        c = self.controller()
+        c.set_next_gang_temperature(88, at(1))
+        self.start(c, 1, 10)
+        c.set_next_gang_temperature(92, at(11))
+        self.assertEqual(c.target_temperature, 88)
+        self.assertEqual(c.next_gang_temperature, 92)
+        self.finish(c, 1, 10)
+        self.assertEqual(c.target_temperature, 92)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 90)
+
+    def test_blocking_provisional_gang_retraction_releases_choice(self):
+        c = self.controller()
+        c.process(event("entry", Kind.DOOR_OPEN, 0))
+        c.process(event("close", Kind.DOOR_CLOSE, 1))
+        c.process(event("person", Kind.PERSON_STRONG, 2))
+        c.set_next_gang_temperature(88, at(3))
+        self.assertEqual(c.target_temperature, 80)
+        c.process(event("exit", Kind.DOOR_OPEN, 4))
+        c.process(event("vent", Kind.VENTILATION, 5))
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.gang_count, 0)
+        self.assertEqual(c.target_temperature, 88)
+        self.assertEqual(c.session.next_gang_temperature_c, 88)
+
+    def test_overridden_provisional_gang_retraction_does_not_consume_choice(self):
+        c = self.controller()
+        c.set_next_gang_temperature(88, at(0))
+        c.process(event("entry", Kind.DOOR_OPEN, 0))
+        c.process(event("close", Kind.DOOR_CLOSE, 1))
+        c.process(event("person", Kind.PERSON_STRONG, 2))
+        c.process(event("exit", Kind.DOOR_OPEN, 4))
+        c.process(event("vent", Kind.VENTILATION, 5))
+        self.assertEqual(c.session.timeline.gang_count, 0)
+        self.assertEqual(c.target_temperature, 88)
+        self.assertEqual(c.session.next_gang_temperature_c, 88)
+
+    def test_named_steps_continue_without_reanchoring(self):
+        c = self.controller()
+        c.temperature_steps = (80, 87, 82, 95)
+        c.set_next_gang_temperature(88, at(1))
+        gang(c, 1, 10)
+        self.assertEqual(c.target_temperature, 87)
+        gang(c, 2, 30)
+        self.assertEqual(c.target_temperature, 82)
+        self.assertEqual(c.temperature_steps, (80, 87, 82, 95))
+
+    def test_last_program_stage_returns_after_one_overridden_gang(self):
+        c = self.controller()
+        c.temperature_steps = (80,)
+        c.set_next_gang_temperature(88, at(1))
+        gang(c, 1, 10)
+        self.assertEqual(c.target_temperature, 80)
+        self.assertEqual(c.next_gang_temperature, 80)
+
+    def test_explicit_program_selection_clears_pending_choice(self):
+        c = self.controller()
+        c.set_next_gang_temperature(88, at(1))
+        change(c, 2, target_temperature_c=82, explicit_target=False,
+            new_program=True, program_mode="progressive")
+        self.assertEqual(c.target_temperature, 82)
+        self.assertIsNone(c.session.next_gang_temperature_c)
+
+    def test_confirmation_timeout_does_not_consume_pending_choice(self):
+        c = controller(target_temperature_c=80, final_temperature_c=95,
+            temperature_gangs=4, confirmation_minutes=1)
+        c.program_mode = "progressive"
+        c.process(event("entry", Kind.DOOR_OPEN, 0))
+        c.process(event("close", Kind.DOOR_CLOSE, 1))
+        c.process(event("person", Kind.PERSON_STRONG, 2))
+        c.set_next_gang_temperature(88, at(3))
+        c.advance(at(62))
+        self.assertIsNone(c.session.timeline.active)
+        self.assertEqual(c.target_temperature, 88)
+        self.assertEqual(c.session.timeline.gang_count, 0)
+
+
 class LiveTemperatureTests(unittest.TestCase):
     def test_distribution_does_not_limit_real_gangs_after_end_change(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
@@ -171,7 +294,7 @@ class LiveTemperatureTests(unittest.TestCase):
         gang(c, 4, 70)
         self.assertEqual(c.target_temperature, 98)
 
-    def test_direct_target_stays_constant_for_all_later_gangs(self):
+    def test_explicit_constant_selection_stays_fixed_for_all_later_gangs(self):
         c = controller(target_temperature_c=80, final_temperature_c=95,
             temperature_gangs=4, after_run_minutes=.1)
         c.program_mode = "progressive"

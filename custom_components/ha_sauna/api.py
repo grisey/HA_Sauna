@@ -217,6 +217,7 @@ class StateView(HomeAssistantView):
                         "thermostat_target": controller.thermostat_target,
                         "thermostat_restart_temperature": controller.thermostat_restart_temperature,
                         "target_temperature": controller.target_temperature,
+                        "next_gang_temperature": controller.next_gang_temperature,
                         "phase_timer": phase_timer(controller, now),
                         "start_availability": start_availability(
                             controller,
@@ -390,7 +391,15 @@ class ParametersView(HomeAssistantView):
             return self.json({"error": parameter_error(error)}, status_code=400)
         except ConfigurationLocked as error:
             return self.json({"error": str(error)}, status_code=409)
-        return self.json({"success": True, "parameters": parameters})
+        runtime = runtime_for(hass, entry_id)
+        return self.json({
+            "success": True, "parameters": parameters,
+            "target_temperature": runtime.controller.target_temperature,
+            "next_gang_temperature": runtime.controller.next_gang_temperature,
+            "program_mode": runtime.configuration.program_mode,
+            "selected_program_id": runtime.configuration.selected_program_id,
+            "temperature_steps": runtime.configuration.temperature_steps,
+        })
 
     async def patch(self, request, entry_id):
         """Merge an administrator's edits with the current serialized settings."""
@@ -494,6 +503,11 @@ class ProgramView(HomeAssistantView):
                 if not isinstance(body["profile"], str):
                     raise ValueError("Ungültiges Temperaturprogramm")
                 parameters = await async_set_program(hass, entry, body["profile"])
+            elif isinstance(body, dict) and set(body) == {"target_temperature_c"}:
+                parameters = await async_set_parameters(
+                    hass, entry, body, partial=True, explicit_target=True,
+                    program_mode="constant", new_program=True,
+                )
             elif isinstance(body, dict) and set(body) == {
                 "target_temperature_c",
                 "final_temperature_c",

@@ -105,7 +105,7 @@ class DetectionContextTests(unittest.TestCase):
         late.advance(at(74))
         self.assertIsNone(late.session.timeline.active)
 
-    def test_oven_cooling_and_operation_off_suppress_gang_signals_without_losing_next_start(self):
+    def test_waiting_without_entry_and_operation_off_cannot_create_a_gang(self):
         c = after_run()
         for second, phase in ((70,"nachlauf"),(99,"nachlauf")):
             c.advance(at(second))
@@ -126,26 +126,21 @@ class DetectionContextTests(unittest.TestCase):
         self.assertFalse(c.recognition_allowed(Kind.PERSON_STRONG))
         self.assertFalse(c.recognition_allowed(Kind.INFUSION))
 
-    def test_cooling_catchup_cannot_reuse_a_rise_before_its_booked_end(self):
-        for rise_at in (80, 99, 111):
-            with self.subTest(rise_at=rise_at):
-                c = after_run()
-                origin = at(70)
-                d = Detector(c.parameters, origin, (Position.UPPER,))
-                for second in range(70, 126):
-                    d.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 90, second))
-                    d.accept(measurement(Position.UPPER, Quantity.HUMIDITY,
-                                         20 if second < rise_at else 23, second))
-                c.advance(at(100))
-                c.process(event("previous-exit-close", Kind.DOOR_CLOSE, 100))
-                c.process(event("new-entry-open", Kind.DOOR_OPEN, 101))
-                c.process(event("new-entry-close", Kind.DOOR_CLOSE, 102))
-                c.advance(at(125))
-                found = d.advance(at(125), enabled=True, allowed=c.recognition_allowed,
-                                  recognition_context=c.recognition_context_at)
-                self.assertEqual(Kind.INFUSION in [event.kind for event in found], rise_at == 111)
-                self.assertEqual(c.recognition_context_at(at(99))[1], "after_run")
-                self.assertIsNone(c.recognition_context_at(at(100))[1])
+    def test_delayed_return_evidence_belongs_to_entry_not_to_cooling_expiry(self):
+        c = after_run()
+        c.process(event("return-close", Kind.DOOR_CLOSE, 75))
+        self.assertIsNotNone(c.session.after_run)
+        self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(74)))
+        old = Event("old-rise", "s", Kind.INFUSION, at(74), at(80))
+        self.assertEqual(c.process(old, recognition_at=at(74)).reason,
+                         "entry_context_changed")
+        self.assertIsNone(c.session.timeline.active)
+        self.assertTrue(c.recognition_allowed_at(Kind.INFUSION, at(76)))
+        c.process(Event("return-rise", "s", Kind.INFUSION, at(76), at(81)),
+                  recognition_at=at(76))
+        self.assertEqual(c.session.timeline.active.started_at, at(75))
+        self.assertEqual(c.session.after_run_history[-1].ends_at, at(81))
+        self.assertIsNone(c.session.after_run)
 
     def test_late_heating_gate_cannot_hide_received_off_on_from_thermal_proof(self):
         c = controller()

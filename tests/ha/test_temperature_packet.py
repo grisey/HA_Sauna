@@ -10,12 +10,15 @@ import test_device_feedback as fixtures
 
 @unittest.skipUnless(fixtures.HA_AVAILABLE, "Home Assistant ist lokal nicht installiert")
 class TemperaturePacketTests(unittest.TestCase):
-    async def packet(self, order, temperature):
+    async def packet(self, order, minimum_offset):
         fixture = fixtures.DeviceFeedbackTests()
         runtime, adapter, clock = fixture.detection_device(
             median_seconds=1, infusion_window_seconds=1, infusion_hold_seconds=1,
         )
-        adapter.ingest("upper_temperature", fixtures.state("60.1", unit="°C"), fixtures.T0)
+        minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
+        temperature = minimum + minimum_offset
+        initial = minimum + .1
+        adapter.ingest("upper_temperature", fixtures.state(str(initial), unit="°C"), fixtures.T0)
         adapter.refresh(fixtures.T0)
         runtime.controller.begin_session("packet", fixtures.T0)
         fixture.complete_proxy_entry(runtime, fixtures.T0)
@@ -25,7 +28,7 @@ class TemperaturePacketTests(unittest.TestCase):
         clock[0] = fixtures.T0 + timedelta(seconds=21)
         inputs = {
             "humidity": ("upper_humidity", 24, "22"),
-            "temperature": ("upper_temperature", temperature, "60.1"),
+            "temperature": ("upper_temperature", temperature, str(initial)),
             "off": ("control_input", "off", "on"),
         }
         tasks = []
@@ -48,16 +51,16 @@ class TemperaturePacketTests(unittest.TestCase):
     def test_same_time_cold_temperature_blocks_every_control_edge_order(self):
         for order in permutations(("humidity", "temperature", "off")):
             with self.subTest(order=order):
-                runtime = asyncio.run(self.packet(order, 59.9))
+                runtime = asyncio.run(self.packet(order, -.1))
                 self.assertEqual(runtime.session.timeline.gang_count, 0)
                 self.assertIsNone(runtime.session.timeline.active)
                 self.assertIsNone(runtime.session.timeline.anchor)
 
     def test_same_time_warm_temperature_allows_one_round_in_every_order(self):
-        for temperature in (60, 60.1):
+        for minimum_offset in (0, .1):
             for order in permutations(("humidity", "temperature", "off")):
-                with self.subTest(order=order, temperature=temperature):
-                    runtime = asyncio.run(self.packet(order, temperature))
+                with self.subTest(order=order, minimum_offset=minimum_offset):
+                    runtime = asyncio.run(self.packet(order, minimum_offset))
                     self.assertEqual(runtime.session.timeline.gang_count, 1)
 
     def test_packet_context_is_released_after_a_processing_error(self):

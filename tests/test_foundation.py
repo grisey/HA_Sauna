@@ -304,6 +304,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result.session.heating.elapsed_seconds, 0)
 
     def test_duplicate_input_does_not_change_state(self):
+        self.controller.process(event("entry-open", Kind.DOOR_OPEN, 9))
         e = event("close", Kind.DOOR_CLOSE, 10)
         self.controller.process(e)
         before = self.controller.session
@@ -379,6 +380,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_injected_clock_and_duplicate_serialization(self):
         session = await self.runtime.begin_session("s")
         self.assertEqual(session.started_at, T0)
+        self.now = T0 + timedelta(seconds=9)
+        await self.runtime.receive(event("entry-open", Kind.DOOR_OPEN, 9))
         self.now = T0 + timedelta(seconds=10)
         e = event("close", Kind.DOOR_CLOSE, 10)
         results = await asyncio.gather(self.runtime.receive(e), self.runtime.receive(e))

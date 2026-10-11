@@ -40,8 +40,9 @@ nur diese zusätzliche Heizanforderung zurück, ohne den Gang zu beenden.
 
 Die Türhilfe fordert nach einem geeigneten Türschluss zusätzliches Heizen an.
 Dafür müssen Öffnung und anschließender Schluss zu demselben Vorgang
-bei Betrieb-EIN in Aufheizen oder Bereit gehören. Gangbeginn oder Kühlung
-verwerfen diesen Vorgang. Bis zur tatsächlichen Heizbestätigung bleibt die
+bei Betrieb-EIN in Aufheizen oder Bereit gehören. Bei Türschluss muss die
+Mindesttemperatur erreicht sein. Gangbeginn oder Kühlung verwerfen diesen Vorgang.
+Bis zur tatsächlichen Heizbestätigung bleibt die
 Anforderung widerrufbar, danach gilt die Mindestheizzeit. Betrieb-AUS und
 manuelles Ofen-AUS verwerfen die Türanforderung. Direkte Präsenzführung verwendet
 keine Türhilfe.

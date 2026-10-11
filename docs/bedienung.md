@@ -2,7 +2,7 @@
 
 ## Starten und nach einer Pause fortsetzen
 
-Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
+Erneutes Einschalten in Automatik innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
 Die unter **Einstellungen → Programme und Start → Sitzung starten und beenden**
@@ -26,8 +26,10 @@ Standardtemperatur aus der Integrationskonfiguration. Danach bleibt eine
 direkt gewählte Solltemperatur erhalten. Gespeicherte Programme behalten
 ihre eigenen Temperaturen.
 
-Eine direkte Sollwertänderung am Temperaturinstrument wirkt sofort und ersetzt das
-Temperaturprogramm durch einen konstanten Sollwert. Programm- und Schnellwahlen
+Bei **Konstant** wirkt eine Sollwertänderung am Temperaturinstrument sofort.
+Während eines Temperaturprogramms ändert das Instrument nur die Temperatur für
+den nächsten Gang. Ein laufender Gang behält seinen Sollwert. Nach dem
+angepassten Gang gelten wieder die ursprünglichen Programmstufen. Programm- und Schnellwahlen
 benötigen während der Sitzung **Programm übernehmen**; außerhalb gelten sie
 sofort. Gangzählung und laufende Zeiten bleiben erhalten.
 
@@ -45,7 +47,7 @@ weder Regelparameter noch Verlaufsachsen.
 Ofen- und Lichtwahl einschließlich freier Helligkeit stehen allen Benutzern
 mit Steuerrechten gleichermaßen zur Verfügung. Außerhalb einer Sitzung ist
 in Automatik zunächst der ausdrückliche Wechsel über **Manuell steuern**
-erforderlich. Ofen und Licht schalten dort ohne Sitzung. Eine automatische
+erforderlich. Eine automatische
 Sitzung beginnt durch **Einschalten** im Automatikmodus oder die gewählte
 Tastergeste.
 
@@ -69,7 +71,7 @@ Lichtnachlauf. Eine spätere Raumlichtwahl startet keinen neuen Nachlauf.
 ## Dauerhaft manuell betreiben
 
 Die Betriebsart **Manuell** ist mit normalen Bedienrechten nach vollständigem
-Sitzungsende wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
+Ende einer automatischen Sitzung wählbar und bleibt bis zur erneuten Betriebsartwahl erhalten.
 Ofen und Licht beginnen beim Wechsel über das Panel und nach einem Home-Assistant-Neustart
 mit AUS. Die Bedienwahlen gelten ohne Übersteuerungsfrist.
 
@@ -80,15 +82,17 @@ Gangheizung, Türhilfe, Kühlung und Lichtautomatik bleiben deaktiviert.
 Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
 zeigt weiterhin die tatsächliche Ofenrückmeldung.
 
-Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
+Ein kurzer Tasterdruck außerhalb einer automatischen Sitzung wechselt in den manuellen Modus
 und schaltet die Temperaturregelung um; die vorherige Helligkeit bleibt erhalten.
 Auch manuelles EIN benötigt eine gültige
 Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
 Automatik gibt Ofen und Licht wieder für die automatische Steuerung frei.
 
-Manuelle Bedienung erzeugt keine Sitzung und keine Schaltaufzeichnung im
-Sauna-Archiv. Messkurven im Vor- und Nachlauf automatischer Sitzungen bleiben
-erhalten.
+Ofen-EIN beginnt eine Aufzeichnung, Ofen-AUS beendet sie. Thermostatzyklen
+unterbrechen sie nicht. Tür, Anwesenheit, Gänge und Aufgüsse werden nach
+denselben [Erkennungsregeln](gangmodell.md) erfasst, ohne Ofen oder Licht zu
+steuern. Für die Speicherung gelten dieselben [Archivregeln](speicherung.md)
+wie im Automatikbetrieb.
 
 ## Ausschalten oder sofort beenden
 
@@ -97,7 +101,7 @@ Wiederaufnahme- und Lichtnachlauffrist. Erst nach dieser Frist ist die Sitzung
 abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
 Konfiguration gesperrt.
 
-Dieselbe Tastergeste beendet bei laufendem Betrieb die Sitzung sofort.
+Dieselbe Tastergeste beendet eine laufende automatische Sitzung sofort.
 Bei gewählter Haltegeste wird zuvor ausgeschaltetes Licht beim Drücken mit der
 eingestellten Einschalthelligkeit eingeschaltet. Sobald die Haltezeit erreicht
 ist, bleibt es bis zur Loslassmeldung AUS;

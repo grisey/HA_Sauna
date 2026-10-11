@@ -16,6 +16,7 @@ class GangTemperatureDeviceTests(unittest.TestCase):
         runtime, adapter, clock = fixture.detection_device(
             both_positions=True, sensor_timeout_seconds=10,
         )
+        minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
         adapter.ingest("upper_temperature", state("25", unit="°C"), T0)
         adapter.ingest("lower_temperature", state("80", unit="°C"), T0)
         adapter.refresh(T0)
@@ -24,10 +25,10 @@ class GangTemperatureDeviceTests(unittest.TestCase):
         self.assertFalse(runtime.controller.recognition_allowed(Kind.INFUSION))
 
         clock[0] = T0 + timedelta(seconds=5)
-        adapter.ingest("lower_temperature", state("60", unit="°C"), clock[0])
+        adapter.ingest("lower_temperature", state(str(minimum), unit="°C"), clock[0])
         clock[0] = T0 + timedelta(seconds=11)
         adapter.refresh(clock[0])
-        self.assertEqual(runtime.controller.temperature, 60)
+        self.assertEqual(runtime.controller.temperature, minimum)
         for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
             runtime.controller.process(Event(kind.value, "s", kind, clock[0], clock[0]))
         self.assertTrue(runtime.controller.recognition_allowed(Kind.INFUSION))
@@ -58,7 +59,10 @@ class GangTemperatureDeviceTests(unittest.TestCase):
             self.assertFalse(runtime.controller.recognition_allowed(Kind.INFUSION))
 
             clock[0] = T0 + timedelta(seconds=12)
-            await runtime.device_input(fixture.detection_edge(runtime, "lower_temperature", 60))
+            await runtime.device_input(fixture.detection_edge(
+                runtime, "lower_temperature",
+                runtime.configuration.parameters.values["sauna_min_temperature_c"],
+            ))
             for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
                 runtime._process_event(Event(f"warm:{kind.value}", "s", kind, clock[0], clock[0]))
             runtime._process_event(Event("warm", "s", Kind.INFUSION, clock[0], clock[0]))

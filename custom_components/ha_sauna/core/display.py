@@ -82,7 +82,7 @@ def phase_timer(controller, now):
 
 
 def start_availability(controller, now, estimated_ready_seconds=None):
-    """Describe temperature readiness and known start blockers without changing state.
+    """Describe temperature readiness and heating restrictions without changing state.
 
     ``estimated_ready_seconds`` is prepared from current measurements by the
     device adapter.  This read-only presentation function never progresses or
@@ -121,57 +121,25 @@ def start_availability(controller, now, estimated_ready_seconds=None):
         and isinstance(target, (int, float))
         and isfinite(target)
     )
-    # A displayed readiness must never bypass the conditions which also stop
-    # the controller from heating.  These conditions have no honest deadline.
+    # Heating restrictions do not prohibit recognition of a new gang.
     if controller.protection:
         result.update(
             blocker={
                 "kind": "protection",
                 "reasons": tuple(sorted(controller.protection)),
             },
-            message="Ein Saunagang ist wegen einer Schutzsperre derzeit nicht möglich.",
+            message="Der Ofen ist wegen einer Schutzsperre gesperrt.",
         )
         return result
     if controller.inhibits:
         result.update(
             blocker={"kind": "inhibit", "reasons": tuple(sorted(controller.inhibits))},
-            message="Ein Saunagang ist derzeit gesperrt.",
+            message="Der Ofen ist derzeit gesperrt.",
         )
         return result
-    after_run = session.after_run
-    if after_run is not None:
-        if after_run.pending_start or after_run.ends_at is None and after_run.paused_at is None:
-            result.update(
-                blocker={"kind": "after_run_pending"},
-                message="Die Ofenkühlung wartet auf die bestätigte Ausschaltung des Ofens.",
-            )
-            return result
-        after_seconds = (
-            after_run.remaining_seconds
-            if after_run.paused_at is not None
-            else max(0, (after_run.ends_at - now).total_seconds())
-        )
-        if after_run.paused_at is not None:
-            result.update(
-                blocker={"kind": "after_run_paused", "seconds": after_seconds},
-                minimum_wait_seconds=None,
-                message="Eine pausierte Ofenkühlung aus dem früheren Ablauf liegt vor.",
-            )
-            return result
-        result.update(
-            minimum_wait_seconds=after_seconds,
-            blocker={
-                "kind": "after_run",
-                "seconds": after_seconds,
-            },
-            message="Ein weiterer Saunagang ist frühestens nach der laufenden Wartezeit möglich; die Temperatur wird danach erneut geprüft.",
-        )
-        return result
-
     if controller.control_mode == "manual":
         result.update(message="Ofen und Licht werden manuell bedient.")
         return result
-
 
     if not valid_target:
         result.update(

@@ -242,6 +242,10 @@ class Session:
     temperature_program_gangs: int | None = None
     temperature_program_start_gang_count: int = 0
     temperature_program_steps: tuple[float, ...] | None = None
+    next_gang_temperature_c: float | None = None
+    next_gang_temperature_blocked_by: str | None = None
+    active_gang_temperature_c: float | None = None
+    active_gang_temperature_id: str | None = None
 
     def __post_init__(self) -> None:
         purposes = set()

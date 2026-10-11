@@ -1716,7 +1716,7 @@
         "label": "Lüften und Gangende",
         "descriptions": {
           "proxy": "Bestätigtes Durchlüften nach einer erneuten Türöffnung beendet den Gang. Die Tür darf offen bleiben.",
-          "ha_presence": "Lüftungssignale bleiben Diagnosewerte. Für das Gangende zählen eine erneute Türöffnung und die Abwesenheitsmeldung des Präsenzsensors."
+          "ha_presence": "Eine neue Türöffnung, zugehörige Abwesenheit und bestätigtes Durchlüften beenden den Gang. Die Tür darf offen bleiben."
         }
       },
       {

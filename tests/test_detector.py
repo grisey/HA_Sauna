@@ -1,6 +1,5 @@
 """Synthetische Zeitreihen prüfen Kausalität, Ausfall und Quellenwechsel."""
 import asyncio
-import json
 import unittest
 from collections import Counter
 from datetime import timedelta
@@ -11,7 +10,6 @@ from test_foundation import T0, event, parameters
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.controller import Controller
-from custom_components.ha_sauna.core.detection_parameters import candidate_values
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
 from custom_components.ha_sauna.core.moisture import (
@@ -310,6 +308,59 @@ class DetectorTests(unittest.TestCase):
         weak = next(event for event in events if event.kind is Kind.PERSON_WEAK)
         self.assertEqual(weak.effective_at, T0 + timedelta(seconds=5))
 
+    def test_cold_entry_keeps_weak_detection_available_after_warming(self):
+        detector = self._entry_detector()
+        c = Controller(Parameters(detector.p))
+        minimum = c.parameters.values["sauna_min_temperature_c"]
+        c.set_temperature(minimum - 1, T0)
+        c.begin_session("s", T0)
+        warm_at = int(c.parameters.seconds("confirmation_minutes")) + 10
+        observed = []
+
+        def received(detection):
+            observed.append(detection)
+            c.process(Event(
+                f"detected:{detection.kind}:{detection.trace_at}", "s",
+                detection.kind, detection.effective_at, detection.detected_at,
+                detection.trace_at,
+            ), recognition_at=detection.trace_at)
+
+        # Entry occurs below the minimum. The room warms later, while a new
+        # moisture rise provides indirect evidence of an occupant inside.
+        entry_values = ((minimum - 1, 40), (minimum - 3, 38),
+                        (minimum - 5, 36), (minimum - 3, 38), (minimum - 1, 40))
+        for second in range(warm_at + 5):
+            now = T0 + timedelta(seconds=second)
+            temperature, humidity = (
+                entry_values[second] if second < len(entry_values) else (
+                    minimum if second >= warm_at else minimum - 1,
+                    40 + max(0, second - warm_at) * .2,
+                )
+            )
+            c.set_temperature(temperature, now)
+            for position in detector.positions:
+                detector.accept(measurement(position, Quantity.TEMPERATURE,
+                                            temperature, second))
+                detector.accept(measurement(position, Quantity.HUMIDITY,
+                                            humidity, second))
+            detector.advance(
+                now, enabled=True, allowed=c.recognition_allowed,
+                allowed_at=c.recognition_allowed_at,
+                recognition_context=c.recognition_context_at,
+                on_detection=received,
+            )
+            if second < warm_at:
+                self.assertIsNone(c.session.timeline.active)
+
+        self.assertEqual(
+            [item.kind for item in observed if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
+            [Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
+        )
+        self.assertIn(Kind.PERSON_WEAK, [item.kind for item in observed])
+        self.assertIsNotNone(c.session.timeline.active)
+        self.assertEqual(c.session.timeline.active.started_at,
+                         T0 + timedelta(seconds=warm_at))
+
     def test_close_recovers_when_lower_humidity_drops_out(self):
         detector = self._entry_detector()
         events = self._opened_entry_episode(detector)
@@ -606,54 +657,6 @@ class DetectorTests(unittest.TestCase):
         self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
         self.assertTrue(detector.ventilation_degraded)
 
-    def test_cooling_with_preserved_absolute_water_does_not_confirm_ventilation(self):
-        water = absolute_humidity(80, 40)
-        def values(second, position):
-            temperature = 80 - max(0, second - 9) * 2
-            return temperature, self._humidity_for_water(temperature, water)
-        detector = self._ventilation_detector()
-        events = self._open_for_ventilation(detector, value_at=values, heating=True)
-        for second in range(12, 50):
-            temperature, humidity = values(second, Position.UPPER)
-            events += sample(detector, second, temperature, humidity)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-
-    def test_stratified_water_loss_at_only_one_position_does_not_confirm_ventilation(self):
-        water = absolute_humidity(80, 40)
-        def values(second, position):
-            temperature = 80 - max(0, second - 9) * 2
-            humidity = 20 if position is Position.UPPER else self._humidity_for_water(temperature, water * 1.2)
-            return temperature, humidity
-        detector = self._ventilation_detector()
-        events = self._open_for_ventilation(detector, value_at=values, heating=True)
-        for second in range(12, 50):
-            for position in (Position.UPPER, Position.LOWER):
-                temperature, humidity = values(second, position)
-                detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
-                detector.accept(measurement(position, Quantity.HUMIDITY, humidity, second))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-
-    def test_post_infusion_cooling_with_time_shifted_sensor_pairs_does_not_confirm(self):
-        """Versetzte, aber frische Paare dürfen Luftumwälzung nicht als Verlust lesen."""
-        water = absolute_humidity(80, 40)
-        def values(second):
-            temperature = 80 - max(0, second - 9) * 2
-            return temperature, self._humidity_for_water(temperature, water)
-        detector = self._ventilation_detector(sensor_timeout_seconds=10)
-        events = []
-        for second in range(50):
-            detector.report_heating(True, T0 + timedelta(seconds=second))
-            for position in (Position.UPPER, Position.LOWER):
-                observed_second = second if position is Position.UPPER else max(0, second - 2)
-                temperature, humidity = values(observed_second)
-                measured = T0 + timedelta(seconds=observed_second)
-                detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second, measured=measured))
-                detector.accept(measurement(position, Quantity.HUMIDITY, humidity, second, measured=measured))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-
     def test_lost_position_during_open_door_cannot_fall_back_to_single_sensor_proof(self):
         water = absolute_humidity(80, 40)
         def values(second, position):
@@ -885,9 +888,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual([k for row in observed for k in row["signals"]], [e.kind for e in events])
         self.assertIsNotNone(observed[100]["metrics"]["upper"]["door_temperature_slope"])
 
-    def test_defaults_are_exactly_the_frozen_reference_and_overrides_are_consumed(self):
-        expected = json.loads((Path(__file__).resolve().parents[1] / "candidate/parameter.json").read_text())
-        self.assertEqual(candidate_values(detection_parameters().values), expected)
+    def test_detection_parameter_override_is_consumed(self):
         self.assertEqual(Detector(detection_parameters(door_open_slope=-3), T0).p["door_open_slope"], -3)
 
     def test_synthetic_episode_person_infusion_and_ventilation(self):

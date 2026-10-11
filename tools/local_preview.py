@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG
-from custom_components.ha_sauna.archive import plain
+from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
@@ -110,6 +110,8 @@ class Preview:
             self.door(Kind.DOOR_OPEN)
             self.step(4)
             self.presence("off")
+            self.step(1)
+            self.door(Kind.VENTILATION)
             self.step(6)
             self.door(Kind.DOOR_CLOSE)
             self.step(160, temperature=79)
@@ -151,6 +153,10 @@ class Preview:
 
     def save_session(self, session, configuration):
         saved = plain(session)
+        if session.ended_at is not None and not session_has_gangs(saved):
+            if self.sessions.pop(session.session_id, None) is not None:
+                self.archive_revision += 1
+            return
         saved["configuration"] = configuration
         saved["measurement_ttl_seconds"] = configuration["parameters"]["sensor_timeout_seconds"]
         self.sessions[session.session_id] = {
@@ -354,6 +360,7 @@ class Preview:
             "energy_kwh":session.energy.total_kwh if session else 0,
             "energy_source":session.energy.source if session else "estimated",
             "thermostat_target":c.thermostat_target, "target_temperature":c.target_temperature,
+            "next_gang_temperature":c.next_gang_temperature,
             "thermostat_restart_temperature":c.thermostat_restart_temperature,
             "phase_timer":phase_timer(c,self.now),
             "start_availability":start_availability(c,self.now), "light_after_run":c.light_after_run,
@@ -399,7 +406,7 @@ class Preview:
                 return {}
             if action != "step":
                 self.step(1)
-            if action in ("door_open", "door_close", "infusion"):
+            if action in ("door_open", "door_close", "infusion", "ventilation_confirmed"):
                 self.door(Kind(action))
             elif action in ("on", "off", "unavailable"):
                 self.presence(action)
@@ -487,6 +494,11 @@ class Preview:
         elif path.endswith("/program"):
             if set(body) == {"profile"} and isinstance(body["profile"], str):
                 asyncio.run(async_set_program(self.hass, self.entry, body["profile"]))
+            elif set(body) == {"target_temperature_c"}:
+                asyncio.run(async_set_parameters(
+                    self.hass, self.entry, body, partial=True, explicit_target=True,
+                    program_mode="constant", new_program=True,
+                ))
             elif set(body) == {"temperature_steps"}:
                 asyncio.run(async_set_temperature_steps(self.hass, self.entry, body["temperature_steps"]))
             elif set(body) == {"target_temperature_c", "final_temperature_c", "temperature_gangs"}:
@@ -500,6 +512,8 @@ class Preview:
             raise ValueError("Diese Einstellungsänderung ist in der lokalen Vorschau nicht angebunden.")
         self.sample()
         return {"parameters":self.c.parameters.as_dict(),
+                "target_temperature":self.c.target_temperature,
+                "next_gang_temperature":self.c.next_gang_temperature,
                 "program_mode":self.runtime.configuration.program_mode,
                 "selected_program_id":self.runtime.configuration.selected_program_id,
                 "temperature_steps":self.runtime.configuration.temperature_steps}

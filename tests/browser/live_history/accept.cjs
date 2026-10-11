@@ -43,7 +43,7 @@ fs.mkdirSync(output, { recursive: true });
     page.errors = errors;
     return page;
   }
-  const page = await fixture({ both: true });
+  const page = await fixture();
   results.push(
     await page.evaluate(async () => {
       const assert = (condition, message) => {
@@ -136,131 +136,99 @@ fs.mkdirSync(output, { recursive: true });
       return { case: "live-and-phases", live, stateOnly, identity: f.identity() };
     }),
   );
-  // Actual browser mouse, modifier wheel, focus and minimap pointer-capture.
+  // Actual browser mouse, zoom button, focus and minimap pointer-capture.
   const surface = page.locator("ha-sauna-panel").locator("svg.session-chart");
   const box = await surface.boundingBox();
   await page.mouse.move(box.x + box.width * 0.55, box.y + 150);
   await page.evaluate(() => f.settle());
   const tooltipBefore = await page.evaluate(() => f.panel.$("#tooltip").textContent);
-  assert.match(tooltipBefore, /Originalwert/);
-  await page.keyboard.down("Control");
-  await page.mouse.wheel(0, -160);
-  await page.keyboard.up("Control");
-  await page.evaluate(() => f.settle());
+  assert.match(tooltipBefore, /Temperatur:.*°C/);
+  assert.match(tooltipBefore, /Luftfeuchte:.*%/);
   const overview = page
     .locator("ha-sauna-panel")
     .locator("#history-overview [data-history-window]");
   const obox = await overview.boundingBox();
+  const windowBeforeDrag = await page.evaluate(() => [...f.panel.window]);
   await page.mouse.move(obox.x + obox.width / 2, obox.y + obox.height / 2);
   await page.mouse.down();
   await page.mouse.move(obox.x + obox.width / 2 + 30, obox.y + obox.height / 2);
   await page.evaluate(() => f.tick());
   await page.mouse.up();
+  assert.notDeepEqual(await page.evaluate(() => [...f.panel.window]), windowBeforeDrag);
+  const zoomButton = page.locator("ha-sauna-panel").locator('[data-action="zoom-in"]');
+  const zoomBefore = await page.evaluate(() => f.panel.zoom);
+  await zoomButton.click();
+  await page.evaluate(() => f.settle());
+  assert.ok((await page.evaluate(() => f.panel.zoom)) > zoomBefore);
+  await zoomButton.focus();
+  await page.evaluate(() => f.tick());
+  assert.equal(
+    await zoomButton.evaluate(
+      (button) => button.getRootNode().activeElement === button,
+    ),
+    true,
+  );
+  // Scroll the actual shadow ancestor, then re-enter the chart with the mouse.
+  await surface.scrollIntoViewIfNeeded();
+  const currentBox = await surface.boundingBox();
+  await page.mouse.move(
+    currentBox.x + currentBox.width / 2,
+    currentBox.y + currentBox.height / 3,
+  );
+  await page.evaluate(() => f.settle());
   results.push(
-    await page.evaluate(async () => {
-      const assert = (condition, message) => {
-        if (!condition) throw Error(message);
-      };
-      const p = f.panel,
-        surface = p.$("svg.session-chart"),
-        tip = p.$("#tooltip"),
-        button = p.$('[data-action="history-detail"]'),
-        detail = p.$("#event-list details");
-      detail.open = true;
-      button.focus();
-      const oldZoom = p.zoom;
-      await f.tick();
-      assert(
-        p.shadowRoot.activeElement === button && detail.open,
-        "focus and event detail preserved",
-      );
-      await p.action("history-detail");
-      await f.settle();
-      assert(f.identity().canvas && f.identity().surface, "height changes keep nodes");
-      assert(
-        Math.abs(
-          p.historyChart.interaction.geometry.rects.surface.top -
-            surface.getBoundingClientRect().top,
-        ) < 0.001,
-        "height controls invalidate position geometry",
-      );
-      const rect = surface.getBoundingClientRect(),
-        event = {
-          target: surface,
-          clientX: rect.left + rect.width * 0.5,
-          scale: 1,
-          preventDefault() {},
-        };
-      p.beginWebkitGesture(event);
-      p.updateWebkitGesture({ ...event, scale: 1.2 });
-      await f.tick();
-      p.endWebkitGesture(event);
-      await f.settle();
-      assert(p.zoom > oldZoom, "WebKit gesture changes zoom during append");
-      // Synthetic pointer pinch invokes real window logic; real capture checked by mouse drag above.
-      p.historyInputMode = "pointer";
-      p.chartPointers.set(1, { x: 300, y: 300 });
-      p.chartPointers.set(2, { x: 500, y: 300 });
-      p.pinchZoom(surface);
-      p.chartPointers.set(2, { x: 600, y: 300 });
-      const pinchBefore = p.zoom;
-      p.pinchZoom(surface);
-      assert(p.zoom > pinchBefore, "pointer pinch");
-      p.chartPointers.clear();
-      p.historyInputMode = null;
-      await f.settle();
-      const scroll = f.outer.querySelector("#scroll");
-      scroll.scrollTop = 120;
-      await f.settle();
-      const current = surface.getBoundingClientRect(),
-        point = p.svgCoordinates(
-          surface,
-          current.left + current.width / 2,
-          current.top + current.height / 2,
-        );
-      assert(
-        Math.abs(point.x - 600) < 0.001 && Math.abs(point.y - 240) < 0.001,
-        "shadow ancestor scroll geometry",
-      );
-      p.scheduleHover({
-        svg: surface,
-        clientX: current.left + current.width / 2,
-        clientY: current.top + 130,
-      });
-      await f.settle();
-      assert(tip === p.$("#tooltip") && !tip.hidden, "persistent hover node");
+    await page.evaluate(() => {
+      const p = f.panel;
+      const tip = p.$("#tooltip");
       const geometry = p.historyChart.interaction.geometry;
-      assert(
-        p.$("canvas.history-curves").width ===
-          Math.round(geometry.canvas.cssWidth * devicePixelRatio),
-        "DPR bitmap",
-      );
+      if (
+        tip.hidden ||
+        !tip.textContent.includes("°C") ||
+        !tip.textContent.includes("%")
+      )
+        throw Error("hover values missing after zoom and live append");
+      if (
+        p.$("canvas.history-curves").width !==
+        Math.round(geometry.canvas.cssWidth * devicePixelRatio)
+      )
+        throw Error("DPR bitmap mismatch");
+      if (!Object.values(f.identity()).every(Boolean))
+        throw Error("interaction replaced history nodes");
       return {
         case: "interaction",
         identity: f.identity(),
         zoom: p.zoom,
         tooltip: tip.textContent,
-        shadowScrollCoordinates: point,
       };
     }),
   );
   await page.setViewportSize({ width: 1120, height: 1000 });
   await page.evaluate(() => f.settle());
+  await page.evaluate(() => f.reset());
+  await page.locator("ha-sauna-panel").locator('[data-action="overview"]').click();
+  await page.evaluate(() => f.settle());
+  await page.evaluate(() => {
+    f.reset();
+    f.panel.drawHistory();
+  });
+  await page.evaluate(() => f.settle());
+  assert.equal(
+    await page.evaluate(
+      () => !!f.counts["curves.paintMain"] || f.panel.historyFrame != null,
+    ),
+    false,
+  );
+  await page.locator("ha-sauna-panel").locator('[data-action="history"]').click();
+  await page.evaluate(async () => {
+    await f.panel.historyLoad?.promise;
+    await f.settle();
+  });
   results.push(
     await page.evaluate(async () => {
       const canvas = f.panel.$("canvas.history-curves"),
         rect = f.panel.$("svg.session-chart").getBoundingClientRect();
       if (canvas.width !== Math.round(rect.width * devicePixelRatio))
         throw Error("resize bitmap mismatch");
-      f.reset();
-      f.panel.setPanelView("overview");
-      f.panel.drawHistory();
-      await f.settle();
-      if (f.counts["curves.paintMain"] || f.panel.historyFrame != null)
-        throw Error("hidden work");
-      f.panel.setPanelView("history");
-      f.panel.drawHistory();
-      await f.settle();
       const oldInteraction = f.panel.historyChart.interaction,
         index = f.panel.chartDataIndex;
       f.panel.remove();

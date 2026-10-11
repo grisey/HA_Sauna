@@ -1,4 +1,4 @@
-"""Manual control drives outputs without creating or recording a session."""
+"""Manual thermostat control and observation share no automatic actuations."""
 
 import unittest
 from datetime import timedelta
@@ -8,6 +8,7 @@ from test_foundation import T0, event, parameters
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
 
 
@@ -24,9 +25,8 @@ class ManualModeTests(unittest.TestCase):
     def start(self, controller):
         controller.set_temperature(60, at(0))
 
-    def reject_session_event(self, controller, name, kind, second):
-        with self.assertRaisesRegex(ValueError, "ohne Session"):
-            controller.process(event(name, kind, second))
+    def observe(self, controller, name, kind, second):
+        controller.process(event(name, kind, second, session=controller.session.session_id))
 
     def test_manual_hysteresis_switches_without_minimum_heat_or_pause(self):
         controller = self.controller(
@@ -36,6 +36,7 @@ class ManualModeTests(unittest.TestCase):
         )
         controller.set_temperature(77, at(0))
         controller.set_heater_override(True, at(1))
+        identity = controller.session.session_id
         controller.report_heating(True, at(1))
         for second, temperature, heat in (
             (2, 84, True), (3, 85, False), (4, 78, False),
@@ -44,8 +45,11 @@ class ManualModeTests(unittest.TestCase):
             controller.set_temperature(temperature, at(second))
             self.assertEqual(controller.last_decision.heat, heat)
             self.assertIs(controller.heater_override, True)
-            self.assertIsNone(controller.session)
-        self.assertEqual(controller.completed_sessions, ())
+            self.assertEqual(controller.session.session_id, identity)
+        controller.set_heater_override(False, at(7))
+        self.assertIsNone(controller.session)
+        self.assertEqual(len(controller.completed_sessions), 1)
+        self.assertEqual(controller.completed_sessions[0].ended_at, at(7))
         self.assertIsNone(controller.light_after_run)
 
     def test_manual_target_changes_apply_immediately_without_starting_a_program(self):
@@ -71,7 +75,7 @@ class ManualModeTests(unittest.TestCase):
             at(3), explicit_target=True,
         )
         self.assertTrue(controller.last_decision.heat)
-        self.assertIsNone(controller.session)
+        self.assertIsNotNone(controller.session)
         self.assertEqual(controller.completed_sessions, ())
 
     def test_off_and_mode_change_clear_manual_hysteresis_memory(self):
@@ -117,7 +121,7 @@ class ManualModeTests(unittest.TestCase):
             with self.subTest(direct=direct):
                 controller = self.controller()
                 self.start(controller)
-                with self.assertRaisesRegex(ValueError, "keine Saunasitzung"):
+                with self.assertRaisesRegex(ValueError, "Ofen Ein"):
                     if direct:
                         controller.begin_session("s", at(1))
                     else:
@@ -157,22 +161,70 @@ class ManualModeTests(unittest.TestCase):
         controller.set_control_mode("manual")
         self.assertIs(controller.heater_override, False)
 
-    def test_explicit_demand_does_not_create_gangs_from_presence_events(self):
-        controller = self.controller()
-        self.start(controller)
-        controller.set_heater_override(True, at(1))
-        self.reject_session_event(controller, "close", Kind.DOOR_CLOSE, 2)
-        self.reject_session_event(controller, "person", Kind.PERSON_STRONG, 3)
-        self.assertEqual(controller.phase, "aus")
-        self.assertTrue(controller.last_decision.heat)
-        self.reject_session_event(controller, "infusion", Kind.INFUSION, 4)
-        self.reject_session_event(controller, "open", Kind.DOOR_OPEN, 5)
-        self.reject_session_event(controller, "ventilation", Kind.VENTILATION, 6)
-        self.assertIsNone(controller.session)
-        self.assertTrue(controller.last_decision.heat)
-        self.assertEqual(controller.completed_sessions, ())
+    def test_recognition_observes_entry_gang_and_exit_without_controlling_outputs(self):
+        for source in ("proxy", "ha_presence"):
+            with self.subTest(source=source):
+                controller = self.controller(target_temperature_c=80)
+                controller.presence_source = source
+                controller.presence_entity = "binary_sensor.presence"
+                controller.set_temperature(80, at(0))
+                controller.set_heater_override(True, at(1))
+                def presence(state, second):
+                    controller.observe_direct_presence(binary_presence(
+                        controller.presence_entity, state, at(second), at(second),
+                    ), at(second))
+                presence("on", 2)
+                self.observe(controller, "entry-open", Kind.DOOR_OPEN, 3)
+                self.observe(controller, "entry-close", Kind.DOOR_CLOSE, 4)
+                self.observe(controller, "infusion", Kind.INFUSION, 5)
+                self.assertIsNotNone(controller.session.timeline.active)
+                self.assertFalse(controller.last_decision.heat)
+                self.assertTrue(controller.heater_override)
+                self.assertFalse(controller.regulation_inputs.gang_heat_demand)
+                self.assertFalse(controller.regulation_inputs.temporary_door_heat)
+                self.observe(controller, "exit", Kind.DOOR_OPEN, 6)
+                presence("off", 7)
+                self.observe(controller, "ventilation", Kind.VENTILATION, 8)
+                self.assertEqual(controller.session.timeline.gang_count, 1)
+                self.assertEqual(controller.target_temperature, 80)
+                self.assertIsNone(controller.session.after_run)
+                self.assertIsNone(controller.light_after_run)
+                controller.set_temperature(controller.thermostat_restart_temperature, at(9))
+                self.assertTrue(controller.last_decision.heat)
+                controller.set_heater_override(False, at(10))
+                self.assertIsNone(controller.session)
+                saved = controller.completed_sessions[-1]
+                self.assertEqual(saved.timeline.gang_count, 1)
+                self.assertEqual(saved.ended_at, at(10))
+                self.assertEqual(saved.deadlines, ())
+                self.assertIsNone(controller.light_after_run)
 
-    def test_manual_heat_does_not_create_session_heating_records(self):
+    def test_manual_entry_waits_for_minimum_and_exit_remains_possible_below_it(self):
+        controller = self.controller()
+        controller.presence_source = "ha_presence"
+        controller.presence_entity = "binary_sensor.presence"
+        minimum = controller.parameters.values["sauna_min_temperature_c"]
+        controller.set_temperature(minimum - 1, at(0))
+        controller.set_heater_override(True, at(1))
+        controller.observe_direct_presence(binary_presence(
+            controller.presence_entity, "on", at(2), at(2),
+        ), at(2))
+        self.observe(controller, "entry-open", Kind.DOOR_OPEN, 3)
+        self.observe(controller, "entry-close", Kind.DOOR_CLOSE, 4)
+        self.assertIsNone(controller.session.timeline.active)
+        controller.set_temperature(minimum, at(5))
+        self.assertEqual(controller.session.timeline.active.started_at, at(5))
+        controller.set_temperature(minimum - 1, at(6))
+        self.observe(controller, "exit", Kind.DOOR_OPEN, 7)
+        controller.observe_direct_presence(binary_presence(
+            controller.presence_entity, "off", at(8), at(8),
+        ), at(8))
+        self.observe(controller, "ventilation", Kind.VENTILATION, 9)
+        self.assertEqual(controller.session.timeline.gang_count, 1)
+        self.assertTrue(controller.last_decision.heat)
+        self.assertIsNone(controller.session.after_run)
+
+    def test_external_heating_feedback_alone_does_not_begin_a_recording(self):
         controller = self.controller(heat_reset_minutes=10)
         self.start(controller)
         controller.report_heating(True, at(0))
@@ -181,7 +233,7 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.completed_sessions, ())
         self.assertEqual(controller.phase, "aus")
 
-    def test_missing_temperature_blocks_manual_demand_but_recording_off_does_not(self):
+    def test_rejected_manual_on_creates_no_recording_and_valid_on_starts_it(self):
         controller = self.controller()
         with self.assertRaises(ValueError):
             controller.set_heater_override(True, at(1))
@@ -189,16 +241,16 @@ class ManualModeTests(unittest.TestCase):
         controller.set_operation(False, at(3))
         controller.set_heater_override(True, at(4))
         self.assertTrue(controller.last_decision.heat)
-        self.assertIsNone(controller.session)
+        self.assertIsNotNone(controller.session)
 
-    def test_manual_idle_demand_uses_protection_without_a_session(self):
+    def test_protection_ends_manual_recording_with_revoked_heater_enable(self):
         controller = self.controller()
         controller.set_temperature(60, at(0))
         controller.set_heater_override(True, at(1))
         controller.report_contactor(True, at(1))
         controller.advance(at(11))
         self.assertTrue(controller.last_decision.heat)
-        self.assertIsNone(controller.session)
+        self.assertIsNotNone(controller.session)
         controller.set_heater_override(False, at(11))
         controller.report_contactor(False, at(11))
         controller.advance(at(21))
@@ -222,43 +274,9 @@ class ManualModeTests(unittest.TestCase):
         controller.set_temperature(controller.thermostat_target, at(2))
         controller.advance(at(63))
         self.assertTrue(controller.heater_override)
-        self.assertEqual(controller.phase, "aus")
-        self.assertIsNone(controller.session)
-        self.assertFalse(controller.last_decision.heat)
-
-    def test_presence_and_old_temperature_threshold_create_no_manual_session(self):
-        controller = self.controller(
-            safety_temperature_c=80,
-            overtemperature_minutes=1,
-            forced_cooling_minutes=2,
-            overtemperature_cooling_factor=2,
-        )
-        self.start(controller)
-        controller.set_heater_override(True, at(1))
-        self.reject_session_event(controller, "close", Kind.DOOR_CLOSE, 2)
-        self.reject_session_event(controller, "person", Kind.PERSON_STRONG, 3)
-        self.reject_session_event(controller, "infusion", Kind.INFUSION, 4)
-        controller.set_temperature(controller.thermostat_target, at(5))
-        controller.advance(at(66))
-
-        self.assertEqual(controller.phase, "aus")
-        self.assertTrue(controller.heater_override)
-        self.assertFalse(controller.last_decision.heat)
-        self.assertIsNone(controller.session)
-
-    def test_technical_protection_still_revokes_manual_heat(self):
-        controller = self.controller()
-        self.start(controller)
-        controller.set_heater_override(True, at(1))
-        self.reject_session_event(controller, "close", Kind.DOOR_CLOSE, 2)
-        self.reject_session_event(controller, "person", Kind.PERSON_STRONG, 3)
-        self.reject_session_event(controller, "infusion", Kind.INFUSION, 4)
-        controller.set_temperature(controller.thermostat_target, at(5))
-        controller.protection.add("confirmed_controller_failure")
-        controller.advance(at(66))
-
-        self.assertEqual(controller.phase, "aus")
-        self.assertIs(controller.heater_override, False)
+        self.assertEqual(controller.phase, "manuell")
+        self.assertIsNotNone(controller.session)
+        self.assertIsNone(controller.session.after_run)
         self.assertFalse(controller.last_decision.heat)
 
     def test_finish_session_can_defer_then_start_light(self):
