@@ -1,7 +1,8 @@
-"""Die Übersicht zeigt nur die Zeit bis zum möglichen Gangbeginn."""
+"""Temperaturbereitschaft und Ofenkühlung bleiben getrennte Anzeigen."""
+from dataclasses import replace
 import unittest
 
-from custom_components.ha_sauna.core.display import start_availability
+from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.timeline import Kind
 from test_cooling import at, controller
 from test_foundation import T0, event
@@ -32,13 +33,23 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertNotIn("start_window_seconds", availability)
         self.assertNotIn("Mindestheizzeit", availability["message"])
 
-    def test_after_run_wait_is_only_its_configured_remainder(self):
+    def test_cooling_states_do_not_define_a_gang_start_blocker(self):
         c = after_run()
-        availability = start_availability(c, at(301))
-        self.assertIsNone(availability["until_ready_seconds"])
-        self.assertGreater(availability["minimum_wait_seconds"], 0)
-        self.assertEqual(availability["blocker"]["kind"], "after_run")
-        self.assertNotIn("pending_cooling", availability)
+        cooling = c.session.after_run
+        for mode, phase in (
+            ("remaining", cooling),
+            ("pending", replace(cooling, pending_start=True, ends_at=None)),
+            ("paused", replace(cooling, paused_at=at(301), ends_at=None)),
+        ):
+            with self.subTest(mode=mode):
+                c._session = replace(c.session, after_run=phase)
+                session = c.session
+                availability = start_availability(c, at(301))
+                self.assertIsNone(availability["minimum_wait_seconds"])
+                self.assertIsNone(availability["blocker"])
+                self.assertNotIn("Saunagang", availability["message"])
+                self.assertEqual(phase_timer(c, at(301))["mode"], mode)
+                self.assertIs(c.session, session)
 
     def test_heating_without_a_valid_rate_does_not_invent_an_eta(self):
         c = controller()
@@ -68,12 +79,11 @@ class StartAvailabilityTests(unittest.TestCase):
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
 
-    def test_active_oven_cooling_has_a_real_remaining_wait(self):
+    def test_cooling_keeps_its_remaining_time_in_the_phase_timer(self):
         c = after_run()
-        availability = start_availability(c, at(301))
-        self.assertEqual(availability["blocker"]["kind"], "after_run")
-        self.assertGreater(availability["minimum_wait_seconds"], 0)
-        self.assertIsNone(availability["until_ready_seconds"])
+        timer = phase_timer(c, at(301))
+        self.assertEqual(timer["kind"], "after_run")
+        self.assertGreater(timer["seconds"], 0)
 
     def test_protection_never_reports_ready_even_at_the_temperature_target(self):
         c = controller(target_temperature_c=70, readiness_offset_c=4)
@@ -83,8 +93,16 @@ class StartAvailabilityTests(unittest.TestCase):
         availability = start_availability(c, T0)
 
         self.assertEqual(availability["blocker"]["kind"], "protection")
+        self.assertEqual(availability["message"], "Der Ofen ist wegen einer Schutzsperre gesperrt.")
         self.assertIsNone(availability["until_ready_seconds"])
         self.assertNotIn("start_window_seconds", availability)
+
+    def test_inhibit_describes_the_heater_without_prohibiting_a_gang(self):
+        c = controller()
+        c.inhibits.add("heater_unavailable")
+        availability = start_availability(c, T0)
+        self.assertEqual(availability["blocker"]["kind"], "inhibit")
+        self.assertEqual(availability["message"], "Der Ofen ist derzeit gesperrt.")
 
     def test_invalid_temperature_does_not_announce_an_existing_ready_latch(self):
         c = controller(target_temperature_c=70)

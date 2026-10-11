@@ -27,20 +27,21 @@ Das Ende des alten Gangs verbraucht diesen späteren Türschluss nicht.
 ## Gang mit direktem Präsenzsensor erkennen
 
 Beim Schließen einer vollständigen Türfolge muss Anwesenheit anliegen.
-Sie kann bereits vor der Öffnung bestanden haben. Eine spätere Präsenzmeldung
-startet keinen Gang anhand einer früheren Türfolge. Bei verspäteter Türerkennung
-zählt der bereits empfangene Präsenzzustand zur ursprünglichen Schließzeit.
+Sie kann bereits vor der Öffnung bestanden haben. Entscheidend ist die gemeldete
+Zustandszeit, unabhängig von der Verarbeitungsreihenfolge. Erst nach dem
+Türschluss beginnende Anwesenheit verwendet diese Türfolge nicht erneut.
 Liegt die Temperatur beim Eintritt noch unter der Mindesttemperatur, bleibt der
 belegte Eintritt bei anhaltender Präsenz erhalten. Der Gang beginnt beim Erreichen
 der Grenze, ohne erneute Türfolge und ohne Rückdatierung auf den kälteren Eintritt.
 Abwesenheit oder ein unbekannter Präsenzzustand unterbrechen diesen Nachweis.
-Ein Gang endet erst bei Abwesenheit nach einer neuen Austrittsöffnung und
-bestätigtem Durchlüften derselben Öffnung. Die beiden Nachweise können in
-beliebiger Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
+Ein Gang endet erst bei einer neuen Austrittsöffnung, bestätigtem Durchlüften
+derselben Öffnung und anliegender Abwesenheit. Diese kann bereits vor dem
+thermischen Öffnungshinweis gemeldet sein. Die Nachweise können in beliebiger
+Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
 vor dem vollständigen Nachweis verhindern das Gangende.
 Abwesenheit nach einer bereits geschlossenen Türfolge benötigt eine neue
 Austrittsöffnung. Eine verspätet empfangene Abwesenheitsmeldung bleibt gültig,
-wenn ihre Zustandszeit innerhalb der damaligen Öffnungsfolge liegt.
+wenn sie Abwesenheit während der damaligen Öffnungsfolge belegt.
 
 | Beleg | Wirkung |
 | --- | --- |

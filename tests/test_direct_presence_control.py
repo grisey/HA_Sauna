@@ -135,16 +135,19 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(8))
         self.assertEqual(self.c.session.timeline.gang_count, 1)
 
-    def test_absence_before_exit_opening_is_not_exit_evidence(self):
+    def test_leaving_is_seen_before_the_thermal_opening_hint(self):
         self.start()
+        # The occupant has left; thermal door recognition follows the faster
+        # presence report. Neither report alone establishes ventilation.
         self.report("off", 4)
         self.door(Kind.DOOR_OPEN, 5)
         self.c.advance(at(6))
         self.assertIsNotNone(self.c.session.timeline.active)
+        self.assertIsNone(self.c.session.after_run)
         self.door(Kind.VENTILATION, 6.5)
-        self.assertIsNotNone(self.c.session.timeline.active)
-        self.report("off", 7)
         self.assertIsNone(self.c.session.timeline.active)
+        self.assertEqual(self.c.session.timeline.completed[0].ended_at, at(6.5))
+        self.assertEqual(self.c.session.after_run.requested_at, at(6.5))
 
     def test_unknown_never_finishes_and_cannot_heat_from_round(self):
         self.start()
@@ -294,22 +297,42 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertEqual(gang.detected_at, at(305))
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in self.c.consumer_events), 1)
 
-    def test_late_presence_receipt_alone_does_not_book_a_closed_entry(self):
-        self.door(Kind.DOOR_OPEN, 1)
-        self.door(Kind.DOOR_CLOSE, 3)
-        self.assertIsNone(self.c.session.timeline.active)
-        self.report("on", 20, effective=2)
-        self.c.advance(at(21))
-        self.assertIsNone(self.c.session.timeline.active)
-        self.assertFalse(any(e.kind == "gang_confirmed" for e in self.c.consumer_events))
-        self.door(Kind.DOOR_OPEN, 22)
-        self.assertIsNone(self.c.session.timeline.active)
-        self.door(Kind.DOOR_CLOSE, 23)
-        gang = self.c.session.timeline.active
-        self.assertIsNotNone(gang)
-        self.assertEqual(gang.started_at, at(23))
-        self.assertEqual(gang.detected_at, at(23))
-        self.assertEqual(gang.start_source_event_id, f"{Kind.DOOR_CLOSE}:23")
+    def test_presence_at_closure_is_valid_when_processed_after_closure(self):
+        for received in (2, 20):
+            with self.subTest(received=received):
+                self.setUp()
+                self.door(Kind.DOOR_OPEN, 1)
+                self.door(Kind.DOOR_CLOSE, 3)
+                self.assertIsNone(self.c.session.timeline.active)
+                self.c.observe_direct_presence(binary_presence(
+                    "binary_sensor.presence", "on", at(2), at(received),
+                ), at(20))
+                gang = self.c.session.timeline.active
+                self.assertIsNotNone(gang)
+                self.assertEqual(gang.started_at, at(3))
+                self.assertEqual(gang.detected_at, at(20))
+                self.assertEqual(gang.start_source_event_id, f"{Kind.DOOR_CLOSE}:3")
+                self.c.advance(at(21))
+                self.assertEqual(sum(e.kind == "gang_confirmed"
+                                     for e in self.c.consumer_events), 1)
+
+    def test_cold_entry_interruption_survives_detector_history_trimming(self):
+        for state in ("off", "unknown", "unavailable"):
+            with self.subTest(state=state):
+                self.setUp()
+                minimum = self.c.parameters.values["sauna_min_temperature_c"]
+                self.c.set_temperature(minimum - 1, at(0))
+                self.door(Kind.DOOR_OPEN, 1)
+                self.report("on", 2)
+                self.door(Kind.DOOR_CLOSE, 3)
+                self.report(state, 4)
+                self.report("on", 5)
+                self.c.discard_recognition_context_before(at(6))
+                self.c.set_temperature(minimum, at(7))
+                self.assertIsNone(self.c.session.timeline.active)
+                self.door(Kind.DOOR_OPEN, 8)
+                self.door(Kind.DOOR_CLOSE, 9)
+                self.assertEqual(self.c.session.timeline.active.started_at, at(9))
 
     def test_presence_level_at_close_controls_entry(self):
         for state, expected in (("on", True), ("off", False),

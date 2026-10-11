@@ -107,19 +107,19 @@ Repositoryverzeichnis.
 
 ```sh
 node tests/browser/live_history/accept.cjs
-VARIANTS=fix node tests/browser/live_history/profile.cjs
-VARIANTS=candidate node tests/browser/live_history/interaction.cjs
+node tests/browser/live_history/profile.cjs
+node tests/browser/live_history/interaction.cjs
 ```
 
 | Skript | Gegenstand und Ausgabe |
 |---|---|
 | `accept.cjs` | Prüft Datenübernahme, dauerhafte Knoten und Browserinteraktionen anhand fester Erwartungen. |
-| `profile.cjs` | Erfasst Kaltstart, Aktualisierung, Geometriezugriffe und beobachtete Bildschirmframe-Abstände. |
+| `profile.cjs` | Erfasst Kaltstart, Aktualisierung, Geometriezugriffe und `requestAnimationFrame`-Abstände. |
 | `interaction.cjs` | Erfasst Zeigerbewegung, Zoom und Verschieben während eingehender Nachträge; trennt die Zeit bis zum Rendercallback-Ende von dessen synchroner Rechenzeit. |
 
 Die Fixture liefert synthetische Status- und Archivantworten an das
 Originalpanel. Die Browserläufe verwenden dessen tatsächliche Zeichen- und
-Eingabemethoden. Im WebKit-Interaktionsvergleich werden Zoomimpulse als
+Eingabemethoden. In der WebKit-Interaktionsprobe werden Zoomimpulse als
 Browser-`WheelEvent` mit gesetztem Strg-Modifikator eingespeist. Die Ergebnisse
 beschreiben die im Skript zugestellten Eingaben bis zur gemessenen
 Browserverarbeitung. Eine Messung auf einem verwendeten Endgerät erfasst
@@ -130,9 +130,14 @@ zusätzlich dessen Eingabeweg und sichtbare Bildschirmausgabe.
 Interaktionsprobe. Standardbrowser ist WebKit; `ENGINE=chromium` und
 `CHROMIUM_EXECUTABLE` wählen eine vorhandene Chromium-Laufzeit.
 
-Die oben gesetzten Varianten untersuchen den aktuellen Arbeitsstand.
-Vergleichsläufe können zusätzlich die in den Skripten angegebenen Gitstände
-laden; dafür müssen diese Revisionen im lokalen Repository vorhanden sein.
-`BASELINE_REVISION` bestimmt die Vergleichsrevision der Interaktionsprobe.
-Messberichte halten die tatsächlich verwendeten Revisionen und
-Umgebungsbedingungen fest.
+Alle drei Skripte prüfen den aktuellen Arbeitsstand von `panel.js`. Die vier
+synthetischen Messreihen bleiben im Archiv erhalten; die aktuelle Verlaufsansicht
+zeigt die führende Messposition. Eine frühere Messhöhenumschaltung und fest
+codierte Gitvergleichsstände sind kein Bestandteil dieser Prüfungen.
+
+`accept.cjs` bedient Zoomknöpfe, Verlaufsnavigation und die Übersicht mit
+Browserinteraktionen. Die Tooltipprüfung verlangt die sichtbaren Messgrößen und
+Einheiten; `interaction.cjs` prüft zusätzlich deren Werte gegen die unabhängig
+festgelegten Bereiche der synthetischen Daten. Interne Aufrufzähler dienen nur
+der Beobachtung von Zeichenarbeit und Knotenerhalt. Archivfehler und
+Sitzungswechsel werden über das synthetische Transportfixture vorgegeben.

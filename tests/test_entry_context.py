@@ -51,7 +51,8 @@ class EntryContextTests(unittest.TestCase):
         )
 
         result = sauna.process(
-            event("old-strong", Kind.PERSON_STRONG, 721, effective=1)
+            event("old-strong", Kind.PERSON_STRONG,
+                  sauna.parameters.seconds("confirmation_minutes") + 1, effective=1)
         )
 
         self.assertFalse(result.changed)
@@ -112,7 +113,10 @@ class EntryContextTests(unittest.TestCase):
         sauna = controller()
         sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close", Kind.DOOR_CLOSE, 0))
-        result = sauna.process(event("old-infusion", Kind.INFUSION, 721, effective=1))
+        result = sauna.process(event(
+            "old-infusion", Kind.INFUSION,
+            sauna.parameters.seconds("confirmation_minutes") + 1, effective=1,
+        ))
         self.assertFalse(result.changed)
         self.assertEqual(result.reason, "entry_context_expired")
         self.assertIsNone(sauna.session.timeline.active)
@@ -136,7 +140,9 @@ class EntryContextTests(unittest.TestCase):
         self.assertTrue(sauna.process(event("weak", Kind.PERSON_WEAK, 1)).changed)
 
     def test_confirmation_boundary_keeps_existing_event_order(self):
-        for detected, expected_changed in ((719, True), (720, True), (721, False)):
+        duration = controller().parameters.seconds("confirmation_minutes")
+        for offset, expected_changed in ((-1, True), (0, True), (1, False)):
+            detected = duration + offset
             with self.subTest(detected=detected):
                 sauna = controller()
                 sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
@@ -146,9 +152,9 @@ class EntryContextTests(unittest.TestCase):
                 )
 
                 self.assertEqual(result.changed, expected_changed)
-                if detected < 720:
+                if offset < 0:
                     self.assertIsNotNone(sauna.session.timeline.active)
-                elif detected == 720:
+                elif offset == 0:
                     # The signal is admitted first; the existing inclusive
                     # deadline pass then retracts that still-unconfirmed gang.
                     self.assertIsNone(sauna.session.timeline.active)
@@ -161,11 +167,12 @@ class EntryContextTests(unittest.TestCase):
         sauna = controller()
         sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
         sauna.process(event("close", Kind.DOOR_CLOSE, 0))
-        old = event("old", Kind.PERSON_STRONG, 721, effective=1)
+        expired_at = sauna.parameters.seconds("confirmation_minutes") + 1
+        old = event("old", Kind.PERSON_STRONG, expired_at, effective=1)
         self.assertEqual(sauna.process(old).reason, "entry_context_expired")
         self.assertEqual(sauna.process(old).reason, "duplicate")
         with self.assertRaises(ValueError):
-            sauna.process(event("old", Kind.PERSON_STRONG, 722, effective=1))
+            sauna.process(event("old", Kind.PERSON_STRONG, expired_at + 1, effective=1))
 
 
 class EntryContextArchiveTests(unittest.IsolatedAsyncioTestCase):
@@ -179,8 +186,9 @@ class EntryContextArchiveTests(unittest.IsolatedAsyncioTestCase):
                 sauna = controller()
                 sauna.process(event("entry-open", Kind.DOOR_OPEN, 0))
                 sauna.process(event("close", Kind.DOOR_CLOSE, 0))
-                sauna.process(event("old-strong", Kind.PERSON_STRONG, 721, effective=1))
-                archive.save_session(sauna.session, at(721), {})
+                expired_at = sauna.parameters.seconds("confirmation_minutes") + 1
+                sauna.process(event("old-strong", Kind.PERSON_STRONG, expired_at, effective=1))
+                archive.save_session(sauna.session, at(expired_at), {})
                 await archive.flush()
 
                 stored = await asyncio.to_thread(archive.read, "s")

@@ -5078,9 +5078,7 @@ class SaunaPanel extends HTMLElement {
         : "";
     const blockerText =
       s.operation_enabled && availability?.blocker && !phaseTimerText
-        ? availability.minimum_wait_seconds > 0
-          ? `Start gesperrt – noch ${duration(availability.minimum_wait_seconds, "remaining")}`
-          : availability.message || "Start derzeit gesperrt."
+        ? availability.message || ""
         : "";
     const readinessText =
       s.operation_enabled &&
@@ -9313,10 +9311,12 @@ class SaunaPanel extends HTMLElement {
               Math.round(control.observation.brightness_percent) ===
                 Math.round(control.manual_feedback_target);
       }
+      // Manual recordings begin/end with heater choices, not actuator feedback.
       const ended =
         (key === "heater" || key === "light") &&
         (command.mode !== state.configuration?.control_mode ||
-          command.session !== (state.session?.timeline?.session_id ?? null));
+          (command.mode !== "manual" &&
+            command.session !== (state.session?.timeline?.session_id ?? null)));
       const failed = (state.issues || []).some(({ key: issue }) =>
         key === "heater"
           ? [

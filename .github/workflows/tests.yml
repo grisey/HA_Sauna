@@ -74,6 +74,40 @@ jobs:
           print(f"Kompressionsbackend: {ZLibBackend.name}")
           PY
       - run: python -m playwright install --with-deps chromium
+      - name: Node-Browserwerkzeuge vorbereiten
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          from importlib.metadata import version
+          from pathlib import Path
+
+          runtime = Path(os.environ["RUNNER_TEMP"]) / "ha-sauna-node"
+          subprocess.run([
+              "npm", "install", "--prefix", str(runtime), "--ignore-scripts",
+              "--no-package-lock", f"playwright@{version('playwright')}",
+          ], check=True)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"NODE_PATH={runtime / 'node_modules'}\n")
+          PY
+      - name: Sitzungsverlauf – Browserinteraktionen
+        run: node tests/browser/live_history/accept.cjs
+        timeout-minutes: 2
+        env:
+          ENGINE: chromium
+          HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
+      - name: Sitzungsverlauf – Lade- und Aktualisierungsmessung
+        run: node tests/browser/live_history/profile.cjs
+        timeout-minutes: 2
+        env:
+          ENGINE: chromium
+          HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
+      - name: Sitzungsverlauf – Zoom und Nachträge
+        run: node tests/browser/live_history/interaction.cjs
+        timeout-minutes: 2
+        env:
+          ENGINE: chromium
+          INTERACTION_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history/interaction.json
       - run: python -u tests/browser/run.py
         timeout-minutes: 8
         env:

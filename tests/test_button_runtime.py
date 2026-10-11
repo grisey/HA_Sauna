@@ -2,6 +2,7 @@
 
 import asyncio
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
@@ -30,6 +31,103 @@ class ButtonRuntimeTests(unittest.TestCase):
     def _event(self, name, seconds=0):
         self.now += timedelta(seconds=seconds)
         asyncio.run(self._handle(name))
+
+    def _advancing_clock(self):
+        self.now += timedelta(microseconds=1)
+        return self.now
+
+    def _program_distinct_from_standard(self):
+        standard = self.runtime.configuration.parameters.values["standard_temperature_c"]
+        program = next((
+            program for program in reversed(self.runtime.configuration.temperature_programs)
+            if program.start_c != standard
+        ), None)
+        self.assertIsNotNone(program, "The catalog must distinguish program and standard targets")
+        return program
+
+    def test_idle_short_uses_one_action_time_with_an_advancing_clock(self):
+        program = self._program_distinct_from_standard()
+        self.runtime = SaunaRuntime(
+            replace(
+                self.runtime.configuration,
+                parameters=Parameters({
+                    **self.runtime.configuration.parameters.as_dict(),
+                    "target_temperature_c": program.start_c,
+                }),
+            ),
+            self._advancing_clock,
+        )
+        values = self.runtime.configuration.parameters.values
+        self.assertNotEqual(values["target_temperature_c"], values["standard_temperature_c"])
+        self.assertLess(
+            values["sauna_min_temperature_c"],
+            values["standard_temperature_c"] - values["readiness_hysteresis_c"],
+        )
+        self.runtime.controller.set_temperature(
+            values["sauna_min_temperature_c"], self.now,
+        )
+        action_at = self.now
+
+        self._event("short")
+
+        self.assertGreater(self.now, action_at)
+        self.assertEqual(self.runtime.configuration.control_mode, "manual")
+        self.assertEqual(
+            self.runtime.controller.target_temperature, values["standard_temperature_c"]
+        )
+        self.assertEqual(self.runtime.session.timeline.session_started_at, action_at)
+        self.assertTrue(self.runtime.controller.heater_override)
+        self.assertTrue(self.runtime.controller.last_decision.heat)
+
+    def test_manual_long_uses_one_action_time_with_an_advancing_clock(self):
+        program = self._program_distinct_from_standard()
+        for button_program in ("constant", program.id):
+            with self.subTest(button_program=button_program):
+                self.setUp()
+                self.runtime = SaunaRuntime(
+                    replace(
+                        self.runtime.configuration,
+                        control_mode="manual",
+                        selected_program_id=program.id,
+                        button_program=button_program,
+                    ),
+                    self._advancing_clock,
+                )
+                values = self.runtime.configuration.parameters.values
+                self.assertNotEqual(program.start_c, values["standard_temperature_c"])
+                self.assertLess(
+                    values["sauna_min_temperature_c"],
+                    min(values["standard_temperature_c"], program.start_c)
+                    - values["readiness_hysteresis_c"],
+                )
+                self.runtime.controller.set_temperature(
+                    values["sauna_min_temperature_c"], self.now,
+                )
+                self._event("short")
+                manual_id = self.runtime.session.session_id
+                action_at = self.now
+
+                self._event("long")
+
+                self.assertGreater(self.now, action_at)
+                self.assertEqual(self.runtime.configuration.control_mode, "automatic")
+                completed = self.runtime.controller.completed_sessions[-1]
+                self.assertEqual(completed.session_id, manual_id)
+                self.assertEqual(completed.ended_at, action_at)
+                self.assertNotEqual(self.runtime.session.session_id, manual_id)
+                self.assertEqual(self.runtime.session.timeline.session_started_at, action_at)
+                self.assertTrue(self.runtime.session.operation_enabled)
+                self.assertIsNone(self.runtime.controller.heater_override)
+                self.assertTrue(self.runtime.controller.last_decision.heat)
+                self.assertEqual(
+                    self.runtime.controller.target_temperature,
+                    values["standard_temperature_c"]
+                    if button_program == "constant" else program.start_c,
+                )
+                self.assertEqual(
+                    self.runtime.configuration.selected_program_id,
+                    None if button_program == "constant" else program.id,
+                )
 
     def test_selected_multi_click_starts_automatic_and_finishes_without_hold(self):
         for gesture in ("double", "triple"):
@@ -410,7 +508,7 @@ class ButtonRuntimeTests(unittest.TestCase):
                         button_program="constant",
                         button_session_gesture="long",
                     ),
-                    lambda: self.now,
+                    self._advancing_clock,
                 )
                 self.runtime.controller.set_temperature(70, self.now)
                 asyncio.run(self.runtime.set_operation(True))

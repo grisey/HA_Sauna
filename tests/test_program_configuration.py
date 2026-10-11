@@ -866,7 +866,10 @@ class ProgramConfigurationTests(unittest.TestCase):
         hass = _FakeHass()
         asyncio.run(async_reset_parameters(hass, entry))
         reset = Configuration.from_options(entry.options)
-        self.assertEqual(reset.parameters.values["nominal_power_kw"], 4.5)
+        self.assertEqual(
+            reset.parameters.values["nominal_power_kw"],
+            Parameters({}).values["nominal_power_kw"],
+        )
         self.assertEqual(
             reset.parameters.values["session_gap_minutes"],
             Parameters({}).values["session_gap_minutes"],

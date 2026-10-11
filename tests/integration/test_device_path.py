@@ -195,7 +195,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         # Integrate that known interval independently at the actual OFF time.
         from math import log
         heat_seconds = (self.runtime.session.after_run.started_at - self.base).total_seconds()
-        expected_seconds = 30 + 900 / log(2) * (1 - 2 ** (-heat_seconds / 900)) / 2
+        parameters = self.runtime.configuration.parameters
+        half_life = parameters.seconds("oven_cooling_half_life_minutes")
+        ratio = parameters.values["oven_cooling_heat_idle_ratio"]
+        expected_seconds = min(
+            parameters.seconds("oven_cooling_max_minutes"),
+            parameters.seconds("after_run_minutes")
+            + half_life / log(2) * (1 - 2 ** (-heat_seconds / half_life)) / ratio,
+        )
         self.assertAlmostEqual(
             self.runtime.session.after_run.duration_seconds, expected_seconds, places=5
         )
@@ -938,11 +945,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_light_externally(True, 128)
         output = self.runtime.device.light_output
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
-        ends_at = output.manual_ends_at
+        ends_at = self.now + timedelta(
+            seconds=self.runtime.configuration.parameters.seconds("manual_override_minutes")
+        )
+        self.assertEqual(output.manual_ends_at, ends_at)
         self.light.async_write_ha_state()  # state_report, not another choice
         await self.hass.async_block_till_done()
         self.assertEqual(output.manual_ends_at, ends_at)
-        await self.time(600)
+        await self.time((ends_at - self.base).total_seconds())
         self.assertIsNone(output.manual_brightness)
 
     async def test_external_light_off_is_the_same_manual_selection(self):
@@ -951,7 +961,9 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.set_light_externally(False)
         output = self.runtime.device.light_output
         self.assertEqual(output.manual_brightness, 0)
-        self.assertEqual(output.manual_ends_at, self.now + timedelta(minutes=10))
+        self.assertEqual(output.manual_ends_at, self.now + timedelta(
+            seconds=self.runtime.configuration.parameters.seconds("manual_override_minutes")
+        ))
 
     async def test_external_light_selection_is_indefinite_in_manual_mode(self):
         from dataclasses import replace
@@ -1730,33 +1742,56 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("upper_temperature", self.runtime.device.faults)
         self.assertFalse(self.heater.is_on)
 
-    async def prepare_temperature_reporting_gap(self, validity_seconds):
+    async def prepare_temperature_reporting_gap(self):
         from custom_components.ha_sauna.core.display import phase_timer
+        from custom_components.ha_sauna.core.parameters import Parameters
         options = {**self.entry.options, "parameters": {**self.entry.options["parameters"],
-            "sensor_timeout_seconds": validity_seconds, "fault_confirmation_seconds": 120,
-            "minimum_heating_minutes": 10}}
+            "minimum_heating_minutes": Parameters({}).values["minimum_heating_minutes"]}}
         self.hass.config_entries.async_update_entry(self.entry, options=options)
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
         self.base = self.now = datetime.now(UTC)
         self.runtime._clock = lambda: self.now
+        for position in ("upper", "lower"):
+            await self.set_source(f"{position}_temperature", 70)
+            await self.set_source(f"{position}_humidity", 25)
         await self.runtime.set_operation(True)
         await self.hass.async_block_till_done()
-        self.now = self.base + timedelta(seconds=610)
-        await self.set_source("upper_temperature", 70)
+        minimum = self.runtime.configuration.parameters.seconds("minimum_heating_minutes")
+        until = self.base + timedelta(seconds=minimum + 1)
+        # The production timer runs every second. Keep observations fresh on
+        # that path throughout the actual minimum-heating interval.
+        while self.now < until:
+            self.now = min(self.now + timedelta(seconds=1), until)
+            for position in ("upper", "lower"):
+                await self.set_source(f"{position}_temperature", 70)
+                await self.set_source(f"{position}_humidity", 25)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+            self.assertTrue(self.heater.is_on)
+            self.assertFalse(self.runtime.controller.protection)
+        self.assertEqual(len(self.runtime.session.heating.intervals), 1)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "heating")
         self.heater.calls.clear()
 
+    async def advance_temperature_reporting_gap(self, seconds):
+        until = self.now + timedelta(seconds=seconds)
+        while self.now < until:
+            self.now = min(self.now + timedelta(seconds=1), until)
+            await self.runtime.tick()
+            await self.hass.async_block_till_done()
+
     async def test_suitable_validity_preserves_completed_minimum_heating_across_reporting_gap(self):
         from custom_components.ha_sauna.core.display import phase_timer
-        await self.prepare_temperature_reporting_gap(30)
+        await self.prepare_temperature_reporting_gap()
         started_at = self.runtime.session.heating.intervals[0].started_at
-        await self.time(616)
+        validity = self.runtime.configuration.parameters.values["sensor_timeout_seconds"]
+        await self.advance_temperature_reporting_gap(validity / 2)
         self.assertEqual(self.runtime.controller.temperature, 70)
         self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
         self.assertFalse(self.runtime.controller.protection)
-        self.now = self.base + timedelta(seconds=616.2)
+        await self.advance_temperature_reporting_gap(validity / 4)
         await self.set_source("upper_temperature", 71)
         self.assertNotIn("regulation_temperature_unavailable", self.runtime.device.faults)
         self.assertTrue(self.heater.is_on)
@@ -1765,24 +1800,35 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.session.heating.intervals[0].started_at, started_at)
         self.assertIsNone(self.runtime.session.heating.intervals[0].ended_at)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "heating")
-        self.assertAlmostEqual(self.runtime.session.heating.elapsed_seconds, 616.2, places=3)
+        self.assertAlmostEqual(
+            self.runtime.session.heating.elapsed_seconds,
+            (self.now - started_at).total_seconds(), places=3,
+        )
 
-    async def test_too_short_validity_causes_real_switching_and_new_minimum_heating(self):
+    async def test_expired_validity_causes_real_switching_and_new_minimum_heating(self):
         from custom_components.ha_sauna.core.display import phase_timer
-        await self.prepare_temperature_reporting_gap(5)
-        await self.time(616)
+        await self.prepare_temperature_reporting_gap()
+        parameters = self.runtime.configuration.parameters
+        await self.advance_temperature_reporting_gap(
+            parameters.values["sensor_timeout_seconds"] + 1
+        )
         self.assertIsNone(self.runtime.controller.temperature)
         self.assertFalse(self.heater.is_on)
         self.assertEqual(self.runtime.controller.last_decision.reason, "upper_temperature_unavailable")
         self.assertFalse(self.runtime.controller.protection)
-        self.now = self.base + timedelta(seconds=616.2)
+        await self.advance_temperature_reporting_gap(
+            parameters.values["fault_confirmation_seconds"] / 2
+        )
         await self.set_source("upper_temperature", 71)
         self.assertTrue(self.heater.is_on)
         self.assertEqual(self.heater.calls, [False, True])
         self.assertEqual(len(self.runtime.session.heating.intervals), 2)
         self.assertEqual(self.runtime.session.heating.intervals[-1].started_at, self.now)
         self.assertEqual(phase_timer(self.runtime.controller, self.now)["kind"], "minimum_heating")
-        self.assertEqual(phase_timer(self.runtime.controller, self.now)["seconds"], 600)
+        self.assertEqual(
+            phase_timer(self.runtime.controller, self.now)["seconds"],
+            parameters.seconds("minimum_heating_minutes"),
+        )
 
     async def test_expired_temperature_stops_immediately_and_persistent_failure_latches(self):
         await self.runtime.set_operation(True)

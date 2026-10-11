@@ -4,33 +4,17 @@
  *
  * The fixture is deliberately the existing synthetic transport only: all
  * rendering, hit-testing, browser input and refresh paths are product code.
- * Run from the HA_Sauna repository, after making the candidate available in
- * custom_components/ha_sauna/panel.js.  See the protocol printed by --help.
+ * Run from the HA_Sauna repository against its current panel.js.
+ * See the protocol printed by --help.
  */
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { webkit, chromium } = require("playwright");
 
 const root = path.resolve(process.env.HA_SAUNA_ROOT || process.cwd());
-const baselineRevision =
-  process.env.BASELINE_REVISION || "7de9317f39f5fc39f58c4f4618f16f0ceff5d35e";
 const engine = process.env.ENGINE || "webkit";
 const steps = Number(process.env.INPUT_STEPS || 24);
 const tickEvery = Number(process.env.TICK_EVERY || 4);
-const variants = (process.env.VARIANTS || "baseline,candidate")
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
-const cases = (process.env.BOTH_CASES || "both")
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean)
-  .map((value) => {
-    if (value === "single") return { name: "single-height", both: false };
-    if (value === "both") return { name: "both-heights", both: true };
-    throw Error(`BOTH_CASES accepts single,both; got ${value}`);
-  });
 const output = path.resolve(
   process.env.INTERACTION_EVIDENCE ||
     path.join(require("node:os").tmpdir(), "ha-sauna-smooth", "interaction.json"),
@@ -45,9 +29,8 @@ Real-browser live-history interaction benchmark
   PLAYWRIGHT_BROWSERS_PATH=/path/to/browsers \\
   ENGINE=webkit node ${path.basename(process.argv[1])}
 
-Defaults compare git show ${baselineRevision} with the current working-tree
-panel.js, in a 57,600-record four-series both-heights fixture. Set
-BOTH_CASES=single,both only when the extra single-height matrix is material.
+Measures the current working-tree panel.js with 57,600 archived records
+from four independent series; the history view selects its leading position.
 INPUT_STEPS must be 20..40 (default 24).  It sends real
 browser pointer moves, Ctrl-wheel zoom in/out and minimap drag moves, while
 calling fixture.tick() after every ${tickEvery} inputs. Results are JSON at
@@ -85,35 +68,22 @@ const numericSummary = (numbers) => {
   };
 };
 
-function panelSource(variant) {
-  if (variant === "candidate")
-    return fs.readFileSync(
-      path.join(root, "custom_components/ha_sauna/panel.js"),
-      "utf8",
-    );
-  if (variant === "baseline")
-    return execFileSync(
-      "git",
-      ["show", `${baselineRevision}:custom_components/ha_sauna/panel.js`],
-      { cwd: root, encoding: "utf8" },
-    );
-  throw Error(`VARIANTS accepts baseline,candidate; got ${variant}`);
-}
-
-async function addFixture(page, source, both) {
+async function addFixture(page) {
   await page.setContent(
     '<!doctype html><html lang="de"><body style="margin:0"></body></html>',
   );
-  await page.addScriptTag({ content: source });
+  await page.addScriptTag({
+    path: path.join(root, "custom_components/ha_sauna/panel.js"),
+  });
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
-  await page.evaluate(async (bothValue) => {
-    window.f = await window.installHistoryFixture({ seconds: 14400, both: bothValue });
+  await page.evaluate(async () => {
+    window.f = await window.installHistoryFixture({ seconds: 14400 });
     window.f.assertClean();
     if (window.f.records.length !== 57600)
       throw Error(`fixture expected 57600 records, got ${window.f.records.length}`);
-  }, both);
+  });
 }
 
 // This instrumentation only observes calls and DOM events. It never invokes a
@@ -271,19 +241,17 @@ async function installInstrumentation(page) {
       const surface = panel.$("svg.session-chart");
       const canvas = panel.$("canvas.history-curves");
       const overview = panel.$("#history-overview svg");
-      const point = panel.lastHistoryPointer;
-      let expectedOriginal = null;
-      if (point && surface) {
-        const coordinate = panel.svgCoordinates(surface, point.clientX, point.clientY);
-        const model = panel.historyChart?.model;
-        const time =
-          model?.start +
-          ((coordinate.x - model.left) / (model.right - model.left)) *
-            (model.end - model.start);
-        const nearest = panel.nearestMeasurement?.("upper", "temperature", time);
-        if (nearest?.source?.raw_value != null)
-          expectedOriginal = `Originalwert ${nearest.source.raw_value} °C`;
-      }
+      // The fixture's upper temperature is always 69..75 °C and humidity
+      // 25..31 %. This oracle does not call the product's lookup/formatter.
+      const values = [...tooltip.querySelectorAll(".history-tooltip-values > div")]
+        .filter((row) => !row.hidden)
+        .map((row) => row.lastElementChild.textContent);
+      const valueIn = (unit, minimum, maximum) =>
+        values.some((text) => {
+          const match = text.match(/^([0-9]+(?:[.,][0-9]+)?)\s*(°C|%)$/);
+          const value = match ? Number(match[1].replace(",", ".")) : NaN;
+          return match?.[2] === unit && value >= minimum && value <= maximum;
+        });
       return {
         calls: bench.calls,
         events: bench.events,
@@ -297,9 +265,9 @@ async function installInstrumentation(page) {
         tooltip: {
           visible: !!tooltip && !tooltip.hidden,
           text: tooltip?.textContent || "",
-          expectedOriginal,
-          originalCorrect:
-            !!expectedOriginal && tooltip.textContent.includes(expectedOriginal),
+          values,
+          valuesCorrect:
+            values.length === 2 && valueIn("°C", 69, 75) && valueIn("%", 25, 31),
         },
         persistentNodes: {
           fixtureIdentity: f.identity(),
@@ -501,7 +469,7 @@ function summarizeCase(raw, input) {
   };
 }
 
-async function runCase(browser, variant, variantSource, testCase) {
+async function runCase(browser) {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1100 },
     deviceScaleFactor: 2,
@@ -509,7 +477,7 @@ async function runCase(browser, variant, variantSource, testCase) {
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   try {
-    await addFixture(page, variantSource, testCase.both);
+    await addFixture(page);
     await installInstrumentation(page);
     const input = await runInputSequence(page);
     const raw = await page.evaluate(() => window.__historyInteractionBench.summary());
@@ -517,8 +485,8 @@ async function runCase(browser, variant, variantSource, testCase) {
       throw Error(
         `expected 8 retained measurement records per live tick; got ${raw.records}`,
       );
-    if (!raw.tooltip.originalCorrect)
-      throw Error(`tooltip lost original value: ${raw.tooltip.text}`);
+    if (!raw.tooltip.visible || !raw.tooltip.valuesCorrect)
+      throw Error(`tooltip values outside the synthetic series: ${raw.tooltip.text}`);
     if (!Object.values(raw.persistentNodes.fixtureIdentity).every(Boolean))
       throw Error(
         `history nodes were replaced: ${JSON.stringify(raw.persistentNodes.fixtureIdentity)}`,
@@ -533,9 +501,7 @@ async function runCase(browser, variant, variantSource, testCase) {
       );
     if (errors.length) throw Error(`page errors: ${errors.join(" | ")}`);
     return {
-      variant,
-      case: testCase.name,
-      both: testCase.both,
+      case: "live-history",
       errors,
       ...summarizeCase(raw, input),
     };
@@ -553,32 +519,24 @@ async function runCase(browser, variant, variantSource, testCase) {
   };
   const browser = await (engine === "webkit" ? webkit : chromium).launch(launchOptions);
   try {
-    const results = [];
-    for (const variant of variants) {
-      const source = panelSource(variant);
-      for (const testCase of cases) {
-        const result = await runCase(browser, variant, source, testCase);
-        results.push(result);
-        console.log(
-          JSON.stringify({
-            variant: result.variant,
-            case: result.case,
-            records: result.records,
-            inputLatency: result.inputLatency,
-            tickDuration: result.tickDuration,
-            renderDuration: result.renderDuration,
-            rafGaps: result.rafGaps,
-            tooltip: result.tooltip.originalCorrect,
-          }),
-        );
-      }
-    }
+    const result = await runCase(browser);
+    const results = [result];
+    console.log(
+      JSON.stringify({
+        case: result.case,
+        records: result.records,
+        inputLatency: result.inputLatency,
+        tickDuration: result.tickDuration,
+        renderDuration: result.renderDuration,
+        rafGaps: result.rafGaps,
+        tooltip: result.tooltip.valuesCorrect,
+      }),
+    );
     const report = {
       scope: {
         engine,
         browserVersion: browser.version(),
-        baselineRevision,
-        candidate: path.join(root, "custom_components/ha_sauna/panel.js"),
+        panel: path.join(root, "custom_components/ha_sauna/panel.js"),
         fixture: path.join(root, "tests/browser/live_history/fixture.js"),
         recordsPerInitialCase: 57600,
         inputStepsPerStream: steps,
@@ -589,7 +547,7 @@ async function runCase(browser, variant, variantSource, testCase) {
           "Latency is delivered DOM input to completion of the next actual panel.renderHistory callback; it does not include device or browser event-queue time before DOM delivery.",
           "The 40 ms synthetic archive-response delay permits DOM inputs to overlap live refreshes; it is not a Companion App measurement.",
           "methods are synchronous wall-clock durations of observed product method calls; fixtureMethods are the fixture's existing method observers.",
-          "The end timestamp is JS callback completion, not GPU/compositor presentation. This is an automated headless comparison, not validation in the user's Companion App.",
+          "The end timestamp is JS callback completion, not GPU/compositor presentation. This is an automated headless measurement, not validation in the user's Companion App.",
         ],
       },
       results,

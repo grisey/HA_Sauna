@@ -182,8 +182,14 @@ class Controller:
                 if gate[0] <= at]
         if past:
             self._gang_temperature_gates = self._gang_temperature_gates[past[-1]:]
+        # An entry below the minimum can remain pending after the detector has
+        # advanced. Keep its occupancy history until a new door cycle replaces
+        # it, including any absence that interrupted the waiting entry.
+        presence_before = at
+        if self._session is not None and self._session.timeline.entry_cycle_available:
+            presence_before = min(at, self._session.timeline.anchor.effective_at)
         past = [index for index, report in enumerate(self._direct_presence_history)
-                if report.effective_at <= at]
+                if report.effective_at <= presence_before]
         if past:
             self._direct_presence_history = self._direct_presence_history[past[-1]:]
 
@@ -1445,12 +1451,16 @@ class Controller:
         session = self._session
         if entry_event is not None:
             self._presence_entry = None
+        closure = (
+            session.timeline.anchor
+            if session is not None and session.timeline.active is None
+            and session.timeline.entry_cycle_available else None
+        )
         report = (
             next((report for report in reversed(self._direct_presence_history)
-                  if report.effective_at <= entry_event.effective_at
+                  if report.effective_at <= closure.effective_at
                   and report.received_at <= self._received_at(at)), None)
-            if entry_event is not None and session is not None
-            and session.timeline.active is None else self.direct_presence
+            if closure is not None else self.direct_presence
         )
         if (self.presence_source != "ha_presence" or session is None
                 or not session.operation_enabled or report is None
@@ -1465,10 +1475,12 @@ class Controller:
                 or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
-            if (entry_event is not None and t.entry_cycle_available
-                    and t.anchor.event_id == entry_event.event_id
+            # Presence and proxy door recognition can be processed in either
+            # order. The state at the actual recorded closure is decisive;
+            # a new ON after that closure still cannot reuse an empty entry.
+            if (closure is not None
                     and report.occupancy == "present"):
-                self._presence_entry = PresenceEntry(entry_event, report)
+                self._presence_entry = PresenceEntry(closure, report)
             entry = self._presence_entry
             if (entry is None or not t.entry_cycle_available
                     or entry.closure.event_id != t.anchor.event_id
@@ -1493,7 +1505,6 @@ class Controller:
             if (self._direct_presence_catchup
                     or report.occupancy != "absent"
                     or ventilation is None
-                    or report.effective_at < opening.effective_at
                     or (t.door == Door.CLOSED
                         and (t.anchor is None
                              or report.effective_at > t.anchor.effective_at))

@@ -159,11 +159,21 @@ assert.doesNotMatch(
 state = baseState();
 state.start_availability = { minimum_wait_seconds: 300, until_ready_seconds: null };
 state.start_availability.blocker = { kind: "after_run" };
-assert.match(
+assert.doesNotMatch(
   render(state),
-  /Start gesperrt – noch 5 Minuten/,
-  "a blocker remains distinct from readiness",
+  /Start gesperrt|availability-line/,
+  "a cooling remainder cannot imply a gang start restriction",
 );
+
+for (const [kind, message] of [
+  ["protection", "Der Ofen ist wegen einer Schutzsperre gesperrt."],
+  ["inhibit", "Der Ofen ist derzeit gesperrt."],
+]) {
+  state = baseState();
+  state.start_availability = { blocker: { kind }, message };
+  assert.ok(render(state).includes(message));
+  assert.doesNotMatch(render(state), /Start gesperrt|Saunagang ist.*gesperrt/);
+}
 
 state = baseState();
 state.phase = "aufheizen";
@@ -442,7 +452,7 @@ state.start_availability = {
   minimum_wait_seconds: 60.1,
   blocker: { kind: "after_run" },
 };
-assert.match(render(state), /Start gesperrt – noch 2 Minuten/);
+assert.doesNotMatch(render(state), /Start gesperrt|availability-line/);
 
 console.log("panel overview time regressions passed");
 

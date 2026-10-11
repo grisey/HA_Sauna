@@ -16,17 +16,21 @@ from custom_components.ha_sauna.core.timeline import Door, Event, Kind
 
 class GangTemperatureTests(unittest.TestCase):
     def test_all_automatic_start_routes_require_current_valid_minimum(self):
-        for temperature in (25, 59.9, 60, None, float("nan"), float("inf"), True):
+        parameters = controller().parameters
+        minimum = parameters.values["sauna_min_temperature_c"]
+        for temperature, admitted in (
+            (minimum - 1, False), (minimum - .1, False), (minimum, True),
+            (None, False), (float("nan"), False), (float("inf"), False), (True, False),
+        ):
             for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
                 for proxy in ((False, True) if kind != Kind.INFUSION else (False,)):
                     with self.subTest(temperature=temperature, kind=kind, proxy=proxy):
-                        c = Controller(controller().parameters)
+                        c = Controller(parameters)
                         c.set_temperature(temperature, T0)
                         c.set_operation(True, T0, session_id="s")
                         c.process(event("entry-open", Kind.DOOR_OPEN, 1))
                         c.process(event("close", Kind.DOOR_CLOSE, 1))
                         signal = event("signal", kind, 2)
-                        admitted = temperature == 60
                         self.assertEqual(c.recognition_allowed(kind), admitted)
                         result = (
                             c.process_presence(ProxyPresenceSource.present(signal), signal)
@@ -47,7 +51,7 @@ class GangTemperatureTests(unittest.TestCase):
                 c.process(event("close", Kind.DOOR_CLOSE, 1))
                 self.assertEqual(c.session.timeline.door, Door.CLOSED)
                 self.assertEqual(c.session.timeline.anchor.effective_at, at(1))
-                c.set_temperature(60, at(9))
+                c.set_temperature(c.parameters.values["sauna_min_temperature_c"], at(9))
                 result = c.process(event("signal", kind, 10))
                 self.assertTrue(result.changed)
                 self.assertEqual(c.session.timeline.active.started_at, at(9))
@@ -58,7 +62,7 @@ class GangTemperatureTests(unittest.TestCase):
             with self.subTest(temperature=temperature):
                 c = controller()
                 c.set_temperature(temperature, at(1))
-                c.set_temperature(60, at(9))
+                c.set_temperature(c.parameters.values["sauna_min_temperature_c"], at(9))
                 c.process(Event("entry-open", "s", Kind.DOOR_OPEN, at(1), at(10)))
                 c.process(Event("close", "s", Kind.DOOR_CLOSE, at(2), at(10)))
                 self.assertEqual(c.session.timeline.anchor.effective_at, at(2))
@@ -81,7 +85,7 @@ class GangTemperatureTests(unittest.TestCase):
         c.set_temperature(25, at(1))
         c.process(event("entry-open", Kind.DOOR_OPEN, 2))
         c.process(event("close", Kind.DOOR_CLOSE, 2))
-        c.set_temperature(60, at(9))
+        c.set_temperature(c.parameters.values["sauna_min_temperature_c"], at(9))
         self.assertFalse(c.recognition_allowed_at(Kind.INFUSION, at(5)))
         self.assertTrue(c.recognition_allowed_at(Kind.INFUSION, at(9)))
         result = c.process(Event("old", "s", Kind.INFUSION, at(5), at(10)),
@@ -173,6 +177,7 @@ class GangTemperatureTests(unittest.TestCase):
             self.assertEqual(len(runtime.controller.decisions), decisions)
             self.assertEqual(runtime.presence.external[report.source], report)
 
-        for temperature in (25, 60):
+        minimum = _runtime([START]).configuration.parameters.values["sauna_min_temperature_c"]
+        for temperature in (minimum - 1, minimum):
             with self.subTest(temperature=temperature):
                 asyncio.run(exercise(temperature))

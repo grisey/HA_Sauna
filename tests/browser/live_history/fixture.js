@@ -1,5 +1,5 @@
 /* Synthetic transport only: every panel render/index/gesture method is real. */
-window.installHistoryFixture = async function ({ seconds = 14400, both = false } = {}) {
+window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const outer = host.attachShadow({ mode: "open" });
@@ -10,8 +10,6 @@ window.installHistoryFixture = async function ({ seconds = 14400, both = false }
   panel.entry = "synthetic";
   panel._hass = { user: { name: "Synthetic", is_admin: false } };
   panel.setPanelView("history");
-  panel.positions = new Set(both ? ["upper", "lower"] : ["upper"]);
-  panel.historyDetail = both;
   const origin = Date.parse("2032-01-01T08:00:00Z"),
     iso = (t) => new Date(t).toISOString();
   const records = [];

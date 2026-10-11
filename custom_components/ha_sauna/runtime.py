@@ -1082,7 +1082,7 @@ class SaunaRuntime:
             self.device.refresh(now)
         session = self.session
         if session is None and self.controller.control_mode != "manual":
-            self._set_control_mode("manual", preserve_light=True)
+            self._set_control_mode("manual", preserve_light=True, at=now)
             if self.save_configuration:
                 self.save_configuration(self.configuration)
         # The current model has only the active Ofenkühlung (`after_run`).
@@ -1202,12 +1202,13 @@ class SaunaRuntime:
 
     def _set_control_mode(self, mode, *, preserve_light=False, at=None):
         """Apply a mode and its output initialization while holding the lock."""
+        at = self._clock() if at is None else at
         if self.reconfiguring:
             raise ValueError(
                 "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
             )
         previous_mode = self.controller.control_mode
-        self.controller.set_control_mode(mode, self._clock() if at is None else at)
+        self.controller.set_control_mode(mode, at)
         # Closing a manual recording must retain its manual configuration.
         self.persist_completed_sessions()
         if previous_mode != mode and mode == "manual":
@@ -1217,7 +1218,7 @@ class SaunaRuntime:
                     "standard_temperature_c"
                 ],
             })
-            self.controller.update_temperature_parameters(parameters, self._clock())
+            self.controller.update_temperature_parameters(parameters, at)
             self.configuration = replace(self.configuration, parameters=parameters)
             if self.device:
                 self.device.values = parameters.values
@@ -1231,7 +1232,7 @@ class SaunaRuntime:
                 catalog=self.configuration.temperature_programs,
             )
             self.controller.update_temperature_parameters(
-                parameters, self._clock(), program_mode=program_mode,
+                parameters, at, program_mode=program_mode,
                 new_program=True, temperature_steps=program.temperature_steps,
             )
             self.configuration = replace(
@@ -1246,7 +1247,9 @@ class SaunaRuntime:
                 brightness = self.device.button_press_original_brightness
                 if brightness is None:
                     brightness = self.device.light_observation["brightness_percent"]
-            self.device.set_light_override((brightness or 0) if mode == "manual" else None)
+            self.device.set_light_override(
+                (brightness or 0) if mode == "manual" else None, at=at,
+            )
         self.configuration = replace(self.configuration, control_mode=mode)
         return self.configuration
 
