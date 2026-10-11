@@ -170,4 +170,3 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.door(Kind.DOOR_OPEN, 12)
         self.door(Kind.VENTILATION, 13)
         self.assertEqual(self.c.session.timeline.gang_count, 2)
-
