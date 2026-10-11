@@ -2,7 +2,7 @@
 
 ## Starten und nach einer Pause fortsetzen
 
-Erneutes Einschalten innerhalb der Wiederaufnahmefrist setzt die vorherige
+Erneutes Einschalten in Automatik innerhalb der Wiederaufnahmefrist setzt die vorherige
 Sitzung fort; der Lichtnachlauf endet dabei.
 
 Die unter **Einstellungen → Programme und Start → Sitzung starten und beenden**
@@ -47,7 +47,7 @@ weder Regelparameter noch Verlaufsachsen.
 Ofen- und Lichtwahl einschließlich freier Helligkeit stehen allen Benutzern
 mit Steuerrechten gleichermaßen zur Verfügung. Außerhalb einer Sitzung ist
 in Automatik zunächst der ausdrückliche Wechsel über **Manuell steuern**
-erforderlich. Ofen und Licht schalten dort ohne Sitzung. Eine automatische
+erforderlich. Eine automatische
 Sitzung beginnt durch **Einschalten** im Automatikmodus oder die gewählte
 Tastergeste.
 
@@ -82,7 +82,7 @@ Gangheizung, Türhilfe, Kühlung und Lichtautomatik bleiben deaktiviert.
 Die umrandete Ofenwahl zeigt, ob die Regelung eingeschaltet ist; die Tastenfarbe
 zeigt weiterhin die tatsächliche Ofenrückmeldung.
 
-Ein kurzer Tasterdruck außerhalb einer Sitzung wechselt in den manuellen Modus
+Ein kurzer Tasterdruck außerhalb einer automatischen Sitzung wechselt in den manuellen Modus
 und schaltet die Temperaturregelung um; die vorherige Helligkeit bleibt erhalten.
 Auch manuelles EIN benötigt eine gültige
 Regeltemperatur und Heizfreigabe; Schutz hat Vorrang. Zurückschalten auf
@@ -101,7 +101,7 @@ Wiederaufnahme- und Lichtnachlauffrist. Erst nach dieser Frist ist die Sitzung
 abgeschlossen. Bis dahin bleiben Betriebsartwechsel und technische
 Konfiguration gesperrt.
 
-Dieselbe Tastergeste beendet bei laufendem Betrieb die Sitzung sofort.
+Dieselbe Tastergeste beendet eine laufende automatische Sitzung sofort.
 Bei gewählter Haltegeste wird zuvor ausgeschaltetes Licht beim Drücken mit der
 eingestellten Einschalthelligkeit eingeschaltet. Sobald die Haltezeit erreicht
 ist, bleibt es bis zur Loslassmeldung AUS;

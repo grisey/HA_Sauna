@@ -80,13 +80,13 @@ Frist ab möglichem Gangbeginn liegen. Nach Ablauf oder Rücknahme benötigt ein
 einen neuen vollständigen Eintritt.
 
 Bestätigtes Durchlüften während der Austrittsöffnung beendet den Gang;
-Gangzählung und Ofenkühlung folgen dann. Eine kurze Türöffnung
+er wird gezählt und löst in Automatik die Ofenkühlung aus. Eine kurze Türöffnung
 ohne bestätigtes Durchlüften beendet keinen Gang.
 
 ## Gang zählen und nächste Temperaturstufe beginnen
 
 Nur beendete, bestätigte Gänge zählen, jeweils einmal und unabhängig vom
-Endgrund. Gleichzeitig folgt die nächste Stufe des
+Endgrund. In Automatik folgt gleichzeitig die nächste Stufe des
 [Temperaturprogramms](bedienung.md#temperatur-während-der-sitzung-ändern).
 Beginn und zugeordnete Aufgüsse bleiben erhalten.
 

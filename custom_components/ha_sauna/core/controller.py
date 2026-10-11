@@ -207,7 +207,7 @@ class Controller:
         )
 
     def set_control_mode(self, control_mode: str, at: datetime | None = None) -> None:
-        """Choose the regulation mode before starting the next session."""
+        """Change modes outside automatic sessions, closing manual recording."""
         if control_mode not in CONTROL_MODES:
             raise ValueError("Ungültiger Betriebsmodus")
         if self.control_mode == control_mode:

@@ -1054,12 +1054,16 @@ const renderCurrent = (
     "a regular user sends one atomic heater command",
   );
   calls.length = 0;
+  panel.state.session = { timeline: {} };
+  panel.state.operation_enabled = true;
+  panel.state.configuration_locked = true;
   await panel.action("control-mode:automatic");
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
     ["/entry-1/control-mode", "POST", { mode: "automatic" }],
   ]);
   calls.length = 0;
-  panel.state.configuration_locked = true;
+  // The API spy does not deliver the following automatic session's state.
+  panel.state.configuration = { control_mode: "automatic" };
   await panel.action("control-mode:manual");
   await panel.action("manual-light-overview");
   await panel.action("details");
