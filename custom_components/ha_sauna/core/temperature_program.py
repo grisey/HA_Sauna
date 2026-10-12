@@ -10,7 +10,7 @@ from .parameters import BY_KEY
 from .temperature_target import whole_temperature
 
 MAXIMUM_TEMPERATURE_C = BY_KEY["target_temperature_c"].maximum
-MINIMUM_TEMPERATURE_C = BY_KEY["sauna_min_temperature_c"].minimum
+MINIMUM_TEMPERATURE_C = BY_KEY["sauna_min_temperature_c"].lower_bound
 
 
 def _temperature(

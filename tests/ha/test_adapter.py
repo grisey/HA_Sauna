@@ -471,7 +471,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(form["menu_options"], result["menu_options"])
                         continue
                     self.assertEqual(form["type"], "form")
-                    self.assertTrue(flat_fields(form["data_schema"]))
+                    fields = {str(key) for key in flat_fields(form["data_schema"])}
+                    self.assertTrue(fields)
+                    self.assertTrue(all(
+                        self.module.BY_KEY[key].configuration_surface == "integration"
+                        for key in fields
+                    ))
 
     async def test_related_installation_fields_share_forms_and_return_to_area(self):
         flow = self.module.SaunaOptionsFlow()

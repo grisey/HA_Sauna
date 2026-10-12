@@ -710,7 +710,10 @@ class ProgramConfigurationTests(unittest.TestCase):
             self.assertEqual(runtime.controller.target_temperature, original_target)
             self.assertEqual(runtime.configuration.selected_program_id, program.id)
             self.assertEqual(entry.options["selected_program_id"], program.id)
-            self.assertEqual(entry.options["parameters"], original)
+            self.assertEqual(
+                entry.options["parameters"],
+                runtime.configuration.parameters.as_options(),
+            )
             reloaded = Configuration.from_options(entry.options)
             self.assertEqual(reloaded.parameters.as_dict(), original)
             self.assertEqual(reloaded.selected_program_id, program.id)

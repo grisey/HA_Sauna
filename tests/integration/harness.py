@@ -11,7 +11,7 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.ha_sauna.bindings import ROLES
 from custom_components.ha_sauna.config_flow import pack_binding_input
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.settings import async_set_parameters
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,9 +123,10 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()
     entry = result["result"]
-    values = {d.key: d.default for d in EDITABLE_DEFINITIONS if d.key != "final_temperature_c"}
+    editable = Parameters({}).as_options()
+    values = {key: value for key, value in editable.items() if key != "final_temperature_c"}
     values.update({key: value for key, value in (parameter_overrides or {}).items()
-                   if key in {d.key for d in EDITABLE_DEFINITIONS}})
+                   if key in editable})
     # Fixture parameters use the same writer as panel settings after basic setup.
     # Supplying fixture targets must not change the setup's temperature mode.
     await async_set_parameters(hass, entry, values, explicit_target=False)

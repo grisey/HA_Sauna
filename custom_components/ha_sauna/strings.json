@@ -258,16 +258,7 @@
           "minimum_heating_minutes": "Mindestheizzeit",
           "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
           "standard_temperature_c": "Standardtemperatur",
-          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen",
-          "warmup_minimum_points": "Mindestzahl der Aufheizmesswerte",
-          "warmup_minimum_span_ratio": "Mindestanteil des Beobachtungsfensters",
-          "warmup_noise_rise_ratio": "Mindestanstieg gegenüber Messschwankung",
-          "warmup_drop_rise_ratio": "Höchster Einzelabfall gegenüber Anstieg",
-          "warmup_smoothing_window_ratio": "Glättungsdauer des Aufheiztrends",
-          "warmup_slow_confirmation_window_ratio": "Bestätigungsdauer langsamen Aufheizens",
-          "warmup_fit_grace_window_ratio": "Anlaufzeit der Trendbewertung",
-          "warmup_history_blend_window_ratio": "Übernahmezeit historischer Aufheizwerte",
-          "climate_temperature_step_c": "Temperaturschritt der HA-Klimabedienung"
+          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
         },
         "data_description": {
           "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
@@ -276,16 +267,7 @@
           "minimum_heating_minutes": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
           "thermostat_cooldown_minutes": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten.",
           "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
-          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg.",
-          "warmup_minimum_points": "Mindestzahl zeitlich verschiedener Messpunkte für Aufheiztrend und Heizfortschritt.",
-          "warmup_minimum_span_ratio": "Mindestdauer der Live-Messreihe relativ zum Beobachtungsfenster.",
-          "warmup_noise_rise_ratio": "Der gefittete Anstieg muss stärker sein als dieser Faktor der mittleren quadratischen Abweichung.",
-          "warmup_drop_rise_ratio": "Ein größerer einzelner Temperaturabfall macht die Aufheizprognose ungültig.",
-          "warmup_smoothing_window_ratio": "Dauer der Trendglättung relativ zum Beobachtungsfenster.",
-          "warmup_slow_confirmation_window_ratio": "Dauer der Bestätigung eines zu langsamen Aufheizens relativ zum Beobachtungsfenster.",
-          "warmup_fit_grace_window_ratio": "Anlaufzeit bis zur Trendbewertung relativ zum Beobachtungsfenster.",
-          "warmup_history_blend_window_ratio": "Überblendungsdauer vom historischen Aufheizwert zum aktuellen Trend relativ zum Beobachtungsfenster.",
-          "climate_temperature_step_c": "Schrittweite der Temperaturwahl über die Home-Assistant-Klimabedienung."
+          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
         },
         "submit": "Speichern und zurück"
       },
@@ -516,14 +498,12 @@
         "data": {
           "light_transition_seconds": "Dauer automatischer Lichtwechsel",
           "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen",
-          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts",
-          "light_cooling_fade_share": "Höchster Anteil einer Kühlüberblendung"
+          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts"
         },
         "data_description": {
           "light_transition_seconds": "Dauer der Überblendung bei automatischen Helligkeitswechseln; ohne Dauer wechselt das Licht unmittelbar.",
           "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort.",
-          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung.",
-          "light_cooling_fade_share": "Begrenzt jede der beiden Überblendungen durch den Anteil der verbleibenden Kühlzeit."
+          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
         },
         "submit": "Speichern und zurück"
       },
@@ -682,51 +662,17 @@
       "runtime": {
         "title": "Daten und Laufzeit",
         "menu_options": {
-          "parameters_scheduler": "Laufzeit",
           "parameters_archive": "Archiv und Übertragung",
-          "parameters_numerics": "Numerische Genauigkeit",
           "init": "Zurück zur Übersicht"
         }
-      },
-      "parameters_scheduler": {
-        "title": "Laufzeit",
-        "data": {
-          "runtime_tick_seconds": "Abstand der Laufzeitprüfung"
-        },
-        "data_description": {
-          "runtime_tick_seconds": "Abstand der laufenden Zustandsprüfung; eingehende Geräteereignisse werden weiterhin unmittelbar verarbeitet."
-        },
-        "submit": "Speichern und zurück"
       },
       "parameters_archive": {
         "title": "Archiv und Übertragung",
         "data": {
-          "history_context_seconds": "Messwerte vor und nach Sitzungen",
-          "archive_read_page_records": "Datensätze je Roharchivabruf",
-          "archive_history_page_records": "Datensätze je Verlaufsabruf",
-          "archive_projection_cache_entries": "Zwischengespeicherte Archivprojektionen",
-          "archive_export_chunk_bytes": "Übertragungsblock des Archivexports"
+          "history_context_seconds": "Messwerte vor und nach Sitzungen"
         },
         "data_description": {
-          "history_context_seconds": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich.",
-          "archive_read_page_records": "Höchstzahl pro Abruf des authentifizierten Roharchivs.",
-          "archive_history_page_records": "Höchstzahl pro Abruf der gefilterten Verlaufsansicht.",
-          "archive_projection_cache_entries": "Anzahl wiederverwendbarer Sitzungsprojektionen im Arbeitsspeicher.",
-          "archive_export_chunk_bytes": "Blockgröße beim streamenden Archivexport."
-        },
-        "submit": "Speichern und zurück"
-      },
-      "parameters_numerics": {
-        "title": "Numerische Genauigkeit",
-        "data": {
-          "warmup_rate_relative_tolerance": "Vergleichstoleranz der Aufheizrate",
-          "humidity_change_absolute_tolerance": "Nulltoleranz der Feuchteänderung",
-          "phase_completion_tolerance_seconds": "Zeitliche Abschlusstoleranz"
-        },
-        "data_description": {
-          "warmup_rate_relative_tolerance": "Numerische relative Toleranz beim Vergleich zweier Aufheizraten.",
-          "humidity_change_absolute_tolerance": "Numerische absolute Toleranz zum Ausblenden von Rundungsrauschen bei Feuchteänderungen.",
-          "phase_completion_tolerance_seconds": "Numerische Toleranz zum Abschluss eines vollständig abgelaufenen Zeitabschnitts."
+          "history_context_seconds": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich."
         },
         "submit": "Speichern und zurück"
       }

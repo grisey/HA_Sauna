@@ -11,6 +11,20 @@ import sys
 from test_settings import setting, timeout
 
 ROOT = Path(__file__).resolve().parents[1]
+CHECKS = ("core", "ha", "browser", "sessions")
+
+
+def select_values(raw, available, label):
+    """Validate a dispatch filter against its actual job or manifest IDs."""
+    if not raw.strip():
+        return list(available)
+    selected = [value.strip() for value in raw.split(",")]
+    unknown = set(selected) - set(available)
+    if unknown:
+        raise ValueError(f"Unknown {label}: {', '.join(sorted(unknown))}")
+    if len(selected) != len(set(selected)):
+        raise ValueError(f"Duplicate {label}")
+    return [value for value in available if value in selected]
 
 
 def outputs():
@@ -23,7 +37,15 @@ def outputs():
         "scenarios"
     ]
     replays = json.loads((ROOT / "tests/replay_manifest.json").read_text())["sessions"]
-    values["cases"] = [case["id"] for case in derived + replays]
+    values["checks"] = select_values(
+        os.environ.get("SAUNA_TEST_CHECKS", ""), CHECKS, "checks"
+    )
+    cases_filter = os.environ.get("SAUNA_SESSION_CASES", "")
+    if cases_filter.strip() and "sessions" not in values["checks"]:
+        raise ValueError("session_cases requires sessions in checks")
+    values["cases"] = select_values(
+        cases_filter, [case["id"] for case in derived + replays], "session cases"
+    )
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={json.dumps(value, separators=(',', ':'))}\n")

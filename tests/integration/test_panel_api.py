@@ -1813,6 +1813,14 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(set(state["frontend_defaults"]), set(section("frontend")))
                 self.assertNotIn(preference_key, state["frontend_defaults"])
             self.assertEqual(set(self.entry.options["appearance"]["preferences"]), editable)
+            self.assertEqual(
+                set(self.entry.runtime_data.configuration.appearance["preferences"]),
+                set(specifications),
+            )
+            self.assertEqual(
+                self.entry.runtime_data.configuration.as_snapshot()["appearance"],
+                self.entry.runtime_data.configuration.appearance,
+            )
             readonly = next((key, definition) for key, definition in specifications.items()
                             if definition["configuration_surface"] == "catalog" and definition["default"] + definition["step"] <= definition["maximum"])
             key, definition = readonly

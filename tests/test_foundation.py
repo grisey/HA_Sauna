@@ -117,7 +117,9 @@ class ParameterTests(unittest.TestCase):
     def test_zero_policy_is_explicit(self):
         for d in DEFINITIONS:
             with self.subTest(key=d.key):
-                if d.allow_zero:
+                if (d.minimum is not None and d.minimum <= 0) or (
+                    d.minimum is None and d.allow_zero
+                ):
                     self.assertEqual(d.validate(0), 0)
                 else:
                     with self.assertRaises(ParameterError):

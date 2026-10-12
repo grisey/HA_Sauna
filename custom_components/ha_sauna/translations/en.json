@@ -172,7 +172,7 @@
       "too_small": "Der Wert liegt unter der zulässigen Untergrenze.",
       "too_large": "Der Wert liegt über der zulässigen Obergrenze.",
       "integer_required": "Bitte eine ganze Zahl eingeben.",
-      "window_not_divisible": "The time window must be divisible by its recognition grid and applicable evaluation interval.",
+      "window_not_divisible": "Das Zeitfenster muss durch sein Erkennungsraster und den jeweiligen Prüfabstand teilbar sein.",
       "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Programmen.",
       "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
@@ -187,7 +187,7 @@
       "entity_id_in_use": "Diese Entitäts-ID ist bereits vergeben.",
       "preview_changed": "Die Liste hat sich geändert. Bitte die neue Vorschau prüfen und erneut bestätigen.",
       "reload_failed": "Eine betroffene Sauna konnte nicht neu geladen werden. Die aktuellen Entitäts-IDs und Zuordnungen bleiben gespeichert.",
-      "catalog_only": "This standard value is read exclusively from the parameter catalog."
+      "catalog_only": "Dieser Standardwert wird ausschließlich aus dem Parameterkatalog gelesen."
     },
     "abort": {
       "heater_already_used": "Dieser Heizaktor ist bereits einer anderen Sauna-Instanz zugeordnet.",
@@ -207,7 +207,7 @@
           "light": "Licht",
           "rename_entity": "Entität umbenennen",
           "cleanup_entities": "Entitäten bereinigen",
-          "runtime": "Data and runtime"
+          "runtime": "Daten und Laufzeit"
         }
       },
       "bindings": {
@@ -258,16 +258,7 @@
           "minimum_heating_minutes": "Mindestheizzeit",
           "thermostat_cooldown_minutes": "Heizpause nach Abschalten",
           "standard_temperature_c": "Standardtemperatur",
-          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen",
-          "warmup_minimum_points": "Minimum warm-up measurements",
-          "warmup_minimum_span_ratio": "Minimum observation window share",
-          "warmup_noise_rise_ratio": "Minimum rise relative to measurement noise",
-          "warmup_drop_rise_ratio": "Maximum individual drop relative to rise",
-          "warmup_smoothing_window_ratio": "Warm-up smoothing window factor",
-          "warmup_slow_confirmation_window_ratio": "Slower warm-up confirmation factor",
-          "warmup_fit_grace_window_ratio": "Warm-up fit grace period factor",
-          "warmup_history_blend_window_ratio": "Warm-up history blending factor",
-          "climate_temperature_step_c": "Thermostat temperature step"
+          "warmup_estimation_minutes": "Beobachtungszeit für das Aufheizen"
         },
         "data_description": {
           "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
@@ -276,16 +267,7 @@
           "minimum_heating_minutes": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
           "thermostat_cooldown_minutes": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten.",
           "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
-          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg.",
-          "warmup_minimum_points": "Minimum number of measurements with distinct timestamps for the warm-up trend and heating progress.",
-          "warmup_minimum_span_ratio": "Minimum duration of the live measurement series as a fraction of the observation window.",
-          "warmup_noise_rise_ratio": "The fitted temperature rise must exceed this multiple of the root mean square residual.",
-          "warmup_drop_rise_ratio": "A larger individual temperature drop invalidates the warm-up estimate.",
-          "warmup_smoothing_window_ratio": "Duration used to reconcile the remaining-time estimate relative to the observation window.",
-          "warmup_slow_confirmation_window_ratio": "Confirmation duration for a slower measured rate relative to the observation window.",
-          "warmup_fit_grace_window_ratio": "Maximum grace period for an unavailable fit relative to the observation window.",
-          "warmup_history_blend_window_ratio": "Duration used to blend historical and live rates relative to the observation window.",
-          "climate_temperature_step_c": "Temperature selection step for the Home Assistant thermostat entity."
+          "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
         },
         "submit": "Speichern und zurück"
       },
@@ -485,16 +467,16 @@
           "cooling_brightness_percent": "Helligkeit am Kaltpunkt",
           "operation_brightness_percent": "Helligkeit bei Solltemperatur am Tag",
           "night_brightness_percent": "Helligkeit bei Solltemperatur in der Nacht",
-          "light_night_elevation_degrees": "Sun elevation for night brightness",
-          "light_day_elevation_degrees": "Sun elevation for day brightness"
+          "light_night_elevation_degrees": "Sonnenhöhe für Nachtlicht",
+          "light_day_elevation_degrees": "Sonnenhöhe für Tageslicht"
         },
         "data_description": {
           "light_reference_temperature_c": "Ab dieser Temperatur verändert sich die Helligkeit linear bis zum Wert bei Solltemperatur.",
           "cooling_brightness_percent": "Unterer Helligkeitswert der Temperaturkurve, auch bei fehlender Temperatur oder Solltemperatur.",
           "operation_brightness_percent": "Tagesziel der Lichtkurve und normale Helligkeit während eines Saunagangs.",
           "night_brightness_percent": "Nachtziel der Lichtkurve und normale Helligkeit im Saunagang; die Dämmerung verbindet Tag- und Nachtwert.",
-          "light_night_elevation_degrees": "Night brightness applies at or below this elevation; brightness increases linearly to the day threshold.",
-          "light_day_elevation_degrees": "Operating brightness applies at or above this elevation. Must exceed the night threshold."
+          "light_night_elevation_degrees": "Unter dieser Sonnenhöhe gilt die Nachthelligkeit; dazwischen wird bis zur Tagesgrenze linear überblendet.",
+          "light_day_elevation_degrees": "Ab dieser Sonnenhöhe gilt die Betriebshelligkeit. Muss größer als die Nachtgrenze sein."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"
@@ -516,14 +498,12 @@
         "data": {
           "light_transition_seconds": "Dauer automatischer Lichtwechsel",
           "light_output_hysteresis_percent": "Toleranz für Helligkeitsschwankungen",
-          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts",
-          "light_cooling_fade_share": "Maximum share for each cooling fade"
+          "light_brightness_scale": "Höchste Helligkeitsstufe des Lichtgeräts"
         },
         "data_description": {
           "light_transition_seconds": "Dauer der Überblendung bei automatischen Helligkeitswechseln; ohne Dauer wechselt das Licht unmittelbar.",
           "light_output_hysteresis_percent": "Hält die bisherige Helligkeitsstufe bei kleinen Änderungen. Der Wert erweitert die Rundungsgrenze um diese Prozentpunkte; eine manuelle Wahl und Ausschalten wirken sofort.",
-          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung.",
-          "light_cooling_fade_share": "Limits each fade to this fraction of the remaining cooling time."
+          "light_brightness_scale": "Berücksichtigt die Helligkeitsstufen des Geräts beim Abgleich eines Lichtbefehls mit seiner Rückmeldung."
         },
         "submit": "Speichern und zurück"
       },
@@ -680,55 +660,21 @@
         }
       },
       "runtime": {
-        "title": "Data and runtime",
+        "title": "Daten und Laufzeit",
         "menu_options": {
-          "parameters_scheduler": "Runtime",
-          "parameters_archive": "Archive and transfer",
-          "parameters_numerics": "Numerical accuracy",
-          "init": "Back to overview"
+          "parameters_archive": "Archiv und Übertragung",
+          "init": "Zurück zur Übersicht"
         }
       },
-      "parameters_scheduler": {
-        "title": "Runtime",
-        "data": {
-          "runtime_tick_seconds": "Runtime check interval"
-        },
-        "data_description": {
-          "runtime_tick_seconds": "Interval between scheduled state checks; incoming device events remain immediate."
-        },
-        "submit": "Save and return"
-      },
       "parameters_archive": {
-        "title": "Archive and transfer",
+        "title": "Archiv und Übertragung",
         "data": {
-          "history_context_seconds": "Measurements before and after sessions",
-          "archive_read_page_records": "Records per raw archive request",
-          "archive_history_page_records": "Records per history request",
-          "archive_projection_cache_entries": "Cached archive projections",
-          "archive_export_chunk_bytes": "Archive export transfer block"
+          "history_context_seconds": "Messwerte vor und nach Sitzungen"
         },
         "data_description": {
-          "history_context_seconds": "Time surrounding a session retained for history. Each session retains its configured context.",
-          "archive_read_page_records": "Maximum number of records returned by one authenticated raw archive request.",
-          "archive_history_page_records": "Maximum number of records returned by one filtered history request.",
-          "archive_projection_cache_entries": "Number of reusable session projections retained in memory.",
-          "archive_export_chunk_bytes": "Block size used to stream archive exports."
+          "history_context_seconds": "Zeitlicher Kontext der Sitzungsansicht. Die gespeicherte Vorgabe einer Sitzung bestimmt ihren Archivbereich."
         },
-        "submit": "Save and return"
-      },
-      "parameters_numerics": {
-        "title": "Numerical accuracy",
-        "data": {
-          "warmup_rate_relative_tolerance": "Warm-up rate comparison tolerance",
-          "humidity_change_absolute_tolerance": "Humidity change zero tolerance",
-          "phase_completion_tolerance_seconds": "Phase completion tolerance"
-        },
-        "data_description": {
-          "warmup_rate_relative_tolerance": "Relative numerical tolerance when comparing two warm-up rates.",
-          "humidity_change_absolute_tolerance": "Absolute numerical tolerance for rounding noise in absolute humidity changes.",
-          "phase_completion_tolerance_seconds": "Numerical time tolerance when completing an elapsed phase."
-        },
-        "submit": "Save and return"
+        "submit": "Speichern und zurück"
       }
     }
   },

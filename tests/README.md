@@ -225,3 +225,10 @@ bleiben nur bei belegbar unveränderten Abhängigkeiten gültig. Reine Testkorre
 erfordern keine erneute Ausführung unveränderter Szenarien und Replays.
 `format_only` führt ausschließlich den Formatjob aus, wenn lediglich dessen Patch
 übernommen wurde; die vorhandenen Testnachweise werden dem Stand zugeordnet.
+
+Der Workflow `HA Sauna` bietet für gezielte Wiederholungen `checks` mit den
+Bereichen `core`, `ha`, `browser` und `sessions`. `session_cases` begrenzt den
+Sitzungsbereich auf durch Kommas getrennte IDs aus den Szenario- und
+Replaymanifesten. Ohne Auswahl laufen alle Bereiche und Fälle; unbekannte oder
+doppelte IDs werden abgewiesen. Eine Szenario-ID umfasst ihre gebundenen
+Varianten. Die Auswahl verändert weder Eingaben noch Bewertungskriterien.

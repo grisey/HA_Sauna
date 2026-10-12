@@ -4,6 +4,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      checks:
+        description: 'Comma-separated checks: core,ha,browser,sessions; empty runs all'
+        type: string
+        default: ''
+      session_cases:
+        description: 'Optional comma-separated manifest IDs for sessions, e.g. G02-proxy,R03'
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -17,12 +26,17 @@ jobs:
       settings: ${{ steps.catalog.outputs.settings }}
       browser: ${{ steps.catalog.outputs.browser }}
       cases: ${{ steps.catalog.outputs.cases }}
+      checks: ${{ steps.catalog.outputs.checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: catalog
         run: python tests/ci_settings.py outputs
+        env:
+          SAUNA_TEST_CHECKS: ${{ inputs.checks }}
+          SAUNA_SESSION_CASES: ${{ inputs.session_cases }}
   core:
     needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -33,9 +47,11 @@ jobs:
       - run: python -m unittest discover -s tests -v
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
       - run: node --test tests/panel_*.test.js
+        if: ${{ !cancelled() }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.panel }}
   ha:
     needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
@@ -66,6 +82,7 @@ jobs:
           HA_TEST_REQUIRED: '1'
   sessions:
     needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
@@ -105,6 +122,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   browser:
     needs: configuration
+    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:

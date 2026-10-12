@@ -25,8 +25,9 @@ from custom_components.ha_sauna.core.parameters import (
     Parameters,
 )
 from custom_components.ha_sauna.core.warmup import HeatingProgress
+from custom_components.ha_sauna.runtime import Configuration
 from sessions.fixture_configuration import catalog_configuration
-from test_foundation import T0
+from test_foundation import T0, bindings
 from test_settings import setting
 
 
@@ -138,6 +139,39 @@ class ParameterConsumptionTests(unittest.TestCase):
         self.assertTrue(
             {item["key"] for item in catalog["parameters"]} <= set(parameters.as_dict())
         )
+
+    def test_options_store_choices_and_snapshot_preserves_every_effective_value(self):
+        catalog = load_catalog()
+        preferences = catalog["appearance"]["preferences"]
+        key = "history_live_poll_ms"
+        choice = preferences[key]["default"] + preferences[key]["step"]
+        configuration = Configuration(
+            bindings(), Parameters({}), appearance={"preferences": {key: choice}}
+        )
+        saved = configuration.as_options()
+        snapshot = configuration.as_snapshot()
+        self.assertEqual(
+            set(saved["parameters"]),
+            {
+                spec["key"] for spec in catalog["parameters"]
+                if spec["configuration_surface"] != "catalog"
+            },
+        )
+        self.assertEqual(snapshot["parameters"], configuration.parameters.as_dict())
+        self.assertEqual(
+            set(saved["appearance"]["preferences"]),
+            {
+                name for name, spec in preferences.items()
+                if spec["configuration_surface"] == "panel"
+            },
+        )
+        self.assertEqual(set(snapshot["appearance"]["preferences"]), set(preferences))
+        self.assertEqual(snapshot["appearance"], configuration.appearance)
+        self.assertEqual(saved["appearance"]["preferences"][key], choice)
+        self.assertEqual(Configuration.from_options(saved), configuration)
+        saved["appearance"]["preferences"][key] = preferences[key]["default"]
+        self.assertEqual(configuration.appearance["preferences"][key], choice)
+        self.assertEqual(snapshot["appearance"]["preferences"][key], choice)
 
     def test_twilight_uses_both_nondefault_endpoints(self):
         values = Parameters({}).as_dict()

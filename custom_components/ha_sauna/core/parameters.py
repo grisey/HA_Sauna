@@ -42,6 +42,11 @@ class ParameterDefinition:
     minimum_parameter: str | None = None
     multiple_of_parameters: tuple[str, ...] = ()
 
+    @property
+    def lower_bound(self) -> float:
+        """Return the numeric boundary, including the implicit non-negative range."""
+        return self.minimum if self.minimum is not None else 0
+
     def validate(self, value: object) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ParameterError(self.key, "invalid_number")
@@ -200,7 +205,7 @@ class Parameters:
         definition = BY_KEY[key]
         if definition.minimum_parameter is not None:
             return self.values[definition.minimum_parameter]
-        return definition.minimum if definition.minimum is not None else 0
+        return definition.lower_bound
 
     def as_dict(self) -> dict[str, float]:
         return dict(self.values)
