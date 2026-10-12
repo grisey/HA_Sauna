@@ -27,5 +27,9 @@ def browser_timeout(name):
     return setting(f"browser.timeouts_ms.{name}")
 
 
+def async_timeout(name):
+    return setting(f"asyncio.timeouts_s.{name}")
+
+
 def fixture(name):
     return setting(f"fixtures.{name}")

@@ -232,3 +232,8 @@ Sitzungsbereich auf durch Kommas getrennte IDs aus den Szenario- und
 Replaymanifesten. Ohne Auswahl laufen alle Bereiche und Fälle; unbekannte oder
 doppelte IDs werden abgewiesen. Eine Szenario-ID umfasst ihre gebundenen
 Varianten. Die Auswahl verändert weder Eingaben noch Bewertungskriterien.
+`integration_tests` begrenzt innerhalb von `ha` die Integration auf durch Kommas
+getrennte vollständige Namen der Form `test_module.Class.test_method`. Ohne
+Auswahl läuft die vollständige Integration; unbekannte oder doppelte Namen sowie
+leere Einträge innerhalb einer Auswahl werden abgewiesen. Die Adapterprüfung
+bleibt Teil des Bereichs `ha`.

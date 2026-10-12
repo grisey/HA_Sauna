@@ -13,6 +13,10 @@ on:
         description: 'Optional comma-separated manifest IDs for sessions, e.g. G02-proxy,R03'
         type: string
         default: ''
+      integration_tests:
+        description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -29,11 +33,14 @@ jobs:
       checks: ${{ steps.catalog.outputs.checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Dispatch-Auswahl prüfen
+        run: python -m unittest discover -s tests -p test_ci_settings.py -v
       - id: catalog
         run: python tests/ci_settings.py outputs
         env:
           SAUNA_TEST_CHECKS: ${{ inputs.checks }}
           SAUNA_SESSION_CASES: ${{ inputs.session_cases }}
+          SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
   core:
     needs: configuration
     if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
@@ -76,11 +83,12 @@ jobs:
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_adapter }}
         env:
           HA_TEST_REQUIRED: '1'
-      - run: python -m unittest discover -s tests/integration -v
+      - run: python tests/ci_settings.py integration
         if: ${{ !cancelled() }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.integration }}
         env:
           HA_TEST_REQUIRED: '1'
+          SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
   sessions:
     needs: configuration
     if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}

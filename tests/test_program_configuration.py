@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from test_settings import async_timeout
 
 from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.archive import Archive, plain
@@ -112,7 +113,7 @@ class ProgramConfigurationTests(unittest.TestCase):
                 self.assertEqual(runtime.controller.target_temperature, 89)
                 self.assertEqual(runtime.controller.next_gang_temperature, 89)
                 self.assertEqual(runtime.session.timeline.gang_count, 0)
-                await asyncio.wait_for(archive.flush(), timeout=10)
+                await asyncio.wait_for(archive.flush(), timeout=async_timeout("reload"))
                 stored = archive.read(runtime.session.session_id)["session"]
                 self.assertEqual(stored["next_gang_temperature_c"], 89)
                 self.assertEqual(stored["configuration"], plain(configuration.as_snapshot()))

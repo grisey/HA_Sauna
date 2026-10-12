@@ -6,6 +6,7 @@ from unittest.mock import patch
 from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from harness import advance_with_fresh_sources, create_sauna, start_hass
+from test_settings import async_timeout
 from custom_components.ha_sauna.appearance import appearance_options, validate_appearance
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
@@ -1004,10 +1005,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     with patch.object(api, "json_body", side_effect=waiting_body):
                         pending = asyncio.create_task(send())
                         try:
-                            await asyncio.wait_for(entered.wait(), 3)
+                            await asyncio.wait_for(entered.wait(), async_timeout("service"))
                             reloaded = await asyncio.wait_for(
                                 self.hass.config_entries.async_reload(self.entry.entry_id),
-                                10,
+                                async_timeout("reload"),
                             )
                             self.assertTrue(reloaded)
                             self.assertTrue(previous.closed)
@@ -1015,13 +1016,13 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         except BaseException as error:
                             release.set()
                             try:
-                                await asyncio.wait_for(pending, 10)
+                                await asyncio.wait_for(pending, async_timeout("reload"))
                             except BaseException as cleanup_error:
                                 error.add_note(f"HTTP-Abschluss fehlgeschlagen: {cleanup_error!r}")
                             raise
                         else:
                             release.set()
-                            status, result = await asyncio.wait_for(pending, 10)
+                            status, result = await asyncio.wait_for(pending, async_timeout("reload"))
                         self.assertEqual(status, 200, result)
                         self.assertEqual(result[key], expected)
                     self.assertEqual(
@@ -1859,7 +1860,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                                                state["appearance_catalog"]["colors"]})
             async with client.post(url + "/appearance", json=appearance) as response:
                 self.assertEqual(response.status, 200, await response.text())
-                self.assertEqual((await response.json())["appearance"], appearance)
+                self.assertEqual(
+                    (await response.json())["appearance"], validate_appearance(appearance),
+                )
             await self.hass.async_block_till_done()
             self.assertIs(self.entry.runtime_data, runtime)
             self.assertIs(runtime.session, session)
@@ -1983,6 +1986,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/appearance", json=appearance) as response:
                 self.assertEqual(response.status, 200, await response.text())
                 stored = (await response.json())["appearance"]
+                self.assertEqual(stored, validate_appearance(appearance))
+                saved = appearance_options(stored)
             async with client.post(url + "/logging", json={"level": "DEBUG"}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             async with client.post(url + "/program", json={"profile": "genusszeit"}) as response:
@@ -2010,14 +2015,15 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.entry.runtime_data.configuration.parameters.values["sensor_timeout_seconds"],
                 definition.default,
             )
-            self.assertEqual(self.entry.options["appearance"], stored)
+            self.assertEqual(self.entry.options["appearance"], saved)
+            self.assertEqual(self.entry.runtime_data.configuration.appearance, stored)
             self.assertEqual(self.entry.options["presence_source"], "ha_presence")
             self.assertEqual(self.entry.options["bindings"]["presence"], entity_id)
             self.assertEqual(
                 self.entry.runtime_data.configuration.presence_source, "ha_presence"
             )
             async with client.get(url + "/state") as response:
-                self.assertEqual((await response.json())["appearance"], stored)
+                self.assertEqual((await response.json())["appearance"], saved)
 
     async def test_appearance_listener_uses_latest_options_after_lock_wait(self):
         import asyncio

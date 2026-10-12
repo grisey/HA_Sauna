@@ -1,16 +1,19 @@
 """Expose the exclusive test catalogue to GitHub Actions and dependency setup."""
 
 import argparse
+import ast
 import json
 import math
 import os
 from pathlib import Path
 import subprocess
 import sys
+import unittest
 
 from test_settings import setting, timeout
 
 ROOT = Path(__file__).resolve().parents[1]
+INTEGRATION_ROOT = ROOT / "tests/integration"
 CHECKS = ("core", "ha", "browser", "sessions")
 
 
@@ -25,6 +28,22 @@ def select_values(raw, available, label):
     if len(selected) != len(set(selected)):
         raise ValueError(f"Duplicate {label}")
     return [value for value in available if value in selected]
+
+
+def select_integration_tests(raw):
+    """Validate complete test IDs from source without importing HA fixtures."""
+    if not raw.strip():
+        return []
+    available = [
+        f"{path.stem}.{definition.name}.{method.name}"
+        for path in sorted(INTEGRATION_ROOT.glob("test_*.py"))
+        for definition in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(definition, ast.ClassDef)
+        for method in definition.body
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and method.name.startswith("test_")
+    ]
+    return select_values(raw, available, "integration tests")
 
 
 def outputs():
@@ -46,6 +65,10 @@ def outputs():
     values["cases"] = select_values(
         cases_filter, [case["id"] for case in derived + replays], "session cases"
     )
+    integration_filter = os.environ.get("SAUNA_INTEGRATION_TESTS", "")
+    if integration_filter.strip() and "ha" not in values["checks"]:
+        raise ValueError("integration_tests requires ha in checks")
+    values["integration_tests"] = select_integration_tests(integration_filter)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={json.dumps(value, separators=(',', ':'))}\n")
@@ -68,8 +91,32 @@ def install_ha():
     )
 
 
+def run_integration():
+    names = select_integration_tests(os.environ.get("SAUNA_INTEGRATION_TESTS", ""))
+    # Named tests need the same module priority as integration discovery.
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(INTEGRATION_ROOT))
+    print("INTEGRATION_TESTS", json.dumps(names or ["all"]), flush=True)
+    loader = unittest.defaultTestLoader
+    suite = (
+        loader.loadTestsFromNames(names)
+        if names
+        else loader.discover(str(INTEGRATION_ROOT))
+    )
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    successful = result.wasSuccessful() and result.testsRun > 0
+    if os.environ.get("HA_TEST_REQUIRED") and result.skipped:
+        print("Required HA integration tests were skipped", flush=True)
+        successful = False
+    raise SystemExit(0 if successful else 1)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("outputs", "install-ha"))
+    parser.add_argument("action", choices=("outputs", "install-ha", "integration"))
     arguments = parser.parse_args()
-    {"outputs": outputs, "install-ha": install_ha}[arguments.action]()
+    {
+        "outputs": outputs,
+        "install-ha": install_ha,
+        "integration": run_integration,
+    }[arguments.action]()

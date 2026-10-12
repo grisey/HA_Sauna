@@ -9,6 +9,7 @@ from custom_components.ha_sauna.core.parameters import LIVE_TEMPERATURE_KEYS, Pa
 from custom_components.ha_sauna.settings import async_set_parameters
 
 from harness import create_sauna, start_hass
+from test_settings import async_timeout
 
 
 def displayed_parameter_values(form, parameters):
@@ -91,7 +92,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         registry = er.async_get(self.hass)
         previous = registry.async_get_or_create(
             "number", "ha_sauna", f"{entry.entry_id}_session_gap_minutes",
-            config_entry_id=entry.entry_id,
+            config_entry=entry,
         )
         separate = registry.async_get_or_create(
             "number", "ha_sauna", "separate_instance_parameter",
@@ -133,7 +134,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 result = await self.hass.config_entries.options.async_configure(
                     flow_id, {**values, "session_gap_minutes": 7})
                 self.assertEqual((result["type"], result["step_id"]), ("menu", "operation"))
-                await asyncio.wait_for(started.wait(), timeout=10)
+                await asyncio.wait_for(started.wait(), timeout=async_timeout("reload"))
                 self.assertTrue(runtime.reconfiguring)
                 saved = dict(entry.options)
                 for step in ("init", "sensors", "init", "operation"):
@@ -330,7 +331,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.hass.services.async_register("light", "turn_on", light_service)
         selecting = asyncio.create_task(runtime.set_light_override(80))
         try:
-            await asyncio.wait_for(entered.wait(), 3)
+            await asyncio.wait_for(entered.wait(), async_timeout("service"))
             selecting.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await selecting

@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from harness import create_sauna, start_hass
+from test_settings import async_timeout
 
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 
@@ -171,7 +172,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with runtime._lock:
                 self.hass.states.async_set(source, "on")
                 state = self.hass.states.get(source)
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 self.assertEqual(runtime.controller.direct_presence.occupancy, "absent")
                 closed_at = runtime._clock()
                 self.assertLess(state.last_changed, closed_at)

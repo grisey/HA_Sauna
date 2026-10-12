@@ -21,6 +21,7 @@ from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, event, parameters, bindings
 from test_detector import measurement
+from test_settings import async_timeout
 
 
 class ArchiveTests(unittest.IsolatedAsyncioTestCase):
@@ -222,7 +223,7 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
             reader.execute("BEGIN")
             before = reader.execute("SELECT COUNT(*) FROM records").fetchone()[0]
             self.record(1)
-            await asyncio.wait_for(self.archive.flush(), 2)
+            await asyncio.wait_for(self.archive.flush(), async_timeout("writer"))
             self.assertIsNone(self.archive.failure)
             self.assertEqual(reader.execute("SELECT COUNT(*) FROM records").fetchone()[0], before)
         with closing(sqlite3.connect(self.archive.path)) as reader:

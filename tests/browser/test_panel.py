@@ -605,7 +605,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await page.route(archive_url, delay_archive_page)
                 try:
                     await panel.locator('.main-tabs [data-action="history"]').click()
-                    await asyncio.wait_for(entered.wait(), 10)
+                    await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(panel.locator("svg.session-chart")).to_be_visible(
                         timeout=browser_timeout("update")
                     )
@@ -1218,7 +1218,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 lambda response: response.url.endswith(program_url) and response.request.method == "POST"
             ) as response_wait:
                 click = asyncio.create_task(action.click())
-                await asyncio.wait_for(entered.wait(), 10)
+                await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                 await expect(action).to_have_text("Wird übernommen …")
                 await expect(action).to_have_class("program-saving program-main")
                 await expect(action).to_have_css("border-style", "solid")
@@ -1236,7 +1236,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
             if entered.is_set():
-                await asyncio.wait_for(route_finished.wait(), 10)
+                await asyncio.wait_for(route_finished.wait(), timeout=setting("browser.event_timeout_s"))
             await self.page.unroute("**" + program_url, delay_program)
         self.assertEqual(self.entry.runtime_data.configuration.selected_program_id, DEFAULT_PROGRAMS[0]["id"])
         await expect(active_program).to_have_text(DEFAULT_PROGRAMS[0]["name"])
@@ -1292,7 +1292,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.page.route("**" + temperature_url, delay_confirmation)
                 try:
                     await action.click()
-                    await asyncio.wait_for(entered.wait(), 10)
+                    await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(action).to_have_text("Wird übernommen …")
                     await expect(self.panel.locator("#program-choice-body")).to_be_visible()
                     during = await geometry()
@@ -1308,7 +1308,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     release.set()
                     if entered.is_set():
-                        await asyncio.wait_for(finished.wait(), 10)
+                        await asyncio.wait_for(finished.wait(), timeout=setting("browser.event_timeout_s"))
                     await self.page.unroute("**" + temperature_url, delay_confirmation)
         self.assertEqual(self.errors, [])
 
@@ -1497,7 +1497,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await self.page.route("**" + program_url, delay_program)
                 try:
                     await choice.click()
-                    await asyncio.wait_for(entered.wait(), 10)
+                    await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(self.panel.locator("#progression-end")).to_be_visible()
                     await expect(choice).to_contain_text("Wird übernommen …")
                     saving = await geometry()
@@ -1513,7 +1513,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     release.set()
                     if entered.is_set():
-                        await asyncio.wait_for(finished.wait(), 10)
+                        await asyncio.wait_for(finished.wait(), timeout=setting("browser.event_timeout_s"))
                     await self.page.unroute("**" + program_url, delay_program)
         self.assertEqual(self.errors, [])
 
@@ -1638,7 +1638,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         await self.page.keyboard.press("Tab")
                     else:
                         await gangs.click()
-                    await asyncio.wait_for(entered[0].wait(), 10)
+                    await asyncio.wait_for(entered[0].wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(gangs).to_be_focused()
                     await expect(gangs).to_be_enabled()
                     if navigation == "failure":
@@ -1658,11 +1658,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                     await start.fill("7")
                     self.assertEqual(writes, [{"final_temperature_c": 91}])
                     release[0].set()
-                    await asyncio.wait_for(entered[1].wait(), 10)
+                    await asyncio.wait_for(entered[1].wait(), timeout=setting("browser.event_timeout_s"))
                     await expect(start).to_be_focused()
                     await expect(start).to_have_value("7")
                     release[1].set()
-                    await asyncio.wait_for(finished[1].wait(), 10)
+                    await asyncio.wait_for(finished[1].wait(), timeout=setting("browser.event_timeout_s"))
                     await self.panel.evaluate(
                         "async p => { while (p.programRequest) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
                     )
@@ -1705,7 +1705,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                         event.set()
                     for index, event in enumerate(entered):
                         if event.is_set():
-                            await asyncio.wait_for(finished[index].wait(), 10)
+                            await asyncio.wait_for(finished[index].wait(), timeout=setting("browser.event_timeout_s"))
                     await self.page.unroute("**" + temperature_url, delayed_temperature)
         self.assertEqual(self.errors, [])
 
@@ -2264,10 +2264,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await menu.get_by_text("Entität umbenennen", exact=True).click()
         group_picker = dialog.locator("ha-selector-select")
         await group_picker.locator("ha-select").click()
-        # The selected-value display repeats the option label in HA's select.
-        controls_option = group_picker.get_by_role("option", name=controls_label, exact=True)
+        # HA's menu items share their labels with the selected-value display.
+        controls_option = group_picker.get_by_role("menuitem", name=controls_label, exact=True)
         await expect(controls_option).to_be_visible()
-        await expect(group_picker.get_by_role("option", name=external_label, exact=True)).to_be_visible()
+        await expect(group_picker.get_by_role("menuitem", name=external_label, exact=True)).to_be_visible()
         await self.page.screenshot(
             path=str(screenshots / "options_rename_groups.png"),
             full_page=True, animations="disabled")
@@ -2302,7 +2302,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(dialog.locator("ha-selector-select")).to_be_visible()
         group_picker = dialog.locator("ha-selector-select")
         await group_picker.locator("ha-select").click()
-        await group_picker.get_by_role("option", name="Zurück zur Übersicht", exact=True).click()
+        await group_picker.get_by_role("menuitem", name="Zurück zur Übersicht", exact=True).click()
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(menu.get_by_text("Entität umbenennen", exact=True)).to_be_visible()
         self.assertEqual(registry.async_get(self.operation), selected_before)

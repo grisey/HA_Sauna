@@ -272,8 +272,21 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.hass.states.get(selected.entity_id))
         groups = rename_groups(self.hass, entry)
         group = next(key for key, value in groups.items() if selected in value["entities"])
-        self.assertNotEqual(group, "own:controls")
-        self.assertGreater(len(groups), 3)
+        self.assertEqual(group, "own:readings")
+        self.assertEqual(set(groups), {"own:controls", "own:readings", "own:programs"})
+        self.assertEqual(
+            {
+                entity.entity_id
+                for value in groups.values()
+                for entity in value["entities"]
+            },
+            {
+                entity.entity_id
+                for entity in er.async_entries_for_config_entry(
+                    self.registry, entry.entry_id,
+                )
+            },
+        )
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "rename_entity"}

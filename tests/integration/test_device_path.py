@@ -14,6 +14,7 @@ from harness import (
     advance_with_fresh_sources, create_sauna, start_hass, retain_session,
     with_confirmed_round,
 )
+from test_settings import async_timeout
 
 
 class TestHeater(SwitchEntity):
@@ -589,7 +590,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_off", side_effect=paused_off):
             first = asyncio.create_task(self.runtime.tick())
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 service = adapter._light_service_task
                 if caller == "cancel":
                     first.cancel()
@@ -1540,7 +1541,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 },
             )
             try:
-                await asyncio.wait_for(entered.wait(), timeout=3)
+                await asyncio.wait_for(entered.wait(), timeout=async_timeout("service"))
                 self.assertFalse(self.light.is_on)
                 calls = len(self.light.calls)
                 await old_runtime.tick()
@@ -1816,7 +1817,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 ):
                     await asyncio.sleep(0)
 
-            await asyncio.wait_for(received(), 3)
+            await asyncio.wait_for(received(), async_timeout("service"))
 
         with patch.object(self.heater, "async_turn_off", side_effect=failing_off):
             try:
@@ -1828,7 +1829,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         self.entry.options["bindings"]["upper_temperature"]
                     ).attributes,
                 )
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 await queued_control(2, "off")
                 await queued_control(30, "on")
                 self.now = self.base + timedelta(seconds=50)
@@ -2092,10 +2093,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(episodes, expected_episodes)
             return episodes
 
-        def calculate_delay(episodes, window_seconds):
+        def calculate_delay(episodes, window_seconds, *, parameters):
             self.assertEqual(episodes, expected_episodes)
             self.assertEqual(window_seconds, window)
-            delay = historical_heating_delay(episodes, window_seconds)
+            self.assertIs(parameters, self.runtime.configuration.parameters)
+            delay = historical_heating_delay(
+                episodes, window_seconds, parameters=parameters,
+            )
             calculated_delays.append(delay)
             return delay
 
@@ -2747,7 +2751,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ):
             selecting = asyncio.create_task(old_runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 self.hass.config_entries.async_update_entry(
                     self.entry,
                     options={
@@ -2757,7 +2761,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         },
                     },
                 )
-                await asyncio.wait_for(handing_off.wait(), 3)
+                await asyncio.wait_for(handing_off.wait(), async_timeout("service"))
             finally:
                 release.set()
             await selecting
@@ -2783,7 +2787,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
@@ -2834,7 +2838,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
@@ -2924,7 +2928,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 service = adapter._light_service_task
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
@@ -2983,7 +2987,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 service = self.runtime.device._light_service_task
                 self.assertEqual(self.runtime.device.light_output.manual_brightness, 80)
                 if caller == "cancel":
@@ -3120,7 +3124,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                 ):
                     selecting = asyncio.create_task(old.set_light_override(80))
                     try:
-                        await asyncio.wait_for(entered.wait(), 3)
+                        await asyncio.wait_for(entered.wait(), async_timeout("service"))
                         if cancel_caller:
                             selecting.cancel()
                             with self.assertRaises(asyncio.CancelledError):
@@ -3221,7 +3225,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ):
             selecting = asyncio.create_task(old.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
@@ -3235,7 +3239,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
                         },
                     },
                 )
-                await asyncio.wait_for(handing_off.wait(), 3)
+                await asyncio.wait_for(handing_off.wait(), async_timeout("service"))
                 self.assertIs(self.entry.runtime_data, old)
             finally:
                 release.set()
@@ -3270,7 +3274,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(adapter, "prepare_light_handoff", side_effect=prepare):
             closing = asyncio.create_task(self.runtime.close())
             try:
-                await asyncio.wait_for(preparing.wait(), 3)
+                await asyncio.wait_for(preparing.wait(), async_timeout("service"))
                 # Queue the original reassignment behind the close preflight.
                 finishing = asyncio.create_task(adapter.finish_session_light(self.now, None))
                 await asyncio.sleep(0)
@@ -3299,7 +3303,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
@@ -3375,7 +3379,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting
@@ -3471,7 +3475,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         ):
             selecting = asyncio.create_task(self.runtime.set_light_override(old_percent))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 old_service = adapter._light_service_task
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
@@ -3563,7 +3567,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.light, "async_turn_on", side_effect=paused_on):
             selecting = asyncio.create_task(self.runtime.set_light_override(80))
             try:
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 selecting.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await selecting

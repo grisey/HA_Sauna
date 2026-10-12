@@ -8,6 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 from harness import create_sauna, retain_session, start_hass
+from test_settings import async_timeout
 
 
 class PresenceIlluminanceTests(unittest.IsolatedAsyncioTestCase):
@@ -87,7 +88,7 @@ class PresenceIlluminanceTests(unittest.IsolatedAsyncioTestCase):
             )
             self.hass.states.async_set(self.source, "37.125", self.attrs)
             reported = self.hass.states.get(self.source)
-            await asyncio.wait_for(both_received(), 3)
+            await asyncio.wait_for(both_received(), async_timeout("service"))
             self.assertEqual(
                 [event.data["entity_id"]
                  for _, event in self.runtime._pending_device_inputs],

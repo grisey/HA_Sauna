@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import os
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,9 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from test_settings import async_timeout
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
@@ -804,7 +808,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             self.assertEqual(calls, ["turn_off"])
             release.set()
             await adapter._light_service_task
-            await asyncio.wait_for(restored.wait(), timeout=1)
+            await asyncio.wait_for(restored.wait(), timeout=async_timeout("short"))
             await adapter._light_service_task
             self.assertEqual(calls, ["turn_off", "turn_on"])
             self.assertEqual(light[0].state, "on")
@@ -1263,11 +1267,11 @@ class DeviceFeedbackTests(unittest.TestCase):
             runtime._lock.release()
             enabled_during_outputs = []
             for _ in range(3):
-                enabled_during_outputs.append(await asyncio.wait_for(entered.get(), 1))
+                enabled_during_outputs.append(await asyncio.wait_for(entered.get(), async_timeout("short")))
                 await receive_temperature()
                 release.put_nowait(None)
             adapter.apply = AsyncMock()
-            await asyncio.wait_for(asyncio.gather(stop, *pending), 1)
+            await asyncio.wait_for(asyncio.gather(stop, *pending), async_timeout("short"))
             return enabled_during_outputs
 
         self.assertEqual(asyncio.run(exercise()), [False, False, False])
