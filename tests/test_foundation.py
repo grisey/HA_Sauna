@@ -474,6 +474,7 @@ class PackagingTests(unittest.TestCase):
         subgroups = {
             definition["settings_subgroup"] for definition in section("parameters")
             if definition["settings_group"] in areas
+            and definition["configuration_surface"] == "integration"
             and definition["minimum"] != definition["maximum"]
         }
         self.assertEqual(

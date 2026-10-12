@@ -39,12 +39,18 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     const nodes = new Map();
     const node = (key) => {
       if (!nodes.has(key))
-        nodes.set(key, { textContent: "", innerHTML: "", setAttribute() {} });
+        nodes.set(key, {
+          textContent: "",
+          innerHTML: "",
+          setAttribute() {},
+          querySelector: () => null,
+        });
       return nodes.get(key);
     };
     const start = Date.parse("2032-01-01T10:10:00Z"),
       end = Date.parse("2032-01-01T10:20:00Z");
     const model = {
+      ...fixturePanel(context.PanelForTest).historyGeometry(),
       start,
       end,
       left: 0,
@@ -273,35 +279,34 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
 
 test("history axis labels cancel unequal SVG scaling and reduce narrow time ticks", () => {
   const { PanelForTest } = loadContext("UTC");
+  const panel = fixturePanel(PanelForTest),
+    plot = panel.historyGeometry();
   const start = Date.parse("2032-01-01T10:00:00Z"),
     end = start + 3600000;
   const model = {
+    ...plot,
     start,
     end,
-    left: 65,
-    right: 1135,
-    top: 18,
-    bottom: 435,
     low: 20,
     high: 100,
     humidityHigh: 80,
-    x: (time) => 65 + ((time - start) / (end - start)) * 1070,
+    x: (time) => plot.left + ((time - start) / (end - start)) * (plot.right - plot.left),
   };
   const axes = (width, height) =>
-    PanelForTest.prototype.historyAxes.call({}, model, { width, height });
+    panel.historyAxes(model, { width, height });
   for (const [width, height] of [
-    [1200, 480],
+    [plot.width, plot.height],
     [642, 420],
     [300, 420],
   ]) {
     const html = axes(width, height);
     for (const match of html.matchAll(/scale\(([^ ]+) ([^)]+)\)/g)) {
-      assert.ok(Math.abs((Number(match[1]) * width) / 1200 - 1) < 1e-12);
-      assert.ok(Math.abs((Number(match[2]) * height) / 480 - 1) < 1e-12);
+      assert.ok(Math.abs((Number(match[1]) * width) / plot.width - 1) < 1e-12);
+      assert.ok(Math.abs((Number(match[2]) * height) / plot.height - 1) < 1e-12);
     }
     assert.match(html, />10:00<\/text>/);
     assert.match(html, />11:00<\/text>/);
   }
   const times = (html) => [...html.matchAll(/>\d{2}:\d{2}<\/text>/g)].length;
-  assert.ok(times(axes(300, 420)) < times(axes(1200, 480)));
+  assert.ok(times(axes(300, 420)) < times(axes(plot.width, plot.height)));
 });

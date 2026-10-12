@@ -156,7 +156,14 @@ window.installHistoryFixture = async function ({
     requests = [],
     pageSize = inputs.page_size;
   panel.api = async (path) => {
-    if (path.split("?")[0].endsWith("/state")) return structuredClone(state);
+    if (path.split("?")[0].endsWith("/state")) {
+      const response = structuredClone(state);
+      if (
+        new URL(path, "http://fixture").searchParams.get("include_catalog") === "false"
+      )
+        delete response.appearance_catalog;
+      return response;
+    }
     if (path.endsWith("/archive"))
       return [
         {

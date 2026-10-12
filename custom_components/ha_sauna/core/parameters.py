@@ -103,8 +103,13 @@ EDITABLE_DEFINITIONS = tuple(
     })
     for spec in sorted(section("parameters"), key=lambda spec: spec["order"])
 )
-DEFINITIONS = EDITABLE_DEFINITIONS + tuple(
+READ_COMPATIBILITY_DEFINITIONS = tuple(
     ParameterDefinition(**spec) for spec in section("legacy_parameters")
+)
+DEFINITIONS = EDITABLE_DEFINITIONS + READ_COMPATIBILITY_DEFINITIONS
+CATALOG_PARAMETER_KEYS = frozenset(
+    definition.key for definition in EDITABLE_DEFINITIONS
+    if definition.configuration_surface == "catalog"
 )
 BY_KEY = MappingProxyType({definition.key: definition for definition in DEFINITIONS})
 SAUNA_TEMPERATURE_MAXIMUM_C = BY_KEY["target_temperature_c"].maximum
@@ -211,9 +216,13 @@ class Parameters:
         return dict(self.values)
 
     def as_options(self) -> dict[str, float]:
-        """Persist only instance choices; catalog-owned standards stay in the catalog."""
+        """Retain instance choices and changed legacy values needed on subsequent loads."""
         return {
             definition.key: self.values[definition.key]
             for definition in EDITABLE_DEFINITIONS
             if definition.configuration_surface != "catalog"
+        } | {
+            definition.key: self.values[definition.key]
+            for definition in READ_COMPATIBILITY_DEFINITIONS
+            if self.values[definition.key] != definition.default
         }

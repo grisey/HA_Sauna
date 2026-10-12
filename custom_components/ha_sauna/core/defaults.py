@@ -241,8 +241,14 @@ _PREFERENCE_KEYS = frozenset(
         "surface_padding_px",
         "control_group_gap_px",
         "detail_plot_side_padding_px",
+        "detail_plot_right_padding_px",
         "detail_plot_top_padding_px",
         "detail_plot_bottom_padding_px",
+        "detail_axis_top_padding_px",
+        "detail_axis_bottom_padding_px",
+        "detail_value_label_top_padding_px",
+        "detail_time_label_bottom_padding_px",
+        "detail_curve_width_px",
         "diagnostic_scale_padding",
         "diagnostic_axis_ticks",
         "instrument_tick_significant_digits",
@@ -487,6 +493,8 @@ _PREFERENCE_KEYS = frozenset(
         "diagnostic_axis_right_padding_px",
         "diagnostic_axis_top_padding_px",
         "diagnostic_axis_bottom_padding_px",
+        "diagnostic_guide_top_padding_px",
+        "diagnostic_time_label_bottom_padding_px",
     ]
 )
 
@@ -620,9 +628,17 @@ def preference_values(value, *, catalog=None, reject_catalog_overrides=False):
     ):
         raise ValueError("History plot padding leaves no drawing area")
     if (
-        result["detail_plot_width_px"] <= result["detail_plot_side_padding_px"] * 2
+        result["detail_plot_width_px"]
+        <= result["detail_plot_side_padding_px"] + result["detail_plot_right_padding_px"]
         or result["detail_plot_height_px"]
         <= result["detail_plot_top_padding_px"] + result["detail_plot_bottom_padding_px"]
+        or result["detail_plot_height_px"]
+        <= max(
+            result["detail_axis_top_padding_px"],
+            result["detail_value_label_top_padding_px"],
+        )
+        + result["detail_axis_bottom_padding_px"]
+        or result["detail_plot_height_px"] <= result["detail_time_label_bottom_padding_px"]
     ):
         raise ValueError("Detail plot padding leaves no drawing area")
     if (
@@ -630,6 +646,10 @@ def preference_values(value, *, catalog=None, reject_catalog_overrides=False):
         <= result["diagnostic_axis_left_padding_px"] + result["diagnostic_axis_right_padding_px"]
         or result["diagnostic_plot_height_px"]
         <= result["diagnostic_axis_top_padding_px"] + result["diagnostic_axis_bottom_padding_px"]
+        or result["diagnostic_plot_height_px"]
+        <= result["diagnostic_guide_top_padding_px"] + result["diagnostic_axis_bottom_padding_px"]
+        or result["diagnostic_plot_height_px"]
+        <= result["diagnostic_time_label_bottom_padding_px"]
     ):
         raise ValueError("Diagnostic plot padding leaves no drawing area")
     return result

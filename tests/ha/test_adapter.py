@@ -505,6 +505,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             update.assert_not_called()
 
     async def test_installation_save_preserves_concurrent_panel_options(self):
+        from custom_components.ha_sauna.runtime import Configuration
+
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
@@ -517,6 +519,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 "parameters": {**self.entry.options["parameters"], "target_temperature_c": 81},
             }
             before = self.entry.options
+            expected = Configuration.from_options(before).as_options()
+            expected["parameters"]["after_run_minutes"] = 1
             submitted["after_run_minutes"] = 1
             result = await flow.async_step_parameters_oven_cooling(submitted)
         self.assertEqual(form["type"], "form")
@@ -525,10 +529,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["log_level"], "DEBUG")
         self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 81)
         self.assertEqual(self.entry.options["parameters"]["after_run_minutes"], 1)
-        self.assertEqual(
-            {key: value for key, value in self.entry.options.items() if key != "parameters"},
-            {key: value for key, value in before.items() if key != "parameters"},
-        )
+        self.assertEqual(self.entry.options, expected)
 
     async def test_installation_forms_use_saved_values_and_preserve_unchanged_fields(self):
         flow = self.module.SaunaOptionsFlow()

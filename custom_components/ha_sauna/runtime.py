@@ -30,7 +30,7 @@ from .core.controller import Controller, Result
 from .core.defaults import instance_default
 from .core.detector import Detector
 from .core.models import Position, Session
-from .core.parameters import BY_KEY, Parameters
+from .core.parameters import BY_KEY, CATALOG_PARAMETER_KEYS, Parameters
 from .core.presence import PresenceProjection, ProxyPresenceSource
 from .core.program_catalog import (
     DEFAULT_PROGRAMS,
@@ -199,7 +199,7 @@ class Configuration:
         if not historical:
             values = {
                 key: value for key, value in values.items()
-                if key not in BY_KEY or BY_KEY[key].configuration_surface != "catalog"
+                if key not in CATALOG_PARAMETER_KEYS
             }
         parameters = Parameters(values)
         minimum_c = parameters.minimum_for("target_temperature_c")

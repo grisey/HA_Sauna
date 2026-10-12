@@ -1950,14 +1950,25 @@ class SaunaPanel extends HTMLElement {
       values.history_plot_width_px > values.history_plot_side_padding_px * 2 &&
       values.history_plot_height_px >
         values.history_plot_top_padding_px + values.history_plot_bottom_padding_px &&
-      values.detail_plot_width_px > values.detail_plot_side_padding_px * 2 &&
+      values.detail_plot_width_px >
+        values.detail_plot_side_padding_px + values.detail_plot_right_padding_px &&
       values.detail_plot_height_px >
         values.detail_plot_top_padding_px + values.detail_plot_bottom_padding_px &&
+      values.detail_plot_height_px >
+        Math.max(
+          values.detail_axis_top_padding_px,
+          values.detail_value_label_top_padding_px,
+        ) +
+          values.detail_axis_bottom_padding_px &&
+      values.detail_plot_height_px > values.detail_time_label_bottom_padding_px &&
       values.diagnostic_min_plot_width_px >
         values.diagnostic_axis_left_padding_px +
           values.diagnostic_axis_right_padding_px &&
       values.diagnostic_plot_height_px >
-        values.diagnostic_axis_top_padding_px + values.diagnostic_axis_bottom_padding_px
+        values.diagnostic_axis_top_padding_px + values.diagnostic_axis_bottom_padding_px &&
+      values.diagnostic_plot_height_px >
+        values.diagnostic_guide_top_padding_px + values.diagnostic_axis_bottom_padding_px &&
+      values.diagnostic_plot_height_px > values.diagnostic_time_label_bottom_padding_px
     );
   }
   rangeGeometry(kind) {
@@ -7936,9 +7947,13 @@ class SaunaPanel extends HTMLElement {
         const width = this.preference("detail_plot_width_px"),
           height = this.preference("detail_plot_height_px"),
           left = this.preference("detail_plot_side_padding_px"),
-          right = width - left,
+          right = width - this.preference("detail_plot_right_padding_px"),
           top = this.preference("detail_plot_top_padding_px"),
           bottom = height - this.preference("detail_plot_bottom_padding_px"),
+          axisTop = this.preference("detail_axis_top_padding_px"),
+          axisBottom = height - this.preference("detail_axis_bottom_padding_px"),
+          valueLabelTop = this.preference("detail_value_label_top_padding_px"),
+          timeLabel = height - this.preference("detail_time_label_bottom_padding_px"),
           x = (time) => left + ((right - left) * (time - start)) / (end - start),
           y = (value) => bottom - ((bottom - top) * (value - minimum)) / range;
         let segments = [],
@@ -7967,7 +7982,7 @@ class SaunaPanel extends HTMLElement {
               `<circle cx="${x(point.time)}" cy="${y(point.value)}" r="${this.preference("detail_single_point_radius_px")}"/>`,
           )
           .join("");
-        return `<section class="detail-value-plot" data-detail-key="plot-${esc(item.key)}"><h3>${esc(item.label)} <small>${esc(item.unit)}</small></h3><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(item.label)} · ${this.clock(start)} bis ${this.clock(end)}"><g fill="currentColor" stroke="currentColor" style="color:var(--sauna-color-series-${item.role})"><path d="${path}" fill="none" stroke-width="${this.preference("chart_curve_width_px") / 2}"/>${single}</g><line x1="${x(cursor)}" x2="${x(cursor)}" y1="${top}" y2="${bottom}" stroke="currentColor" stroke-dasharray="${this.preference("guide_dash_length_px")} ${this.preference("guide_dash_gap_px")}"/><text x="0" y="${top}">${this.num(maximum, this.preference("value_precision"))}</text><text x="0" y="${bottom}">${this.num(minimum, this.preference("value_precision"))}</text><text x="${left}" y="${height}">${this.clock(start)}</text><text x="${right}" y="${height}" text-anchor="end">${this.clock(end)}</text></svg></section>`;
+        return `<section class="detail-value-plot" data-detail-key="plot-${esc(item.key)}"><h3>${esc(item.label)} <small>${esc(item.unit)}</small></h3><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(item.label)} · ${this.clock(start)} bis ${this.clock(end)}"><g fill="currentColor" stroke="currentColor" style="color:var(--sauna-color-series-${item.role})"><path d="${path}" fill="none" stroke-width="${this.preference("detail_curve_width_px")}"/>${single}</g><line x1="${x(cursor)}" x2="${x(cursor)}" y1="${axisTop}" y2="${axisBottom}" stroke="currentColor" stroke-dasharray="${this.preference("guide_dash_length_px")} ${this.preference("guide_dash_gap_px")}"/><text x="0" y="${valueLabelTop}">${this.num(maximum, this.preference("value_precision"))}</text><text x="0" y="${axisBottom}">${this.num(minimum, this.preference("value_precision"))}</text><text x="${left}" y="${timeLabel}">${this.clock(start)}</text><text x="${right}" y="${timeLabel}" text-anchor="end">${this.clock(end)}</text></svg></section>`;
       })
       .join("");
     return `<div class="card" id="control-values"><h2>Messwerte und Lichtverlauf</h2><div class="detail-value-grid">${plots || '<p class="muted">Keine Messwerte aufgezeichnet.</p>'}</div><div class="scroll"><table><thead><tr><th>Wert am gewählten Zeitpunkt</th><th>Letzter Messwert</th><th>Messmeldung</th><th>Quelle</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">Gezeigt werden aufgezeichnete Werte. Fehlende Rückmeldungen bleiben unbekannt; die Heizbeobachtung ist keine lückenlose Leistungsmessung. Lichtvorgabe und Rückmeldung sind getrennt.</p></div>`;
@@ -9993,7 +10008,10 @@ class SaunaPanel extends HTMLElement {
       plotRight = chartWidth - this.preference("diagnostic_axis_right_padding_px"),
       chartHeight = this.preference("diagnostic_plot_height_px"),
       plotTop = this.preference("diagnostic_axis_top_padding_px"),
-      plotBottom = chartHeight - this.preference("diagnostic_axis_bottom_padding_px");
+      plotBottom = chartHeight - this.preference("diagnostic_axis_bottom_padding_px"),
+      guideTop = this.preference("diagnostic_guide_top_padding_px"),
+      timeLabel =
+        chartHeight - this.preference("diagnostic_time_label_bottom_padding_px");
     const chartX = (t) =>
       plotLeft + ((stamp(t) - start) / (end - start)) * (plotRight - plotLeft);
     const selectedEvent = this.eventNavigation().find(
@@ -10088,13 +10106,13 @@ class SaunaPanel extends HTMLElement {
       for (let n = 0; n <= axisTicks; n++) {
         const v = lo + ((hi - lo) * n) / axisTicks,
           t = start + ((end - start) * n) / axisTicks;
-        chart += `<text class="axis-${quantity}" x="4" y="${y(v) + 4}">${this.num(v, this.preference("value_precision"))}</text><text text-anchor="middle" x="${chartX(t)}" y="${plotBottom + (chartHeight - plotBottom) / 2 + this.preference("font_size_small_px") / 3}">${this.clock(t)}</text>`;
+        chart += `<text class="axis-${quantity}" x="4" y="${y(v) + 4}">${this.num(v, this.preference("value_precision"))}</text><text text-anchor="middle" x="${chartX(t)}" y="${timeLabel}">${this.clock(t)}</text>`;
       }
       if (selectedRoute?.[0] === metric && selectedTrace) {
         const time = stamp(selectedTrace.at),
           x = chartX(time);
         if (time >= start && time <= end)
-          chart += `<rect class="diagnostic-selection-band" x="${Math.max(plotLeft, x - this.preference("event_marker_size_px") / 2)}" y="${plotTop}" width="${this.preference("event_marker_size_px")}" height="${plotBottom - plotTop}"/><line class="diagnostic-selection-guide" x1="${x}" x2="${x}" y1="${plotTop}" y2="${plotBottom}"/>`;
+          chart += `<rect class="diagnostic-selection-band" x="${Math.max(plotLeft, x - this.preference("event_marker_size_px") / 2)}" y="${guideTop}" width="${this.preference("event_marker_size_px")}" height="${plotBottom - guideTop}"/><line class="diagnostic-selection-guide" x1="${x}" x2="${x}" y1="${guideTop}" y2="${plotBottom}"/>`;
       }
       chart += markerLayout.markers
         .map((marker) => {

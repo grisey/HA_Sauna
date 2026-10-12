@@ -120,9 +120,17 @@ assert.equal(
   "the dial exposes only whole degrees inside its bounds",
 );
 assert.equal(panel.clampArcTemperature(80.6, { minimum: 60, maximum: 100 }), 81);
-assert.match(
-  source,
-  /\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*0\.35/s,
+const focusedTrack = panel
+  .appearanceStyles()
+  .match(/\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*([\d.]+)/s);
+assert.ok(focusedTrack, "the rendered focus rule sets the arc opacity");
+assert.equal(
+  Number(focusedTrack[1]),
+  appearanceCatalog.preferences.opacity_0_35_ratio.default,
+  "focus consumes the catalog's dimmed arc opacity",
+);
+assert.ok(
+  Number(focusedTrack[1]) < 1,
   "keyboard focus no longer turns the complete target arc opaque",
 );
 

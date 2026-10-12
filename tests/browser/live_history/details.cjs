@@ -443,10 +443,17 @@ fs.mkdirSync(output, { recursive: true });
       Number(controlState.value) > controlState.max * 0.7 &&
         Number(controlState.value) < controlState.max * 0.8,
     );
+    const detailPreferences = defaults.appearance.preferences,
+      detailLeft = detailPreferences.detail_plot_side_padding_px.default,
+      detailRight =
+        detailPreferences.detail_plot_width_px.default -
+        detailPreferences.detail_plot_right_padding_px.default;
     assert.ok(
       Math.abs(
         controlState.line -
-          (48 + (500 * Number(controlState.value)) / controlState.max),
+          (detailLeft +
+            ((detailRight - detailLeft) * Number(controlState.value)) /
+              controlState.max),
       ) < 0.01,
       "plot cursor follows the selected time",
     );

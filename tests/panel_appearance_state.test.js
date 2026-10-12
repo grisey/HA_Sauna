@@ -144,3 +144,29 @@ test("default preview removes saved hex overrides instead of displaying stale sa
   assert.ok(temperature.includes(`value="${defaultColor}"`));
   assert.doesNotMatch(temperature, /#123456/);
 });
+
+test("catalog-free polls retain the bootstrap catalog and updated appearance", async () => {
+  const paths = [];
+  const next = state(appearance("#ABCDEF"));
+  delete next.appearance_catalog;
+  next.configuration.parameters = { target_temperature_c: 85 };
+  const p = panel(async (path) => {
+    paths.push(path);
+    return next;
+  });
+  const bootstrap = p.panel.config.appearance_catalog;
+  p.appearanceDraft = null;
+  await p.refresh();
+  assert.equal(p.state, next);
+  assert.equal(p.appearanceCatalog(), bootstrap);
+  assert.equal(p.appearanceColor("series_temperature"), "#ABCDEF");
+  assert.equal(
+    p.preference("detail_plot_right_padding_px"),
+    bootstrap.preferences.detail_plot_right_padding_px.default,
+  );
+  await p.waitForConfiguration("first", next.configuration.parameters);
+  assert.deepEqual(paths, [
+    "/first/state?include_catalog=false",
+    "/first/state?include_catalog=false",
+  ]);
+});

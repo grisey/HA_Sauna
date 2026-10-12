@@ -27,13 +27,16 @@ class LocalPreviewTests(unittest.TestCase):
 
     def test_display_parameter_save_is_visible_without_a_ha_options_listener(self):
         self.preview.reset("archiv")
-        before = self.preview.runtime.configuration.as_options()
+        before = self.preview.runtime.configuration.as_snapshot()
+        saved_before = self.preview.runtime.configuration.as_options()
         current = before["parameters"]["preset_step_c"]
         changed = current + 1
         self.preview.action("/preview/parameters", {"preset_step_c": changed})
         after = self.preview.state()["configuration"]
         before["parameters"]["preset_step_c"] = changed
+        saved_before["parameters"]["preset_step_c"] = changed
         self.assertEqual(after, before)
+        self.assertEqual(self.preview.entry.options, saved_before)
         self.assertFalse(self.preview.runtime.reconfiguring)
         self.preview.admin = False
         with self.assertRaises(ValueError):

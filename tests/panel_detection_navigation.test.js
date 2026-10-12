@@ -3,6 +3,7 @@ const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // click actions and the stable event-id mapping used by both directions.
 const assert = require("node:assert/strict");
 const {
+  catalog: fixtureCatalog,
   parameterValues: fixtureValues,
   parameterDefinition: fixtureDefinition,
 } = require("./catalog_fixture.cjs");
@@ -238,7 +239,7 @@ const parameters = fixtureValues();
       signals: [],
     },
     {
-      at: iso(25),
+      at: iso(20 + parameters.grid_seconds),
       metrics: {
         upper: {
           ventilation_temperature_loss: 3.5,
@@ -292,10 +293,54 @@ const parameters = fixtureValues();
     plots.innerHTML.replace(/<[^>]*>/g, ""),
     /Lüftungserkennung · Absoluter Feuchteverlust · %/,
   );
-  assert.match(
-    plots.innerHTML,
-    /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62l0,0 L[\d.]+,28\.78 "/,
-  );
+  const preferences = fixtureCatalog.appearance.preferences,
+    value = (key) => preferences[key].default,
+    columns =
+      value("diagnostic_fallback_width_px") > value("diagnostic_columns_breakpoint_px")
+        ? value("diagnostic_wide_columns")
+        : 1,
+    chartWidth = Math.max(
+      value("diagnostic_min_plot_width_px"),
+      (value("diagnostic_fallback_width_px") -
+        (columns - 1) * value("diagnostic_plot_gap_px")) /
+        columns -
+        value("diagnostic_plot_padding_px"),
+    ),
+    left = value("diagnostic_axis_left_padding_px"),
+    right = chartWidth - value("diagnostic_axis_right_padding_px"),
+    top = value("diagnostic_axis_top_padding_px"),
+    bottom =
+      value("diagnostic_plot_height_px") - value("diagnostic_axis_bottom_padding_px"),
+    low = -value("diagnostic_scale_padding"),
+    high =
+      Math.max(35, parameters.vent_absolute_humidity_loss_percent) +
+      value("diagnostic_scale_padding"),
+    expectedPoint = (second, percentage) => [
+      Number(
+        (left + ((right - left) * second) / 60).toFixed(
+          value("chart_coordinate_precision"),
+        ),
+      ),
+      Number(
+        (bottom - ((percentage - low) / (high - low)) * (bottom - top)).toFixed(
+          value("chart_coordinate_precision"),
+        ),
+      ),
+    ],
+    plottedPoints = () => {
+      const path = plots.innerHTML.match(
+        /data-series="detector_ventilation_absolute_humidity_loss_upper" d="([^"]*)"/,
+      )[1];
+      return [...path.matchAll(/([ML])([\d.]+),([\d.]+)/g)].map((point) => [
+        point[1],
+        Number(point[2]),
+        Number(point[3]),
+      ]);
+    };
+  assert.deepEqual(plottedPoints(), [
+    ["M", ...expectedPoint(20, 25)],
+    ["L", ...expectedPoint(20 + parameters.grid_seconds, 35)],
+  ]);
   assert.ok(
     plots.innerHTML.includes(
       `Schwelle oben: ${parameters.vent_absolute_humidity_loss_percent}`,
@@ -305,6 +350,20 @@ const parameters = fixtureValues();
     !plots.innerHTML.includes(
       `Schwelle oben: ${fixtureDefinition("vent_absolute_humidity_loss_percent").maximum}`,
     ),
+  );
+  const missingGridPoint = 20 + parameters.grid_seconds * 2;
+  p.shown.records = traces.map((payload, index) => ({
+    kind: "detector_trace",
+    payload: index ? { ...payload, at: iso(missingGridPoint) } : payload,
+  }));
+  p.drawDiagnostics();
+  assert.deepEqual(
+    plottedPoints(),
+    [
+      ["M", ...expectedPoint(20, 25)],
+      ["M", ...expectedPoint(missingGridPoint, 35)],
+    ],
+    "a missing detector grid point starts a separate segment",
   );
 }
 

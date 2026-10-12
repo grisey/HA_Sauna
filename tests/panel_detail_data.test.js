@@ -209,6 +209,53 @@ test("values retain missing sources and use authoritative power projection witho
   );
 });
 
+test("detail plots consume catalog geometry for curves, cursor and labels", () => {
+  const p = panel();
+  const geometry = {
+    detail_plot_width_px: 680,
+    detail_plot_height_px: 160,
+    detail_plot_side_padding_px: 40,
+    detail_plot_right_padding_px: 40,
+    detail_plot_top_padding_px: 30,
+    detail_plot_bottom_padding_px: 30,
+    detail_axis_top_padding_px: 20,
+    detail_axis_bottom_padding_px: 20,
+    detail_value_label_top_padding_px: 32,
+    detail_time_label_bottom_padding_px: 5,
+    detail_curve_width_px: 2.5,
+  };
+  for (const [key, value] of Object.entries(geometry))
+    p.panel.config.appearance_catalog.preferences[key].default = value;
+  const records = [
+    record(0, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: 10,
+    }),
+    record(10, "measurement", {
+      position: "upper",
+      quantity: "temperature",
+      value: 20,
+    }),
+  ];
+  const html = p.renderHistoryValues(
+    records,
+    Date.parse(iso(0)),
+    Date.parse(iso(10)),
+    Date.parse(iso(0)) + 2500,
+  );
+  assert.match(html, /viewBox="0 0 680 160"/);
+  assert.match(
+    html,
+    /d="M40\.00,130\.00 L640\.00,30\.00"[^>]*stroke-width="2\.5"/,
+  );
+  assert.match(html, /<line x1="190" x2="190" y1="20" y2="140"/);
+  assert.match(html, /<text x="0" y="32">20/);
+  assert.match(html, /<text x="0" y="140">10/);
+  assert.match(html, /<text x="40" y="155">/);
+  assert.match(html, /<text x="640" y="155" text-anchor="end">/);
+});
+
 test("record access consumes configured page sizes and keeps all pages reachable", () => {
   const defaults = preferences();
   for (const change of [0, 1]) {
