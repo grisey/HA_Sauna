@@ -80,7 +80,8 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
             await release_archive.wait()
             await route.continue_()
 
-        await self.page.route("**/api/ha_sauna/*/state", hold_state)
+        state_url = panel_fixture.state_request_pattern()
+        await self.page.route(state_url, hold_state)
         await self.page.route(f"**/archive?session_id={identities[0]}&**", hold_archive)
         try:
             await self.panel.evaluate("p => { void p.refresh(true); }")
@@ -104,7 +105,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release_state.set()
             release_archive.set()
-            await self.page.unroute("**/api/ha_sauna/*/state", hold_state)
+            await self.page.unroute(state_url, hold_state)
             await self.page.unroute(f"**/archive?session_id={identities[0]}&**", hold_archive)
         self.assertEqual(self.errors, [])
 

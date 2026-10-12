@@ -2225,7 +2225,7 @@
       "typeahead_reset_ms": {
         "label": "Pause der Auswahlsuche",
         "description": "Pause der Auswahlsuche. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 700,
         "minimum": 100,
         "maximum": 5000,
@@ -2237,7 +2237,7 @@
       "program_saved_feedback_ms": {
         "label": "Dauer der Speicherbestätigung",
         "description": "Dauer der Speicherbestätigung. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 2000,
         "minimum": 250,
         "maximum": 30000,
@@ -2273,7 +2273,7 @@
       "history_wheel_idle_ms": {
         "label": "Ende einer Mausradbewegung",
         "description": "Ende einer Mausradbewegung. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 120,
         "minimum": 10,
         "maximum": 2000,
@@ -2285,7 +2285,7 @@
       "history_wheel_zoom_coefficient": {
         "label": "Empfindlichkeit des Mausrad-Zooms",
         "description": "Empfindlichkeit des Mausrad-Zooms. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 0.002,
         "minimum": 0.0001,
         "maximum": 0.02,
@@ -2309,7 +2309,7 @@
       "history_keyboard_pan_fraction": {
         "label": "Verschiebung mit Pfeiltasten",
         "description": "Verschiebung mit Pfeiltasten. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 0.1,
         "minimum": 0.01,
         "maximum": 1,
@@ -2321,7 +2321,7 @@
       "history_zoom_factor": {
         "label": "Vergrößerung je Tastenschritt",
         "description": "Vergrößerung je Tastenschritt. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 2,
         "minimum": 1.1,
         "maximum": 10,
@@ -2345,7 +2345,7 @@
       "program_drag_edge_px": {
         "label": "Randzone beim Sortieren",
         "description": "Randzone beim Sortieren. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 48,
         "minimum": 1,
         "maximum": 200,
@@ -2357,7 +2357,7 @@
       "program_drag_scroll_px": {
         "label": "Scrollschritt beim Sortieren",
         "description": "Scrollschritt beim Sortieren. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 18,
         "minimum": 1,
         "maximum": 100,
@@ -2369,7 +2369,7 @@
       "select_menu_gap_px": {
         "label": "Abstand der Auswahlliste",
         "description": "Abstand der Auswahlliste. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 4,
         "minimum": 0,
         "maximum": 40,
@@ -2381,7 +2381,7 @@
       "info_popup_gap_px": {
         "label": "Abstand der Erklärung",
         "description": "Abstand der Erklärung. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 6,
         "minimum": 0,
         "maximum": 40,
@@ -2573,7 +2573,7 @@
       "history_hover_radius_px": {
         "label": "Ereignisnähe am Zeiger",
         "description": "Ereignisnähe am Zeiger. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 6,
         "minimum": 1,
         "maximum": 40,
@@ -2825,7 +2825,7 @@
       "temperature_step_c": {
         "label": "Schritt der Temperaturauswahl",
         "description": "Schritt der Temperaturauswahl. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 1,
         "minimum": 1,
         "maximum": 10,
@@ -2837,7 +2837,7 @@
       "temperature_dial_step_c": {
         "label": "Schritt am Temperaturinstrument",
         "description": "Schritt am Temperaturinstrument. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 1,
         "minimum": 1,
         "maximum": 10,
@@ -2849,7 +2849,7 @@
       "brightness_step_percent": {
         "label": "Schritt der Helligkeitsauswahl",
         "description": "Schritt der Helligkeitsauswahl. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 1,
         "minimum": 1,
         "maximum": 25,
@@ -2861,7 +2861,7 @@
       "warmup_minutes_step": {
         "label": "Schritt der Aufheizdauer",
         "description": "Schritt der Aufheizdauer. Gilt für die Darstellung dieser Sauna-Instanz.",
-        "group": "Bedienung",
+        "group": "Bedienverhalten",
         "default": 5,
         "minimum": 1,
         "maximum": 60,

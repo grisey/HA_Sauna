@@ -108,6 +108,14 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(await page.evaluate(() => f.panel.navigation.main), "details");
     await panel.locator("#diagnostic-selection").waitFor({ state: "visible" });
     assert.match(await panel.locator("#diagnostic-selection").innerText(), /Tür/);
+    // Keyboard activation schedules a marker reveal for the next render frame.
+    // Complete that navigation before measuring unrelated live appends.
+    await page.evaluate(async () => {
+      await f.settle();
+    });
+    await page.waitForFunction(
+      () => !f.panel.pendingEventFocus && f.panel.historyFrame == null,
+    );
     results.push({
       check:
         "Pointer and keyboard select the producing trace without leaving diagnostics",
@@ -121,7 +129,8 @@ fs.mkdirSync(output, { recursive: true });
       const text = details.querySelector("p").firstChild;
       const selection = document.getSelection();
       selection.setBaseAndExtent(text, 0, text, Math.min(24, text.length));
-      f.outer.querySelector("#scroll").scrollTop = 100;
+      // The user's own scroll choice ends any remaining reveal animation.
+      f.outer.querySelector("#scroll").scrollTo({ top: 100, behavior: "instant" });
       window.beforeUpdate = {
         details,
         chart: p.$('[data-diagnostic-metric="door_temperature_slope"]'),
@@ -147,6 +156,11 @@ fs.mkdirSync(output, { recursive: true });
       });
       for (let i = 0; i < 3; i++) await f.tick();
       observer.disconnect();
+      window.detailScrollEvidence = {
+        before: beforeUpdate.scroll,
+        after: f.outer.querySelector("#scroll").scrollTop,
+        pendingEventFocus: p.pendingEventFocus,
+      };
       return {
         details: p.$("#detection-plots details") === beforeUpdate.details,
         open: beforeUpdate.details.open,
@@ -171,7 +185,10 @@ fs.mkdirSync(output, { recursive: true });
     assert.deepEqual(
       Object.values(stable),
       Object.values(stable).map(() => true),
-      JSON.stringify(stable),
+      JSON.stringify({
+        stable,
+        scroll: await page.evaluate(() => detailScrollEvidence),
+      }),
     );
     results.push({
       check:

@@ -41,6 +41,11 @@ DEFAULT_PROGRAMS = section("programs")
 DEFAULT_PARAMETERS = Parameters({}).as_dict()
 
 
+def state_request_pattern(entry_id=None):
+    entry = re.escape(entry_id) if entry_id else r"[^/?]+"
+    return re.compile(rf"/api/ha_sauna/{entry}/state(?:\?.*)?$")
+
+
 def default_css_color(role):
     color = next(item["default"] for item in section("appearance")["colors"]
                  if item["id"] == role)
@@ -815,8 +820,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             new_started.set()
             await new_release.wait()
             await route.continue_()
-        old_url = f"**/api/ha_sauna/{self.entry.entry_id}/state"
-        new_url = f"**/api/ha_sauna/{second.entry_id}/state"
+        old_url = state_request_pattern(self.entry.entry_id)
+        new_url = state_request_pattern(second.entry_id)
         writes = []
         def record_write(request):
             if f"/api/ha_sauna/{second.entry_id}/" in request.url and request.method == "POST":
@@ -826,7 +831,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.page.route(new_url, new_status)
         try:
             await self.panel.evaluate("p => { p.switchTestPoll = p.refresh(); }")
-            await asyncio.wait_for(old_started.wait(), 10)
+            await asyncio.wait_for(old_started.wait(), timeout=setting("browser.event_timeout_s"))
             await self.select_dropdown(self.panel.locator('#instance'), second.entry_id)
             await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
             self.assertEqual(await self.panel.locator('#parameters').count(), 0)
@@ -839,7 +844,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             }""")
             self.assertEqual(writes, [])
             old_release.set()
-            await asyncio.wait_for(new_started.wait(), 10)
+            await asyncio.wait_for(new_started.wait(), timeout=setting("browser.event_timeout_s"))
             self.assertIsNone(await self.panel.evaluate("p => p.state"))
             await expect(self.panel.locator('#settings')).to_contain_text("Lade Saunadaten")
             new_release.set()
@@ -1401,12 +1406,13 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.errors, [])
 
     async def test_unrelated_hass_updates_do_not_restart_an_inflight_idle_poll(self):
-        state_url = f"/api/ha_sauna/{self.entry.entry_id}/state"
+        state_url = state_request_pattern(self.entry.entry_id)
+        idle_poll_ms = section("appearance")["preferences"]["status_idle_poll_ms"]["default"]
         await self.panel.evaluate(
             "async p => { while (p.busy) await new Promise(r => setTimeout(r, window.testSettings.browser.poll_ms)); }"
         )
         self.assertIsNone(self.runtime.session)
-        self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), 10000)
+        self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), idle_poll_ms)
         previous_hass = await self.panel.evaluate_handle("p => p.hass")
         entered, release = asyncio.Event(), asyncio.Event()
         starts = []
@@ -1422,16 +1428,16 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
             await route.fulfill(response=response)
 
-        await self.page.route("**" + state_url, delay_state)
+        await self.page.route(state_url, delay_state)
         try:
             # The original start/timer/setter paths stay active. A real unrelated
             # HA entity reaches the panel through the actual frontend websocket.
             await self.panel.evaluate("p => p.start()")
-            await asyncio.wait_for(entered.wait(), 10)
+            await asyncio.wait_for(entered.wait(), timeout=setting("browser.event_timeout_s"))
             self.hass.states.async_set("sensor.unrelated_panel_probe", "1")
             await self.hass.async_block_till_done()
             reached_setter = await self.panel.evaluate('''async p => {
-              const deadline = performance.now() + 5000;
+              const deadline = performance.now() + window.testSettings.browser.timeouts_ms.short;
               while (p.hass.states['sensor.unrelated_panel_probe']?.state !== '1' && performance.now() < deadline)
                 await new Promise(resolve => setTimeout(resolve, window.testSettings.browser.poll_ms));
               return p.hass.states['sensor.unrelated_panel_probe']?.state === '1' && p.busy;
@@ -1446,11 +1452,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await self.page.wait_for_timeout(setting("browser.idle_observation_ms"))
             self.assertEqual(await self.panel.evaluate("p => p.hass.states['sensor.unrelated_panel_probe'].state"), "10")
             self.assertEqual(len(starts), 1, [round(at - starts[0], 3) for at in starts])
-            self.assertLess(time.monotonic() - starts[0], 10)
-            self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), 10000)
+            self.assertLess(time.monotonic() - starts[0], idle_poll_ms / 1000)
+            self.assertEqual(await self.panel.evaluate("p => p.statusPollInterval()"), idle_poll_ms)
         finally:
             release.set()
-            await self.page.unroute("**" + state_url, delay_state)
+            await self.page.unroute(state_url, delay_state)
             await previous_hass.dispose()
         self.assertEqual(self.errors, [])
 
@@ -2159,6 +2165,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await menu.get_by_text(subgroup["label"], exact=True).click()
         fields = [item for item in section("parameters")
                   if item["settings_subgroup"] == subgroup["id"]
+                  and item["configuration_surface"] == "integration"
                   and item["minimum"] != item["maximum"]]
         await expect(dialog.locator("ha-selector-number")).to_have_count(len(fields))
         for definition in fields:
