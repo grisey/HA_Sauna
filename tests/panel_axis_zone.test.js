@@ -60,7 +60,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
       low: 20,
       high: 100,
       humidityHigh: 80,
-      x: (time) => (time - start) / 6000,
+      x: (time) => ((time - model.start) / (model.end - model.start)) * model.right,
     };
     let axes = 0,
       annotations = 0;
@@ -107,6 +107,27 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     chart.render(new Set(["size"]), session, []);
     assert.equal(axes, 2, "viewport resize redraws labels at their CSS pixel size");
     assert.equal(annotations, 1, "text sizing does not alter annotation coordinates");
+    assert.doesNotMatch(
+      node("[data-history-axes]").innerHTML,
+      />\d{2}:\d{2}:\d{2}<\/text>/,
+      "distinct minute labels keep their compact format",
+    );
+    model.end = start + 30_000;
+    chart.render(new Set(["status"]), session, []);
+    const shortLabels = [
+      ...node("[data-history-axes]").innerHTML.matchAll(
+        />(\d{2}:\d{2}(?::\d{2})?)<\/text>/g,
+      ),
+    ].map((match) => match[1]);
+    assert.ok(shortLabels.length >= 2, "the short interval retains time ticks");
+    assert.ok(shortLabels.every((label) => /^\d{2}:\d{2}:\d{2}$/.test(label)));
+    assert.equal(
+      new Set(shortLabels).size,
+      shortLabels.length,
+      "different short-interval ticks have distinct second labels",
+    );
+    assert.equal(shortLabels[0], `${clock}:00`);
+    assert.equal(shortLabels.at(-1), `${clock}:30`);
   }
 });
 

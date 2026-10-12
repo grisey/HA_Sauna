@@ -4,10 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
-const {
-  panelFixture,
-  parameterValues,
-} = require("./catalog_fixture.cjs");
+const { panelFixture, parameterValues } = require("./catalog_fixture.cjs");
 
 class EventTarget {
   constructor() {
@@ -58,7 +55,9 @@ class Node extends EventTarget {
   }
   remove() {
     if (this.parentNode)
-      this.parentNode.children = this.parentNode.children.filter((node) => node !== this);
+      this.parentNode.children = this.parentNode.children.filter(
+        (node) => node !== this,
+      );
     this.parentNode = null;
   }
   replaceChildren(...nodes) {
@@ -127,9 +126,7 @@ const selectionBounds = (panel) => {
   return selection && [selection.kind, selection.start, selection.end];
 };
 const visibleText = (node) =>
-  node.hidden
-    ? ""
-    : node.text || node.children.map(visibleText).join("");
+  node.hidden ? "" : node.text || node.children.map(visibleText).join("");
 
 const makeFixture = (catalogOverrides = {}, scale = 1) => {
   const panel = Object.assign(panelFixture(context.Panel), {
@@ -248,12 +245,25 @@ test("range phase names require containment in a single real projected interval"
     panel.selectHistoryTime(at(begin));
     panel.selectHistoryTime(at(end));
   };
-  for (const [begin, end] of [[10, 30], [11, 29], [40, 70]]) {
+  for (const [begin, end] of [
+    [10, 30],
+    [11, 29],
+    [40, 70],
+  ]) {
     select(begin, end);
     assert.equal(panel.historySelectionPhase(), begin < 30 ? heating : ready);
-    assert.match(tooltip.children[0].textContent, begin < 30 ? /^Aufheizen ·/ : /^Bereit ·/);
+    assert.match(
+      tooltip.children[0].textContent,
+      begin < 30 ? /^Aufheizen ·/ : /^Bereit ·/,
+    );
   }
-  for (const [begin, end] of [[9, 30], [10, 31], [20, 50], [31, 39], [70, 80]]) {
+  for (const [begin, end] of [
+    [9, 30],
+    [10, 31],
+    [20, 50],
+    [31, 39],
+    [70, 80],
+  ]) {
     select(begin, end);
     assert.equal(panel.historySelectionPhase(), null);
     assert.match(tooltip.children[0].textContent, /^Ausgewählter Zeitraum ·/);
@@ -263,19 +273,31 @@ test("range phase names require containment in a single real projected interval"
     interval(20, 30, "aufheizen"),
   ];
   select(10, 30);
-  assert.equal(panel.historySelectionPhase(), null, "separate intervals are not merged merely because their phase names match");
+  assert.equal(
+    panel.historySelectionPhase(),
+    null,
+    "separate intervals are not merged merely because their phase names match",
+  );
   assert.match(tooltip.children[0].textContent, /^Ausgewählter Zeitraum ·/);
   panel.shown.phase_projection.intervals = [
     { started_at: iso(10), phase: "aufheizen" },
     { ended_at: iso(70), phase: "bereit" },
   ];
   select(20, 60);
-  assert.equal(panel.historySelectionPhase(), null, "missing real boundaries are not inferred from the viewport");
+  assert.equal(
+    panel.historySelectionPhase(),
+    null,
+    "missing real boundaries are not inferred from the viewport",
+  );
   assert.match(tooltip.children[0].textContent, /^Ausgewählter Zeitraum ·/);
   panel.shown.phase_projection.intervals = [heating, ready];
   panel.clearHistorySelection();
   panel.selectHistoryTime(at(70));
-  assert.equal(panel.historySelectionPhase(), ready, "a point preserves the existing final phase endpoint contract");
+  assert.equal(
+    panel.historySelectionPhase(),
+    ready,
+    "a point preserves the existing final phase endpoint contract",
+  );
   assert.equal(JSON.stringify(panel.shown.phase_projection), original);
 });
 
@@ -289,14 +311,27 @@ test("selection snippets include their beginning and exclude their end exactly o
   ];
   const original = JSON.stringify(panel.shown);
   panel.selectHistoryTime(at(20));
-  assert.deepEqual(Array.from(panel.historySelectionEvents(), (event) => event.event_id), ["begin"]);
+  assert.deepEqual(
+    Array.from(panel.historySelectionEvents(), (event) => event.event_id),
+    ["begin"],
+  );
   panel.selectHistoryTime(at(60));
-  assert.deepEqual(Array.from(panel.historySelectionEvents(), (event) => event.event_id), ["begin", "middle"]);
+  assert.deepEqual(
+    Array.from(panel.historySelectionEvents(), (event) => event.event_id),
+    ["begin", "middle"],
+  );
   panel.clearHistorySelection();
   panel.selectHistoryTime(at(60));
   panel.selectHistoryTime(at(80));
-  assert.deepEqual(Array.from(panel.historySelectionEvents(), (event) => event.event_id), ["end"]);
-  assert.equal(JSON.stringify(panel.shown), original, "selection never rewrites archived events or phase evidence");
+  assert.deepEqual(
+    Array.from(panel.historySelectionEvents(), (event) => event.event_id),
+    ["end"],
+  );
+  assert.equal(
+    JSON.stringify(panel.shown),
+    original,
+    "selection never rewrites archived events or phase evidence",
+  );
 });
 
 test("phase snapping uses the catalogue radius in CSS pixels at its inclusive boundary", () => {
@@ -308,7 +343,8 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     panel.window = [base, base + (plot.right - plot.left) * 1000];
     const model = refreshModel();
     panel.shown.phase_projection.intervals = [interval(100, 300)];
-    const definition = panel.panel.config.appearance_catalog.preferences.history_phase_snap_radius_px;
+    const definition =
+      panel.panel.config.appearance_catalog.preferences.history_phase_snap_radius_px;
     for (const radius of [definition.default, definition.default + definition.step]) {
       definition.default = radius;
       const millisecondsPerCssPixel = 1000 / scale;
@@ -316,10 +352,16 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
         for (const sign of [-1, 1]) {
           for (const offset of [radius - 1, radius]) {
             const time = boundary + sign * offset * millisecondsPerCssPixel;
-            assert.equal(panel.historySnapTime(time, model, interaction.geometry), boundary);
+            assert.equal(
+              panel.historySnapTime(time, model, interaction.geometry),
+              boundary,
+            );
           }
           const outside = boundary + sign * (radius + 1) * millisecondsPerCssPixel;
-          assert.equal(panel.historySnapTime(outside, model, interaction.geometry), outside);
+          assert.equal(
+            panel.historySnapTime(outside, model, interaction.geometry),
+            outside,
+          );
         }
     }
     definition.default = 0;
@@ -327,7 +369,11 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.equal(panel.historySnapTime(beside, model, interaction.geometry), beside);
     panel.shown.phase_projection.intervals = [];
     definition.default = definition.maximum;
-    assert.equal(panel.historySnapTime(beside, model, interaction.geometry), beside, "unprojected boundaries never attract a selection");
+    assert.equal(
+      panel.historySnapTime(beside, model, interaction.geometry),
+      beside,
+      "unprojected boundaries never attract a selection",
+    );
     assert.equal(chart.model, model);
   }
 });
@@ -348,7 +394,11 @@ test("pinned boundary values survive hover, pointer leave, viewport changes and 
   assert.equal(visibleText(tooltip), text);
   panel.window = [at(80), at(100)];
   interaction.refreshSelection(refreshModel());
-  assert.equal(visibleText(tooltip), text, "both pinned endpoints remain readable outside the viewport");
+  assert.equal(
+    visibleText(tooltip),
+    text,
+    "both pinned endpoints remain readable outside the viewport",
+  );
   panel.state.now = iso(200);
   panel.shown.records.push(record(120, 90));
   panel.historyIndex(panel.shown.records);
@@ -434,7 +484,11 @@ test("a frozen overview domain and its owning pointer govern a resize through se
   chart.domain = panel.historyDomain();
   panel.updateHistoryGesture(input(0.8, 99));
   panel.endHistoryGesture(input(0.8, 99));
-  assert.equal(panel.historyGesture, gesture, "another pointer cannot complete the resize");
+  assert.equal(
+    panel.historyGesture,
+    gesture,
+    "another pointer cannot complete the resize",
+  );
   assert.deepEqual(Array.from(panel.window), [at(20), at(60)]);
   panel.updateHistoryGesture(input(0.8));
   assert.deepEqual(Array.from(panel.window), [at(20), at(80)]);
@@ -462,7 +516,10 @@ test("foreign pointers, cancellation, scrolling, motion and pinch cannot become 
     const start = point(at(50));
     panel.beginChartPointer(start, surface);
     if (movement === "beyond") {
-      panel.updateChartPointer({ ...start, clientX: start.clientX + panel.preference("history_tap_movement_px") + 1 });
+      panel.updateChartPointer({
+        ...start,
+        clientX: start.clientX + panel.preference("history_tap_movement_px") + 1,
+      });
       panel.updateChartPointer(start);
     }
     if (movement === "scroll") view.dispatch("scroll");
@@ -481,19 +538,34 @@ test("foreign pointers, cancellation, scrolling, motion and pinch cannot become 
   const { panel, surface, point } = makeFixture();
   const start = point(at(50));
   panel.beginChartPointer(start, surface);
-  const edge = { ...start, clientY: start.clientY + panel.preference("history_tap_movement_px") };
+  const edge = {
+    ...start,
+    clientY: start.clientY + panel.preference("history_tap_movement_px"),
+  };
   panel.updateChartPointer(edge);
   panel.endChartPointer({ ...edge, type: "pointerup" });
-  assert.deepEqual(selectionBounds(panel), ["point", at(50), at(50)], "the inclusive movement boundary remains a tap");
+  assert.deepEqual(
+    selectionBounds(panel),
+    ["point", at(50), at(50)],
+    "the inclusive movement boundary remains a tap",
+  );
 });
 
 test("keyboard selection moves by its catalogue fraction, commits boundaries and clears with Escape", () => {
-  const { panel, tooltip, cursor, chart, interaction } = makeFixture({ history_phase_snap_radius_px: 0 });
-  const definition = panel.panel.config.appearance_catalog.preferences.history_keyboard_selection_fraction;
+  const { panel, tooltip, cursor, chart, interaction } = makeFixture({
+    history_phase_snap_radius_px: 0,
+  });
+  const definition =
+    panel.panel.config.appearance_catalog.preferences
+      .history_keyboard_selection_fraction;
   definition.default += definition.step;
   const key = (name, shiftKey = false) => {
     let prevented = false;
-    panel.keyHistorySelection({ key: name, shiftKey, preventDefault: () => (prevented = true) });
+    panel.keyHistorySelection({
+      key: name,
+      shiftKey,
+      preventDefault: () => (prevented = true),
+    });
     return prevented;
   };
   assert.equal(key("Enter"), true);
@@ -501,24 +573,40 @@ test("keyboard selection moves by its catalogue fraction, commits boundaries and
   assert.deepEqual(selectionBounds(panel), ["point", middle, middle]);
   const pin = panel.historyValueSelection;
   const pinnedText = visibleText(tooltip);
-  assert.equal(key("ArrowRight"), false, "plain arrow navigation keeps its existing viewport meaning");
+  assert.equal(
+    key("ArrowRight"),
+    false,
+    "plain arrow navigation keeps its existing viewport meaning",
+  );
   assert.deepEqual(selectionBounds(panel), ["point", middle, middle]);
   assert.equal(key("ArrowRight", true), true);
   const next = middle + (panel.window[1] - panel.window[0]) * definition.default;
   assert.equal(panel.historyKeyboardTime, next);
-  assert.equal(panel.historyValueSelection, pin, "previewing the range end retains the original pin");
+  assert.equal(
+    panel.historyValueSelection,
+    pin,
+    "previewing the range end retains the original pin",
+  );
   assert.equal(visibleText(tooltip), pinnedText);
   assert.equal(cursor.getAttribute("visibility"), "visible");
   assert.equal(Number(cursor.getAttribute("x1")), chart.model.x(next));
   assert.equal(Number(cursor.getAttribute("x2")), chart.model.x(next));
   assert.notEqual(Number(cursor.getAttribute("x1")), chart.model.x(middle));
   interaction.refreshSelection(chart.model);
-  assert.equal(cursor.getAttribute("visibility"), "visible", "an incoming render preserves the visible keyboard target");
+  assert.equal(
+    cursor.getAttribute("visibility"),
+    "visible",
+    "an incoming render preserves the visible keyboard target",
+  );
   assert.equal(Number(cursor.getAttribute("x1")), chart.model.x(next));
   assert.equal(panel.historyValueSelection, pin);
   assert.equal(key(" "), true);
   assert.deepEqual(selectionBounds(panel), ["range", middle, next]);
-  assert.equal(cursor.getAttribute("visibility"), "hidden", "committing the end replaces the preview with the selected range");
+  assert.equal(
+    cursor.getAttribute("visibility"),
+    "hidden",
+    "committing the end replaces the preview with the selected range",
+  );
   assert.equal(key("Escape"), true);
   assert.equal(panel.historyValueSelection, null);
   assert.equal(tooltip.hidden, true);
