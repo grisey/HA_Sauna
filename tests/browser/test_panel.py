@@ -344,7 +344,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         normal_tokens = json.dumps({
             "hassUrl": self.url, "clientId": self.url + "/",
             "access_token": self.hass.auth.async_create_access_token(refresh),
-            "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+            "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
             "expires_in": setting("browser.auth_token_seconds"),
         })
         admin_tokens = await self.page.evaluate("localStorage.getItem('hassTokens')")
@@ -445,7 +445,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                   "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
                   "expires_in": setting("browser.auth_token_seconds")}
         context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
         try:
@@ -551,7 +551,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             "clientId": self.url + "/",
             "access_token": self.hass.auth.async_create_access_token(refresh),
             "refresh_token": refresh.token,
-            "expires": (time.time() + 1800) * 1000,
+            "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
             "expires_in": setting("browser.auth_token_seconds"),
         }
         context = await browser_context(self.browser, 
@@ -1735,7 +1735,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
                 tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                           "access_token": self.hass.auth.async_create_access_token(refresh),
-                          "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                          "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
                           "expires_in": setting("browser.auth_token_seconds")}
                 context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
                 try:
@@ -2033,7 +2033,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                   "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
                   "expires_in": setting("browser.auth_token_seconds")}
         context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
         try:
@@ -2264,12 +2264,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await menu.get_by_text("Entität umbenennen", exact=True).click()
         group_picker = dialog.locator("ha-selector-select")
         await group_picker.locator("ha-select").click()
-        await expect(group_picker.get_by_text(controls_label, exact=True)).to_be_visible()
-        await expect(group_picker.get_by_text(external_label, exact=True)).to_be_visible()
+        # The selected-value display repeats the option label in HA's select.
+        controls_option = group_picker.get_by_role("option", name=controls_label, exact=True)
+        await expect(controls_option).to_be_visible()
+        await expect(group_picker.get_by_role("option", name=external_label, exact=True)).to_be_visible()
         await self.page.screenshot(
             path=str(screenshots / "options_rename_groups.png"),
             full_page=True, animations="disabled")
-        await group_picker.get_by_text(controls_label, exact=True).click()
+        await controls_option.click()
+        await expect(group_picker).to_have_js_property("value", "own:controls")
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(dialog.get_by_title("Entität auswählen", exact=True)).to_be_visible()
         picker = dialog.locator("ha-selector-entity ha-entity-picker")
@@ -2299,7 +2302,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(dialog.locator("ha-selector-select")).to_be_visible()
         group_picker = dialog.locator("ha-selector-select")
         await group_picker.locator("ha-select").click()
-        await group_picker.get_by_text("Zurück zur Übersicht", exact=True).click()
+        await group_picker.get_by_role("option", name="Zurück zur Übersicht", exact=True).click()
         await dialog.get_by_role("button", name="Weiter", exact=True).click()
         await expect(menu.get_by_text("Entität umbenennen", exact=True)).to_be_visible()
         self.assertEqual(registry.async_get(self.operation), selected_before)
@@ -2951,7 +2954,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         refresh = await self.hass.auth.async_create_refresh_token(user, client_id=self.url + "/")
         tokens = {"hassUrl": self.url, "clientId": self.url + "/",
                   "access_token": self.hass.auth.async_create_access_token(refresh),
-                  "refresh_token": refresh.token, "expires": (time.time() + 1800) * 1000,
+                  "refresh_token": refresh.token, "expires": (time.time() + setting("browser.auth_token_seconds")) * 1000,
                   "expires_in": setting("browser.auth_token_seconds")}
         context = await browser_context(self.browser, viewport=setting("browser.viewports.mobile"))
         try:
