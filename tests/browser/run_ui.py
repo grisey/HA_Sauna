@@ -47,8 +47,14 @@ def snapshot():
 
 class Evidence:
     def __init__(self, mode):
+        runner_temp = os.environ.get("RUNNER_TEMP")
+        runner_directory = (
+            Path(runner_temp) / ("ha-sauna-ui-format" if mode == "format" else "ha-sauna-ui")
+            if runner_temp else None
+        )
         self.directory = Path(
-            os.environ.get("UI_EVIDENCE") or tempfile.mkdtemp(prefix="ha-sauna-ui-")
+            os.environ.get("UI_EVIDENCE") or runner_directory
+            or tempfile.mkdtemp(prefix="ha-sauna-ui-")
         ).resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self.mode = mode
@@ -172,11 +178,12 @@ def test(evidence):
 
 
 def format_changed(evidence):
-    changed = git("diff", "--name-only", "--diff-filter=ACMR", "HEAD^", "HEAD", "--").splitlines()
-    added = git("diff", "--name-only", "--diff-filter=A", "HEAD^", "HEAD", "--").splitlines()
+    base = git("merge-base", "HEAD", os.environ.get("UI_BASE_REF", "origin/main"))
+    changed = git("diff", "--name-only", "--diff-filter=ACMR", base, "HEAD", "--").splitlines()
+    added = git("diff", "--name-only", "--diff-filter=A", base, "HEAD", "--").splitlines()
     javascript = [name for name in changed if Path(name).suffix in (".js", ".cjs")]
     python = [name for name in added if Path(name).suffix == ".py"]
-    evidence.data["format_scope"] = {"base": git("rev-parse", "HEAD^"), "javascript": javascript, "new_python": python}
+    evidence.data["format_scope"] = {"base": base, "javascript": javascript, "new_python": python}
     evidence.save()
     if javascript:
         evidence.run("prettier", ["npx", "--yes", "prettier@3.6.2", "--write", *javascript], 600)
