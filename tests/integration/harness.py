@@ -16,7 +16,8 @@ from custom_components.ha_sauna.settings import async_set_parameters
 
 ROOT = Path(__file__).resolve().parents[2]
 import sys
-sys.path.insert(0, str(ROOT / "tests"))
+# Keep the active discovery directory ahead of shared test helpers.
+sys.path.append(str(ROOT / "tests"))
 from test_settings import setting, fixture
 
 HA_INPUTS = fixture("ha")
