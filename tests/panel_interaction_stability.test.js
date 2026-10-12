@@ -316,7 +316,10 @@ test("markup reconciliation restores retained focus and backwards text selection
   };
   let restored;
   const selection = {
-    anchorNode: text, anchorOffset: 8, focusNode: text, focusOffset: 2,
+    anchorNode: text,
+    anchorOffset: 8,
+    focusNode: text,
+    focusOffset: 2,
     setBaseAndExtent: (...values) => (restored = values),
   };
   const target = {
@@ -348,10 +351,17 @@ test("markup reconciliation never refocuses removed, replaced or disabled contro
     let contained = change !== "outside";
     let focusedAgain = false;
     const focused = {
-      get isConnected() { return connected; },
-      focus() { focusedAgain = true; },
+      get isConnected() {
+        return connected;
+      },
+      focus() {
+        focusedAgain = true;
+      },
     };
-    const target = { contains: (node) => contained && node === focused, cloneNode: () => ({}) };
+    const target = {
+      contains: (node) => contained && node === focused,
+      cloneNode: () => ({}),
+    };
     panel.$ = () => target;
     panel.shadowRoot.activeElement = focused;
     panel.syncInfo = () => {};
@@ -370,7 +380,9 @@ test("a moved text field keeps its input selection without scrolling", () => {
   const panel = makePanel();
   const calls = [];
   const focused = {
-    isConnected: true, selectionStart: 2, selectionEnd: 6,
+    isConnected: true,
+    selectionStart: 2,
+    selectionEnd: 6,
     selectionDirection: "backward",
     focus: (options) => calls.push(["focus", options.preventScroll]),
     setSelectionRange: (...values) => calls.push(["range", ...values]),
@@ -384,5 +396,8 @@ test("a moved text field keeps its input selection without scrolling", () => {
     focused.selectionStart = focused.selectionEnd = 0;
   };
   panel.updateMarkup("#history", "new sibling");
-  assert.deepEqual(calls, [["focus", true], ["range", 2, 6, "backward"]]);
+  assert.deepEqual(calls, [
+    ["focus", true],
+    ["range", 2, 6, "backward"],
+  ]);
 });

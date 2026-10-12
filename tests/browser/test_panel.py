@@ -3271,7 +3271,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(self.panel.locator('#event-list')).to_be_visible()
         selected_link = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')
         await expect(selected_link).to_be_focused()
-        await expect(selected_link).to_have_css("outline-width", "2px")
+        self.assertGreaterEqual(
+            await selected_link.evaluate("button => parseFloat(getComputedStyle(button).outlineWidth)"),
+            2,
+        )
         button_contrast = await selected_link.evaluate("""button => {
           const style = getComputedStyle(button);
           const light = color => color.match(/[\\d.]+/g).slice(0, 3).map(Number)

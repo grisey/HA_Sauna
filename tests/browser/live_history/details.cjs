@@ -505,10 +505,35 @@ fs.mkdirSync(output, { recursive: true });
     const lateLight = await page.evaluate(async () => {
       const at = f.iso(f.origin + 580000),
         p = f.panel;
-      const selection = document.getSelection(),
+      // Document endpoints can be retargeted to the outer shadow host while
+      // toString still exposes the selected text. Observe the same native
+      // shadow selection as the panel, and prove its endpoints before updating.
+      const selection = p.shadowRoot.getSelection?.() || document.getSelection(),
         text = lateRecordNodes.details.querySelector("p").firstChild;
-      selection.setBaseAndExtent(text, 0, text, Math.min(text.length, 20));
+      const end = Math.min(text.length, 20);
+      selection.setBaseAndExtent(text, 0, text, end);
       const selectedText = selection.toString();
+      const observeSelection = () => ({
+        anchor: selection.anchorNode === text,
+        focus: selection.focusNode === text,
+        anchorOffset: selection.anchorOffset,
+        focusOffset: selection.focusOffset,
+        text: selection.toString(),
+        documentAnchorIsText: document.getSelection().anchorNode === text,
+        documentText: document.getSelection().toString(),
+      });
+      const selectionBefore = observeSelection();
+      if (
+        !selectionBefore.anchor ||
+        !selectionBefore.focus ||
+        selectionBefore.anchorOffset !== 0 ||
+        selectionBefore.focusOffset !== end ||
+        !selectedText.length ||
+        selectionBefore.documentText !== selectedText
+      )
+        throw new Error(
+          `Native selection was not established before refresh: ${JSON.stringify(selectionBefore)}`,
+        );
       f.addRecord({
         kind: "light_command",
         received_at: f.state.now,
@@ -525,26 +550,41 @@ fs.mkdirSync(output, { recursive: true });
         },
       });
       await f.refresh();
+      const selectionAfter = observeSelection();
       return {
-        row:
-          p.$(`[data-record-id="${lateRecordNodes.row.dataset.recordId}"]`) ===
-          lateRecordNodes.row,
-        focus: p.shadowRoot.activeElement === lateRecordNodes.button,
-        selection:
-          selection.anchorNode === text && selection.toString() === selectedText,
-        details:
-          lateRecordNodes.row.querySelector("details") === lateRecordNodes.details,
-        open: lateRecordNodes.details.open,
-        allCommands:
-          lateRecordNodes.details.querySelectorAll("p[data-record-id]").length === 4,
-        earlierStart: lateRecordNodes.row.textContent.includes("90 %"),
+        checks: {
+          row:
+            p.$(`[data-record-id="${lateRecordNodes.row.dataset.recordId}"]`) ===
+            lateRecordNodes.row,
+          focus: p.shadowRoot.activeElement === lateRecordNodes.button,
+          selection:
+            selectionAfter.anchor &&
+            selectionAfter.focus &&
+            selectionAfter.anchorOffset === 0 &&
+            selectionAfter.focusOffset === end &&
+            selectionAfter.text === selectedText,
+          documentSelection: selectionAfter.documentText === selectedText,
+          details:
+            lateRecordNodes.row.querySelector("details") === lateRecordNodes.details,
+          open: lateRecordNodes.details.open,
+          allCommands:
+            lateRecordNodes.details.querySelectorAll("p[data-record-id]").length === 4,
+          earlierStart: lateRecordNodes.row.textContent.includes("90 %"),
+        },
+        selectionBefore,
+        selectionAfter,
       };
     });
-    assert.ok(Object.values(lateLight).every(Boolean), JSON.stringify(lateLight));
+    assert.ok(
+      Object.values(lateLight.checks).every(Boolean),
+      JSON.stringify(lateLight),
+    );
     results.push({
       check:
-        "Earlier light completion extends its existing section without losing identity or focus",
-      ...lateLight,
+        "Earlier light completion retains section, focus and native selection endpoints",
+      ...lateLight.checks,
+      selectionBefore: lateLight.selectionBefore,
+      selectionAfter: lateLight.selectionAfter,
     });
     await controlSlider.focus();
     // Expand only the synthetic outer harness for complete review images;

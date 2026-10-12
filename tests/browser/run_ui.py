@@ -225,6 +225,21 @@ def prepare(evidence):
 
 
 def test(evidence):
+    available = {
+        "panel",
+        "panel-api",
+        "details",
+        "accept",
+        "profile",
+        "interaction",
+        "ha-browser",
+    }
+    requested = os.environ.get("UI_CHECKS")
+    checks = set(requested.split(",")) if requested else available
+    if not checks or checks - available:
+        raise ValueError(f"Unknown UI checks: {sorted(checks - available)}")
+    evidence.data["selected_checks"] = sorted(checks)
+    evidence.save()
     environment = {
         "HA_TEST_REQUIRED": "1",
         "ENGINE": "chromium",
@@ -241,38 +256,48 @@ def test(evidence):
     )
     if not panel_tests:
         raise RuntimeError("No panel method tests found")
-    evidence.run("panel", ["node", "--test", *panel_tests], 300, environment, "node")
-    evidence.run(
-        "panel-api",
-        [
-            sys.executable,
-            "-m",
+    if "panel" in checks:
+        evidence.run("panel", ["node", "--test", *panel_tests], 300, environment, "node")
+    if "panel-api" in checks:
+        evidence.run(
+            "panel-api",
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests/integration",
+                "-p",
+                "test_panel*.py",
+                "-v",
+            ],
+            300,
+            environment,
             "unittest",
-            "discover",
-            "-s",
-            "tests/integration",
-            "-p",
-            "test_panel*.py",
-            "-v",
-        ],
-        300,
-        environment,
-        "unittest",
-    )
+        )
     for script in ("details", "accept", "profile", "interaction"):
+        if script not in checks:
+            continue
         evidence.run(
             script,
             ["node", f"tests/browser/live_history/{script}.cjs"],
             180,
             environment,
         )
-    evidence.run(
-        "ha-browser",
-        [sys.executable, "-u", "tests/browser/run.py"],
-        900,
-        environment,
-        "unittest",
-    )
+    if "ha-browser" in checks:
+        evidence.run(
+            "ha-browser",
+            [
+                sys.executable,
+                "-u",
+                "tests/browser/run.py",
+                *os.environ.get("HA_SAUNA_BROWSER_TESTS", "").split(),
+            ],
+            900,
+            environment,
+            "unittest",
+        )
 
 
 def format_changed(evidence):

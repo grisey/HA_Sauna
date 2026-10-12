@@ -1696,7 +1696,8 @@ class SaunaPanel extends HTMLElement {
   patchNode(current, next) {
     if (current.nodeType === 3) {
       if (current.data !== next.data) {
-        const selection = this.shadowRoot?.getSelection?.() || this.ownerDocument?.getSelection?.(),
+        const selection =
+            this.shadowRoot?.getSelection?.() || this.ownerDocument?.getSelection?.(),
           anchor = selection?.anchorNode === current ? selection.anchorOffset : null,
           focus = selection?.focusNode === current ? selection.focusOffset : null,
           anchorNode = selection?.anchorNode,
@@ -1785,30 +1786,37 @@ class SaunaPanel extends HTMLElement {
     // nodes are reinserted. Save identities, not selectors or live Ranges.
     const focused = this.shadowRoot.activeElement,
       ownedFocus = focused && target.contains(focused),
-      inputSelection = ownedFocus && Number.isInteger(focused.selectionStart)
-        ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection]
-        : null,
-      selection = this.shadowRoot.getSelection?.() || this.ownerDocument?.getSelection?.(),
+      inputSelection =
+        ownedFocus && Number.isInteger(focused.selectionStart)
+          ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection]
+          : null,
+      selection =
+        this.shadowRoot.getSelection?.() || this.ownerDocument?.getSelection?.(),
       endpoint = (node, offset) => ({
-        node, offset,
+        node,
+        offset,
         before: node?.childNodes?.[offset],
         after: node?.childNodes?.[offset - 1],
       }),
-      selected = selection &&
+      selected =
+        selection &&
         (target.contains(selection.anchorNode) || target.contains(selection.focusNode))
-        ? {
-            anchor: endpoint(selection.anchorNode, selection.anchorOffset),
-            focus: endpoint(selection.focusNode, selection.focusOffset),
-          }
-        : null;
+          ? {
+              anchor: endpoint(selection.anchorNode, selection.anchorOffset),
+              focus: endpoint(selection.focusNode, selection.focusOffset),
+            }
+          : null;
     const next = target.cloneNode(false);
     next.innerHTML = markup;
     this.patchNode(target, next);
     this.selectMenu?.sync();
     this.syncInfo();
     if (
-      ownedFocus && focused.isConnected && target.contains(focused) &&
-      !focused.disabled && !focused.matches?.(":disabled") &&
+      ownedFocus &&
+      focused.isConnected &&
+      target.contains(focused) &&
+      !focused.disabled &&
+      !focused.matches?.(":disabled") &&
       !focused.closest?.("[hidden], [inert]") &&
       (!focused.getClientRects || focused.getClientRects().length)
     ) {
@@ -1818,7 +1826,9 @@ class SaunaPanel extends HTMLElement {
         focused.setSelectionRange?.(...inputSelection);
     }
     if (
-      selected && selected.anchor.node?.isConnected && selected.focus.node?.isConnected &&
+      selected &&
+      selected.anchor.node?.isConnected &&
+      selected.focus.node?.isConnected &&
       (target.contains(selected.anchor.node) || target.contains(selected.focus.node))
     ) {
       const offset = ({ node, offset: saved, before, after }) => {
@@ -1829,8 +1839,10 @@ class SaunaPanel extends HTMLElement {
         return Math.min(saved, children.length);
       };
       selection.setBaseAndExtent?.(
-        selected.anchor.node, offset(selected.anchor),
-        selected.focus.node, offset(selected.focus),
+        selected.anchor.node,
+        offset(selected.anchor),
+        selected.focus.node,
+        offset(selected.focus),
       );
     }
   }

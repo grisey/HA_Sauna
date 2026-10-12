@@ -192,3 +192,12 @@ Der getrennte Formatjob vergleicht mit der über `UI_BASE_REF` festgelegten
 Entwicklungsbasis. Er formatiert geänderte JavaScript-Dateien mit Prettier 3.6.2
 und neue Python-Dateien mit Ruff und liefert notwendige Änderungen als Patch.
 Der Testjob prüft den unveränderten ausgecheckten Commit.
+
+Gezielte Korrekturläufe können im manuellen Workflow über `checks` ausgewählt
+werden: `panel`, `panel-api`, `details`, `accept`, `profile`, `interaction` und
+`ha-browser`, durch Kommas getrennt. `browser_tests` begrenzt den HA-Browserlauf
+auf durch Leerzeichen getrennte vollständige unittest-Namen. Leere Felder führen
+den vollständigen UI-Prüfumfang aus; unbekannte Namen führen zu einem Fehler.
+Die Prozessnachweise nennen die tatsächliche Auswahl. Bestandene Prüfungen
+bleiben nur bei belegbar unveränderten Abhängigkeiten gültig. Reine Testkorrekturen
+erfordern keine erneute Ausführung unveränderter Szenarien und Replays.

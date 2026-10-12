@@ -3,6 +3,15 @@ on:
   push:
     branches: ['codex/ui-*']
   workflow_dispatch:
+    inputs:
+      checks:
+        description: 'Comma-separated checks; empty runs the complete UI suite'
+        type: string
+        default: ''
+      browser_tests:
+        description: 'Optional space-separated unittest names for bounded browser reruns'
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -15,6 +24,8 @@ jobs:
     env:
       HA_TEST_REQUIRED: '1'
       ENGINE: chromium
+      UI_CHECKS: ${{ inputs.checks }}
+      HA_SAUNA_BROWSER_TESTS: ${{ inputs.browser_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
