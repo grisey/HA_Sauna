@@ -10,10 +10,11 @@ from .parameters import BY_KEY
 from .temperature_target import whole_temperature
 
 MAXIMUM_TEMPERATURE_C = BY_KEY["target_temperature_c"].maximum
+MINIMUM_TEMPERATURE_C = BY_KEY["sauna_min_temperature_c"].minimum
 
 
 def _temperature(
-    value: object, name: str, minimum_c: float = 0,
+    value: object, name: str, minimum_c: float = MINIMUM_TEMPERATURE_C,
     maximum_c: float = MAXIMUM_TEMPERATURE_C,
 ) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -35,7 +36,7 @@ def _count(value: object, name: str) -> int:
 
 def temperature_steps(
     value: object, name: str = "temperature_steps", *,
-    minimum_c: float = 0, maximum_c: float = MAXIMUM_TEMPERATURE_C,
+    minimum_c: float = MINIMUM_TEMPERATURE_C, maximum_c: float = MAXIMUM_TEMPERATURE_C,
     rounded: bool = True,
 ) -> tuple[float, ...]:
     """Validate explicit targets shared by free and named programs."""

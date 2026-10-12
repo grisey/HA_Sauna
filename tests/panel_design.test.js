@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const {
   parameterValues: fixtureValues,
@@ -7,9 +8,7 @@ const {
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 let Panel;
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
   HTMLElement: class {},
@@ -21,7 +20,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   },
 });
 const panel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: defaults.frontend,
       appearance_catalog: defaults.appearance,
@@ -59,18 +58,18 @@ test("brightness reports distinguish feedback, a plan and unknown independently 
 
 test("temperature controls retain whole degrees even with legacy fractional steps", () => {
   const p = panel();
-  p.state.frontend_defaults = {
-    ...defaults.frontend,
-    temperature_step_c: 0.25,
-    temperature_dial_step_c: 2,
-  };
+  p.state.appearance = { preferences: { temperature_step_c: 0.25, temperature_dial_step_c: 2 } };
   assert.equal(p.temperatureStep(), 1);
   assert.equal(p.clampTemperature(80.3), 80);
   assert.equal(p.clampTemperature(80.5), 81);
+  assert.equal(p.clampArcTemperature(83), 83);
+  p.state.appearance_catalog = structuredClone(defaults.appearance);
+  p.state.appearance_catalog.preferences.temperature_dial_step_c.default = 2;
   assert.equal(p.clampArcTemperature(83), 84);
-  p.state.frontend_defaults.temperature_dial_step_c = 0.1;
+  p.state.appearance_catalog.preferences.temperature_dial_step_c.default = 0.1;
   assert.equal(p.clampArcTemperature(80.5), 81);
-  p.state.frontend_defaults = {};
+  p.state.appearance = {};
+  p.state.appearance_catalog = { colors: [], scales: {}, preferences: {} };
   assert.equal(p.temperatureStep(), null);
   assert.equal(p.targetArcBounds(), null);
   assert.equal(p.clampTemperature(80), null);

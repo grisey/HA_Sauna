@@ -116,7 +116,7 @@ class ArchiveIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(rows), 21)
                 session = json.loads(archive.read("sessions.jsonl").splitlines()[0])
                 self.assertEqual(session["timeline"]["session_id"], self.session_id)
-                self.assertEqual(session["configuration"], self.runtime.configuration.as_options())
+                self.assertEqual(session["configuration"], self.runtime.configuration.as_snapshot())
 
     async def test_actual_ha_backup_and_restore_to_new_installation(self):
         assert await async_setup_component(self.hass, "backup", {})

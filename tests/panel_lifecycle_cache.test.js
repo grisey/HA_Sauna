@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const {
   catalog: fixtureCatalog,
@@ -51,7 +52,7 @@ function diagnosticPanel() {
     heating: {},
     energy: {},
   };
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     isConnected: true,
     shown: { records, session },
     historyDetail: true,
@@ -155,7 +156,7 @@ test("archive reset frees the source index and event mappings immediately", () =
   assert.equal(p.cache.size, 0);
 });
 test("record-budget LRU keeps active sources and reloads an evicted archive from zero", async () => {
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     entry: "e",
     isConnected: true,
     selected: "a",
@@ -207,7 +208,7 @@ test("record-budget LRU keeps active sources and reloads an evicted archive from
   assert.equal(p.cache.has("live"), true);
 });
 test("temperature cancellation never commits and capture release during commit does not cancel", async () => {
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     drawCurrent() {},
     applyAppearance() {},
     cancelProgramDrag() {},

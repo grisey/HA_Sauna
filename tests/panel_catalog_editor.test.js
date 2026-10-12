@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const {
@@ -36,7 +37,7 @@ const ids = (panel) =>
   JSON.parse(JSON.stringify(panel.currentProgramDraft().map((program) => program.id)));
 const makePanel = () => {
   const library = { dataset: {}, innerHTML: "" };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "sauna-1",
     generation: 0,
     state: {

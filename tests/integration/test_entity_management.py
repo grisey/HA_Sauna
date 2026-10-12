@@ -263,7 +263,7 @@ class EntityManagementTests(unittest.IsolatedAsyncioTestCase):
         entry = await create_sauna(self.hass)
         selected = next(
             item for item in er.async_entries_for_config_entry(self.registry, entry.entry_id)
-            if item.unique_id.endswith("_target_temperature_c")
+            if item.unique_id.endswith("_absolute_humidity_upper")
         )
         selected = self.registry.async_update_entity(
             selected.entity_id, disabled_by=er.RegistryEntryDisabler.USER

@@ -6,6 +6,7 @@ from unittest.mock import patch
 from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from harness import advance_with_fresh_sources, create_sauna, start_hass
+from custom_components.ha_sauna.appearance import appearance_options, validate_appearance
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 
@@ -508,7 +509,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             # subset. A full hidden page must still expose its continuation.
             original = runtime.archive.read(session_id)
             after = max(record["id"] for record in original["records"])
-            for _ in range(1000):
+            for _ in range(runtime.configuration.parameters.values["archive_read_page_records"]):
                 runtime.archive.append("detector_trace", runtime._clock(), {}, session_id)
             runtime.archive.append("measurement", runtime._clock(),
                                    {"position": "upper", "quantity": "temperature", "value": 73}, session_id)
@@ -1791,6 +1792,33 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             finally:
                 runtime.reconfiguring = False
 
+    async def test_state_catalog_bootstrap_and_compact_poll_share_effective_preferences(self):
+        url = self.base + "/" + self.entry.entry_id
+        specifications = section("appearance")["preferences"]
+        editable = {key for key, definition in specifications.items() if definition["configuration_surface"] == "panel"}
+        preference_key = "history_live_poll_ms"
+        specification = specifications[preference_key]
+        chosen = specification["default"] + specification["step"]
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/appearance", json={"preferences": {preference_key: chosen}}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            for query, includes_catalog in (("", True), ("?include_catalog=false", False)):
+                async with client.get(url + "/state" + query) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    state = await response.json()
+                self.assertEqual("appearance_catalog" in state, includes_catalog)
+                self.assertEqual(set(state["appearance"]["preferences"]), editable)
+                self.assertEqual(state["appearance"]["preferences"][preference_key], chosen)
+                self.assertEqual(state["configuration"]["appearance"], state["appearance"])
+                self.assertEqual(set(state["frontend_defaults"]), set(section("frontend")))
+                self.assertNotIn(preference_key, state["frontend_defaults"])
+            self.assertEqual(set(self.entry.options["appearance"]["preferences"]), editable)
+            readonly = next((key, definition) for key, definition in specifications.items()
+                            if definition["configuration_surface"] == "catalog" and definition["default"] + definition["step"] <= definition["maximum"])
+            key, definition = readonly
+            async with client.post(url + "/appearance", json={"preferences": {key: definition["default"] + definition["step"]}}) as response:
+                self.assertEqual(response.status, 400, await response.text())
+
     async def test_appearance_updates_live_without_reloading_or_changing_control(self):
         from custom_components.ha_sauna.runtime import Configuration
 
@@ -1813,6 +1841,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 "humidity": {"minimum": 5, "maximum": 85},
             },
         }
+        appearance = appearance_options(appearance)
         async with ClientSession(headers=self.headers) as client:
             async with client.get(url + "/state") as response:
                 state = await response.json()
@@ -1830,10 +1859,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(runtime.detector, detector)
             self.assertIs(runtime.device, device)
             self.assertEqual(session.deadlines, deadlines)
-            self.assertEqual(runtime.configuration.appearance, appearance)
+            self.assertEqual(runtime.configuration.appearance, validate_appearance(appearance))
             self.assertEqual(self.entry.options["appearance"], appearance)
             self.assertEqual(Configuration.from_options(self.entry.options).appearance,
-                             appearance)
+                             validate_appearance(appearance))
             async with client.get(url + "/state") as response:
                 state = await response.json()
                 self.assertEqual(state["appearance"], appearance)
@@ -1845,18 +1874,19 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                                    json={"target_temperature_c": 81}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             await self.hass.async_block_till_done()
-            self.assertEqual(runtime.configuration.appearance, appearance)
+            self.assertEqual(runtime.configuration.appearance, validate_appearance(appearance))
             self.assertEqual(runtime.session.session_id, session.session_id)
             session = runtime.session
             deadlines = session.deadlines
             external = {"colors": {"status_warning": "#FEDCBA"}, "scales":
                         appearance["scales"], "instruments": appearance["instruments"]}
+            external = appearance_options(external)
             self.hass.config_entries.async_update_entry(
                 self.entry, options={**self.entry.options, "appearance": external})
             await self.hass.async_block_till_done()
             self.assertIs(self.entry.runtime_data, runtime)
             self.assertIs(runtime.session, session)
-            self.assertEqual(runtime.configuration.appearance, external)
+            self.assertEqual(runtime.configuration.appearance, validate_appearance(external))
             self.assertEqual(session.deadlines, deadlines)
 
     async def test_appearance_validation_permissions_and_full_replacement(self):
@@ -1927,7 +1957,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 key: specification["default"]
                 for key, specification in section("appearance")["scales"].items()
             })
-            self.assertEqual(self.entry.runtime_data.configuration.appearance, replaced)
+            self.assertEqual(self.entry.runtime_data.configuration.appearance, validate_appearance(replaced))
 
     async def test_appearance_survives_parameter_reset_and_other_settings(self):
         entity_id = "binary_sensor.reset_presence"

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const { settings } = require("../../settings_fixture.cjs");
+const { catalog: fixtureCatalog } = require("../../catalog_fixture.cjs");
 /*
  * Real-browser interaction benchmark for the live history view.
  *
@@ -12,12 +14,10 @@ const path = require("node:path");
 const { webkit, chromium } = require("playwright");
 
 const root = path.resolve(process.env.HA_SAUNA_ROOT || process.cwd());
-const defaults = JSON.parse(
-  fs.readFileSync(path.join(root, "custom_components/ha_sauna/defaults.json"), "utf8"),
-);
-const engine = process.env.ENGINE || "webkit";
-const steps = Number(process.env.INPUT_STEPS || 24);
-const tickEvery = Number(process.env.TICK_EVERY || 4);
+const defaults = structuredClone(fixtureCatalog);
+const engine = process.env.ENGINE || settings.browser.engine;
+const steps = Number(process.env.INPUT_STEPS || settings.fixtures.history.interaction_steps);
+const tickEvery = Number(process.env.TICK_EVERY || settings.fixtures.history.tick_every);
 const output = path.resolve(
   process.env.INTERACTION_EVIDENCE ||
     path.join(require("node:os").tmpdir(), "ha-sauna-smooth", "interaction.json"),
@@ -32,17 +32,17 @@ Real-browser live-history interaction benchmark
   PLAYWRIGHT_BROWSERS_PATH=/path/to/browsers \\
   ENGINE=webkit node ${path.basename(process.argv[1])}
 
-Measures the current working-tree panel.js with 57,600 archived records
-from four independent series; the history view selects its leading position.
-INPUT_STEPS must be 20..40 (default 24).  It sends real
+Measures the current working-tree panel.js with the declared history dataset
+in tests/settings.json; the history view selects its leading position.
+INPUT_STEPS must be a positive integer (default ${settings.fixtures.history.interaction_steps}). It sends real
 browser pointer moves, Ctrl-wheel zoom in/out and minimap drag moves, while
 calling fixture.tick() after every ${tickEvery} inputs. Results are JSON at
 INTERACTION_EVIDENCE (or ${output}).
 `);
   process.exit(0);
 }
-if (!Number.isInteger(steps) || steps < 20 || steps > 40)
-  throw Error(`INPUT_STEPS must be an integer from 20 to 40; got ${steps}`);
+if (!Number.isInteger(steps) || steps < 1)
+  throw Error(`INPUT_STEPS must be a positive integer; got ${steps}`);
 if (!Number.isInteger(tickEvery) || tickEvery < 1)
   throw Error(`TICK_EVERY must be a positive integer; got ${tickEvery}`);
 if (!["webkit", "chromium"].includes(engine))
@@ -78,14 +78,15 @@ async function addFixture(page) {
   await page.addScriptTag({
     path: path.join(root, "custom_components/ha_sauna/panel.js"),
   });
+  await page.evaluate(value => { window.testSettings = value; }, settings);
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
   await page.evaluate(async (defaults) => {
-    window.f = await window.installHistoryFixture({ seconds: 14400, defaults });
+    window.f = await window.installHistoryFixture({ defaults });
     window.f.assertClean();
-    if (window.f.records.length !== 57600)
-      throw Error(`fixture expected 57600 records, got ${window.f.records.length}`);
+    if (window.f.records.length !== f.initialRecordCount)
+      throw Error(`fixture expected ${f.initialRecordCount} records, got ${window.f.records.length}`);
   }, defaults);
 }
 
@@ -198,7 +199,7 @@ async function installInstrumentation(page) {
     root.addEventListener("pointermove", record, true);
     root.addEventListener("wheel", record, true);
     bench.latestId = () => bench.nextEventId;
-    bench.waitForRender = (afterId, type, timeoutMs = 1500) =>
+    bench.waitForRender = (afterId, type, timeoutMs = testSettings.browser.timeouts_ms.render) =>
       new Promise((resolve, reject) => {
         const deadline = performance.now() + timeoutMs;
         const check = () => {
@@ -208,7 +209,7 @@ async function installInstrumentation(page) {
           if (event?.completed != null) return resolve({ ...event });
           if (performance.now() >= deadline)
             return reject(Error(`no completed render after ${type} input ${afterId}`));
-          setTimeout(check, 4);
+          setTimeout(check, testSettings.browser.render_poll_ms);
         };
         check();
       });
@@ -474,8 +475,8 @@ function summarizeCase(raw, input) {
 
 async function runCase(browser) {
   const page = await browser.newPage({
-    viewport: { width: 1440, height: 1100 },
-    deviceScaleFactor: 2,
+    viewport: settings.browser.viewports.history,
+    deviceScaleFactor: settings.browser.device_scale_factor,
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -484,7 +485,7 @@ async function runCase(browser) {
     await installInstrumentation(page);
     const input = await runInputSequence(page);
     const raw = await page.evaluate(() => window.__historyInteractionBench.summary());
-    if (raw.records !== 57600 + input.ticks.length * 8)
+    if (raw.records !== settings.fixtures.history.duration_seconds * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length + input.ticks.length * settings.fixtures.history.samples_per_tick * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length)
       throw Error(
         `expected 8 retained measurement records per live tick; got ${raw.records}`,
       );
@@ -515,7 +516,7 @@ async function runCase(browser) {
 
 (async () => {
   const launchOptions = {
-    headless: true,
+    headless: settings.browser.headless,
     ...(engine === "chromium"
       ? { executablePath: process.env.CHROMIUM_EXECUTABLE }
       : {}),
@@ -541,7 +542,7 @@ async function runCase(browser) {
         browserVersion: browser.version(),
         panel: path.join(root, "custom_components/ha_sauna/panel.js"),
         fixture: path.join(root, "tests/browser/live_history/fixture.js"),
-        recordsPerInitialCase: 57600,
+        recordsPerInitialCase: settings.fixtures.history.duration_seconds * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length,
         inputStepsPerStream: steps,
         tickEvery,
         notes: [

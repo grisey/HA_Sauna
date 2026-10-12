@@ -1910,7 +1910,7 @@ class Controller:
         elif deadline.purpose == "after_run":
             phase = session.after_run
             if phase is not None:
-                if phase.remaining_seconds <= 1e-6:
+                if phase.remaining_seconds <= self.parameters.values["phase_completion_tolerance_seconds"]:
                     phase = replace(
                         phase,
                         elapsed_seconds=max(phase.elapsed_seconds, phase.required_seconds),

@@ -11,7 +11,7 @@ import unittest
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.program_catalog import DEFAULT_PROGRAMS
 from custom_components.ha_sauna.bindings import ROLES
@@ -43,7 +43,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             for r in ROLES
             if not r.optional or r.device_class in {"temperature", "humidity"}
         }
-        self.values = {d.key: d.default for d in EDITABLE_DEFINITIONS}
+        self.values = Parameters({}).as_options()
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": "button" if r.key == "control_input" else r.device_class,
@@ -531,6 +531,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.entry.options["parameters"]["after_run_minutes"] = 2
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             form = await flow.async_step_parameters_oven_cooling()
+            selectors = {str(key): value for key, value in flat_fields(form["data_schema"]).items()}
+            self.assertEqual(
+                selectors["oven_cooling_max_minutes"].config["min"],
+                self.entry.options["parameters"]["after_run_minutes"],
+            )
             marker = next(key for key in flat_fields(form["data_schema"]) if key.schema == "after_run_minutes")
             self.assertEqual(marker.description["suggested_value"], 2)
             submitted = {d.key: self.entry.options["parameters"][d.key] for d in flow._definitions("oven_cooling")}

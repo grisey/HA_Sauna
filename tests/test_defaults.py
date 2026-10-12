@@ -82,7 +82,7 @@ class DefaultsTests(unittest.TestCase):
         data["appearance"]["scales"]["humidity"]["default"].update(
             minimum=5, maximum=70
         )
-        data["runtime"]["archive_projection_cache_entries"] = 7
+        next(item for item in data["parameters"] if item["key"] == "archive_projection_cache_entries")["default"] = 7
         data["setup"] = {"program_mode": "constant", "control_input_mode": "switch"}
         self.assertIs(validate_catalog(data), data)
 
@@ -90,11 +90,18 @@ class DefaultsTests(unittest.TestCase):
         for surface in ("panel", "integration"):
             with self.subTest(surface=surface):
                 data = load_catalog()
-                data["frontend"]["settings_groups"][0]["surface"] = surface
+                group = data["frontend"]["settings_groups"][0]
+                group["surface"] = surface
+                for definition in data["parameters"]:
+                    if definition["settings_group"] == group["id"] and definition["configuration_surface"] != "catalog":
+                        definition["configuration_surface"] = surface
                 self.assertIs(validate_catalog(data), data)
         data = load_catalog()
         for group in data["frontend"]["settings_groups"]:
             group.pop("surface", None)
+        for definition in data["parameters"]:
+            if definition["configuration_surface"] != "catalog":
+                definition["configuration_surface"] = "panel"
         self.assertIs(validate_catalog(data), data)
         self.assertTrue(all(
             group.get("surface", "panel") == "panel"
@@ -105,7 +112,11 @@ class DefaultsTests(unittest.TestCase):
         for surface in (None, "", "both", True, [], {}):
             with self.subTest(surface=surface):
                 data = load_catalog()
-                data["frontend"]["settings_groups"][0]["surface"] = surface
+                group = data["frontend"]["settings_groups"][0]
+                group["surface"] = surface
+                for definition in data["parameters"]:
+                    if definition["settings_group"] == group["id"] and definition["configuration_surface"] != "catalog":
+                        definition["configuration_surface"] = surface
                 with self.assertRaises(ValueError):
                     validate_catalog(data)
         data = load_catalog()
@@ -120,7 +131,7 @@ class DefaultsTests(unittest.TestCase):
         }
         self.assertEqual(
             {key for key, owner in groups.items() if owner == "integration"},
-            {"operation", "sensors", "light"},
+            {"operation", "sensors", "light", "runtime"},
         )
         for definition in EDITABLE_DEFINITIONS:
             with self.subTest(key=definition.key):

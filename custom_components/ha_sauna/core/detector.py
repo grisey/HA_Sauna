@@ -7,7 +7,8 @@ from math import ceil, isclose, isfinite
 from statistics import median
 
 from .models import Measurement, Position, Quantity
-from .moisture import absolute_humidity
+from .moisture import KELVIN_OFFSET_C, absolute_humidity
+from .parameters import BY_KEY
 from .timeline import Kind, utc
 
 
@@ -20,7 +21,7 @@ class Detection:
     trace_at: object | None = None
 
 
-def robust_slope(values, step=1):
+def robust_slope(values, step=BY_KEY["grid_seconds"].default):
     if len(values) < 2 or any(v is None for v in values):
         return None
     slopes = [
@@ -35,7 +36,7 @@ def robust_slope(values, step=1):
 
 
 class Detector:
-    """Ein-Sekunden-Raster übernimmt nur bis dahin empfangene Originalwerte.
+    """Das konfigurierte Raster übernimmt nur bis dahin empfangene Originalwerte.
 
     Begrenzte Arbeitsfenster sind keine Archivverdichtung. Jedes Original wird
     separat archiviert. Fehlende/alte Messungen werden niemals interpoliert.
@@ -49,6 +50,7 @@ class Detector:
         observer=None,
     ):
         self.p = parameters.values
+        self.grid_seconds = self.p["grid_seconds"]
         self.origin = utc(origin)
         self.positions = tuple(positions)
         self.index = -1
@@ -57,11 +59,11 @@ class Detector:
         self.last_received = None
         self.capacity = int(
             max(
-                self.p["median_seconds"],
-                self.p["vent_baseline_seconds"]
-                + max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
-                + 1,
-                *(self.p[k] + 1 for k in (
+                self.p["median_seconds"] / self.grid_seconds,
+                (self.p["vent_baseline_seconds"]
+                 + max(self.p["door_window_seconds"], self.p["door_humidity_seconds"]))
+                / self.grid_seconds + 1,
+                *(self.p[k] / self.grid_seconds + 1 for k in (
                     "door_window_seconds",
                     "door_humidity_seconds",
                     "strong_window_seconds",
@@ -112,7 +114,7 @@ class Detector:
             and measurement.received_at < self.last_received
         ) or (
             self.index >= 0
-            and measurement.received_at < self.origin + timedelta(seconds=self.index)
+            and measurement.received_at < self.origin + timedelta(seconds=self.index * self.grid_seconds)
         ):
             self.rejected += 1
             return False
@@ -162,18 +164,20 @@ class Detector:
         # Physikalische Plausibilität; keine erfundene sichere Heiztemperatur.
         if quantity == Quantity.HUMIDITY and not 0 <= m.value <= 100:
             return None
-        if quantity == Quantity.TEMPERATURE and not -273.15 < m.value:
+        if quantity == Quantity.TEMPERATURE and not -KELVIN_OFFSET_C < m.value:
             return None
         return m.value
 
-    def _series(self, position, key, window, step=1):
+    def _series(self, position, key, window, step=None):
         frames = self.frames[position]
-        need = int(window) + 1
+        step = self.grid_seconds if step is None else step
+        need = int(window / self.grid_seconds) + 1
         if len(frames) < need:
             return []
-        return [frame[key] for frame in list(frames)[-need :: int(step)]]
+        return [frame[key] for frame in list(frames)[-need :: int(step / self.grid_seconds)]]
 
-    def _slope(self, position, key, window, step=1):
+    def _slope(self, position, key, window, step=None):
+        step = self.grid_seconds if step is None else step
         return robust_slope(self._series(position, key, window, step), step)
 
     def _difference(self, position, key, window):
@@ -183,7 +187,8 @@ class Detector:
         difference = series[-1] - series[0]
         return difference if isfinite(difference) else None
 
-    def _sustain(self, name, condition, seconds, step=1):
+    def _sustain(self, name, condition, seconds, step=None):
+        step = self.grid_seconds if step is None else step
         self.counts[name] = self.counts.get(name, 0) + 1 if condition else 0
         return self.counts[name] >= ceil(seconds / step) + 1
 
@@ -203,13 +208,14 @@ class Detector:
         except ValueError:
             return None
 
-    def _absolute_humidity_difference(self, position, window, step=1):
+    def _absolute_humidity_difference(self, position, window, step=None):
         """Nur ein vollständiger T/RH-Quellenzug darf Feuchteanstieg belegen."""
         frames = self.frames[position]
-        need = int(window) + 1
+        step = self.grid_seconds if step is None else step
+        need = int(window / self.grid_seconds) + 1
         if len(frames) < need:
             return None
-        selected = list(frames)[-need :: int(step)]
+        selected = list(frames)[-need :: int(step / self.grid_seconds)]
         sources = [(frame.get("Ts"), frame.get("Hs")) for frame in selected]
         values = [self._absolute_humidity(frame) for frame in selected]
         if (
@@ -220,7 +226,11 @@ class Detector:
         ):
             return None
         change = values[-1] - values[0]
-        return 0.0 if isclose(change, 0.0, abs_tol=1e-9) else change
+        return (
+            0.0
+            if isclose(change, 0.0, abs_tol=self.p["humidity_change_absolute_tolerance"])
+            else change
+        )
 
     def _moisture_rise(self, route, features):
         """RH-Schwelle und AH-Ausgleich beschreiben denselben Feuchteweg."""
@@ -250,9 +260,10 @@ class Detector:
         """Die letzte vollständige Vorherprobe als quellengebundene Referenz merken."""
         feature_window = int(
             max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
+            / self.grid_seconds
         )
         window = list(self.frames[position])[
-            -int(self.p["vent_baseline_seconds"]) - feature_window - 1 : -feature_window
+            -int(self.p["vent_baseline_seconds"] / self.grid_seconds) - feature_window - 1 : -feature_window
             - 1
         ]
         usable = [
@@ -293,7 +304,7 @@ class Detector:
             "temperatures": {
                 position: max((
                     frame["Tm"]
-                    for frame in list(self.frames[position])[-int(self.p["door_window_seconds"]) - 1:]
+                    for frame in list(self.frames[position])[-int(self.p["door_window_seconds"] / self.grid_seconds) - 1:]
                     if frame["Tm"] is not None
                     and frame.get("Ts") == self.frames[position][-1].get("Ts")
                 ), default=None)
@@ -450,16 +461,16 @@ class Detector:
         detected_at kann die reale Erkennungsuhr liefern, getrennt vom Rasterende.
         """
         at = utc(at)
-        final = int((at - self.origin).total_seconds())
-        if not include_current and self.origin + timedelta(seconds=final) == at:
+        final = int((at - self.origin).total_seconds() // self.grid_seconds)
+        if not include_current and self.origin + timedelta(seconds=final * self.grid_seconds) == at:
             final -= 1
         if final < self.index:
-            if at < self.origin + timedelta(seconds=self.index):
+            if at < self.origin + timedelta(seconds=self.index * self.grid_seconds):
                 raise ValueError("Detektoruhr darf nicht rückwärts laufen")
             return []
         output = []
         while self.index < final:
-            now = self.origin + timedelta(seconds=self.index + 1)
+            now = self.origin + timedelta(seconds=(self.index + 1) * self.grid_seconds)
             if before_sample is not None and before_sample(now) is False:
                 break
             self.index += 1
@@ -563,15 +574,16 @@ class Detector:
                 else None
             )
             for key in ("T", "H"):
+                median_samples = int(p["median_seconds"] / self.grid_seconds)
                 last = (
-                    [f[key] for f in list(frames)[-int(p["median_seconds"] - 1) :]]
-                    if p["median_seconds"] > 1
+                    [f[key] for f in list(frames)[-(median_samples - 1) :]]
+                    if median_samples > 1
                     else []
                 )
                 values = last + [raw[key]]
                 frame[key + "m"] = (
                     median(values)
-                    if len(values) == p["median_seconds"]
+                    if len(values) == median_samples
                     and all(v is not None for v in values)
                     else None
                 )
@@ -801,7 +813,7 @@ class Detector:
             # permitted stretch. Old blocked rises cannot cross its boundary.
             return recognition_since is None or (
                 (now - recognition_since).total_seconds()
-                >= p[f"{route}_window_seconds"] + p["median_seconds"] - 1
+                >= p[f"{route}_window_seconds"] + p["median_seconds"] - self.grid_seconds
             )
 
         eligible = bool(enabled and gang_permitted and not self.open)
@@ -842,7 +854,7 @@ class Detector:
         if not weak_opportunity:
             self.counts["weak"] = 0
             self.levels["weak"] = False
-        if self.index % p["person_step_seconds"] == 0:
+        if (self.index * self.grid_seconds) % p["person_step_seconds"] == 0:
             for route, kind in (
                 ("strong", Kind.PERSON_STRONG),
                 ("weak", Kind.PERSON_WEAK),

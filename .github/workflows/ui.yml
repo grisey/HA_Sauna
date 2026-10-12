@@ -22,13 +22,25 @@ concurrency:
   group: ui-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  test:
-    if: ${{ !inputs.format_only }}
+  configuration:
+    # Bootstrap on the GitHub-hosted Linux provider; all run settings come from the catalogue.
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    outputs:
+      settings: ${{ steps.catalog.outputs.settings }}
+      browser: ${{ steps.catalog.outputs.browser }}
+      cases: ${{ steps.catalog.outputs.cases }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: catalog
+        run: python tests/ci_settings.py outputs
+  test:
+    needs: configuration
+    if: ${{ !inputs.format_only }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ui }}
     env:
       HA_TEST_REQUIRED: '1'
-      ENGINE: chromium
+      ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
       UI_CHECKS: ${{ inputs.checks }}
       HA_SAUNA_BROWSER_TESTS: ${{ inputs.browser_tests }}
     steps:
@@ -37,7 +49,7 @@ jobs:
           fetch-depth: 2
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
       - name: Pinned Home Assistant and browser dependencies
         run: python -u tests/browser/run_ui.py prepare
       - name: Panel methods, panel API, HA browser and history interactions
@@ -49,19 +61,20 @@ jobs:
           name: ui-tests-${{ github.sha }}
           path: ${{ runner.temp }}/ha-sauna-ui
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   format:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.format }}
     env:
-      UI_BASE_REF: origin/codex/sauna-development
+      UI_BASE_REF: ${{ fromJSON(needs.configuration.outputs.settings).ui_base_ref }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
       - name: Format changed JavaScript and newly added Python; export patch
         run: python -u tests/browser/run_ui.py format
       - name: Preserve format patch separately from tested HEAD
@@ -71,4 +84,4 @@ jobs:
           name: ui-format-${{ github.sha }}
           path: ${{ runner.temp }}/ha-sauna-ui-format
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}

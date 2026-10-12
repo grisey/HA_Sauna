@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -57,7 +58,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
     };
     let axes = 0,
       annotations = 0;
-    const panel = Object.assign(Object.create(context.PanelForTest.prototype), {
+    const panel = Object.assign(fixturePanel(context.PanelForTest), {
       $: node,
       historyDetail: false,
       positions: new Set(["upper"]),
@@ -110,7 +111,7 @@ test("normal history never exposes height comparison controls or its note", () =
       timeline: { session_started_at: "2032-01-01T10:10:00Z" },
     },
     model = { start: 0, end: 1000, low: 20, high: 100, humidityHigh: 80 };
-  const panel = Object.assign(Object.create(context.PanelForTest.prototype), {
+  const panel = Object.assign(fixturePanel(context.PanelForTest), {
     selected: "live",
     historyDetail: false,
     positions: new Set(["upper"]),
@@ -223,7 +224,7 @@ test("tables, diagnostics, annotations and session labels use each fixed local z
       if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: false });
       return nodes.get(selector);
     };
-    const panel = Object.assign(Object.create(context.PanelForTest.prototype), {
+    const panel = Object.assign(fixturePanel(context.PanelForTest), {
       entry: "entry",
       selected: "session",
       sessions: [{ session_id: "session", started_at: at, ended_at: later }],

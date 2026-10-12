@@ -82,7 +82,10 @@ async def async_setup_entry(
         runtime.on_close(presence.close)
         await presence.start()
         runtime.on_close(
-            async_track_time_interval(hass, runtime.tick, timedelta(seconds=1))
+            async_track_time_interval(
+                hass, runtime.tick,
+                timedelta(seconds=configuration.parameters.values["runtime_tick_seconds"]),
+            )
         )
 
         async def stopped(_event):

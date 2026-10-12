@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // The detector view works without HA or a browser; the DOM here records real
 // click actions and the stable event-id mapping used by both directions.
 const assert = require("node:assert/strict");
@@ -76,7 +77,7 @@ const parameters = fixtureValues();
       channels: ["upper"],
     },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session,
       records: traces.map((payload) => ({ kind: "detector_trace", payload })),
@@ -131,7 +132,7 @@ const parameters = fixtureValues();
       channels: ["upper"],
     },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: { ...session, timeline: { ...session.timeline, processed: [door] } },
       records: [
@@ -155,7 +156,7 @@ const parameters = fixtureValues();
 }
 
 {
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: {
         ...session,
@@ -263,7 +264,7 @@ const parameters = fixtureValues();
       },
     },
   };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: archived,
       records: traces.map((payload) => ({ kind: "detector_trace", payload })),
@@ -310,7 +311,7 @@ const parameters = fixtureValues();
 // Ventilation uses its serialized event kind as signal and the effective
 // sample time, while a trace without the matching metric stays unmarked.
 {
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: {
         ...session,
@@ -359,7 +360,7 @@ const parameters = fixtureValues();
 // The event-list lookup omits optional route arguments.  It must still reject
 // a same-time trace for another signal or one without the primary metric.
 {
-  const p = Object.create(Panel.prototype);
+  const p = fixturePanel(Panel);
   const event = {
     event_id: "door",
     kind: "door_open",
@@ -405,7 +406,7 @@ const parameters = fixtureValues();
 // ventilation measurement or emitting NaN coordinates.
 {
   const plots = {};
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session,
       records: [
@@ -444,7 +445,7 @@ const parameters = fixtureValues();
     { event_id: "door-9", kind: "door_close", effective_at: iso(40) },
     { event_id: "future-10", kind: "infusion", effective_at: iso(120) },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shown: {
       session: { ...session, timeline: { ...session.timeline, processed: allEvents } },
       records: [],
@@ -488,7 +489,7 @@ const parameters = fixtureValues();
       },
     },
   ];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     shadowRoot: { querySelectorAll: () => rows },
   });
   p.highlightEvent("infusion-8", true);
@@ -501,7 +502,7 @@ const parameters = fixtureValues();
 // to the event list is an explicitly labelled separate action.
 {
   const calls = [];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     state: { permissions: { admin: true } },
     message: () => {},
     setPanelView: (view) => calls.push(["view", view]),
@@ -540,7 +541,7 @@ const parameters = fixtureValues();
       if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: false });
       return nodes.get(selector);
     };
-    const p = Object.assign(Object.create(Panel.prototype), {
+    const p = Object.assign(fixturePanel(Panel), {
       entry: "entry",
       state: { now: iso(90), permissions: { admin }, configuration: { parameters } },
       shown: {

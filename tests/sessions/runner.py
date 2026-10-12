@@ -43,9 +43,14 @@ from homeassistant.components.light import LightEntityFeature
 from homeassistant.core import Context
 
 from fixture_configuration import bound_parameters
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from test_settings import fixture
+
+SESSION_INPUTS = fixture("session")
 
 ROOT = Path(__file__).resolve().parents[1]
-ORIGIN = datetime(2000, 1, 1, 12, tzinfo=UTC)
+ORIGIN = datetime.fromisoformat(SESSION_INPUTS["origin"])
 CLIMATE = ("upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity")
 BINDINGS = {
     **{role: f"sensor.fixture_{role}" for role in CLIMATE},
@@ -76,7 +81,8 @@ def load_manifest(name):
     manifest = read_json(path)
     parameters = bound_parameters() if "configuration_file" in manifest else None
     for file_key, hash_key in (("source_curves", "source_curves_sha256"),
-                               ("configuration_file", "configuration_sha256")):
+                               ("configuration_file", "configuration_sha256"),
+                               ("construction_file", "construction_sha256")):
         if file_key in manifest:
             source = ROOT / manifest[file_key]
             if hashlib.sha256(source.read_bytes()).hexdigest() != manifest[hash_key]:
@@ -257,10 +263,10 @@ class SessionRun:
             ]),
         }), self.now, initial=True)
         self.runtime._reset_button_gestures()
-        self.state("light", spec.get("initial_light_percent", 0))
+        self.state("light", spec.get("initial_light_percent", SESSION_INPUTS["initial_light_percent"]))
         self.state("heater", False)
         self.states["sun.sun"] = SimpleNamespace(attributes={
-            "elevation": spec.get("sun_elevation", 10 if spec.get("daylight") else -10),
+            "elevation": spec.get("sun_elevation", SESSION_INPUTS["sun_day_elevation"] if spec.get("daylight") else SESSION_INPUTS["sun_night_elevation"]),
         })
         self._temporary = TemporaryDirectory(prefix="sauna-session-")
 

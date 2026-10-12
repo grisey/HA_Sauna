@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Display aggregation remains pure data work. Canvas checks below use a
 // functional FakeCanvas only to verify paths and original endpoints, never speed.
 const assert = require("node:assert/strict");
@@ -6,9 +7,7 @@ const {
   parameterDefinition: fixtureDefinition,
 } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
-const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).appearance;
+const appearanceCatalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
 const curveStyles = {
@@ -90,7 +89,7 @@ const session = (seconds) => ({
   heating: { intervals: [] },
 });
 const panel = (seconds, records) =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     positions: new Set(["upper"]),
     window: [base, base + seconds * 1000],
     state: {

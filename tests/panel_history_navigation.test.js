@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const {
@@ -35,7 +36,7 @@ const session = {
   timeline: { session_started_at: iso(0), processed: [], completed: [] },
 };
 const panel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     shown: { session, records: [] },
     state: {
       now: iso(3600),
@@ -259,13 +260,13 @@ test("explicit navigation during a periodic refresh queues one fresh read", asyn
   let releaseFirst;
   let stateReads = 0;
   const firstState = new Promise((resolve) => (releaseFirst = resolve));
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry",
     generation: 0,
     isConnected: true,
     shadowRoot: { activeElement: null },
     api: async (path) => {
-      if (path !== "/entry/state") throw Error(path);
+      if (path !== "/entry/state?include_catalog=false") throw Error(path);
       stateReads++;
       return stateReads === 1 ? firstState : {};
     },

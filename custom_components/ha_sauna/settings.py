@@ -119,7 +119,7 @@ async def async_reset_parameters(hass, entry):
 
 async def async_set_appearance(hass, entry, value):
     """Persist only display preferences without cycling the active controller."""
-    appearance = validate_appearance(value)
+    appearance = validate_appearance(value, reject_catalog_overrides=True)
     runtime = entry.runtime_data
     async with runtime._lock:
         runtime._require_open()
@@ -131,6 +131,7 @@ async def async_set_appearance(hass, entry, value):
         hass.config_entries.async_update_entry(
             entry, options=runtime.configuration.as_options()
         )
+        runtime.notify_entities()
         return appearance
 
 
@@ -158,6 +159,13 @@ def parameter_change(
     if not isinstance(values, Mapping):
         raise ParameterError("base", "invalid_parameters")
     before = configuration.parameters.as_dict()
+    for key, value in values.items():
+        definition = BY_KEY.get(key)
+        if (
+            definition is not None and definition.configuration_surface == "catalog"
+            and value != before.get(key)
+        ):
+            raise ParameterError(key, "catalog_only")
     merged = {**before, **values} if partial else dict(values)
     # Ein leer übermittelter Endwert fällt auf den zentralen Standard zurück.
     if partial and merged.get("final_temperature_c", False) is None:
@@ -327,7 +335,7 @@ async def _async_set_parameters_locked(
         entry,
         options={
             **entry.options,
-            "parameters": parameters.as_dict(),
+            "parameters": parameters.as_options(),
             **({"program_mode": selected_mode} if selected_mode is not None else {}),
             **({"selected_program_id": None} if clear_selected_program else {}),
             **(
@@ -385,7 +393,7 @@ async def async_set_program(hass, entry, profile):
             entry,
             options={
                 **entry.options,
-                "parameters": parameters.as_dict(),
+                "parameters": parameters.as_options(),
                 "program_mode": mode,
                 "selected_program_id": (
                     profile

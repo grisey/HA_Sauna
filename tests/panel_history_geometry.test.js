@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const {
   parameterValues: fixtureValues,
   parameterDefinition: fixtureDefinition,
@@ -139,6 +140,7 @@ const makeEnvironment = () => {
   };
 };
 
+let Panel;
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const load = () => {
   const context = {
@@ -151,7 +153,7 @@ const load = () => {
     Set,
     Intl,
     HTMLElement: class {},
-    customElements: { get: () => null, define() {} },
+    customElements: { get: () => null, define: (_, value) => { Panel = value; } },
   };
   vm.runInNewContext(
     `${source}\nglobalThis.HistoryInteraction = HistoryInteraction;`,
@@ -160,7 +162,7 @@ const load = () => {
   return context.HistoryInteraction;
 };
 
-const panel = (calls) => ({
+const panel = (calls) => Object.assign(fixturePanel(Panel), {
   window: [0, 1000],
   positions: new Set(["upper", "lower"]),
   historyDetail: true,

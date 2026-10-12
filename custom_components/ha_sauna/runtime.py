@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
-from .appearance import default_appearance, validate_appearance
+from .appearance import appearance_options, default_appearance, validate_appearance
 from .archive import encoded, encoded_plain, plain
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
@@ -120,7 +120,7 @@ class Configuration:
         return ConfigurationModel.from_configuration(self).button.session_gestures
 
     @classmethod
-    def from_options(cls, options: Mapping) -> Configuration:
+    def from_options(cls, options: Mapping, *, historical=False) -> Configuration:
         if (
             not isinstance(options, Mapping)
             or not {CONF_BINDINGS, CONF_PARAMETERS} <= set(options)
@@ -196,6 +196,11 @@ class Configuration:
                 if key in values:
                     minimum_c = min(minimum_c, BY_KEY[key].validate(values[key]))
             values["sauna_min_temperature_c"] = minimum_c
+        if not historical:
+            values = {
+                key: value for key, value in values.items()
+                if key not in BY_KEY or BY_KEY[key].configuration_surface != "catalog"
+            }
         parameters = Parameters(values)
         minimum_c = parameters.minimum_for("target_temperature_c")
         maximum_c = BY_KEY["target_temperature_c"].maximum
@@ -252,10 +257,10 @@ class Configuration:
             options.get("button_session_gesture", instance_default("button_session_gesture")),
         )
 
-    def as_options(self) -> dict:
+    def as_options(self, *, snapshot=False) -> dict:
         return {
             CONF_BINDINGS: self.bindings.as_dict(),
-            CONF_PARAMETERS: self.parameters.as_dict(),
+            CONF_PARAMETERS: self.parameters.as_dict() if snapshot else self.parameters.as_options(),
             "log_level": self.log_level,
             "control_input_mode": self.control_input_mode,
             "button_event_type": self.button_event_type,
@@ -269,8 +274,15 @@ class Configuration:
             "control_mode": self.control_mode,
             "presence_source": self.presence_source,
             "temperature_steps": self.temperature_steps,
-            "appearance": validate_appearance(self.appearance),
+            "appearance": (
+                validate_appearance(self.appearance) if snapshot
+                else appearance_options(self.appearance)
+            ),
         }
+
+    def as_snapshot(self) -> dict:
+        """Archive and publish every effective value, including catalog-owned standards."""
+        return self.as_options(snapshot=True)
 
 
 class SaunaRuntime:
@@ -497,7 +509,7 @@ class SaunaRuntime:
                 include_current=include_current,
                 detected_at=self._clock,
             )
-            sampled_at = detector.origin + timedelta(seconds=detector.index)
+            sampled_at = detector.origin + timedelta(seconds=detector.index * detector.grid_seconds)
             past = [i for i, (gate_at, _) in enumerate(self._detector_heating_gates)
                     if gate_at <= sampled_at]
             if past:
@@ -679,7 +691,9 @@ class SaunaRuntime:
     async def start_archive(self, path, entry_id):
         from .archive import Archive
 
-        self.archive = Archive(path, entry_id, sessions_only=True)
+        self.archive = Archive(
+            path, entry_id, sessions_only=True, parameters=self.configuration.parameters
+        )
         await self.archive.start()
         self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
         self.archive.append("presence_source", self._clock(), {
@@ -825,7 +839,7 @@ class SaunaRuntime:
         completed = self.controller.completed_sessions[self._archived_completed :]
         for session in completed:
             self.archive.save_session(
-                session, self._clock(), self.configuration.as_options()
+                session, self._clock(), self.configuration.as_snapshot()
             )
         self._archived_completed = len(self.controller.completed_sessions)
         if completed and self.device:
@@ -891,7 +905,7 @@ class SaunaRuntime:
             signature = encoded_plain(signature)
             if signature != self._archive_signature:
                 self.archive.save_session(
-                    self.session, now, self.configuration.as_options()
+                    self.session, now, self.configuration.as_snapshot()
                 )
                 self._archive_signature = signature
         self._persist_decisions()
@@ -967,6 +981,10 @@ class SaunaRuntime:
             self.log.info("fault_cleared", "%s", fault_resolved(key))
         self._logged_faults = faults
         self.persist()
+        self.notify_entities()
+
+    def notify_entities(self):
+        """Publish changed display values without advancing or persisting the controller."""
         for callback in tuple(self._subscribers):
             callback()
 
@@ -1237,7 +1255,7 @@ class SaunaRuntime:
             # Keep the manual/current configuration as its own revision before
             # the same recording continues under the newly selected mode.
             self.archive.save_session(
-                previous_session, at, self.configuration.as_options()
+                previous_session, at, self.configuration.as_snapshot()
             )
         # A due gap may complete at this boundary. Save it with its former
         # configuration before applying a mode to a subsequent recording.
@@ -1597,7 +1615,7 @@ class SaunaRuntime:
                         self.archive.save_session(
                             replace(self.session, ended_at=now),
                             now,
-                            self.configuration.as_options(),
+                            self.configuration.as_snapshot(),
                         )
                 except Exception as error:
                     failures.append(error)

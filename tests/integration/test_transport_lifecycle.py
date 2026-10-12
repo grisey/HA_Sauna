@@ -576,11 +576,8 @@ class TransportLifecycleTests(unittest.IsolatedAsyncioTestCase):
             }, blocking=True)
             self.assertEqual(self.hass.states.get(self.climate).attributes["temperature"], 85)
             entities = [callback.__self__ for callback in self.runtime._subscribers]
-            target = next(entity for entity in entities
-                          if entity.unique_id.endswith("_target_temperature_c"))
             humidity = next(entity for entity in entities
                             if entity.unique_id.endswith("_absolute_humidity_upper"))
-            self.assertEqual(float(self.hass.states.get(target.entity_id).state), 85)
             self.assertNotEqual(self.hass.states.get(humidity.entity_id).state, "unavailable")
             self.now += timedelta(seconds=
                 self.runtime.configuration.parameters.values["sensor_timeout_seconds"] + 1

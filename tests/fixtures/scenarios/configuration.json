@@ -1,6 +1,8 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "source": "custom_components/ha_sauna/defaults.json",
-  "source_sha256": "6ff5a7cb4c2f776059db484de1ebe055c6bbab6e144e043b400ab6f9ae888c7f",
-  "basis": "Canonical factory catalog consumed at materialization; no copied parameter values. Explicit user selections and measured climate inputs remain fixture data."
+  "source_sha256": "4efec9e42ce814c2933df21d033f62b94baa7f4da9dcbefad1f2b002105a3845",
+  "effective_sha256": "95d8d787300171ff47de18d685e65baa007de3662a1f767a7a022d5d0294f4b4",
+  "projection": "all resolved parameter defaults and programme start/end/distribution values",
+  "basis": "Canonical configuration values consumed at materialization; no copied defaults. Presentation metadata and UI preferences do not alter fixture inputs. Changed effective values require explicit review before rebinding; unchanged input curves remain byte-bound."
 }

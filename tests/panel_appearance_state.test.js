@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
@@ -12,9 +13,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   setInterval,
   clearInterval,
 });
-const catalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).appearance;
+const catalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const appearance = (color = "#123456") => ({
   colors: { series_temperature: color },
@@ -30,7 +29,7 @@ const state = (value = appearance()) => ({
   configuration: { appearance: value, temperature_programs: [] },
 });
 function panel(api = async () => ({ appearance: appearance() })) {
-  return Object.assign(Object.create(Panel.prototype), {
+  return Object.assign(fixturePanel(Panel), {
     entry: "first",
     generation: 0,
     isConnected: true,

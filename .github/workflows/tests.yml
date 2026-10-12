@@ -3,33 +3,47 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  configuration:
+    # Bootstrap on the GitHub-hosted Linux provider; all run settings come from the catalogue.
+    runs-on: ubuntu-latest
+    outputs:
+      settings: ${{ steps.catalog.outputs.settings }}
+      browser: ${{ steps.catalog.outputs.browser }}
+      cases: ${{ steps.catalog.outputs.cases }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: catalog
+        run: python tests/ci_settings.py outputs
   core:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.13'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
       - run: python -m unittest discover -s tests -v
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
       - run: node --test tests/panel_*.test.js
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.panel }}
   ha:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
-      - run: python -m pip install 'homeassistant==2026.10.0' 'securetar==2026.4.1' 'cronsim==2.7'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - run: python tests/ci_settings.py install-ha
       - name: Versionsformat für Home Assistant und HACS prüfen
         run: |
           python - <<'PY'
@@ -43,42 +57,27 @@ jobs:
           print(f"Version: {version}; Format: {version.strategy.value}; Beta: {version.beta}")
           PY
       - run: python -m unittest discover -s tests/ha -v
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_adapter }}
         env:
           HA_TEST_REQUIRED: '1'
       - run: python -m unittest discover -s tests/integration -v
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.integration }}
         env:
           HA_TEST_REQUIRED: '1'
-  session-matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      cases: ${{ steps.cases.outputs.cases }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - id: cases
-        run: |
-          python - <<'PYTHON'
-          import json, os
-          from pathlib import Path
-          derived = json.loads(Path("tests/scenario_manifest.json").read_text())["scenarios"]
-          replay = json.loads(Path("tests/replay_manifest.json").read_text())["sessions"]
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write("cases=" + json.dumps([case["id"] for case in derived + replay]) + "\n")
-          PYTHON
   sessions:
-    needs: session-matrix
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
       fail-fast: false
       matrix:
-        case: ${{ fromJSON(needs.session-matrix.outputs.cases) }}
+        case: ${{ fromJSON(needs.configuration.outputs.cases) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
-      - run: python -m pip install 'homeassistant==2026.10.0' 'securetar==2026.4.1' 'cronsim==2.7'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - run: python tests/ci_settings.py install-ha
       - name: Vollständige Sitzungen und gebundene Realdaten-Replays
         run: |
           mkdir -p "$SAUNA_SESSION_EVIDENCE"
@@ -90,7 +89,7 @@ jobs:
           echo "$result" > "$SAUNA_SESSION_EVIDENCE/exit-code.txt"
           cat "$SAUNA_SESSION_EVIDENCE/process.log"
           exit "$result"
-        timeout-minutes: 40
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         env:
           HA_TEST_REQUIRED: '1'
           TMPDIR: /dev/shm
@@ -103,32 +102,31 @@ jobs:
           name: session-${{ matrix.case }}
           path: ${{ runner.temp }}/ha-sauna-sessions
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   browser:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    needs: configuration
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14.2'
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
       - run: python -m pip install -r tests/browser/requirements.txt
       - name: Kompressionsbackend prüfen
         run: |
           python -m pip check
           python - <<'PY'
-          from importlib.metadata import version
           from isal import isal_zlib
           import aiohttp_fast_zlib
           from aiohttp.compression_utils import ZLibBackend
 
-          assert version("isal") == "1.8.0"
           assert aiohttp_fast_zlib.best_zlib is isal_zlib
           aiohttp_fast_zlib.enable()
           assert ZLibBackend.name == isal_zlib.__name__
           print(f"Kompressionsbackend: {ZLibBackend.name}")
           PY
-      - run: python -m playwright install --with-deps chromium
+      - run: python -m playwright install --with-deps ${{ fromJSON(needs.configuration.outputs.browser).engine }}
       - name: Node-Browserwerkzeuge vorbereiten
         run: |
           python - <<'PY'
@@ -147,30 +145,30 @@ jobs:
           PY
       - name: Sitzungsverlauf – Browserinteraktionen
         run: node tests/browser/live_history/accept.cjs
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Sitzungsverlauf – Lade- und Aktualisierungsmessung
         run: node tests/browser/live_history/profile.cjs
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
       - name: Detailansicht – Zustandserhalt und Marker
         run: node tests/browser/live_history/details.cjs
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           DETAILS_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/details
       - name: Sitzungsverlauf – Zoom und Nachträge
         run: node tests/browser/live_history/interaction.cjs
-        timeout-minutes: 2
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.live_history }}
         env:
-          ENGINE: chromium
+          ENGINE: ${{ fromJSON(needs.configuration.outputs.browser).engine }}
           INTERACTION_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history/interaction.json
       - run: python -u tests/browser/run.py
-        timeout-minutes: 15
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_browser }}
         env:
           HA_TEST_REQUIRED: '1'
           HA_SAUNA_BROWSER_ARTIFACT_DIR: ${{ runner.temp }}/ha-sauna-browser
@@ -181,4 +179,4 @@ jobs:
           name: browser-views
           path: ${{ runner.temp }}/ha-sauna-browser
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}

@@ -1,3 +1,5 @@
+const { settings } = require("../../settings_fixture.cjs");
+const { catalog: fixtureCatalog } = require("../../catalog_fixture.cjs");
 // Real panel methods and browser input; only archive/status transport is synthetic.
 const { chromium, webkit } = require("playwright");
 const assert = require("node:assert/strict");
@@ -7,13 +9,13 @@ const output = process.env.DETAILS_EVIDENCE || "/tmp/ha-sauna-details";
 fs.mkdirSync(output, { recursive: true });
 
 (async () => {
-  const engine = process.env.ENGINE || "chromium";
+  const engine = process.env.ENGINE || settings.browser.engine;
   const browser = await (engine === "webkit" ? webkit : chromium).launch({
-    headless: true,
+    headless: settings.browser.headless,
   });
   const results = [];
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+    const page = await browser.newPage({ viewport: settings.browser.viewports.history });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.setContent(
@@ -22,22 +24,21 @@ fs.mkdirSync(output, { recursive: true });
     await page.addScriptTag({
       path: path.resolve("custom_components/ha_sauna/panel.js"),
     });
+    await page.evaluate(value => { window.testSettings = value; }, settings);
     await page.addScriptTag({
       path: path.resolve("tests/browser/live_history/fixture.js"),
     });
-    const defaults = JSON.parse(
-      fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-    );
+    const defaults = structuredClone(fixtureCatalog);
     await page.evaluate(async (defaults) => {
-      window.f = await installHistoryFixture({ seconds: 1200, defaults });
+      window.f = await installHistoryFixture({ seconds: testSettings.fixtures.history.detail_duration_seconds, defaults });
       f.state.permissions = { admin: true };
       f.panel.state.permissions = { admin: true };
-      const at = f.iso(f.origin + 305000);
+      const at = f.iso(f.origin + f.inputs.detail_selected_seconds * 1000);
       const events = [
         {
           event_id: "door-proof",
           kind: "door_open",
-          effective_at: f.iso(f.origin + 300000),
+          effective_at: f.iso(f.origin + f.inputs.detail_event_seconds * 1000),
           detected_at: at,
         },
         {
@@ -48,8 +49,8 @@ fs.mkdirSync(output, { recursive: true });
         },
       ];
       f.session.timeline.processed.push(...events);
-      for (let second = 0; second < 1200; second += 5) {
-        const selected = second === 305;
+      for (let second = 0; second < f.inputs.detail_duration_seconds; second += f.inputs.detail_trace_step_seconds) {
+        const selected = second === f.inputs.detail_selected_seconds;
         f.addRecord({
           kind: "detector_trace",
           received_at: f.iso(f.origin + second * 1000),
@@ -171,7 +172,7 @@ fs.mkdirSync(output, { recursive: true });
       f.setDelay(0);
       const requests = f.requests.length;
       for (let i = 0; i < 3; i++) {
-        f.state.now = f.iso(Date.parse(f.state.now) + 2000);
+        f.state.now = f.iso(Date.parse(f.state.now) + f.panel.preference("status_active_poll_ms"));
         await f.panel.refresh();
         await f.panel.historyLoad?.promise;
       }
@@ -260,7 +261,7 @@ fs.mkdirSync(output, { recursive: true });
       f.host.style.width = "390px";
       f.host.style.maxWidth = "100%";
     });
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(settings.browser.cursor_observation_ms);
     const narrow = await page.evaluate(() => {
       const p = f.panel,
         element = p.$("#detection-plots"),
@@ -650,14 +651,14 @@ fs.mkdirSync(output, { recursive: true });
 
     const large = await page.evaluate(async (defaults) => {
       document.body.replaceChildren();
-      window.f = await installHistoryFixture({ seconds: 14400, defaults });
+      window.f = await installHistoryFixture({ defaults });
       f.state.permissions = { admin: true };
       f.panel.state.permissions = { admin: true };
       f.panel.setPanelView("detail-history");
       await f.refresh();
       // The first later status enables "Bis zum neuesten Stand". Measure
       // subsequent polls once that visible state transition has settled.
-      f.state.now = f.iso(Date.parse(f.state.now) + 2000);
+      f.state.now = f.iso(Date.parse(f.state.now) + f.panel.preference("status_active_poll_ms"));
       await f.panel.refresh();
       await f.panel.historyLoad?.promise;
       let valuesRenders = 0;
@@ -668,15 +669,15 @@ fs.mkdirSync(output, { recursive: true });
       };
       const polls = [],
         appends = [];
-      for (let i = 0; i < 5; i++) {
-        f.state.now = f.iso(Date.parse(f.state.now) + 2000);
+      for (let i = 0; i < f.inputs.detail_updates; i++) {
+        f.state.now = f.iso(Date.parse(f.state.now) + f.panel.preference("status_active_poll_ms"));
         const start = performance.now();
         await f.panel.refresh();
         await f.panel.historyLoad?.promise;
         polls.push(performance.now() - start);
       }
       const unchangedRenders = valuesRenders;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < f.inputs.detail_updates; i++) {
         const start = performance.now();
         await f.tick();
         appends.push(performance.now() - start);
@@ -690,7 +691,7 @@ fs.mkdirSync(output, { recursive: true });
         plotCount: f.panel.shadowRoot.querySelectorAll(".detail-value-plot").length,
       };
     }, defaults);
-    assert.equal(large.records, 57600 + 5 * 8);
+    assert.equal(large.records, settings.fixtures.history.duration_seconds * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length + settings.fixtures.history.detail_updates * settings.fixtures.history.samples_per_tick * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length);
     assert.equal(
       large.unchangedRenders,
       0,

@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser: controls stay on the control page.
 const assert = require("node:assert/strict");
 const {
@@ -7,9 +8,7 @@ const {
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 const frontendDefaults = defaults.frontend;
 
 let Panel;
@@ -52,7 +51,7 @@ assert.doesNotMatch(source, /Servus|greeting/);
 
 const makePanel = (permissions, lightValue = "42") => {
   const calls = [];
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     state: {
       frontend_defaults: frontendDefaults,
@@ -99,7 +98,7 @@ const renderCurrent = (
     if (!nodes.has(selector)) nodes.set(selector, { innerHTML: "", hidden: false });
     return nodes.get(selector);
   };
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     hass: { user: { name: "Testperson", is_admin: permissions.admin } },
     $: node,
     progressionDraft: null,
@@ -507,7 +506,7 @@ const renderCurrent = (
       syncAppearanceEditor() {},
       scheduleRefresh() {},
       api: (path) =>
-        path.endsWith("/state")
+        path.split("?")[0].endsWith("/state")
           ? ++reads === 1
             ? stale.promise
             : fresh.promise
@@ -660,7 +659,7 @@ const renderCurrent = (
   const preferenceCalls = [],
     startButton = { disabled: false, textContent: "Als Startseite festlegen" },
     startStatus = { textContent: "" };
-  const startPage = Object.assign(Object.create(Panel.prototype), {
+  const startPage = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { admin: false },
@@ -700,7 +699,7 @@ const renderCurrent = (
 
   const failedButton = { disabled: false },
     failedStatus = { textContent: "vorher" };
-  const failedStartPage = Object.assign(Object.create(Panel.prototype), {
+  const failedStartPage = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { admin: false },
@@ -1416,7 +1415,7 @@ const renderCurrent = (
       detailNodes.set(selector, { innerHTML: "", hidden: false });
     return detailNodes.get(selector);
   };
-  const detailPanel = Object.assign(Object.create(Panel.prototype), {
+  const detailPanel = Object.assign(fixturePanel(Panel), {
     hass: { user: { name: "Admin", is_admin: true } },
     $: detailNode,
     progressionDraft: null,
@@ -1530,7 +1529,7 @@ const renderCurrent = (
       },
     },
   ];
-  const navigation = Object.assign(Object.create(Panel.prototype), {
+  const navigation = Object.assign(fixturePanel(Panel), {
     state: {
       frontend_defaults: frontendDefaults,
       permissions: { admin: true },

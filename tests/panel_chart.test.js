@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser. The retained renderer receives a
 // prepared historyModel; FakeCanvas is functional coverage, not a timing claim.
 const assert = require("node:assert/strict");
@@ -6,16 +7,14 @@ const {
   parameterDefinition: fixtureDefinition,
 } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
-const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).appearance;
+const appearanceCatalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
 const curveStyles = {
-  "upper:temperature": { stroke: color("series_temperature") },
-  "lower:temperature": { stroke: color("series_temperature") },
-  "upper:humidity": { stroke: color("series_humidity") },
-  "lower:humidity": { stroke: color("series_humidity") },
+  "upper:temperature": { stroke: color("series_temperature"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
+  "lower:temperature": { stroke: color("series_temperature"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
+  "upper:humidity": { stroke: color("series_humidity"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
+  "lower:humidity": { stroke: color("series_humidity"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
 };
 const vm = require("node:vm");
 
@@ -106,7 +105,7 @@ const session = (seconds = 30) => ({
   heating: { intervals: [] },
 });
 const panel = (seconds, records, positions = ["upper"]) =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     positions: new Set(positions),
     window: [base, base + seconds * 1000],
     state: {

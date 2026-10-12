@@ -296,7 +296,10 @@ class LightOutput:
         remaining = _remaining(now, ends_at)
         if phase in self._DIM_PHASES:
             low = self.parameters.values["after_run_brightness_percent"]
-            fade = min(duration, remaining / 2) if remaining is not None else duration
+            fade = (
+                min(duration, remaining * self.parameters.values["light_cooling_fade_share"])
+                if remaining is not None else duration
+            )
             return _Motion("dim", now, actual, low, fade)
         if phase in self._SESSION_PHASES:
             fade = min(duration, remaining) if remaining is not None else duration

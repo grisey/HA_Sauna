@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping
 
 
-from .core.defaults import section
+from .core.defaults import preference_values, section
 
 
 APPEARANCE_CATALOG = section("appearance")
@@ -18,6 +18,10 @@ INSTRUMENT_DEFINITIONS = APPEARANCE_CATALOG["instruments"]
 INSTRUMENT_DEFAULTS = {
     name: spec["default"] for name, spec in INSTRUMENT_DEFINITIONS.items()
 }
+PREFERENCE_DEFINITIONS = APPEARANCE_CATALOG["preferences"]
+PREFERENCE_DEFAULTS = {
+    name: spec["default"] for name, spec in PREFERENCE_DEFINITIONS.items()
+}
 _COLOR = re.compile(r"#[0-9A-Fa-f]{6}\Z")
 
 
@@ -27,16 +31,26 @@ def default_appearance():
         "colors": {},
         "scales": {name: dict(bounds) for name, bounds in SCALE_DEFAULTS.items()},
         "instruments": dict(INSTRUMENT_DEFAULTS),
+        "preferences": preference_values({}),
     }
 
 
-def validate_appearance(value):
+def validate_appearance(value, *, reject_catalog_overrides=False):
     """Validate a complete replacement; return a detached canonical value."""
-    if not isinstance(value, Mapping) or set(value) - {"colors", "scales", "instruments"}:
+    if not isinstance(value, Mapping) or set(value) - {
+        "colors", "scales", "instruments", "preferences"
+    }:
         raise ValueError("Ungültige Darstellungseinstellungen")
     colors = value.get("colors", {})
     scales = value.get("scales", {})
     instruments = value.get("instruments", {})
+    preferences = value.get("preferences", {})
+    try:
+        validated_preferences = preference_values(
+            preferences, reject_catalog_overrides=reject_catalog_overrides
+        )
+    except ValueError as error:
+        raise ValueError("Ungültige Bedienungs- oder Verlaufseinstellung") from error
     if not isinstance(instruments, Mapping) or set(instruments) - set(INSTRUMENT_DEFAULTS):
         raise ValueError("Ungültige Instrumentendarstellung")
     validated_instruments = dict(INSTRUMENT_DEFAULTS)
@@ -91,4 +105,22 @@ def validate_appearance(value):
         "colors": validated_colors,
         "scales": validated_scales,
         "instruments": validated_instruments,
+        "preferences": validated_preferences,
     }
+
+
+def frontend_preferences(appearance):
+    """Resolve the compatibility payload from the instance's leading preferences."""
+    frontend = section("frontend")
+    preferences = validate_appearance(appearance)["preferences"]
+    return {key: preferences.get(key, value) for key, value in frontend.items()}
+
+
+def appearance_options(appearance):
+    """Serialize only instance-editable preferences, retaining the shared design data."""
+    effective = validate_appearance(appearance)
+    effective["preferences"] = {
+        key: value for key, value in effective["preferences"].items()
+        if PREFERENCE_DEFINITIONS[key]["configuration_surface"] == "panel"
+    }
+    return effective

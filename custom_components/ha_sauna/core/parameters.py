@@ -38,6 +38,9 @@ class ParameterDefinition:
     settings_group: str
     settings_subgroup: str | None
     order: int
+    configuration_surface: str
+    minimum_parameter: str | None = None
+    multiple_of_parameters: tuple[str, ...] = ()
 
     def validate(self, value: object) -> float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -144,8 +147,8 @@ class Parameters:
                     continue
                 raise ParameterError(definition.key, "required")
             checked[definition.key] = definition.validate(values[definition.key])
-        if checked["oven_cooling_max_minutes"] < checked["after_run_minutes"]:
-            raise ParameterError("oven_cooling_max_minutes", "too_small")
+        if checked["light_night_elevation_degrees"] >= checked["light_day_elevation_degrees"]:
+            raise ParameterError("light_day_elevation_degrees", "too_small")
 
         sauna_minimum = checked["sauna_min_temperature_c"]
         # Older installations can have a minimum above the newly introduced
@@ -170,9 +173,18 @@ class Parameters:
             if checked[key] < sauna_minimum:
                 raise ParameterError(key, "too_small")
             BY_KEY[key].validate(checked[key])
-        for route in ("strong", "weak"):
-            if checked[f"{route}_window_seconds"] % checked["person_step_seconds"]:
-                raise ParameterError(f"{route}_window_seconds", "window_not_divisible")
+        for definition in EDITABLE_DEFINITIONS:
+            if (
+                definition.minimum_parameter is not None
+                and checked[definition.key] < checked[definition.minimum_parameter]
+            ):
+                raise ParameterError(definition.key, "too_small")
+        for definition in EDITABLE_DEFINITIONS:
+            if any(
+                checked[definition.key] % checked[reference]
+                for reference in definition.multiple_of_parameters
+            ):
+                raise ParameterError(definition.key, "window_not_divisible")
         object.__setattr__(self, "values", MappingProxyType(checked))
 
     def seconds(self, key: str) -> float:
@@ -185,17 +197,18 @@ class Parameters:
         """Return the effective UI and validation minimum for a parameter."""
         if key not in BY_KEY:
             raise ParameterError(key, "unknown_parameter")
-        if key in {
-            "preset_start_c",
-            "target_temperature_c",
-            "standard_temperature_c",
-            "final_temperature_c",
-        }:
-            return self.values["sauna_min_temperature_c"]
-        if key == "oven_cooling_max_minutes":
-            return self.values["after_run_minutes"]
         definition = BY_KEY[key]
+        if definition.minimum_parameter is not None:
+            return self.values[definition.minimum_parameter]
         return definition.minimum if definition.minimum is not None else 0
 
     def as_dict(self) -> dict[str, float]:
         return dict(self.values)
+
+    def as_options(self) -> dict[str, float]:
+        """Persist only instance choices; catalog-owned standards stay in the catalog."""
+        return {
+            definition.key: self.values[definition.key]
+            for definition in EDITABLE_DEFINITIONS
+            if definition.configuration_surface != "catalog"
+        }

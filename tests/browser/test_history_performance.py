@@ -14,14 +14,15 @@ from playwright.async_api import expect
 from custom_components.ha_sauna import archive as archive_module
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from test_settings import setting, browser_timeout
 from archive_performance_fixture import (
-    BACKGROUND_RECORD_COUNT, ORIGINAL_RECORD_COUNT, old_page_query, seed_volume,
+    INPUTS, BACKGROUND_RECORD_COUNT, ORIGINAL_RECORD_COUNT, old_page_query, seed_volume,
 )
 from harness import retain_session
 
 # Performance-fixture contract with ArchiveView's projection=history page size.
 # A full final page requires one additional empty page to close pagination.
-HISTORY_PAGE_LIMIT = 5000
+HISTORY_PAGE_LIMIT = panel_fixture.DEFAULT_PARAMETERS["archive_history_page_records"]
 
 
 class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
@@ -62,7 +63,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
 
         await self.panel.evaluate("p => p.refresh(true)")
         await self.panel.locator('.main-tabs [data-action="history"]').click()
-        await expect(self.panel.locator("canvas.history-curves")).to_be_visible(timeout=15000)
+        await expect(self.panel.locator("canvas.history-curves")).to_be_visible(timeout=browser_timeout("update"))
         await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
         self.assertFalse(await self.panel.evaluate("(p, id) => p.cache.has(id)", identities[0]))
 
@@ -83,16 +84,16 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
         await self.page.route(f"**/archive?session_id={identities[0]}&**", hold_archive)
         try:
             await self.panel.evaluate("p => { void p.refresh(true); }")
-            await asyncio.wait_for(state_started.wait(), timeout=10)
+            await asyncio.wait_for(state_started.wait(), timeout=setting("browser.event_timeout_s"))
             # select_option dispatches the native input/change events consumed
             # by the same handler as the custom dropdown; no direct loader call.
             await self.panel.locator("#session").select_option(identities[0], force=True)
-            await asyncio.wait_for(archive_started.wait(), timeout=10)
+            await asyncio.wait_for(archive_started.wait(), timeout=setting("browser.event_timeout_s"))
             self.assertFalse(release_state.is_set(), "archive starts independently of status")
             await expect(self.panel.locator("#plots")).not_to_contain_text("Noch keine Sitzungsdaten")
             await expect(self.panel.locator('#history [role="status"]').filter(has_text="Lade").first).to_be_visible()
             release_archive.set()
-            await expect(self.panel.locator("canvas.history-curves")).to_be_visible(timeout=15000)
+            await expect(self.panel.locator("canvas.history-curves")).to_be_visible(timeout=browser_timeout("update"))
             await self.panel.evaluate("async p => { if (p.historyLoad) await p.historyLoad.promise; }")
             kinds = await self.panel.evaluate("p => [...new Set(p.shown.records.map(r => r.kind))]")
             self.assertIn("measurement", kinds)
@@ -111,7 +112,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(True)
         retain_session(self.runtime)
         template_id = self.runtime.session.session_id
-        self.now = self.base + timedelta(hours=6)
+        self.now = self.base + timedelta(seconds=INPUTS["duration_seconds"])
         await self.runtime.set_operation(False)
         self.now += timedelta(minutes=20)
         await self.runtime.tick()
@@ -145,7 +146,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
             # objects. Both variants use the same server/database and role.
             await self.page.reload()
             self.panel = self.page.locator("ha-sauna-panel")
-            await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=60000)
+            await expect(self.panel.locator('#current [data-action="operation"]')).to_be_visible(timeout=browser_timeout("bootstrap"))
             with patch.object(archive_module.sqlite3, "connect", before_connect if mode == "before" else connect):
                 await self.panel.evaluate("""(p, expectedRecords) => {
                     performance.clearResourceTimings();
@@ -219,7 +220,7 @@ class HistoryPerformanceTests(unittest.IsolatedAsyncioTestCase):
                     });
                 }""", ORIGINAL_RECORD_COUNT)
                 await self.page.wait_for_function(
-                    "window.historyBenchmark?.fullFrameAt != null || window.historyBenchmark?.error", timeout=120000,
+                    "window.historyBenchmark?.fullFrameAt != null || window.historyBenchmark?.error", timeout=browser_timeout("performance"),
                 )
                 self.assertIsNone(await self.page.evaluate("window.historyBenchmark.error || null"))
                 result = await self.panel.evaluate("""async p => {

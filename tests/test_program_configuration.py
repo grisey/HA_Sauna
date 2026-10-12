@@ -115,7 +115,7 @@ class ProgramConfigurationTests(unittest.TestCase):
                 await asyncio.wait_for(archive.flush(), timeout=10)
                 stored = archive.read(runtime.session.session_id)["session"]
                 self.assertEqual(stored["next_gang_temperature_c"], 89)
-                self.assertEqual(stored["configuration"], plain(configuration.as_options()))
+                self.assertEqual(stored["configuration"], plain(configuration.as_snapshot()))
                 for value in (True, float("nan"),
                               configuration.parameters.minimum_for("target_temperature_c") - .1,
                               BY_KEY["target_temperature_c"].maximum + .1):

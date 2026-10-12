@@ -16,6 +16,8 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+from test_settings import setting, timeout as process_timeout
 
 
 def utc_now():
@@ -24,7 +26,7 @@ def utc_now():
 
 def git(*arguments):
     return (
-        subprocess.check_output(["git", *arguments], cwd=ROOT, timeout=30)
+        subprocess.check_output(["git", *arguments], cwd=ROOT, timeout=process_timeout("git"))
         .decode()
         .strip()
     )
@@ -32,7 +34,7 @@ def git(*arguments):
 
 def snapshot():
     files = (
-        subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT, timeout=30)
+        subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT, timeout=process_timeout("git"))
         .decode()
         .split("\0")
     )
@@ -78,9 +80,10 @@ class Evidence:
     def save(self):
         self.path.write_text(json.dumps(self.data, indent=2, sort_keys=True) + "\n")
 
-    def run(self, name, command, timeout=120, env=None, suite=None):
-        if not 1 <= timeout <= 900:
-            raise ValueError("A process timeout must be between 1 and 900 seconds")
+    def run(self, name, command, timeout=None, env=None, suite=None):
+        timeout = process_timeout("default") if timeout is None else timeout
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            raise ValueError("A process timeout must be a positive number")
         logfile = self.directory / f"{self.mode}-{name}.log"
         result = {
             "name": name,
@@ -113,10 +116,10 @@ class Evidence:
                     result["timed_out"] = True
                     os.killpg(process.pid, signal.SIGTERM)
                     try:
-                        process.wait(timeout=10)
+                        process.wait(timeout=process_timeout("terminate"))
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=10)
+                        process.wait(timeout=process_timeout("terminate"))
                     result["exit_code"] = process.returncode
                 result["completed"] = True
         except OSError as error:
@@ -178,9 +181,9 @@ def prepare(evidence):
                 "-r",
                 "tests/browser/requirements.txt",
             ],
-            900,
+            process_timeout("install_python"),
         ),
-        ("python-dependencies", [sys.executable, "-m", "pip", "check"], 120),
+        ("python-dependencies", [sys.executable, "-m", "pip", "check"], process_timeout("default")),
         (
             "compression-backend",
             [
@@ -188,12 +191,12 @@ def prepare(evidence):
                 "-c",
                 "from isal import isal_zlib; import aiohttp_fast_zlib; from aiohttp.compression_utils import ZLibBackend; assert aiohttp_fast_zlib.best_zlib is isal_zlib; aiohttp_fast_zlib.enable(); assert ZLibBackend.name == isal_zlib.__name__; print(ZLibBackend.name)",
             ],
-            120,
+            process_timeout("default"),
         ),
         (
             "install-chromium",
             [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
-            600,
+            process_timeout("install_browser"),
         ),
     ]
     for name, command, timeout in commands:
@@ -214,13 +217,13 @@ def prepare(evidence):
             "--no-package-lock",
             f"playwright@{version('playwright')}",
         ],
-        300,
+        process_timeout("install_node"),
     ):
         environment_file = os.environ.get("GITHUB_ENV")
         if environment_file:
             with Path(environment_file).open("a") as output:
                 output.write(f"NODE_PATH={runtime / 'node_modules'}\n")
-    evidence.run("versions", [sys.executable, "-m", "pip", "freeze"], 120)
+    evidence.run("versions", [sys.executable, "-m", "pip", "freeze"], process_timeout("default"))
     evidence.run("node-version", ["node", "--version"])
 
 
@@ -242,7 +245,7 @@ def test(evidence):
     evidence.save()
     environment = {
         "HA_TEST_REQUIRED": "1",
-        "ENGINE": "chromium",
+        "ENGINE": setting("browser.engine"),
         "HA_SAUNA_BROWSER_ARTIFACT_DIR": str(evidence.directory / "browser"),
         "HA_SAUNA_BROWSER_ARTIFACTS": str(evidence.directory / "browser"),
         "HISTORY_EVIDENCE": str(evidence.directory / "history"),
@@ -258,7 +261,7 @@ def test(evidence):
         raise RuntimeError("No panel method tests found")
     if "panel" in checks:
         evidence.run(
-            "panel", ["node", "--test", *panel_tests], 300, environment, "node"
+            "panel", ["node", "--test", *panel_tests], process_timeout("panel"), environment, "node"
         )
     if "panel-api" in checks:
         evidence.run(
@@ -274,7 +277,7 @@ def test(evidence):
                 "test_panel*.py",
                 "-v",
             ],
-            300,
+            process_timeout("panel_api"),
             environment,
             "unittest",
         )
@@ -284,7 +287,7 @@ def test(evidence):
         evidence.run(
             script,
             ["node", f"tests/browser/live_history/{script}.cjs"],
-            180,
+            process_timeout("live_history"),
             environment,
         )
     if "ha-browser" in checks:
@@ -296,14 +299,14 @@ def test(evidence):
                 "tests/browser/run.py",
                 *os.environ.get("HA_SAUNA_BROWSER_TESTS", "").split(),
             ],
-            900,
+            process_timeout("ha_browser"),
             environment,
             "unittest",
         )
 
 
 def format_changed(evidence):
-    base = git("merge-base", "HEAD", os.environ.get("UI_BASE_REF", "origin/main"))
+    base = git("merge-base", "HEAD", os.environ.get("UI_BASE_REF", setting("runner.ui_base_ref")))
     changed = git(
         "diff", "--name-only", "--diff-filter=ACMR", base, "HEAD", "--"
     ).splitlines()
@@ -320,19 +323,19 @@ def format_changed(evidence):
     evidence.save()
     if javascript:
         evidence.run(
-            "prettier", ["npx", "--yes", "prettier@3.6.2", "--write", *javascript], 600
+            "prettier", ["npx", "--yes", f"prettier@{setting('runner.prettier')}", "--write", *javascript], process_timeout("format")
         )
     if python:
         if evidence.run(
-            "install-ruff", [sys.executable, "-m", "pip", "install", "ruff"], 300
+            "install-ruff", [sys.executable, "-m", "pip", "install", f"ruff=={setting('runner.ruff')}"], process_timeout("install_node")
         ):
             evidence.run("ruff-version", [sys.executable, "-m", "ruff", "--version"])
-            evidence.run("ruff", [sys.executable, "-m", "ruff", "format", *python], 180)
-    evidence.run("patch", ["git", "diff", "--binary", "--"], 120)
+            evidence.run("ruff", [sys.executable, "-m", "ruff", "format", *python], process_timeout("live_history"))
+    evidence.run("patch", ["git", "diff", "--binary", "--"], process_timeout("default"))
     shutil.copyfile(
         evidence.directory / "format-patch.log", evidence.directory / "format.patch"
     )
-    evidence.run("clean-diff", ["git", "diff", "--exit-code", "--"], 120)
+    evidence.run("clean-diff", ["git", "diff", "--exit-code", "--"], process_timeout("default"))
 
 
 def main():

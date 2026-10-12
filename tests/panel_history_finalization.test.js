@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -72,7 +73,7 @@ function makePanel(api) {
     "#history": { hidden: false },
     "#session": { innerHTML: "" },
   };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "e",
     generation: 0,
     selected: "live",

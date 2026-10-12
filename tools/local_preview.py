@@ -6,12 +6,14 @@ Start: python3 tools/local_preview.py. Keine HA-Verbindung, keine Geräteausgabe
 # ruff: noqa: E402
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import sys
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from math import isfinite
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -19,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG
+from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG, frontend_preferences
 from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.configuration_model import (
@@ -29,7 +31,6 @@ from custom_components.ha_sauna.core.configuration_model import (
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.history import (
-    HISTORY_CONTEXT_SECONDS,
     measurement_window,
 )
 from custom_components.ha_sauna.core.light import normal_brightness
@@ -62,6 +63,32 @@ from custom_components.ha_sauna.settings import (
 )
 
 
+PREVIEW_DEFAULTS_PATH = ROOT / "tools" / "preview" / "defaults.json"
+
+
+def load_preview_defaults(path=PREVIEW_DEFAULTS_PATH):
+    """Read the exclusive synthetic dataset, resolving product parameter references."""
+    parameters = Parameters({}).values
+
+    def resolve(value):
+        if isinstance(value, dict):
+            if set(value) == {"parameter"}:
+                return parameters[value["parameter"]]
+            return {key: resolve(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [resolve(item) for item in value]
+        return value
+
+    result = resolve(json.loads(Path(path).read_text(encoding="utf-8")))
+    sample = result["sequence"]["sample_seconds"]
+    if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not isfinite(sample) or sample <= 0:
+        raise ValueError("Der Simulationsabstand muss positiv und endlich sein.")
+    return result
+
+
+PREVIEW_DEFAULTS = load_preview_defaults()
+
+
 class PreviewRuntime(SaunaRuntime):
     """Supply the simulated event entity's advertised Shelly RPC capabilities."""
 
@@ -69,37 +96,31 @@ class PreviewRuntime(SaunaRuntime):
     def configuration_model(self):
         return ConfigurationModel.from_configuration(
             self.configuration,
-            button_event_types=(
-                "btn_down", "btn_up", "single_push", "double_push",
-                "triple_push", "long_push",
-            ),
+            button_event_types=PREVIEW_DEFAULTS["button_event_types"],
         )
 
 
 class Preview:
     def __init__(self):
         self.admin = True
-        self.reset("verlauf")
+        self.reset(PREVIEW_DEFAULTS["initial"]["scenario"])
 
     def reset(self, scenario):
         self.archive_revision = getattr(self, "archive_revision", 0) + 1
         self.scenario = scenario
-        self.now = datetime(2026, 10, 8, 16, 0, tzinfo=UTC)
+        initial, sequence = PREVIEW_DEFAULTS["initial"], PREVIEW_DEFAULTS["sequence"]
+        self.now = datetime.fromisoformat(initial["origin"])
         self.records = []
         self.sessions = {}
         self.decision_cursor = self.consumer_cursor = 0
-        self.light = 0
-        self.sun_elevation = None
-        self.humidity = 24.5
+        self.light = initial["light_percent"]
+        self.sun_elevation = initial["sun_elevation_degrees"]
+        self.humidity = initial["humidity_percent"]
         self.follow_feedback = True
         self.button_pressed = False
         self.runtime = PreviewRuntime(Configuration(
-            Bindings({"upper_temperature": "sensor.demo_temperatur",
-                      "upper_humidity": "sensor.demo_feuchte",
-                      "heater": "switch.demo_ofen", "light": "light.demo_sauna",
-                      "control_input": "event.demo_taster",
-                      "presence": "binary_sensor.demo_fp300"}),
-            Parameters({"target_temperature_c": 80}), presence_source="ha_presence",
+            Bindings(PREVIEW_DEFAULTS["bindings"]),
+            Parameters({"target_temperature_c": initial["target_temperature_c"]}), presence_source="ha_presence",
             control_input_mode="button",
             control_mode="manual" if scenario == "manuell" else "automatic",
         ), clock=lambda: self.now)
@@ -114,41 +135,42 @@ class Preview:
         self.light_quantizer = LightQuantizer()
         if scenario == "manuell":
             self.select_light(0)
-        self.now -= timedelta(seconds=HISTORY_CONTEXT_SECONDS)
-        self.c.set_temperature(58, self.now)
+        context_seconds = self.c.parameters.values["history_context_seconds"]
+        self.now -= timedelta(seconds=context_seconds)
+        self.c.set_temperature(initial["prehistory_temperature_c"], self.now)
         self.sample()
-        self.step(HISTORY_CONTEXT_SECONDS, temperature=62)
+        self.step(context_seconds, temperature=initial["start_temperature_c"])
         if scenario != "manuell":
-            self.c.set_operation(True, self.now, session_id="lokale-vorschau")
-        self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":"binary_sensor.demo_fp300"})
+            self.c.set_operation(True, self.now, session_id=initial["session_id"])
+        self.record("presence_source", {"configured_source":"ha_presence", "effective_source":"ha_presence", "entity_id":PREVIEW_DEFAULTS["bindings"]["presence"]})
         self.presence("off")
         self.sample()
         if scenario in ("bereit", "gang", "verlauf", "archiv", "ausfall"):
-            self.step(600, temperature=80)
+            self.step(sequence["warmup_seconds"], temperature=sequence["warmup_temperature_c"])
         if scenario in ("gang", "verlauf", "archiv", "ausfall"):
-            self.step(120)
+            self.step(sequence["ready_seconds"])
             self.door(Kind.DOOR_OPEN)
-            self.step(3)
+            self.step(sequence["entry_open_seconds"])
             self.presence("on")
-            self.step(4)
+            self.step(sequence["entry_close_seconds"])
             self.door(Kind.DOOR_CLOSE)
-            self.step(240, temperature=82)
+            self.step(sequence["stay_seconds"], temperature=sequence["stay_temperature_c"])
         if scenario in ("verlauf", "archiv"):
             self.door(Kind.INFUSION)
-            self.humidity = 39
-            self.step(180, temperature=83)
+            self.humidity = sequence["infusion_humidity_percent"]
+            self.step(sequence["infusion_seconds"], temperature=sequence["infusion_temperature_c"])
             self.door(Kind.DOOR_OPEN)
-            self.step(4)
+            self.step(sequence["exit_open_seconds"])
             self.presence("off")
-            self.step(1)
+            self.step(sequence["exit_absence_seconds"])
             self.door(Kind.VENTILATION)
-            self.step(6)
+            self.step(sequence["exit_ventilation_seconds"])
             self.door(Kind.DOOR_CLOSE)
-            self.step(160, temperature=79)
+            self.step(sequence["cooling_seconds"], temperature=sequence["cooling_temperature_c"])
         if scenario == "archiv":
             self.c.finish_session(self.now)
             self.sample()
-            self.step(HISTORY_CONTEXT_SECONDS, temperature=65)
+            self.step(context_seconds, temperature=sequence["archive_temperature_c"])
         if scenario == "ausfall":
             self.presence("unavailable")
         self.sample()
@@ -175,11 +197,11 @@ class Preview:
                 continue
             configuration = (
                 previous["session"]["configuration"] if previous
-                else self.runtime.configuration.as_options()
+                else self.runtime.configuration.as_snapshot()
             )
             self.save_session(session, configuration)
         if self.c.session:
-            self.save_session(self.c.session, self.runtime.configuration.as_options())
+            self.save_session(self.c.session, self.runtime.configuration.as_snapshot())
 
     def save_session(self, session, configuration):
         saved = plain(session)
@@ -211,6 +233,7 @@ class Preview:
             datetime.fromisoformat(session["timeline"]["session_started_at"]),
             datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None,
             self.now,
+            context_seconds=session["configuration"]["parameters"]["history_context_seconds"],
         )
         records = [r for r in self.records
                    if r["id"] > after and (
@@ -254,7 +277,7 @@ class Preview:
         initial = self.c.temperature
         origin = self.now
         while self.now < end:
-            self.now = min(end, self.now + timedelta(seconds=10))
+            self.now = min(end, self.now + timedelta(seconds=PREVIEW_DEFAULTS["sequence"]["sample_seconds"]))
             value = initial if temperature is None else initial + (temperature-initial)*(self.now-origin).total_seconds()/seconds
             self.c.set_temperature(value, self.now)
             asyncio.run(self.runtime.tick())
@@ -301,7 +324,7 @@ class Preview:
         self.sample()
 
     def presence(self, value):
-        report = binary_presence("binary_sensor.demo_fp300", value, self.now, self.now)
+        report = binary_presence(PREVIEW_DEFAULTS["bindings"]["presence"], value, self.now, self.now)
         asyncio.run(self.runtime.accept_presence(report))
         self.record("presence", report)
         self.sample()
@@ -358,33 +381,25 @@ class Preview:
         result = plain({
             "now": self.now, "phase":c.phase, "session":session,
             "presence":self.runtime.presence_status, "rule_inputs":c.regulation_inputs,
-            "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
+            "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_snapshot(),
             "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
-            "frontend_defaults":section("frontend"),
+            "frontend_defaults":frontend_preferences(configuration.appearance),
             "configuration_model":configuration_model.as_dict(),
             "temperature_control":temperature_control(c).as_dict(),
             "button_session_gestures":self.runtime.available_button_session_gestures,
             "environment": {
                 "configured": True,
-                "station": {"name": "Beispielstation", "id": "demo"},
-                "condition": "partlycloudy",
+                "station": PREVIEW_DEFAULTS["environment"]["station"],
+                "condition": PREVIEW_DEFAULTS["environment"]["condition"],
                 "values": [
-                    {"key": key, "label": label, "state": "current", "value": value,
-                     "unit": unit, "available": True, "last_updated": self.now}
-                    for key, label, value, unit in (
-                        ("temperature", "Temperatur", 16.4, "°C"),
-                        ("humidity", "Relative Luftfeuchte", 64, "%"),
-                        ("absolute_humidity", "Absolute Luftfeuchte", 8.9, "g/m³"),
-                        ("dew_point", "Taupunkt", 9.6, "°C"),
-                        ("pressure", "Luftdruck", 1016.2, "hPa"),
-                        ("wind_speed", "Windgeschwindigkeit", 12.6, "km/h"),
-                        ("wind_direction", "Windrichtung", "W", None),
-                        ("precipitation", "Niederschlag", 0, "mm/h"),
-                    )
+                    {**item, "state": "current", "available": True, "last_updated": self.now}
+                    for item in PREVIEW_DEFAULTS["environment"]["values"]
                 ],
-                "measurement_time": self.now - timedelta(minutes=10),
+                "measurement_time": self.now - timedelta(
+                    seconds=PREVIEW_DEFAULTS["environment"]["measurement_age_seconds"]
+                ),
                 "forecast_time": self.now,
-                "source": {"mode": "mixed_data", "interpolated": True},
+                "source": PREVIEW_DEFAULTS["environment"]["source"],
                 "updated_at": self.now,
             },
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
@@ -448,13 +463,13 @@ class Preview:
                 self.button(action)
                 return {}
             if action != "step":
-                self.step(1)
+                self.step(PREVIEW_DEFAULTS["sequence"]["action_seconds"])
             if action in ("door_open", "door_close", "infusion", "ventilation_confirmed"):
                 self.door(Kind(action))
             elif action in ("on", "off", "unavailable"):
                 self.presence(action)
             elif action == "step":
-                self.step(60)
+                self.step(PREVIEW_DEFAULTS["sequence"]["advance_seconds"])
             elif action == "temperature":
                 self.c.set_temperature(float(body["value"]), self.now)
             elif action == "feedback":
@@ -477,7 +492,7 @@ class Preview:
             if previous_mode != self.c.control_mode:
                 self.select_light(0 if self.c.control_mode == "manual" else None)
             self.sample()
-            return {"configuration":self.runtime.configuration.as_options()}
+            return {"configuration":self.runtime.configuration.as_snapshot()}
         elif path.endswith("/finish_phase"):
             if (
                 not isinstance(body, dict)
@@ -581,6 +596,12 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/panel.js", "/preview.js"):
             file = ROOT / ("custom_components/ha_sauna/panel.js" if path=="/panel.js" else "tools/preview/"+("index.html" if path=="/" else "preview.js"))
             self.send(file.read_bytes(), "text/html; charset=utf-8" if path=="/" else "text/javascript; charset=utf-8")
+        elif path == "/preview-config":
+            self.send({
+                "appearance_catalog": APPEARANCE_CATALOG,
+                "frontend_defaults": section("frontend"),
+                "preview": PREVIEW_DEFAULTS,
+            })
         elif path.endswith("/state"):
             self.send(preview.state())
         elif path.endswith("/archive"):
@@ -612,7 +633,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv)>1 else 8765
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("port", nargs="?", type=int)
+    parser.add_argument("--config", type=Path, default=PREVIEW_DEFAULTS_PATH)
+    parser.add_argument("--host")
+    args = parser.parse_args()
+    PREVIEW_DEFAULTS = load_preview_defaults(args.config)
+    host = args.host or PREVIEW_DEFAULTS["server"]["host"]
+    port = args.port if args.port is not None else PREVIEW_DEFAULTS["server"]["port"]
     preview = Preview()
-    print(f"Lokale Vorschau: http://127.0.0.1:{port} · synthetische Daten", flush=True)
-    HTTPServer(("127.0.0.1",port), Handler).serve_forever()
+    print(f"Lokale Vorschau: http://{host}:{port} · synthetische Daten", flush=True)
+    HTTPServer((host, port), Handler).serve_forever()

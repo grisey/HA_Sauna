@@ -116,13 +116,12 @@ class ParameterTests(unittest.TestCase):
 
     def test_zero_policy_is_explicit(self):
         for d in DEFINITIONS:
-            data = {**parameters().as_dict(), d.key: 0}
             with self.subTest(key=d.key):
                 if d.allow_zero:
-                    self.assertEqual(Parameters(data).values[d.key], 0)
+                    self.assertEqual(d.validate(0), 0)
                 else:
                     with self.assertRaises(ParameterError):
-                        Parameters(data)
+                        d.validate(0)
 
     def test_seconds_are_derived_from_the_only_value(self):
         self.assertEqual(parameters().seconds("session_gap_minutes"),

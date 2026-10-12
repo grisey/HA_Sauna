@@ -1,8 +1,9 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const test = require("node:test");
-const { parameterValues } = require("./catalog_fixture.cjs");
+const { parameterValues, preferences } = require("./catalog_fixture.cjs");
 let Panel;
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
   HTMLElement: class {},
@@ -11,7 +12,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
 const iso = (second) => new Date(Date.UTC(2026, 9, 12, 10, 0, second)).toISOString();
 const record = (id, kind, payload) => ({ id, kind, received_at: iso(id), payload });
 const panel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     state: {
       permissions: { admin: true },
       configuration: { parameters: parameterValues() },
@@ -208,40 +209,34 @@ test("values retain missing sources and use authoritative power projection witho
   );
 });
 
-test("record access is bounded and all pages remain reachable", () => {
-  const p = panel(),
-    records = Array.from({ length: 93 }, (_, index) =>
+test("record access consumes configured page sizes and keeps all pages reachable", () => {
+  const defaults = preferences();
+  for (const change of [0, 1]) {
+    const p = panel();
+    const recordPage = defaults.detail_records_per_page + change;
+    const eventPage = defaults.detail_events_per_page + change;
+    p.state.appearance = { preferences: { ...defaults, detail_records_per_page: recordPage, detail_events_per_page: eventPage } };
+    const remaining = 13;
+    const total = recordPage * 2 + remaining;
+    const records = Array.from({ length: total }, (_, index) =>
       record(index + 1, "decision", { heat: false, reason: "operation_off" }),
     );
-  assert.equal(
-    (p.renderHistoryRecords(records).match(/<details data-record-id=/g) || []).length,
-    40,
-  );
-  p.detailRecordPage = 2;
-  const last = p.renderHistoryRecords(records);
-  assert.equal((last.match(/<details data-record-id=/g) || []).length, 13);
-  assert.match(last, /data-record-id="93"/);
-  assert.match(last, /Seite 3 von 3/);
-  assert.match(p.detailFields({ false_value: false, zero: 0, missing: null }), /Nein/);
-  assert.match(
-    p.detailFields({ false_value: false, zero: 0, missing: null }),
-    /Nicht aufgezeichnet/,
-  );
-  const events = Array.from({ length: 93 }, (_, index) => ({
-    id: `event-${index}`,
-    at: Date.parse(iso(index)),
-    label: "Ereignis",
-    detail: "Beleg",
-    source: "Regelung",
-    error: index === 90,
-  }));
-  const activity = p.renderControlEvents(events, null);
-  assert.equal((activity.match(/<tr data-record-id=/g) || []).length, 60);
-  assert.match(
-    activity,
-    /data-record-id="error-event-90"/,
-    "errors outside the current page remain immediately visible",
-  );
+    assert.equal((p.renderHistoryRecords(records).match(/<details data-record-id=/g) || []).length, recordPage);
+    p.detailRecordPage = 2;
+    const last = p.renderHistoryRecords(records);
+    assert.equal((last.match(/<details data-record-id=/g) || []).length, remaining);
+    assert.match(last, new RegExp(`data-record-id="${total}"`));
+    assert.match(last, /Seite 3 von 3/);
+    assert.match(p.detailFields({ false_value: false, zero: 0, missing: null }), /Nein/);
+    assert.match(p.detailFields({ false_value: false, zero: 0, missing: null }), /Nicht aufgezeichnet/);
+    const errorIndex = eventPage + remaining;
+    const events = Array.from({ length: errorIndex + 1 }, (_, index) => ({
+      id: `event-${index}`, at: Date.parse(iso(index)), label: "Ereignis", detail: "Beleg", source: "Regelung", error: index === errorIndex,
+    }));
+    const activity = p.renderControlEvents(events, null);
+    assert.equal((activity.match(/<tr data-record-id=/g) || []).length, eventPage);
+    assert.match(activity, new RegExp(`data-record-id="error-event-${errorIndex}"`), "errors outside the current page remain immediately visible");
+  }
 });
 
 test("live detail applicability follows configuration model while archive values keep their own evidence", () => {

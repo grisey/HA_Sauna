@@ -3,8 +3,10 @@
 [Arbeitsregeln zur Prüfung](../AGENTS.md#prüfung)
 
 Tests laufen ausschließlich unter Linux. Die maßgeblichen Versionen,
-Abhängigkeiten und Zeitgrenzen stehen in der
-[CI-Konfiguration](../.github/workflows/tests.yml). Alle folgenden Befehle werden
+Prozessgrenzen, Browsergeometrien und synthetischen Lastdaten stehen in
+[`settings.json`](settings.json). Die Python-Abhängigkeiten werden ausschließlich
+in [`browser/requirements.txt`](browser/requirements.txt) festgelegt; die
+[CI-Konfiguration](../.github/workflows/tests.yml) konsumiert diese Quellen. Alle folgenden Befehle werden
 vom Repository-Hauptverzeichnis aus und jeweils als eigener Prozess ausgeführt.
 Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
@@ -47,11 +49,31 @@ Prüfungen an einer Grenze leiten ihre Zeitpunkte oder Eingaben aus diesem Wert 
 statt den Werkseinstellungswert zu wiederholen. Lange Fristen werden über die
 virtuelle Uhr abgebildet; dafür werden keine kürzeren Regelparameter eingesetzt.
 
-Fest vorgegebene Messdaten, bewusste Bedienwerte sowie Werte zur Prüfung von
-Rundung und ungültigen Eingaben bleiben Testdaten. Historische Replays behalten
-ihre aufgezeichnete Konfiguration. Konstruierte Sitzungen binden den zentralen
-Katalog bei der Materialisierung; eine spätere Katalogänderung verlangt eine
-erneute Materialisierung und Prüfung der gebundenen Kurven und Bewertungen.
+Synthetische Lastdaten, Browserabmessungen und Messabläufe werden über
+`test_settings.py` beziehungsweise `settings_fixture.cjs` aus `settings.json`
+gelesen. Die Entwicklungsvorschau konsumiert ihren eigenen
+[`tools/preview/defaults.json`](../tools/preview/defaults.json). Konstruierte
+Sitzungen verwenden die benannten Eingaben in
+[`fixtures/scenarios/construction.json`](fixtures/scenarios/construction.json).
+Diese Eingaben beschreiben Bedienfolgen und Messumgebung; die unabhängigen
+Bewertungen bleiben in den gebundenen Szenarien. Einzelne Zahlen zur Prüfung
+mathematischer Eigenschaften, ungültiger Eingaben oder einer konkreten
+Bedienhandlung definieren das jeweilige Prüfziel.
+
+`catalog_fixture.cjs` löst Parameter- und Darstellungsreferenzen des
+Produktkatalogs auf und stellt den gleichen Panel-Bootstrap wie Home Assistant
+bereit. Die Klassifikation `configuration_surface` bestimmt auch in Tests,
+welche Werte aus dem Katalog und welche aus gespeicherten Einstellungen kommen.
+Gezielte Metatests prüfen Defaultkonsum, abweichende gültige Werte, die
+Schreibgrenzen sowie die Unveränderlichkeit des Katalogs beim Speichern.
+
+Die Szenariobindung erfasst die effektiven Parameter- und Programmwerte.
+Änderungen an Beschriftungen oder UI-Standards verändern diese Eingaben nicht.
+Veränderte effektive Werte erfordern eine Prüfung der Bindung und betroffenen
+Kurven; Materialisierung ist nur erforderlich, wenn Eingaben tatsächlich anders
+werden sollen. Die Kurven, Bedienfolgen, Bewertungen und Konstruktionsdaten
+bleiben separat durch SHA-256 gebunden. Historische Replays behalten ihre
+aufgezeichnete Konfiguration.
 
 ## Home Assistant
 
@@ -59,7 +81,7 @@ Die HA-Prüfungen verwenden eine eigene Python-Umgebung gemäß Workflow.
 Installation wie im HA-Job:
 
 ```sh
-python -m pip install 'homeassistant==2026.10.0' 'securetar==2026.4.1' 'cronsim==2.7'
+python tests/ci_settings.py install-ha
 ```
 
 Danach werden Adapter und Integration getrennt ausgeführt. `HA_TEST_REQUIRED=1`
@@ -164,9 +186,9 @@ zusätzlich dessen Eingabeweg und sichtbare Bildschirmausgabe.
 
 `HISTORY_EVIDENCE` legt das Ausgabeverzeichnis von `accept.cjs` und
 `profile.cjs` fest. `INTERACTION_EVIDENCE` benennt die Ergebnisdatei der
-Interaktionsprobe. Standardbrowser ist WebKit; `ENGINE=chromium` und
-`CHROMIUM_EXECUTABLE` wählen eine vorhandene Chromium-Laufzeit.
-`details.cjs` verwendet standardmäßig Chromium und speichert Ergebnisse und
+Interaktionsprobe. Der Standardbrowser wird in `settings.json` festgelegt; `ENGINE` und
+`CHROMIUM_EXECUTABLE` wählen bei Bedarf eine vorhandene Browserlaufzeit.
+`details.cjs` speichert Ergebnisse und
 Ansichten im Verzeichnis `DETAILS_EVIDENCE`.
 
 Alle vier Skripte prüfen den aktuellen Arbeitsstand von `panel.js`. Die vier
@@ -189,8 +211,8 @@ fehlschlagen. Die Artefakte enthalten den geprüften Commit, Tree, Dateiprüfsum
 Protokolle und Browserbilder.
 
 Der getrennte Formatjob vergleicht mit der über `UI_BASE_REF` festgelegten
-Entwicklungsbasis. Er formatiert geänderte JavaScript-Dateien mit Prettier 3.6.2
-und neue Python-Dateien mit Ruff und liefert notwendige Änderungen als Patch.
+Entwicklungsbasis. Er formatiert geänderte JavaScript-Dateien mit Prettier
+und neue Python-Dateien mit Ruff in den Versionen aus `settings.json` und liefert notwendige Änderungen als Patch.
 Der Testjob prüft den unveränderten ausgecheckten Commit.
 
 Gezielte Korrekturläufe können im manuellen Workflow über `checks` ausgewählt

@@ -1,12 +1,11 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const { parameterDefinition: fixtureDefinition } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 let Panel;
 vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"), {
@@ -34,7 +33,7 @@ function panel() {
       ]),
     ),
   };
-  return Object.assign(Object.create(Panel.prototype), {
+  return Object.assign(fixturePanel(Panel), {
     entry: "instrument-test",
     generation: 0,
     state: {
@@ -253,7 +252,7 @@ test("light status refresh moves both controls with external feedback instead of
       const response = clone(p.state);
       response.manual_controls.light.observation.brightness_percent = brightness;
       p.api = async (path) => {
-        assert.equal(path, "/instrument-test/state");
+        assert.equal(path, "/instrument-test/state?include_catalog=false");
         return response;
       };
       await Panel.prototype.refresh.call(p);

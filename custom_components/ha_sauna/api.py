@@ -8,11 +8,10 @@ from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
 
-from .appearance import APPEARANCE_CATALOG
+from .appearance import APPEARANCE_CATALOG, frontend_preferences
 from .archive import plain
 from .const import DOMAIN
 from .core.configuration_model import ConfigurationModel, temperature_control
-from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
@@ -176,6 +175,10 @@ class StateView(HomeAssistantView):
                 device.regulation_measurement(now) if device else None
             )
             configuration_model = runtime.configuration_model
+            configuration = {
+                **runtime.configuration.as_options(),
+                "parameters": runtime.configuration.parameters.as_dict(),
+            }
             result = plain(
                     {
                         "title": request.app[KEY_HASS].config_entries.async_get_entry(entry_id).title,
@@ -189,15 +192,17 @@ class StateView(HomeAssistantView):
                         "rule_inputs": controller.regulation_inputs,
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
-                        "configuration": runtime.configuration.as_options(),
+                        "configuration": configuration,
                         "configuration_model": configuration_model.as_dict(),
                         "button_session_gestures": runtime.available_button_session_gestures,
                         "measurement_ttl_seconds": runtime.configuration.parameters.values[
                             "sensor_timeout_seconds"
                         ],
-                        "appearance": runtime.configuration.appearance,
-                        "appearance_catalog": APPEARANCE_CATALOG,
-                        "frontend_defaults": section("frontend"),
+                        "appearance": configuration["appearance"],
+                        **({"appearance_catalog": APPEARANCE_CATALOG}
+                           if request.query.get("include_catalog", "true") != "false"
+                           else {}),
+                        "frontend_defaults": frontend_preferences(runtime.configuration.appearance),
                         "last_session": next((
                             item for item in reversed(controller.completed_sessions)
                             if item.timeline.gang_count
@@ -772,7 +777,7 @@ class ArchiveView(HomeAssistantView):
             read_options["now"] = clock()
         if projection == "history":
             read_options.update(
-                limit=5000,
+                limit=runtime.configuration.parameters.values["archive_history_page_records"],
                 kinds=(
                     "measurement", "source_snapshot", "phase", "diagnostic",
                     "detector_trace", "detection", "presence", "presence_source",
@@ -796,7 +801,7 @@ class ArchiveView(HomeAssistantView):
             if request["hass_user"].is_admin:
                 try:
                     stored_configuration = Configuration.from_options(
-                        session.get("configuration")
+                        session.get("configuration"), historical=True
                     )
                     session["configuration_model"] = (
                         ConfigurationModel.from_configuration(
@@ -905,7 +910,7 @@ class ExportView(HomeAssistantView):
                 runtime.archive.save_session(
                     runtime.session,
                     runtime._clock(),
-                    runtime.configuration.as_options(),
+                    runtime.configuration.as_snapshot(),
                 )
         path = await runtime.archive.export()
         response = web.StreamResponse(
@@ -919,7 +924,9 @@ class ExportView(HomeAssistantView):
             await response.prepare(request)
             handle = await asyncio.to_thread(path.open, "rb")
             try:
-                while chunk := await asyncio.to_thread(handle.read, 65536):
+                while chunk := await asyncio.to_thread(
+                    handle.read, runtime.configuration.parameters.values["archive_export_chunk_bytes"]
+                ):
                     await response.write(chunk)
             finally:
                 await asyncio.to_thread(handle.close)

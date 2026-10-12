@@ -20,8 +20,8 @@ from enum import Enum
 from math import isfinite
 from pathlib import Path
 
-from .core.defaults import section
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
+from .core.parameters import BY_KEY, Parameters
 from .core.models import TimedPhase
 from .core.phases import project_archive, project_session
 
@@ -105,7 +105,7 @@ class _ExportWork:
 
 
 class Archive:
-    def __init__(self, path, entry_id, *, sessions_only=False):
+    def __init__(self, path, entry_id, *, sessions_only=False, parameters=None):
         self.path = Path(path)
         self.entry_id = entry_id
         self.queue = asyncio.Queue()
@@ -117,11 +117,12 @@ class Archive:
         self.closed = False
         self._close_task = None
         self.sessions_only = sessions_only
+        self.parameters = parameters if parameters is not None else Parameters({})
         self._discarded_sessions = set()
         self._projection_cache = OrderedDict()
         self._projection_lock = threading.Lock()
         self._projection_generation = 0
-        self._projection_cache_entries = section("runtime")["archive_projection_cache_entries"]
+        self._projection_cache_entries = self.parameters.values["archive_projection_cache_entries"]
         self.revision = 0
         self._context_pruned_before = None
 
@@ -364,7 +365,7 @@ class Archive:
 
     def _prune_context(self, db, now, *, incremental=False):
         """Revisit newly expired buffer points; full scans only at lifecycle changes."""
-        cutoff = now - timedelta(seconds=HISTORY_CONTEXT_SECONDS)
+        cutoff = now - timedelta(seconds=self.parameters.values["history_context_seconds"])
         previous = self._context_pruned_before if incremental else None
         if previous is not None and cutoff <= previous:
             return
@@ -375,8 +376,10 @@ class Archive:
             + lower_bound + """
             AND NOT EXISTS (
                 SELECT 1 FROM sessions s WHERE s.entry_id=records.entry_id
-                AND julianday(records.received_at)>=julianday(s.started_at)-?/86400.0
-                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+?/86400.0
+                AND julianday(records.received_at)>=julianday(s.started_at)-
+                    COALESCE(json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
+                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+
+                    COALESCE(json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
                 AND (julianday(records.received_at)<=julianday(s.started_at)
                     OR julianday(records.received_at)>=julianday(COALESCE(s.ended_at, s.updated_at)))
                 AND json_extract(records.payload,'$.position') IN ('upper','lower')
@@ -489,7 +492,9 @@ class Archive:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
-    def read(self, session_id=None, *, after=0, limit=1000, kinds=None, now=None):
+    def read(self, session_id=None, *, after=0, limit=None, kinds=None, now=None):
+        if limit is None:
+            limit = self.parameters.values["archive_read_page_records"]
         # Capture before establishing the SQLite snapshot. An in-flight reader
         # may finish after invalidation, but must not restore its old cache data.
         with self._projection_lock:
@@ -517,7 +522,12 @@ class Archive:
             current = now or datetime.now(UTC)
             started = datetime.fromisoformat(session["timeline"]["session_started_at"])
             ended = datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None
-            window = measurement_window(started, ended, current)
+            context_definition = BY_KEY["history_context_seconds"]
+            context = session.get("configuration", {}).get("parameters", {}).get(
+                context_definition.key, context_definition.default
+            )
+            context = context_definition.validate(context)
+            window = measurement_window(started, ended, current, context_seconds=context)
             bindings = session.get("configuration", {}).get("bindings", {})
             sources = tuple(
                 (bindings[key], *key.split("_", 1)) for key in (

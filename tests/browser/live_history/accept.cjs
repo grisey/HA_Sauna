@@ -1,3 +1,5 @@
+const { settings } = require("../../settings_fixture.cjs");
+const { catalog: fixtureCatalog } = require("../../catalog_fixture.cjs");
 // Run from repository root with Playwright installed in NODE_PATH.
 // No Home Assistant connection: only the transport supplies synthetic fixtures.
 const { webkit, chromium } = require("playwright");
@@ -8,15 +10,13 @@ const root = process.cwd(),
   output =
     process.env.HISTORY_EVIDENCE ||
     require("node:path").join(require("node:os").tmpdir(), "ha-sauna-live-history");
-const defaults = JSON.parse(
-  fs.readFileSync(path.join(root, "custom_components/ha_sauna/defaults.json"), "utf8"),
-);
+const defaults = structuredClone(fixtureCatalog);
 let runningBrowser;
 fs.mkdirSync(output, { recursive: true });
 (async () => {
-  const engine = process.env.ENGINE || "webkit";
+  const engine = process.env.ENGINE || settings.browser.engine;
   const browser = await (engine === "webkit" ? webkit : chromium).launch({
-    headless: true,
+    headless: settings.browser.headless,
     ...(process.env.CHROMIUM_EXECUTABLE
       ? { executablePath: process.env.CHROMIUM_EXECUTABLE }
       : {}),
@@ -25,8 +25,8 @@ fs.mkdirSync(output, { recursive: true });
   const results = [];
   async function fixture(options = {}) {
     const page = await browser.newPage({
-      viewport: { width: 1440, height: 1100 },
-      deviceScaleFactor: 2,
+      viewport: settings.browser.viewports.history,
+      deviceScaleFactor: settings.browser.device_scale_factor,
     });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
@@ -36,6 +36,7 @@ fs.mkdirSync(output, { recursive: true });
     await page.addScriptTag({
       path: path.join(root, "custom_components/ha_sauna/panel.js"),
     });
+    await page.evaluate(value => { window.testSettings = value; }, settings);
     await page.addScriptTag({
       path: path.join(root, "tests/browser/live_history/fixture.js"),
     });
@@ -55,11 +56,11 @@ fs.mkdirSync(output, { recursive: true });
       const assert = (condition, message) => {
         if (!condition) throw Error(message);
       };
-      assert(f.records.length === 57600, "four-hour fixture count");
-      f.setDelay(100);
+      assert(f.records.length === f.initialRecordCount, "four-hour fixture count");
+      f.setDelay(f.inputs.delayed_response_ms);
       f.reset();
       const retainedWindow = JSON.stringify(f.panel.window);
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < f.inputs.accept_updates; i++) {
         const before = f.counts["curves.paintMain"] || 0;
         await f.tick();
         assert(
@@ -72,7 +73,7 @@ fs.mkdirSync(output, { recursive: true });
         );
       }
       assert(
-        f.panel.shown.records.length === 57624,
+        f.panel.shown.records.length === f.initialRecordCount + f.inputs.accept_updates * f.recordsPerTick,
         "all eight records retained per update",
       );
       assert(
@@ -83,15 +84,15 @@ fs.mkdirSync(output, { recursive: true });
         previousPaths = [...f.panel.historyChart.curves.mainPaths.values()].map(
           (item) => item.path,
         );
-      const at = f.iso(f.origin + 7200500);
+      const at = f.iso(f.origin + f.inputs.late_sample_seconds * 1000);
       f.addRecord({
         kind: "measurement",
         received_at: at,
         payload: {
           position: "upper",
           quantity: "temperature",
-          value: 90,
-          raw_value: "90",
+          value: f.inputs.late_temperature,
+          raw_value: String(f.inputs.late_temperature),
           received_at: at,
           measured_at: at,
         },
@@ -104,7 +105,7 @@ fs.mkdirSync(output, { recursive: true });
       assert(
         f.panel.chartDataIndex.series
           .get("upper:temperature")
-          .some((point) => point.time === Date.parse(at) && point.value === 90),
+          .some((point) => point.time === Date.parse(at) && point.value === f.inputs.late_temperature),
         "the late value is available at its original measurement time",
       );
       assert(
@@ -247,7 +248,7 @@ fs.mkdirSync(output, { recursive: true });
       };
     }),
   );
-  await page.setViewportSize({ width: 1120, height: 1000 });
+  await page.setViewportSize(settings.browser.viewports.tablet);
   await page.evaluate(() => f.settle());
   await page.evaluate(() => f.reset());
   await page.locator("ha-sauna-panel").locator('[data-action="overview"]').click();
@@ -339,19 +340,19 @@ fs.mkdirSync(output, { recursive: true });
     assert.deepEqual(p.errors, []);
     await p.close();
   }
-  const lifecycle = await fixture({ seconds: 750 });
+  const lifecycle = await fixture({ seconds: settings.fixtures.history.lifecycle_duration_seconds });
   results.push(
     await lifecycle.evaluate(async () => {
       const p = f.panel;
-      f.setDelay(35);
-      f.setPageSize(1000);
+      f.setDelay(f.inputs.lifecycle_response_delay_ms);
+      f.setPageSize(f.inputs.page_size);
       p.cache.clear();
       p.shown = null;
       p.historySessionId = null;
       const original = p.api;
       let failSecond = true;
       p.api = async (path) => {
-        if (path.includes("after=1000") && failSecond) {
+        if (path.includes(`after=${f.inputs.page_size}`) && failSecond) {
           failSecond = false;
           throw Error("synthetic second page");
         }
@@ -359,17 +360,17 @@ fs.mkdirSync(output, { recursive: true });
       };
       await p.refresh();
       const load = p.historyLoad?.promise;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      if (p.busy || p.cache.get("synthetic").records.length < 1000)
+      await new Promise((resolve) => setTimeout(resolve, testSettings.browser.settle_ms));
+      if (p.busy || p.cache.get("synthetic").records.length < f.inputs.page_size)
         throw Error("partial data not usable");
       await load;
-      if (p.cache.get("synthetic").after !== 1000) throw Error("failed page cursor");
+      if (p.cache.get("synthetic").after !== f.inputs.page_size) throw Error("failed page cursor");
       await p.refresh();
       await p.historyLoad?.promise;
       await f.settle();
       if (
-        p.shown.records.length !== 3000 ||
-        new Set(p.shown.records.map((r) => r.id)).size !== 3000
+        p.shown.records.length !== f.initialRecordCount ||
+        new Set(p.shown.records.map((r) => r.id)).size !== f.initialRecordCount
       )
         throw Error("retry duplicates/data loss");
       // Keep an old open cached session while the status belongs to a new session.
@@ -381,7 +382,7 @@ fs.mkdirSync(output, { recursive: true });
         timeline: { ...f.session.timeline, session_id: "new" },
       };
       p.api = (path) =>
-        path.endsWith("/state") ? Promise.resolve(newState) : original(path);
+        path.split("?")[0].endsWith("/state") ? Promise.resolve(newState) : original(path);
       p.selected = "synthetic";
       p.historySelectionGeneration = (p.historySelectionGeneration || 0) + 1;
       await p.refresh();
@@ -390,7 +391,7 @@ fs.mkdirSync(output, { recursive: true });
       if (
         !p.shown.session.ended_at ||
         !p.cache.get("synthetic").finalSynced ||
-        p.shown.records.length !== 3004
+        p.shown.records.length !== f.records.length
       )
         throw Error("old selection after new live session not finalized");
       // The replaced-selection response must not overwrite the current cache/view.
@@ -425,7 +426,7 @@ fs.mkdirSync(output, { recursive: true });
       p.cache.clear();
       p.state = { ...f.state, session: null };
       p.historySelectionGeneration++;
-      p.api = (path) => Promise.resolve(path.endsWith("/state") ? p.state : []);
+      p.api = (path) => Promise.resolve(path.split("?")[0].endsWith("/state") ? p.state : []);
       await p.refresh();
       await p.historyLoad?.promise;
       await f.settle();
@@ -437,9 +438,9 @@ fs.mkdirSync(output, { recursive: true });
         throw Error("empty archive cleanup");
       return {
         case: "slow-pages-retry-old-session-stale-empty",
-        partial: 1000,
-        complete: 3000,
-        closedOld: 3004,
+        partial: f.inputs.page_size,
+        complete: f.initialRecordCount,
+        closedOld: f.records.length,
       };
     }),
   );

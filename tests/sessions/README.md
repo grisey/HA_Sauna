@@ -6,12 +6,21 @@ Ein fehlender Bestandteil ist ein Fehler. Die Prüfung benötigt keine private
 Arbeitsablage, keinen HA-Host und keine Zugangsdaten.
 
 Konstruierte Szenarien beziehen Anlagenparameter und gespeicherte Programme
-direkt aus dem zentralen `defaults.json`. `configuration.json` enthält dafür
-nur den gebundenen Quellenverweis, keinen zweiten Wertekatalog. Ändert sich
-diese Quelle, scheitert der Lauf vor Beginn mit dem Hinweis auf veraltete
-Messkurven. Die Materialisierung mit `build_fixtures.py` und die fachliche
-Prüfung der daraus entstandenen Kurven erfolgen ausdrücklich vor dem nächsten
-Produktlauf. Historische Replays behalten ihre damalige Anlagenkonfiguration.
+direkt aus dem zentralen `defaults.json`. `configuration.json` enthält einen
+Quellenverweis mit der ursprünglichen Dateiprüfsumme und eine gesonderte
+Prüfsumme aller aufgelösten Parameterdefaults sowie der Start-, End- und
+Verteilungswerte der Programme. UI-Standards und Beschriftungen beeinflussen
+diese Projektion nicht. Ein geänderter effektiver Wert lässt den Lauf vor
+Beginn scheitern, bis die Bindung und ihre Auswirkungen auf die Eingaben
+geprüft wurden. Unveränderte Messkurven werden dabei nicht neu erzeugt.
+
+[`construction.json`](../fixtures/scenarios/construction.json) enthält benannte
+Eingaben für Bedienfolgen, Klimaübergänge, Lichtwerte und die einzelnen
+Sitzungsvarianten. `build_fixtures.py` konsumiert diese Daten bei einer ausdrücklich
+erforderlichen Materialisierung. Das Manifest bindet Konstruktion, Kurven,
+Bedienungen und Bewertungen getrennt. Die Bewertung wird nicht aus dem aktuellen
+Produktergebnis erzeugt. Historische Replays behalten ihre damalige
+Anlagenkonfiguration.
 
 ## Sitzungen und Iterationen
 

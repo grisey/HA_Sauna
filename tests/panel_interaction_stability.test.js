@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
@@ -12,7 +13,7 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
 });
 const iso = (second) => new Date(Date.UTC(2032, 0, 1) + second * 1000).toISOString();
 const makePanel = () =>
-  Object.assign(Object.create(Panel.prototype), {
+  Object.assign(fixturePanel(Panel), {
     state: { now: iso(60), configuration: { parameters: parameterValues() } },
     shown: {
       session: {

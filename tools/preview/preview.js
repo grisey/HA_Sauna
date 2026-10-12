@@ -1,4 +1,6 @@
+const bootstrap = await (await fetch("/preview-config")).json();
 const panel = document.createElement("ha-sauna-panel");
+panel.panel = { config: bootstrap };
 document.body.append(panel);
 panel.entry = "preview";
 panel.$("#instance").hidden = true;

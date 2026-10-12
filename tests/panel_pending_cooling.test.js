@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const {
@@ -95,7 +96,7 @@ function state(admin) {
 
 function render(admin, target = "#details") {
   const nodes = new Map();
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     state: state(admin),
     hass: { user: { name: "Admin", is_admin: admin } },
     progressionDraft: null,
@@ -127,7 +128,7 @@ assert.match(
 
 (async () => {
   const calls = [];
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     entry: "entry-1",
     state: { permissions: { admin: false, control: true } },
     api: async (...args) => calls.push(args),

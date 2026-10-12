@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const { parameterValues: fixtureValues } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
@@ -6,9 +7,7 @@ const vm = require("node:vm");
 
 const panelPath = process.env.PANEL_PATH || "custom_components/ha_sauna/panel.js";
 const document = { hidden: false };
-const frontendDefaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-).frontend;
+const frontendDefaults = structuredClone(require("./catalog_fixture.cjs").catalog).frontend;
 let Panel;
 vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   HTMLElement: class {
@@ -19,7 +18,7 @@ vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   clearTimeout,
   document,
 });
-const turn = () => new Promise((resolve) => setTimeout(resolve, 5));
+const turn = () => new Promise((resolve) => setTimeout(resolve, require("./settings_fixture.cjs").setting("browser.poll_ms")));
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => {
@@ -57,7 +56,7 @@ function panel(api) {
     "#plots": { innerHTML: "" },
     "#history-overview": { replaceChildren() {} },
   };
-  const p = Object.assign(new Panel(), {
+  const p = Object.assign(fixturePanel(new Panel()), {
     entry: "e",
     generation: 0,
     selected: "live",
@@ -195,11 +194,11 @@ test("first archive page failure replaces the loading placeholder and clears bus
 
 test("status polling is live during operation and sparse while idle", () => {
   const { p } = panel(async () => ({}));
-  assert.equal(p.statusPollInterval(), 2000);
+  assert.equal(p.statusPollInterval(), p.preference("status_active_poll_ms"));
   p.state = { ...state(), session: null, operation_enabled: false };
-  assert.equal(p.statusPollInterval(), 10000);
+  assert.equal(p.statusPollInterval(), p.preference("status_idle_poll_ms"));
   p.state.light_after_run = { ends_at: "2032-01-01T12:01:00Z" };
-  assert.equal(p.statusPollInterval(), 2000);
+  assert.equal(p.statusPollInterval(), p.preference("status_active_poll_ms"));
 });
 
 test("unrelated hass updates do not restart an in-flight status poll", async () => {
@@ -207,7 +206,7 @@ test("unrelated hass updates do not restart an in-flight status poll", async () 
   const idle = { ...state(), session: null, operation_enabled: false };
   let reads = 0;
   const { p, nodes } = panel(async (request) => {
-    if (request !== "/e/state") throw Error(request);
+    if (request !== "/e/state?include_catalog=false") throw Error(request);
     reads++;
     return response.promise;
   });
@@ -242,7 +241,7 @@ test("slow archive pages do not hold status refresh and partial pages are visibl
     lists = 0,
     pages = 0;
   const { p, nodes } = panel(async (request) => {
-    if (request.endsWith("/state")) {
+    if (request.split("?")[0].endsWith("/state")) {
       states++;
       return state();
     }
@@ -443,7 +442,7 @@ test("a completed background session refreshes the list without discarding archi
       last_session: latest?.session || null,
     });
     const { p } = panel(async (request) => {
-      if (request.endsWith("/state")) return snapshot();
+      if (request.split("?")[0].endsWith("/state")) return snapshot();
       if (request.endsWith("/archive")) {
         lists++;
         return latest === next
@@ -528,7 +527,7 @@ test("an older pending list cannot hide a newer last-session identity", async ()
 test("a confirmed empty archive list remains loaded across status cycles", async () => {
   let lists = 0;
   const { p } = panel(async (request) => {
-    if (request.endsWith("/state")) return { ...state(), session: null };
+    if (request.split("?")[0].endsWith("/state")) return { ...state(), session: null };
     lists++;
     return [];
   });
@@ -544,7 +543,7 @@ test("returning from a hidden document reconciles its archive list once", async 
   let lists = 0;
   const idle = { ...state(), session: null, operation_enabled: false };
   const { p } = panel(async (request) => {
-    if (request.endsWith("/state")) return idle;
+    if (request.split("?")[0].endsWith("/state")) return idle;
     lists++;
     return [];
   });
@@ -582,7 +581,7 @@ test("live page polling is throttled, explicit reads advance without reloading t
   await p.startHistoryLoad();
   assert.equal(pages, 1, "background polls retain the loaded live cache");
   await p.startHistoryLoad(true);
-  p.historyCache("live").lastFetchedAt -= 15000;
+  p.historyCache("live").lastFetchedAt -= p.preference("history_live_poll_ms");
   await p.startHistoryLoad();
   assert.equal(lists, 1);
   assert.equal(pages, 3);
@@ -644,7 +643,7 @@ test("fixed user and admin panels load their finalized archive records", async (
 
 test("role loss clears diagnostic consumers even while history is hidden", async () => {
   const { p, nodes } = panel(async (request) => {
-    assert.ok(request.endsWith("/state"));
+    assert.ok(request.split("?")[0].endsWith("/state"));
     return { ...state(), permissions: { admin: false } };
   });
   p.syncHistoryProjection();
