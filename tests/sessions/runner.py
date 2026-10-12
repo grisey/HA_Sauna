@@ -79,6 +79,7 @@ def substitute(value, values):
 def load_manifest(name):
     path = ROOT / name
     manifest = read_json(path)
+    defaults = SESSION_INPUTS["configuration_defaults"]
     parameters = bound_parameters() if "configuration_file" in manifest else None
     for file_key, hash_key in (("source_curves", "source_curves_sha256"),
                                ("configuration_file", "configuration_sha256"),
@@ -100,7 +101,10 @@ def load_manifest(name):
         if case["id"] != entry["id"]:
             raise ValueError(f"Fixture identity mismatch: {fixture}")
         case["_path"] = fixture
-        for source in entry.get("presence_sources", [case.get("configuration", {}).get("presence_source", "ha_presence")]):
+        sources = entry.get("presence_sources", [
+            case.get("configuration", {}).get("presence_source", defaults["presence_source"])
+        ])
+        for source in sources:
             for choice in entry.get("variants", [{}]):
                 variant = deepcopy(case)
                 variant["base_id"] = case["id"]
@@ -114,7 +118,9 @@ def load_manifest(name):
                         raise ValueError(f"Derived fixture duplicates or lacks the canonical parameter binding: {fixture}")
                     config["parameters"] = dict(parameters)
                 config.update(choice.get("configuration", {}), presence_source=source)
-                gesture = config.get("button_session_gesture", "long")
+                gesture = config.get(
+                    "button_session_gesture", defaults["button_session_gesture"]
+                )
                 variant["actions"] = substitute([
                     action for action in variant["actions"]
                     if gesture in action.get("gestures", [gesture])
@@ -203,7 +209,7 @@ class SessionRun:
         self.notifications = []
         self.observed_outputs = (bound_jsonl(case, "observed_outputs")
                                  if case.get("kind") == "real_session" else [])
-        self.feedback_mode = case.get("feedback_mode", "simulated_acknowledgement")
+        self.feedback_mode = case.get("feedback_mode", SESSION_INPUTS["feedback_mode"])
         self.pending_feedback = []
         self.first_session_id = None
         self.first_session_started_at = None
@@ -217,10 +223,11 @@ class SessionRun:
         ]
         self.input_transitions = {check["id"]: [] for check in self.transition_checks}
         spec = case.get("configuration", {})
+        defaults = SESSION_INPUTS["configuration_defaults"]
         bindings = dict(BINDINGS)
-        if spec.get("button_input_kind") == "binary":
+        if spec.get("button_input_kind", defaults["button_input_kind"]) == "binary":
             bindings["control_input"] = "binary_sensor.fixture_button"
-        if spec.get("presence_source", "ha_presence") == "proxy":
+        if spec.get("presence_source", defaults["presence_source"]) == "proxy":
             bindings.pop("presence")
         program = spec.get("program", {})
         parameters = dict(spec.get("parameters", {}))
@@ -237,14 +244,18 @@ class SessionRun:
                               temperature_gangs=len(program["steps"]))
         configuration = Configuration(
             Bindings(bindings), Parameters(parameters),
-            control_input_mode=spec.get("control_input_mode", "button"),
-            control_mode=spec.get("control_mode", "automatic"),
-            presence_source=spec.get("presence_source", "ha_presence"),
-            program_mode=program.get("mode", "constant"),
+            control_input_mode=spec.get(
+                "control_input_mode", defaults["control_input_mode"]
+            ),
+            control_mode=spec.get("control_mode", defaults["control_mode"]),
+            presence_source=spec.get("presence_source", defaults["presence_source"]),
+            program_mode=program.get("mode", defaults["program_mode"]),
             temperature_steps=tuple(program["steps"]) if program.get("steps") else None,
             selected_program_id=program.get("profile"),
-            button_program=spec.get("button_program", "constant"),
-            button_session_gesture=spec.get("button_session_gesture", "long"),
+            button_program=spec.get("button_program", defaults["button_program"]),
+            button_session_gesture=spec.get(
+                "button_session_gesture", defaults["button_session_gesture"]
+            ),
         )
         self.runtime = SaunaRuntime(configuration, lambda: self.now)
         self.hass = SimpleNamespace(
@@ -258,9 +269,9 @@ class SessionRun:
         self.device = HADevice(self.hass, self.runtime)
         self.runtime.device = self.device
         self.device.ingest("control_input", self.state("control_input", "idle", {
-            "event_types": spec.get("button_event_types", [
-                "btn_down", "btn_up", "single_push", "long_push", "double_push", "triple_push",
-            ]),
+            "event_types": spec.get(
+                "button_event_types", list(defaults["button_event_types"])
+            ),
         }), self.now, initial=True)
         self.runtime._reset_button_gestures()
         self.state("light", spec.get("initial_light_percent", SESSION_INPUTS["initial_light_percent"]))

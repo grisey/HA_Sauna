@@ -92,7 +92,25 @@
       "origin": "2000-01-01T12:00:00+00:00",
       "sun_day_elevation": 10,
       "sun_night_elevation": -10,
-      "initial_light_percent": 0
+      "initial_light_percent": 0,
+      "feedback_mode": "simulated_acknowledgement",
+      "configuration_defaults": {
+        "presence_source": "ha_presence",
+        "control_input_mode": "button",
+        "control_mode": "automatic",
+        "program_mode": "constant",
+        "button_program": "constant",
+        "button_session_gesture": "long",
+        "button_input_kind": "event",
+        "button_event_types": [
+          "btn_down",
+          "btn_up",
+          "single_push",
+          "long_push",
+          "double_push",
+          "triple_push"
+        ]
+      }
     },
     "history": {
       "origin": "2032-01-01T08:00:00Z",

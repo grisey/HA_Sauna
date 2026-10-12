@@ -16,7 +16,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.checks || 'all' }}
   cancel-in-progress: true
 jobs:
   configuration:
