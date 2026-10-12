@@ -1965,9 +1965,11 @@ class SaunaPanel extends HTMLElement {
         values.diagnostic_axis_left_padding_px +
           values.diagnostic_axis_right_padding_px &&
       values.diagnostic_plot_height_px >
-        values.diagnostic_axis_top_padding_px + values.diagnostic_axis_bottom_padding_px &&
+        values.diagnostic_axis_top_padding_px +
+          values.diagnostic_axis_bottom_padding_px &&
       values.diagnostic_plot_height_px >
-        values.diagnostic_guide_top_padding_px + values.diagnostic_axis_bottom_padding_px &&
+        values.diagnostic_guide_top_padding_px +
+          values.diagnostic_axis_bottom_padding_px &&
       values.diagnostic_plot_height_px > values.diagnostic_time_label_bottom_padding_px
     );
   }

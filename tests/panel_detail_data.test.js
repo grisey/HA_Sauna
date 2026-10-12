@@ -245,10 +245,7 @@ test("detail plots consume catalog geometry for curves, cursor and labels", () =
     Date.parse(iso(0)) + 2500,
   );
   assert.match(html, /viewBox="0 0 680 160"/);
-  assert.match(
-    html,
-    /d="M40\.00,130\.00 L640\.00,30\.00"[^>]*stroke-width="2\.5"/,
-  );
+  assert.match(html, /d="M40\.00,130\.00 L640\.00,30\.00"[^>]*stroke-width="2\.5"/);
   assert.match(html, /<line x1="190" x2="190" y1="20" y2="140"/);
   assert.match(html, /<text x="0" y="32">20/);
   assert.match(html, /<text x="0" y="140">10/);

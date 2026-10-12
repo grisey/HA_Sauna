@@ -153,7 +153,8 @@ class ParameterConsumptionTests(unittest.TestCase):
         self.assertEqual(
             set(saved["parameters"]),
             {
-                spec["key"] for spec in catalog["parameters"]
+                spec["key"]
+                for spec in catalog["parameters"]
                 if spec["configuration_surface"] != "catalog"
             },
         )
@@ -161,7 +162,8 @@ class ParameterConsumptionTests(unittest.TestCase):
         self.assertEqual(
             set(saved["appearance"]["preferences"]),
             {
-                name for name, spec in preferences.items()
+                name
+                for name, spec in preferences.items()
                 if spec["configuration_surface"] == "panel"
             },
         )

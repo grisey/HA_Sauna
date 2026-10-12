@@ -122,7 +122,9 @@ assert.equal(
 assert.equal(panel.clampArcTemperature(80.6, { minimum: 60, maximum: 100 }), 81);
 const focusedTrack = panel
   .appearanceStyles()
-  .match(/\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*([\d.]+)/s);
+  .match(
+    /\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*([\d.]+)/s,
+  );
 assert.ok(focusedTrack, "the rendered focus rule sets the arc opacity");
 assert.equal(
   Number(focusedTrack[1]),

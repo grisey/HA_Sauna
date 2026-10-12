@@ -290,10 +290,10 @@ test("history axis labels cancel unequal SVG scaling and reduce narrow time tick
     low: 20,
     high: 100,
     humidityHigh: 80,
-    x: (time) => plot.left + ((time - start) / (end - start)) * (plot.right - plot.left),
+    x: (time) =>
+      plot.left + ((time - start) / (end - start)) * (plot.right - plot.left),
   };
-  const axes = (width, height) =>
-    panel.historyAxes(model, { width, height });
+  const axes = (width, height) => panel.historyAxes(model, { width, height });
   for (const [width, height] of [
     [plot.width, plot.height],
     [642, 420],
