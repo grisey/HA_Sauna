@@ -180,3 +180,15 @@ Einheiten; `interaction.cjs` prüft zusätzlich deren Werte gegen die unabhängi
 festgelegten Bereiche der synthetischen Daten. Interne Aufrufzähler dienen nur
 der Beobachtung von Zeichenarbeit und Knotenerhalt. Archivfehler und
 Sitzungswechsel werden über das synthetische Transportfixture vorgegeben.
+
+Der GitHub-Workflow `HA Sauna UI` prüft Zweige unter `codex/ui-*` auf Ubuntu.
+`tests/browser/run_ui.py` führt die Panelmethoden, Panel-API-Tests, vier
+Verlaufsproben und die Home-Assistant-Browsertests aus. Jeder Prozess erhält einen
+eigenen Exitcode und Abschlussnachweis; übersprungene Tests lassen die Prüfung
+fehlschlagen. Die Artefakte enthalten den geprüften Commit, Tree, Dateiprüfsummen,
+Protokolle und Browserbilder.
+
+Der getrennte Formatjob vergleicht mit der über `UI_BASE_REF` festgelegten
+Entwicklungsbasis. Er formatiert geänderte JavaScript-Dateien mit Prettier 3.6.2
+und neue Python-Dateien mit Ruff und liefert notwendige Änderungen als Patch.
+Der Testjob prüft den unveränderten ausgecheckten Commit.

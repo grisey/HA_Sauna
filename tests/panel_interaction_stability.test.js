@@ -11,22 +11,26 @@ vm.runInNewContext(fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8"
   clearTimeout,
 });
 const iso = (second) => new Date(Date.UTC(2032, 0, 1) + second * 1000).toISOString();
-const makePanel = () => Object.assign(Object.create(Panel.prototype), {
-  state: { now: iso(60), configuration: { parameters: parameterValues() } },
-  shown: {
-    session: { timeline: { session_id: "s", session_started_at: iso(0), processed: [] } },
-    records: [],
-  },
-  shadowRoot: { querySelectorAll: () => [] },
-  $: () => null,
-  message() {},
-});
+const makePanel = () =>
+  Object.assign(Object.create(Panel.prototype), {
+    state: { now: iso(60), configuration: { parameters: parameterValues() } },
+    shown: {
+      session: {
+        timeline: { session_id: "s", session_started_at: iso(0), processed: [] },
+      },
+      records: [],
+    },
+    shadowRoot: { querySelectorAll: () => [] },
+    $: () => null,
+    message() {},
+  });
 
 test("incoming session growth preserves full and maximally zoomed windows until explicit reset", () => {
   for (const zoom of [1, 256]) {
     const panel = makePanel();
     panel.ensureHistoryWindow();
-    if (zoom === 256) panel.setHistoryWindow(Date.parse(iso(20)), Date.parse(iso(20)) + 1);
+    if (zoom === 256)
+      panel.setHistoryWindow(Date.parse(iso(20)), Date.parse(iso(20)) + 1);
     const window = panel.window;
     const previousZoom = panel.zoom;
     panel.state.now = iso(36000);
@@ -50,7 +54,10 @@ test("archived thresholds are never backfilled from changed current settings", (
   delete panel.shown.session.configuration;
   delete panel.shown.session.ended_at;
   panel.state.session = panel.shown.session;
-  assert.equal(panel.diagnosticsParameters().person_step_seconds, parameterValues().person_step_seconds);
+  assert.equal(
+    panel.diagnosticsParameters().person_step_seconds,
+    parameterValues().person_step_seconds,
+  );
 });
 
 test("zooming a retained viewport uses its width instead of the expanded live domain", () => {
@@ -67,9 +74,13 @@ test("zooming a retained viewport uses its width instead of the expanded live do
 test("all stored checks, negative conditions, zero holds and readiness are accessible without a signal", () => {
   const panel = makePanel();
   const trace = {
-    at: iso(5), metrics: { upper: { door_temperature_slope: 0 } },
-    checks: { door_open: false }, conditions: { door_open: false },
-    holds: { door_open: 0 }, readiness: { temperature: false }, signals: [],
+    at: iso(5),
+    metrics: { upper: { door_temperature_slope: 0 } },
+    checks: { door_open: false },
+    conditions: { door_open: false },
+    holds: { door_open: 0 },
+    readiness: { temperature: false },
+    signals: [],
   };
   panel.shown.records.push({ kind: "detector_trace", payload: trace });
   const html = panel.diagnosticSelectionMarkup(panel.diagnosticData().traces);
@@ -79,7 +90,10 @@ test("all stored checks, negative conditions, zero holds and readiness are acces
   assert.match(html, /data-key="value:door_open">0 Prüfpunkte</);
   assert.match(html, /data-key="value:temperature">Nein</);
   assert.match(html, /Signale: Keine/);
-  panel.shown.records.push({ kind: "detector_trace", payload: { ...trace, at: iso(10) } });
+  panel.shown.records.push({
+    kind: "detector_trace",
+    payload: { ...trace, at: iso(10) },
+  });
   panel.diagnosticSelectionMarkup(panel.diagnosticData().traces);
   assert.equal(panel.selectedDiagnosticTraceAt, iso(5));
 });
@@ -90,7 +104,11 @@ test("a missing marker target clears a navigation request instead of stealing la
   panel.pendingEventFocus = { kind: "marker", eventId: "absent", sessionId: "s" };
   panel.revealEventTarget("marker");
   assert.equal(panel.pendingEventFocus, null);
-  panel.pendingEventFocus = { kind: "marker", eventId: "absent", sessionId: "old-session" };
+  panel.pendingEventFocus = {
+    kind: "marker",
+    eventId: "absent",
+    sessionId: "old-session",
+  };
   panel.revealEventTarget("marker");
   assert.equal(panel.pendingEventFocus, null);
 });
@@ -98,14 +116,29 @@ test("a missing marker target clears a navigation request instead of stealing la
 test("same-time traces remain independently selectable while new records append", async () => {
   const panel = makePanel();
   panel.state.permissions = { admin: true };
-  const first = { at: iso(5), metrics: { upper: { door_temperature_slope: -1 } }, signals: [] };
-  const second = { at: iso(5), metrics: { upper: { door_temperature_slope: -2 } }, signals: [] };
-  panel.shown.records = [first, second].map((payload) => ({ kind: "detector_trace", payload }));
-  panel.drawDiagnostics = () => panel.diagnosticSelectionMarkup(panel.diagnosticData().traces);
+  const first = {
+    at: iso(5),
+    metrics: { upper: { door_temperature_slope: -1 } },
+    signals: [],
+  };
+  const second = {
+    at: iso(5),
+    metrics: { upper: { door_temperature_slope: -2 } },
+    signals: [],
+  };
+  panel.shown.records = [first, second].map((payload) => ({
+    kind: "detector_trace",
+    payload,
+  }));
+  panel.drawDiagnostics = () =>
+    panel.diagnosticSelectionMarkup(panel.diagnosticData().traces);
   panel.drawDiagnostics();
   await panel.action("diagnostic-trace:next");
   assert.equal(panel.selectedDiagnosticTrace, second);
-  panel.shown.records.push({ kind: "detector_trace", payload: { ...first, at: iso(10) } });
+  panel.shown.records.push({
+    kind: "detector_trace",
+    payload: { ...first, at: iso(10) },
+  });
   panel.drawDiagnostics();
   assert.equal(panel.selectedDiagnosticTrace, second);
 });
@@ -114,14 +147,21 @@ test("old archives without sample cadence show isolated visible points and no bo
   const panel = makePanel();
   panel.state.permissions = { admin: true };
   panel.shown.session.ended_at = iso(60);
-  panel.shown.records = [5, 10].map((second) => ({ kind: "detector_trace", payload: {
-    at: iso(second), metrics: { upper: { door_temperature_slope: -second } }, signals: [],
-  } }));
+  panel.shown.records = [5, 10].map((second) => ({
+    kind: "detector_trace",
+    payload: {
+      at: iso(second),
+      metrics: { upper: { door_temperature_slope: -second } },
+      signals: [],
+    },
+  }));
   panel.ensureHistoryWindow();
   const plots = { innerHTML: "" };
-  panel.$ = (selector) => selector === "#detection-plots" ? plots : null;
+  panel.$ = (selector) => (selector === "#detection-plots" ? plots : null);
   panel.drawDiagnostics();
-  const path = plots.innerHTML.match(/data-series="detector_door_temperature_slope_upper" d="([^"]*)"/)[1];
+  const path = plots.innerHTML.match(
+    /data-series="detector_door_temperature_slope_upper" d="([^"]*)"/,
+  )[1];
   assert.equal((path.match(/l0,0/g) || []).length, 2);
   assert.doesNotMatch(path, /L/);
   assert.match(plots.innerHTML, /stroke-linecap="round"/);
@@ -130,59 +170,104 @@ test("old archives without sample cadence show isolated visible points and no bo
 
 test("person markers identify the decision-making humidity feature, not contextual temperature", () => {
   const panel = makePanel();
-  assert.equal(panel.diagnosticRoute({ kind: "person_strong" })[0], "strong_humidity_slope");
-  assert.equal(panel.diagnosticRoute({ kind: "person_weak" })[0], "weak_humidity_slope");
+  assert.equal(
+    panel.diagnosticRoute({ kind: "person_strong" })[0],
+    "strong_humidity_slope",
+  );
+  assert.equal(
+    panel.diagnosticRoute({ kind: "person_weak" })[0],
+    "weak_humidity_slope",
+  );
 });
 
 test("diagnostic configuration uses the saved model and keeps recorded features from either person source", () => {
   for (const direct of [false, true]) {
     const panel = makePanel();
     panel.state.permissions = { admin: true };
-    panel.state.configuration_model = { measurement_positions: ["lower"], presence: { direct: !direct } };
+    panel.state.configuration_model = {
+      measurement_positions: ["lower"],
+      presence: { direct: !direct },
+    };
     const savedModel = { measurement_positions: ["upper"], presence: { direct } };
     panel.shown.session.ended_at = iso(60);
     panel.shown.session.configuration_model = savedModel;
     panel.shown.session.configuration = { parameters: parameterValues() };
-    panel.shown.records.push({ kind: "detector_trace", payload: {
-      at: iso(5), metrics: { upper: { strong_humidity_slope: 2, strong_temperature_slope: -1 } },
-      checks: { strong: false }, conditions: { strong: null }, holds: { strong: 0 }, signals: [],
-    } });
+    panel.shown.records.push({
+      kind: "detector_trace",
+      payload: {
+        at: iso(5),
+        metrics: { upper: { strong_humidity_slope: 2, strong_temperature_slope: -1 } },
+        checks: { strong: false },
+        conditions: { strong: null },
+        holds: { strong: 0 },
+        signals: [],
+      },
+    });
     panel.ensureHistoryWindow();
     const plots = { innerHTML: "" };
-    panel.$ = (selector) => selector === "#detection-plots" ? plots : null;
+    panel.$ = (selector) => (selector === "#detection-plots" ? plots : null);
     assert.equal(panel.historyConfigurationModel(), savedModel);
     panel.drawDiagnostics();
-    assert.match(plots.innerHTML, direct ? /Personenquelle: Präsenzsensor mit Türereignis/ : /Personenquelle: Temperatur und Feuchte/);
+    assert.match(
+      plots.innerHTML,
+      direct
+        ? /Personenquelle: Präsenzsensor mit Türereignis/
+        : /Personenquelle: Temperatur und Feuchte/,
+    );
     assert.match(plots.innerHTML, /data-series="detector_strong_humidity_slope_upper"/);
-    assert.doesNotMatch(plots.innerHTML, /data-series="detector_strong_humidity_slope_lower"/);
+    assert.doesNotMatch(
+      plots.innerHTML,
+      /data-series="detector_strong_humidity_slope_lower"/,
+    );
     assert.doesNotMatch(plots.innerHTML, /<summary>Messwerte unten<\/summary>/);
     assert.match(plots.innerHTML, /<summary>Messwerte oben<\/summary>/);
     assert.match(plots.innerHTML, /Nicht geprüft/);
-    const contextChart = plots.innerHTML.split('data-diagnostic-metric="strong_temperature_slope"')[1].split('</svg>')[0];
+    const contextChart = plots.innerHTML
+      .split('data-diagnostic-metric="strong_temperature_slope"')[1]
+      .split("</svg>")[0];
     assert.doesNotMatch(contextChart, /Schwelle oben:/);
     delete panel.shown.session.configuration_model;
     assert.equal(panel.historyConfigurationModel(), null);
     panel.drawDiagnostics();
-    assert.match(plots.innerHTML, /damalige Anlagenkonfiguration ist nicht gespeichert/);
+    assert.match(
+      plots.innerHTML,
+      /damalige Anlagenkonfiguration ist nicht gespeichert/,
+    );
     assert.match(plots.innerHTML, /data-series="detector_strong_humidity_slope_upper"/);
   }
 });
 
 test("a configured but currently missing measurement position stays explicit in the evidence", () => {
   const panel = makePanel();
-  panel.shown.session.configuration_model = { measurement_positions: ["upper", "lower"], presence: { direct: false } };
-  const trace = { at: iso(5), metrics: { upper: { door_temperature_slope: -1 } }, signals: [] };
+  panel.shown.session.configuration_model = {
+    measurement_positions: ["upper", "lower"],
+    presence: { direct: false },
+  };
+  const trace = {
+    at: iso(5),
+    metrics: { upper: { door_temperature_slope: -1 } },
+    signals: [],
+  };
   panel.shown.records = [{ kind: "detector_trace", payload: trace }];
   const html = panel.diagnosticSelectionMarkup(panel.diagnosticData().traces);
-  assert.match(html, /<summary>Messwerte unten<\/summary><dl><dt>Angaben<\/dt><dd>Nicht gespeichert/);
+  assert.match(
+    html,
+    /<summary>Messwerte unten<\/summary><dl><dt>Angaben<\/dt><dd>Nicht gespeichert/,
+  );
 });
 
 test("incremental attribute updates preserve user-opened details", () => {
   const panel = makePanel();
-  const attributes = new Map([["open", ""], ["id", "evidence"], ["obsolete", "old"]]);
+  const attributes = new Map([
+    ["open", ""],
+    ["id", "evidence"],
+    ["obsolete", "old"],
+  ]);
   const current = {
     nodeName: "DETAILS",
-    get attributes() { return [...attributes].map(([name, value]) => ({ name, value })); },
+    get attributes() {
+      return [...attributes].map(([name, value]) => ({ name, value }));
+    },
     getAttribute: (name) => attributes.get(name),
     removeAttribute: (name) => attributes.delete(name),
     setAttribute: (name, value) => attributes.set(name, value),
@@ -198,10 +283,19 @@ test("incremental attribute updates preserve user-opened details", () => {
 
 test("changed selected text retains its anchor and focus within the remaining text", () => {
   const panel = makePanel();
-  const current = { nodeType: 3, data: "abcdefghij", get length() { return this.data.length; } };
+  const current = {
+    nodeType: 3,
+    data: "abcdefghij",
+    get length() {
+      return this.data.length;
+    },
+  };
   let restored;
   const selection = {
-    anchorNode: current, anchorOffset: 2, focusNode: current, focusOffset: 9,
+    anchorNode: current,
+    anchorOffset: 2,
+    focusNode: current,
+    focusOffset: 9,
     setBaseAndExtent: (...args) => (restored = args),
   };
   panel.ownerDocument = { getSelection: () => selection };

@@ -176,7 +176,10 @@ test("the history heading and timeline revisions remain independent of samples",
   p.selected = "archive-1";
   p.sessions = [{ session_id: "archive-1", started_at: iso(10) }];
   assert.equal(p.historyTitle({ timeline: {} }), p.sessionLabel(p.sessions[0]));
-  assert.doesNotMatch(p.historyTitle({ timeline: {} }), /Sitzung vom|beendet|Ohne Startzeit/);
+  assert.doesNotMatch(
+    p.historyTitle({ timeline: {} }),
+    /Sitzung vom|beendet|Ohne Startzeit/,
+  );
 
   const live = {
     ...session,
