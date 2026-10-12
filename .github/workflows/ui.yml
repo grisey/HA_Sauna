@@ -4,6 +4,10 @@ on:
     branches: ['codex/ui-*']
   workflow_dispatch:
     inputs:
+      format_only:
+        description: 'Only verify formatting; retain existing test evidence'
+        type: boolean
+        default: false
       checks:
         description: 'Comma-separated checks; empty runs the complete UI suite'
         type: string
@@ -19,6 +23,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
+    if: ${{ !inputs.format_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:

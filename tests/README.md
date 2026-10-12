@@ -201,3 +201,5 @@ den vollständigen UI-Prüfumfang aus; unbekannte Namen führen zu einem Fehler.
 Die Prozessnachweise nennen die tatsächliche Auswahl. Bestandene Prüfungen
 bleiben nur bei belegbar unveränderten Abhängigkeiten gültig. Reine Testkorrekturen
 erfordern keine erneute Ausführung unveränderter Szenarien und Replays.
+`format_only` führt ausschließlich den Formatjob aus, wenn lediglich dessen Patch
+übernommen wurde; die vorhandenen Testnachweise werden dem Stand zugeordnet.

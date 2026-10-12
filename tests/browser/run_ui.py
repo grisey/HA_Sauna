@@ -257,7 +257,9 @@ def test(evidence):
     if not panel_tests:
         raise RuntimeError("No panel method tests found")
     if "panel" in checks:
-        evidence.run("panel", ["node", "--test", *panel_tests], 300, environment, "node")
+        evidence.run(
+            "panel", ["node", "--test", *panel_tests], 300, environment, "node"
+        )
     if "panel-api" in checks:
         evidence.run(
             "panel-api",
