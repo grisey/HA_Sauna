@@ -23,10 +23,11 @@ fs.mkdirSync(output, { recursive: true });
   });
   runningBrowser = browser;
   const results = [];
-  async function fixture(options = {}) {
+  async function fixture(options = {}, pageOptions = {}) {
     const page = await browser.newPage({
       viewport: settings.browser.viewports.history,
       deviceScaleFactor: settings.browser.device_scale_factor,
+      ...pageOptions,
     });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
@@ -255,6 +256,13 @@ fs.mkdirSync(output, { recursive: true });
       };
     }),
   );
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => f.settle());
+  assert.equal(
+    await page.evaluate(() => f.panel.$("#tooltip").hidden),
+    true,
+    "ordinary hover still disappears on leaving the chart without a pin",
+  );
   await page.setViewportSize(settings.browser.viewports.tablet);
   await page.evaluate(() => f.settle());
   await page.evaluate(() => f.reset());
@@ -307,6 +315,417 @@ fs.mkdirSync(output, { recursive: true });
   });
   assert.deepEqual(page.errors, []);
   await page.close();
+
+  // A separate, existing short fixture keeps the live/measurement proof above
+  // unchanged. Mouse and touchscreen input exercise the real panel handlers.
+  const selectionPage = await fixture(
+    { seconds: settings.fixtures.history.detail_duration_seconds },
+    { hasTouch: true },
+  );
+  const selectionPanel = selectionPage.locator("ha-sauna-panel"),
+    selectionSurface = selectionPanel.locator("svg.session-chart"),
+    selectionTooltip = selectionPanel.locator("#tooltip"),
+    readout = selectionPanel.locator(".history-readout");
+  const settleSelection = async () => {
+    await selectionPage.evaluate(() => f.settle());
+    await selectionPage.waitForFunction(
+      () => f.panel.historyFrame == null,
+      null,
+      { timeout: settings.browser.timeouts_ms.interaction },
+    );
+  };
+  const chartPoint = (fraction, time) =>
+    selectionPage.evaluate(({ fraction, time }) => {
+      const svg = f.panel.$("svg.session-chart"),
+        rect = svg.getBoundingClientRect(),
+        model = f.panel.historyChart.model,
+        x = time == null ? model.left + (model.right - model.left) * fraction : model.x(time);
+      return {
+        x: rect.left + (x / model.width) * rect.width,
+        y: rect.top + ((model.top + model.bottom) / 2 / model.height) * rect.height,
+      };
+    }, { fraction, time });
+  const selectedValues = () =>
+    selectionPage.evaluate(() => ({
+      selection: structuredClone(f.panel.historyValueSelection),
+      values: [...f.panel.$("#tooltip").querySelectorAll(".history-tooltip-values")].map(
+        (node) => node.textContent,
+      ),
+    }));
+  await selectionPage.evaluate(async () => {
+    const boundary = f.iso(f.origin + f.inputs.detail_event_seconds * 1000),
+      infusionAt = f.iso(f.origin + f.inputs.detail_selected_seconds * 1000),
+      events = [
+        { event_id: "door-proof", kind: "door_open", effective_at: boundary, detected_at: infusionAt },
+        { event_id: "infusion-proof", kind: "infusion", effective_at: infusionAt, detected_at: infusionAt },
+      ];
+    f.session.timeline.processed.push(...events);
+    for (const event of events)
+      f.addRecord({
+        kind: "detection",
+        received_at: infusionAt,
+        payload: { event, trace_at: infusionAt, channels: ["upper"] },
+      });
+    f.state.phase_projection = {
+      intervals: [
+        { phase: "bereit", started_at: f.iso(f.origin), ended_at: boundary, complete: true },
+        { phase: "saunagang", started_at: boundary, ended_at: f.state.now, complete: false },
+      ],
+    };
+    await f.refresh();
+    f.assertClean();
+  });
+  await selectionSurface.scrollIntoViewIfNeeded();
+  const selectionTimes = await selectionPage.evaluate(() => {
+    const p = f.panel, model = p.historyChart.model,
+      rect = p.$("svg.session-chart").getBoundingClientRect(),
+      phase = p.shown.phase_projection.intervals.find((item) => item.phase === "saunagang"),
+      phaseStart = Math.max(model.start, Date.parse(phase.started_at)),
+      phaseEnd = Math.min(model.end, Date.parse(phase.ended_at)),
+      latestEvent = Math.max(phaseStart, ...f.session.timeline.processed
+        .filter((event) => ["door_open", "door_close", "infusion"].includes(event.kind))
+        .map((event) => Date.parse(event.effective_at))),
+      timePerPixel = (model.end - model.start) / ((model.right - model.left) * rect.width / model.width),
+      clearance = 2 * Math.max(p.preference("history_phase_snap_radius_px"), p.preference("event_marker_size_px") / 2) * timePerPixel,
+      usableStart = latestEvent + clearance,
+      usableEnd = phaseEnd - clearance;
+    if (!((usableEnd - usableStart) / 3 > timePerPixel))
+      throw Error("selection fixture needs a visible phase section beyond its events and snap/marker clearance");
+    return {
+      first: usableStart + (usableEnd - usableStart) / 3,
+      second: usableStart + 2 * (usableEnd - usableStart) / 3,
+      latestEvent,
+    };
+  });
+  const firstPoint = await chartPoint(null, selectionTimes.first);
+  await selectionPage.mouse.click(firstPoint.x, firstPoint.y);
+  await settleSelection();
+  const pinned = await selectedValues();
+  assert.equal(pinned.selection.kind, "point", "first mouse click pins a point");
+  assert.ok(pinned.selection.start > selectionTimes.latestEvent, "the pinned point lies after the events inspected separately");
+  assert.match(await selectionTooltip.innerText(), /Punkt.*Temperatur:.*°C.*Luftfeuchte:.*%/s);
+  assert.equal(
+    await selectionPanel.locator("[data-history-selection]").getAttribute("visibility"),
+    "visible",
+  );
+  await selectionPage.mouse.move(0, 0);
+  await settleSelection();
+  assert.equal(await selectionTooltip.isVisible(), true, "pinned values survive mouseleave");
+  assert.deepEqual(await selectedValues(), pinned);
+  const secondPoint = await chartPoint(null, selectionTimes.second);
+  await selectionPage.mouse.click(secondPoint.x, secondPoint.y);
+  await settleSelection();
+  const range = await selectedValues();
+  assert.equal(range.selection.kind, "range", "second mouse click completes the range");
+  assert.equal(range.selection.start, pinned.selection.start);
+  assert.ok(range.selection.end > range.selection.start);
+  assert.match(await selectionTooltip.innerText(), /Saunagang.*Beginn.*Ende/s);
+
+  // Inspect an actual event outside the selected interval. Its facts are visible
+  // independently; marker activation must not become a third chart selection.
+  const infusionMarker = selectionPanel.locator(
+    '.history-event-marker[data-history-event-id="infusion-proof"]',
+  );
+  await infusionMarker.click();
+  await settleSelection();
+  assert.equal(await infusionMarker.getAttribute("aria-pressed"), "true");
+  assert.match(
+    await selectionPanel.locator("#history-event-inspection").innerText(),
+    /Aufguss/,
+  );
+  assert.match(await selectionTooltip.innerText(), /Aufguss/);
+  assert.deepEqual(await selectedValues(), range, "marker inspection preserves range and boundary values");
+  await infusionMarker.focus();
+  await selectionPage.evaluate(async () => {
+    const at = f.iso(f.origin + (f.inputs.detail_selected_seconds + f.inputs.detail_trace_step_seconds) * 1000),
+      event = { event_id: "door-close-proof", kind: "door_close", effective_at: at, detected_at: f.state.now };
+    f.session.timeline.processed.push(event);
+    f.addRecord({ kind: "detection", received_at: f.state.now, payload: { event, trace_at: at, channels: ["upper"] } });
+    await f.tick();
+    f.assertClean();
+  });
+  await settleSelection();
+  assert.equal(
+    await infusionMarker.evaluate((node) => node.getRootNode().activeElement === node),
+    true,
+    "a new event append retains focus on the same logical history marker",
+  );
+  assert.equal(await infusionMarker.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await selectedValues(), range);
+  results.push({ case: "history-marker-focus-with-new-event-append", marker: "infusion-proof", appendedEvent: "door-close-proof" });
+  await selectionPage.mouse.move(0, 0);
+  await settleSelection();
+  assert.equal(await selectionTooltip.isVisible(), true);
+
+  await readout.scrollIntoViewIfNeeded();
+  const readoutBox = await readout.boundingBox(),
+    scrollBefore = await selectionPage.evaluate(() => ({
+      readout: f.panel.$(".history-readout").scrollTop,
+      outer: f.outer.querySelector("#scroll").scrollTop,
+    }));
+  await selectionPage.mouse.move(readoutBox.x + readoutBox.width / 2, readoutBox.y + readoutBox.height / 2);
+  await selectionPage.mouse.wheel(0, await readout.evaluate((node) => node.scrollHeight));
+  await selectionPage.waitForFunction(
+    (before) => f.panel.$(".history-readout").scrollTop !== before.readout || f.outer.querySelector("#scroll").scrollTop !== before.outer,
+    scrollBefore,
+    { timeout: settings.browser.timeouts_ms.interaction },
+  );
+  await selectionPage.waitForFunction(
+    (frames) => {
+      const position = `${f.panel.$(".history-readout").scrollTop}:${f.outer.querySelector("#scroll").scrollTop}`,
+        previous = window.selectionScrollProbe;
+      window.selectionScrollProbe = {
+        position,
+        stable: previous?.position === position ? previous.stable + 1 : 0,
+      };
+      return window.selectionScrollProbe.stable >= frames;
+    },
+    settings.browser.settle_frames,
+    { timeout: settings.browser.timeouts_ms.interaction, polling: "raf" },
+  );
+  const scrollAfter = await selectionPage.evaluate(() => ({
+    readout: f.panel.$(".history-readout").scrollTop,
+    outer: f.outer.querySelector("#scroll").scrollTop,
+  }));
+  await selectionPage.mouse.move(0, 0);
+  await settleSelection();
+  assert.equal(await selectionTooltip.isVisible(), true);
+  assert.deepEqual(await selectionPage.evaluate(() => ({
+    readout: f.panel.$(".history-readout").scrollTop,
+    outer: f.outer.querySelector("#scroll").scrollTop,
+  })), scrollAfter);
+  assert.deepEqual(await selectedValues(), range, "scrolling pinned values keeps both endpoints");
+
+  const selectionZoom = selectionPanel.locator('[data-action="zoom-in"]');
+  await selectionZoom.click();
+  await settleSelection();
+  await selectionZoom.focus();
+  await selectionPage.evaluate(() => {
+    window.selectionBeforeAppend = {
+      window: [...f.panel.window],
+      zoom: f.panel.zoom,
+      selection: structuredClone(f.panel.historyValueSelection),
+      focus: f.panel.shadowRoot.activeElement,
+      outerScroll: f.outer.querySelector("#scroll").scrollTop,
+      readoutScroll: f.panel.$(".history-readout").scrollTop,
+    };
+  });
+  await selectionPage.evaluate(() => f.tick());
+  await settleSelection();
+  const appended = await selectionPage.evaluate(() => {
+    const before = selectionBeforeAppend, p = f.panel;
+    return {
+      selection: p.historyValueSelection,
+      beforeSelection: before.selection,
+      window: p.window,
+      beforeWindow: before.window,
+      zoom: p.zoom,
+      beforeZoom: before.zoom,
+      focusRetained: p.shadowRoot.activeElement === before.focus,
+      outerScrollRetained: f.outer.querySelector("#scroll").scrollTop === before.outerScroll,
+      readoutScrollRetained: p.$(".history-readout").scrollTop === before.readoutScroll,
+      identity: f.identity(),
+      tooltipVisible: !p.$("#tooltip").hidden,
+    };
+  });
+  assert.deepEqual(appended.selection, appended.beforeSelection);
+  assert.deepEqual(appended.window, appended.beforeWindow);
+  assert.equal(appended.zoom, appended.beforeZoom);
+  assert.equal(appended.focusRetained, true);
+  assert.equal(appended.outerScrollRetained, true);
+  assert.equal(appended.readoutScrollRetained, true);
+  assert.equal(appended.tooltipVisible, true);
+  assert.ok(Object.values(appended.identity).every(Boolean));
+  assert.deepEqual((await selectedValues()).values, range.values);
+
+  await selectionPanel.locator('[data-action="reset-zoom"]').click();
+  await settleSelection();
+  await selectionSurface.scrollIntoViewIfNeeded();
+  const snapPoint = await selectionPage.evaluate(() => {
+    const p = f.panel, model = p.historyChart.model,
+      rect = p.$("svg.session-chart").getBoundingClientRect(),
+      at = f.origin + f.inputs.detail_event_seconds * 1000;
+    return {
+      at,
+      x: rect.left + (model.x(at) / model.width) * rect.width - p.preference("history_phase_snap_radius_px") / 2,
+      y: rect.top + ((model.top + model.bottom) / 2 / model.height) * rect.height,
+    };
+  });
+  // The fixture's tick projects one ready interval. Restore the same source
+  // boundary before checking the user-visible snap against its original UTC time.
+  await selectionPage.evaluate(() => {
+    f.state.phase_projection.intervals = [
+      { phase: "bereit", started_at: f.iso(f.origin), ended_at: f.iso(f.origin + f.inputs.detail_event_seconds * 1000), complete: true },
+      { phase: "saunagang", started_at: f.iso(f.origin + f.inputs.detail_event_seconds * 1000), ended_at: f.state.now, complete: false },
+    ];
+    f.panel.state = structuredClone(f.state);
+    f.panel.showHistoryCache();
+  });
+  await selectionPage.mouse.click(snapPoint.x, snapPoint.y);
+  await settleSelection();
+  const thirdPoint = await selectedValues();
+  assert.equal(thirdPoint.selection.kind, "point", "third mouse click begins a new point");
+  assert.equal(thirdPoint.selection.start, snapPoint.at, "nearby click snaps to the real source phase boundary");
+  await selectionSurface.press("Escape");
+  await settleSelection();
+  assert.equal(await selectionPage.evaluate(() => f.panel.historyValueSelection), null);
+  assert.equal(await selectionPanel.locator("[data-history-selection]").getAttribute("visibility"), "hidden");
+  assert.equal(await selectionTooltip.isVisible(), false);
+  results.push({ case: "mouse-pin-range-marker-scroll-append-escape", identity: appended.identity });
+
+  // A genuine touchscreen tap, followed by genuine browser multitouch on the
+  // configured Chromium engine. Other engines do not claim this CDP proof.
+  let touchPoint = await chartPoint(2 / 5);
+  await selectionPage.touchscreen.tap(touchPoint.x, touchPoint.y);
+  await settleSelection();
+  assert.equal((await selectedValues()).selection.kind, "point", "real touch tap pins a point");
+  await selectionSurface.press("Escape");
+  await settleSelection();
+  let pinchVerified = false;
+  if (engine === "chromium") {
+    const cdp = await selectionPage.context().newCDPSession(selectionPage),
+      left = await chartPoint(2 / 5),
+      right = await chartPoint(3 / 5),
+      wideLeft = await chartPoint(1 / 4),
+      wideRight = await chartPoint(3 / 4),
+      widthBefore = await selectionPage.evaluate(() => f.panel.window[1] - f.panel.window[0]);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ ...left, id: 1 }, { ...right, id: 2 }],
+    });
+    await settleSelection();
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ ...wideLeft, id: 1 }, { ...wideRight, id: 2 }],
+    });
+    await settleSelection();
+    assert.ok(
+      (await selectionPage.evaluate(() => f.panel.window[1] - f.panel.window[0])) < widthBefore,
+      "real two-finger input zooms the chart",
+    );
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+    await settleSelection();
+    assert.deepEqual(
+      await selectionPage.evaluate(() => ({
+        selection: f.panel.historyValueSelection,
+        pointers: f.panel.chartPointers.size,
+        inputMode: f.panel.historyInputMode,
+      })),
+      { selection: null, pointers: 0, inputMode: null },
+      "pinch cancellation does not create a pin or retain an active gesture",
+    );
+    await cdp.detach();
+    pinchVerified = true;
+  }
+  touchPoint = await chartPoint(2 / 5);
+  await selectionPage.touchscreen.tap(touchPoint.x, touchPoint.y);
+  await settleSelection();
+  const touchPin = (await selectedValues()).selection;
+  assert.equal(touchPin.kind, "point", "touch remains usable after gesture cancellation");
+  const mouseAfterTouch = await chartPoint(3 / 5);
+  await selectionPage.mouse.click(mouseAfterTouch.x, mouseAfterTouch.y);
+  await settleSelection();
+  assert.equal((await selectedValues()).selection.kind, "range", "mouse continues the touch selection on a hybrid surface");
+  results.push({
+    case: "touch-tap-and-hybrid-selection",
+    pinchVerified,
+    pinchInput: pinchVerified ? "Chromium CDP Input.dispatchTouchEvent with real browser pointer capture and touchCancel" : `not exercised on ${engine}; no CDP multitouch coverage claimed`,
+  });
+
+  await selectionPage.setViewportSize(settings.browser.viewports.mobile);
+  await settleSelection();
+  const narrowSelection = await selectedValues();
+  await readout.scrollIntoViewIfNeeded();
+  assert.equal(await selectionTooltip.isVisible(), true);
+  assert.ok(await readout.evaluate((node) => node.scrollWidth <= node.clientWidth), "narrow value box has no clipped horizontal content");
+  const narrowMetrics = await selectionPage.evaluate(() => {
+    const box = f.panel.$(".history-readout"),
+      value = f.panel.$(".history-tooltip-values > div:not([hidden]) > span:last-child");
+    return {
+      clientWidth: box.clientWidth,
+      scrollWidth: box.scrollWidth,
+      clientHeight: box.clientHeight,
+      scrollHeight: box.scrollHeight,
+      tooltipFontPx: parseFloat(getComputedStyle(f.panel.$("#tooltip")).fontSize),
+      valueFontPx: parseFloat(getComputedStyle(value).fontSize),
+    };
+  });
+  assert.equal(
+    narrowMetrics.valueFontPx,
+    await selectionPage.evaluate(() => f.panel.preference("font_size_large_px")),
+    "narrow values retain the catalogue's actual text size",
+  );
+  for (const action of ["reset-zoom", "history-to-selection", "clear-history-selection"]) {
+    const button = selectionPanel.locator(`[data-action="${action}"]`);
+    await button.scrollIntoViewIfNeeded();
+    const bounds = await button.boundingBox();
+    assert.ok(bounds && bounds.width > 0 && bounds.x >= 0 && bounds.x + bounds.width <= settings.browser.viewports.mobile.width, `${action} remains within the narrow viewport`);
+  }
+  await selectionPanel.locator('[data-action="history-to-selection"]').click();
+  await settleSelection();
+  assert.deepEqual((await selectedValues()).selection, narrowSelection.selection);
+  const overviewTab = selectionPanel.locator('.main-tabs [data-action="overview"]');
+  await overviewTab.click();
+  await selectionPanel.locator('.main-tabs [data-action="history"]').click();
+  await settleSelection();
+  assert.deepEqual((await selectedValues()).selection, narrowSelection.selection, "narrow main navigation preserves the selected values");
+  await selectionPage.screenshot({ path: path.join(output, `${engine}-selection-mobile.png`), fullPage: true });
+  await selectionSurface.scrollIntoViewIfNeeded();
+  const narrowPoint = await chartPoint(1 / 2);
+  await selectionPage.touchscreen.tap(narrowPoint.x, narrowPoint.y);
+  await settleSelection();
+  assert.equal((await selectedValues()).selection.kind, "point");
+  assert.equal(await selectionTooltip.isVisible(), true);
+  assert.ok(await readout.evaluate((node) => node.scrollWidth <= node.clientWidth), "narrow pinned point has no clipped horizontal content");
+  results.push({ case: "narrow-selection-values-and-navigation", viewport: settings.browser.viewports.mobile, values: narrowMetrics });
+
+  // Reuse the fixture transport for a second session, as the existing lifecycle
+  // proof does. Selection changes still enter through the real session menu.
+  await selectionPage.evaluate(async () => {
+    f.close();
+    const p = f.panel, original = p.api, nextState = structuredClone(f.state),
+      nextSession = structuredClone(f.session);
+    nextSession.ended_at = null;
+    nextSession.timeline.session_id = "synthetic-next";
+    nextState.session = nextSession;
+    nextState.operation_enabled = true;
+    p.api = async (path) => {
+      if (path.split("?")[0].endsWith("/state")) return nextState;
+      if (path.endsWith("/archive")) return [
+        { session_id: "synthetic-next", started_at: nextSession.timeline.session_started_at, ended_at: null },
+        { session_id: "synthetic", started_at: f.session.timeline.session_started_at, ended_at: f.session.ended_at },
+      ];
+      const response = await original(path);
+      if (path.includes("/archive/synthetic-next")) response.session = structuredClone(nextSession);
+      return response;
+    };
+    p.sessions = null;
+    await f.refresh();
+    f.assertClean();
+  });
+  await settleSelection();
+  assert.equal(await selectionPage.evaluate(() => f.panel.historyValueSelection), null, "a new live session clears the previous pin/range");
+  assert.equal(await selectionPage.evaluate(() => f.panel.inspectedHistoryEventId), null, "a new live session clears independent event inspection");
+  await selectionSurface.scrollIntoViewIfNeeded();
+  const newSessionPoint = await chartPoint(1 / 2);
+  await selectionPage.touchscreen.tap(newSessionPoint.x, newSessionPoint.y);
+  await settleSelection();
+  assert.equal((await selectedValues()).selection.kind, "point");
+  const archivedLabel = await selectionPanel.locator('#session option[value="synthetic"]').textContent();
+  await selectionPanel.locator("#session + .sauna-select-trigger").click();
+  await selectionPanel.locator(".sauna-select-menu").getByRole("option", { name: archivedLabel, exact: true }).click();
+  await selectionPage.evaluate(async () => {
+    await f.panel.historyLoad?.promise;
+    await f.settle();
+    f.assertClean();
+  });
+  assert.equal(await selectionPage.evaluate(() => f.panel.selected), "synthetic");
+  assert.equal(await selectionPage.evaluate(() => f.panel.shown.session.timeline.session_id), "synthetic");
+  assert.equal(await selectionPage.evaluate(() => f.panel.historyValueSelection), null, "the real archive selector clears the other session's pin");
+  assert.equal(await selectionPanel.locator("[data-history-selection]").getAttribute("visibility"), "hidden");
+  results.push({ case: "new-live-session-and-archive-menu-clear-selection" });
+  assert.deepEqual(selectionPage.errors, []);
+  await selectionPage.close();
   for (const empty of [false, true]) {
     const p = await fixture({ seconds: 20 });
     results.push(
