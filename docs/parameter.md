@@ -16,6 +16,14 @@ Die Einstellungen für Betrieb, Erkennung und Licht gelten unmittelbar und bleib
 nach einem Neustart erhalten. Sie und die Gerätezuordnungen sind mit
 Administratorrechten nach vollständigem Sitzungsende änderbar.
 
+Integrationskonfiguration, Panel und Einstellungsentitäten verwenden dieselbe
+Anwendbarkeit: Eingabefelder erscheinen nur für zugeordnete Messpositionen und
+Quellen, Personenschwellen nur beim indirekten Verfahren und die Haltezeit nur
+bei Binärtastern. Parameter-Entitäten behalten ihre Identität; ohne passende
+Zuordnung sind sie nicht verfügbar. Ein vorübergehender Sensorausfall ändert
+die Anwendbarkeit nicht. Gespeicherte Werte bleiben für einen späteren
+Konfigurationswechsel erhalten.
+
 ## Entitätsrollen
 
 | Rolle | Geeignete Entität |

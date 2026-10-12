@@ -15,6 +15,7 @@
       "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
       "invalid_presence_source": "Bitte ein angebotenes Erkennungsverfahren auswählen.",
       "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "native_button_event": "Bereits erkannte Tastergesten behalten ihre Bedeutung. Hier ist nur ein zusätzlicher Name für kurze Betätigung möglich.",
       "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
       "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
       "invalid_configuration": "Die Gerätezuordnung passt nicht zu den gespeicherten Einstellungen.",
@@ -48,7 +49,7 @@
           "control_input": "Taster oder Betriebsschalter",
           "light": "Dimmbares Saunalicht",
           "control_input_mode": "Bedienart",
-          "button_event_type": "Ereignis bei kurzer Betätigung",
+          "button_event_type": "Bedienereignis",
           "presence_source": "Anwesenheit erkennen"
         },
         "data_description": {
@@ -57,7 +58,7 @@
           "control_input": "Entkoppelter Bedieneingang, getrennt vom Ofen-Schaltausgang.",
           "light": "Dimmbare Leuchte für Automatik und manuelle Bedienung.",
           "control_input_mode": "Taster: kurze Betätigung schaltet den Ofen, die Sitzungsgeste steuert die Sitzung. Betriebsschalter: Ein/Aus steuert die Sitzung.",
-          "button_event_type": "Ereignis der kurzen Betätigung. Leer: Shelly single_push oder single.",
+          "button_event_type": "Beim Taster ergänzt dieser Name eine weitere Kurzbetätigung; bekannte Gerätegesten behalten ihre Bedeutung. Beim Betriebsschalter wählt er das Ereignis, das den Betrieb umschaltet.",
           "presence_source": "Nur die Anwesenheit wechselt die Quelle. Tür und Aufguss werden immer aus Temperatur und Feuchte erkannt."
         },
         "sections": {
@@ -161,6 +162,7 @@
       "entity_not_ready": "Die Entität ist noch nicht mit ihren Metadaten verfügbar.",
       "invalid_presence_source": "Bitte ein angebotenes Erkennungsverfahren auswählen.",
       "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
+      "native_button_event": "Bereits erkannte Tastergesten behalten ihre Bedeutung. Hier ist nur ein zusätzlicher Name für kurze Betätigung möglich.",
       "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
       "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
       "invalid_configuration": "Die Eingabe passt nicht zu den übrigen gespeicherten Einstellungen.",
@@ -174,6 +176,7 @@
       "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Programmen.",
       "invalid_parameters": "Bitte die eingegebenen Werte prüfen.",
       "unknown_parameter": "Diese Einstellung gehört nicht zu diesem Formular.",
+      "not_applicable": "Diese Einstellung wird mit den zugeordneten Geräten und dem gewählten Erkennungsverfahren nicht verwendet.",
       "parameter_dependency": "Die Änderung betrifft eine weitere Einstellung. {reason}",
       "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen.",
       "configuration_busy": "Die vorherige Änderung wird noch übernommen. Bitte kurz warten und erneut speichern.",
@@ -233,7 +236,7 @@
       "parameters_session_controls": {
         "title": "Sitzung und Taster",
         "data": {
-          "button_hold_seconds": "Taster zum Starten und Beenden halten",
+          "button_hold_seconds": "Haltezeit des Binärtasters",
           "session_gap_minutes": "Sitzung nach Ausschalten fortsetzen",
           "manual_override_minutes": "Dauer manueller Ofen- und Lichtwahl"
         },
@@ -257,10 +260,10 @@
         },
         "data_description": {
           "sauna_min_temperature_c": "Untergrenze für die Solltemperatur. Ein neuer Saunagang kann erst beginnen, wenn eine gültige Temperaturmessung diesen Wert erreicht.",
-          "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. Mindestheizzeit und Heizen während eines Saunagangs haben Vorrang.",
-          "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein, sobald die Heizpause abgelaufen ist.",
-          "minimum_heating_minutes": "Nach dem Einschalten bleibt der Ofen mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
-          "thermostat_cooldown_minutes": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten.",
+          "readiness_offset_c": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. In Automatik haben Mindestheizzeit und Heizen während eines Saunagangs Vorrang.",
+          "readiness_hysteresis_c": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein. In Automatik muss zusätzlich die Heizpause abgelaufen sein.",
+          "minimum_heating_minutes": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
+          "thermostat_cooldown_minutes": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten.",
           "standard_temperature_c": "Solltemperatur beim Wechsel zu Konstant oder Manuell. Eine danach gewählte Temperatur gilt weiter; Programme verwenden ihre eigenen Temperaturen.",
           "warmup_estimation_minutes": "Zeitfenster für die Aufheizprognose und den Hinweis auf fehlenden Temperaturanstieg."
         },
@@ -377,7 +380,7 @@
           "person_step_seconds": "In diesem Abstand wird der Feuchteanstieg ausgewertet. Beide Vergleichszeiten müssen ganzzahlige Vielfache dieses Abstands sein.",
           "strong_window_seconds": "Über diesen Zeitraum wird der Anstieg von relativer und absoluter Feuchte ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
           "weak_window_seconds": "Über diesen Zeitraum wird ein neuer Feuchteanstieg nach Türöffnung und Türschluss ausgewertet. Die Zeit muss ein Vielfaches des Auswertungsabstands sein.",
-          "confirmation_minutes": "Ab Türschluss gilt eine gemeinsame Frist für Personenhinweise und die Bestätigung des Saunagangs durch einen Aufguss."
+          "confirmation_minutes": "Die gemeinsame Frist für Personenhinweise und die Bestätigung durch einen Aufguss beginnt mit dem möglichen Gangbeginn: nach vollständigem Eintritt, frühestens bei erreichter Mindesttemperatur."
         },
         "submit": "Speichern und zurück",
         "description": "{description}"
@@ -505,7 +508,7 @@
           "control_input": "Taster oder Betriebsschalter",
           "light": "Dimmbares Saunalicht",
           "control_input_mode": "Bedienart",
-          "button_event_type": "Ereignis bei kurzer Betätigung",
+          "button_event_type": "Bedienereignis",
           "presence_source": "Anwesenheit erkennen"
         },
         "data_description": {
@@ -513,7 +516,7 @@
           "control_input": "Entkoppelter Bedieneingang, getrennt vom Ofen-Schaltausgang.",
           "light": "Dimmbare Leuchte für Automatik und manuelle Bedienung.",
           "control_input_mode": "Taster: kurze Betätigung schaltet den Ofen, die Sitzungsgeste steuert die Sitzung. Betriebsschalter: Ein/Aus steuert die Sitzung.",
-          "button_event_type": "Ereignis der kurzen Betätigung. Leer: Shelly single_push oder single.",
+          "button_event_type": "Beim Taster ergänzt dieser Name eine weitere Kurzbetätigung; bekannte Gerätegesten behalten ihre Bedeutung. Beim Betriebsschalter wählt er das Ereignis, das den Betrieb umschaltet.",
           "presence_source": "Nur die Anwesenheit wechselt die Quelle. Tür und Aufguss werden immer aus Temperatur und Feuchte erkannt."
         },
         "sections": {

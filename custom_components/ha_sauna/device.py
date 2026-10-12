@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from math import isfinite
 
 from homeassistant.components import persistent_notification
+from homeassistant.components.light import ATTR_TRANSITION, LightEntityFeature
+from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.core import Context
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -18,10 +20,12 @@ from homeassistant.helpers.event import (
 from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core import power
-from .core.button import NATIVE_BUTTON_EVENTS
 from .core.light import normal_brightness
 from .core.light_control import (
-    light_phase, light_plan, select_light, validate_light_selection,
+    light_phase,
+    light_plan,
+    select_light,
+    validate_light_selection,
 )
 from .core.light_output import LightOutput, LightQuantizer
 from .core.models import Measurement, Position, Quantity
@@ -147,8 +151,9 @@ class HADevice:
         if role == "control_input" and state is not None:
             event_types = state.attributes.get("event_types")
             if (
-                isinstance(event_types, (list, tuple)) and event_types
+                isinstance(event_types, (list, tuple))
                 and all(isinstance(value, str) for value in event_types)
+                and (event_types or state.state not in ("unknown", "unavailable"))
             ):
                 self._button_event_types = tuple(event_types)
         self.source_received_at[role] = received_at
@@ -257,31 +262,28 @@ class HADevice:
             self._archive_illuminance(at, snapshot=True)
 
     @property
+    def button_event_types(self):
+        """Last reported input capabilities, retained across source outages."""
+        return self._button_event_types
+
+    @property
     def available_button_session_gestures(self):
-        possible = self.runtime.configuration.available_button_session_gestures
-        if not possible:
-            return ()
-        if not self.bindings["control_input"].startswith("event."):
-            return possible
-        if self._button_event_types is None:
-            # Keep the saved choice during startup; do not invent device capabilities.
-            return (self.runtime.configuration.button_session_gesture,)
-        reported = {NATIVE_BUTTON_EVENTS.get(value) for value in self._button_event_types}
-        return tuple(gesture for gesture in possible if gesture in reported)
+        return self.runtime.configuration_model.button.session_gestures
 
     def physical_action(self, event):
         if event.data["entity_id"] != self.bindings["control_input"]:
             return None
+        button = self.runtime.configuration_model.button
         old, new = event.data.get("old_state"), event.data.get("new_state")
         source = new if new is not None else old
         if (
-            self.runtime.configuration.control_input_mode == "button"
+            button.input_kind == "event"
             and source is not None and source.domain == "event"
             and (new is None or new.state in ("unknown", "unavailable"))
         ):
             return "unavailable"
         if (
-            self.runtime.configuration.control_input_mode == "button"
+            button.input_kind == "binary"
             and source is not None
             and source.domain == "binary_sensor"
         ):
@@ -322,21 +324,11 @@ class HADevice:
         self.last_input_event = new.state
         self.last_input_occurred_at = occurred
         event_type = new.attributes.get("event_type")
-        if self.runtime.configuration.control_input_mode == "button":
-            native = NATIVE_BUTTON_EVENTS.get(event_type)
-            if native is not None:
-                return native
-            selected = self.runtime.configuration.button_event_type
-            return "short" if selected and event_type == selected else None
-        selected = self.runtime.configuration.button_event_type
-        if selected:
-            if event_type != selected:
-                return None
-        elif event_type is not None and event_type not in ("single_push", "single"):
-            # Shelly meldet Drücken, Loslassen und die fertige Klickauswertung.
-            # Nur die kurze Klickauswertung umschalten, niemals dreifach.
-            return None
-        return not self.runtime.controller.automatic_operation_enabled
+        action = button.action_for_event(event_type)
+        return (
+            not self.runtime.controller.automatic_operation_enabled
+            if action == "toggle" else action
+        )
 
     def binary_state(self, role):
         state = self.states.get(role)
@@ -1577,6 +1569,15 @@ class HADevice:
         if service == "turn_on":
             data["brightness_pct"] = brightness
         state_before = self.hass.states.get(entity_id)
+        supported = (
+            state_before.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
+            if state_before is not None else 0
+        )
+        if isinstance(supported, int) and supported & LightEntityFeature.TRANSITION:
+            # LightOutput already interpolates ordinary changes. Taster
+            # feedback uses an immediate command on the same output path.
+            # Neither may inherit a second fade from the actor or HA profile.
+            data[ATTR_TRANSITION] = 0
         error = None
         task, expectation = None, None
         context = Context()
@@ -1598,6 +1599,7 @@ class HADevice:
                         "phase": phase,
                         "service": service,
                         "brightness_pct": brightness,
+                        "transition_seconds": data.get(ATTR_TRANSITION),
                         "ends_at": ends_at,
                     },
                     session_id,

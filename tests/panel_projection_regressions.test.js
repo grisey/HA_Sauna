@@ -1,5 +1,9 @@
 "use strict";
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -16,7 +20,7 @@ const start = "2026-09-22T15:00:00+00:00";
 const end = "2026-09-22T16:00:00+00:00";
 const session = {
   ended_at: end,
-  configuration: { parameters: { sensor_timeout_seconds: 30 } },
+  configuration: { parameters: fixtureValues() },
   heating: { intervals: [] },
   timeline: {
     completed: [],
@@ -154,11 +158,11 @@ test("details render includes the reachable presence and rule card", () => {
       energy: {},
     },
     configuration: {
-      parameters: { preset_count: 0, preset_start_c: 80, preset_step_c: 1 },
+      parameters: fixtureValues(),
       control_mode: "automatic",
       program_mode: "constant",
     },
-    parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
+    parameters: [fixtureDefinition("target_temperature_c")],
     measurements: [],
     measurement_status: {},
 
@@ -189,20 +193,25 @@ test("details render includes the reachable presence and rule card", () => {
       external: {},
     },
     rule_inputs: { gang_heat_demand: true, temporary_door_heat: false },
+    configuration_model: {
+      presence: { source: "proxy", direct: false, observer: false },
+      regulation_causes: ["gang_heat", "provisional_door_heat", "cooling"],
+      measurement_positions: ["upper", "lower"],
+    },
   };
   const value = Object.assign(Object.create(Panel.prototype), {
     state,
     hass: { user: { is_admin: true } },
     $: (selector) => (nodes[selector] ||= {}),
     updateMarkup: (selector, markup) => ((nodes[selector] ||= {}).innerHTML = markup),
-    temperatureBounds: () => ({ minimum: 60, maximum: 100 }),
+    temperatureBounds: () => fixtureDefinition("target_temperature_c"),
     programChoice: () => "constant",
     programMode: () => "constant",
     programBounds: () => ({
-      minimum: 60,
-      maximum: 100,
-      gangMinimum: 1,
-      gangMaximum: 8,
+      minimum: fixtureDefinition("target_temperature_c").minimum,
+      maximum: fixtureDefinition("target_temperature_c").maximum,
+      gangMinimum: fixtureDefinition("temperature_gangs").minimum,
+      gangMaximum: fixtureDefinition("temperature_gangs").maximum,
     }),
     programApplyButton: () => "",
     temperatureTickMarks: () => "",
@@ -211,11 +220,11 @@ test("details render includes the reachable presence and rule card", () => {
   });
   value.drawCurrent();
   assert.match(nodes["#details"].innerHTML, /Präsenz und Regelursache/);
-  assert.match(nodes["#details"].innerHTML, /Präsenzsensor/);
+  assert.match(nodes["#details"].innerHTML, /Temperatur und Feuchte/);
   assert.match(nodes["#details"].innerHTML, /keine beobachtete Abwesenheit/);
   assert.doesNotMatch(nodes["#details"].innerHTML, /proxy_retraction/);
 
-  state.measurement_positions = ["lower"];
+  state.configuration_model.measurement_positions = ["lower"];
   state.regulation_temperature_position = "lower";
   state.measurements = [
     { position: "lower", quantity: "temperature", value: 67 },
@@ -230,7 +239,7 @@ test("details render includes the reachable presence and rule card", () => {
   assert.match(nodes["#current"].innerHTML, /38<\/tspan>\s*<tspan[^>]*>\s*%/);
   assert.doesNotMatch(nodes["#current"].innerHTML, /Messung unten/);
 
-  state.measurement_positions = ["upper", "lower"];
+  state.configuration_model.measurement_positions = ["upper", "lower"];
   state.issues = [{ message: "Temperatur oben ausgefallen" }];
   value.drawCurrent();
   assert.doesNotMatch(nodes["#current"].innerHTML, /Ersatzmessung unten/);

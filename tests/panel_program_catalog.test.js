@@ -1,4 +1,8 @@
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
@@ -49,8 +53,8 @@ const programs = [
     state: {
       frontend_defaults: frontendDefaults,
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
   });
@@ -73,7 +77,11 @@ const programs = [
     "manual stages remain exact",
   );
   assert.deepEqual(
-    JSON.parse(JSON.stringify(p.distributedSteps(80, 90, 9))),
+    JSON.parse(
+      JSON.stringify(
+        p.distributedSteps(80, 90, fixtureDefinition("temperature_gangs").maximum + 1),
+      ),
+    ),
     [],
     "stage expansion observes the configured maximum",
   );
@@ -214,8 +222,8 @@ assert.match(
       frontend_defaults: frontendDefaults,
       permissions: { program: true, temperature: true },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
       configuration: {
         program_mode: "progressive",
@@ -305,8 +313,8 @@ for (const selected of [null, "quiet"]) {
       frontend_defaults: frontendDefaults,
       permissions: { program: true, temperature: true },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
       configuration: {
         program_mode: selected ? "progressive" : "constant",
@@ -354,8 +362,8 @@ for (const selected of [null, "quiet"]) {
       configuration_locked: false,
       configuration: { temperature_programs: programs, button_program: "current" },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) => (selector === "#program-library" ? library : null),
@@ -412,8 +420,8 @@ for (const selected of [null, "quiet"]) {
         parameters: {},
       },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) =>
@@ -493,8 +501,8 @@ for (const selected of [null, "quiet"]) {
         parameters: {},
       },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 110 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: (selector) =>

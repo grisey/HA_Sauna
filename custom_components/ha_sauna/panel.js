@@ -5003,7 +5003,9 @@ class SaunaPanel extends HTMLElement {
         validity_unconfigured: "Gültigkeit noch nicht eingestellt",
       })[quality(position, quantity)] || "Messwert fehlt";
     const measurementPosition =
-      s.regulation_temperature_position || s.measurement_positions?.[0] || "upper";
+      s.regulation_temperature_position ||
+      s.configuration_model?.measurement_positions?.[0] ||
+      "upper";
     const measurementHeight = measurementPosition === "lower" ? "unten" : "oben";
     const formatValue = (position, quantity, unit) =>
       `${num(value(position, quantity), 1)} ${unit}`;
@@ -5030,7 +5032,8 @@ class SaunaPanel extends HTMLElement {
       }[s.heating_observation?.source] || "Rückmeldung fehlt";
     const permissions = s.permissions || {};
     const manualMode = s.configuration.control_mode === "manual";
-    const modeLocked = !!s.configuration_locked && !manualMode;
+    const modeLocked = !s.control_mode_change_allowed;
+    const lightAfterRun = s.light_after_run && stamp(s.light_after_run.ends_at) > now;
     const canStart =
       permissions.control && (s.operation_enabled || !s.start_errors.length);
     const sessionGap = !s.operation_enabled
@@ -5104,7 +5107,7 @@ class SaunaPanel extends HTMLElement {
     const operation = manualMode
       ? ""
       : sessionGap
-        ? `<div class="operation-control split"><button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Endgültig beenden</button><button class="tile operation primary" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", true, "Fortsetzen")}</button></div>`
+        ? `<div class="operation-control${lightAfterRun ? " split" : ""}">${lightAfterRun ? `<button class="tile operation stop" data-action="finish-session:${esc(encodeURIComponent(sessionGap.token))}" ${permissions.control ? "" : "disabled"}>Lichtnachlauf beenden</button>` : ""}<button class="tile operation primary" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", true, "Fortsetzen")}</button></div>`
         : `<div class="operation-control${finishPhase ? " split" : ""}"><button class="tile operation ${s.operation_enabled ? "stop" : "primary"}" data-action="operation"${this.controlCommandAttributes("operation", !s.operation_enabled)} ${canStart ? "" : "disabled"}>${this.controlCommandLabel("operation", !s.operation_enabled, s.operation_enabled ? "Ausschalten" : "Einschalten")}</button>${finishPhase}</div>`;
     const phaseLabel =
       s.phase === "aufheizen" ? "Heizen" : phases[s.phase] || "Unbekannt";
@@ -5126,6 +5129,7 @@ class SaunaPanel extends HTMLElement {
         : `<svg class="dial ${control ? `dial-${key}` : ""}" style="--measurement-color:${color}" viewBox="25 5 250 250" role="${control ? "group" : "img"}" aria-label="${esc(key === "temperature" && control ? "Temperatur und Solltemperatur" : `${caption}: ${num(reading, key === "light" ? 0 : 1)} ${unit}`)}"><defs><linearGradient id="instrument-face-${key}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--sauna-color-card-background, var(--card-background-color))"/><stop offset="1" stop-color="var(--sauna-color-page-background, var(--primary-background-color))"/></linearGradient><linearGradient id="instrument-rim-${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="white" stop-opacity=".16"/><stop offset=".5" stop-color="white" stop-opacity=".025"/><stop offset="1" stop-color="black" stop-opacity=".28"/></linearGradient></defs><circle class="instrument-face" cx="150" cy="130" r="119" fill="url(#instrument-face-${key})"/><circle class="instrument-rim" cx="150" cy="130" r="119" stroke="url(#instrument-rim-${key})"/><path d="${temperatureDial.path}" fill="none" stroke="var(--sauna-color-border, var(--divider-color))" stroke-width="10" stroke-linecap="round"/>${Number.isFinite(reading) && reading > minimum ? `<path class="instrument-value-arc" d="${temperatureDial.path}" fill="none" stroke="${valid ? color : this.appearanceColor("status_unknown")}" stroke-width="10" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, ((reading - minimum) / (maximum - minimum || 1)) * 100))} 100"/>` : ""}${this.temperatureTickMarks({ minimum, maximum })}<rect class="instrument-readout" width="0" height="0" rx="6"/><text class="reading" ${key === "light" ? "data-light-observation" : ""} x="150" y="130" text-anchor="middle" dominant-baseline="central"><tspan>${num(reading, key === "light" ? 0 : 1)}</tspan><tspan class="reading-unit" dx="5"> ${unit}</tspan></text>${control || (unit === "%" ? '<path class="humidity-symbol" transform="translate(150 210) scale(.58) translate(-150 -126)" d="M150 104 C146 113 135 121 135 132 A15 15 0 0 0 165 132 C165 121 154 113 150 104 Z"/>' : "")}</svg>`;
     const deadlineLabels = { confirmation: "Aufgussbestätigung" };
     const phaseRemaining = (phase) =>
+      phase.remaining_seconds ??
       Math.max(
         0,
         (phase.duration_seconds ?? 0) -
@@ -5154,7 +5158,6 @@ class SaunaPanel extends HTMLElement {
       if (!deadlineLabels[deadline.purpose]) continue;
       timerRows.push([deadlineLabels[deadline.purpose], remaining(deadline.due_at)]);
     }
-    const lightAfterRun = s.light_after_run && stamp(s.light_after_run.ends_at) > now;
     if (sessionGap)
       timerRows.push([
         lightAfterRun ? "Wiederaufnahme und Lichtnachlauf" : "Wiederaufnahme",
@@ -5245,10 +5248,9 @@ class SaunaPanel extends HTMLElement {
     const manualControls = this.manualControlAvailability(),
       canManualHeater = manualControls.heater,
       canManualLight = manualControls.brightness;
-    const modeControls =
-      session && !manualMode
-        ? ""
-        : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
+    const modeControls = modeLocked
+      ? ""
+      : `<div class="segmented-mode control-mode" role="group" aria-label="Betriebsmodus"><button data-action="control-mode:automatic" aria-pressed="${!manualMode}"${this.controlCommandAttributes("control-mode", "automatic")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "automatic", "Automatik")}</button><button data-action="control-mode:manual" aria-pressed="${manualMode}"${this.controlCommandAttributes("control-mode", "manual")} ${permissions.control && !modeLocked ? "" : "disabled"}>${this.controlCommandLabel("control-mode", "manual", "Manuell")}</button></div>`;
     const outputControls = (
       key,
       title,
@@ -5395,7 +5397,10 @@ class SaunaPanel extends HTMLElement {
         stateLine,
         timers,
         presence: this.presenceDetails(),
-        targetTemperature: num(s.target_temperature, 1),
+        targetTemperature: num(s.temperature_control?.current_target, 1),
+        nextGangTemperature: this.temperatureControlsNextGang()
+          ? num(s.temperature_control?.next_target, 1)
+          : null,
         thermostatTarget: num(s.thermostat_target, 1),
         restartThreshold: num(s.thermostat_restart_temperature, 1),
         temperatureProgram,
@@ -5410,7 +5415,7 @@ class SaunaPanel extends HTMLElement {
         lightManual: light.manual,
         lightOverrideRemaining: overrideRemaining(light.override_ends_at),
         doorText,
-        measurements: ["upper", "lower"]
+        measurements: (s.configuration_model?.measurement_positions || [])
           .map(
             (pos) =>
               `<h3>${pos === "upper" ? "Obere" : "Untere"} Messposition</h3><p style="color:var(--sauna-color-series-temperature)">${formatValue(pos, "temperature", "°C")} · ${qualityText(pos, "temperature")}</p><p style="color:var(--sauna-color-series-humidity)">${formatValue(pos, "humidity", "% relative Luftfeuchte")} · ${qualityText(pos, "humidity")}</p>`,
@@ -5597,6 +5602,7 @@ class SaunaPanel extends HTMLElement {
       timers,
       presence,
       targetTemperature,
+      nextGangTemperature,
       thermostatTarget,
       restartThreshold,
       temperatureProgram,
@@ -5614,11 +5620,12 @@ class SaunaPanel extends HTMLElement {
       measurements,
       detectionText,
     } = view;
-    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd><dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${num(lightAutomatic, 0)} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${num(lightManual, 0)} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}`;
+    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${num(lightAutomatic, 0)} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${num(lightManual, 0)} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}`;
   }
   presenceDetails() {
     const presence = this.state?.presence;
     const rules = this.state?.rule_inputs;
+    const model = this.state?.configuration_model;
     if (!presence && !rules) return "";
     const report = (item) => {
       if (!item) return "Noch keine Meldung";
@@ -5645,18 +5652,30 @@ class SaunaPanel extends HTMLElement {
       }[item.reason];
       return `${occupancy} · ${assertion} · Ereignis ${when(item.effective_at)} · empfangen ${when(item.received_at)}${reason ? ` · ${reason}` : ""}`;
     };
-    return `<div class="card"><h2>Präsenz und Regelursache</h2><dl><dt>Eingestellte Personenerkennung</dt><dd>${(this.state.configuration?.presence_source || presence?.configured_source) === "ha_presence" ? "Präsenzsensor" : "Temperatur und Feuchte"}</dd><dt>Wirksame Personenerkennung</dt><dd>${presence?.effective_source === "ha_presence" ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${Object.entries(
-      presence?.external || {},
-    )
-      .map(([source, item]) => {
-        const leading =
-          presence?.effective_source === "ha_presence" &&
-          source === this.state.configuration?.bindings?.presence;
-        return `<dt>${leading ? "Führender Präsenzsensor" : "Beobachtete Quelle"} · ${esc(source)}</dt><dd>${esc(report(item))}</dd>`;
+    const observers = model?.presence?.observer
+      ? Object.entries(presence?.external || {})
+          .map(
+            ([source, item]) =>
+              `<dt>Beobachtete Quelle · ${esc(source)}</dt><dd>${esc(report(item))}</dd>`,
+          )
+          .join("")
+      : "";
+    const causeLabels = {
+      gang_heat: ["Heizanforderung im Saunagang", rules?.gang_heat_demand],
+      provisional_door_heat: [
+        "Vorläufige Heizanforderung nach Türschluss",
+        rules?.temporary_door_heat,
+      ],
+      cooling: ["Ofenkühlung", rules?.cooling],
+    };
+    const causes = (model?.regulation_causes || [])
+      .filter((cause) => causeLabels[cause])
+      .map((cause) => {
+        const [label, active] = causeLabels[cause];
+        return `<dt>${label}</dt><dd>${active ? "Aktiv" : "Inaktiv"}</dd>`;
       })
-      .join(
-        "",
-      )}<dt>Heizanforderung im Saunagang</dt><dd>${rules?.gang_heat_demand ? "Aktiv" : "Inaktiv"}</dd><dt>Temporäres Heizen nach Türschluss</dt><dd>${rules?.temporary_door_heat ? "Aktiv" : "Inaktiv"}</dd><dt>Ofenkühlung</dt><dd>${rules?.cooling ? "Aktiv" : "Inaktiv"}</dd></dl></div>`;
+      .join("");
+    return `<div class="card"><h2>${causes ? "Präsenz und Regelursache" : "Präsenz"}</h2><dl><dt>Personenerkennung</dt><dd>${model?.presence?.direct ? "Präsenzsensor mit Türereignis" : "Temperatur und Feuchte"}</dd><dt>Aktuelle Belegung</dt><dd>${esc(report(presence?.current))}</dd>${observers}${causes}</dl></div>`;
   }
   async changeTarget(value) {
     if (!this.state?.permissions?.temperature) return;
@@ -5687,28 +5706,23 @@ class SaunaPanel extends HTMLElement {
       if (this.entry !== entry || this.generation !== generation) return;
       this.state.configuration = {
         ...this.state.configuration,
-        program_mode:
-          saved?.program_mode ||
-          (nextGang ? this.state.configuration.program_mode : "constant"),
+        program_mode: saved?.program_mode || this.state.configuration.program_mode,
         selected_program_id: Object.hasOwn(saved || {}, "selected_program_id")
           ? saved.selected_program_id
-          : nextGang
-            ? this.state.configuration.selected_program_id
-            : null,
+          : this.state.configuration.selected_program_id,
         temperature_steps: Object.hasOwn(saved || {}, "temperature_steps")
           ? saved.temperature_steps
-          : nextGang
-            ? this.state.configuration.temperature_steps
-            : null,
+          : this.state.configuration.temperature_steps,
         parameters: {
           ...this.state.configuration.parameters,
-          ...(saved?.parameters || (nextGang ? {} : { target_temperature_c: value })),
+          ...(saved?.parameters || {}),
         },
       };
-      this.state.target_temperature =
-        saved?.target_temperature ?? (nextGang ? this.state.target_temperature : value);
-      this.state.next_gang_temperature =
-        saved?.next_gang_temperature ?? (nextGang ? value : null);
+      if (saved?.temperature_control) {
+        this.state.temperature_control = saved.temperature_control;
+        this.state.target_temperature = saved.temperature_control.current_target;
+        this.state.next_gang_temperature = saved.temperature_control.next_target;
+      }
       this.programRevision = (this.programRevision || 0) + 1;
       if (!nextGang) {
         if (this.programSelectionDraft?.mode === "constant")
@@ -5727,17 +5741,10 @@ class SaunaPanel extends HTMLElement {
     }
   }
   temperatureControlsNextGang() {
-    return (
-      !!this.state?.session &&
-      this.state.configuration?.control_mode !== "manual" &&
-      (this.state.session.temperature_program_mode ||
-        this.state.configuration?.program_mode) === "progressive"
-    );
+    return this.state?.temperature_control?.scope === "next_gang";
   }
   temperatureControlValue() {
-    return this.temperatureControlsNextGang()
-      ? (this.state.next_gang_temperature ?? this.state.target_temperature)
-      : this.state?.target_temperature;
+    return this.state?.temperature_control?.value;
   }
   temperatureDefinition() {
     return this.state?.parameters?.find((d) => d.key === "target_temperature_c");
@@ -8274,7 +8281,7 @@ class SaunaPanel extends HTMLElement {
     const [start, end] = this.window;
     const detectionPlots = this.$("#detection-plots");
     let html =
-      '<details><summary>Hinweise zur Erkennung</summary><p class="muted">Die Kurven zeigen die gespeicherten Erkennungswerte, die gestrichelten Linien die zugehörigen Schwellen. Ein Grenzübertritt löst erst dann ein Ereignis aus, wenn auch die übrigen Bedingungen erfüllt sind. Nach Beginn eines Gangs, im Nachlauf und während laufender Kühlung ruht die Personensuche. Weitere Aufgüsse werden im Gang weiter erkannt.</p></details>';
+      '<details><summary>Hinweise zur Erkennung</summary><p class="muted">Die Kurven zeigen die gespeicherten Erkennungswerte, die gestrichelten Linien die zugehörigen Schwellen. Ein Grenzübertritt löst erst dann ein Ereignis aus, wenn auch die übrigen Bedingungen erfüllt sind. Die Gangerkennung läuft auch während der Ofenkühlung weiter. Weitere Aufgüsse werden im Gang weiter erkannt.</p></details>';
     if (!traces.length) {
       this.$("#detection-plots").innerHTML =
         html +
@@ -8410,16 +8417,10 @@ class SaunaPanel extends HTMLElement {
       group?.surface === "integration"
     )
       return "";
-    const source = state.configuration.presence_source || "proxy";
+    const source = state.configuration_model?.presence?.source;
     const subgroups = state.frontend_defaults.settings_subgroups || [];
     const entries = state.parameters
-      .filter((d) => {
-        const group = subgroups.find((group) => group.id === d.settings_subgroup);
-        return (
-          d.settings_group === id &&
-          (!group?.presence_sources || group.presence_sources.includes(source))
-        );
-      })
+      .filter((d) => d.settings_group === id && d.applicable)
       .sort((a, b) => a.order - b.order);
     if (!entries.length) return "";
     const field = (d) =>
@@ -8824,7 +8825,7 @@ class SaunaPanel extends HTMLElement {
       editable = !!this.state.permissions?.program && !this.state.configuration_locked,
       gestureEditable =
         !!this.state.permissions?.control && !this.state.configuration_locked,
-      gestureOptions = (this.state.button_session_gestures || [])
+      gestureOptions = (this.state.configuration_model?.button?.session_gestures || [])
         .map(
           (value) =>
             `<option value="${value}" ${configuration.button_session_gesture === value ? "selected" : ""}>${{ long: "Gedrückt halten", double: "Zweimal drücken", triple: "Dreimal drücken" }[value]}</option>`,
@@ -9563,9 +9564,7 @@ class SaunaPanel extends HTMLElement {
       (action === "manual-light-overview" && !manualControls.brightness) ||
       (action.startsWith("heater:") && !manualControls.heater) ||
       (action.startsWith("control-mode:") &&
-        (!permissions.control ||
-          (this.state.configuration_locked &&
-            this.state.configuration.control_mode !== "manual"))) ||
+        (!permissions.control || !this.state.control_mode_change_allowed)) ||
       (action.startsWith("end-phase:") &&
         (!permissions.control || !action.startsWith("end-phase:after_run:"))) ||
       (action === "reset-settings" &&

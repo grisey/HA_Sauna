@@ -43,7 +43,11 @@ const makePanel = (admin) => {
     state: {
       permissions: { admin },
       configuration: { parameters: { ...values }, presence_source: "proxy" },
-      parameters: catalog.parameters,
+      parameters: catalog.parameters.map((definition) => ({
+        ...definition,
+        applicable: definition.settings_group === "appearance",
+      })),
+      configuration_model: { presence: { source: "proxy" } },
       frontend_defaults: catalog.frontend,
     },
     selectSettingsSection() {},

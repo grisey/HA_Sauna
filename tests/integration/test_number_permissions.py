@@ -1,6 +1,7 @@
 """Real HA number service must enforce the technical/admin boundary."""
 
 import unittest
+from custom_components.ha_sauna.core.parameters import Parameters
 
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.core import Context
@@ -13,9 +14,7 @@ from harness import create_sauna, start_hass
 class NumberPermissionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
-        self.entry = await create_sauna(
-            self.hass, parameter_overrides={"sensor_timeout_seconds": 180}
-        )
+        self.entry = await create_sauna(self.hass)
 
     async def asyncTearDown(self):
         await self.hass.async_stop(force=True)
@@ -47,7 +46,8 @@ class NumberPermissionTests(unittest.IsolatedAsyncioTestCase):
                 context=Context(user_id=user.id),
             )
         self.assertEqual(
-            self.entry.options["parameters"]["sensor_timeout_seconds"], 180
+            self.entry.options["parameters"]["sensor_timeout_seconds"],
+            Parameters({}).values["sensor_timeout_seconds"]
         )
         await self.hass.services.async_call(
             "number",

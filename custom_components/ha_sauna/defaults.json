@@ -13,7 +13,7 @@
       },
       "minimum": null,
       "integer": false,
-      "description": "Eine direkte Temperaturwahl gilt sofort und ersetzt das Temperaturprogramm durch einen konstanten Sollwert.",
+      "description": "Bei Konstant und Manuell gilt eine direkte Temperaturwahl sofort. Während eines Temperaturprogramms gilt sie für den nächsten Gang; danach läuft das Programm mit seinen ursprünglichen Temperaturen weiter.",
       "group": "temperature",
       "expert": false,
       "step": 1,
@@ -108,7 +108,7 @@
       "default": 1,
       "minimum": null,
       "integer": false,
-      "description": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. Mindestheizzeit und Heizen während eines Saunagangs haben Vorrang.",
+      "description": "Die Temperaturregelung schaltet bei Solltemperatur plus diesem Abstand ab. In Automatik haben Mindestheizzeit und Heizen während eines Saunagangs Vorrang.",
       "group": "temperature",
       "expert": false,
       "step": "any",
@@ -127,7 +127,7 @@
       "default": 1,
       "minimum": null,
       "integer": false,
-      "description": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein, sobald die Heizpause abgelaufen ist.",
+      "description": "Die Temperaturregelung schaltet bei Solltemperatur minus diesem Abstand wieder ein. In Automatik muss zusätzlich die Heizpause abgelaufen sein.",
       "group": "temperature",
       "expert": false,
       "step": "any",
@@ -146,7 +146,7 @@
       "default": 10,
       "minimum": null,
       "integer": false,
-      "description": "Nach dem Einschalten bleibt der Ofen mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
+      "description": "In Automatik bleibt der Ofen nach bestätigtem Heizbeginn mindestens so lange an. Ofenkühlung, Ausschalten und Schutzabschaltung haben Vorrang.",
       "group": "temperature",
       "expert": false,
       "step": "any",
@@ -165,7 +165,7 @@
       "default": 5,
       "minimum": null,
       "integer": false,
-      "description": "Nach Erreichen der Abschalttemperatur wartet die Temperaturregelung so lange vor dem erneuten Einschalten.",
+      "description": "In Automatik wartet die Temperaturregelung nach Erreichen der Abschalttemperatur so lange vor dem erneuten Einschalten.",
       "group": "temperature",
       "expert": false,
       "step": "any",
@@ -317,7 +317,7 @@
       "default": 12,
       "minimum": null,
       "integer": false,
-      "description": "Ab Türschluss gilt eine gemeinsame Frist für Personenhinweise und die Bestätigung des Saunagangs durch einen Aufguss.",
+      "description": "Die gemeinsame Frist für Personenhinweise und die Bestätigung durch einen Aufguss beginnt mit dem möglichen Gangbeginn: nach vollständigem Eintritt, frühestens bei erreichter Mindesttemperatur.",
       "group": "operation",
       "expert": false,
       "step": "any",
@@ -347,7 +347,7 @@
     },
     {
       "key": "button_hold_seconds",
-      "label": "Taster zum Starten und Beenden halten",
+      "label": "Haltezeit des Binärtasters",
       "unit": "s",
       "allow_zero": true,
       "optional": false,
@@ -1715,8 +1715,8 @@
         "id": "ventilation",
         "label": "Lüften und Gangende",
         "descriptions": {
-          "proxy": "Bestätigtes Durchlüften nach einer erneuten Türöffnung beendet den Gang. Die Tür darf offen bleiben.",
-          "ha_presence": "Eine neue Türöffnung, zugehörige Abwesenheit und bestätigtes Durchlüften beenden den Gang. Die Tür darf offen bleiben."
+          "proxy": "Beim Verlassen wird die Tür zum Durchlüften geöffnet. Bestätigtes Durchlüften nach dieser erneuten Öffnung beendet den Gang.",
+          "ha_presence": "Beim Verlassen wird die Tür zum Durchlüften geöffnet. Diese neue Öffnung, bestätigtes Durchlüften und zugehörige Abwesenheit beenden den Gang."
         }
       },
       {

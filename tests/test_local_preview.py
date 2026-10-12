@@ -149,14 +149,13 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.step((self.preview.c.light_after_run.ends_at - self.preview.now).total_seconds())
         self.assertEqual(self.preview.light, 0)
 
-    def test_user_can_control_manual_heater_through_real_controller(self):
+    def test_user_heater_route_projects_the_manual_selection(self):
         self.preview.admin = False
         self.preview.reset("manuell")
         self.assertTrue(self.preview.state()["permissions"]["heater"])
-        self.preview.action("/preview/heater", {"value":True})
-        self.assertTrue(self.preview.c.last_decision.heat)
-        self.preview.action("/preview/heater", {"value":False})
-        self.assertFalse(self.preview.c.last_decision.heat)
+        for value in (True, False):
+            self.preview.action("/preview/heater", {"value":value})
+            self.assertEqual(self.preview.state()["manual_controls"]["heater"]["manual"], value)
 
     def test_user_sees_manual_enablement_when_thermostat_needs_no_heat(self):
         self.preview.admin = False
@@ -213,15 +212,17 @@ class LocalPreviewTests(unittest.TestCase):
                 self.assertIsNotNone(self.preview.c.session)
                 self.assertTrue(self.preview.state()["operation_enabled"])
                 self.assertTrue(self.preview.c.last_decision.heat)
+                session_id = self.preview.c.session.session_id
                 self.preview.action("/preview/heater", {"value":False})
-                self.assertIsNone(self.preview.c.session)
+                self.assertEqual(self.preview.c.session.session_id, session_id)
+                self.assertFalse(self.preview.c.session.operation_enabled)
                 self.assertFalse(self.preview.c.last_decision.heat)
                 with self.assertRaises(ValueError):
                     self.preview.action("/preview/control", {"enabled":True})
-                self.assertIsNone(self.preview.c.session)
+                self.assertEqual(self.preview.c.session.session_id, session_id)
                 self.preview.action("/preview/control-mode", {"mode":"automatic"})
                 self.preview.action("/preview/control", {"enabled":True})
-                session_id = self.preview.c.session.session_id
+                self.assertEqual(self.preview.c.session.session_id, session_id)
                 self.preview.action("/preview/heater", {"value":True})
                 self.assertEqual(self.preview.c.session.session_id, session_id)
                 self.preview.action("/preview/control", {"enabled":False})
@@ -298,6 +299,10 @@ class LocalPreviewTests(unittest.TestCase):
         token = next(d.token for d in self.preview.c.session.deadlines
                      if d.purpose == "session_gap")
         self.preview.action("/preview/finish-session", {"token":token})
+        self.assertEqual(self.preview.c.session.session_id, session_id)
+        due_at = next(d.due_at for d in self.preview.c.session.deadlines
+                      if d.purpose == "session_gap")
+        self.preview.step((due_at - self.preview.now).total_seconds())
         self.assertIsNone(self.preview.c.session)
         self.assertEqual(self.preview.state()["last_session"]["timeline"]["session_id"], session_id)
         self.assertEqual(self.preview.archive()[0]["session_id"], session_id)
@@ -331,21 +336,7 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertTrue(all(r["kind"] in ("measurement", "source_snapshot", "phase")
                             for r in public["records"]))
 
-    def test_preview_button_short_bounds_manual_recording(self):
-        self.preview.reset("manuell")
-        for expected in (True, False):
-            self.preview.action("/simulate", {"action":"button_short"})
-            self.assertEqual(self.preview.c.last_decision.heat, expected)
-            self.assertEqual(self.preview.c.session is not None, expected)
-            self.assertEqual(self.preview.c.control_mode, "manual")
-        self.preview.reset("archiv")
-        self.preview.action("/simulate", {"action":"button_short"})
-        self.assertEqual(self.preview.c.control_mode, "manual")
-        self.assertIsNotNone(self.preview.c.session)
-        self.assertFalse(self.preview.c.automatic_operation_enabled)
-        self.assertTrue(self.preview.c.last_decision.heat)
-
-    def test_native_multiple_press_starts_automatic_from_manual_recording(self):
+    def test_preview_gesture_selection_uses_settings_validation(self):
         for gesture in ("double", "triple"):
             with self.subTest(gesture=gesture):
                 self.preview.reset("manuell")
@@ -354,31 +345,21 @@ class LocalPreviewTests(unittest.TestCase):
                 saved = self.preview.action("/preview/button-gesture", {"gesture":gesture})
                 self.assertEqual(saved["button_session_gesture"], gesture)
                 self.assertEqual(self.preview.entry.options["button_session_gesture"], gesture)
-                self.preview.action("/simulate", {"action":"button_short"})
-                self.assertIsNotNone(self.preview.c.session)
-                self.assertFalse(self.preview.c.automatic_operation_enabled)
-                self.preview.action("/simulate", {"action":f"button_{gesture}"})
-                self.assertIsNotNone(self.preview.c.session)
-                self.assertEqual(self.preview.c.control_mode, "automatic")
-                with self.assertRaises(ValueError):
-                    self.preview.action("/preview/button-gesture", {"gesture":"long"})
-                self.preview.action("/simulate", {"action":f"button_{gesture}"})
-                self.assertIsNone(self.preview.c.session)
         for gesture in ("short", "unknown"):
             with self.assertRaises(ValueError):
                 self.preview.action("/preview/button-gesture", {"gesture":gesture})
 
-    def test_preview_button_hold_uses_configured_threshold_and_release_feedback(self):
+    def test_preview_native_button_consumes_classified_events_without_advancing_time(self):
         self.preview.reset("manuell")
         self.preview.action("/preview/button-gesture", {"gesture":"long"})
         self.assertEqual(self.preview.runtime.configuration.control_input_mode, "button")
         before = self.preview.now
-        seconds = self.preview.c.parameters.values["button_hold_seconds"]
         bright = self.preview.c.parameters.values["session_light_brightness_percent"]
         self.preview.action("/simulate", {"action":"button_hold"})
         state = self.preview.state()
         identity = self.preview.c.session.session_id
-        self.assertEqual(self.preview.now - before, timedelta(seconds=seconds))
+        self.assertEqual(self.preview.now, before)
+        self.assertIsNone(self.preview.runtime._button.hold_threshold)
         self.assertEqual(self.preview.c.control_mode, "automatic")
         self.assertTrue(state["preview_button"]["pressed"])
         self.assertTrue(state["preview_button"]["start_hold"])
@@ -392,7 +373,8 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.action("/simulate", {"action":"button_short"})
         self.assertEqual(self.preview.c.session.session_id, identity)
         self.preview.action("/simulate", {"action":"button_hold"})
-        self.assertIsNone(self.preview.c.session)
+        self.assertEqual(self.preview.c.session.session_id, identity)
+        self.assertFalse(self.preview.c.session.operation_enabled)
         self.assertEqual(self.preview.state()["manual_controls"]["light"]["observation"]["brightness_percent"], 0)
         self.preview.action("/simulate", {"action":"button_release"})
         self.assertIsNotNone(self.preview.c.light_after_run)
@@ -422,6 +404,11 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertEqual(self.preview.state()["archive_revision"], current["archive_revision"])
         self.assertEqual(len(self.preview.archive()), 1)
         self.preview.action("/preview/heater", {"value":False})
+        self.assertEqual(len(self.preview.archive()), 1)
+        self.assertFalse(self.preview.c.session.operation_enabled)
+        due_at = next(d.due_at for d in self.preview.c.session.deadlines
+                      if d.purpose == "session_gap")
+        self.preview.step((due_at - self.preview.now).total_seconds())
         self.assertEqual(self.preview.archive(), [])
 
     def test_program_choices_use_existing_runtime_settings_without_session_reset(self):

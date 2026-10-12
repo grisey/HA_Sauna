@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
 from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.program_catalog import DEFAULT_PROGRAMS
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
@@ -66,7 +67,7 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertEqual(manual_controls(runtime)["light"]["observation"],
                          {"available": False, "brightness_percent": None})
 
-    def device(self, *, bindings=BINDINGS, **parameters):
+    def device(self, *, bindings=BINDINGS, button_events=None, **parameters):
         from custom_components.ha_sauna.device import HADevice
 
         configuration = Configuration(bindings, Parameters(parameters))
@@ -75,6 +76,11 @@ class DeviceFeedbackTests(unittest.TestCase):
         hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity: light[0]))
         adapter = HADevice(hass, runtime)
         runtime.device = adapter
+        if button_events is not None:
+            button = state("unavailable")
+            button.domain = "event"
+            button.attributes["event_types"] = list(button_events)
+            adapter.ingest("control_input", button, T0, initial=True)
         return runtime, adapter, light
 
     def detection_device(self, *, both_positions=False, **parameters):
@@ -85,7 +91,9 @@ class DeviceFeedbackTests(unittest.TestCase):
                  if key != "heater_feedback"
                  and (both_positions or key not in {"lower_temperature", "lower_humidity"})}
         runtime = SaunaRuntime(Configuration(Bindings(roles), Parameters({
-            "target_temperature_c": 80, "feedback_timeout_seconds": 60, **parameters,
+            "target_temperature_c": next(
+                program.start_c for program in DEFAULT_PROGRAMS if program.id == "genusszeit"
+            ), **parameters,
         })), lambda: clock[0])
         hass = SimpleNamespace(states=SimpleNamespace(get=lambda _entity: None),
                                services=SimpleNamespace(async_call=AsyncMock()))
@@ -122,9 +130,50 @@ class DeviceFeedbackTests(unittest.TestCase):
         controller.set_heater_override(False, at)
         controller.set_heater_override(None, at)
 
+    async def prepare_infusion_packet(self, runtime, adapter, clock, at, *, temperature=90):
+        """Supply a healthy baseline and an ordinary four-point RH increase.
+
+        This prepares the last sample of the configured median/hold interval;
+        callers retain the final same-time packet whose HA ordering they test.
+        No detector parameter is shortened and no detection result is copied.
+        """
+        from math import ceil
+
+        values = runtime.configuration.parameters.values
+        delay = (int(values["median_seconds"]) - 1) // 2 + ceil(values["infusion_hold_seconds"])
+        rising_at = at - timedelta(seconds=delay)
+        interval = timedelta(seconds=values["sensor_timeout_seconds"] / 2)
+        positions = tuple(position for position in ("upper", "lower")
+                          if f"{position}_temperature" in runtime.configuration.bindings.values)
+        # The lightweight adapter fixture acknowledges ordinary relay commands
+        # here; this long healthy baseline must not create a separate fault.
+        def acknowledge():
+            adapter.ingest("heater", state("on" if adapter.command else "off"), clock[0])
+            adapter.refresh(clock[0])
+
+        acknowledge()
+        baseline_end = rising_at - timedelta(seconds=1)
+        while clock[0] < baseline_end:
+            clock[0] = min(baseline_end, clock[0] + interval)
+            await asyncio.gather(*(
+                runtime.device_input(self.detection_edge(runtime, f"{position}_{quantity}", value))
+                for position in positions
+                for quantity, value in (("temperature", temperature), ("humidity", 20))
+            ))
+            acknowledge()
+        clock[0] = rising_at
+        await asyncio.gather(*(
+            runtime.device_input(self.detection_edge(runtime, f"{position}_humidity", 24))
+            for position in positions
+        ))
+        while clock[0] + timedelta(seconds=1) < at:
+            clock[0] += timedelta(seconds=1)
+            await runtime.tick()
+        clock[0] = at
+
     def test_received_readiness_releases_override_before_current_output(self):
         async def exercise(queued, same_time, path):
-            runtime, adapter, clock = self.detection_device(feedback_timeout_seconds=10)
+            runtime, adapter, clock = self.detection_device()
             target = runtime.controller.target_temperature
             below = target - .01
             restart = runtime.controller.thermostat_restart_temperature
@@ -391,7 +440,8 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_sampling_stops_at_session_gap_before_old_detector_callback(self):
         async def exercise(path, resumes):
-            runtime, adapter, clock = self.detection_device(session_gap_minutes=1)
+            runtime, adapter, clock = self.detection_device()
+            gap = runtime.configuration.parameters.seconds("session_gap_minutes")
             runtime.controller.begin_session("gap", T0)
             self.complete_proxy_entry(runtime, T0)
             await runtime.start_archive(path, "gap-entry")
@@ -409,11 +459,17 @@ class DeviceFeedbackTests(unittest.TestCase):
             await asyncio.sleep(0)
             pending = [off]
             if resumes:
-                clock[0] = T0 + timedelta(seconds=65)
+                clock[0] = T0 + timedelta(seconds=gap + 4)
+                pending.append(asyncio.create_task(runtime.device_input(
+                    self.detection_edge(runtime, "upper_temperature", 90))))
+                pending.append(asyncio.create_task(runtime.device_input(
+                    self.detection_edge(runtime, "upper_humidity", 20))))
+                await asyncio.sleep(0)
+                clock[0] = T0 + timedelta(seconds=gap + 5)
                 pending.append(asyncio.create_task(runtime.device_input(
                     self.detection_edge(runtime, "control_input", "on", "off"))))
                 await asyncio.sleep(0)
-            clock[0] = T0 + timedelta(seconds=70)
+            clock[0] = T0 + timedelta(seconds=gap + 10)
             runtime._lock.release()
             await asyncio.gather(*pending)
             await runtime.archive.flush()
@@ -426,9 +482,10 @@ class DeviceFeedbackTests(unittest.TestCase):
                 with self.subTest(resumes=resumes):
                     runtime, stored = asyncio.run(exercise(
                         Path(directory) / f"gap-{resumes}.sqlite", resumes))
+                    gap = runtime.configuration.parameters.seconds("session_gap_minutes")
                     old = runtime.controller.completed_sessions[-1]
                     self.assertEqual(old.ended_at,
-                                     T0 + timedelta(seconds=62))
+                                     T0 + timedelta(seconds=gap + 2))
                     self.assertEqual(old.timeline.gang_count, int(resumes))
                     self.assertEqual(len(old.timeline.completed), 1)
                     self.assertEqual(old.timeline.completed[0].end_reason, "ausgeschaltet")
@@ -437,7 +494,7 @@ class DeviceFeedbackTests(unittest.TestCase):
                     self.assertEqual(old.timeline.retracted, ())
                     self.assertEqual(runtime.presence.current.occupancy, "unknown")
                     ended = next(e for e in runtime.consumer_events if e.kind == "gang_ended")
-                    self.assertEqual(ended.received_at, T0 + timedelta(seconds=70))
+                    self.assertEqual(ended.received_at, T0 + timedelta(seconds=gap + 10))
                     withdrawal = next(e for e in runtime.consumer_events if e.kind == "occupancy"
                                       and e.presence.assertion == "proxy_retraction")
                     self.assertEqual(withdrawal.session_id, "gap")
@@ -526,8 +583,6 @@ class DeviceFeedbackTests(unittest.TestCase):
         async def exercise(tick_first, confirmation_at):
             runtime, adapter, clock = self.detection_device(
                 both_positions=tick_first in ("split", "control_split", "control_last"),
-                confirmation_minutes=1, median_seconds=1,
-                infusion_window_seconds=1, infusion_hold_seconds=1,
             )
             runtime.controller.begin_session("confirmation", T0)
             await runtime.tick()
@@ -536,13 +591,8 @@ class DeviceFeedbackTests(unittest.TestCase):
             await runtime.receive(Event("person", "confirmation", Kind.PERSON_STRONG,
                                         clock[0], clock[0]))
             old = runtime.session.timeline.active
-            clock[0] = T0 + timedelta(seconds=confirmation_at - 1)
-            roles = (("upper_humidity", "lower_humidity")
-                     if tick_first in ("split", "control_split", "control_last")
-                     else ("upper_humidity",))
-            await asyncio.gather(*(runtime.device_input(self.detection_edge(runtime, role, 22))
-                                   for role in roles))
-            clock[0] = T0 + timedelta(seconds=confirmation_at)
+            await self.prepare_infusion_packet(runtime, adapter, clock,
+                                               T0 + timedelta(seconds=confirmation_at))
             if tick_first in ("control_split", "control_last"):
                 upper = runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
                 lower = runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24))
@@ -578,12 +628,13 @@ class DeviceFeedbackTests(unittest.TestCase):
             await asyncio.gather(first, second)
             return runtime, old
 
-        for confirmation_at in (70, 71, 72):
+        confirmation = 11 + Parameters({}).seconds("confirmation_minutes")
+        for confirmation_at in (confirmation - 1, confirmation, confirmation + 1):
             for tick_first in (False, True, None, "split", "control_split", "control_last"):
                 with self.subTest(tick_first=tick_first, confirmation_at=confirmation_at):
                     runtime, old = asyncio.run(exercise(tick_first, confirmation_at))
                     ended = tick_first in ("control_split", "control_last")
-                    if confirmation_at > 71:
+                    if confirmation_at > confirmation:
                         self.assertIsNone(runtime.session.timeline.active)
                         self.assertEqual(runtime.session.timeline.gang_count, 0)
                         self.assertEqual(runtime.presence.current.occupancy, "unknown")
@@ -689,8 +740,14 @@ class DeviceFeedbackTests(unittest.TestCase):
             clock[0] = T0 + timedelta(seconds=3)
             await runtime._apply_button_action(END_HOLD, clock[0])
             await runtime._cycle()
-            self.assertIsNone(runtime.session)
+            self.assertEqual(runtime.session.session_id, "old")
+            self.assertFalse(runtime.session.operation_enabled)
             self.assertEqual(runtime.controller.last_decision.session_id, "old")
+            deadline = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+            clock[0] = deadline.due_at
+            await runtime._cycle()
+            self.assertIsNone(runtime.session)
+            self.assertEqual(runtime.controller.completed_sessions[-1].ended_at, deadline.due_at)
             clock[0] += timedelta(seconds=1)
             runtime.controller.begin_session("new", clock[0])
             runtime.persist()
@@ -713,7 +770,7 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_short_release_restoration_waits_for_slow_press_off_service(self):
         async def exercise():
-            runtime, adapter, light = self.device(feedback_timeout_seconds=0.01)
+            runtime, adapter, light = self.device()
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()
@@ -758,10 +815,7 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_binary_short_preserves_light_when_switching_to_manual(self):
         async def exercise():
-            runtime, adapter, light = self.device(
-                target_temperature_c=80, sensor_timeout_seconds=30,
-                feedback_timeout_seconds=2, fault_confirmation_seconds=5,
-            )
+            runtime, adapter, light = self.device()
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()
@@ -802,7 +856,10 @@ class DeviceFeedbackTests(unittest.TestCase):
             bindings = Bindings({**BINDINGS.values, "control_input": (
                 "event.operator" if native else BINDINGS.values["control_input"]
             )})
-            runtime, adapter, light = self.device(bindings=bindings)
+            runtime, adapter, light = self.device(
+                bindings=bindings,
+                button_events=("btn_down", "btn_up", "single_push", "long_push") if native else None,
+            )
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()
@@ -837,9 +894,10 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_gesture_reset_restores_press_light_and_preserves_manual_selection(self):
         async def exercise():
-            runtime, adapter, light = self.device(bindings=Bindings({
-                **BINDINGS.values, "control_input": "event.operator",
-            }))
+            runtime, adapter, light = self.device(
+                bindings=Bindings({**BINDINGS.values, "control_input": "event.operator"}),
+                button_events=("btn_down", "btn_up", "single_push", "long_push", "double_push"),
+            )
             runtime.configuration = replace(runtime.configuration, control_input_mode="button",
                                             button_session_gesture="long")
             runtime._reset_button_gestures()
@@ -867,12 +925,12 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_held_button_retries_unconfirmed_off_and_keeps_fault_visible(self):
         async def exercise():
-            runtime, adapter, light = self.device(feedback_timeout_seconds=0.2)
+            runtime, adapter, light = self.device()
             clock = [T0]
             runtime._clock = lambda: clock[0]
             adapter.light_call = AsyncMock()
             await adapter.show_button_hold_light(T0, "held")
-            clock[0] += timedelta(seconds=0.3)
+            clock[0] += timedelta(seconds=adapter.values["feedback_timeout_seconds"] + .1)
             await adapter.show_button_hold_light(clock[0], "held")
             self.assertEqual(adapter.light_call.await_count, 2)
             self.assertEqual(adapter.faults["operation_light"], "feedback_missing")
@@ -893,8 +951,9 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_light_echo_window_starts_when_command_is_sent(self):
         async def exercise():
-            runtime, adapter, _ = self.device(feedback_timeout_seconds=0.2)
-            clock = [T0 + timedelta(seconds=0.15)]
+            runtime, adapter, _ = self.device()
+            timeout = adapter.values["feedback_timeout_seconds"]
+            clock = [T0 + timedelta(seconds=timeout * .75)]
             runtime._clock = lambda: clock[0]
             adapter.light_call = AsyncMock()
             await adapter._send_light_command(
@@ -906,7 +965,7 @@ class DeviceFeedbackTests(unittest.TestCase):
                 "old_state": state("on", 180), "new_state": state("off"),
             })
             self.assertIsNone(adapter.external_light_selection(
-                event, T0 + timedelta(seconds=0.21)
+                event, T0 + timedelta(seconds=timeout * 1.05)
             ))
 
         asyncio.run(exercise())
@@ -915,7 +974,7 @@ class DeviceFeedbackTests(unittest.TestCase):
         from homeassistant.core import Context
 
         async def exercise(delay, own_context):
-            runtime, adapter, _ = self.device(feedback_timeout_seconds=.2)
+            runtime, adapter, _ = self.device()
             clock = [T0]
             runtime._clock = lambda: clock[0]
             contexts = []
@@ -941,11 +1000,11 @@ class DeviceFeedbackTests(unittest.TestCase):
                 "old_state": state("on", 180), "new_state": new,
             })
             return adapter.external_light_selection(
-                event, clock[0] + timedelta(seconds=delay)
+                event, clock[0] + timedelta(seconds=adapter.values["feedback_timeout_seconds"] + delay)
             )
 
-        for delay, own_context, expected in ((.199, True, None), (.2, True, 80),
-                                             (.199, False, 80)):
+        for delay, own_context, expected in ((-.001, True, None), (0, True, 80),
+                                             (-.001, False, 80)):
             with self.subTest(delay=delay, own_context=own_context):
                 self.assertEqual(asyncio.run(exercise(delay, own_context)), expected)
 
@@ -961,13 +1020,14 @@ class DeviceFeedbackTests(unittest.TestCase):
 
 
     def test_independent_heat_while_off_latches_after_confirmation(self):
-        runtime, adapter, _ = self.device(fault_confirmation_seconds=2)
+        runtime, adapter, _ = self.device()
         adapter.ingest("heater", state("off"), T0)
         adapter.ingest("heater_feedback", state("on"), T0)
         adapter.command, adapter.command_at = False, T0
-        adapter.refresh(T0 + timedelta(seconds=10))
+        observed = T0 + timedelta(seconds=adapter.values["feedback_timeout_seconds"])
+        adapter.refresh(observed)
         self.assertEqual(adapter.faults["heater_still_heating"], "pending")
-        adapter.refresh(T0 + timedelta(seconds=12))
+        adapter.refresh(observed + timedelta(seconds=adapter.values["fault_confirmation_seconds"]))
         self.assertIn("heater_still_heating", runtime.controller.protection)
 
     def test_switch_recovery_off_stops_but_recovery_on_does_not_start(self):
@@ -1137,8 +1197,9 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_binary_release_received_behind_tick_stays_a_short_press(self):
         async def exercise():
-            runtime, adapter, _ = self.device(button_hold_seconds=2)
+            runtime, adapter, _ = self.device()
             runtime.configuration = replace(runtime.configuration, control_input_mode="button")
+            hold = runtime.configuration.parameters.values["button_hold_seconds"]
             clock = [T0]
             runtime._clock = lambda: clock[0]
             runtime.controller.begin_session("short", T0)
@@ -1153,13 +1214,13 @@ class DeviceFeedbackTests(unittest.TestCase):
 
             await runtime.device_input(edge("off", "on"))
             await runtime._lock.acquire()
-            clock[0] = T0 + timedelta(seconds=0.5)
+            clock[0] = T0 + timedelta(seconds=hold / 4)
             tick = asyncio.create_task(runtime.tick())
             await asyncio.sleep(0)
-            clock[0] = T0 + timedelta(seconds=1)
+            clock[0] = T0 + timedelta(seconds=hold / 2)
             release = asyncio.create_task(runtime.device_input(edge("on", "off")))
             await asyncio.sleep(0)
-            clock[0] = T0 + timedelta(seconds=3)
+            clock[0] = T0 + timedelta(seconds=hold + 1)
             runtime._lock.release()
             await asyncio.gather(tick, release)
             return runtime
@@ -1346,7 +1407,8 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_session_light_off_waits_for_feedback_then_retries(self):
         async def exercise():
-            runtime, adapter, light = self.device(feedback_timeout_seconds=2)
+            runtime, adapter, light = self.device()
+            timeout = adapter.values["feedback_timeout_seconds"]
             clock = [T0]
             runtime._clock = lambda: clock[0]
             phase = SimpleNamespace(session_id="ended", started_at=T0, ends_at=T0)
@@ -1354,19 +1416,19 @@ class DeviceFeedbackTests(unittest.TestCase):
             adapter.light_call = AsyncMock()
             self.assertFalse(await adapter._finish_expired_session_light(T0))
             self.assertNotIn("session_light", adapter.faults)
-            clock[0] = T0 + timedelta(seconds=1)
+            clock[0] = T0 + timedelta(seconds=timeout / 2)
             self.assertFalse(
                 await adapter._finish_expired_session_light(clock[0])
             )
             self.assertEqual(adapter.light_call.await_count, 1)
-            clock[0] = T0 + timedelta(seconds=2)
+            clock[0] = T0 + timedelta(seconds=timeout)
             self.assertFalse(
                 await adapter._finish_expired_session_light(clock[0])
             )
             self.assertEqual(adapter.light_call.await_count, 2)
             self.assertEqual(adapter.faults["session_light"], "feedback_missing")
             light[0] = state("off")
-            clock[0] = T0 + timedelta(seconds=3)
+            clock[0] = T0 + timedelta(seconds=timeout + 1)
             self.assertTrue(
                 await adapter._finish_expired_session_light(clock[0])
             )
@@ -1376,7 +1438,7 @@ class DeviceFeedbackTests(unittest.TestCase):
 
     def test_queued_dimmer_before_session_light_deadline_keeps_due_off(self):
         async def exercise():
-            runtime, adapter, _ = self.device(feedback_timeout_seconds=2)
+            runtime, adapter, _ = self.device()
             clock = [T0]
             runtime._clock = lambda: clock[0]
             phase = SimpleNamespace(

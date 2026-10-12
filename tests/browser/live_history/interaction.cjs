@@ -12,6 +12,9 @@ const path = require("node:path");
 const { webkit, chromium } = require("playwright");
 
 const root = path.resolve(process.env.HA_SAUNA_ROOT || process.cwd());
+const defaults = JSON.parse(
+  fs.readFileSync(path.join(root, "custom_components/ha_sauna/defaults.json"), "utf8"),
+);
 const engine = process.env.ENGINE || "webkit";
 const steps = Number(process.env.INPUT_STEPS || 24);
 const tickEvery = Number(process.env.TICK_EVERY || 4);
@@ -78,12 +81,12 @@ async function addFixture(page) {
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
-  await page.evaluate(async () => {
-    window.f = await window.installHistoryFixture({ seconds: 14400 });
+  await page.evaluate(async (defaults) => {
+    window.f = await window.installHistoryFixture({ seconds: 14400, defaults });
     window.f.assertClean();
     if (window.f.records.length !== 57600)
       throw Error(`fixture expected 57600 records, got ${window.f.records.length}`);
-  });
+  }, defaults);
 }
 
 // This instrumentation only observes calls and DOM events. It never invokes a

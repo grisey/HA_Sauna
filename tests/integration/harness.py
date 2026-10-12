@@ -2,6 +2,7 @@
 import shutil
 import socket
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 from homeassistant import bootstrap, config_entries, loader
@@ -80,6 +81,25 @@ def seed_sources(hass):
     return bindings
 
 
+async def complete_entity_form(hass, flow, values):
+    """Submit the hardware choice before its conditional event-name field."""
+    result = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], pack_binding_input(values)
+    )
+    if result["type"] == "form":
+        assert result["step_id"] == "entities" and not result["errors"], result
+        fields = {
+            str(key)
+            for marker, value in result["data_schema"].schema.items()
+            for key in (value.schema.schema if hasattr(value, "schema") else (marker,))
+        }
+        assert "button_event_type" in fields, result
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], pack_binding_input({**values, "button_event_type": ""})
+        )
+    return result
+
+
 async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None):
     bindings = seed_sources(hass)
     if binding_overrides:
@@ -92,13 +112,13 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
     flow = await hass.config_entries.flow.async_configure(
         flow["flow_id"], {"name": "Testsauna"})
     assert flow["step_id"] == "entities", flow
-    result = await hass.config_entries.flow.async_configure(flow["flow_id"], pack_binding_input({"name": "Testsauna", "control_input_mode": "switch", **bindings}))
+    result = await complete_entity_form(hass, flow, {
+        "name": "Testsauna", "control_input_mode": "switch", **bindings,
+    })
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()
     entry = result["result"]
     values = {d.key: d.default for d in EDITABLE_DEFINITIONS if d.key != "final_temperature_c"}
-    values.update(session_gap_minutes=2.5,
-        sensor_timeout_seconds=2.5, feedback_timeout_seconds=2.5, fault_confirmation_seconds=2.5)
     values.update({key: value for key, value in (parameter_overrides or {}).items()
                    if key in {d.key for d in EDITABLE_DEFINITIONS}})
     # Fixture parameters use the same writer as panel settings after basic setup.
@@ -106,6 +126,28 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
     await async_set_parameters(hass, entry, values, explicit_target=False)
     await hass.async_block_till_done()
     return entry
+
+
+async def advance_with_fresh_sources(hass, runtime, target, set_clock):
+    """Advance a healthy constant-input interval with normal source reports.
+
+    Fault/expiry tests deliberately use their own clock instead. This helper
+    leaves every configured limit unchanged and renews only existing climate
+    reports; actor acknowledgements still come from the real HA service path.
+    """
+    interval = runtime.configuration.parameters.values["sensor_timeout_seconds"] / 2
+    current = runtime._clock()
+    while current < target:
+        current = min(target, current + timedelta(seconds=interval))
+        set_clock(current)
+        for role in ("upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"):
+            entity = runtime.configuration.bindings.values.get(role)
+            source = hass.states.get(entity) if entity else None
+            if source is not None:
+                hass.states.async_set(entity, source.state, source.attributes, force_update=True)
+        await hass.async_block_till_done()
+        await runtime.tick()
+        await hass.async_block_till_done()
 
 
 def with_confirmed_round(session):

@@ -1,4 +1,8 @@
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -24,17 +28,28 @@ const configuration = (mode = "constant") => ({
   selected_program_id: null,
   temperature_steps: null,
   temperature_programs: programs,
-  parameters: {
+  // Explicit editor inputs; all unrelated policy values come from the catalog.
+  parameters: fixtureValues({
     target_temperature_c: 80,
     final_temperature_c: 90,
     temperature_gangs: 3,
-    preset_count: 0,
-    preset_start_c: 70,
-    preset_step_c: 5,
-    session_light_brightness_percent: 50,
-  },
+  }),
 });
-function panel(config = configuration(), session = null, api = async () => ({})) {
+function panel(
+  config = configuration(),
+  session = null,
+  api = async (path, _method, body) =>
+    path.endsWith("/temperature")
+      ? {
+          temperature_control: {
+            scope: "current",
+            value: body.target_temperature_c,
+            current_target: body.target_temperature_c,
+            next_target: body.target_temperature_c,
+          },
+        }
+      : {},
+) {
   const calls = [];
   const p = Object.assign(Object.create(Panel.prototype), {
     entry: "entry",
@@ -44,10 +59,16 @@ function panel(config = configuration(), session = null, api = async () => ({}))
       configuration: config,
       session,
       target_temperature: 86,
+      temperature_control: {
+        scope: "current",
+        value: 86,
+        current_target: 86,
+        next_target: 86,
+      },
       permissions: { program: true, temperature: true },
       parameters: [
-        { key: "target_temperature_c", minimum: 60, maximum: 100 },
-        { key: "temperature_gangs", minimum: 1, maximum: 8 },
+        fixtureDefinition("target_temperature_c"),
+        fixtureDefinition("temperature_gangs"),
       ],
     },
     $: () => null,
@@ -176,6 +197,7 @@ test("temperature choice returns to direct selection after finally ending a sess
       reportedState = {
         ...reportedState,
         operation_enabled: body.enabled,
+        light_after_run: body.enabled ? null : { ends_at: "2032-01-01T12:10:00Z" },
         session: {
           ...session,
           deadlines: body.enabled
@@ -194,7 +216,7 @@ test("temperature choice returns to direct selection after finally ending a sess
     assert.equal(path, "/entry/finish-session");
     assert.equal(method, "POST");
     assert.deepEqual(plain(body), { token: "gap-token" });
-    reportedState = { ...reportedState, session: null, last_session: session };
+    reportedState = { ...reportedState, light_after_run: null };
     return {};
   });
   const current = renderControls(p);
@@ -229,6 +251,16 @@ test("temperature choice returns to direct selection after finally ending a sess
   await checkDisclosure();
   await p.action("operation");
   await p.action("finish-session:gap-token");
+  assert.equal(p.state.session.timeline.session_id, "current-session");
+  assert.doesNotMatch(current(), /data-action="finish-session:/);
+  assert.match(current(), /data-action="operation"[^>]*>Fortsetzen<\/button>/);
+  reportedState = {
+    ...reportedState,
+    now: "2032-01-01T12:10:00Z",
+    session: null,
+    last_session: session,
+  };
+  await p.refresh();
   assert.equal(p.state.session, null);
   assert.match(current(), /id="program-choice-body" >/);
   assert.doesNotMatch(current(), /program-current|data-action="program-toggle"/);
@@ -279,14 +311,6 @@ test("a session draft keeps its cancel and apply actions after the session ends"
             };
             return {};
           }
-          if (path === "/entry/finish-session") {
-            reportedState = {
-              ...reportedState,
-              session: null,
-              last_session: session,
-            };
-            return {};
-          }
           assert.equal(path, "/entry/program");
           return {};
         },
@@ -324,7 +348,13 @@ test("a session draft keeps its cancel and apply actions after the session ends"
       await p.action("operation");
       assert.equal(p.programSelectionDraft, draft);
       assert.match(current(), /data-action="program-apply"/);
-      await p.action("finish-session:gap-token");
+      reportedState = {
+        ...reportedState,
+        now: "2032-01-01T12:10:00Z",
+        session: null,
+        last_session: session,
+      };
+      await p.refresh();
       assert.equal(p.state.session, null);
       assert.equal(p.programSelectionDraft, draft);
       assert.match(current(), /id="program-choice-body" >/);
@@ -532,7 +562,12 @@ test("changing individual steps to even saves without a session and stages withi
           id: "free-step-count",
           matches: (selector) => selector === "[data-free-step-count]",
         };
-      for (const value of ["", "0", "1.5", "9"]) {
+      for (const value of [
+        "",
+        "0",
+        "1.5",
+        String(fixtureDefinition("temperature_gangs").maximum + 1),
+      ]) {
         countInput.value = value;
         assert.throws(() => p.finishFreeProgramInput(countInput), /Stufenzahl/);
         await assert.rejects(() => p.applyProgram(), /Stufenzahl/);
@@ -1151,6 +1186,7 @@ test("gap control keeps its apply action inside the open program editor", () => 
     now: "2032-01-01T12:00:00Z",
     last_session: null,
     operation_enabled: false,
+    light_after_run: { ends_at: "2032-01-01T12:10:00Z" },
     phase: "aus",
     gang_count: 0,
     measurements: [],

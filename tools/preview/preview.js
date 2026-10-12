@@ -45,9 +45,9 @@ const refresh = async (reset = false) => {
   document.querySelector('[data-sim="button_release"]').disabled = !button.pressed;
   document.querySelector("#button-status").textContent = button.pressed
     ? button.start_hold
-      ? "Gedrückt · Start bestätigt, Licht hell bis zum Loslassen"
+      ? "Gedrückt · Start bestätigt, Lichtbestätigung bis zum Loslassen"
       : "Gedrückt · Loslassen beendet die Geste"
-    : `Simulierte Haltezeit: ${button.hold_seconds} s`;
+    : "Ereignistaster: fertige Gestenmeldungen";
   panel._hass.user.is_admin = panel.state.permissions.admin;
   document.querySelector("#sim-time").textContent = new Date(
     panel.state.now,

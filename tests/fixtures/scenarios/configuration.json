@@ -1,0 +1,6 @@
+{
+  "schema_version": 2,
+  "source": "custom_components/ha_sauna/defaults.json",
+  "source_sha256": "6ff5a7cb4c2f776059db484de1ebe055c6bbab6e144e043b400ab6f9ae888c7f",
+  "basis": "Canonical factory catalog consumed at materialization; no copied parameter values. Explicit user selections and measured climate inputs remain fixture data."
+}

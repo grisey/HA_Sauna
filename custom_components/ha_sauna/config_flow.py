@@ -12,12 +12,26 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .bindings import ROLE_BY_KEY, ROLES, BindingError, Bindings, metadata_error, validate_metadata
+from .bindings import (
+    ROLE_BY_KEY,
+    ROLES,
+    BindingError,
+    Bindings,
+    metadata_error,
+    validate_metadata,
+)
 from .const import CONF_BINDINGS, DOMAIN
+from .core.configuration_model import ButtonCapabilities, ConfigurationModel
 from .core.defaults import instance_default, section
-from .core.parameters import BY_KEY, EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
-from .presentation import parameter_error
+from .core.parameters import (
+    BY_KEY,
+    EDITABLE_DEFINITIONS,
+    LIVE_TEMPERATURE_KEYS,
+    ParameterError,
+    Parameters,
+)
 from .maintenance_flow import MaintenanceOptionsMixin
+from .presentation import parameter_error
 from .runtime import Configuration
 from .settings import parameter_change
 
@@ -193,12 +207,17 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
             ] = selector.SelectSelector(
                 {"options": ["button", "switch"], "translation_key": "control_input_mode"}
             )
-            fields[
-                vol.Optional(
-                    "button_event_type",
-                    default=saved.get("button_event_type", instance_default("button_event_type"))
-                )
-            ] = selector.TextSelector()
+            capabilities = button_capabilities(hass, saved, setup=include_name)
+            if (
+                capabilities.additional_short_event_configurable
+                or capabilities.event_selection_configurable
+            ):
+                fields[
+                    vol.Optional(
+                        "button_event_type",
+                        default=saved.get("button_event_type", instance_default("button_event_type"))
+                    )
+                ] = selector.TextSelector()
         elif role.key == "presence":
             fields[
                 vol.Required(
@@ -234,11 +253,35 @@ def binding_schema(hass: HomeAssistant, *, include_name: bool = False, saved=Non
     return vol.Schema(grouped)
 
 
+def button_capabilities(hass, values, *, setup=False):
+    """Use the same input capabilities before a complete configuration exists."""
+    entity_id = values.get("control_input")
+    state = hass.states.get(entity_id) if entity_id else None
+    event_types = state.attributes.get("event_types") if state is not None else None
+    return ButtonCapabilities.from_input(
+        entity_id,
+        values.get("control_input_mode", instance_default("control_input_mode", setup=setup)),
+        values.get("button_event_type", instance_default("button_event_type")),
+        event_types if isinstance(event_types, (list, tuple)) else None,
+    )
+
+
+def event_name_form_needed(hass, values, *, setup=False):
+    """A newly selected event input may add a field absent from the prior form."""
+    capabilities = button_capabilities(hass, values, setup=setup)
+    return "button_event_type" not in values and (
+        capabilities.additional_short_event_configurable
+        or capabilities.event_selection_configurable
+    )
+
+
 def checked_bindings(hass: HomeAssistant, user_input: dict[str, Any], *, saved=None) -> Bindings:
     if user_input.get("presence_source", instance_default("presence_source")) not in ("proxy", "ha_presence"):
         raise BindingError("presence_source", "invalid_presence_source")
     if user_input.get("presence_source") == "ha_presence" and not user_input.get("presence"):
         raise BindingError("presence", "entity_required")
+    if not button_capabilities(hass, user_input).event_name_valid:
+        raise BindingError("button_event_type", "native_button_event")
     bindings = Bindings(
         {
             k: v
@@ -333,9 +376,10 @@ class SaunaConfigFlow(ConfigFlow, domain=DOMAIN):
             except BindingError as error:
                 errors[error.key] = error.code
             else:
-                return self.async_create_entry(
-                    title=name, data={}, options=configuration.as_options()
-                )
+                if not event_name_form_needed(self.hass, user_input, setup=True):
+                    return self.async_create_entry(
+                        title=name, data={}, options=configuration.as_options()
+                    )
         suggested = user_input if user_input is not None else getattr(self, "_device_values", {})
         errors = errors or (getattr(self, "_device_errors", {}) if user_input is None else {})
         return self.async_show_form(
@@ -406,13 +450,9 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         return self._show_area_menu(area)
 
     def _definitions(self, subgroup, *, area=None):
-        source = self.config_entry.options.get("presence_source", instance_default("presence_source"))
-        group = next(
-            item for item in section("frontend")["settings_subgroups"]
-            if item["id"] == subgroup
+        model = ConfigurationModel.from_configuration(
+            Configuration.from_options(self.config_entry.options)
         )
-        if source not in group.get("presence_sources", ("proxy", "ha_presence")):
-            return ()
         areas = integration_groups()
         return tuple(
             definition for definition in EDITABLE_DEFINITIONS
@@ -421,6 +461,7 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             and definition.settings_subgroup == subgroup
             and definition.key not in LIVE_TEMPERATURE_KEYS
             and definition.minimum != definition.maximum
+            and model.parameter_applicable(definition)
         )
 
     async def _async_step_parameters(self, subgroup, user_input=None):
@@ -603,7 +644,8 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             except BindingError as error:
                 errors[error.key] = error.code
             else:
-                return self._save_and_return(candidate, "init")
+                if not event_name_form_needed(self.hass, user_input):
+                    return self._save_and_return(candidate, "init")
         return self.async_show_form(
             step_id="binding_entities",
             data_schema=self.add_suggested_values_to_schema(

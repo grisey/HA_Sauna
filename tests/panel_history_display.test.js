@@ -1,6 +1,10 @@
 // Display aggregation remains pure data work. Canvas checks below use a
 // functional FakeCanvas only to verify paths and original endpoints, never speed.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const appearanceCatalog = JSON.parse(
   fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
@@ -81,7 +85,7 @@ const record = (second, value, position = "upper", quantity = "temperature") => 
 });
 const session = (seconds) => ({
   ended_at: iso(seconds),
-  configuration: { parameters: { sensor_timeout_seconds: 5 } },
+  configuration: { parameters: fixtureValues() },
   timeline: { session_started_at: iso(0), processed: [], completed: [] },
   heating: { intervals: [] },
 });
@@ -91,7 +95,7 @@ const panel = (seconds, records) =>
     window: [base, base + seconds * 1000],
     state: {
       now: iso(seconds),
-      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+      configuration: { parameters: fixtureValues() },
     },
     shown: { records, session: session(seconds) },
   });
@@ -140,23 +144,25 @@ const geometry = {
 
 // Missing and stale intervals connect available originals in one Canvas path.
 {
+  const afterTimeout = fixtureValues().sensor_timeout_seconds + 4;
+  const duration = afterTimeout + 1;
   const records = [
     record(0, 70),
     record(1, 71),
     record(2, null),
     record(3, 72),
-    record(20, 73),
+    record(afterTimeout, 73),
   ];
-  const p = panel(30, records);
+  const p = panel(duration, records);
   const chart = {
     prepared: new Map(),
-    domain: [base, base + 30_000],
+    domain: [base, base + duration * 1000],
   };
   const curves = new HistoryCurves(new FakeCanvas(), {
     Path2DClass: FakePath2D,
     styles: curveStyles,
   });
-  curves.update(modelFor(p, records, 30, chart), geometry);
+  curves.update(modelFor(p, records, duration, chart), geometry);
   assert.equal(
     curves.mainPaths
       .get("upper:temperature")
@@ -167,15 +173,17 @@ const geometry = {
 
 // A timeout inside a coarse bucket does not force unbounded raw-point output.
 {
-  const records = [record(0, 20), record(1, 21), record(12, 22)],
-    p = panel(32, records);
+  const ttl = fixtureValues().sensor_timeout_seconds * 1000;
+  const duration = fixtureValues().sensor_timeout_seconds + 3;
+  const records = [record(0, 20), record(1, 21), record(duration - 1, 22)],
+    p = panel(duration, records);
   p.historyIndex(records);
   const display = p.historyDisplayValues(
     "upper",
     "temperature",
     base,
-    base + 32_000,
-    5_000,
+    base + duration * 1000,
+    ttl,
     1,
   );
   assert.ok(display.length <= 3);

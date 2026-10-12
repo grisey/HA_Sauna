@@ -8,6 +8,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import UnitOfTemperature
 
+from .core.configuration_model import temperature_control
 from .core.defaults import section
 from .core.parameters import BY_KEY
 from .entity import SaunaEntity
@@ -67,12 +68,16 @@ class SaunaThermostat(SaunaEntity, ClimateEntity):
 
     @property
     def target_temperature(self):
-        return self.runtime.controller.target_temperature
+        return temperature_control(self.runtime.controller).value
 
     @property
     def extra_state_attributes(self):
         values = self.runtime.configuration.parameters.values
+        target = temperature_control(self.runtime.controller)
         return {
+            "target_scope": target.scope,
+            "current_target_temperature": target.current_target,
+            "next_gang_temperature": target.next_target,
             "thermostat_target": self.runtime.controller.thermostat_target,
             "thermostat_restart_temperature": self.runtime.controller.thermostat_restart_temperature,
             "readiness_offset": values["readiness_offset_c"],

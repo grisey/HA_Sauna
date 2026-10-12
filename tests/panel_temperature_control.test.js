@@ -1,6 +1,10 @@
 // Runs without Home Assistant or a browser: the temperature arc keeps its
 // geometry and uses only the parameter definition for its limits.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
@@ -46,17 +50,34 @@ const state = {
   appearance: { scales: { temperature: { minimum: 50, maximum: 110 } } },
   permissions: { temperature: true },
   target_temperature: 80,
-  configuration: { parameters: { sauna_min_temperature_c: 60 } },
+  temperature_control: {
+    scope: "current",
+    value: 80,
+    current_target: 80,
+    next_target: 80,
+  },
+  configuration: { parameters: fixtureValues() },
   parameters: [
-    { key: "target_temperature_c", minimum: 60, maximum: 100 },
-    { key: "temperature_gangs", minimum: 1, maximum: 8 },
+    fixtureDefinition("target_temperature_c"),
+    fixtureDefinition("temperature_gangs"),
   ],
 };
 const calls = [];
 const panel = Object.assign(Object.create(Panel.prototype), {
   entry: "entry-1",
   state,
-  api: async (...args) => calls.push(args),
+  api: async (...args) => {
+    calls.push(args);
+    const value = args[2].target_temperature_c;
+    return {
+      temperature_control: {
+        scope: "current",
+        value,
+        current_target: value,
+        next_target: value,
+      },
+    };
+  },
   refresh: async () => {},
   drawCurrent: () => {},
   $: () => null,
@@ -64,12 +85,12 @@ const panel = Object.assign(Object.create(Panel.prototype), {
 });
 
 assert.deepEqual(JSON.parse(JSON.stringify(panel.temperatureBounds())), {
-  minimum: 60,
-  maximum: 100,
+  minimum: fixtureDefinition("target_temperature_c").minimum,
+  maximum: fixtureDefinition("target_temperature_c").maximum,
 });
 assert.equal(
   panel.temperatureValueAt({}, 75.75, 204.25),
-  60,
+  fixtureDefinition("target_temperature_c").minimum,
   "the arc starts at the configured minimum",
 );
 assert.equal(
@@ -79,7 +100,7 @@ assert.equal(
 );
 assert.equal(
   panel.temperatureValueAt({}, 224.25, 204.25),
-  100,
+  fixtureDefinition("target_temperature_c").maximum,
   "the arc ends at the configured maximum",
 );
 assert.deepEqual(
@@ -106,9 +127,15 @@ assert.match(
 
 {
   const inputs = {
-    "#progression-start": { value: "60" },
-    "#progression-end": { value: "100" },
-    "#progression-gangs": { value: "8" },
+    "#progression-start": {
+      value: String(fixtureDefinition("target_temperature_c").minimum),
+    },
+    "#progression-end": {
+      value: String(fixtureDefinition("target_temperature_c").maximum),
+    },
+    "#progression-gangs": {
+      value: String(fixtureDefinition("temperature_gangs").maximum),
+    },
   };
   const p = Object.assign(Object.create(Panel.prototype), {
     state,
@@ -116,7 +143,11 @@ assert.match(
   });
   assert.deepEqual(
     JSON.parse(JSON.stringify(p.progressionValues())),
-    { start: 60, end: 100, gangs: 8 },
+    {
+      start: fixtureDefinition("target_temperature_c").minimum,
+      end: fixtureDefinition("target_temperature_c").maximum,
+      gangs: fixtureDefinition("temperature_gangs").maximum,
+    },
     "free progression accepts the catalog's dynamic bounds",
   );
   assert.deepEqual(
@@ -127,7 +158,12 @@ assert.match(
     "completed fractional endpoints become the actual whole-degree commands",
   );
   assert.throws(
-    () => p.progressionValues({ start: "59.9", end: "89", gangs: "3" }),
+    () =>
+      p.progressionValues({
+        start: String(fixtureDefinition("target_temperature_c").minimum - 0.1),
+        end: "89",
+        gangs: "3",
+      }),
     /zulässigen Grenzen/,
     "rounding must not admit a raw value below the allowed minimum",
   );
@@ -142,8 +178,12 @@ assert.match(
     /zulässigen Grenzen/,
     "free progression rejects an out-of-range temperature before the request",
   );
-  inputs["#progression-start"].value = "60";
-  inputs["#progression-gangs"].value = "21";
+  inputs["#progression-start"].value = String(
+    fixtureDefinition("target_temperature_c").minimum,
+  );
+  inputs["#progression-gangs"].value = String(
+    fixtureDefinition("temperature_gangs").maximum + 1,
+  );
   assert.throws(
     () => p.progressionValues(),
     /zulässigen Grenzen/,
@@ -162,7 +202,22 @@ assert.match(
   const manualPanel = Object.assign(Object.create(Panel.prototype), {
     entry: "manual-entry",
     state: { ...state, configuration: manualConfiguration },
-    api: async (...args) => calls.push(args),
+    api: async (...args) => {
+      calls.push(args);
+      return {
+        ...manualConfiguration,
+        program_mode: "constant",
+        selected_program_id: null,
+        temperature_steps: null,
+        parameters: { target_temperature_c: 85 },
+        temperature_control: {
+          scope: "current",
+          value: 85,
+          current_target: 85,
+          next_target: 85,
+        },
+      };
+    },
     refresh: async () => {},
   });
   await manualPanel.changeTarget(84.6);
@@ -200,7 +255,7 @@ assert.match(
   assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), [
     "/entry-1/temperature",
     "POST",
-    { target_temperature_c: 100 },
+    { target_temperature_c: fixtureDefinition("target_temperature_c").maximum },
   ]);
 
   let prevented = false;
@@ -214,7 +269,7 @@ assert.match(
   assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())), [
     "/entry-1/temperature",
     "POST",
-    { target_temperature_c: 100 },
+    { target_temperature_c: fixtureDefinition("target_temperature_c").maximum },
   ]);
   assert.equal(
     panel.programSelectionDraft,
@@ -241,6 +296,12 @@ assert.match(
         ...state,
         target_temperature: 76,
         next_gang_temperature: 83,
+        temperature_control: {
+          scope: "next_gang",
+          value: 83,
+          current_target: 76,
+          next_target: 83,
+        },
         session: { temperature_program_mode: "progressive" },
         configuration,
       },
@@ -256,6 +317,12 @@ assert.match(
           ...configuration,
           target_temperature: 76,
           next_gang_temperature: args[2].target_temperature_c,
+          temperature_control: {
+            scope: "next_gang",
+            value: args[2].target_temperature_c,
+            current_target: 76,
+            next_target: args[2].target_temperature_c,
+          },
         };
       },
       refresh: async () => {},
@@ -282,7 +349,10 @@ assert.match(
       svg,
     );
     await progressivePanel.endTemperatureDrag({ pointerId: 21 });
-    assert.equal(progressivePanel.state.next_gang_temperature, 100);
+    assert.equal(
+      progressivePanel.state.next_gang_temperature,
+      fixtureDefinition("target_temperature_c").maximum,
+    );
     preserveProgram();
     await progressivePanel.commitLinearTarget(88);
     assert.equal(progressivePanel.state.next_gang_temperature, 88);
@@ -296,11 +366,13 @@ assert.match(
     preserveProgram();
     assert.deepEqual(
       JSON.parse(JSON.stringify(requests)),
-      [100, 88, keyboardTarget].map((value) => [
-        "/progressive-entry/temperature",
-        "POST",
-        { target_temperature_c: value },
-      ]),
+      [fixtureDefinition("target_temperature_c").maximum, 88, keyboardTarget].map(
+        (value) => [
+          "/progressive-entry/temperature",
+          "POST",
+          { target_temperature_c: value },
+        ],
+      ),
       "round, linear and keyboard controls all change the next gang",
     );
   }
@@ -313,7 +385,14 @@ assert.match(
       await new Promise((resolve) => {
         releaseFirst = resolve;
       });
-    return { parameters: { target_temperature_c: args[2].target_temperature_c } };
+    return {
+      temperature_control: {
+        scope: "current",
+        value: args[2].target_temperature_c,
+        current_target: args[2].target_temperature_c,
+        next_target: args[2].target_temperature_c,
+      },
+    };
   };
   panel.beginTemperatureDrag(
     { pointerId: 10, clientX: 150, clientY: 25, preventDefault() {} },
@@ -343,7 +422,14 @@ assert.match(
       await new Promise((_resolve, reject) => {
         rejectOlder = reject;
       });
-    return { parameters: { target_temperature_c: args[2].target_temperature_c } };
+    return {
+      temperature_control: {
+        scope: "current",
+        value: args[2].target_temperature_c,
+        current_target: args[2].target_temperature_c,
+        next_target: args[2].target_temperature_c,
+      },
+    };
   };
   const older = panel.changeTarget(80);
   const olderFailure = assert.rejects(older, /older choice failed/);

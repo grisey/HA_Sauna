@@ -1,6 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -160,10 +164,12 @@ const panel = (calls) => ({
   window: [0, 1000],
   positions: new Set(["upper", "lower"]),
   historyDetail: true,
-  shown: { session: { measurement_ttl_seconds: 2 } },
+  shown: {
+    session: { measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds },
+  },
   state: {
-    measurement_ttl_seconds: 1,
-    configuration: { parameters: { sensor_timeout_seconds: 1 } },
+    measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
+    configuration: { parameters: fixtureValues() },
   },
   scheduleHistoryRender: (reason) => calls.push(reason),
   nearestMeasurement: (position, quantity) =>

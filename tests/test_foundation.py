@@ -21,9 +21,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def parameters():
-    # Rein synthetische Testeingabe; keine produktiven Ausgangswerte.
-    return Parameters({**{definition.key: definition.default if definition.default is not None else 2.5 for definition in DEFINITIONS if definition.key != "final_temperature_c"},
-                       "session_gap_minutes": 2.5})
+    """Use the regular catalog; a virtual clock advances without shortening policy."""
+    return Parameters({})
 
 
 def bindings():
@@ -83,7 +82,8 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(legacy.minimum_for("oven_cooling_max_minutes"), saved_duration)
 
         with self.assertRaises(ParameterError) as raised:
-            Parameters({"after_run_minutes": 16, "oven_cooling_max_minutes": 15})
+            Parameters({"after_run_minutes": saved_duration,
+                        "oven_cooling_max_minutes": saved_duration - 1})
         self.assertEqual(raised.exception.key, "oven_cooling_max_minutes")
 
     def test_unknown_parameter_fails(self):
@@ -125,7 +125,8 @@ class ParameterTests(unittest.TestCase):
                         Parameters(data)
 
     def test_seconds_are_derived_from_the_only_value(self):
-        self.assertEqual(parameters().seconds("session_gap_minutes"), 150)
+        self.assertEqual(parameters().seconds("session_gap_minutes"),
+                         parameters().values["session_gap_minutes"] * 60)
         with self.assertRaises(ParameterError):
             parameters().seconds("readiness_hysteresis_c")
 
@@ -133,7 +134,8 @@ class ParameterTests(unittest.TestCase):
         original = parameters().as_dict()
         result = Parameters(original)
         original["session_gap_minutes"] = 999
-        self.assertEqual(result.values["session_gap_minutes"], 2.5)
+        self.assertEqual(result.values["session_gap_minutes"],
+                         parameters().values["session_gap_minutes"])
         with self.assertRaises(TypeError):
             result.values["session_gap_minutes"] = 3
 
@@ -358,7 +360,8 @@ class ControllerTests(unittest.TestCase):
         controller = Controller(source)
         controller.begin_session("other", T0)
         self.assertIs(controller.parameters, source)
-        self.assertEqual(controller.parameters.seconds("session_gap_minutes"), 150)
+        self.assertEqual(controller.parameters.seconds("session_gap_minutes"),
+                         source.values["session_gap_minutes"] * 60)
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
@@ -371,7 +374,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         rebuilt = Configuration.from_options(options)
         self.assertEqual(rebuilt, self.runtime.configuration)
         options["parameters"]["session_gap_minutes"] = 999
-        self.assertEqual(rebuilt.parameters.values["session_gap_minutes"], 2.5)
+        self.assertEqual(rebuilt.parameters.values["session_gap_minutes"],
+                         parameters().values["session_gap_minutes"])
 
     async def test_configuration_cannot_silently_fill_missing_values(self):
         with self.assertRaises(ValueError):

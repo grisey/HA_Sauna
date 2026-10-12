@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from math import isfinite
 
@@ -151,6 +151,9 @@ class TimedPhase:
     pending_start: bool = False
     requested_at: datetime | None = None
     cooling_calculation: OvenCoolingResult | None = None
+    # Proxy evidence caps this same phase; original duration and factual OFF
+    # accounting stay intact, even when the minimum has already elapsed.
+    minimum_duration_requested: bool = False
 
     def __post_init__(self) -> None:
         # Ältere Aufrufer kannten nur Start und Ende. Die Dauer wird einmal
@@ -181,8 +184,17 @@ class TimedPhase:
             raise ValueError("Phasenzeit darf ihre Dauer nicht überschreiten")
 
     @property
+    def required_seconds(self) -> float:
+        if self.minimum_duration_requested and self.cooling_calculation is not None:
+            minimum = timedelta(
+                minutes=self.cooling_calculation.base_minutes
+            ).total_seconds()
+            return min(self.duration_seconds, minimum)
+        return self.duration_seconds
+
+    @property
     def remaining_seconds(self) -> float:
-        return max(0.0, self.duration_seconds - self.elapsed_seconds)
+        return max(0.0, self.required_seconds - self.elapsed_seconds)
 
 
 @dataclass(frozen=True)

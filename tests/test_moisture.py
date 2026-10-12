@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 import unittest
 
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.moisture import (
     absolute_humidity,
     current_absolute_humidity,
@@ -10,6 +11,7 @@ from custom_components.ha_sauna.core.moisture import (
 
 
 NOW = datetime(2026, 9, 20, 12, tzinfo=UTC)
+TIMEOUT = Parameters({}).values["sensor_timeout_seconds"]
 
 
 def measurement(position, quantity, value, received_at=NOW):
@@ -38,11 +40,11 @@ class MoistureTests(unittest.TestCase):
             "upper_humidity": measurement(Position.UPPER, Quantity.HUMIDITY, 50),
             "lower_temperature": measurement(Position.LOWER, Quantity.TEMPERATURE, 30),
         }
-        self.assertAlmostEqual(current_absolute_humidity(measurements, Position.UPPER, NOW, 180), 8.64, places=2)
-        self.assertIsNone(current_absolute_humidity(measurements, Position.LOWER, NOW, 180))
+        self.assertAlmostEqual(current_absolute_humidity(measurements, Position.UPPER, NOW, TIMEOUT), 8.64, places=2)
+        self.assertIsNone(current_absolute_humidity(measurements, Position.LOWER, NOW, TIMEOUT))
         self.assertIsNone(current_absolute_humidity(
             {**measurements, "upper_humidity": measurement(Position.LOWER, Quantity.HUMIDITY, 50)},
-            Position.UPPER, NOW, 180,
+            Position.UPPER, NOW, TIMEOUT,
         ))
 
     def test_current_value_becomes_unavailable_for_invalid_stale_or_future_sources(self):
@@ -52,19 +54,19 @@ class MoistureTests(unittest.TestCase):
         }
         self.assertIsNone(current_absolute_humidity(
             {**measurements, "upper_humidity": measurement(Position.UPPER, Quantity.HUMIDITY, None)},
-            Position.UPPER, NOW, 180,
+            Position.UPPER, NOW, TIMEOUT,
         ))
         self.assertIsNone(current_absolute_humidity(
-            {**measurements, "upper_temperature": measurement(Position.UPPER, Quantity.TEMPERATURE, 20, NOW - timedelta(seconds=181))},
-            Position.UPPER, NOW, 180,
+            {**measurements, "upper_temperature": measurement(Position.UPPER, Quantity.TEMPERATURE, 20, NOW - timedelta(seconds=TIMEOUT + 1))},
+            Position.UPPER, NOW, TIMEOUT,
         ))
         self.assertIsNotNone(current_absolute_humidity(
-            {**measurements, "upper_temperature": measurement(Position.UPPER, Quantity.TEMPERATURE, 20, NOW - timedelta(seconds=180))},
-            Position.UPPER, NOW, 180,
+            {**measurements, "upper_temperature": measurement(Position.UPPER, Quantity.TEMPERATURE, 20, NOW - timedelta(seconds=TIMEOUT))},
+            Position.UPPER, NOW, TIMEOUT,
         ))
         self.assertIsNone(current_absolute_humidity(
             {**measurements, "upper_humidity": measurement(Position.UPPER, Quantity.HUMIDITY, 50, NOW + timedelta(seconds=1))},
-            Position.UPPER, NOW, 180,
+            Position.UPPER, NOW, TIMEOUT,
         ))
 
 

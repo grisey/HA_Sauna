@@ -12,9 +12,7 @@ import test_device_feedback as fixtures
 class TemperaturePacketTests(unittest.TestCase):
     async def packet(self, order, minimum_offset):
         fixture = fixtures.DeviceFeedbackTests()
-        runtime, adapter, clock = fixture.detection_device(
-            median_seconds=1, infusion_window_seconds=1, infusion_hold_seconds=1,
-        )
+        runtime, adapter, clock = fixture.detection_device()
         minimum = runtime.configuration.parameters.values["sauna_min_temperature_c"]
         temperature = minimum + minimum_offset
         initial = minimum + .1
@@ -23,9 +21,14 @@ class TemperaturePacketTests(unittest.TestCase):
         runtime.controller.begin_session("packet", fixtures.T0)
         fixture.complete_proxy_entry(runtime, fixtures.T0)
         await runtime.tick()
-        clock[0] = fixtures.T0 + timedelta(seconds=20)
-        await runtime.device_input(fixture.detection_edge(runtime, "upper_humidity", 22))
-        clock[0] = fixtures.T0 + timedelta(seconds=21)
+        values = runtime.configuration.parameters.values
+        packet_at = fixtures.T0 + timedelta(seconds=(
+            values["infusion_window_seconds"] + values["median_seconds"]
+            + values["infusion_hold_seconds"] + 1
+        ))
+        await fixture.prepare_infusion_packet(
+            runtime, adapter, clock, packet_at, temperature=initial,
+        )
         inputs = {
             "humidity": ("upper_humidity", 24, "22"),
             "temperature": ("upper_temperature", temperature, str(initial)),

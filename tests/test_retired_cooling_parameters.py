@@ -22,9 +22,9 @@ class RetiredParameterTests(unittest.TestCase):
         self.assertTrue(LEGACY_PARAMETER_KEYS.isdisjoint(BY_KEY))
         self.assertTrue(LEGACY_PARAMETER_KEYS.isdisjoint(
             definition.key for definition in EDITABLE_DEFINITIONS))
-        self.assertEqual(parameters.seconds("after_run_minutes"), 660)
-        self.assertEqual(parameters.seconds("heat_reset_minutes"), 1020)
-        self.assertEqual(parameters.values["cooling_brightness_percent"], 9)
+        self.assertEqual(parameters.seconds("after_run_minutes"), saved["after_run_minutes"] * 60)
+        self.assertEqual(parameters.seconds("heat_reset_minutes"), saved["heat_reset_minutes"] * 60)
+        self.assertEqual(parameters.values["cooling_brightness_percent"], saved["cooling_brightness_percent"])
         self.assertEqual(Parameters(parameters.as_dict()), parameters)
 
     def test_retired_values_do_not_gate_thermostat(self):

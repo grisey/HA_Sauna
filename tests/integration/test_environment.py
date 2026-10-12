@@ -177,7 +177,7 @@ class EnvironmentTests(unittest.IsolatedAsyncioTestCase):
     async def test_weather_updates_do_not_enter_control_or_archive(self):
         entry = await create_sauna(self.hass, binding_overrides={
             "environment_weather": self.weather,
-        }, parameter_overrides={"sensor_timeout_seconds": 60, "feedback_timeout_seconds": 60})
+        })
         runtime = entry.runtime_data
         await runtime.set_operation(True)
         retain_session(runtime)

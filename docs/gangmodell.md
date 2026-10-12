@@ -16,7 +16,7 @@ Der initiale Türzustand ist geschlossen; er ersetzt keine beobachtete Öffnung.
 | --- | --- |
 | Noch kein Gang | Eintritt und Anwesenheitsnachweis; Beginn frühestens bei gültiger Regeltemperatur ab der Mindesttemperatur |
 | Gang läuft | Aufgüsse und Gangende bleiben auch unterhalb der Mindesttemperatur erkennbar |
-| Ofenkühlung läuft | Ein erkannter neuer Gang beendet die Kühlung |
+| Ofenkühlung läuft | Gangerkennung und Aufzeichnung bleiben aktiv; die Wirkung auf die Kühlung richtet sich nach der [Präsenzquelle](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden) |
 | Betrieb-AUS | Keine neuen Gänge |
 
 Beim Eintritt folgt auf die Öffnung der Türschluss. Beim Verlassen wird die Tür
@@ -39,14 +39,17 @@ derselben Öffnung und anliegender Abwesenheit. Diese kann bereits vor dem
 thermischen Öffnungshinweis gemeldet sein. Die Nachweise können in beliebiger
 Reihenfolge eintreffen; Anwesenheit, `unknown` oder `unavailable`
 vor dem vollständigen Nachweis verhindern das Gangende.
-Abwesenheit nach einer bereits geschlossenen Türfolge benötigt eine neue
-Austrittsöffnung. Eine verspätet empfangene Abwesenheitsmeldung bleibt gültig,
-wenn sie Abwesenheit während der damaligen Öffnungsfolge belegt.
+Ein anschließender Türschluss verwirft den belegten Austritt nicht. Die
+Abwesenheit kann auch erst danach gemeldet werden oder beginnen; maßgeblich
+bleiben dieselbe Austrittsöffnung, ihr bestätigtes Durchlüften und die weiterhin
+gültige Abwesenheit. Erneute Anwesenheit überholt einen früheren
+Abwesenheitsnachweis. Eine ältere Austrittsfolge kann keinen später begonnenen
+Gang beenden.
 
 | Beleg | Wirkung |
 | --- | --- |
 | Eintritt mit Anwesenheit und erreichter Mindesttemperatur | Bestätigter Gang, ohne Wartefrist oder erforderlichen Aufguss |
-| Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis während dieser Öffnungsphase |
+| Öffnen zum Verlassen mit zugehöriger Abwesenheit und bestätigtem Durchlüften | Gangende beim vollständigen Nachweis, auch nach dem anschließenden Türschluss |
 | Einzelne Präsenzmeldung, Türschluss ohne Öffnung oder bloßer Zeitablauf | Kein Übergang |
 | Durchlüften ohne zugehörige Abwesenheit | Kein Gangende |
 | Betrieb-AUS | Ende des offenen Gangs |
@@ -81,8 +84,11 @@ Frist ab möglichem Gangbeginn liegen. Nach Ablauf oder Rücknahme benötigt ein
 einen neuen vollständigen Eintritt.
 
 Bestätigtes Durchlüften während der Austrittsöffnung beendet den Gang;
-er wird gezählt und löst in Automatik die Ofenkühlung aus. Eine kurze Türöffnung
-ohne bestätigtes Durchlüften beendet keinen Gang.
+er wird gezählt und löst in Automatik die Ofenkühlung aus, sofern diese nicht
+bereits läuft. Erkannte Personenbelege begrenzen eine laufende Kühlung auf ihre
+[Mindestgesamtdauer](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden), auch
+ohne bestätigten Gang. Eine kurze Türöffnung ohne bestätigtes Durchlüften beendet
+keinen Gang.
 
 ## Gang zählen und nächste Temperaturstufe beginnen
 

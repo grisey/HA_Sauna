@@ -1,4 +1,8 @@
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
@@ -42,7 +46,7 @@ const annotationModel = () => {
 const panel = Object.assign(Object.create(Panel.prototype), {
   state: {
     now: end,
-    configuration: { parameters: { sensor_timeout_seconds: 60 } },
+    configuration: { parameters: fixtureValues() },
     presence: {
       configured_source: "ha_presence",
       current: {
@@ -60,6 +64,10 @@ const panel = Object.assign(Object.create(Panel.prototype), {
       },
     },
     rule_inputs: { gang_heat_demand: true, temporary_door_heat: true },
+    configuration_model: {
+      presence: { source: "proxy", direct: false, observer: true },
+      regulation_causes: ["gang_heat", "provisional_door_heat", "cooling"],
+    },
   },
   historyRecords: () => [],
 });
@@ -68,21 +76,27 @@ assert.match(
   detail,
   /Indirekter Hinweis zurückgenommen; keine beobachtete Abwesenheit/,
 );
-assert.match(detail, /Präsenzsensor/);
 assert.match(detail, /Nicht verfügbar/);
 assert.match(detail, /Beobachtete Quelle · &lt;sensor&gt;/);
 assert.match(detail, /Temperatur und Feuchte/);
 assert.doesNotMatch(detail, /Proxy/);
 panel.state.configuration.bindings = { presence: "<sensor>" };
-panel.state.presence.effective_source = "ha_presence";
+panel.state.configuration_model.presence = {
+  source: "ha_presence",
+  direct: true,
+  observer: false,
+};
+panel.state.configuration_model.regulation_causes = ["gang_heat", "cooling"];
 panel.state.presence.external["<sensor>"].reason = "unavailable";
+panel.state.presence.current = panel.state.presence.external["<sensor>"];
 const directDetail = panel.presenceDetails();
-assert.match(directDetail, /Führender Präsenzsensor · &lt;sensor&gt;/);
+assert.match(directDetail, /Präsenzsensor mit Türereignis/);
+assert.doesNotMatch(directDetail, /Beobachtete Quelle|Heizanforderung nach Türschluss/);
 assert.match(directDetail, /Sensor nicht verfügbar/);
 assert.doesNotMatch(directDetail, /unavailable/);
 assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);
 assert.match(detail, /Heizanforderung im Saunagang[\s\S]*Aktiv/);
-assert.match(detail, /Temporäres Heizen nach Türschluss[\s\S]*Aktiv/);
+assert.match(detail, /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/);
 
 const session = {
   ended_at: end,

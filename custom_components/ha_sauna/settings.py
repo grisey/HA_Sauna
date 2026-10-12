@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 
 from .appearance import validate_appearance
 from .core.button import validate_session_gesture
+from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS, ParameterError, Parameters
 from .core.program_catalog import load_programs, validate_programs
 from .core.temperature_program import temperature_steps as validate_temperature_steps
@@ -180,6 +181,10 @@ def parameter_change(
         for k in before.keys() | parameters.values.keys()
         if before.get(k) != parameters.values.get(k)
     }
+    model = ConfigurationModel.from_configuration(configuration)
+    for key in values if partial else sorted(changed):
+        if not model.parameter_applicable(key):
+            raise ParameterError(key, "not_applicable")
     explicit_target = (
         "target_temperature_c" in (values if partial else changed)
         if explicit_target is None
@@ -251,10 +256,7 @@ async def _async_set_parameters_locked(
         partial and isinstance(values, Mapping)
         and set(values) == {"target_temperature_c"}
         and explicit_target is None and program_mode is None and not new_program
-        and runtime.controller.control_mode == "automatic"
-        and runtime.session
-        and (runtime.session.temperature_program_mode
-             or runtime.controller.program_mode) == "progressive"
+        and temperature_control(runtime.controller).scope == "next_gang"
     ):
         # A live instrument edit belongs to one upcoming gang, not to the
         # saved program. Validate through the same parameter bounds/rounding.

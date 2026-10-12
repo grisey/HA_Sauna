@@ -1,5 +1,5 @@
 /* Synthetic transport only: every panel render/index/gesture method is real. */
-window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
+window.installHistoryFixture = async function ({ seconds = 14400, defaults } = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const outer = host.attachShadow({ mode: "open" });
@@ -42,18 +42,21 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     }
   };
   for (let i = 0; i < seconds; i++) addSecond(i);
+  const definitions = new Map(defaults.parameters.map((item) => [item.key, item]));
+  const configuredValue = (key) => {
+    const value = definitions.get(key).default;
+    return value && typeof value === "object"
+      ? configuredValue(value.parameter)
+      : value;
+  };
+  const parameters = Object.fromEntries(
+    [...definitions.keys()].map((key) => [key, configuredValue(key)]),
+  );
   const configuration = {
     control_mode: "manual",
     program_mode: "constant",
     temperature_programs: [],
-    parameters: {
-      sensor_timeout_seconds: 5,
-      preset_count: 0,
-      preset_start_c: 70,
-      preset_step_c: 5,
-      session_light_brightness_percent: 50,
-      manual_override_minutes: 10,
-    },
+    parameters,
   };
   let session = {
     ended_at: null,
@@ -85,7 +88,27 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     now: iso(origin + seconds * 1000),
     session,
     configuration,
-    parameters: [{ key: "target_temperature_c", minimum: 30, maximum: 100 }],
+    frontend_defaults: defaults.frontend,
+    appearance_catalog: defaults.appearance,
+    configuration_model: {
+      measurement_positions: ["upper", "lower"],
+      presence: { source: "proxy", direct: false, observer: false },
+      button: { session_gestures: [] },
+      regulation_causes: [],
+    },
+    temperature_control: {
+      scope: "current",
+      value: 80,
+      current_target: 80,
+      next_target: 80,
+      program_mode: "constant",
+    },
+    parameters: [
+      {
+        ...definitions.get("target_temperature_c"),
+        minimum: parameters.sauna_min_temperature_c,
+      },
+    ],
     measurements: [],
     measurement_status: {},
 
@@ -267,7 +290,13 @@ window.installHistoryFixture = async function ({ seconds = 14400 } = {}) {
     },
     assertClean() {
       if (panel.messages?.refresh || panel.messages?.history)
-        throw Error(JSON.stringify(panel.messages));
+        throw Error(
+          JSON.stringify(panel.messages, (_key, value) =>
+            value instanceof Error
+              ? { message: value.message, stack: value.stack }
+              : value,
+          ),
+        );
     },
   };
 };

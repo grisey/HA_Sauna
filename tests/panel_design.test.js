@@ -1,5 +1,9 @@
 "use strict";
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -22,7 +26,7 @@ const panel = () =>
       frontend_defaults: defaults.frontend,
       appearance_catalog: defaults.appearance,
       configuration: { parameters: {} },
-      parameters: [{ key: "target_temperature_c", minimum: 60, maximum: 100 }],
+      parameters: [fixtureDefinition("target_temperature_c")],
     },
   });
 
@@ -93,7 +97,6 @@ test("settings round target temperatures without changing fractional control par
     preset_start_c: 70.5,
     preset_step_c: 0.5,
     readiness_hysteresis_c: 1.5,
-    heating_hysteresis_c: 2.5,
   });
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), [
     "/entry/parameters",
@@ -104,7 +107,6 @@ test("settings round target temperatures without changing fractional control par
       preset_start_c: 71,
       preset_step_c: 0.5,
       readiness_hysteresis_c: 1.5,
-      heating_hysteresis_c: 2.5,
     },
   ]);
 });

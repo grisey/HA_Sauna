@@ -11,14 +11,17 @@ Die Thermostatgrenzen liegen bei:
 - **EIN:** Solltemperatur minus Wiedereinschaltabstand.
 
 An den Grenzen wird geschaltet; dazwischen bleibt der bisherige Zustand erhalten.
-Nach einer Temperaturabschaltung muss zusätzlich die Heizpause ablaufen.
-Die Mindestheizzeit beginnt mit dem tatsächlich bestätigten Heizbeginn und
-verzögert eine reguläre Temperaturabschaltung. Ihr Beginn bleibt auch bei
+In Automatik muss nach einer Temperaturabschaltung zusätzlich die Heizpause ablaufen.
+Die Mindestheizzeit gilt ebenfalls nur in Automatik. Sie beginnt mit dem
+tatsächlich bestätigten Heizbeginn und verzögert eine reguläre
+Temperaturabschaltung. Ihr Beginn bleibt auch bei
 Solländerungen oder Rückgabe einer manuellen EIN-Wahl erhalten.
 
 **Bereit** gilt im freigegebenen Automatikbetrieb ab dem ersten Erreichen des
-Sollwerts, unabhängig von der höheren Abschaltschwelle. Temperaturabfall und
-Solländerung heben diese Bereitschaft nicht auf. Eine vorläufige Gangerkennung
+aktuellen Sollwerts, unabhängig von der höheren Abschaltschwelle. Ein späterer
+Temperaturabfall hebt diese Bereitschaft nicht auf. Eine Sollwerterhöhung über die
+aktuelle Temperatur führt wieder zu **Aufheizen**, bis das neue Ziel erreicht ist.
+Eine vorläufige Gangerkennung
 bewahrt sie; ein bestätigter Gang beendet sie. Nach Gang und Kühlung kann sie
 neu entstehen ([Gangerkennung](gangmodell.md)).
 
@@ -63,8 +66,13 @@ Automatische Stellwerte werden auf ganze Prozent gerundet und durch die
 Ausgabehysterese beruhigt; manuelle Wahlen und fälliges AUS werden dadurch nicht
 verzögert.
 
-Übergänge beginnen an der beobachteten Helligkeit. Bei Kühlbeginn ist der erste
-Übergang auf die halbe Restzeit begrenzt. Fälliges AUS beendet auch einen Übergang.
+Die Integration führt automatische Übergänge ab der beobachteten Helligkeit;
+bei unterstützten Geräten fordern die einzelnen Lichtbefehle keine zusätzliche
+Geräteüberblendung an.
+Bei Kühlbeginn ist der erste Übergang auf die halbe Restzeit begrenzt.
+Tasterrückmeldung und fälliges AUS werden ohne eigenen Übergang angefordert und
+beenden einen laufenden Übergang. Geräte- oder integrationsseitige Mindestzeiten
+der tatsächlichen Lichtreaktion bleiben davon unberührt.
 
 ## Heizzeit und Energie
 

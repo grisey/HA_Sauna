@@ -1,6 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -138,9 +142,9 @@ const tooltipFor = (
   const panel = Object.assign(Object.create(Panel.prototype), {
     positions: new Set(["upper"]),
     window: [received - 30000, received + 30000],
-    state: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+    state: { configuration: { parameters: fixtureValues() } },
     shown: {
-      session: { configuration: { parameters: { sensor_timeout_seconds: 120 } } },
+      session: { configuration: { parameters: fixtureValues() } },
       records: [{ kind, payload: source }],
     },
     historyDetail: true,

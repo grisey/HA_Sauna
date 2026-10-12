@@ -11,22 +11,29 @@ from homeassistant.helpers import entity_registry as er
 from .appearance import APPEARANCE_CATALOG
 from .archive import plain
 from .const import DOMAIN
+from .core.configuration_model import temperature_control
 from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .environment import environment_snapshot
 from .log import LEVELS
 from .presentation import (
-    decision_message, fault_message, issues, parameter_error,
-    public_measurement, public_phase_projection, public_session, public_state,
+    decision_message,
+    fault_message,
+    issues,
+    parameter_error,
+    public_measurement,
+    public_phase_projection,
+    public_session,
+    public_state,
     resolve_cooling_token,
 )
 from .settings import (
     ConfigurationLocked,
     async_reset_parameters,
     async_set_appearance,
-    async_set_button_program,
     async_set_button_gesture,
+    async_set_button_program,
     async_set_control_mode,
     async_set_parameters,
     async_set_program,
@@ -166,6 +173,7 @@ class StateView(HomeAssistantView):
             regulation_measurement = (
                 device.regulation_measurement(now) if device else None
             )
+            configuration_model = runtime.configuration_model
             result = plain(
                     {
                         "title": request.app[KEY_HASS].config_entries.async_get_entry(entry_id).title,
@@ -180,6 +188,7 @@ class StateView(HomeAssistantView):
                         "phase_projection": controller.phase_projection(now),
                         "session": session,
                         "configuration": runtime.configuration.as_options(),
+                        "configuration_model": configuration_model.as_dict(),
                         "button_session_gestures": runtime.available_button_session_gestures,
                         "measurement_ttl_seconds": runtime.configuration.parameters.values[
                             "sensor_timeout_seconds"
@@ -199,10 +208,14 @@ class StateView(HomeAssistantView):
                                     d.key
                                 ),
                                 "live_editable": d.key in LIVE_TEMPERATURE_KEYS,
+                                "applicable": configuration_model.parameter_applicable(d),
                             }
                             for d in EDITABLE_DEFINITIONS
                         ],
                         "configuration_locked": session is not None,
+                        "control_mode_change_allowed": (
+                            controller.control_mode_change_allowed and not runtime.reconfiguring
+                        ),
                         "operation_enabled": bool(
                             session and session.operation_enabled
                         ),
@@ -218,6 +231,7 @@ class StateView(HomeAssistantView):
                         "thermostat_restart_temperature": controller.thermostat_restart_temperature,
                         "target_temperature": controller.target_temperature,
                         "next_gang_temperature": controller.next_gang_temperature,
+                        "temperature_control": temperature_control(controller).as_dict(),
                         "phase_timer": phase_timer(controller, now),
                         "start_availability": start_availability(
                             controller,
@@ -237,12 +251,7 @@ class StateView(HomeAssistantView):
                             regulation_measurement.position.value
                             if regulation_measurement else None
                         ),
-                        "measurement_positions": [
-                            position
-                            for position in ("upper", "lower")
-                            if f"{position}_temperature"
-                            in runtime.configuration.bindings.values
-                        ],
+                        "measurement_positions": configuration_model.measurement_positions,
                         "gang_count": session.timeline.gang_count if session else 0,
                         "gang_confirmation": active.confirmation if active else None,
                         "gang_duration_seconds": active.elapsed_seconds(now)
@@ -396,6 +405,7 @@ class ParametersView(HomeAssistantView):
             "success": True, "parameters": parameters,
             "target_temperature": runtime.controller.target_temperature,
             "next_gang_temperature": runtime.controller.next_gang_temperature,
+            "temperature_control": temperature_control(runtime.controller).as_dict(),
             "program_mode": runtime.configuration.program_mode,
             "selected_program_id": runtime.configuration.selected_program_id,
             "temperature_steps": runtime.configuration.temperature_steps,

@@ -164,6 +164,7 @@ def parameter_error(error):
         "reduction_too_large": "Die Verkürzung muss kleiner als die erste Heizzeit sein.",
         "window_not_divisible": "Das Zeitfenster muss durch den Zeitabstand der Personenprüfung teilbar sein.",
         "program_catalog_invalid": "Die Mindesttemperatur passt nicht zu den gespeicherten Temperaturprogrammen.",
+        "not_applicable": "Diese Einstellung wird mit den zugeordneten Geräten und dem gewählten Erkennungsverfahren nicht verwendet.",
     }.get(error.code, "Bitte die eingegebenen Werte prüfen.")
     return label + ": " + detail
 

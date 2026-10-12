@@ -1,6 +1,10 @@
 // Runs without Home Assistant or a browser.  Each assertion renders the
 // overview from an availability DTO, so it covers the guest-facing result.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
@@ -32,14 +36,11 @@ vm.runInNewContext(
   sandbox,
 );
 
-const parameters = {
-  preset_count: 6,
-  preset_start_c: 95,
-  preset_step_c: 2,
-  target_temperature_c: 80,
-  final_temperature_c: 90,
-  temperature_gangs: 3,
-};
+// Place choices on both sides of the catalog limit to verify clipping.
+const choiceStep = fixtureValues().preset_step_c;
+const parameters = fixtureValues({
+  preset_start_c: fixtureDefinition("target_temperature_c").maximum - 2 * choiceStep,
+});
 const baseState = () => ({
   frontend_defaults: defaults.frontend,
   appearance_catalog: defaults.appearance,
@@ -56,8 +57,8 @@ const baseState = () => ({
   measurements: [],
   measurement_status: {},
   parameters: [
-    { key: "target_temperature_c", minimum: 60, maximum: 100 },
-    { key: "temperature_gangs", minimum: 1, maximum: 8 },
+    fixtureDefinition("target_temperature_c"),
+    fixtureDefinition("temperature_gangs"),
   ],
 
   heating_feedback: false,
@@ -66,6 +67,12 @@ const baseState = () => ({
   issues: [],
   detection_channels: [],
   target_temperature: 80,
+  temperature_control: {
+    scope: "current",
+    value: 80,
+    current_target: 80,
+    next_target: 80,
+  },
   manual_controls: { light: {} },
   start_availability: {
     until_ready_seconds: 0,
@@ -257,8 +264,8 @@ assert.doesNotMatch(
 );
 assert.equal(
   (overview.match(/data-action="preset:/g) || []).length,
-  3,
-  "presets over the 100 °C maximum are hidden",
+  Math.min(3, parameters.preset_count),
+  "presets over the configured target maximum are hidden",
 );
 assert.match(
   overview,

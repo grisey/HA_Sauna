@@ -166,6 +166,26 @@ class Timeline:
             and self.anchor.event_id not in self.rejected_start_sources
         )
 
+    def presence_exit_at(self, absence_at: datetime) -> datetime | None:
+        """Combine current absence with the running gang's own exit episode.
+
+        The presence sensor and thermal door proxy have different delays.
+        Closing the door therefore does not expire persistent absence. A new
+        opening replaces this episode; an opening from before this gang, or
+        one already consumed, cannot finish it.
+        """
+        opening = self.opening if self.door == Door.OPEN else self.closed_opening
+        ventilation = self.exit_ventilation
+        if (
+            self.active is None
+            or opening is None
+            or ventilation is None
+            or opening.event_id in self.rejected_start_sources
+            or opening.effective_at <= self.active.started_at
+        ):
+            return None
+        return max(utc(absence_at), opening.effective_at, ventilation.effective_at)
+
     @property
     def gang_count(self) -> int:
         return sum(g.confirmation == Confirmation.CONFIRMED for g in self.completed)
@@ -227,10 +247,11 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             preparation=state.open_ventilation,
             open_ventilation=None,
         )
-        if state.active is not None:
-            # Closing while the old gang still runs is not a new entry.
-            # After leaving and ventilating, a later closure can instead belong
-            # to the next occupant returning through the still open door.
+        if (state.active is not None
+                and state.active.confirmation == Confirmation.CONFIRMED):
+            # A confirmed gang consumes door cycles within that same stay.
+            # A provisional gang keeps its own start anchor; a newer cycle
+            # remains available if that earlier conjecture later expires.
             result = replace(result, rejected_start_sources=(
                 *state.rejected_start_sources, event.event_id,
             ))
@@ -277,17 +298,10 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             result = replace(result, resolved_presence_close_id=state.anchor.event_id)
     elif event.kind == Kind.PRESENCE_ENDED:
         opening = state.opening if state.door == Door.OPEN else state.closed_opening
-        if (state.active is None or opening is None
-                or opening.event_id in state.rejected_start_sources
-                or opening.effective_at <= state.active.started_at):
-            raise ValueError("Gangende benötigt eine neue Austrittsöffnung")
-        if (event.effective_at < opening.effective_at
-                or (state.door == Door.CLOSED
-                    and (state.anchor is None
-                         or event.effective_at > state.anchor.effective_at))):
-            raise ValueError("Abwesenheit gehört nicht zur Austrittsöffnung")
-        if state.exit_ventilation is None:
-            raise ValueError("Gangende benötigt bestätigtes Lüften der Austrittsöffnung")
+        if state.presence_exit_at(event.effective_at) != event.effective_at:
+            raise ValueError(
+                "Gangende benötigt Abwesenheit und bestätigtes Lüften einer neuen Austrittsöffnung"
+            )
         finished = replace(state.active, ended_at=event.booking_at,
                            end_event_id=event.event_id, end_reason="presence_exit")
         result = replace(state, active=None, completed=state.completed + (finished,),
@@ -321,8 +335,7 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
                 active=None,
                 retracted=state.retracted + (state.active,),
                 rejected_start_sources=state.rejected_start_sources
-                + (state.active.start_source_event_id,)
-                + ((state.anchor.event_id,) if state.anchor else ()),
+                + (state.active.start_source_event_id,),
             )
     elif event.kind == Kind.OPERATION_OFF:
         completed = state.completed

@@ -73,10 +73,10 @@ mit denselben gültigen Quellen fort; ein Quellenwechsel verwirft die Referenz.
 Temperaturerholung beginnt die Schließprüfung und beendet einen noch offenen
 Lüftungsnachweis.
 
-Ein bestätigter Lüftungsnachweis bleibt der Austrittsöffnung zugeordnet. Beim
-Proxyverfahren genügt er zum Gangende; bei direkter Präsenzführung muss zusätzlich
-zugehörige Abwesenheit während dieser Öffnungsphase anliegen. Ein späterer
-Türschluss begrenzt die Öffnungsphase; spätere neue Abwesenheit gehört ihr nicht an.
+Ein bestätigter Lüftungsnachweis bleibt seiner Austrittsöffnung auch nach
+Türschluss zugeordnet. Ob damit ein Gang endet, bestimmt die
+[Gangerkennung](gangmodell.md); bei direkter Präsenzführung gehört dazu außerdem
+eine gültige Abwesenheitsmeldung.
 
 ## Erkennungen bei Messlücken prüfen
 

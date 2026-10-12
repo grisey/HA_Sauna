@@ -1,5 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
+const { parameterDefinition: fixtureDefinition } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -284,13 +285,7 @@ test("zero light feedback removes the colored progress arc while retaining its c
   p.state.appearance.instruments = { light: "round" };
   Object.assign(p.state, {
     now: "2026-09-20T12:00:00Z",
-    parameters: [
-      {
-        ...defaults.parameters.find(({ key }) => key === "target_temperature_c"),
-        minimum: 30,
-        maximum: 100,
-      },
-    ],
+    parameters: [fixtureDefinition("target_temperature_c")],
     measurements: [],
     measurement_status: {},
     issues: [],

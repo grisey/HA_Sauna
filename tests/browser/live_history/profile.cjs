@@ -4,6 +4,9 @@ const fs = require("node:fs"),
   assert = require("node:assert/strict");
 const { webkit, chromium } = require("playwright");
 const root = process.cwd();
+const defaults = JSON.parse(
+  fs.readFileSync(path.join(root, "custom_components/ha_sauna/defaults.json"), "utf8"),
+);
 const output =
   process.env.HISTORY_EVIDENCE ||
   path.join(require("node:os").tmpdir(), "ha-sauna-live-history");
@@ -33,8 +36,8 @@ fs.mkdirSync(output, { recursive: true });
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
-  await page.evaluate(async () => {
-    window.f = await installHistoryFixture();
+  await page.evaluate(async (defaults) => {
+    window.f = await installHistoryFixture({ defaults });
     f.assertClean();
     f.setDelay(100);
     f.reset();
@@ -60,7 +63,7 @@ fs.mkdirSync(output, { recursive: true });
         return original.apply(this, args);
       };
     }
-  });
+  }, defaults);
   const surface = page.locator("ha-sauna-panel").locator("svg.session-chart");
   for (let index = 0; index < 20; index++) {
     const box = await surface.boundingBox();

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .core.defaults import section
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
+from .core.models import TimedPhase
 from .core.phases import project_archive, project_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,9 +30,15 @@ _LOGGER = logging.getLogger(__name__)
 
 def plain(value):
     if is_dataclass(value):
-        return {
+        result = {
             field.name: plain(getattr(value, field.name)) for field in fields(value)
         }
+        if isinstance(value, TimedPhase):
+            result.update(
+                required_seconds=value.required_seconds,
+                remaining_seconds=value.remaining_seconds,
+            )
+        return result
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Enum):

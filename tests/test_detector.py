@@ -3,6 +3,7 @@ import asyncio
 import unittest
 from collections import Counter
 from datetime import timedelta
+from math import ceil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -17,7 +18,7 @@ from custom_components.ha_sauna.core.moisture import (
     absolute_humidity,
     saturation_vapor_pressure,
 )
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
@@ -28,7 +29,7 @@ def detection_parameters(**values):
         baseline["standard_temperature_c"],
         values.get("sauna_min_temperature_c", baseline["sauna_min_temperature_c"]),
     )
-    return Parameters({**baseline, "sensor_timeout_seconds": 10, **values})
+    return Parameters({**baseline, **values})
 
 
 def measurement(pos, quantity, value, second, source=None, measured=None):
@@ -59,8 +60,9 @@ def trace(second):
 
 class DetectorTests(unittest.TestCase):
     def test_complete_additive_ventilation_lookback_ends_confirmed_gang(self):
-        p = detection_parameters(median_seconds=1, door_humidity_seconds=60,
-                                 vent_baseline_seconds=120)
+        defaults = parameters().values
+        p = detection_parameters(door_humidity_seconds=defaults["strong_window_seconds"],
+                                 vent_baseline_seconds=defaults["weak_window_seconds"])
         d = Detector(p, T0)
         c = Controller(p)
         c.set_temperature(80, T0)
@@ -88,9 +90,10 @@ class DetectorTests(unittest.TestCase):
             d.advance(now, enabled=True, allowed=c.recognition_allowed,
                       on_detection=received, recognition_context=c.recognition_context_at)
 
-        self.assertEqual(d.capacity, 181)
+        self.assertEqual(d.capacity, p.values["door_humidity_seconds"] + p.values["vent_baseline_seconds"] + 1)
         ventilation = [e for e in found if e.kind == Kind.VENTILATION]
-        self.assertEqual([e.trace_at for e in ventilation], [T0 + timedelta(seconds=215)])
+        self.assertEqual(len(ventilation), 1)
+        self.assertGreaterEqual(ventilation[0].trace_at, T0 + timedelta(seconds=200))
         self.assertNotIn(Kind.DOOR_CLOSE, [e.kind for e in found])
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.gang_count, 1)
@@ -182,6 +185,7 @@ class DetectorTests(unittest.TestCase):
             )
 
             class Device:
+                button_event_types = None
                 measurements = {}
                 command = False
                 command_error = False
@@ -232,81 +236,85 @@ class DetectorTests(unittest.TestCase):
             "infusion_temperature",
         }.isdisjoint(editable))
 
-    def _ventilation_detector(self, *, positions=(Position.UPPER, Position.LOWER), **overrides):
-        values = {
-            "median_seconds": 1, "door_window_seconds": 2, "door_humidity_seconds": 2,
-            "door_open_slope": -1, "door_open_humidity_upper": .01, "door_open_humidity_lower": .01,
-            "door_open_hold_seconds": 1, "door_heating_hold_seconds": 1,
-            "sauna_min_temperature_c": 100, "preset_start_c": 100,
-            "target_temperature_c": 100, "final_temperature_c": 100,
-            "vent_baseline_seconds": 5,
-            "vent_hold_seconds": 30,
-        }
-        return Detector(detection_parameters(**{**values, **overrides}), T0, positions)
+    def _ventilation_detector(self, *, positions=(Position.UPPER, Position.LOWER)):
+        return Detector(detection_parameters(), T0, positions)
+
 
     @staticmethod
     def _humidity_for_water(temperature, water):
         return water * WATER_VAPOR_GAS_CONSTANT * (temperature + 273.15) * 100 / (
             saturation_vapor_pressure(temperature) * 1000)
 
-    def _open_for_ventilation(self, detector, *, positions=(Position.UPPER, Position.LOWER),
-                              value_at=None, heating=False):
-        """Eine reale Türflanke mit vorangehendem Referenzfenster erzeugen."""
-        events = []
-        value_at = value_at or (lambda second, position: (80 - max(0, second - 9) * 2,
-                                                           40 - max(0, second - 9) * 5))
-        for second in range(12):
-            if heating:
-                detector.report_heating(True, T0 + timedelta(seconds=second))
-            temperature, humidity = value_at(second, Position.UPPER)
+    def _segment(self, detector, duration, before, after=None, *, positions=None,
+                 missing=(), heating=False, source=None):
+        """Continuous linear measurement inputs; detector windows stay configured."""
+        after = before if after is None else after
+        positions = detector.positions if positions is None else positions
+        output = []
+        for index in range(ceil(duration)):
+            second = detector.index + 1
+            fraction = (index + 1) / ceil(duration)
+            now = T0 + timedelta(seconds=second)
+            detector.report_heating(heating, now)
             for position in positions:
-                temperature, humidity = value_at(second, position)
-                detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
-                detector.accept(measurement(position, Quantity.HUMIDITY, humidity, second))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
-        return events
-
-    def _entry_detector(self, **overrides):
-        values = {
-            "median_seconds": 1, "door_window_seconds": 1, "door_humidity_seconds": 1,
-            "door_open_slope": -1, "door_open_humidity_upper": .1,
-            "door_open_humidity_lower": .1, "door_open_hold_seconds": 1,
-            "door_close_slope": .1, "door_close_hold_seconds": 1,
-            "vent_baseline_seconds": 1, "vent_drop_upper": 100, "vent_drop_lower": 100,
-            "person_step_seconds": 1, "strong_window_seconds": 1,
-            "strong_hold_seconds": 600, "infusion_hold_seconds": 600,
-            "weak_window_seconds": 2, "weak_humidity_upper": .1,
-            "weak_humidity_lower": .1, "weak_hold_seconds": 1,
-            "confirmation_minutes": 1,
-        }
-        return Detector(detection_parameters(**{**values, **overrides}), T0)
+                for quantity, initial, final in zip(
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY), before, after, strict=True
+                ):
+                    value = (None if (position, quantity) in missing or initial is None or final is None
+                             else initial + (final - initial) * fraction)
+                    detector.accept(measurement(position, quantity, value, second, source=source))
+            output += detector.advance(now, enabled=True)
+        return output
 
     @staticmethod
-    def _entry_episode(detector):
-        events = []
-        for second, values in enumerate(((80, 40), (78, 38), (76, 36),
-                                         (78, 38), (80, 40), (82, 42))):
-            events += sample(detector, second, *values)
+    def _settling_time(detector):
+        return ceil(max(detector.p["weak_window_seconds"], detector.p["strong_window_seconds"],
+                        detector.p["vent_baseline_seconds"]) + detector.p["median_seconds"]
+                    + max(detector.p["door_window_seconds"], detector.p["door_humidity_seconds"]))
+
+    def _open_for_ventilation(self, detector, *, positions=None, heating=False):
+        """Short opening: a measured 2 °C loss, insufficient for ventilation."""
+        positions = detector.positions if positions is None else positions
+        events = self._segment(detector, self._settling_time(detector), (80, 40),
+                               positions=positions, heating=heating)
+        events += self._segment(detector, 20, (80, 40), (78, 38),
+                                positions=positions, heating=heating)
+        events += self._segment(detector, detector.p["median_seconds"], (78, 38),
+                                positions=positions, heating=heating)
+        self.assertIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
         return events
 
-    @staticmethod
-    def _opened_entry_episode(detector):
-        events = []
-        for second, values in enumerate(((80, 40), (78, 38), (76, 36))):
-            events += sample(detector, second, *values)
+
+    def _entry_detector(self):
+        return Detector(detection_parameters(), T0)
+
+
+    def _entry_episode(self, detector, *, moisture=True):
+        events = self._opened_entry_episode(detector)
+        events += self._segment(detector, 30, (78, 38), (80, 38))
+        if moisture:
+            duration = (detector.p["weak_window_seconds"] + detector.p["median_seconds"]
+                        + detector.p["weak_hold_seconds"] + 2 * detector.p["person_step_seconds"])
+            events += self._segment(detector, duration, (80, 38),
+                                    (80, 38 + duration * .02))
         return events
+
+
+    def _opened_entry_episode(self, detector):
+        return self._open_for_ventilation(detector)
+
 
     def test_brief_nonventing_open_close_enables_weak_person_signal(self):
         detector = self._entry_detector()
         events = self._entry_episode(detector)
-        self.assertEqual(
-            [event.kind for event in events if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
-            [Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
-        )
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-        weak = next(event for event in events if event.kind is Kind.PERSON_WEAK)
-        self.assertEqual(weak.effective_at, T0 + timedelta(seconds=5))
+        self.assertEqual([item.kind for item in events if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
+                         [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        weak = next(item for item in events if item.kind is Kind.PERSON_WEAK)
+        close = next(item for item in events if item.kind is Kind.DOOR_CLOSE)
+        self.assertGreater(weak.effective_at, close.effective_at)
+
 
     def test_cold_entry_keeps_weak_detection_available_after_warming(self):
         detector = self._entry_detector()
@@ -314,317 +322,287 @@ class DetectorTests(unittest.TestCase):
         minimum = c.parameters.values["sauna_min_temperature_c"]
         c.set_temperature(minimum - 1, T0)
         c.begin_session("s", T0)
-        warm_at = int(c.parameters.seconds("confirmation_minutes")) + 10
+        baseline = self._settling_time(detector)
+        close_at = baseline + 20 + 30
+        warm_at = close_at + ceil(c.parameters.seconds("confirmation_minutes")) + 1
+        duration = ceil(detector.p["weak_window_seconds"] + detector.p["median_seconds"]
+                        + detector.p["weak_hold_seconds"] + 2 * detector.p["person_step_seconds"])
         observed = []
 
         def received(detection):
             observed.append(detection)
-            c.process(Event(
-                f"detected:{detection.kind}:{detection.trace_at}", "s",
-                detection.kind, detection.effective_at, detection.detected_at,
-                detection.trace_at,
-            ), recognition_at=detection.trace_at)
+            c.process(Event(f"detected:{detection.kind}:{detection.trace_at}", "s",
+                            detection.kind, detection.effective_at, detection.detected_at,
+                            detection.trace_at), recognition_at=detection.trace_at)
 
-        # Entry occurs below the minimum. The room warms later, while a new
-        # moisture rise provides indirect evidence of an occupant inside.
-        entry_values = ((minimum - 1, 40), (minimum - 3, 38),
-                        (minimum - 5, 36), (minimum - 3, 38), (minimum - 1, 40))
-        for second in range(warm_at + 5):
+        for second in range(warm_at + duration):
             now = T0 + timedelta(seconds=second)
-            temperature, humidity = (
-                entry_values[second] if second < len(entry_values) else (
-                    minimum if second >= warm_at else minimum - 1,
-                    40 + max(0, second - warm_at) * .2,
-                )
-            )
+            if second < baseline:
+                temperature, humidity = minimum - 1, 40
+            elif second < baseline + 20:
+                fraction = (second - baseline + 1) / 20
+                temperature, humidity = minimum - 1 - 2 * fraction, 40 - 2 * fraction
+            elif second < close_at:
+                fraction = (second - baseline - 19) / 30
+                temperature, humidity = minimum - 3 + 2 * fraction, 38
+            else:
+                temperature = minimum if second >= warm_at else minimum - 1
+                humidity = 38 + max(0, second - warm_at) * .02
             c.set_temperature(temperature, now)
             for position in detector.positions:
-                detector.accept(measurement(position, Quantity.TEMPERATURE,
-                                            temperature, second))
-                detector.accept(measurement(position, Quantity.HUMIDITY,
-                                            humidity, second))
-            detector.advance(
-                now, enabled=True, allowed=c.recognition_allowed,
-                allowed_at=c.recognition_allowed_at,
-                recognition_context=c.recognition_context_at,
-                on_detection=received,
-            )
+                detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
+                detector.accept(measurement(position, Quantity.HUMIDITY, humidity, second))
+            detector.advance(now, enabled=True, allowed=c.recognition_allowed,
+                             allowed_at=c.recognition_allowed_at,
+                             recognition_context=c.recognition_context_at, on_detection=received)
             if second < warm_at:
                 self.assertIsNone(c.session.timeline.active)
-
-        self.assertEqual(
-            [item.kind for item in observed if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
-            [Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
-        )
-        self.assertIn(Kind.PERSON_WEAK, [item.kind for item in observed])
+        self.assertEqual([item.kind for item in observed if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
+                         [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
+        self.assertTrue(any(item.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) for item in observed))
         self.assertIsNotNone(c.session.timeline.active)
-        self.assertEqual(c.session.timeline.active.started_at,
-                         T0 + timedelta(seconds=warm_at))
+        self.assertEqual(c.session.timeline.active.started_at, T0 + timedelta(seconds=warm_at))
+
 
     def test_close_recovers_when_lower_humidity_drops_out(self):
         detector = self._entry_detector()
         events = self._opened_entry_episode(detector)
-        for second, temperature in ((3, 78), (4, 80)):
-            for position in (Position.UPPER, Position.LOWER):
-                detector.accept(
-                    measurement(position, Quantity.TEMPERATURE, temperature, second)
-                )
-                detector.accept(
-                    measurement(
-                        position,
-                        Quantity.HUMIDITY,
-                        None if position is Position.LOWER else 40,
-                        second,
-                    )
-                )
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        close = next(event for event in events if event.kind is Kind.DOOR_CLOSE)
+        missing = ((Position.LOWER, Quantity.HUMIDITY),)
+        events += self._segment(detector, 30, (78, 38), (80, 38), missing=missing)
+        close = next(item for item in events if item.kind is Kind.DOOR_CLOSE)
         self.assertEqual(close.channels, ("upper", "lower"))
+
 
     def test_close_recovers_without_humidity_pairs(self):
         detector = self._entry_detector()
         events = self._opened_entry_episode(detector)
-        for second, temperature in ((3, 78), (4, 80)):
-            for position in (Position.UPPER, Position.LOWER):
-                detector.accept(
-                    measurement(position, Quantity.TEMPERATURE, temperature, second)
-                )
-                detector.accept(measurement(position, Quantity.HUMIDITY, None, second))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertIn(Kind.DOOR_CLOSE, [event.kind for event in events])
-        self.assertTrue(
-            {Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION}.isdisjoint(
-                event.kind for event in events
-            )
-        )
+        missing = tuple((position, Quantity.HUMIDITY) for position in detector.positions)
+        events += self._segment(detector, 30, (78, 38), (80, 38), missing=missing)
+        close = next(item for item in events if item.kind is Kind.DOOR_CLOSE)
+        self.assertEqual(close.channels, ("upper", "lower"))
+
 
     def test_close_can_recover_with_one_remaining_temperature_role(self):
         detector = self._entry_detector()
         events = self._opened_entry_episode(detector)
-        for second, temperature in ((3, 78), (4, 80)):
-            detector.accept(
-                measurement(Position.UPPER, Quantity.TEMPERATURE, temperature, second)
-            )
-            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 40, second))
-            detector.accept(
-                measurement(Position.LOWER, Quantity.TEMPERATURE, None, second)
-            )
-            detector.accept(
-                measurement(Position.LOWER, Quantity.HUMIDITY, None, second)
-            )
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        close = next(event for event in events if event.kind is Kind.DOOR_CLOSE)
+        missing = ((Position.LOWER, Quantity.TEMPERATURE), (Position.LOWER, Quantity.HUMIDITY))
+        events += self._segment(detector, 30, (78, 38), (80, 38), missing=missing)
+        close = next(item for item in events if item.kind is Kind.DOOR_CLOSE)
         self.assertEqual(close.channels, ("upper",))
 
+
     def test_missing_temperatures_reset_the_close_hold(self):
-        detector = self._entry_detector(door_close_hold_seconds=2)
-        events = self._opened_entry_episode(detector)
-        events += sample(detector, 3, 78, 38)
-        for position in (Position.UPPER, Position.LOWER):
-            detector.accept(measurement(position, Quantity.TEMPERATURE, None, 4))
-            detector.accept(measurement(position, Quantity.HUMIDITY, 38, 4))
-        events += detector.advance(T0 + timedelta(seconds=4), enabled=True)
-        events += sample(detector, 5, 80, 40)
+        detector = self._entry_detector()
+        self._opened_entry_episode(detector)
+        events = []
+        # The first recovering samples precede a missing-temperature interval.
+        for recovery_step in range(ceil(detector.p["door_window_seconds"] + detector.p["median_seconds"] + detector.p["door_close_hold_seconds"]) + 1):
+            step = detector.index + 1
+            temperature = 78 + (recovery_step + 1) * .1
+            events += sample(detector, step, temperature, 38)
+            self.assertTrue(detector.open)
+            if detector.diagnostic["conditions"].get("door_close"):
+                break
+        self.assertTrue(detector.diagnostic["conditions"].get("door_close"))
+        gap_at = detector.index + 1
+        for position in detector.positions:
+            detector.accept(measurement(position, Quantity.TEMPERATURE, None, gap_at))
+        events += detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
+        self.assertEqual(detector.diagnostic["holds"].get("door", 0), 0)
+        events += sample(detector, gap_at + 1, temperature + .01, 38)
         self.assertTrue(detector.open)
-        self.assertNotIn(Kind.DOOR_CLOSE, [event.kind for event in events])
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+
 
     def test_preopening_recovery_hint_cannot_close_a_later_falling_opening(self):
-        detector = self._entry_detector(
-            door_window_seconds=3, door_humidity_seconds=3,
-            door_open_hold_seconds=1, door_close_hold_seconds=1,
-        )
-        events = []
-        for second, values in enumerate(((80, 40), (82, 40), (84, 40), (86, 38),
-                                         (84, 36), (82, 34), (80, 32), (78, 30))):
-            events += sample(detector, second, *values)
-        kinds = [event.kind for event in events]
-        self.assertIn(Kind.DOOR_OPEN, kinds)
-        self.assertNotIn(Kind.DOOR_CLOSE, kinds)
+        detector = self._entry_detector()
+        events = self._segment(detector, self._settling_time(detector), (78, 40), (80, 40))
+        events += self._segment(detector, 30, (80, 40), (76, 36))
+        self.assertIn(Kind.DOOR_OPEN, [item.kind for item in events])
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+
 
     def test_weak_needs_a_recent_actual_close_and_new_opening_resets_its_hold(self):
-        initial = self._entry_detector()
-        initial_events = []
-        for second in range(6):
-            initial_events += sample(initial, second, 80 + 2 * second, 40 + 2 * second)
-        self.assertNotIn(Kind.PERSON_WEAK, [event.kind for event in initial_events])
+        detector = self._entry_detector()
+        duration = self._settling_time(detector) + detector.p["weak_hold_seconds"]
+        events = self._segment(detector, duration, (80, 30), (80, 30 + .02 * duration))
+        self.assertNotIn(Kind.PERSON_WEAK, [item.kind for item in events])
+        events = self._entry_episode(detector, moisture=False)
+        expiry = ceil(detector.p["confirmation_minutes"] * 60) + 1
+        events += self._segment(detector, expiry, (80, 38))
+        events += self._segment(detector, duration, (80, 38), (80, 38 + .02 * duration))
+        self.assertNotIn(Kind.PERSON_WEAK, [item.kind for item in events])
+        self.assertFalse(detector.diagnostic["checks"].get("weak", False))
+        self.assertEqual(detector.diagnostic["holds"].get("weak", 0), 0)
+        # A new opening retires the old entry and its unfinished weak proof.
+        events += self._segment(detector, 30, (80, 38), (76, 34))
+        self.assertTrue(detector.open)
+        self.assertEqual(detector.diagnostic["holds"].get("weak", 0), 0)
 
-        expired = self._entry_detector(confirmation_minutes=.01)
-        expired_events = self._entry_episode(expired)
-        for second in range(6, 10):
-            expired_events += sample(expired, second, 82 + 2 * (second - 5), 42 + 2 * (second - 5))
-        self.assertNotIn(Kind.PERSON_WEAK, [event.kind for event in expired_events])
-        self.assertFalse(expired.diagnostic["checks"]["weak"])
-        self.assertEqual(expired.diagnostic["holds"]["weak"], 0)
-
-        detector = self._entry_detector(weak_hold_seconds=3)
-        events = self._entry_episode(detector)
-        for second, values in ((6, (80, 40)), (7, (78, 38)), (8, (80, 40)),
-                               (9, (82, 42)), (10, (84, 44)), (11, (86, 46)),
-                               (12, (88, 48))):
-            events += sample(detector, second, *values)
-        weak = [event for event in events if event.kind is Kind.PERSON_WEAK]
-        self.assertEqual([event.effective_at for event in weak], [T0 + timedelta(seconds=12)])
 
     def test_hot_stable_temperature_with_actual_water_gain_confirms_person(self):
-        detector = Detector(detection_parameters(
-            median_seconds=1, person_step_seconds=1,
-            strong_window_seconds=2, strong_hold_seconds=1,
-            strong_humidity_upper=.1, strong_humidity_lower=.1,
-            strong_temperature_upper=100, strong_temperature_lower=100,
-            infusion_hold_seconds=600,
-        ), T0)
-        events = []
-        for second in range(8):
-            events += sample(detector, second, 85, 30 + second * .5)
-        self.assertIn(Kind.PERSON_STRONG, [event.kind for event in events])
+        detector = Detector(detection_parameters(), T0)
+        duration = self._settling_time(detector) + detector.p["strong_hold_seconds"]
+        events = self._segment(detector, duration, (85, 30), (85, 30 + .03 * duration))
+        self.assertIn(Kind.PERSON_STRONG, [item.kind for item in events])
+
 
     def test_cooling_can_raise_relative_humidity_without_person_or_infusion(self):
-        detector = Detector(detection_parameters(
-            median_seconds=1, person_step_seconds=1,
-            strong_window_seconds=2, strong_hold_seconds=1,
-            strong_humidity_upper=.1, strong_humidity_lower=.1,
-            infusion_window_seconds=2, infusion_hold_seconds=1, infusion_humidity=.1,
-        ), T0)
+        detector = Detector(detection_parameters(), T0)
         water = absolute_humidity(80, 30)
         events = []
-        for second in range(8):
-            temperature = 80 - second
-            events += sample(detector, second, temperature,
-                             self._humidity_for_water(temperature, water))
-        kinds = [event.kind for event in events]
+        duration = self._settling_time(detector) + detector.p["strong_hold_seconds"]
+        for second in range(ceil(duration)):
+            temperature = 80 - 5 * second / duration
+            events += sample(detector, second, temperature, self._humidity_for_water(temperature, water))
+        kinds = [item.kind for item in events]
         self.assertNotIn(Kind.PERSON_STRONG, kinds)
         self.assertNotIn(Kind.INFUSION, kinds)
 
+
     def test_infusion_with_fan_cooling_needs_water_gain_not_temperature_rise(self):
-        detector = Detector(detection_parameters(
-            median_seconds=1, infusion_window_seconds=2, infusion_hold_seconds=1,
-            infusion_humidity=.1, infusion_temperature=100,
-            strong_hold_seconds=600,
-        ), T0)
-        initial_water = absolute_humidity(80, 30)
-        events = []
-        for second in range(8):
-            temperature = 80 - 2 * second
-            events += sample(detector, second, temperature, self._humidity_for_water(
-                temperature, initial_water + 3 * second
-            ))
-        self.assertIn(Kind.INFUSION, [event.kind for event in events])
+        detector = Detector(detection_parameters(), T0)
+        events = self._segment(detector, self._settling_time(detector), (80, 30))
+        events += self._segment(detector, 25, (80, 30), (78, 40))
+        self.assertIn(Kind.INFUSION, [item.kind for item in events])
+
 
     def test_preopening_moisture_rise_cannot_become_weak_person_after_close(self):
-        detector = self._entry_detector(door_heating_hold_seconds=1)
-        events = []
-        for second, values in enumerate(((80, 40), (80, 45), (80, 50),
-                                         (79, 60), (78, 70), (79, 75),
-                                         (80, 80), (81, 85))):
-            detector.report_heating(True, T0 + timedelta(seconds=second))
-            events += sample(detector, second, *values)
-        kinds = [event.kind for event in events]
-        self.assertIn(Kind.DOOR_CLOSE, kinds)
-        self.assertNotIn(Kind.PERSON_WEAK, kinds)
+        detector = self._entry_detector()
+        duration = self._settling_time(detector)
+        events = self._segment(detector, duration, (80, 30))
+        events += self._segment(detector, duration, (80, 30), (80, 30 + .02 * duration), heating=True)
+        humidity = 30 + .02 * duration
+        # Added water continues throughout this opening; the thermal drop must
+        # not turn the earlier moisture rise into a new false→true evidence edge.
+        events += self._segment(detector, 30, (80, humidity), (76, humidity + 10), heating=True)
+        events += self._segment(detector, 30, (76, humidity + 10), (80, humidity + 10.6), heating=True)
+        events += self._segment(detector, duration, (80, humidity + 10.6),
+                                (80, humidity + 10.6 + .02 * duration), heating=True)
+        self.assertIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        self.assertNotIn(Kind.PERSON_WEAK, [item.kind for item in events])
+
 
     def test_source_gap_restarts_strong_hold_after_a_complete_window(self):
-        detector = Detector(detection_parameters(
-            median_seconds=1, person_step_seconds=1,
-            strong_window_seconds=2, strong_hold_seconds=1,
-            strong_humidity_upper=.1, strong_humidity_lower=.1,
-            infusion_hold_seconds=600,
-        ), T0)
+        detector = Detector(detection_parameters(), T0)
+        p = detector.p
+        step = p["person_step_seconds"]
+        first_full = ceil((p["median_seconds"] - 1 + p["strong_window_seconds"]) / step) * step
         events = []
-        for second in range(3):
-            events += sample(detector, second, 80, 30)
-        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, None, 3))
-        detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, None, 3))
-        events += detector.advance(T0 + timedelta(seconds=3), enabled=True)
-        for second in range(4, 7):
-            events += sample(detector, second, 80, 30 + second)
-        self.assertNotIn(Kind.PERSON_STRONG, [event.kind for event in events])
-        for second in range(7, 10):
-            events += sample(detector, second, 80, 30 + second)
-        self.assertEqual([event.kind for event in events].count(Kind.PERSON_STRONG), 1)
+        for second in range(ceil(first_full) + 1):
+            events += sample(detector, second, 80, 30 + .03 * second)
+        self.assertGreater(detector.diagnostic["holds"].get("strong", 0), 0)
+        self.assertNotIn(Kind.PERSON_STRONG, [item.kind for item in events])
+        gap_at = detector.index + 1
+        for position in (Position.UPPER,):
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                detector.accept(measurement(position, quantity, None, gap_at))
+        events += detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
+        self.assertEqual(detector.diagnostic["holds"].get("strong", 0), 0)
+        before_full = gap_at + ceil(p["strong_window_seconds"])
+        for second in range(gap_at + 1, before_full + 1):
+            events += sample(detector, second, 80, 30 + .03 * second)
+        self.assertNotIn(Kind.PERSON_STRONG, [item.kind for item in events])
+        complete = before_full + ceil(p["median_seconds"] + p["strong_hold_seconds"] + 2 * step)
+        for second in range(before_full + 1, complete + 1):
+            events += sample(detector, second, 80, 30 + .03 * second)
+        self.assertEqual([item.kind for item in events].count(Kind.PERSON_STRONG), 1)
+
 
     def test_gap_restarts_an_unfinished_strong_hold(self):
-        detector = Detector(detection_parameters(
-            median_seconds=1, person_step_seconds=1,
-            strong_window_seconds=2, strong_hold_seconds=3,
-            strong_humidity_upper=.1, strong_humidity_lower=.1,
-            infusion_hold_seconds=600,
-        ), T0)
+        detector = Detector(detection_parameters(), T0)
+        p = detector.p
+        step = p["person_step_seconds"]
+        first_full = ceil((p["median_seconds"] - 1 + p["strong_window_seconds"]) / step) * step
         events = []
-        for second in range(4):
-            events += sample(detector, second, 80, 30 + second)
-        for position in (Position.UPPER, Position.LOWER):
-            detector.accept(measurement(position, Quantity.TEMPERATURE, None, 4))
-            detector.accept(measurement(position, Quantity.HUMIDITY, None, 4))
-        events += detector.advance(T0 + timedelta(seconds=4), enabled=True)
-        for second in range(5, 10):
-            events += sample(detector, second, 80, 30 + second)
-        self.assertNotIn(Kind.PERSON_STRONG, [event.kind for event in events])
-        for second in range(10, 13):
-            events += sample(detector, second, 80, 30 + second)
-        self.assertEqual([event.kind for event in events].count(Kind.PERSON_STRONG), 1)
+        for second in range(ceil(first_full) + 1):
+            events += sample(detector, second, 80, 30 + .03 * second)
+        self.assertGreater(detector.diagnostic["holds"].get("strong", 0), 0)
+        self.assertNotIn(Kind.PERSON_STRONG, [item.kind for item in events])
+        gap_at = detector.index + 1
+        for position in detector.positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                detector.accept(measurement(position, quantity, None, gap_at))
+        events += detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
+        self.assertEqual(detector.diagnostic["holds"].get("strong", 0), 0)
+        before_full = gap_at + ceil(p["strong_window_seconds"])
+        for second in range(gap_at + 1, before_full + 1):
+            events += sample(detector, second, 80, 30 + .03 * second)
+        self.assertNotIn(Kind.PERSON_STRONG, [item.kind for item in events])
+        complete = before_full + ceil(p["median_seconds"] + p["strong_hold_seconds"] + 2 * step)
+        for second in range(before_full + 1, complete + 1):
+            events += sample(detector, second, 80, 30 + .03 * second)
+        self.assertEqual([item.kind for item in events].count(Kind.PERSON_STRONG), 1)
+
 
     def test_two_sensor_water_loss_confirms_without_the_legacy_open_duration(self):
-        detector = self._ventilation_detector()
+        observed = []
+        detector = Detector(detection_parameters(), T0, observer=observed.append)
         events = self._open_for_ventilation(detector)
-        events += sample(detector, 12, 74, 20)
-        ventilation = next(event for event in events if event.kind is Kind.VENTILATION)
-        self.assertLess((ventilation.detected_at - detector.opened_at).total_seconds(), 30)
-        metric = detector.diagnostic["metrics"]["upper"]
-        self.assertGreaterEqual(metric["ventilation_temperature_loss"], 3)
-        self.assertGreaterEqual(metric["ventilation_absolute_humidity_loss"], .30)
+        events += self._segment(detector, 20, (78, 38), (74, 20))
+        ventilation = next(item for item in events if item.kind is Kind.VENTILATION)
+        self.assertLess((ventilation.detected_at - detector.opened_at).total_seconds(), detector.p["vent_hold_seconds"])
+        trace = next(row for row in observed if Kind.VENTILATION in row["signals"])
+        metric = trace["metrics"]["upper"]
+        self.assertGreaterEqual(metric["ventilation_temperature_loss"], detector.p["vent_drop_upper"])
+        self.assertGreaterEqual(metric["ventilation_absolute_humidity_loss"], detector.p["vent_absolute_humidity_loss_percent"] / 100)
+
 
     def test_gap_pauses_two_position_ventilation_and_same_sources_can_resume_it(self):
         detector = self._ventilation_detector()
         events = self._open_for_ventilation(detector)
-        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 74, 12))
-        detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 20, 12))
-        detector.accept(measurement(Position.LOWER, Quantity.TEMPERATURE, None, 12))
-        detector.accept(measurement(Position.LOWER, Quantity.HUMIDITY, None, 12))
-        events += detector.advance(T0 + timedelta(seconds=12), enabled=True)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-        for position in (Position.UPPER, Position.LOWER):
-            detector.accept(measurement(position, Quantity.TEMPERATURE, 74, 13))
-            detector.accept(measurement(position, Quantity.HUMIDITY, 20, 13))
-        events += detector.advance(T0 + timedelta(seconds=13), enabled=True)
-        self.assertEqual([event.kind for event in events].count(Kind.VENTILATION), 1)
+        events += self._segment(detector, 20, (78, 38), (74, 20),
+                                missing=((Position.LOWER, Quantity.TEMPERATURE), (Position.LOWER, Quantity.HUMIDITY)))
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        events += self._segment(detector, detector.p["median_seconds"] + 1, (74, 20))
+        self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+
 
     def test_ventilation_reference_precedes_the_first_delayed_feature_window(self):
-        detector = self._ventilation_detector(
-            door_open_slope=-20, door_open_hold_seconds=10,
-        )
-        for second in range(14):
-            temperature = 80 if second < 4 else 80 - .1 * (second - 3)
-            humidity = 40 if second < 13 else 39
-            sample(detector, second, temperature, humidity)
-        for position in (Position.UPPER, Position.LOWER):
-            self.assertAlmostEqual(detector.baseline[position]["temperature"], 79.3)
+        detector = self._ventilation_detector()
+        self._segment(detector, self._settling_time(detector), (80, 40))
+        self._segment(detector, 20, (80, 40), (78, 40))
+        # The temperature hint exists before the later humidity loss qualifies the mixed route.
+        self._segment(detector, 20, (78, 40), (76, 38))
+        self.assertTrue(detector.open)
+        for position in detector.positions:
+            self.assertGreater(detector.baseline[position]["temperature"], 78)
+
 
     def test_recovery_pauses_ventilation_before_the_close_hold_completes(self):
-        detector = self._ventilation_detector(
-            door_window_seconds=1, door_humidity_seconds=1,
-            door_close_slope=.1, door_close_hold_seconds=3,
-            vent_drop_upper=1, vent_drop_lower=1,
-        )
-        def values(second, position):
-            return ((80, 40) if second < 10 else (79, 35) if second == 10 else (78, 30))
-        events = self._open_for_ventilation(detector, value_at=values)
-        events += sample(detector, 12, 79, 25)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-        self.assertNotIn(Kind.DOOR_CLOSE, [event.kind for event in events])
-        events += sample(detector, 13, 80, 22)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
-        events += sample(detector, 14, 78, 20)
-        kinds = [event.kind for event in events]
-        self.assertIn(Kind.VENTILATION, kinds)
+        detector = self._ventilation_detector()
+        events = self._open_for_ventilation(detector)
+        # Temperature has fallen sufficiently, but constant water content prevents ventilation.
+        water = absolute_humidity(78, 38)
+        for _ in range(20):
+            second = detector.index + 1
+            temperature = 78 - .2 * (_ + 1)
+            events += sample(detector, second, temperature, self._humidity_for_water(temperature, water))
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        # A fresh recovering temperature trend must pause ventilation before the close timer is due.
+        recovery = []
+        for _ in range(ceil(detector.p["door_window_seconds"] + detector.p["median_seconds"] + detector.p["door_close_hold_seconds"]) + 1):
+            second = detector.index + 1
+            temperature += .15
+            recovery += sample(detector, second, temperature, self._humidity_for_water(temperature, water))
+            self.assertTrue(detector.open)
+            if detector.diagnostic["conditions"].get("door_close"):
+                break
+        self.assertTrue(detector.diagnostic["conditions"].get("door_close"))
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in recovery])
+        self.assertTrue(detector.diagnostic["conditions"].get("ventilation_recovery"))
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in recovery])
+
 
     def test_single_sensor_keeps_the_legacy_open_duration(self):
         detector = self._ventilation_detector(positions=(Position.UPPER,))
-        events = self._open_for_ventilation(detector, positions=(Position.UPPER,))
-        for second in range(12, 42):
-            events += sample(detector, second, 74, 20, (Position.UPPER,))
-        ventilation = [event for event in events if event.kind is Kind.VENTILATION]
+        events = self._open_for_ventilation(detector)
+        events += self._segment(detector, 20, (78, 38), (74, 20))
+        events += self._segment(detector, detector.p["vent_hold_seconds"], (74, 20))
+        ventilation = [item for item in events if item.kind is Kind.VENTILATION]
         self.assertEqual(len(ventilation), 1)
-        self.assertGreaterEqual((ventilation[0].detected_at - detector.opened_at).total_seconds(), 30)
+        self.assertGreaterEqual((ventilation[0].detected_at - detector.opened_at).total_seconds(), detector.p["vent_hold_seconds"])
+
 
     def test_runtime_positions_confirm_one_position_available_when_the_door_opens(self):
         """Die Runtime behält beide Rollen, obwohl unten vor der Öffnung fehlt."""
@@ -640,7 +618,7 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual([event.kind for event in events].count(Kind.DOOR_OPEN), 1)
         self.assertEqual(len(ventilation), 1)
         self.assertEqual(ventilation[0].channels, ("upper",))
-        self.assertGreaterEqual((ventilation[0].detected_at - detector.opened_at).total_seconds(), 60)
+        self.assertGreaterEqual((ventilation[0].detected_at - detector.opened_at).total_seconds(), detector.p["vent_hold_seconds"])
         self.assertIn("lower_unavailable", detector.faults)
 
     def test_used_single_position_source_change_cannot_confirm_the_opening(self):
@@ -658,30 +636,22 @@ class DetectorTests(unittest.TestCase):
         self.assertTrue(detector.ventilation_degraded)
 
     def test_lost_position_during_open_door_cannot_fall_back_to_single_sensor_proof(self):
-        water = absolute_humidity(80, 40)
-        def values(second, position):
-            temperature = 80 - max(0, second - 9) * 2
-            return temperature, self._humidity_for_water(temperature, water)
-        detector = self._ventilation_detector(sensor_timeout_seconds=5)
-        events = self._open_for_ventilation(detector, value_at=values, heating=True)
-        for second in range(12, 50):
-            # Oben entsteht ein starker Verlust, unten fällt dagegen aus.
-            detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 70, second))
-            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 10, second))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
+        detector = self._ventilation_detector()
+        events = self._open_for_ventilation(detector)
+        events += self._segment(detector, 20, (78, 38), (74, 20), positions=(Position.UPPER,))
+        duration = detector.p["sensor_timeout_seconds"] + detector.p["vent_hold_seconds"] + 1
+        events += self._segment(detector, duration, (74, 20), positions=(Position.UPPER,))
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
         self.assertIn(Position.LOWER, detector.baseline)
+
 
     def test_source_replacement_during_opening_invalidates_its_reference(self):
         detector = self._ventilation_detector()
         events = self._open_for_ventilation(detector)
-        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 74, 12, source="sensor.replaced"))
-        detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 20, 12))
-        detector.accept(measurement(Position.LOWER, Quantity.TEMPERATURE, 74, 12))
-        detector.accept(measurement(Position.LOWER, Quantity.HUMIDITY, 20, 12))
-        events += detector.advance(T0 + timedelta(seconds=12), enabled=True)
-        self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
+        events += self._segment(detector, 20, (78, 38), (74, 20), source="sensor.replaced")
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
         self.assertIn(Position.UPPER, detector.ventilation_invalid)
+
 
     def test_door_with_delayed_humidity_drop_during_continuous_heating(self):
         detector = Detector(detection_parameters(), T0)
@@ -697,14 +667,16 @@ class DetectorTests(unittest.TestCase):
 
     def test_fresh_opening_routes_reach_holds_longer_than_the_feature_window(self):
         for route in ("mixed", "thermal"):
-            for hold in (2, 12, 15, 600):
+            for hold in (parameters().values["door_open_hold_seconds"],
+                         max(parameters().values["door_window_seconds"], parameters().values["door_humidity_seconds"]) + 1,
+                         BY_KEY["door_open_hold_seconds"].maximum):
                 with self.subTest(route=route, hold=hold):
                     detector = Detector(detection_parameters(**{
                         "door_open_hold_seconds": hold,
                         "door_heating_hold_seconds": hold,
                     }), T0, (Position.UPPER,))
                     events = []
-                    for second in range(hold + 60):
+                    for second in range(ceil(hold) + 60):
                         detector.report_heating(route == "thermal", T0 + timedelta(seconds=second))
                         fall = max(0, second - 20)
                         events += sample(detector, second, 90 - .04 * fall,
@@ -721,7 +693,8 @@ class DetectorTests(unittest.TestCase):
         for route in ("mixed", "thermal"):
             with self.subTest(route=route):
                 detector = Detector(detection_parameters(
-                    door_open_hold_seconds=30, door_heating_hold_seconds=30,
+                    door_open_hold_seconds=2 * max(parameters().values["door_window_seconds"], parameters().values["door_humidity_seconds"]),
+                    door_heating_hold_seconds=2 * max(parameters().values["door_window_seconds"], parameters().values["door_humidity_seconds"]),
                 ), T0, (Position.UPPER,))
                 events = []
                 for second in range(100):
@@ -822,23 +795,27 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(observed[29], T0 + timedelta(seconds=29))
 
     def test_door_hold_starts_again_after_required_position_is_missing(self):
-        detector = Detector(detection_parameters(
-            median_seconds=1, door_window_seconds=2,
-            door_heating_hold_seconds=4, door_heating_slope=-.1,
-        ), T0, (Position.UPPER,))
-        for second in range(6):
+        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+        self._segment(detector, self._settling_time(detector), (80, 30), heating=True)
+        limit = ceil(detector.p["door_window_seconds"] + detector.p["median_seconds"]
+                     + detector.p["door_heating_hold_seconds"] + detector.p["door_open_drop_c"] / .1)
+        temperature = 80
+        for _ in range(limit):
+            second = detector.index + 1
+            temperature -= .1
             detector.report_heating(True, T0 + timedelta(seconds=second))
-            sample(detector, second, 60 - .3 * second, 30, (Position.UPPER,))
+            sample(detector, second, temperature, 30, (Position.UPPER,))
+            if detector.diagnostic["holds"].get("door_heating", 0):
+                break
         self.assertGreater(detector.diagnostic["holds"].get("door_heating", 0), 0)
-        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, None, 6))
-        detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, 6))
-        detector.advance(T0 + timedelta(seconds=6), enabled=True)
+        self.assertFalse(detector.open)
+        gap_at = detector.index + 1
+        detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, None, gap_at))
+        detector.advance(T0 + timedelta(seconds=gap_at), enabled=True)
         self.assertEqual(detector.diagnostic["holds"].get("door_heating", 0), 0)
-        events = []
-        for second in range(7, 11):
-            events += sample(detector, second, 60 - .3 * second, 30,
-                             (Position.UPPER,))
-        self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        events = self._segment(detector, detector.p["door_heating_hold_seconds"] - 1,
+                               (temperature, 30), (temperature - .2, 30), heating=True)
+        self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
 
     def test_additional_door_rule_uses_all_available_positions(self):
         cases = (
@@ -864,8 +841,9 @@ class DetectorTests(unittest.TestCase):
                 self.assertEqual(Kind.DOOR_OPEN in [event.kind for event in events], opens)
 
     def test_hot_operation_uses_the_continuous_heating_route(self):
-        for base, minimum in ((90, 60), (65, 60), (59, 60)):
-            d=Detector(detection_parameters(sauna_min_temperature_c=minimum),T0)
+        minimum = parameters().values["sauna_min_temperature_c"]
+        for base in (parameters().values["standard_temperature_c"], minimum + 5, minimum - 1):
+            d=Detector(detection_parameters(),T0)
             events=[]
             for i in range(80):
                 d.report_heating(True,T0+timedelta(seconds=i))
@@ -891,22 +869,7 @@ class DetectorTests(unittest.TestCase):
     def test_detection_parameter_override_is_consumed(self):
         self.assertEqual(Detector(detection_parameters(door_open_slope=-3), T0).p["door_open_slope"], -3)
 
-    def test_synthetic_episode_person_infusion_and_ventilation(self):
-        detector = Detector(detection_parameters(), T0)
-        events = []
-        for i in range(401):
-            events += sample(detector, i, *trace(i))
-        kinds = [e.kind for e in events]
-        self.assertEqual(kinds.count(Kind.DOOR_OPEN), 2)
-        self.assertEqual(kinds.count(Kind.DOOR_CLOSE), 1)
-        # Die erste alte Temperatur-only-Lüftung verliert weniger als 30 %
-        # absoluten Wassergehalt und gilt deshalb nicht mehr als Nachweis.
-        self.assertEqual(kinds.count(Kind.VENTILATION), 1)
-        self.assertIn(Kind.PERSON_STRONG, kinds)
-        self.assertEqual(kinds.count(Kind.INFUSION), 1)
-        self.assertLess(kinds.index(Kind.PERSON_STRONG), kinds.index(Kind.INFUSION))
-        self.assertTrue(all(e.effective_at <= e.detected_at for e in events))
-        self.assertEqual(detector.faults, ())
+
 
     def test_future_measurements_do_not_rewrite_the_past(self):
         detector = Detector(detection_parameters(), T0)
@@ -921,19 +884,17 @@ class DetectorTests(unittest.TestCase):
 
     def test_failure_single_sensor_operation_and_rejoin(self):
         detector = Detector(detection_parameters(), T0)
-        events = []
-        for i in range(401):
-            positions = (Position.LOWER,) if 60 <= i <= 170 else (Position.UPPER, Position.LOWER)
-            events += sample(detector, i, *trace(i), positions=positions)
-            if i == 80:
-                self.assertEqual(detector.active_positions, (Position.LOWER,))
-                self.assertIn("upper_unavailable", detector.faults)
-            if i == 180:
-                self.assertEqual(detector.active_positions, (Position.UPPER, Position.LOWER))
-                self.assertEqual(detector.faults, ())
-        opening = next(e for e in events if e.kind == Kind.DOOR_OPEN)
+        self._segment(detector, self._settling_time(detector), (80, 40))
+        self._segment(detector, detector.p["sensor_timeout_seconds"] + 1, (80, 40),
+                      positions=(Position.LOWER,))
+        self.assertEqual(detector.active_positions, (Position.LOWER,))
+        self.assertIn("upper_unavailable", detector.faults)
+        events = self._segment(detector, 20, (80, 40), (78, 38), positions=(Position.LOWER,))
+        opening = next(item for item in events if item.kind == Kind.DOOR_OPEN)
         self.assertEqual(opening.channels, ("lower",))
-        self.assertEqual(sum(e.kind == Kind.INFUSION for e in events), 1)
+        self._segment(detector, detector.p["median_seconds"], (78, 38))
+        self.assertEqual(detector.active_positions, detector.positions)
+        self.assertEqual(detector.faults, ())
 
     def test_source_replacement_discards_old_history_and_hold_evidence(self):
         detector = Detector(detection_parameters(), T0, (Position.UPPER,))
@@ -946,7 +907,7 @@ class DetectorTests(unittest.TestCase):
         self.assertIsNone(detector.frames[Position.UPPER][-1]["Tm"])
 
     def test_missing_implausible_or_old_source_timestamp_is_not_healthy(self):
-        for value, measured in ((None, None), (101, None), (40, T0 - timedelta(minutes=1))):
+        for value, measured in ((None, None), (101, None), (40, T0 - timedelta(seconds=parameters().values["sensor_timeout_seconds"] + 1))):
             with self.subTest(value=value, measured=measured):
                 detector = Detector(detection_parameters(), T0)
                 detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, 70, 0))

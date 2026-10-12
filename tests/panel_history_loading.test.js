@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { parameterValues: fixtureValues } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -786,7 +787,7 @@ test("six-hour four-source cold pagination indexes each original once and reuses
       session_started_at: new Date(origin).toISOString(),
     },
     ended_at: new Date(origin + 6 * 3600 * 1000).toISOString(),
-    measurement_ttl_seconds: 5,
+    measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
   };
   let requests = 0,
     bytes = 0,

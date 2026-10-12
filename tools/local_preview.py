@@ -7,12 +7,12 @@ Start: python3 tools/local_preview.py. Keine HA-Verbindung, keine Geräteausgabe
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
@@ -22,28 +22,58 @@ sys.path.insert(0, str(ROOT))
 from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG
 from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.bindings import Bindings
+from custom_components.ha_sauna.core.configuration_model import (
+    ConfigurationModel,
+    temperature_control,
+)
 from custom_components.ha_sauna.core.defaults import section
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
-from custom_components.ha_sauna.core.history import HISTORY_CONTEXT_SECONDS, measurement_window
+from custom_components.ha_sauna.core.history import (
+    HISTORY_CONTEXT_SECONDS,
+    measurement_window,
+)
 from custom_components.ha_sauna.core.light import normal_brightness
 from custom_components.ha_sauna.core.light_control import light_plan, select_light
 from custom_components.ha_sauna.core.light_output import LightOutput, LightQuantizer
 from custom_components.ha_sauna.core.parameters import (
-    EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, Parameters,
+    EDITABLE_DEFINITIONS,
+    LIVE_TEMPERATURE_KEYS,
+    Parameters,
 )
 from custom_components.ha_sauna.core.phases import project_session
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.presentation import (
-    decision_message, public_measurement, public_phase_projection, public_session, public_state,
+    decision_message,
+    public_measurement,
+    public_phase_projection,
+    public_session,
+    public_state,
     resolve_cooling_token,
 )
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
-    async_set_appearance, async_set_button_gesture, async_set_control_mode,
-    async_set_parameters, async_set_program,
+    async_set_appearance,
+    async_set_button_gesture,
+    async_set_control_mode,
+    async_set_parameters,
+    async_set_program,
     async_set_temperature_steps,
 )
+
+
+class PreviewRuntime(SaunaRuntime):
+    """Supply the simulated event entity's advertised Shelly RPC capabilities."""
+
+    @property
+    def configuration_model(self):
+        return ConfigurationModel.from_configuration(
+            self.configuration,
+            button_event_types=(
+                "btn_down", "btn_up", "single_push", "double_push",
+                "triple_push", "long_push",
+            ),
+        )
 
 
 class Preview:
@@ -63,7 +93,7 @@ class Preview:
         self.humidity = 24.5
         self.follow_feedback = True
         self.button_pressed = False
-        self.runtime = SaunaRuntime(Configuration(
+        self.runtime = PreviewRuntime(Configuration(
             Bindings({"upper_temperature": "sensor.demo_temperatur",
                       "upper_humidity": "sensor.demo_feuchte",
                       "heater": "switch.demo_ofen", "light": "light.demo_sauna",
@@ -231,26 +261,34 @@ class Preview:
             self.sample()
 
     async def button_event(self, *events):
+        """Feed already classified native events without a second hold clock."""
         async with self.runtime.serialized():
             for event in events:
-                await self.runtime._handle_button_event(event, self.now)
+                action = self.runtime.configuration_model.button.action_for_event(event)
+                if action is not None:
+                    await self.runtime._handle_button_event(action, self.now)
             await self.runtime._cycle()
 
     def button(self, action):
         previous_mode = self.c.control_mode
         if action == "button_release":
-            asyncio.run(self.button_event("release"))
+            asyncio.run(self.button_event("btn_up"))
             self.button_pressed = False
         else:
             if self.button_pressed:
                 raise ValueError("Der Taster ist noch gedrückt. Zuerst loslassen.")
             if action in ("button_short", "button_double", "button_triple"):
-                asyncio.run(self.button_event("press", action.removeprefix("button_"), "release"))
+                gesture, count = {
+                    "button_short": ("single_push", 1),
+                    "button_double": ("double_push", 2),
+                    "button_triple": ("triple_push", 3),
+                }[action]
+                # Native devices publish the final click summary after release.
+                asyncio.run(self.button_event(*(("btn_down", "btn_up") * count), gesture))
             else:
-                asyncio.run(self.button_event("press"))
+                asyncio.run(self.button_event("btn_down"))
                 self.button_pressed = True
-                self.step(self.c.parameters.values["button_hold_seconds"])
-                asyncio.run(self.button_event("long"))
+                asyncio.run(self.button_event("long_push"))
         if previous_mode != self.c.control_mode:
             self.select_light(0 if self.c.control_mode == "manual" else None)
         self.sample()
@@ -311,6 +349,7 @@ class Preview:
     def state(self):
         c, session = self.c, self.c.session
         configuration = self.runtime.configuration
+        configuration_model = self.runtime.configuration_model
         active = session.timeline.active if session else None
         light_observation = self.observed_light()
         measurements = [{"position":"upper", "quantity":q, "value":v,
@@ -322,7 +361,9 @@ class Preview:
             "phase_projection":c.phase_projection(self.now), "configuration":configuration.as_options(),
             "appearance":configuration.appearance, "appearance_catalog":APPEARANCE_CATALOG,
             "frontend_defaults":section("frontend"),
-            "button_session_gestures":configuration.available_button_session_gestures,
+            "configuration_model":configuration_model.as_dict(),
+            "temperature_control":temperature_control(c).as_dict(),
+            "button_session_gestures":self.runtime.available_button_session_gestures,
             "environment": {
                 "configured": True,
                 "station": {"name": "Beispielstation", "id": "demo"},
@@ -349,12 +390,14 @@ class Preview:
             "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
             "archive_revision":self.archive_revision, "preview_scenario":self.scenario,
             "preview_button":{"pressed":self.button_pressed,
-                              "hold_seconds":c.parameters.values["button_hold_seconds"],
                               "start_hold":self.runtime.button_start_hold_active},
             "measurement_ttl_seconds":configuration.parameters.values["sensor_timeout_seconds"],
             "parameters":[{**asdict(d), "minimum":configuration.parameters.minimum_for(d.key),
-                           "live_editable":d.key in LIVE_TEMPERATURE_KEYS} for d in EDITABLE_DEFINITIONS],
+                           "live_editable":d.key in LIVE_TEMPERATURE_KEYS,
+                           "applicable":configuration_model.parameter_applicable(d)}
+                          for d in EDITABLE_DEFINITIONS],
             "configuration_locked":session is not None,
+            "control_mode_change_allowed":c.control_mode_change_allowed and not self.runtime.reconfiguring,
             "operation_enabled":bool(session and session.operation_enabled),
             "heating_feedback":c.feedback, "heating_observation":{"source":"contactor"},
             "energy_kwh":session.energy.total_kwh if session else 0,
@@ -514,6 +557,7 @@ class Preview:
         return {"parameters":self.c.parameters.as_dict(),
                 "target_temperature":self.c.target_temperature,
                 "next_gang_temperature":self.c.next_gang_temperature,
+                "temperature_control":temperature_control(self.c).as_dict(),
                 "program_mode":self.runtime.configuration.program_mode,
                 "selected_program_id":self.runtime.configuration.selected_program_id,
                 "temperature_steps":self.runtime.configuration.temperature_steps}

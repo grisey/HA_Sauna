@@ -1,12 +1,13 @@
 """Real authenticated panel endpoints, session guard and HA options reload."""
 import asyncio
+from math import nextafter
 import unittest
 from unittest.mock import patch
 from aiohttp import ClientSession
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
-from harness import create_sauna, start_hass
+from harness import advance_with_fresh_sources, create_sauna, start_hass
 from custom_components.ha_sauna.core.defaults import section
-from custom_components.ha_sauna.core.parameters import Parameters
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
 
 
 class PanelAPITests(unittest.IsolatedAsyncioTestCase):
@@ -102,8 +103,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 async with client.post(url, json={"reset": True}) as response:
                     self.assertEqual(response.status, 409)
                 await runtime.set_operation(False)
-                token = next(d.token for d in runtime.session.deadlines if d.purpose == "session_gap")
-                await runtime.finish_session_gap(token)
+                runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+                await runtime._cycle()
             await runtime.archive.flush()
             for body in ({}, {"reset": False}, {"reset": True, "session_id": "x"}):
                 async with client.post(url, json=body) as response:
@@ -128,7 +129,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
-        self.entry = await create_sauna(self.hass, parameter_overrides={"sensor_timeout_seconds": 60})
+        self.entry = await create_sauna(self.hass)
         self.base = f"http://127.0.0.1:{self.hass.http.server_port}/api/ha_sauna"
         user = await self.hass.auth.async_create_user("Panel test", group_ids=[GROUP_ID_ADMIN])
         token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
@@ -173,6 +174,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_override_parameter_api_enforces_the_catalog_limit_atomically(self):
         url = self.base + "/" + self.entry.entry_id
+        definition = BY_KEY["manual_override_minutes"]
+        maximum = definition.maximum
         async with ClientSession(headers=self.headers) as client:
             async with client.get(url + "/state") as response:
                 state = await response.json()
@@ -183,9 +186,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(
                     (field["default"], field["maximum"], field["integer"]),
-                    (10, 10, False),
+                    (definition.default, maximum, definition.integer),
                 )
-            for value in (10.000000000000002, 20):
+            for value in (nextafter(maximum, float("inf")), maximum * 2):
                 before = dict(self.entry.options)
                 runtime = self.entry.runtime_data
                 configuration = runtime.configuration
@@ -205,7 +208,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(runtime.controller.last_decision, decision)
                 self.assertEqual(runtime.device.command, command)
                 self.assertFalse(runtime.reconfiguring)
-            for value in (10, 0.5):
+            for value in (maximum, maximum / 20):
                 async with client.post(
                     url + "/parameters",
                     json={
@@ -245,17 +248,34 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             },
         }
         url = self.base + "/" + self.entry.entry_id
+        maximum = BY_KEY["manual_override_minutes"].maximum
+        # This is the formerly stored value whose migration is under test,
+        # not a copy of the current runtime limit.
+        legacy = 20
+        legacy_effective = min(legacy, maximum)
+        shorter = maximum / 20
         async with ClientSession(headers=self.headers) as client:
             for stored, mode, seconds, effective in (
-                (20, "automatic", 600, 10),
-                (0.5, "automatic", 30, 0.5),
-                (20, "manual", 601, 10),
+                (legacy, "automatic", legacy_effective * 60, legacy_effective),
+                (shorter, "automatic", shorter * 60, shorter),
+                (legacy, "manual", legacy_effective * 60 + 1, legacy_effective),
             ):
                 with self.subTest(stored=stored, mode=mode):
+                    # Each case starts from an acknowledged outside-light OFF.
+                    # The preceding case can leave its last visible 80% at the
+                    # start of a fade; choosing that same value is a valid no-op
+                    # and would not exercise creation of an override deadline.
+                    await self.hass.services.async_call(
+                        "light", "turn_off", {"entity_id": light.entity_id},
+                        blocking=True,
+                    )
+                    await self.hass.async_block_till_done()
+                    self.assertFalse(light.is_on)
                     for role in ("upper_temperature", "lower_temperature"):
                         entity = baseline["bindings"][role]
                         self.hass.states.async_set(
-                            entity, "25", self.hass.states.get(entity).attributes
+                            entity, str(baseline["parameters"]["light_reference_temperature_c"]),
+                            self.hass.states.get(entity).attributes,
                         )
                     self.hass.config_entries.async_update_entry(
                         self.entry,
@@ -269,11 +289,6 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                             "parameters": {
                                 **baseline["parameters"],
                                 "manual_override_minutes": stored,
-                                "minimum_heating_minutes": 0,
-                                "thermostat_cooldown_minutes": 0,
-                                "sensor_timeout_seconds": 1800,
-                                "feedback_timeout_seconds": 60,
-                                "light_transition_seconds": 0,
                             },
                         },
                     )
@@ -292,7 +307,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         runtime.configuration.parameters.values[
                             "light_brightness_scale"
                         ],
-                        255,
+                        baseline["parameters"]["light_brightness_scale"],
                     )
                     async with client.get(url + "/state") as response:
                         state = await response.json()
@@ -324,7 +339,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(light.calls[-1][1]["brightness"], 204)
                     before = dict(self.entry.options)
                     calls = (list(heater.calls), list(light.calls))
-                    for value in (10.000000000000002, 20):
+                    for value in (nextafter(maximum, float("inf")), maximum * 2):
                         async with client.post(
                             url + "/parameters",
                             json={
@@ -337,18 +352,20 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                             )
                     self.assertEqual(dict(self.entry.options), before)
                     self.assertEqual((heater.calls, light.calls), calls)
-                    clock[0] = start + timedelta(seconds=seconds - 1)
-                    await runtime.tick()
-                    await self.hass.async_block_till_done()
+                    await advance_with_fresh_sources(
+                        self.hass, runtime, start + timedelta(seconds=seconds - 1),
+                        lambda at: clock.__setitem__(0, at),
+                    )
                     self.assertEqual(
                         runtime.controller.heater_override, mode == "manual"
                     )
                     self.assertEqual(runtime.device.light_output.manual_brightness, 80)
                     self.assertEqual(heater.is_on, mode == "manual")
                     self.assertEqual(light.brightness, 204)
-                    clock[0] = start + timedelta(seconds=seconds)
-                    await runtime.tick()
-                    await self.hass.async_block_till_done()
+                    await advance_with_fresh_sources(
+                        self.hass, runtime, start + timedelta(seconds=seconds),
+                        lambda at: clock.__setitem__(0, at),
+                    )
                     if mode == "automatic":
                         self.assertIsNone(runtime.controller.heater_override)
                         self.assertIsNone(runtime.device.light_output.manual_brightness)
@@ -357,13 +374,23 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(runtime.controller.phase, "aufheizen")
                         self.assertTrue(heater.is_on)
                         self.assertTrue(heater.calls[-1])
+                        light_values = runtime.configuration.parameters.values
+                        transition_seconds = light_values["light_transition_seconds"]
+                        cold_percent = light_values["cooling_brightness_percent"]
                         self.assertEqual(
                             runtime.device.light_output.last_automatic_brightness,
-                            runtime.configuration.parameters.values["cooling_brightness_percent"]
+                            80 if transition_seconds else cold_percent,
                         )
-                        cold_brightness = round(255 * runtime.configuration.parameters.values[
-                            "cooling_brightness_percent"
-                        ] / 100)
+                        await advance_with_fresh_sources(
+                            self.hass, runtime, clock[0] + timedelta(seconds=
+                                transition_seconds),
+                            lambda at: clock.__setitem__(0, at),
+                        )
+                        self.assertEqual(
+                            runtime.device.light_output.last_automatic_brightness,
+                            cold_percent,
+                        )
+                        cold_brightness = round(255 * round(cold_percent) / 100)
                         self.assertEqual(light.brightness, cold_brightness)
                         self.assertEqual(light.calls[-1][0], "on")
                         self.assertEqual(light.calls[-1][1]["brightness"], cold_brightness)
@@ -376,7 +403,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                         )
                         self.assertEqual(light.brightness, 204)
                         self.assertEqual(runtime.configuration.control_mode, "manual")
-                    if stored == 20 and mode == "automatic":
+                    if stored == legacy and mode == "automatic":
+                        await advance_with_fresh_sources(
+                            self.hass, runtime, clock[0] + timedelta(seconds=
+                                runtime.configuration.parameters.seconds("minimum_heating_minutes")),
+                            lambda at: clock.__setitem__(0, at),
+                        )
                         await runtime.set_heater_override(False)
                         await runtime.set_light_override(80)
                         for role in ("upper_temperature", "lower_temperature"):
@@ -397,12 +429,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     if runtime.session.operation_enabled:
                         await runtime.set_operation(False)
                     if runtime.session is not None:
-                        token = next(
-                            deadline.token
-                            for deadline in runtime.session.deadlines
-                            if deadline.purpose == "session_gap"
-                        )
-                        await runtime.finish_session_gap(token)
+                        runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+                        await runtime._cycle()
                 await self.hass.async_block_till_done()
 
     async def test_unauthenticated_and_unpermitted_writes_are_rejected(self):
@@ -465,12 +493,14 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("target_temperature_c", {item["key"] for item in state["parameters"]})
                 self.assertNotIn("sensor_timeout_seconds", {item["key"] for item in state["parameters"]})
                 self.assertTrue(all("source" not in item for item in state["measurements"]))
-                self.assertEqual(state["measurement_ttl_seconds"], 60)
+                self.assertEqual(state["measurement_ttl_seconds"],
+                                 runtime.configuration.parameters.values["sensor_timeout_seconds"])
             async with client.get(url + "/archive", params={"session_id": session_id}) as response:
                 self.assertEqual(response.status, 200, await response.text())
                 history = await response.json()
                 self.assertNotIn("configuration", history["session"])
-                self.assertEqual(history["session"]["measurement_ttl_seconds"], 60)
+                self.assertEqual(history["session"]["measurement_ttl_seconds"],
+                                 runtime.configuration.parameters.values["sensor_timeout_seconds"])
                 self.assertTrue(all(record["kind"] in {"measurement", "source_snapshot", "phase"}
                                     for record in history["records"]))
                 self.assertTrue(all("source" not in record["payload"] for record in history["records"]))
@@ -540,8 +570,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await measure(20, 32)
         clock[0] = base + timedelta(seconds=30)
         await runtime.set_operation(False)
-        token = next(d.token for d in runtime.session.deadlines if d.purpose == "session_gap")
-        await runtime.finish_session_gap(token)
+        runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+        await runtime._cycle()
         self.assertIsNone(runtime.session)
 
         user = await self.hass.auth.async_create_user("Context reader", group_ids=[GROUP_ID_USER])
@@ -887,7 +917,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.entry.runtime_data.configuration.parameters.values["sauna_min_temperature_c"], 70)
                     self.assertEqual(self.entry.runtime_data.configuration.temperature_steps, (80, 70, 90))
 
-    async def test_finish_session_requires_the_current_gap_token_and_control_permission(self):
+    async def test_finish_light_requires_current_gap_token_and_preserves_recording(self):
         from datetime import UTC, datetime
 
         url = self.base + "/" + self.entry.entry_id + "/finish-session"
@@ -925,13 +955,18 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(runtime.session.operation_enabled)
 
             await runtime.set_operation(False)
-            current_gap_token = next(deadline.token for deadline in runtime.session.deadlines if deadline.purpose == "session_gap")
+            current_gap = next(deadline for deadline in runtime.session.deadlines if deadline.purpose == "session_gap")
+            current_gap_token = current_gap.token
             async with client.post(url, json={"token": current_gap_token}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             async with client.get(self.base + "/" + self.entry.entry_id + "/state") as response:
                 state = await response.json()
-                self.assertIsNone(state["session"])
-                self.assertFalse(state["configuration_locked"])
+                self.assertEqual(state["session"]["timeline"]["session_id"], resumed_session.session_id)
+                self.assertFalse(state["session"]["operation_enabled"])
+                self.assertTrue(state["configuration_locked"])
+                self.assertTrue(state["control_mode_change_allowed"])
+                self.assertIn(current_gap, runtime.session.deadlines)
+                self.assertLessEqual(runtime.controller.light_after_run.ends_at, runtime._clock())
 
     async def test_write_acknowledges_replacement_runtime_after_waiting_for_body(self):
         from custom_components.ha_sauna import api
@@ -1283,7 +1318,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             await forbidden(client.post(url + "/logging", json={"level": "INFO"}))
             await forbidden(client.get(url + "/export"))
 
-            now += timedelta(seconds=150)
+            now = next(d.due_at for d in runtime.session.deadlines
+                       if d.purpose == "session_gap")
             await runtime.tick()
             self.assertIsNone(runtime.session)
             async with client.post(url + "/control-mode", json={"mode": "automatic"}) as response:
@@ -1478,6 +1514,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             values.pop(key)
         self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options,"parameters":values})
         await self.hass.async_block_till_done()
+        # The fixture is a saved older installation. Exercise loading it;
+        # deleting values equal to live defaults is not a live config change.
+        self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+        await self.hass.async_block_till_done()
         defaults = Parameters({}).values
         for key in ("sensor_timeout_seconds", "feedback_timeout_seconds", "fault_confirmation_seconds"):
             self.assertEqual(self.entry.options["parameters"][key], defaults[key])
@@ -1494,7 +1534,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_measurement_rejects_start_with_useful_german_reason(self):
         from datetime import UTC, datetime, timedelta
         runtime=self.entry.runtime_data
-        now=datetime.now(UTC)+timedelta(seconds=61)
+        now=datetime.now(UTC)+timedelta(seconds=
+            runtime.configuration.parameters.values["sensor_timeout_seconds"] + 1)
         runtime._clock=lambda:now
         async with ClientSession(headers=self.headers) as client:
             async with client.post(self.base+"/"+self.entry.entry_id+"/control",json={"enabled":True}) as response:
@@ -1901,15 +1942,33 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.post(url + "/appearance", json=appearance) as response:
                 self.assertEqual(response.status, 200, await response.text())
                 stored = (await response.json())["appearance"]
-            runtime_before_reset = self.entry.runtime_data
             async with client.post(url + "/logging", json={"level": "DEBUG"}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             async with client.post(url + "/program", json={"profile": "genusszeit"}) as response:
                 self.assertEqual(response.status, 200, await response.text())
+            definition = BY_KEY["sensor_timeout_seconds"]
+            changed_timeout = definition.default + definition.number_step
+            if changed_timeout > definition.maximum:
+                changed_timeout = definition.default - definition.number_step
+            async with client.post(url + "/parameters", json={
+                **self.entry.options["parameters"],
+                "sensor_timeout_seconds": changed_timeout,
+            }) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            runtime_before_reset = self.entry.runtime_data
+            self.assertEqual(
+                runtime_before_reset.configuration.parameters.values["sensor_timeout_seconds"],
+                changed_timeout,
+            )
             async with client.post(url + "/parameters/reset", json={}) as response:
                 self.assertEqual(response.status, 200, await response.text())
             await self.hass.async_block_till_done()
             self.assertIsNot(self.entry.runtime_data, runtime_before_reset)
+            self.assertEqual(
+                self.entry.runtime_data.configuration.parameters.values["sensor_timeout_seconds"],
+                definition.default,
+            )
             self.assertEqual(self.entry.options["appearance"], stored)
             self.assertEqual(self.entry.options["presence_source"], "ha_presence")
             self.assertEqual(self.entry.options["bindings"]["presence"], entity_id)

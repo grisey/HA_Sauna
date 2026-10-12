@@ -1,6 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -35,7 +39,7 @@ const panel = () =>
     shown: { session, records: [] },
     state: {
       now: iso(3600),
-      configuration: { parameters: { sensor_timeout_seconds: 5 } },
+      configuration: { parameters: fixtureValues() },
     },
     $: () => null,
     scheduleHistoryRender: () => {},

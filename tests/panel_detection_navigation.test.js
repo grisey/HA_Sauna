@@ -1,6 +1,10 @@
 // The detector view works without HA or a browser; the DOM here records real
 // click actions and the stable event-id mapping used by both directions.
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
@@ -46,18 +50,9 @@ const processed = [
 const session = {
   ended_at: iso(60),
   timeline: { session_started_at: iso(0), processed, completed: [] },
-  configuration: { parameters: { person_step_seconds: 5 } },
+  configuration: { parameters: fixtureValues() },
 };
-const parameters = {
-  door_open_slope: -1,
-  door_heating_slope: -1,
-  door_close_slope: 1,
-  door_open_humidity_upper: 1,
-  door_open_humidity_lower: 1,
-  vent_drop_upper: 3,
-  vent_drop_lower: 3,
-  vent_absolute_humidity_loss_percent: 30,
-};
+const parameters = fixtureValues();
 
 // Equal timestamps do not collapse: IDs remain navigation keys, while each
 // event marker is tied to the archived detector value in its primary curve.
@@ -218,8 +213,8 @@ const parameters = {
 }
 
 // Ventilation losses are archived as fractions, but the diagnostics display
-// them as percentages and retain the archived 30 % threshold (25 % is below,
-// 35 % above).  Earlier traces without these metrics render no false zero line.
+// them as percentages and retain the archived configured threshold instead of
+// a changed live value. Earlier traces without these metrics render no false zero line.
 {
   const plots = {};
   const traces = [
@@ -259,7 +254,11 @@ const parameters = {
   const archived = {
     ...session,
     configuration: {
-      parameters: { ...parameters, vent_absolute_humidity_loss_percent: 30 },
+      parameters: {
+        ...parameters,
+        vent_absolute_humidity_loss_percent:
+          parameters.vent_absolute_humidity_loss_percent,
+      },
     },
   };
   const p = Object.assign(Object.create(Panel.prototype), {
@@ -270,7 +269,12 @@ const parameters = {
     state: {
       permissions: { admin: true },
       configuration: {
-        parameters: { ...parameters, vent_absolute_humidity_loss_percent: 99 },
+        parameters: {
+          ...parameters,
+          vent_absolute_humidity_loss_percent: fixtureDefinition(
+            "vent_absolute_humidity_loss_percent",
+          ).maximum,
+        },
       },
     },
     window: [Date.parse(iso(0)), Date.parse(iso(60))],
@@ -289,8 +293,16 @@ const parameters = {
     plots.innerHTML,
     /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62 L[\d.]+,28\.78 "/,
   );
-  assert.match(plots.innerHTML, /Schwelle oben: 30/);
-  assert.doesNotMatch(plots.innerHTML, /Schwelle oben: 99/);
+  assert.ok(
+    plots.innerHTML.includes(
+      `Schwelle oben: ${parameters.vent_absolute_humidity_loss_percent}`,
+    ),
+  );
+  assert.ok(
+    !plots.innerHTML.includes(
+      `Schwelle oben: ${fixtureDefinition("vent_absolute_humidity_loss_percent").maximum}`,
+    ),
+  );
 }
 
 // Ventilation uses its serialized event kind as signal and the effective

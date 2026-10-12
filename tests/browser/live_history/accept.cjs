@@ -8,6 +8,9 @@ const root = process.cwd(),
   output =
     process.env.HISTORY_EVIDENCE ||
     require("node:path").join(require("node:os").tmpdir(), "ha-sauna-live-history");
+const defaults = JSON.parse(
+  fs.readFileSync(path.join(root, "custom_components/ha_sauna/defaults.json"), "utf8"),
+);
 let runningBrowser;
 fs.mkdirSync(output, { recursive: true });
 (async () => {
@@ -36,10 +39,13 @@ fs.mkdirSync(output, { recursive: true });
     await page.addScriptTag({
       path: path.join(root, "tests/browser/live_history/fixture.js"),
     });
-    await page.evaluate(async (options) => {
-      window.f = await installHistoryFixture(options);
-      f.assertClean();
-    }, options);
+    await page.evaluate(
+      async (options) => {
+        window.f = await installHistoryFixture(options);
+        f.assertClean();
+      },
+      { defaults, ...options },
+    );
     page.errors = errors;
     return page;
   }

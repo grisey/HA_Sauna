@@ -145,6 +145,13 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(runtime.session.session_id, identity)
                 now = T0 + timedelta(seconds=6)
                 await runtime.set_heater_override(False)
+                stopped_at = now
+                deadline = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+                self.assertEqual(runtime.session.session_id, identity)
+                self.assertFalse(runtime.session.operation_enabled)
+                self.assertEqual(c.completed_sessions, ())
+                now = deadline.due_at
+                await runtime.tick()
                 self.assertIsNone(runtime.session)
                 self.assertIsNone(runtime.detector)
                 self.assertIsNone(c.light_after_run)
@@ -155,12 +162,14 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(saved)
                     continue
                 self.assertEqual(saved["session"]["configuration"]["control_mode"], "manual")
+                self.assertEqual(saved["session"]["operation_off_at"], stopped_at.isoformat())
+                self.assertEqual(saved["session"]["ended_at"], deadline.due_at.isoformat())
                 self.assertEqual(len(saved["session"]["timeline"]["completed"]), 1)
                 commands = [r for r in saved["records"] if r["kind"] == "manual_heater"]
                 self.assertEqual([r["payload"]["value"] for r in commands], [True, False])
                 self.assertEqual({r["session_id"] for r in commands}, {identity})
 
-    async def test_physical_start_archives_manual_context_before_applying_button_program(self):
+    async def test_physical_start_keeps_manual_archive_revisions_in_the_same_recording(self):
         from dataclasses import replace
 
         now = T0
@@ -172,21 +181,28 @@ class ArchiveRetentionTests(unittest.IsolatedAsyncioTestCase):
         runtime.controller.set_temperature(80, now)
         await runtime.set_heater_override(True)
         identity = runtime.session.session_id
-        for second, kind in enumerate((Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.INFUSION), 1):
-            now = T0 + timedelta(seconds=second)
-            await runtime.receive(event(kind.value, kind, second, session=identity))
+        started_at = runtime.session.timeline.session_started_at
+        await self.archive.flush()
+        manual_records = self.archive.read(identity)["records"]
+        self.assertEqual(self.archive.read(identity)["session"]["configuration"]["control_mode"], "manual")
         now = T0 + timedelta(seconds=4)
         async with runtime.serialized():
             await runtime._handle_button_event("long", now)
             await runtime._cycle()
         await self.archive.flush()
-        saved = self.archive.read(identity)["session"]
-        self.assertEqual(saved["configuration"]["control_mode"], "manual")
-        self.assertEqual(saved["ended_at"], now.isoformat())
+        saved = self.archive.read(identity)
+        self.assertEqual(saved["session"]["configuration"]["control_mode"], "automatic")
+        self.assertIsNone(saved["session"]["ended_at"])
+        self.assertEqual(saved["session"]["timeline"]["session_started_at"], started_at.isoformat())
+        self.assertEqual(saved["records"][:len(manual_records)], manual_records)
+        self.assertTrue(any(r["kind"] == "session" and
+                            r["payload"]["configuration"]["control_mode"] == "manual"
+                            for r in saved["records"]))
         self.assertEqual(runtime.configuration.control_mode, "automatic")
         self.assertEqual(runtime.configuration.selected_program_id, program.id)
         self.assertEqual(runtime.controller.target_temperature, program.start_c)
-        self.assertNotEqual(runtime.session.session_id, identity)
+        self.assertEqual(runtime.session.session_id, identity)
+        self.assertEqual(runtime.controller.completed_sessions, ())
         self.assertIsNone(runtime.controller.light_after_run)
 
     async def test_consumer_event_lookup_uses_partial_index_and_same_identities(self):

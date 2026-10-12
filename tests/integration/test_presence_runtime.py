@@ -32,7 +32,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_changes_unknown_and_audio_do_not_start_a_session(self):
         runtime = await self.configure()
         self.assertEqual(runtime.configuration.presence_source, "ha_presence")
-        self.assertEqual(runtime.presence_status["effective_source"], "ha_presence")
+        self.assertEqual(runtime.configuration_model.presence_source, "ha_presence")
         source = runtime.configuration.bindings.values["presence"]
         self.assertEqual(runtime.presence.external[source].occupancy, "present")
         self.assertIsNone(runtime.session)

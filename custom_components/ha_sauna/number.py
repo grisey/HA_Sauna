@@ -4,6 +4,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory
 from homeassistant.exceptions import Unauthorized
 
+from .core.configuration_model import temperature_control
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
@@ -34,10 +35,31 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         return self.runtime.configuration.parameters.minimum_for(self.definition.key)
 
     @property
+    def available(self):
+        # Retain the entity's identity when a binding changes. An inapplicable
+        # setting must not remain an operable input on a different HA surface.
+        return super().available and self.runtime.configuration_model.parameter_applicable(
+            self.definition
+        )
+
+    @property
     def native_value(self):
+        if not self.available:
+            return None
         if self.definition.key == "target_temperature_c":
-            return self.runtime.controller.target_temperature
+            return temperature_control(self.runtime.controller).value
         return self.runtime.configuration.parameters.values.get(self.definition.key)
+
+    @property
+    def extra_state_attributes(self):
+        if self.definition.key != "target_temperature_c":
+            return None
+        target = temperature_control(self.runtime.controller)
+        return {
+            "target_scope": target.scope,
+            "current_target_temperature": target.current_target,
+            "next_gang_temperature": target.next_target,
+        }
 
     async def async_set_native_value(self, value):
         context = self._context

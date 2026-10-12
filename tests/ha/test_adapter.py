@@ -44,7 +44,6 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             if not r.optional or r.device_class in {"temperature", "humidity"}
         }
         self.values = {d.key: d.default for d in EDITABLE_DEFINITIONS}
-        self.values.update(session_gap_minutes=2.5)
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": "button" if r.key == "control_input" else r.device_class,
@@ -240,7 +239,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(values["lower_temperature"], self.inputs["lower_temperature"])
             # Corrections in the entity step remain authoritative.
             values["upper_humidity"] = self.inputs["upper_humidity"]
-            result = await flow.async_step_binding_entities(self.module.pack_binding_input(values))
+            submitted = form["data_schema"](self.module.pack_binding_input(values))
+            result = await flow.async_step_binding_entities(submitted)
         self.assertEqual(result["type"], "menu")
         self.assertEqual(self.entry.options["bindings"]["upper_humidity"], self.inputs["upper_humidity"])
 
@@ -433,7 +433,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_setup_and_binding_form_expose_only_hardware_configuration(self):
         expected = {role.key for role in ROLES} | {
-            "control_input_mode", "button_event_type", "presence_source",
+            "control_input_mode", "presence_source",
         }
         form = await self.flow.async_step_entities()
         self.assertEqual({str(key) for key in flat_fields(form["data_schema"])}, expected | {"name"})
@@ -442,7 +442,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             form = await flow.async_step_binding_entities()
         self.assertEqual(form["step_id"], "binding_entities")
-        self.assertEqual({str(key) for key in flat_fields(form["data_schema"])}, expected)
+        self.assertEqual(
+            {str(key) for key in flat_fields(form["data_schema"])},
+            expected | {"button_event_type"},
+        )
         for current in (self.flow, flow):
             self.assertFalse(hasattr(current, "async_step_parameters"))
             self.assertFalse(hasattr(current, "async_step_logging"))
@@ -726,7 +729,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-            result = await flow.async_step_binding_entities(self.module.pack_binding_input(self.inputs))
+            form = await flow.async_step_binding_entities()
+            submitted = form["data_schema"](self.module.pack_binding_input(self.inputs))
+            result = await flow.async_step_binding_entities(submitted)
+            self.assertEqual(result["type"], "menu")
             self.assertNotIn("upper_status", self.entry.options["bindings"])
             self.assertEqual(self.entry.options["parameters"], self.values)
 
@@ -757,7 +763,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 flow = self.module.SaunaOptionsFlow()
                 flow.hass = self.hass
                 with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
-                    result = await flow.async_step_binding_entities(self.module.pack_binding_input(inputs))
+                    form = await flow.async_step_binding_entities()
+                    submitted = form["data_schema"](self.module.pack_binding_input(inputs))
+                    result = await flow.async_step_binding_entities(submitted)
                 self.assertEqual(result["type"], "menu")
                 self.assertEqual(self.entry.options, {**original, "bindings": inputs})
                 self.assertIs(runtime.configuration, configuration)
@@ -859,7 +867,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             rejected = await flow.async_step_binding_entities(self.module.pack_binding_input(self.inputs))
             self.assertEqual(rejected["errors"], {"presence_sensors": "entity_required"})
-            result = await flow.async_step_binding_entities(self.module.pack_binding_input({**self.inputs, "presence_source": "proxy"}))
+            submitted = rejected["data_schema"](self.module.pack_binding_input({
+                **self.inputs, "presence_source": "proxy",
+            }))
+            result = await flow.async_step_binding_entities(submitted)
         self.assertEqual(result["type"], "menu")
         self.assertNotIn("presence", self.entry.options["bindings"])
         self.assertEqual(self.entry.options["presence_source"], "proxy")

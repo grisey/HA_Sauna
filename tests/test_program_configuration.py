@@ -12,6 +12,7 @@ from custom_components.ha_sauna.archive import Archive, plain
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.const import CONF_BINDINGS, CONF_PARAMETERS
 from custom_components.ha_sauna.core.defaults import instance_default
+from custom_components.ha_sauna.core.configuration_model import ConfigurationModel
 from custom_components.ha_sauna.core.parameters import (
     BY_KEY,
     EDITABLE_DEFINITIONS,
@@ -53,7 +54,42 @@ def options(parameters=None, **configuration):
     }
 
 
+class _NativeButtonRuntime(SaunaRuntime):
+    """Configuration fixture for metadata normally supplied by the event entity."""
+
+    @property
+    def configuration_model(self):
+        return ConfigurationModel.from_configuration(
+            self.configuration,
+            button_event_types=(
+                "btn_down", "btn_up", "single_push", "long_push",
+                "double_push", "triple_push",
+            ),
+        )
+
+
 class ProgramConfigurationTests(unittest.TestCase):
+    def test_configuration_exposes_source_bound_cooling_policy(self):
+        for mode, source, policy in (
+            ("automatic", "ha_presence", "direct_gang_start"),
+            ("automatic", "proxy", "proxy_person_minimum"),
+            ("manual", "ha_presence", "none"),
+            ("manual", "proxy", "none"),
+        ):
+            with self.subTest(mode=mode, source=source):
+                configured = options(control_mode=mode, presence_source=source)
+                configured[CONF_BINDINGS]["presence"] = "binary_sensor.presence"
+                model = ConfigurationModel.from_configuration(
+                    Configuration.from_options(configured),
+                )
+                self.assertEqual(model.cooling_presence_policy, policy)
+                self.assertEqual(model.as_dict()["cooling_presence_policy"], policy)
+                interrupts = policy == "direct_gang_start"
+                self.assertEqual(model.gang_start_interrupts_cooling, interrupts)
+                self.assertEqual(
+                    model.as_dict()["gang_start_interrupts_cooling"], interrupts,
+                )
+
     def test_live_target_only_preserves_named_program_options_and_archive(self):
         async def exercise(directory):
             runtime = SaunaRuntime(Configuration.from_options(options()), clock=lambda: T0)
@@ -144,7 +180,7 @@ class ProgramConfigurationTests(unittest.TestCase):
                          instance_default("button_session_gesture"))
 
     def test_button_gesture_save_resets_pending_input_and_keeps_session_lock(self):
-        runtime = SaunaRuntime(
+        runtime = _NativeButtonRuntime(
             Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
         )
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
@@ -160,7 +196,7 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(entry.options["button_session_gesture"], "double")
 
     def test_button_gesture_change_waits_for_end_hold_release(self):
-        runtime = SaunaRuntime(
+        runtime = _NativeButtonRuntime(
             Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
         )
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
@@ -168,6 +204,9 @@ class ProgramConfigurationTests(unittest.TestCase):
         runtime.controller.set_operation(True, T0)
         asyncio.run(runtime._handle_button_event("press", T0))
         asyncio.run(runtime._handle_button_event("long", T0))
+        self.assertFalse(runtime.session.operation_enabled)
+        # Isolate the outstanding physical release from the recording lock.
+        runtime.controller.finish_session(T0)
         self.assertIsNone(runtime.session)
         with self.assertRaises(ConfigurationLocked):
             asyncio.run(async_set_button_gesture(hass, entry, "double"))
@@ -177,16 +216,15 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(entry.options["button_session_gesture"], "double")
 
     def test_button_gesture_change_preserves_start_release_after_external_finish(self):
-        runtime = SaunaRuntime(
+        runtime = _NativeButtonRuntime(
             Configuration.from_options(options(control_input_mode="button")), clock=lambda: T0
         )
         entry = SimpleNamespace(runtime_data=runtime, options=runtime.configuration.as_options())
         asyncio.run(runtime._handle_button_event("press", T0))
         asyncio.run(runtime._handle_button_event("long", T0))
         asyncio.run(runtime.set_operation(False))
-        token = next(deadline.token for deadline in runtime.session.deadlines
-                     if deadline.purpose == "session_gap")
-        asyncio.run(runtime.finish_session_gap(token))
+        # A deliberate internal finalization isolates the stale release guard.
+        runtime.controller.finish_session(T0)
         self.assertIsNone(runtime.session)
         with self.assertRaises(ConfigurationLocked):
             asyncio.run(async_set_button_gesture(_FakeHass(), entry, "double"))
@@ -247,15 +285,22 @@ class ProgramConfigurationTests(unittest.TestCase):
         asyncio.run(async_set_temperature_steps(hass, entry, [80.5, 82.5, 89.49]))
         self.assertEqual(runtime.configuration.temperature_steps, (81, 83, 89))
         self.assertEqual(entry.options["temperature_steps"], (81, 83, 89))
-        for value in (59.9, 100.1):
+        for value in (
+            runtime.configuration.parameters.minimum_for("target_temperature_c") - .1,
+            BY_KEY["target_temperature_c"].maximum + .1,
+        ):
             before = dict(entry.options)
             with self.subTest(value=value), self.assertRaises(ValueError):
                 asyncio.run(async_set_temperature_steps(hass, entry, [80, value]))
             self.assertEqual(entry.options, before)
 
     def test_target_bounds_apply_before_and_after_rounding(self):
-        for value in (59.9, 100.1):
-            for key in ("target_temperature_c", "final_temperature_c", "preset_start_c"):
+        parameters = Parameters({})
+        for key in ("target_temperature_c", "final_temperature_c", "preset_start_c"):
+            for value in (
+                parameters.minimum_for(key) - .1,
+                BY_KEY[key].maximum + .1,
+            ):
                 with self.subTest(value=value, key=key), self.assertRaises(ParameterError):
                     Parameters({key: value})
         with self.assertRaises(ParameterError):
@@ -730,7 +775,11 @@ class ProgramConfigurationTests(unittest.TestCase):
         self.assertEqual(Configuration.from_options(configuration.as_options()), configuration)
         with self.assertRaises(ValueError):
             Configuration(
-                Bindings(bindings()), Parameters({}), temperature_steps=(59, 80)
+                Bindings(bindings()), Parameters({}),
+                temperature_steps=(
+                    configuration.parameters.minimum_for("target_temperature_c") - .1,
+                    80,
+                ),
             )
 
     def test_manual_steps_use_the_live_program_path_and_direct_target_clears_them(self):

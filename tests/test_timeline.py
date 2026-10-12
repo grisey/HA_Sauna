@@ -235,22 +235,17 @@ class TimelineTests(unittest.TestCase):
                                  anchor=self.closed.anchor)
                 self.assertIsNone(state.exit_ventilation)
 
-    def test_closed_direct_exit_rejects_absence_from_after_its_closure(self):
+    def test_exit_booking_combines_sensor_time_with_the_complete_evidence(self):
         state = self.direct_exit(closed=True)
-        with self.assertRaises(ValueError):
-            apply(state, e("later-absence", Kind.PRESENCE_ENDED,
-                           "21:17:00", effective="21:16:21"))
-        self.assertIsNotNone(state.active)
-        self.assertEqual(state.gang_count, 0)
-
-    def test_delayed_direct_exit_uses_original_absence_within_door_episode(self):
-        state = self.direct_exit(closed=True)
-        for effective in ("21:16:10", "21:16:15", "21:16:20"):
-            with self.subTest(effective=effective):
+        for sensor_time, combined_time in (
+            ("21:16:10", "21:16:12"),
+            ("21:16:15", "21:16:15"),
+            ("21:16:20", "21:16:20"),
+        ):
+            with self.subTest(sensor_time=sensor_time):
+                self.assertEqual(state.presence_exit_at(t(sensor_time)), t(combined_time))
                 ended = apply(state, e("delayed-absence", Kind.PRESENCE_ENDED,
-                                       "21:17:00", effective=effective))
-                self.assertIsNone(ended.active)
-                self.assertEqual(ended.gang_count, 1)
+                                       "21:17:00", effective=combined_time))
                 self.assertEqual(ended.completed[0].ended_at, t("21:17:00"))
 
     def test_delayed_exit_ventilation_uses_original_time_within_closed_episode(self):
@@ -369,7 +364,7 @@ class TimelineTests(unittest.TestCase):
                 with self.subTest(door=state.door, kind=kind), self.assertRaises(ValueError):
                     apply(state, e("signal", kind, "21:19:15"))
 
-    def test_closure_during_old_gang_differs_from_entry_after_its_retraction(self):
+    def test_new_closure_survives_retraction_of_an_older_provisional_anchor(self):
         for close_before_expiry in (False, True):
             with self.subTest(close_before_expiry=close_before_expiry):
                 state = apply(self.active, e("o", Kind.DOOR_OPEN, "21:20:00"))
@@ -379,14 +374,14 @@ class TimelineTests(unittest.TestCase):
                 if not close_before_expiry:
                     state = apply(state, e("c", Kind.DOOR_CLOSE, "21:20:30"))
                 self.assertIsNone(state.active)
+                self.assertIn(self.active.active.start_source_event_id, state.rejected_start_sources)
+                self.assertNotIn("c", state.rejected_start_sources)
                 for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
                     with self.subTest(kind=kind):
-                        if close_before_expiry:
-                            with self.assertRaises(ValueError):
-                                apply(state, e("reuse", kind, "21:20:40"))
-                        else:
-                            entered = apply(state, e("new-entry", kind, "21:20:40"))
-                            self.assertEqual(entered.active.started_at, t("21:20:30"))
+                        entered = apply(state, e("new-entry", kind, "21:20:40"))
+                        self.assertEqual(entered.active.start_source_event_id, "c")
+                        self.assertEqual(entered.active.started_at,
+                                         t("21:20:10" if close_before_expiry else "21:20:30"))
                 state = apply(state, e("new-o", Kind.DOOR_OPEN, "21:21:00"))
                 state = apply(state, e("new-c", Kind.DOOR_CLOSE, "21:21:10"))
                 state = apply(state, e("new-water", Kind.INFUSION, "21:21:20"))

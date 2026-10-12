@@ -8,6 +8,12 @@ Abschluss verworfen; dieselbe Bereinigung erfolgt beim Integrationsstart für
 ältere Sitzungen ohne bestätigten Gang. Das gilt auch für Aufzeichnungen im
 manuellen Modus.
 
+AUS unterbricht zunächst nur den Betrieb. Erneutes EIN vor Ende der
+Wiederaufnahmefrist gehört unabhängig von der Betriebsart zur gleichen
+Aufzeichnung. Auch manuelles Vorheizen vor dem Wechsel auf Automatik bleibt
+Teil dieser Sitzung. Erst der Ablauf dieser Frist entscheidet über den
+Abschluss und die Speicherung; die Lichtbedienung verkürzt sie nicht.
+
 Das Archiv umfasst Messungen **15 Minuten vor und nach der Sitzung**.
 Außerhalb dieser Fenster werden keine sitzungslosen Messreihen dauerhaft
 aufbewahrt. Der Nachlauf kann eine bereits beendete Sitzung noch ergänzen.

@@ -10,10 +10,22 @@ from math import isfinite
 from uuid import uuid4
 
 from . import energy, heating, thermostat
+from .configuration_model import (
+    cooling_presence_policy,
+    gang_start_interrupts_cooling,
+    regulation_causes,
+)
 from .consumer_events import gang_changes
 from .contracts import BasePhaseMark, ContactorMark, ControlInputs, PresenceReport
 from .defaults import instance_default
-from .models import Deadline, Energy, LightAfterRun, Session, ThermostatState, TimedPhase
+from .models import (
+    Deadline,
+    Energy,
+    LightAfterRun,
+    Session,
+    ThermostatState,
+    TimedPhase,
+)
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
@@ -205,29 +217,46 @@ class Controller:
         return (
             self._recognition_context_current(at)
             and self.recognition_context_at(at)[1] is None
-            and (self._session.timeline.active is not None
+            and (self._proxy_cooling_evidence_allowed(at)
+                 or self._session.timeline.active is not None
                  or (self._gang_temperature_blocked_at(at) is None
                      and self._gang_entry_start_at(self._session.timeline) is not None
                      and at >= self._gang_entry_start_at(self._session.timeline)))
             and self.recognition_allowed(kind)
         )
 
+    @property
+    def control_mode_change_allowed(self) -> bool:
+        """A recording survives mode changes; active automatic control is locked."""
+        return bool(
+            self._session is None
+            or self.control_mode == "manual"
+            or not self._session.operation_enabled
+        )
+
     def set_control_mode(self, control_mode: str, at: datetime | None = None) -> None:
-        """Change modes outside automatic sessions, closing manual recording."""
+        """Change the regulating mode without replacing its observation history."""
         if control_mode not in CONTROL_MODES:
             raise ValueError("Ungültiger Betriebsmodus")
         if self.control_mode == control_mode:
             return
-        if self._session is not None and self.control_mode == "automatic":
+        if not self.control_mode_change_allowed:
             raise ValueError(
-                "Der Betriebsmodus kann nur ohne laufende Session geändert werden"
+                "Der Betriebsmodus kann erst bei ausgeschaltetem Automatikbetrieb geändert werden"
             )
         if self._session is not None:
-            self.finish_session(at or self._last_at, light_after_run=False)
+            at = self._last_at if at is None else utc(at)
+            self.advance(at, evaluate=False)
+        previous_override = self.heater_override
         self.control_mode = control_mode
+        if self._session is not None:
+            self._handoff_manual_heating(previous_override, at)
         self._clear_heater_override()
         if control_mode == "manual":
             self.light_after_run = None
+        if self._session is not None:
+            self._latch_readiness(at)
+            self._evaluate(at)
 
     @property
     def session(self) -> Session | None:
@@ -299,6 +328,7 @@ class Controller:
         """Override one forthcoming actual gang without changing its program."""
         parameters = Parameters({**self.parameters.as_dict(), "target_temperature_c": value})
         self.advance(at, evaluate=False)
+        previous_target = self.target_temperature
         session = self._session
         if (session is None or self.control_mode != "automatic"
                 or (session.temperature_program_mode or self.program_mode) != "progressive"):
@@ -317,7 +347,7 @@ class Controller:
             next_gang_temperature_c=parameters.values["target_temperature_c"],
             next_gang_temperature_blocked_by=active.gang_id if active else None,
         )
-        self._latch_readiness(utc(at))
+        self._latch_readiness(utc(at), previous_target=previous_target)
         self._evaluate(utc(at))
 
     def update_temperature_parameters(
@@ -411,7 +441,7 @@ class Controller:
                     temperature_program_gangs=parameters.values["temperature_gangs"],
                     temperature_program_steps=self.temperature_steps,
                 )
-        self._latch_readiness(utc(at))
+        self._latch_readiness(utc(at), previous_target=before)
         self._evaluate(utc(at))
 
     @property
@@ -440,11 +470,26 @@ class Controller:
             self._suspend_after_run_countdown(utc(at))
         self._evaluate(utc(at))
 
-    def _latch_readiness(self, at):
+    def _latch_readiness(self, at, *, previous_target=...):
         """Remember the first permitted measurement at the current setpoint."""
         session = self._session
         target = self.target_temperature
         temperature = self.temperature
+        # Readiness survives normal thermostat cycles, but it is no claim
+        # that a newly selected, higher target has already been reached.
+        # Editing a future gang leaves the effective current target intact.
+        if (
+            isinstance(previous_target, (int, float))
+            and isinstance(target, (int, float))
+            and target > previous_target
+        ) and (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not isfinite(temperature)
+            or temperature < target
+        ):
+            self._clear_readiness()
+            session = self._session
         if (
             session is None
             or session.ready_at is not None
@@ -495,7 +540,7 @@ class Controller:
         return self._begin_recording(session_id, at)
 
     def _begin_recording(self, session_id: str, at: datetime) -> Session:
-        """Shared observation lifetime; manual heater selection owns its boundary."""
+        """Begin the observation lifetime shared by automatic and manual operation."""
         if self._session is not None:
             raise ValueError("Bestehende Session darf nicht beiläufig ersetzt werden")
         at = utc(at)
@@ -545,15 +590,7 @@ class Controller:
                     self.door_request, eligible_open=False, invalidated=True
                 )
         if enabled:
-            if self._session is None:
-                return self.begin_session(session_id or uuid4().hex, at)
-            if not self._session.operation_enabled:
-                self._session = replace(
-                    self._session, operation_enabled=True, operation_off_at=None
-                )
-                self._cancel("session_gap")
-                self.light_after_run = None
-                self._latch_readiness(at)
+            return self._enable_recording(at, session_id=session_id)
         elif self._session is not None and self._session.operation_enabled:
             self.process(
                 Event(
@@ -561,9 +598,21 @@ class Controller:
                     at, self._received_at(at), booking_at=at,
                 )
             )
-        if not enabled and self.control_mode == "manual" and self._session is not None:
-            self._complete_session(at, light_after_run=False)
         self._evaluate(at, decision_session_id=recording_id)
+        return self._session
+
+    def _enable_recording(self, at, *, session_id=None):
+        """Share one observation lifetime across every heater-off pause and mode."""
+        if self._session is None:
+            return self._begin_recording(session_id or uuid4().hex, at)
+        if not self._session.operation_enabled:
+            self._session = replace(
+                self._session, operation_enabled=True, operation_off_at=None
+            )
+            self._cancel("session_gap")
+            self.light_after_run = None
+            self._latch_readiness(at)
+        self._evaluate(at)
         return self._session
 
     def validate_heater_override(self, heat: bool | None):
@@ -603,10 +652,7 @@ class Controller:
         self.heater_override = heat
         if self.control_mode == "manual":
             if heat is True:
-                if self._session is None:
-                    self._begin_recording(uuid4().hex, at)
-                else:
-                    self._evaluate(at)
+                self._enable_recording(at)
             else:
                 self.set_operation(False, at)
             return self.last_decision
@@ -860,8 +906,7 @@ class Controller:
                 event_id=event.event_id,
                 door_open=event.kind == Kind.DOOR_OPEN,
                 enabled=(previous.operation_enabled and observed_enabled and context_current
-                         and self.control_mode == "automatic"
-                         and self.presence_source == "proxy"),
+                         and "provisional_door_heat" in self.regulation_causes),
                 gang_active=previous.timeline.active is not None,
                 cooling=previous.after_run is not None,
             )
@@ -882,6 +927,18 @@ class Controller:
             blocked = observed_blocked
         elif event.kind in GANG_SIGNALS and not context_current:
             blocked = "recognition_context_changed"
+        cooling_person_signal = bool(
+            blocked is None
+            and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
+            and self._proxy_cooling_evidence_allowed(
+                recognition_at or event.effective_at
+            )
+        )
+        if cooling_person_signal:
+            # Cooling consumes valid person observations independently of the
+            # additional door evidence needed to create a gang below.
+            self._limit_after_run_to_minimum(event.booking_at)
+            previous = self._session
         if (
             blocked is None
             and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
@@ -903,7 +960,7 @@ class Controller:
                 ),
             )
             self._evaluate(event.booking_at)
-            return Result(self._session, False, blocked, event.event_id)
+            return Result(self._session, cooling_person_signal, blocked, event.event_id)
         timeline = apply(
             previous.timeline, event,
             gang_start_at=(self._gang_entry_start_at(previous.timeline)
@@ -920,7 +977,8 @@ class Controller:
             self._presence_entry = None
         if previous.timeline.active is None and timeline.active is not None:
             self._presence_entry = None
-            self._abort_after_run(event.booking_at)
+            if gang_start_interrupts_cooling(self.control_mode, self.presence_source):
+                self._abort_after_run(event.booking_at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None
                      or timeline.active.gang_id != previous.active_gang_temperature_id)):
@@ -968,7 +1026,7 @@ class Controller:
         if (
             len(timeline.completed) > len(previous.timeline.completed)
             and timeline.completed[-1].confirmation == Confirmation.CONFIRMED
-            and self.control_mode == "automatic"
+            and "cooling" in self.regulation_causes
             and event.kind != Kind.OPERATION_OFF
         ):
             self._begin_after_run(timeline.completed[-1].gang_id, event.booking_at)
@@ -996,13 +1054,16 @@ class Controller:
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
     def recognition_allowed(self, kind: Kind) -> bool:
-        """Nur Signale prüfen, die den führenden Gangzustand noch ändern können."""
+        """Freigabe für Gangzuordnung oder die laufende Proxykühlung."""
         session = self._session
         if session is None or not session.operation_enabled:
             return False
         active = session.timeline.active
         if self.presence_source == "ha_presence":
             return kind == Kind.INFUSION and active is not None
+        if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
+            if self._proxy_cooling_evidence_allowed():
+                return True
         if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK):
             if active is not None:
                 return False
@@ -1011,6 +1072,23 @@ class Controller:
         return active is not None or (
             self._gang_start_blocked(session) is None
             and self._proxy_entry_blocked(session.timeline, self._last_at) is None
+        )
+
+    def _proxy_cooling_evidence_allowed(self, at=None):
+        """Person evidence can shorten cooling without authorizing a new gang."""
+        session = self._session
+        phase = session.after_run if session else None
+        if (
+            phase is None or not session.operation_enabled
+            or cooling_presence_policy(self.control_mode, self.presence_source)
+            != "proxy_person_minimum"
+        ):
+            return False
+        if at is not None and at < (phase.requested_at or phase.started_at):
+            return False
+        return session.timeline.active is not None or (
+            self._gang_temperature_blocked_at(at) is None if at is not None
+            else self._gang_temperature_blocked() is None
         )
 
     def _proxy_entry_blocked(self, timeline, at, effective_at=None):
@@ -1076,6 +1154,10 @@ class Controller:
         return None
 
     def _begin_after_run(self, gang_id, at):
+        # Proxy recognition can continue through cooling. A later gang ending
+        # does not replace its already fixed duration or discard elapsed OFF.
+        if self._session.after_run is not None:
+            return
         # The cooling demand begins immediately, but its timer and calculated
         # duration start only when the contactor actually reports OFF.
         phase = TimedPhase(
@@ -1147,8 +1229,14 @@ class Controller:
             pending_start=False,
             cooling_calculation=calculation,
         )
+        started = replace(
+            started, ends_at=at + timedelta(seconds=started.remaining_seconds)
+        )
         self._session = replace(session, after_run=started)
-        self._schedule("after_run", started.ends_at, started.phase_id)
+        if started.remaining_seconds == 0:
+            self._finish_after_run(started)
+        else:
+            self._schedule("after_run", started.ends_at, started.phase_id)
 
     def _align_after_run_to_contactor(self, at):
         """Start pending cooling and count only its confirmed OFF runtime."""
@@ -1200,6 +1288,27 @@ class Controller:
             return
         self._cancel("after_run")
         self._finish_after_run(replace(phase, ends_at=at))
+
+    def _limit_after_run_to_minimum(self, at):
+        """Cap the original cooling clock once, retaining all confirmed OFF time."""
+        session = self._session
+        phase = session.after_run if session else None
+        if phase is None or phase.minimum_duration_requested:
+            return
+        phase = replace(phase, minimum_duration_requested=True)
+        self._session = replace(session, after_run=phase)
+        if phase.pending_start:
+            # No duration or OFF time exists until the contactor acknowledges.
+            return
+        self._cancel("after_run")
+        if phase.remaining_seconds == 0:
+            self._finish_after_run(replace(phase, ends_at=at))
+        elif phase.ends_at is not None and self.contactor is False:
+            phase = replace(
+                phase, ends_at=at + timedelta(seconds=phase.remaining_seconds)
+            )
+            self._session = replace(self._session, after_run=phase)
+            self._schedule("after_run", phase.ends_at)
 
     def _account_after_run(self, at):
         phase = self._session.after_run if self._session else None
@@ -1357,21 +1466,26 @@ class Controller:
         )
 
     @property
+    def regulation_causes(self):
+        return regulation_causes(self.control_mode, self.presence_source)
+
+    @property
     def regulation_inputs(self):
         session = self._session
-        if self.control_mode == "manual":
-            return ControlInputs()
+        causes = self.regulation_causes
         return ControlInputs(
             gang_heat_demand=bool(
-                session and session.timeline.active
+                "gang_heat" in causes and session and session.timeline.active
                 and (self.presence_source == "proxy" or (
                     self.direct_presence is not None and self.direct_presence.available
                 ))
             ),
-            temporary_door_heat=self._door_request_pending,
-            # A live cooling phase keeps priority even if contradictory gang
-            # evidence arrives.  Timeline/projection remains observational.
-            cooling=bool(session and session.after_run),
+            temporary_door_heat=(
+                "provisional_door_heat" in causes and self._door_request_pending
+            ),
+            # Cooling has priority for its remaining confirmed OFF time.
+            # Proxy person evidence caps that time; direct entry ends it.
+            cooling=bool("cooling" in causes and session and session.after_run),
         )
 
     def _evaluate_manual(self, at):
@@ -1402,8 +1516,14 @@ class Controller:
             temperature=self.temperature,
             enabled=session.operation_enabled,
             inputs=self.regulation_inputs,
-            heating_active=bool(self.last_decision and self.last_decision.heat
-                                and session.heating.reported_heating is True),
+            # Manual feedback records real heat but cannot create the automatic
+            # demand that cancels its own override. Handoff transfers that
+            # running interval when the manual choice actually ends.
+            heating_active=bool(
+                self.heater_override is None
+                and self.last_decision and self.last_decision.heat
+                and session.heating.reported_heating is True
+            ),
             protection=tuple(sorted(self.protection)),
             inhibits=tuple(sorted(self.inhibits)),
             heating_since=(
@@ -1501,20 +1621,13 @@ class Controller:
             kind = Kind.PRESENCE_CONFIRMED
             source, report = entry.closure, entry.presence
         else:
-            ventilation = t.exit_ventilation
+            effective = t.presence_exit_at(report.effective_at)
             if (self._direct_presence_catchup
                     or report.occupancy != "absent"
-                    or ventilation is None
-                    or (t.door == Door.CLOSED
-                        and (t.anchor is None
-                             or report.effective_at > t.anchor.effective_at))
-                    or opening.event_id in t.rejected_start_sources
-                    or opening.effective_at <= t.active.started_at):
+                    or effective is None):
                 return False
             kind = Kind.PRESENCE_ENDED
             source = opening
-            effective = max(source.effective_at, report.effective_at,
-                            ventilation.effective_at)
         if effective > at:
             return False
         self.process(Event(
@@ -1654,15 +1767,15 @@ class Controller:
         return session
 
     def finish_session(self, at: datetime, *, light_after_run=True):
-        """End a session immediately, including an active gang, and archive it."""
+        """Explicit final archive closure; ordinary OFF uses ``set_operation``."""
         at = utc(at)
         light_after_run = light_after_run and self.control_mode == "automatic"
         if self._session is None:
             raise ValueError("Es läuft keine Session.")
         session_id = self._session.session_id
         self.set_operation(False, at)
-        # Advancing to ``at`` can itself consume the session-gap deadline and
-        # finish the session. That completion must not be repeated below.
+        # Advancing may already have consumed the gap. Never create a second
+        # completion; ordinary UI and button OFF do not call this finalizer.
         if self._session is None:
             if light_after_run and self.light_after_run is None:
                 self.start_session_light(session_id, at)
@@ -1677,12 +1790,7 @@ class Controller:
         self._evaluate(at, decision_session_id=session_id)
 
     def finish_session_gap(self, token: str, at: datetime):
-        """End the currently paused session through its displayed gap deadline.
-
-        The token ties this action to the exact interruption the user saw.  The
-        post-session light object remains in place, but becomes due immediately,
-        so the device adapter can reliably retry its required OFF command.
-        """
+        """End the selected light after-run without shortening recording retention."""
         at = utc(at)
         session = self._session
         deadline = (
@@ -1707,8 +1815,10 @@ class Controller:
         if self.light_after_run is None:
             self._create_session_light(session.session_id, ends_at, ends_at)
         else:
-            self.light_after_run = replace(self.light_after_run, ends_at=ends_at)
-        self._complete_session(ends_at, light_after_run=False)
+            self.light_after_run = replace(
+                self.light_after_run,
+                ends_at=min(self.light_after_run.ends_at, ends_at),
+            )
         self._evaluate(at, decision_session_id=session.session_id)
         return deadline
 
@@ -1725,19 +1835,28 @@ class Controller:
         return self.light_after_run
 
     def start_session_light(self, session_id: str, at: datetime):
-        """Start the post-session light after a deferred physical release."""
+        """Release held feedback without extending an existing OFF interval."""
         at = utc(at)
-        if (
-            self._session is not None
-            or not self.completed_sessions
-            or self.completed_sessions[-1].session_id != session_id
-        ):
-            raise ValueError("Die Session ist nicht die zuletzt beendete Session.")
-        return self._create_session_light(
-            session_id,
-            at,
-            at + timedelta(seconds=self.parameters.seconds("session_gap_minutes")),
-        )
+        session = self._session
+        light = self.light_after_run
+        deadline = next(
+            (item for item in session.deadlines if item.purpose == "session_gap"),
+            None,
+        ) if session is not None and session.session_id == session_id else None
+        if deadline is not None and not session.operation_enabled:
+            ends_at = deadline.due_at
+        elif (session is None and self.completed_sessions
+                and self.completed_sessions[-1].session_id == session_id):
+            # An explicitly forced archive closure can defer its light phase.
+            # Ordinary OFF keeps its existing phase even while feedback is held.
+            ends_at = at + timedelta(
+                seconds=self.parameters.seconds("session_gap_minutes")
+            )
+        else:
+            raise ValueError("Die Session hat keinen passenden Lichtnachlauf.")
+        if light is not None and light.session_id == session_id:
+            ends_at = min(ends_at, light.ends_at)
+        return self._create_session_light(session_id, min(at, ends_at), ends_at)
 
     def register_deadline(self, deadline: Deadline) -> None:
         session = self._session
@@ -1792,7 +1911,10 @@ class Controller:
             phase = session.after_run
             if phase is not None:
                 if phase.remaining_seconds <= 1e-6:
-                    phase = replace(phase, elapsed_seconds=phase.duration_seconds)
+                    phase = replace(
+                        phase,
+                        elapsed_seconds=max(phase.elapsed_seconds, phase.required_seconds),
+                    )
                     self._finish_after_run(phase)
                 elif self.contactor is not False:
                     # The deadline became stale while feedback is ON or

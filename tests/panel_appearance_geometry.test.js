@@ -1,6 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const {
+  parameterValues: fixtureValues,
+  parameterDefinition: fixtureDefinition,
+} = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -42,9 +46,9 @@ const makePanel = (appearance = { colors: {}, scales: {} }) => {
       operation_enabled: true,
       configuration: {
         control_mode: "automatic",
-        parameters: { sauna_min_temperature_c: 50 },
+        parameters: fixtureValues(),
       },
-      parameters: [{ key: "target_temperature_c", minimum: 50, maximum: 100 }],
+      parameters: [fixtureDefinition("target_temperature_c")],
       phase: "aufheizen",
     },
     style: {
@@ -64,7 +68,10 @@ test("cropped instrument pointers use the SVG transform and viewBox origin", () 
     viewBox: { baseVal: { x: 25, y: 5, width: 250, height: 250 } },
     getBoundingClientRect: () => ({ left: 40, top: 80, width: 500, height: 500 }),
   };
-  assert.equal(panel.temperatureValueAt(cropped, 500, 330), 100);
+  assert.equal(
+    panel.temperatureValueAt(cropped, 500, 330),
+    fixtureDefinition("target_temperature_c").maximum,
+  );
   assert.equal(panel.lightValueAt(cropped, 290, 120), 50);
 
   // A taller viewport adds letterboxing: its CTM, not the bounding rectangle,
@@ -81,7 +88,10 @@ test("cropped instrument pointers use the SVG transform and viewBox origin", () 
       },
     }),
   };
-  assert.equal(panel.temperatureValueAt(transformed, 500, 380), 100);
+  assert.equal(
+    panel.temperatureValueAt(transformed, 500, 380),
+    fixtureDefinition("target_temperature_c").maximum,
+  );
   assert.equal(panel.lightValueAt(transformed, 290, 170), 50);
 });
 

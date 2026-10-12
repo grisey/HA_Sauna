@@ -18,7 +18,6 @@ class PresenceIlluminanceTests(unittest.IsolatedAsyncioTestCase):
         self.hass.states.async_set(self.source, "12.75", self.attrs)
         self.entry = await create_sauna(
             self.hass, binding_overrides={"presence_illuminance": self.source},
-            parameter_overrides={"sensor_timeout_seconds": 60},
         )
         self.runtime = self.entry.runtime_data
 

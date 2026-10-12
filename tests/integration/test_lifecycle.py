@@ -11,6 +11,14 @@ from custom_components.ha_sauna.settings import async_set_parameters
 from harness import create_sauna, start_hass
 
 
+def displayed_parameter_values(form, parameters):
+    """Submit the parameters that this hardware configuration actually shows."""
+    return {
+        str(marker): parameters[str(marker)]
+        for marker in form["data_schema"].schema
+    }
+
+
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
@@ -59,9 +67,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("init", flow["menu_options"])
         flow = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {"next_step_id": "parameters_session_controls"})
-        values = {definition.key: preserved["parameters"][definition.key]
-                  for definition in EDITABLE_DEFINITIONS
-                  if definition.settings_subgroup == "session_controls"}
+        values = displayed_parameter_values(flow, preserved["parameters"])
         result = await self.hass.config_entries.options.async_configure(
             flow["flow_id"], {**values, "session_gap_minutes": 7})
         self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "operation", flow_id))
@@ -101,11 +107,9 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         flow = await self.hass.config_entries.options.async_init(entry.entry_id)
         flow_id = flow["flow_id"]
         await self.hass.config_entries.options.async_configure(flow_id, {"next_step_id": "operation"})
-        await self.hass.config_entries.options.async_configure(
+        parameter_form = await self.hass.config_entries.options.async_configure(
             flow_id, {"next_step_id": "parameters_session_controls"})
-        values = {definition.key: entry.options["parameters"][definition.key]
-                  for definition in EDITABLE_DEFINITIONS
-                  if definition.settings_subgroup == "session_controls"}
+        values = displayed_parameter_values(parameter_form, entry.options["parameters"])
         with patch.object(runtime.device, "prepare_heater_handoff", side_effect=delayed_handoff):
             try:
                 result = await self.hass.config_entries.options.async_configure(
@@ -156,9 +160,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             pending["flow_id"], {"next_step_id": "operation"})
         pending = await self.hass.config_entries.options.async_configure(
             pending["flow_id"], {"next_step_id": "parameters_session_controls"})
-        pending_values = {definition.key: entry.options["parameters"][definition.key]
-                          for definition in EDITABLE_DEFINITIONS
-                          if definition.settings_subgroup == "session_controls"}
+        pending_values = displayed_parameter_values(pending, entry.options["parameters"])
         await self.hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
         rejected = await self.hass.config_entries.options.async_configure(
             pending["flow_id"], {**pending_values, "session_gap_minutes": 9})
@@ -176,9 +178,11 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             await async_set_parameters(self.hass, entry, {"session_gap_minutes": 9}, partial=True)
         with self.assertRaises(ValueError):
             await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
-        self.assertEqual(entry.options["parameters"]["session_gap_minutes"], 2.5)
+        self.assertEqual(entry.options["parameters"]["session_gap_minutes"],
+                         runtime.configuration.parameters.values["session_gap_minutes"])
         await self.hass.services.async_call("switch", "turn_off", {"entity_id": switch}, blocking=True)
-        now += timedelta(seconds=149)
+        gap = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+        now = gap.due_at - timedelta(seconds=1)
         await runtime.tick()
         self.assertEqual(runtime.session.session_id, session_id)
         self.assertFalse(runtime.session.operation_enabled)

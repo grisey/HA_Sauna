@@ -12,7 +12,8 @@ Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 | Ebene | Zweck | Dateien |
 | --- | --- | --- |
-| Fachkern und Runtime | Regeln und Zustandsübergänge mit kontrollierter Zeit; Originalarchiv und Fehlergrenzen. | `tests/test_*.py` |
+| Sitzungen und Replay | Vollständige Nutzungsabläufe mit gebundenen Messwerten, Bedienungen und unabhängigen Bewertungen. | `tests/sessions/` |
+| Fachkern und Runtime | Verbleibende Komponentenverträge, Datenintegrität, Fehler- und Zeitgrenzen. | `tests/test_*.py` |
 | Panelmethoden | Datenaufbereitung, Bedienzustände und Diagrammverträge mit synthetischen Daten. | `tests/panel_*.test.js` |
 | HA-Adapter | Einrichtung und Adapterverhalten mit HA-Datentypen und gezielt ersetzten Außenaufrufen. | `tests/ha/` |
 | HA-Integration | Laufende Testinstanz mit HA-Listenern, Diensten, Rechten und HTTP-Schnittstellen; externe Geräte sind Testquellen. | `tests/integration/` |
@@ -30,12 +31,27 @@ python -m unittest discover -s tests -v
 node --test tests/panel_*.test.js
 ```
 
-Die Variable `SAUNA_RECORDER_ARCHIVE` aktiviert die privaten Vergleichsfälle
-mit einem freigegebenen Recorderexport. Der Standardlauf kennzeichnet diese
-Fälle als übersprungen. Die Auswertung einer zur
-Kalibrierung verwendeten Sitzung belegt den Vergleich an genau dieser Sitzung.
+Szenarien und die gebundenen realen Replay-Aufzeichnungen sind im Checkout enthalten.
+Die Manifeste binden Daten und Bewertungen durch Prüfsummen. Fehlende oder
+veränderte Dateien führen zu einem Fehler; private Pfade und Umgebungsvariablen
+sind keine Ausführungsbedingung. Der eingefrorene historische Kandidat bleibt
+als [Reproduktionswerkzeug](referenz-replay.md) erhalten. Seine alten
+Programmausgaben sind kein Maßstab für die aktuellen Produktprüfungen.
 
-[Replaydatengrundlage und Reproduktion](referenz-replay.md)
+[Sitzungsabläufe, Messkurven und Bewertungen](sessions/README.md)
+
+Konfigurierbare Fristen, Schwellen, Eingabegrenzen und Standardwerte werden aus
+`custom_components/ha_sauna/defaults.json` konsumiert. Komponenten verwenden
+`Parameters({})`; Panel-Fixtures lesen denselben Katalog über `catalog_fixture.cjs`.
+Prüfungen an einer Grenze leiten ihre Zeitpunkte oder Eingaben aus diesem Wert ab,
+statt den Werkseinstellungswert zu wiederholen. Lange Fristen werden über die
+virtuelle Uhr abgebildet; dafür werden keine kürzeren Regelparameter eingesetzt.
+
+Fest vorgegebene Messdaten, bewusste Bedienwerte sowie Werte zur Prüfung von
+Rundung und ungültigen Eingaben bleiben Testdaten. Historische Replays behalten
+ihre aufgezeichnete Konfiguration. Konstruierte Sitzungen binden den zentralen
+Katalog bei der Materialisierung; eine spätere Katalogänderung verlangt eine
+erneute Materialisierung und Prüfung der gebundenen Kurven und Bewertungen.
 
 ## Home Assistant
 
@@ -56,6 +72,25 @@ HA_TEST_REQUIRED=1 python -m unittest discover -s tests/ha -v
 ```sh
 HA_TEST_REQUIRED=1 python -m unittest discover -s tests/integration -v
 ```
+
+Die vollständigen Sitzungsprüfungen laufen mit derselben HA-Version. Sie verwenden
+den echten Geräteadapter, die Laufzeit, Erkennung, Regelung und Archivierung;
+nur der Diensttransport zu den Aktoren wird ersetzt.
+
+```sh
+SAUNA_SESSION_EVIDENCE=/tmp/ha-sauna-sessions python -m unittest discover -s tests/sessions -v
+```
+
+`SAUNA_SESSION_EVIDENCE` speichert pro Lauf jede gebundene Bewertung mit Sollwert,
+Ist-Abweichung, Bedienfolge und ausgegebenen Diensten. Die CI führt jede gebundene
+Grund-ID einschließlich sämtlicher Varianten aus. Für die Fehlersuche auf Linux kann
+`SAUNA_SESSION_CASE` einzelne IDs auswählen.
+
+[`coverage_ownership.json`](coverage_ownership.json) bindet entfernte
+Fachduplikate an ihre Sitzungsbewertungen. Ein Metatest prüft, dass die genannten
+Bewertungen vorhanden sind und die ersetzten Methoden nicht erneut parallel
+ausgeführt werden. Eigene Prüfungen für Rechte, Transport, Ausfälle, Zeitstempel,
+Anzeige und Speicherformate behalten ihre jeweiligen Schnittstellenverträge.
 
 `tests/integration/test_archive_backup.py` erzeugt über die offizielle
 Home-Assistant-Routine ein Core-Backup und stellt es in einem getrennten

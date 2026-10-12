@@ -13,7 +13,7 @@ class ArchiveRestartDeleteTests(unittest.IsolatedAsyncioTestCase):
     async def test_interrupted_confirmed_session_is_deletable_after_restart(self):
         hass, temp = await start_hass()
         try:
-            entry = await create_sauna(hass, parameter_overrides={"sensor_timeout_seconds": 60})
+            entry = await create_sauna(hass)
             runtime = entry.runtime_data
             await runtime.set_operation(True)
             retain_session(runtime)

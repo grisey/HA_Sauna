@@ -44,7 +44,10 @@ def _event(runtime, kind, seconds, event_id):
 
 class PresenceRegressionTests(unittest.TestCase):
     def test_current_status_stays_bounded_as_external_history_grows(self):
-        runtime = _runtime([START])
+        runtime = SaunaRuntime(Configuration(
+            Bindings({**BINDINGS.values, "presence": "binary_sensor.occupancy"}),
+            Parameters({}), presence_source="proxy",
+        ), clock=lambda: START)
         for second in range(1000):
             at = START + timedelta(seconds=second)
             runtime.presence.accept(binary_presence(
@@ -56,7 +59,7 @@ class PresenceRegressionTests(unittest.TestCase):
         self.assertEqual(status["external"]["binary_sensor.occupancy"].occupancy, "present")
         self.assertEqual(len(runtime.presence.observations), 500)
 
-    def test_explicit_session_end_retracts_evidence_from_completed_session(self):
+    def test_stopped_recording_retracts_evidence_and_completes_at_deadline(self):
         async def exercise():
             clock = [START]
             runtime = _runtime(clock)
@@ -74,6 +77,14 @@ class PresenceRegressionTests(unittest.TestCase):
             clock[0] = START + timedelta(seconds=30)
             await runtime._apply_button_action(END_HOLD, clock[0])
             await runtime._cycle()
+            self.assertEqual(runtime.session.session_id, "explicit-end")
+            self.assertFalse(runtime.session.operation_enabled)
+            self.assertEqual(runtime.presence.current.occupancy, "unknown")
+            self.assertEqual(runtime.presence.current.source_ref, "person")
+            deadline = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+            clock[0] = deadline.due_at
+            await runtime._cycle()
+            self.assertEqual(runtime.controller.completed_sessions[-1].ended_at, deadline.due_at)
             return runtime
 
         runtime = asyncio.run(exercise())
@@ -178,7 +189,7 @@ class PresenceRegressionTests(unittest.TestCase):
         async def exercise(path, seconds):
             clock = [START]
             runtime = SaunaRuntime(
-                Configuration(BINDINGS, Parameters({"session_gap_minutes": 1, "target_temperature_c": 80})),
+                Configuration(BINDINGS, Parameters({"target_temperature_c": 80})),
                 clock=lambda: clock[0],
             )
             await runtime.start_archive(path, "entry")
@@ -209,12 +220,13 @@ class PresenceRegressionTests(unittest.TestCase):
             return runtime.archive.read("shutdown-gap")
 
         with TemporaryDirectory() as directory:
-            for seconds in (60, 61, 62):
+            gap = Parameters({}).seconds("session_gap_minutes")
+            for seconds in (gap, gap + 1, gap + 2):
                 with self.subTest(seconds=seconds):
                     archived = asyncio.run(exercise(
                         Path(directory) / f"{seconds}.sqlite", seconds
                     ))
-                    ended_at = (START + timedelta(seconds=min(seconds, 61))).isoformat()
+                    ended_at = (START + timedelta(seconds=min(seconds, gap + 1))).isoformat()
                     self.assertEqual(archived["session"]["ended_at"], ended_at)
                     finals = [record for record in archived["records"]
                               if record["kind"] == "session"
