@@ -148,6 +148,7 @@ const events = {
   presence_confirmed: "Gangbeginn · Präsenz nach Türvorgang",
   presence_ended: "Gangende · Abwesenheit und Durchlüften",
 };
+const historyEventMarkerKinds = new Set(["door_open", "door_close", "infusion"]);
 const gangConfirmed = (g) =>
   g.recognition_kind === "presence_confirmed" || !!g.infusion_events?.length;
 const signalText = {
@@ -9963,7 +9964,9 @@ class SaunaPanel extends HTMLElement {
       return (
         Number.isFinite(at) &&
         (selection.kind === "range"
-          ? at >= selection.start && at < selection.end
+          ? historyEventMarkerKinds.has(event.kind) &&
+            at >= selection.start &&
+            at < selection.end
           : at === selection.start)
       );
     });
@@ -9981,7 +9984,7 @@ class SaunaPanel extends HTMLElement {
         (size + gap) *
         (model.height / Math.max(1, geometry?.rects?.surface?.height || model.height)),
       markers = orderedHistoryEvents(this.normalHistoryEvents())
-        .filter((event) => ["door_open", "door_close", "infusion"].includes(event.kind))
+        .filter((event) => historyEventMarkerKinds.has(event.kind))
         .map((event) => ({ event, at: stamp(event.effective_at) })),
       layout = this.eventMarkerLayout(
         markers,

@@ -302,12 +302,19 @@ test("range phase names require containment in a single real projected interval"
 });
 
 test("selection snippets include their beginning and exclude their end exactly once", () => {
-  const { panel } = makeFixture({ history_phase_snap_radius_px: 0 });
+  const { panel, tooltip } = makeFixture({ history_phase_snap_radius_px: 0 });
   panel.shown.session.timeline.processed = [
     { event_id: "end", kind: "infusion", effective_at: iso(60) },
     { event_id: "middle", kind: "door_close", effective_at: iso(40) },
     { event_id: "begin", kind: "door_open", effective_at: iso(20) },
     { event_id: "before", kind: "infusion", effective_at: iso(19.999) },
+    {
+      event_id: "gang-begin",
+      kind: "presence_confirmed",
+      effective_at: iso(30),
+      detected_at: iso(35),
+    },
+    { event_id: "control", kind: "operation_off", effective_at: iso(50) },
   ];
   const original = JSON.stringify(panel.shown);
   panel.selectHistoryTime(at(20));
@@ -320,6 +327,11 @@ test("selection snippets include their beginning and exclude their end exactly o
     Array.from(panel.historySelectionEvents(), (event) => event.event_id),
     ["begin", "middle"],
   );
+  assert.doesNotMatch(
+    visibleText(tooltip),
+    /Gangbeginn|Präsenz nach Türvorgang|Betrieb ausgeschaltet/,
+    "range values omit recognition reasons and control events",
+  );
   panel.clearHistorySelection();
   panel.selectHistoryTime(at(60));
   panel.selectHistoryTime(at(80));
@@ -327,6 +339,22 @@ test("selection snippets include their beginning and exclude their end exactly o
     Array.from(panel.historySelectionEvents(), (event) => event.event_id),
     ["end"],
   );
+  panel.clearHistorySelection();
+  panel.selectHistoryTime(at(30));
+  assert.deepEqual(
+    Array.from(panel.historySelectionEvents(), (event) => event.event_id),
+    ["gang-begin"],
+    "point inspection retains the original recognition event",
+  );
+  assert.match(visibleText(tooltip), /Gangbeginn · Präsenz nach Türvorgang/);
+  panel.clearHistorySelection();
+  panel.selectHistoryTime(at(50));
+  assert.deepEqual(
+    Array.from(panel.historySelectionEvents(), (event) => event.event_id),
+    ["control"],
+    "point inspection retains the original control event",
+  );
+  assert.match(visibleText(tooltip), /Betrieb ausgeschaltet/);
   assert.equal(
     JSON.stringify(panel.shown),
     original,
