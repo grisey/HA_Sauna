@@ -1696,7 +1696,7 @@ class SaunaPanel extends HTMLElement {
   patchNode(current, next) {
     if (current.nodeType === 3) {
       if (current.data !== next.data) {
-        const selection = this.ownerDocument?.getSelection?.(),
+        const selection = this.shadowRoot?.getSelection?.() || this.ownerDocument?.getSelection?.(),
           anchor = selection?.anchorNode === current ? selection.anchorOffset : null,
           focus = selection?.focusNode === current ? selection.focusOffset : null,
           anchorNode = selection?.anchorNode,
@@ -1780,11 +1780,59 @@ class SaunaPanel extends HTMLElement {
       target.innerHTML = markup;
       return;
     }
+    // insertBefore can transiently detach a retained keyed subtree. Browsers
+    // then clear its focus and adjust native selection even though the same
+    // nodes are reinserted. Save identities, not selectors or live Ranges.
+    const focused = this.shadowRoot.activeElement,
+      ownedFocus = focused && target.contains(focused),
+      inputSelection = ownedFocus && Number.isInteger(focused.selectionStart)
+        ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection]
+        : null,
+      selection = this.shadowRoot.getSelection?.() || this.ownerDocument?.getSelection?.(),
+      endpoint = (node, offset) => ({
+        node, offset,
+        before: node?.childNodes?.[offset],
+        after: node?.childNodes?.[offset - 1],
+      }),
+      selected = selection &&
+        (target.contains(selection.anchorNode) || target.contains(selection.focusNode))
+        ? {
+            anchor: endpoint(selection.anchorNode, selection.anchorOffset),
+            focus: endpoint(selection.focusNode, selection.focusOffset),
+          }
+        : null;
     const next = target.cloneNode(false);
     next.innerHTML = markup;
     this.patchNode(target, next);
     this.selectMenu?.sync();
     this.syncInfo();
+    if (
+      ownedFocus && focused.isConnected && target.contains(focused) &&
+      !focused.disabled && !focused.matches?.(":disabled") &&
+      !focused.closest?.("[hidden], [inert]") &&
+      (!focused.getClientRects || focused.getClientRects().length)
+    ) {
+      if (this.shadowRoot.activeElement !== focused)
+        focused.focus?.({ preventScroll: true });
+      if (inputSelection && Number.isInteger(focused.selectionStart))
+        focused.setSelectionRange?.(...inputSelection);
+    }
+    if (
+      selected && selected.anchor.node?.isConnected && selected.focus.node?.isConnected &&
+      (target.contains(selected.anchor.node) || target.contains(selected.focus.node))
+    ) {
+      const offset = ({ node, offset: saved, before, after }) => {
+        if (node.nodeType === 3) return Math.min(saved, node.length);
+        const children = [...node.childNodes];
+        if (before?.parentNode === node) return children.indexOf(before);
+        if (after?.parentNode === node) return children.indexOf(after) + 1;
+        return Math.min(saved, children.length);
+      };
+      selection.setBaseAndExtent?.(
+        selected.anchor.node, offset(selected.anchor),
+        selected.focus.node, offset(selected.focus),
+      );
+    }
   }
   async api(path, method = "GET", body) {
     return this.hass.callApi(method, `ha_sauna${path}`, body);

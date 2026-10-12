@@ -505,6 +505,10 @@ fs.mkdirSync(output, { recursive: true });
     const lateLight = await page.evaluate(async () => {
       const at = f.iso(f.origin + 580000),
         p = f.panel;
+      const selection = document.getSelection(),
+        text = lateRecordNodes.details.querySelector("p").firstChild;
+      selection.setBaseAndExtent(text, 0, text, Math.min(text.length, 20));
+      const selectedText = selection.toString();
       f.addRecord({
         kind: "light_command",
         received_at: f.state.now,
@@ -526,6 +530,8 @@ fs.mkdirSync(output, { recursive: true });
           p.$(`[data-record-id="${lateRecordNodes.row.dataset.recordId}"]`) ===
           lateRecordNodes.row,
         focus: p.shadowRoot.activeElement === lateRecordNodes.button,
+        selection:
+          selection.anchorNode === text && selection.toString() === selectedText,
         details:
           lateRecordNodes.row.querySelector("details") === lateRecordNodes.details,
         open: lateRecordNodes.details.open,

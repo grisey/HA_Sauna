@@ -302,3 +302,87 @@ test("changed selected text retains its anchor and focus within the remaining te
   panel.patchNode(current, { data: "abcde" });
   assert.deepEqual(restored, [current, 2, current, 5]);
 });
+
+test("markup reconciliation restores retained focus and backwards text selection after a keyed move", () => {
+  const panel = makePanel();
+  const text = { nodeType: 3, isConnected: true, length: 10 };
+  const focusCalls = [];
+  const focused = {
+    isConnected: true,
+    focus(options) {
+      focusCalls.push(options);
+      panel.shadowRoot.activeElement = this;
+    },
+  };
+  let restored;
+  const selection = {
+    anchorNode: text, anchorOffset: 8, focusNode: text, focusOffset: 2,
+    setBaseAndExtent: (...values) => (restored = values),
+  };
+  const target = {
+    contains: (node) => node === focused || node === text,
+    cloneNode: () => ({}),
+  };
+  panel.$ = () => target;
+  panel.shadowRoot.activeElement = focused;
+  panel.shadowRoot.getSelection = () => selection;
+  panel.syncInfo = () => {};
+  // Browser insertBefore has this side effect for retained nodes; the browser
+  // regression exercises that actual operation with a late light-command row.
+  panel.patchNode = () => {
+    panel.shadowRoot.activeElement = null;
+    selection.anchorNode = selection.focusNode = null;
+    selection.anchorOffset = selection.focusOffset = 0;
+  };
+  panel.updateMarkup("#history", "new sibling before retained row");
+  assert.equal(panel.shadowRoot.activeElement, focused);
+  assert.equal(focusCalls.length, 1);
+  assert.equal(focusCalls[0].preventScroll, true);
+  assert.deepEqual(restored, [text, 8, text, 2]);
+});
+
+test("markup reconciliation never refocuses removed, replaced or disabled controls", () => {
+  for (const change of ["removed", "replaced", "disabled", "outside"]) {
+    const panel = makePanel();
+    let connected = true;
+    let contained = change !== "outside";
+    let focusedAgain = false;
+    const focused = {
+      get isConnected() { return connected; },
+      focus() { focusedAgain = true; },
+    };
+    const target = { contains: (node) => contained && node === focused, cloneNode: () => ({}) };
+    panel.$ = () => target;
+    panel.shadowRoot.activeElement = focused;
+    panel.syncInfo = () => {};
+    panel.patchNode = () => {
+      panel.shadowRoot.activeElement = null;
+      if (change === "removed") connected = false;
+      if (change === "replaced") contained = false;
+      if (change === "disabled") focused.disabled = true;
+    };
+    panel.updateMarkup("#history", "changed markup");
+    assert.equal(focusedAgain, false, change);
+  }
+});
+
+test("a moved text field keeps its input selection without scrolling", () => {
+  const panel = makePanel();
+  const calls = [];
+  const focused = {
+    isConnected: true, selectionStart: 2, selectionEnd: 6,
+    selectionDirection: "backward",
+    focus: (options) => calls.push(["focus", options.preventScroll]),
+    setSelectionRange: (...values) => calls.push(["range", ...values]),
+  };
+  const target = { contains: (node) => node === focused, cloneNode: () => ({}) };
+  panel.$ = () => target;
+  panel.shadowRoot.activeElement = focused;
+  panel.syncInfo = () => {};
+  panel.patchNode = () => {
+    panel.shadowRoot.activeElement = null;
+    focused.selectionStart = focused.selectionEnd = 0;
+  };
+  panel.updateMarkup("#history", "new sibling");
+  assert.deepEqual(calls, [["focus", true], ["range", 2, 6, "backward"]]);
+});

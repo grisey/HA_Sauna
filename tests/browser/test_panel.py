@@ -3262,7 +3262,10 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await expect(marker).to_be_focused()
         await expect(marker).to_have_attribute('aria-pressed', 'true')
         await expect(self.panel.locator('#diagnostic-selection')).to_be_visible()
-        await expect(self.panel.locator('.diagnostic-selection-guide').first).to_be_visible()
+        await expect(self.panel.locator('.diagnostic-selection-band').first).to_be_visible()
+        guide = self.panel.locator('.diagnostic-selection-guide').first
+        self.assertEqual(await guide.get_attribute('x1'), await guide.get_attribute('x2'))
+        self.assertGreater(float(await guide.get_attribute('y2')), float(await guide.get_attribute('y1')))
         await self.panel.locator(f'[data-action="event-history:{event_id}"]').click()
         await expect(self.panel.locator('.main-tabs [data-action="history"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#event-list')).to_be_visible()
@@ -3319,7 +3322,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await device_tests.DevicePathTests.expire_recording_gap(self)
         await self.panel.locator('.main-tabs [data-action="overview"]').click()
         await self.panel.locator('[data-action="history"]').click()
-        await expect(self.panel.locator(f'#session option[value="{identity}"]')).to_contain_text(" · beendet", timeout=15000)
+        archived_option = self.panel.locator(f'#session option[value="{identity}"]')
+        await expect(archived_option).to_contain_text(
+            re.compile(r"\d{2}:\d{2}(?::\d{2})? – .*\d{2}:\d{2}"), timeout=15000
+        )
+        await expect(archived_option).not_to_contain_text("beendet")
         await expect(self.panel.locator("svg.session-chart")).to_be_visible()
         await self.select_dropdown(self.panel.locator("#session"), identity)
         await expect(self.panel.locator('[data-gang-id]')).to_contain_text("Bestätigt", timeout=15000)

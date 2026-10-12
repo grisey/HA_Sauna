@@ -58,12 +58,17 @@ fs.mkdirSync(output, { recursive: true });
       assert(f.records.length === 57600, "four-hour fixture count");
       f.setDelay(100);
       f.reset();
+      const retainedWindow = JSON.stringify(f.panel.window);
       for (let i = 0; i < 3; i++) {
         const before = f.counts["curves.paintMain"] || 0;
         await f.tick();
         assert(
-          f.counts["curves.paintMain"] === before + 1,
-          "one measurement paint per response",
+          (f.counts["curves.paintMain"] || 0) - before <= 1,
+          "at most one measurement paint per response; offscreen appends need no repaint",
+        );
+        assert(
+          JSON.stringify(f.panel.window) === retainedWindow,
+          "appends preserve the chosen time window",
         );
       }
       assert(
@@ -73,6 +78,40 @@ fs.mkdirSync(output, { recursive: true });
       assert(
         Object.values(f.identity()).every(Boolean),
         "same chart and interaction nodes",
+      );
+      const painted = f.counts["curves.paintMain"] || 0,
+        previousPaths = [...f.panel.historyChart.curves.mainPaths.values()].map(
+          (item) => item.path,
+        );
+      const at = f.iso(f.origin + 7200500);
+      f.addRecord({
+        kind: "measurement",
+        received_at: at,
+        payload: {
+          position: "upper",
+          quantity: "temperature",
+          value: 90,
+          raw_value: "90",
+          received_at: at,
+          measured_at: at,
+        },
+      });
+      await f.refresh();
+      assert(
+        f.counts["curves.paintMain"] === painted + 1,
+        "a late measurement inside the retained window updates the visible curve",
+      );
+      assert(
+        f.panel.chartDataIndex.series
+          .get("upper:temperature")
+          .some((point) => point.time === Date.parse(at) && point.value === 90),
+        "the late value is available at its original measurement time",
+      );
+      assert(
+        [...f.panel.historyChart.curves.mainPaths.values()].some(
+          (item, index) => item.path !== previousPaths[index],
+        ),
+        "the visible curve path incorporates the late value",
       );
       const live = { ...f.counts };
       const [a, z] = f.panel.historyDomain();
