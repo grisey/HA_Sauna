@@ -3258,6 +3258,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         marker = self.panel.locator(f'.diagnostic-marker[data-event-id="{event_id}"][data-selected="true"]').first
         await expect(marker).to_be_focused()
         await marker.press('Enter')
+        await expect(self.panel.locator('.detail-tabs [data-action="diagnostics"]')).to_have_attribute('aria-current', 'page')
+        await expect(marker).to_be_focused()
+        await expect(marker).to_have_attribute('aria-pressed', 'true')
+        await expect(self.panel.locator('#diagnostic-selection')).to_be_visible()
+        await expect(self.panel.locator('.diagnostic-selection-guide').first).to_be_visible()
+        await self.panel.locator(f'[data-action="event-history:{event_id}"]').click()
         await expect(self.panel.locator('.main-tabs [data-action="history"]')).to_have_attribute('aria-current', 'page')
         await expect(self.panel.locator('#event-list')).to_be_visible()
         selected_link = self.panel.locator(f'#event-list [data-action="event-row:{event_id}"]')

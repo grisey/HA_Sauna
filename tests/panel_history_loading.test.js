@@ -566,7 +566,7 @@ test("returning from a hidden document reconciles its archive list once", async 
   assert.equal(lists, 2, "a confirmed empty list remains valid afterwards");
 });
 
-test("live page polling advances without reloading the archive list", async () => {
+test("live page polling is throttled, explicit reads advance without reloading the list", async () => {
   let lists = 0,
     pages = 0;
   const { p } = panel(async (request) => {
@@ -580,12 +580,39 @@ test("live page polling advances without reloading the archive list", async () =
   await p.startHistoryLoad();
   await p.startHistoryLoad();
   await p.startHistoryLoad();
+  assert.equal(pages, 1, "background polls retain the loaded live cache");
+  await p.startHistoryLoad(true);
+  p.historyCache("live").lastFetchedAt -= 15000;
+  await p.startHistoryLoad();
   assert.equal(lists, 1);
   assert.equal(pages, 3);
   assert.deepEqual(
     Array.from(p.historyCache("live").records, (item) => item.id),
     [1, 2, 3],
   );
+});
+
+test("live append has no initial loading banner and finalization bypasses its polling gate", async () => {
+  let calls = 0;
+  let resolvePage;
+  const { p, nodes } = historyUiPanel(async (request) => {
+    if (request.endsWith("/archive")) return [];
+    calls++;
+    if (calls === 2) return new Promise((resolve) => (resolvePage = resolve));
+    return page([calls], null, "live", calls > 2);
+  });
+  await p.startHistoryLoad();
+  const pending = p.startHistoryLoad(true);
+  await turn();
+  assert.equal(nodes["#history-loading"].hidden, true);
+  assert.equal(nodes["#plots"].attributes["aria-busy"], "false");
+  resolvePage(page([2]));
+  await pending;
+  p.state.session = null;
+  p.historyPendingFinalId = "live";
+  await p.startHistoryLoad();
+  assert.equal(calls, 3);
+  assert.equal(p.historyCache("live").finalSynced, true);
 });
 
 test("fixed user and admin panels load their finalized archive records", async () => {

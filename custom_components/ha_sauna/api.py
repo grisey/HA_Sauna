@@ -11,12 +11,14 @@ from homeassistant.helpers import entity_registry as er
 from .appearance import APPEARANCE_CATALOG
 from .archive import plain
 from .const import DOMAIN
-from .core.configuration_model import temperature_control
+from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.defaults import section
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
+from .core.power import watts
 from .environment import environment_snapshot
 from .log import LEVELS
+from .runtime import Configuration
 from .presentation import (
     decision_message,
     fault_message,
@@ -775,6 +777,10 @@ class ArchiveView(HomeAssistantView):
                     "measurement", "source_snapshot", "phase", "diagnostic",
                     "detector_trace", "detection", "presence", "presence_source",
                     "decision", "command", "light_command", "consumer_event",
+                    "source_state", "heating_observation", "illuminance", "notice",
+                    "manual_light", "manual_heater", "heater_override_rejected",
+                    "manual_phase_end", "manual_session_light_end", "interruption",
+                    "session",
                 ) if request["hass_user"].is_admin else (
                     "measurement", "source_snapshot", "phase",
                 ),
@@ -788,12 +794,61 @@ class ArchiveView(HomeAssistantView):
                 session, runtime.configuration.parameters.values["sensor_timeout_seconds"]
             )
             if request["hass_user"].is_admin:
+                try:
+                    stored_configuration = Configuration.from_options(
+                        session.get("configuration")
+                    )
+                    session["configuration_model"] = (
+                        ConfigurationModel.from_configuration(
+                            stored_configuration
+                        ).as_dict()
+                    )
+                except (TypeError, ValueError, KeyError):
+                    # Old archives may not carry a complete configuration.
+                    # Their recorded observations remain available; current
+                    # instance settings are not historical evidence.
+                    session["configuration_model"] = None
                 for record in result["records"]:
                     if record["kind"] == "diagnostic":
                         record["payload"]["messages"] = [
                             fault_message(k, v)
                             for k, v in record["payload"].get("faults", {}).items()
                         ]
+                    elif projection == "history" and record["kind"] == "source_state":
+                        payload = record["payload"]
+                        if payload.get("role") == "heater_power":
+                            attributes = payload.get("attributes", {})
+                            record["display"] = {
+                                "power_w": watts(
+                                    payload.get("state"),
+                                    attributes.get("unit_of_measurement"),
+                                )
+                                if attributes.get("device_class") == "power"
+                                else None
+                            }
+                    elif projection == "history" and record["kind"] == "session":
+                        # State history keeps the recorded values without
+                        # transferring a growing copy of the entire event
+                        # timeline for every snapshot. The unprojected archive
+                        # and authenticated export retain the full originals.
+                        record["projection"] = "session_state"
+                        record["payload"] = {
+                            key: value
+                            for key, value in record["payload"].items()
+                            if key.startswith("temperature_")
+                            or key in {
+                                "operation_enabled",
+                                "operation_off_at",
+                                "ended_at",
+                                "thermostat",
+                                "energy",
+                                "ready_at",
+                                "active_gang_temperature_c",
+                                "next_gang_temperature_c",
+                                "next_gang_temperature_blocked_by",
+                                "configuration",
+                            }
+                        }
             else:
                 result["session"] = public_session(session)
                 result["phase_projection"] = public_phase_projection(result["phase_projection"])

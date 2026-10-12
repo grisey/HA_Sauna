@@ -192,7 +192,9 @@ window.installHistoryFixture = async function ({ seconds = 14400, defaults } = {
     await frame();
   };
   const refresh = async () => {
-    await panel.refresh();
+    // Deliver this explicit fixture batch immediately. Background polling is
+    // exercised separately with refresh() and its real refresh interval.
+    await panel.refresh(true);
     await panel.historyLoad?.promise;
     await settle();
   };

@@ -58,6 +58,7 @@ function diagnosticPanel() {
     state: {
       permissions: { admin: true },
       configuration: { parameters: fixtureValues() },
+      session,
     },
     window: [Date.parse(at(0)), Date.parse(at(30))],
     $: (selector) => nodes[selector],

@@ -144,6 +144,7 @@ Repositoryverzeichnis.
 node tests/browser/live_history/accept.cjs
 node tests/browser/live_history/profile.cjs
 node tests/browser/live_history/interaction.cjs
+node tests/browser/live_history/details.cjs
 ```
 
 | Skript | Gegenstand und Ausgabe |
@@ -151,6 +152,7 @@ node tests/browser/live_history/interaction.cjs
 | `accept.cjs` | Prüft Datenübernahme, dauerhafte Knoten und Browserinteraktionen anhand fester Erwartungen. |
 | `profile.cjs` | Erfasst Kaltstart, Aktualisierung, Geometriezugriffe und `requestAnimationFrame`-Abstände. |
 | `interaction.cjs` | Erfasst Zeigerbewegung, Zoom und Verschieben während eingehender Nachträge; trennt die Zeit bis zum Rendercallback-Ende von dessen synchroner Rechenzeit. |
+| `details.cjs` | Prüft stabile Erkennungsansichten, Fokus, Textauswahl, Markerverknüpfung und Nachträge sowie schmale Container und Fehler bei Archivabrufen. |
 
 Die Fixture liefert synthetische Status- und Archivantworten an das
 Originalpanel. Die Browserläufe verwenden dessen tatsächliche Zeichen- und
@@ -164,8 +166,10 @@ zusätzlich dessen Eingabeweg und sichtbare Bildschirmausgabe.
 `profile.cjs` fest. `INTERACTION_EVIDENCE` benennt die Ergebnisdatei der
 Interaktionsprobe. Standardbrowser ist WebKit; `ENGINE=chromium` und
 `CHROMIUM_EXECUTABLE` wählen eine vorhandene Chromium-Laufzeit.
+`details.cjs` verwendet standardmäßig Chromium und speichert Ergebnisse und
+Ansichten im Verzeichnis `DETAILS_EVIDENCE`.
 
-Alle drei Skripte prüfen den aktuellen Arbeitsstand von `panel.js`. Die vier
+Alle vier Skripte prüfen den aktuellen Arbeitsstand von `panel.js`. Die vier
 synthetischen Messreihen bleiben im Archiv erhalten; die aktuelle Verlaufsansicht
 zeigt die führende Messposition. Eine frühere Messhöhenumschaltung und fest
 codierte Gitvergleichsstände sind kein Bestandteil dieser Prüfungen.

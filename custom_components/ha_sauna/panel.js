@@ -12,6 +12,7 @@ const equalPresetColumns = (count, maximum) => {
   return 1;
 };
 const HISTORY_PLOT = Object.freeze({ width: 1200, left: 65, right: 1135 });
+const HISTORY_LIVE_POLL_MS = 15000;
 const stamp = (v) => (v ? new Date(v).getTime() : null);
 const orderedHistoryEvents = (items = []) =>
   items
@@ -1478,6 +1479,7 @@ class SaunaPanel extends HTMLElement {
     this.fullscreenChangeHandler = () => {
       this.syncFullscreenNavigation();
       this.historyChart?.interaction.invalidateGeometry("size");
+      this.scheduleHistoryRender("size");
       this.fitInstrumentReadouts();
     };
     this.visibilityHandler = () => {
@@ -1500,6 +1502,13 @@ class SaunaPanel extends HTMLElement {
   }
   connectedCallback() {
     if (!this.$("main")) this.shell();
+    const Resize = this.ownerDocument?.defaultView?.ResizeObserver || globalThis.ResizeObserver;
+    if (Resize && !this.diagnosticsResizeObserver) {
+      this.diagnosticsResizeObserver = new Resize(() => {
+        if (this.view === "diagnostics") this.scheduleHistoryRender("size");
+      });
+      this.diagnosticsResizeObserver.observe(this.$("#detection-plots"));
+    }
     this.selectMenu ??= new SaunaSelectMenu(this);
     this.selectMenu.connect();
     this.infoOutsideHandler ??= (event) => {
@@ -1545,6 +1554,8 @@ class SaunaPanel extends HTMLElement {
     if (this._hass) this.start();
   }
   disconnectedCallback() {
+    this.diagnosticsResizeObserver?.disconnect();
+    this.diagnosticsResizeObserver = null;
     this.selectMenu?.disconnect();
     this.ownerDocument?.removeEventListener("click", this.infoOutsideHandler, true);
     this.shadowRoot?.removeEventListener?.("scroll", this.infoGeometryHandler, true);
@@ -1646,6 +1657,12 @@ class SaunaPanel extends HTMLElement {
       ? `id:${node.id}`
       : node.dataset?.action
         ? `action:${node.dataset.action}`
+        : node.dataset?.key
+          ? `key:${node.dataset.key}`
+          : node.dataset?.detailKey
+            ? `detail:${node.dataset.detailKey}`
+            : node.dataset?.recordId
+              ? `record:${node.dataset.recordId}`
         : null;
   }
   sameNode(current, next) {
@@ -1660,7 +1677,11 @@ class SaunaPanel extends HTMLElement {
   }
   patchAttributes(current, next) {
     for (const attribute of [...current.attributes])
-      if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+      if (
+        !next.hasAttribute(attribute.name) &&
+        !(current.nodeName === "DETAILS" && attribute.name === "open")
+      )
+        current.removeAttribute(attribute.name);
     for (const attribute of [...next.attributes])
       if (current.getAttribute(attribute.name) !== attribute.value)
         current.setAttribute(attribute.name, attribute.value);
@@ -1673,7 +1694,23 @@ class SaunaPanel extends HTMLElement {
   }
   patchNode(current, next) {
     if (current.nodeType === 3) {
-      if (current.data !== next.data) current.data = next.data;
+      if (current.data !== next.data) {
+        const selection = this.ownerDocument?.getSelection?.(),
+          anchor = selection?.anchorNode === current ? selection.anchorOffset : null,
+          focus = selection?.focusNode === current ? selection.focusOffset : null,
+          anchorNode = selection?.anchorNode,
+          focusNode = selection?.focusNode,
+          anchorOffset = selection?.anchorOffset,
+          focusOffset = selection?.focusOffset;
+        current.data = next.data;
+        if (anchor !== null || focus !== null)
+          selection?.setBaseAndExtent?.(
+            anchorNode,
+            anchor === null ? anchorOffset : Math.min(anchor, current.length),
+            focusNode,
+            focus === null ? focusOffset : Math.min(focus, current.length),
+          );
+      }
       return current;
     }
     const focused =
@@ -2337,6 +2374,8 @@ class SaunaPanel extends HTMLElement {
       * {
         box-sizing: border-box;
       }
+      :host { cursor: default; }
+      input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), textarea { cursor: text; }
       main {
         max-width: 1280px;
         height: 100%;
@@ -2841,6 +2880,7 @@ class SaunaPanel extends HTMLElement {
         width: 100%;
         touch-action: pan-y;
         user-select: none;
+        cursor: default;
       }
       .chart text {
         fill: var(--sauna-chart-ink, var(--sauna-color-chart-text));
@@ -3284,6 +3324,17 @@ class SaunaPanel extends HTMLElement {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 14px;
       }
+      #detection-plots { container-type: inline-size; }
+      @container (max-width: 600px) { .diagnostic-grid { grid-template-columns: 1fr; } }
+      [data-diagnostic-metric][data-selected="true"] { outline: 2px solid var(--sauna-chart-focus, var(--accent)); outline-offset: -2px; }
+      .diagnostic-selection-band { fill: var(--sauna-color-detector-marker); opacity: .12; pointer-events: none; }
+      .diagnostic-selection-guide { stroke: var(--sauna-chart-focus, var(--accent)); stroke-width: 2; stroke-dasharray: 3 3; pointer-events: none; }
+      .diagnostic-selection-context { margin: 12px 0; padding: 12px; border: 1px solid var(--sauna-color-border); border-radius: var(--sauna-control-radius); }
+      .diagnostic-selection-context dl { display: grid; grid-template-columns: minmax(6rem, 1fr) minmax(0, 2fr); gap: 4px 12px; overflow-wrap: anywhere; }
+      .diagnostic-selection-context dd { margin: 0; }
+      .diagnostic-trace-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+      .diagnostic-trace-navigation input { flex: 1 1 120px; min-width: 0; }
+      .diagnostic-chart-context { font-size: 13px; margin: 8px 0; }
       .diagnostic-grid .plot-panel {
         margin: 0;
         padding: 14px 10px;
@@ -3967,10 +4018,11 @@ class SaunaPanel extends HTMLElement {
       @keyframes command-wait { from { opacity: .25; transform: scaleX(.45); } to { opacity: .8; transform: scaleX(1); } }
       @media (prefers-reduced-motion: reduce) { button[data-command-pending]::after { animation: none; } }
       .manual-entry { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .control-history-lanes { min-width: 660px; }
-      .control-track { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 18px; margin: 16px 0; font-size: 13px; }
+      #control-history { container-type: inline-size; }
+      .control-history-lanes { min-width: 0; }
+      .control-track { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: center; gap: 12px; margin: 9px 0; font-size: 12px; }
       .control-track > span { color: var(--sauna-card-muted-text); }
-      .control-track-bar { height: 25px; position: relative; border-radius: 5px; overflow: hidden; background: repeating-linear-gradient(135deg,transparent,transparent 4px,var(--sauna-color-border, var(--divider-color)) 4px,var(--sauna-color-border, var(--divider-color)) 5px); }
+      .control-track-bar { height: 17px; position: relative; border-radius: 3px; overflow: hidden; background: repeating-linear-gradient(135deg,transparent,transparent 4px,var(--sauna-color-border, var(--divider-color)) 4px,var(--sauna-color-border, var(--divider-color)) 5px); }
       .control-track-bar button { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-radius: 0; min-width: 1px; box-shadow: none; }
       .control-track-bar button:hover { outline: 2px solid var(--sauna-card-text); z-index: 1; }
       .control-track-bar i { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--sauna-card-text); pointer-events: none; }
@@ -3988,6 +4040,30 @@ class SaunaPanel extends HTMLElement {
       .control-history-events td:first-child { white-space: nowrap; }
       .control-history-events button { padding: 3px 7px; font-variant-numeric: tabular-nums; }
       .control-history-events tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+      .control-history-events tr[data-error="true"] { box-shadow: inset 3px 0 var(--sauna-color-error, var(--error-color)); }
+      .detail-data { margin: 8px 0; font-size: 13px; }
+      .detail-data > div { display: grid; grid-template-columns: minmax(8em, 1fr) minmax(0, 2fr); gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--sauna-color-border, var(--divider-color)); }
+      .detail-data dt { color: var(--sauna-card-muted-text); overflow-wrap: anywhere; }
+      .detail-data dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+      .detail-data details { margin: 0; }
+      .detail-data details > summary { font-weight: 500; }
+      .detail-record-list > details { padding: 8px 0; border-bottom: 1px solid var(--sauna-color-border, var(--divider-color)); }
+      .detail-value-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .detail-value-plot { min-width: 0; }
+      .detail-value-plot h3 { font-size: 13px; margin: 8px 0 3px; }
+      .detail-value-plot svg { width: 100%; display: block; }
+      .detail-value-plot text { font-size: 10px; fill: var(--sauna-card-muted-text); }
+      .detail-event-list { padding-left: 18px; font-size: 13px; }
+      .detail-event-list li { padding: 5px 0; }
+      #control-session-evidence > details, .detail-evidence > details { border-top: 1px solid var(--sauna-color-border, var(--divider-color)); padding: 10px 0; }
+      @container (max-width: 520px) {
+        .control-track { grid-template-columns: 94px minmax(0, 1fr); gap: 8px; }
+        .control-time-axis, .control-cursor-row { margin-left: 102px; }
+        .control-time-axis { font-size: 10px; }
+        .control-history-inspection { grid-template-columns: 1fr; gap: 12px; }
+        .detail-value-grid { grid-template-columns: 1fr; }
+        .detail-data > div { grid-template-columns: minmax(7em, 1fr) minmax(0, 1.3fr); gap: 8px; }
+      }
       @media (max-width: 700px) { .control-history-inspection { grid-template-columns: 1fr; gap: 12px; } }
       .gauge-card { padding: 26px 20px 20px; }
       .gauge-card h2 { font-size: 13px; font-weight: 500; letter-spacing: .035em; color: var(--sauna-card-muted-text); margin-bottom: 10px; }
@@ -4085,12 +4161,24 @@ class SaunaPanel extends HTMLElement {
       const moment = e.target.closest("[data-control-time]");
       if (moment) {
         this.controlHistoryCursor = Number(moment.dataset.controlTime);
+        this.controlHistoryEnd = Math.max(this.controlHistoryEnd || 0, this.controlHistoryCursor);
         this.renderControlHistory();
       }
       const b = e.target.closest("[data-action]");
       if (b) this.runPanelAction(() => this.action(b.dataset.action));
     });
     this.shadowRoot.addEventListener("change", (e) => {
+      if (e.target.id === "diagnostic-trace-index") {
+        const trace = this.diagnosticData().traces[Number(e.target.value)];
+        if (trace) {
+          this.selectedDiagnosticTrace = trace;
+          this.selectedDiagnosticTraceAt = trace.at;
+          this.highlightedEventId = null;
+          this.pendingEventFocus = null;
+          this.drawDiagnostics();
+        }
+        return;
+      }
       if (e.target.id === "control-history-cursor") {
         this.controlHistoryCursor =
           stamp(this.shown.session.timeline.session_started_at) +
@@ -4175,7 +4263,7 @@ class SaunaPanel extends HTMLElement {
         this.window = null;
         this.showHistoryCache();
         this.drawHistory("archive");
-        this.startHistoryLoad();
+        this.startHistoryLoad(true);
       }
       if (e.target.id === "button-program")
         this.runPanelAction(() => this.action("button-program"));
@@ -4612,7 +4700,7 @@ class SaunaPanel extends HTMLElement {
         this.syncHistorySessions();
         this.showHistoryCache();
         this.drawHistory("status");
-        this.startHistoryLoad();
+        this.startHistoryLoad(requested);
       }
       this.drawSettings();
       this.syncAppearanceEditor();
@@ -4788,6 +4876,10 @@ class SaunaPanel extends HTMLElement {
     if (id !== this.historySessionId) {
       this.historySessionId = id;
       this.window = null;
+      this.selectedDiagnosticTraceAt = null;
+      this.selectedDiagnosticTrace = null;
+      this.highlightedEventId = null;
+      this.pendingEventFocus = null;
       this.invalidateHistoryIndex();
       this.historyTimelineSignature = null;
     }
@@ -4821,7 +4913,7 @@ class SaunaPanel extends HTMLElement {
           .filter((session) => session.session_id !== liveId)
           .map(
             (session) =>
-              `<option value="${esc(session.session_id)}">Sitzung vom ${esc(when(session.started_at, timeZone))}${session.ended_at ? " · beendet" : " · unterbrochen"}</option>`,
+              `<option value="${esc(session.session_id)}">${esc(this.sessionLabel(session, timeZone))}</option>`,
           )
           .join("");
     if (this.historyOptionsSignature !== options) {
@@ -4834,11 +4926,12 @@ class SaunaPanel extends HTMLElement {
   syncHistoryLoading() {
     const node = this.$("#history-loading");
     if (!node) return;
-    node.hidden = !this.historyLoad;
-    node.textContent = this.historyLoad ? "Wird geladen …" : "";
-    this.$("#plots")?.setAttribute?.("aria-busy", String(!!this.historyLoad));
+    const initial = !!this.historyLoad?.initial;
+    node.hidden = !initial;
+    node.textContent = initial ? "Wird geladen …" : "";
+    this.$("#plots")?.setAttribute?.("aria-busy", String(initial));
   }
-  startHistoryLoad() {
+  startHistoryLoad(force = false) {
     this.syncHistoryLoading();
     if (
       !this.state ||
@@ -4864,9 +4957,26 @@ class SaunaPanel extends HTMLElement {
         : false;
     if (!listNeeded && !pageNeeded) return;
     if (this.historyLoad?.key === key) return this.historyLoad.promise;
-    const load = { key, count: 0, sessionId: initialId };
+    const initialCache = initialId ? this.historyCache(initialId) : null,
+      completedSinceLastRead =
+        initialCache?.lastReadLive &&
+        (liveId !== initialId || !!this.state?.session?.ended_at),
+      now = Date.now();
+    if (
+      !force &&
+      !listNeeded &&
+      initialCache?.pageRunLoaded &&
+      !initialCache.session?.ended_at &&
+      !completedSinceLastRead &&
+      now - (initialCache.lastFetchedAt || 0) < HISTORY_LIVE_POLL_MS
+    )
+      return;
+    const load = {
+      key, count: 0, sessionId: initialId,
+      initial: !initialCache?.pageRunLoaded && !initialCache?.records.length,
+    };
     this.historyLoad = load;
-    this.message(null, "history");
+    if (load.initial) this.message(null, "history");
     this.syncHistoryLoading();
     const current = () =>
       this.historyLoad === load &&
@@ -4939,6 +5049,10 @@ class SaunaPanel extends HTMLElement {
             more = continuation != null;
             cache.pageRunLoaded = !more;
             cache.loaded = cache.pageRunLoaded;
+            if (!more) {
+              cache.lastFetchedAt = Date.now();
+              cache.lastReadLive = id === liveId && !cache.session?.ended_at;
+            }
             // A page run can be complete for an open snapshot.  Only a
             // closed final snapshot plus its last page settles the session.
             cache.finalSynced =
@@ -5597,6 +5711,9 @@ class SaunaPanel extends HTMLElement {
     return `<div class="control-overview"><div class="dashboard"><div class="card control-main">${status}${overviewLightTimer}${actions}${temperatureAutomation}${controls}${alert}</div><div class="card gauge-card"><div class="gauges" style="--round-count:${Math.max(1, roundCount)}"><div class="measurement-instrument" data-instrument="temperature" data-instrument-style="${this.instrumentStyle("temperature")}"><h2>Temperatur</h2>${temperatureGauge}</div><div class="measurement-instrument" data-instrument="humidity" data-instrument-style="${this.instrumentStyle("humidity")}"><h2>Luftfeuchte</h2>${humidityGauge}</div>${lightGauge}</div>${weather}</div></div></div>`;
   }
   renderDetailView(view) {
+    if (this.state?.configuration_model?.regulation_causes?.length === 0) {
+      view = { ...view, nextGangTemperature: null, temperatureProgram: "Konstante Temperaturregelung (manuell)" };
+    }
     const {
       stateLine,
       timers,
@@ -5620,7 +5737,39 @@ class SaunaPanel extends HTMLElement {
       measurements,
       detectionText,
     } = view;
-    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${num(lightAutomatic, 0)} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${num(lightManual, 0)} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}`;
+    return `<div class="card hero">${stateLine}${timers}</div><div class="detail-grid"><div class="card"><h2>Ofen</h2><dl><dt>Aktuelle Solltemperatur</dt><dd>${targetTemperature} °C</dd>${nextGangTemperature == null ? "" : `<dt>Solltemperatur des nächsten Gangs</dt><dd>${nextGangTemperature} °C</dd>`}<dt>Obere Regeltemperatur</dt><dd data-readiness>${thermostatTarget} °C</dd><dt>Wiedereinschaltschwelle</dt><dd>${restartThreshold} °C</dd><dt>Temperaturprogramm</dt><dd>${temperatureProgram}</dd><dt>Heizzustand</dt><dd>${heatCaption}</dd><dt>Ermittlung der Heizzeit</dt><dd>${heatSource}</dd><dt>Energieverbrauch</dt><dd>${energyText}</dd><dt>Ofenleistung</dt><dd>${powerText}</dd></dl><p>${decisionText}</p></div><div class="card"><h2>Licht</h2><p class="manual-status ${lightMode}" data-light-status="${lightMode}">${lightStatus}</p><dl><dt>Automatischer Wert</dt><dd>${num(lightAutomatic, 0)} %</dd><dt>Manuelle Vorgabe</dt><dd>${lightManual == null ? "Keine" : `${num(lightManual, 0)} %`}</dd><dt>Übersteuerung</dt><dd>${lightOverrideRemaining}</dd></dl></div><div class="card"><h2>Messung</h2><p data-door-status>${doorText}</p>${measurements}<p class="muted">${detectionText}</p></div></div>${presence}${this.renderLiveEvidence()}`;
+  }
+  renderLiveEvidence() {
+    const state = this.state;
+    if (!state?.permissions?.admin) return "";
+    const model = state.configuration_model;
+    const ruleKeys = { gang_heat: "gang_heat_demand", provisional_door_heat: "temporary_door_heat", cooling: "cooling" };
+    const rules = model ? Object.fromEntries((model.regulation_causes || []).flatMap((cause) => ruleKeys[cause] ? [[ruleKeys[cause], state.rule_inputs?.[ruleKeys[cause]]]] : [])) : state.rule_inputs;
+    const heatingObservation = state.heating_observation && Object.fromEntries(Object.entries(state.heating_observation).filter(([key]) => key !== "power_w" || !model || model.power_sensor_configured));
+    const measurements = (state.measurements || []).filter((measurement) => !model || (model.measurement_positions || []).includes(measurement.position));
+    const groups = [
+      ["regulation", "Regelung und Schutz", {
+        decision: state.decision, ...(Object.keys(rules || {}).length ? { rule_inputs: rules } : {}),
+        protection: state.protection, inhibits: state.inhibits, faults: state.faults,
+        temperature_control: state.temperature_control,
+        thermostat: state.session?.thermostat,
+      }],
+      ["inputs", "Messquellen und Eingaben", {
+        measurements, measurement_status: state.measurement_status,
+        regulation_temperature_position: state.regulation_temperature_position,
+        presence: state.presence, environment: state.environment,
+      }],
+      ["outputs", "Geräteausgabe und Rückmeldungen", {
+        heater: state.manual_controls?.heater, light: state.manual_controls?.light,
+        heating_observation: heatingObservation, ...(state.light_after_run ? { light_after_run: state.light_after_run } : {}),
+      }],
+      ["session", "Sitzung, Energie und Fristen", {
+        heating: state.session?.heating, energy: state.session?.energy,
+        after_run: state.session?.after_run, after_run_history: state.session?.after_run_history,
+        deadlines: state.session?.deadlines, start_availability: state.start_availability,
+      }],
+    ];
+    return `<div class="card detail-evidence"><h2>Aktuelle Daten im Detail</h2>${groups.map(([key, label, fields]) => `<details id="detail-${key}"><summary>${label}</summary>${this.detailFields(fields, `live-${key}`)}</details>`).join("")}</div>`;
   }
   presenceDetails() {
     const presence = this.state?.presence;
@@ -6772,6 +6921,18 @@ class SaunaPanel extends HTMLElement {
         "Parameter gespeichert, Neuladen noch nicht abgeschlossen. Bitte Status prüfen.",
       );
   }
+  sessionLabel(session, timeZone = localTimeZone()) {
+    const start = session.started_at || session.timeline?.session_started_at;
+    if (!start) return "Ohne Startzeit";
+    const date = new Intl.DateTimeFormat("de-DE", {
+      day: "2-digit", month: "2-digit", year: "numeric", timeZone,
+    }).format(new Date(start));
+    const end = session.ended_at;
+    const sameDay = end && new Intl.DateTimeFormat("de-DE", {
+      day: "2-digit", month: "2-digit", year: "numeric", timeZone,
+    }).format(new Date(end)) === date;
+    return `${date} · ${clock(start, timeZone)}${end ? ` – ${sameDay ? clock(end, timeZone) : when(end, timeZone)}` : " · unterbrochen"}`;
+  }
   historyTitle(session) {
     if (this.selected === "live")
       return this.state.operation_enabled && this.state.session
@@ -6779,7 +6940,7 @@ class SaunaPanel extends HTMLElement {
         : "Letzte Sitzung";
     const archive = this.sessions?.find((item) => item.session_id === this.selected);
     const started = session?.timeline?.session_started_at || archive?.started_at;
-    return started ? `Sitzung vom ${when(started)}` : "Archivierte Sitzung";
+    return started ? this.sessionLabel({ ...archive, ...session, started_at: started }) : "Archivierte Sitzung";
   }
   drawHistory(reason = "viewport") {
     this.scheduleHistoryRender(reason);
@@ -6811,16 +6972,282 @@ class SaunaPanel extends HTMLElement {
       this.updateMarkup(selector, "");
     this.historyGangKey = this.historyEventKey = this.historyDiagnosticsKey = null;
   }
+  historyFaultEvents(records = this.shown?.records || []) {
+    let previous = {}, count = 0;
+    const events = [];
+    for (const [index, record] of records.entries()) {
+      if (record.kind !== "diagnostic") continue;
+      const payload = record.payload || {}, faults = payload.faults || {};
+      const messages = Object.keys(faults).map((key, i) => [key, payload.messages?.[i] || key]);
+      const labels = Object.fromEntries(messages);
+      for (const [key, value] of Object.entries(faults)) {
+        if (Object.hasOwn(previous, key) && previous[key].value === value) continue;
+        const changed = Object.hasOwn(previous, key);
+        if (!changed) count++;
+        events.push({
+          id: `fault-${record.id ?? index}-${key}`,
+          at: stamp(record.received_at),
+          label: changed ? "Fehlerstatus geändert" : "Fehler aufgetreten",
+          detail: labels[key], source: "Fehler", error: true,
+          status: value, key,
+        });
+      }
+      for (const [key, value] of Object.entries(previous)) {
+        if (Object.hasOwn(faults, key)) continue;
+        events.push({
+          id: `resolved-${record.id ?? index}-${key}`,
+          at: stamp(record.received_at), label: "Entwarnung",
+          detail: value.label, source: "Fehler", resolved: true, key,
+        });
+      }
+      previous = Object.fromEntries(Object.entries(faults).map(([key, value]) => [key, { value, label: labels[key] }]));
+    }
+    return { count, events };
+  }
+  historyFaultMarkup(records, prefix = "history") {
+    if (this.state?.permissions?.admin === false) return "";
+    const faults = this.historyFaultEvents(records);
+    if (!faults.events.length) return '<p class="muted" data-fault-count="0">Keine Fehler aufgezeichnet.</p>';
+    return `<details id="${prefix}-faults"><summary>Fehler im Sitzungsverlauf · <span data-fault-count="${faults.count}">${faults.count}</span></summary><ol class="detail-event-list">${faults.events.map((event) => `<li data-record-id="${esc(event.id)}"><time>${clock(event.at)}</time> <strong>${esc(event.label)}</strong> · ${esc(event.detail)}${event.status ? ` <span class="muted">(${esc(this.detailValue(event.status))})</span>` : ""}</li>`).join("")}</ol></details>`;
+  }
+  historyLightValue(record) {
+    if (record.payload.service === "turn_off") return "Aus";
+    return record.payload.brightness_pct == null
+      ? "Helligkeit nicht aufgezeichnet"
+      : `${num(record.payload.brightness_pct, 0)} %`;
+  }
+  historyLightActivity(records) {
+    const result = [];
+    let group = null;
+    const value = (record) => this.historyLightValue(record);
+    const boundary = (reason) => {
+      if (group) group.boundary = reason;
+      group = null;
+    };
+    const ordered = records.map((record, index) => ({ record, index, at: stamp(record.kind === "light_command" ? record.payload.sent_at || record.received_at : record.received_at) })).sort((left, right) => left.at - right.at || left.index - right.index);
+    for (const { index, record } of ordered) {
+      if (["phase", "manual_light", "manual_heater", "manual_phase_end", "manual_session_light_end", "interruption"].includes(record.kind)) {
+        boundary(record.kind === "phase" ? "Phasenwechsel" : "Bedienung oder Unterbrechung");
+        continue;
+      }
+      if (record.kind !== "light_command") continue;
+      const payload = record.payload || {};
+      const at = stamp(payload.sent_at || record.received_at);
+      const key = JSON.stringify([payload.phase, payload.purpose, payload.ends_at]);
+      const isolated = payload.service_error || payload.service === "turn_off" || ["manual", "button_press", "button_hold", "light_reassignment"].includes(payload.phase);
+      if (isolated || group?.key !== key) boundary(payload.service_error ? "Dienstfehler" : "Neuer Lichtabschnitt");
+      if (!group) {
+        group = {
+          id: `light-${record.id ?? index}`, at, effective: payload.sent_at || record.received_at,
+          source: "Licht", key, records: [], first: record, last: record, anchorIndex: index,
+          error: !!payload.service_error,
+          label: payload.service_error ? "Lichtbefehl fehlgeschlagen" : payload.service === "turn_off" ? "Lichtbefehl Aus" : `Licht · ${phases[payload.phase] || ({ session_light: "Lichtnachlauf", manual: "Manuelle Wahl", button_press: "Tasterrückmeldung", button_hold: "Tasterrückmeldung", light_reassignment: "Gerätewechsel" }[payload.phase]) || payload.phase || "Ausgabe"}`,
+        };
+        result.push(group);
+      }
+      // A late service completion may precede the first known command in
+      // send time. Keep the identity of the earliest received group member.
+      if (index < group.anchorIndex) {
+        group.id = `light-${record.id ?? index}`;
+        group.anchorIndex = index;
+      }
+      group.records.push(record);
+      group.last = record;
+      if (isolated) boundary(payload.service_error ? "Dienstfehler" : payload.service === "turn_off" ? "AUS-Befehl abgeschlossen" : "Einzelbefehl");
+    }
+    return result.map((item) => ({
+      ...item,
+      detail: item.error ? `Dienstfehler: ${item.first.payload.service_error}` : item.records.length === 1
+        ? `${value(item.first)} · Dienst abgeschlossen; Rückmeldung separat`
+        : `Beginn ${clock(item.first.payload.sent_at || item.first.received_at)}: ${value(item.first)} · letzter belegter Wert ${clock(item.last.payload.completed_at || item.last.received_at)}: ${value(item.last)} · ${item.records.length} Befehle${item.boundary ? ` · ${item.boundary}` : " · kein Abschluss belegt"}`,
+    }));
+  }
+  detailValue(value) {
+    if (value == null) return "Nicht aufgezeichnet";
+    if (value === true) return "Ja";
+    if (value === false) return "Nein";
+    if (typeof value === "number") return Number.isFinite(value) ? num(value, 2) : "Nicht verfügbar";
+    if (Array.isArray(value)) return value.length ? value.map((item) => this.detailValue(item)).join(" · ") : "Keine";
+    if (typeof value === "object") return Object.entries(value).map(([key, item]) => `${this.detailFieldLabel(key)}: ${this.detailValue(item)}`).join(" · ");
+    if (/^\d{4}-\d\d-\d\dT/.test(value)) return when(value);
+    return ({ on: "Ein", off: "Aus", unknown: "Unbekannt", unavailable: "Nicht verfügbar", pending: "Wird geprüft", confirmed: "Bestätigt", present: "Anwesend", absent: "Abwesend", automatic: "Automatik", manual: "Manuell", measured: "Gemessen", estimated: "Geschätzt", mixed: "Messung mit Schätzung", incomplete: "Unvollständig", direct_presence: "Direkte Präsenz", provisional_proxy: "Vorläufiger indirekter Hinweis", proxy_retraction: "Indirekter Hinweis aufgehoben", power: "Leistungsmessung", contactor: "Schützrückmeldung", turn_on: "Einschalten", turn_off: "Ausschalten" })[value] || String(value);
+  }
+  detailFieldLabel(key) {
+    return this.state?.parameters?.find((definition) => definition.key === key)?.label || ({
+      value: "Wert", state: "Zustand", source: "Quelle", role: "Rolle", attributes: "Quellenattribute", raw_value: "Originalwert",
+      received_at: "Empfangen", measured_at: "Gemessen", sent_at: "Gesendet", completed_at: "Dienst abgeschlossen", planned_at: "Geplant", effective_at: "Wirksam seit", created_at: "Entschieden", at: "Zeit", started_at: "Beginn", ended_at: "Ende", ends_at: "Geplantes Ende", due_at: "Fällig", purpose: "Zweck",
+      heat: "Heizanforderung", heating: "Heizung", reason: "Grund", decision: "Entscheidung", power_w: "Leistung (W)", available: "Verfügbar", phase: "Phase", service: "Dienst", service_error: "Dienstfehler", brightness_pct: "Helligkeit (%)", transition_seconds: "Übergang (s)",
+      upper: "Oben", lower: "Unten", temperature: "Temperatur", humidity: "Luftfeuchte", position: "Messposition", quantity: "Messgröße", occupancy: "Belegung", assertion: "Art der Präsenzmeldung", confidence: "Sicherheit",
+      event_id: "Ereigniskennung", report_id: "Meldungskennung", session_id: "Sitzungskennung", gang_id: "Gangkennung", source_ref: "Quellenbezug", trace_at: "Prüfzeit", kind: "Art", status: "Status", channels: "Messpositionen", payload: "Daten", event: "Ereignis",
+      measured_kwh: "Gemessene Energie (kWh)", estimated_kwh: "Geschätzte Energie (kWh)", measured_seconds: "Messdauer (s)", estimated_seconds: "Geschätzte Dauer (s)", unknown_seconds: "Dauer ohne Beleg (s)", elapsed_seconds: "Vergangene Dauer (s)", accounted_at: "Abgerechnet bis", intervals: "Intervalle", reported_heating: "Rückgemeldete Heizung", off_since: "Aus seit", last_reset_at: "Letztes Zurücksetzen", end_reason: "Endgrund",
+      demand: "Thermostatanforderung", cooldown_until: "Heizpause bis", protection: "Schutzabschaltungen", inhibits: "Startsperren", faults: "Fehlerzustände", messages: "Fehlermeldungen", gang_heat_demand: "Gang fordert Heizung", temporary_door_heat: "Türhilfe", cooling: "Ofenkühlung", checks: "Aktive Prüfungen", conditions: "Bedingungen", holds: "Prüfpunkte", signals: "Signale", metrics: "Erkennungswerte",
+      automatic: "Automatischer Wert", manual: "Manuelle Vorgabe", observation: "Rückmeldung", override_ends_at: "Übersteuerung bis", command: "Befehl", command_pending: "Befehl ausstehend", target: "Sollwert", mode: "Betriebsart", current_target: "Aktueller Sollwert", next_target: "Nächster Sollwert",
+      confirmation: "Bestätigung", confirmation_at: "Bestätigt am", duration_seconds: "Dauer (s)", credited_seconds: "Angerechnete Dauer (s)", pending_start: "Beginn ausstehend", paused_at: "Pausiert seit", phase_id: "Phasenkennung", token: "Identität", name: "Name", unit_of_measurement: "Einheit", brightness: "Helligkeit (0–255)", illuminance: "Beleuchtungsstärke", last_changed: "Geändert", last_updated: "Aktualisiert", last_reported: "Gemeldet", session_start_snapshot: "Anfangswert",
+      operation_enabled: "Betrieb eingeschaltet", operation_off_at: "Betrieb ausgeschaltet", ready_at: "Bereit seit", temperature_base_c: "Temperaturbasis (°C)", temperature_program_mode: "Temperaturprogramm", temperature_program_steps: "Programmstufen (°C)", active_gang_temperature_c: "Sollwert aktiver Gang (°C)", next_gang_temperature_c: "Nächster Sollwert (°C)", next_gang_temperature_blocked_by: "Nächste Stufe gesperrt durch", current: "Aktuell", external: "Externe Meldungen", configured_source: "Gewählte Präsenzquelle", effective_source: "Wirksame Präsenzquelle", external_snapshot: "Präsenzmeldungen beim Start",
+    })[key] || key.replaceAll("_", " ");
+  }
+  detailFields(value, key = "data") {
+    if (!value || typeof value !== "object") return `<p>${esc(this.detailValue(value))}</p>`;
+    if (!Object.keys(value).length) return '<p class="muted">Keine Einträge.</p>';
+    return `<dl class="detail-data">${Object.entries(value).map(([field, item]) => {
+      const identity = `${key}:${field}`;
+      const label = Array.isArray(value) ? `Eintrag ${Number(field) + 1}` : this.detailFieldLabel(field);
+      const nested = item && typeof item === "object" && Object.keys(item).length;
+      return `<div data-detail-key="${esc(identity)}"><dt>${esc(label)}</dt><dd>${nested ? `<details id="detail-${esc(identity)}"><summary>${Array.isArray(item) ? item.length : Object.keys(item).length} ${Array.isArray(item) ? "Einträge" : "Werte"}</summary>${this.detailFields(item, identity)}</details>` : esc(this.detailValue(item))}</dd></div>`;
+    }).join("")}</dl>`;
+  }
+  historyAdditionalActivity(records) {
+    const definitions = {
+      manual_light: ["Bedienung", "Lichtwahl"], manual_heater: ["Bedienung", "Ofenwahl"],
+      heater_override_rejected: ["Bedienung", "Ofenwahl abgelehnt"], manual_phase_end: ["Bedienung", "Ofenkühlung beendet"],
+      manual_session_light_end: ["Bedienung", "Lichtnachlauf beendet"], interruption: ["Betrieb", "Sitzung unterbrochen"],
+      notice: ["Hinweis", "Betriebshinweis"], consumer_event: ["Regelung", "Zustandsereignis"],
+      presence_source: ["Präsenz", "Präsenzquelle"], heating_observation: ["Heizrückmeldung", "Heizbeobachtung"],
+    };
+    let programSignature = null;
+    return records.flatMap((record, index) => {
+      if (record.kind === "session") {
+        const payload = record.payload || {};
+        const program = Object.fromEntries(Object.entries(payload).filter(([key]) => key.includes("temperature")));
+        const signature = JSON.stringify(program);
+        if (signature === programSignature) return [];
+        programSignature = signature;
+        return [{ id: `program-${record.id ?? index}`, at: stamp(record.received_at), source: "Temperaturprogramm", label: "Temperaturvorgaben", detail: this.detailValue(program), record }];
+      }
+      const definition = definitions[record.kind];
+      if (!definition) return [];
+      const payload = record.payload || {};
+      const selection = Object.hasOwn(payload, "value") ? payload.value === null ? "Automatik" : payload.value === false ? "Aus" : payload.value === true ? "Ein" : typeof payload.value === "number" ? `${num(payload.value, 0)} %` : String(payload.value) : null;
+      return [{
+        id: `record-${record.id ?? index}`, at: stamp(record.received_at), source: definition[0],
+        label: definition[1], detail: selection || this.detailValue(payload),
+        error: record.kind === "heater_override_rejected", record,
+      }];
+    });
+  }
+  historyValueSeries(records) {
+    let cache = this.detailValueCache;
+    if (cache?.records !== records || cache.count > records.length) cache = null;
+    if (cache?.count === records.length) return [...cache.series.values()];
+    const series = cache?.series || new Map();
+    const number = (value) => value == null || value === "" || typeof value === "boolean" || !Number.isFinite(Number(value)) ? null : Number(value);
+    const add = (key, label, unit, role, record, value, at = record.received_at) => {
+      const time = stamp(at);
+      if (!Number.isFinite(time)) return;
+      if (!series.has(key)) series.set(key, { key, label, unit, role, values: [] });
+      series.get(key).values.push({ time, value, source: record });
+    };
+    for (const record of records.slice(cache?.count || 0)) {
+      const p = record.payload || {};
+      if (["measurement", "source_snapshot"].includes(record.kind)) {
+        const temperature = p.quantity === "temperature";
+        add(`${p.position}:${p.quantity}`, `${temperature ? "Temperatur" : "Luftfeuchte"} ${p.position === "upper" ? "oben" : "unten"}`, temperature ? "°C" : "%", temperature ? "temperature" : "humidity", record, number(p.value), p.received_at || record.received_at);
+      } else if (record.kind === "source_state" && p.role === "heater_power") {
+        add("power", "Gemessene Leistung", "W", "temperature", record, number(record.display?.power_w));
+      } else if (record.kind === "source_state" && p.role === "light") {
+        add("light-observed", "Lichtrückmeldung", "%", "humidity", record, p.state === "off" ? 0 : p.state === "on" && number(p.attributes?.brightness) != null ? number(p.attributes.brightness) * 100 / 255 : null);
+      } else if (record.kind === "light_command") {
+        add("light-command", "Lichtvorgabe · abgeschlossene Dienste", "%", "humidity", record, p.service_error ? null : p.service === "turn_off" ? 0 : number(p.brightness_pct), p.completed_at || record.received_at);
+      } else if (record.kind === "illuminance") {
+        const unit = p.attributes?.unit_of_measurement || "Einheit unbekannt";
+        add(`illuminance:${unit}`, "Beleuchtungsstärke", unit, "humidity", record, number(p.state));
+      } else if (record.kind === "session") {
+        for (const [key, label] of [["temperature_base_c", "Temperaturbasis"], ["active_gang_temperature_c", "Sollwert des aktiven Gangs"], ["next_gang_temperature_c", "Sollwert des nächsten Gangs"]]) {
+          if (Object.hasOwn(p, key)) add(key, label, "°C", "temperature", record, number(p[key]));
+        }
+      }
+    }
+    for (const item of series.values()) item.values.sort((a, b) => a.time - b.time);
+    this.detailValueCache = { records, count: records.length, series };
+    return [...series.values()];
+  }
+  renderHistoryValues(records, start, end, cursor) {
+    const series = this.historyValueSeries(records);
+    const rows = series.map((item) => {
+      const point = item.values.filter((value) => value.time <= cursor).at(-1);
+      return `<tr data-detail-key="value-${esc(item.key)}"><th>${esc(item.label)}</th><td>${point?.value == null ? "Nicht verfügbar" : `${num(point.value, 2)} ${esc(item.unit)}`}</td><td>${point ? clock(point.time) : "Nicht aufgezeichnet"}</td><td>${esc(point?.source.payload.source || (point?.source.kind === "light_command" ? "Geräteausgabe" : point?.source.kind === "session" ? "Sitzungszustand" : "Quelle nicht aufgezeichnet"))}</td></tr>`;
+    }).join("");
+    const plots = series.map((item) => {
+      const points = item.values.filter((point) => point.time >= start && point.time <= end);
+      const values = points.map((point) => point.value).filter(Number.isFinite);
+      if (!values.length) return `<section class="detail-value-plot" data-detail-key="plot-${esc(item.key)}"><h3>${esc(item.label)}</h3><p class="muted">Keine gültigen Werte im Ausschnitt.</p></section>`;
+      const [minimum, maximum] = values.reduce(([low, high], value) => [Math.min(low, value), Math.max(high, value)], [Infinity, -Infinity]);
+      const range = maximum - minimum || 1;
+      const x = (time) => 48 + 500 * (time - start) / (end - start), y = (value) => 100 - 76 * (value - minimum) / range;
+      let segments = [], segment = [];
+      for (const point of points) {
+        if (point.value == null) { if (segment.length) segments.push(segment); segment = []; }
+        else segment.push(point);
+      }
+      if (segment.length) segments.push(segment);
+      const path = segments.map((values) => reduceHistorySegment(values, x).map((point, index) => `${index ? "L" : "M"}${x(point.time).toFixed(2)},${y(point.value).toFixed(2)}`).join(" ")).join(" ");
+      const single = segments.filter((values) => values.length === 1).map(([point]) => `<circle cx="${x(point.time)}" cy="${y(point.value)}" r="2"/>`).join("");
+      return `<section class="detail-value-plot" data-detail-key="plot-${esc(item.key)}"><h3>${esc(item.label)} <small>${esc(item.unit)}</small></h3><svg viewBox="0 0 570 128" role="img" aria-label="${esc(item.label)} · ${clock(start)} bis ${clock(end)}"><g fill="currentColor" stroke="currentColor" style="color:var(--sauna-color-series-${item.role})"><path d="${path}" fill="none" stroke-width="1.8"/>${single}</g><line x1="${x(cursor)}" x2="${x(cursor)}" y1="18" y2="103" stroke="currentColor" stroke-dasharray="3 3"/><text x="0" y="26">${num(maximum, 1)}</text><text x="0" y="103">${num(minimum, 1)}</text><text x="48" y="124">${clock(start)}</text><text x="548" y="124" text-anchor="end">${clock(end)}</text></svg></section>`;
+    }).join("");
+    return `<div class="card" id="control-values"><h2>Messwerte und Lichtverlauf</h2><div class="detail-value-grid">${plots || '<p class="muted">Keine Messwerte aufgezeichnet.</p>'}</div><div class="scroll"><table><thead><tr><th>Wert am gewählten Zeitpunkt</th><th>Letzter Messwert</th><th>Messmeldung</th><th>Quelle</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">Gezeigt werden aufgezeichnete Werte. Fehlende Rückmeldungen bleiben unbekannt; die Heizbeobachtung ist keine lückenlose Leistungsmessung. Lichtvorgabe und Rückmeldung sind getrennt.</p></div>`;
+  }
+  historyRecordLabel(kind) {
+    return ({ session: "Sitzungszustand", measurement: "Messung", source_snapshot: "Anfangsmessung", source_state: "Quellenzustand", illuminance: "Beleuchtungsstärke", heating_observation: "Heizbeobachtung", detector_trace: "Erkennungsprüfung", detection: "Erkennung", diagnostic: "Fehlerzustand", decision: "Heizentscheidung", command: "Ofenausgabe", light_command: "Lichtausgabe", consumer_event: "Verbraucherereignis", presence: "Präsenzmeldung", presence_source: "Präsenzquelle", phase: "Betriebsphase", notice: "Hinweis", manual_light: "Lichtwahl", manual_heater: "Ofenwahl", heater_override_rejected: "Ofenwahl abgelehnt", manual_phase_end: "Ofenkühlung beendet", manual_session_light_end: "Lichtnachlauf beendet", interruption: "Unterbrechung" })[kind] || this.detailFieldLabel(kind);
+  }
+  renderHistoryRecords(records) {
+    const size = 40, pages = Math.max(1, Math.ceil(records.length / size));
+    const page = Math.max(0, Math.min(pages - 1, this.detailRecordPage || 0));
+    const slice = records.slice(page * size, (page + 1) * size);
+    return `<div class="card"><details id="detail-records"><summary>Einzelbelege · ${records.length} Datensätze</summary><p class="muted">Archivfelder nach Empfangsreihenfolge. Sitzungszustände sind kompakte Auszüge; der Archivexport enthält die vollständigen Originale. Messungen, Regelentscheidungen, Erkennungsprüfungen, Bedienung und Ausgaben bleiben einzeln prüfbar.</p><div class="row"><button data-action="detail-record-page:${page - 1}" ${page ? "" : "disabled"}>Zurück</button><span>Seite ${page + 1} von ${pages}</span><button data-action="detail-record-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Weiter</button></div><div class="detail-record-list">${slice.map((record, index) => `<details data-record-id="${record.id ?? page * size + index}"><summary>${clock(record.received_at)} · ${esc(this.historyRecordLabel(record.kind))}${record.projection ? " · Auszug" : ""}</summary>${this.detailFields(record.payload, `record-${record.id ?? index}`)}</details>`).join("")}</div></details></div>`;
+  }
+  renderSessionEvidence(session) {
+    return `<div class="card" id="control-session-evidence">${this.renderSessionEvidenceContents(session)}</div>`;
+  }
+  renderSessionEvidenceContents(session) {
+    const groups = [
+      ["energy", "Heizzeit und Energie", { Heizzeit: session.heating, Energie: session.energy, Schützverlauf: session.contactor_history }],
+      ["cooling", "Kühlung und Fristen", { Aktuelle_Ofenkühlung: session.after_run, Kühlphasen: session.after_run_history, Fristen: session.deadlines }],
+      ["temperature", "Temperaturprogramm", Object.fromEntries(Object.entries(session).filter(([key]) => key.includes("temperature") || key === "thermostat"))],
+      ["recognition", "Gänge und Präsenz", { Bestätigte_Gänge: session.timeline.completed, Aktiver_Gang: session.timeline.active, Aufgehobene_Erkennungen: session.timeline.retracted }],
+      ["configuration", "Einstellungen dieser Sitzung", session.configuration || null],
+    ];
+    return `<h2>Sitzungsdaten</h2><p class="muted">Gespeicherter Sitzungsstand. Nicht aufgezeichnete frühere Einstellungen und Zwischenzustände lassen sich daraus nicht rekonstruieren.</p>${groups.map(([key, label, value]) => `<details id="session-evidence-${key}"><summary>${label}</summary>${this.detailFields(value, `session-${key}`)}</details>`).join("")}`;
+  }
+  renderControlEvents(activity, selected) {
+    const size = 60, pages = Math.max(1, Math.ceil(activity.length / size));
+    const page = Math.max(0, Math.min(pages - 1, this.detailEventPage || 0));
+    const shown = activity.slice(page * size, (page + 1) * size);
+    const hiddenErrors = activity.filter((event) => event.error && !shown.includes(event));
+    const faults = `<div class="card">${this.historyFaultMarkup(this.shown?.records || [], "control")}${hiddenErrors.map((event) => `<p data-record-id="error-${esc(event.id)}"><strong>${clock(event.at)} · ${esc(event.label)}</strong> · ${esc(event.detail)}</p>`).join("")}</div><div class="row"><button data-action="detail-event-page:${page - 1}" ${page ? "" : "disabled"}>Frühere Ereignisse</button><span>Ereignisse · Seite ${page + 1} von ${pages}</span><button data-action="detail-event-page:${page + 1}" ${page + 1 < pages ? "" : "disabled"}>Spätere Ereignisse</button></div>`;
+    activity = shown;
+    return `${faults}<div class="card control-history-events"><h2>Bedienung, Regelung und Ausgaben</h2><div class="scroll"><table><thead><tr><th>Uhrzeit</th><th>Quelle</th><th>Ereignis</th><th>Status / Grund</th></tr></thead><tbody>${activity.map((event, index) => `<tr data-record-id="${esc(event.id || event.ref || `activity-${index}`)}" data-selected="${event === selected}" ${event.error ? 'data-error="true"' : ""} ${event.records ? 'data-light-section="true"' : ""}><td><button data-control-time="${event.at}">${clock(event.at)}</button></td><td>${esc(event.source)}</td><td>${esc(event.label)}</td><td>${esc(event.detail)}${event.records?.length > 1 ? `<details id="commands-${esc(event.id)}"><summary>${event.records.length} Einzelbefehle</summary>${event.records.map((record, i) => `<p data-record-id="light-command-${record.id ?? i}">${clock(record.payload.sent_at || record.received_at)} · ${esc(this.historyLightValue(record))} · ${esc(record.payload.service_error || "Dienst abgeschlossen")}</p>`).join("")}</details>` : ""}</td></tr>`).join("")}</tbody></table></div></div>`;
+  }
   renderControlHistory() {
     const { session, records, phase_projection: projection } = this.shown;
     const timeline = session.timeline;
     const start = stamp(timeline.session_started_at);
-    const end = Math.max(start + 1000, stamp(session.ended_at || this.state.now));
+    const latest = Math.max(start + 1000, stamp(session.ended_at || this.state.now));
     if (this.controlHistorySession !== timeline.session_id) {
       this.controlHistorySession = timeline.session_id;
       this.controlHistoryCursor = null;
+      this.controlHistoryEnd = latest;
+      this.detailRecordPage = 0;
+      this.detailEventPage = 0;
     }
+    const end = this.controlHistoryEnd ?? latest;
     const cursor = Math.max(start, Math.min(end, this.controlHistoryCursor ?? end));
+    const renderKey = JSON.stringify([
+      timeline, session.ended_at, session.contactor_history,
+      (projection?.intervals || []).map((item) => [item.phase, item.started_at, Math.min(end, stamp(item.ended_at) || end)]),
+      this.state.phase, this.historyConfigurationModel(), end, cursor, latest > end,
+      this.detailRecordPage || 0, this.detailEventPage || 0,
+    ]);
+    const retained = this.controlHistoryRenderCache;
+    const evidenceTick = Math.floor((stamp(this.state.now) || 0) / HISTORY_LIVE_POLL_MS);
+    if (retained?.records === records && retained.count === records.length && retained.key === renderKey && (!this.shadowRoot || this.$("#control-state-history"))) {
+      if (this.shadowRoot && this.controlEvidenceTick !== evidenceTick) {
+        // Counters may change without an archive record. Refresh just their
+        // retained detail card at the archive cadence, leaving plots alone.
+        this.updateMarkup("#control-session-evidence", this.renderSessionEvidenceContents(session));
+        this.controlEvidenceTick = evidenceTick;
+      }
+      return;
+    }
     const pct = (at) => (100 * (at - start)) / (end - start);
     const neutral = "var(--sauna-color-card-background, var(--card-background-color))";
     const color = (role) => `var(--sauna-color-${role})`;
@@ -6849,7 +7276,9 @@ class SaunaPanel extends HTMLElement {
         "Inaktiv",
         neutral,
       );
-    const configured = session.configuration || this.state.configuration;
+    const currentSession = !session.ended_at && this.state.session?.timeline.session_id === timeline.session_id;
+    const configured = session.configuration || (currentSession ? this.state.configuration : null);
+    const configurationModel = this.historyConfigurationModel();
     const entity = configured?.bindings?.presence;
     const reports = records.flatMap((r) =>
       r.kind === "presence"
@@ -6862,12 +7291,13 @@ class SaunaPanel extends HTMLElement {
       (r) => r.assertion === "direct_presence" && (!entity || r.source === entity),
     );
     const occupancy = (r) =>
-      !r.available
+      r.assertion === "proxy_retraction"
+        ? "Hinweis aufgehoben"
+        : !r.available
         ? "Nicht verfügbar"
         : { present: "Anwesend", absent: "Abwesend" }[r.occupancy] || "Unbekannt";
-    const decisions = records
-      .filter((r) => r.kind === "decision")
-      .map((r) => r.payload);
+    const decisionRecords = records.filter((r) => r.kind === "decision");
+    const decisions = decisionRecords.map((r) => r.payload);
     const cause = (reason) => {
       if (reason?.startsWith("protection:")) return "Bestätigte technische Störung";
       if (reason?.startsWith("inhibit:")) return "Einrichtung unvollständig";
@@ -6916,7 +7346,7 @@ class SaunaPanel extends HTMLElement {
       !session.ended_at &&
       this.state.session?.timeline?.session_id === timeline.session_id
     ) {
-      coolingChanges.push(coolingState(this.state.phase, end));
+      coolingChanges.push(coolingState(this.state.phase, latest));
     }
     const lanes = [
       [
@@ -6975,22 +7405,36 @@ class SaunaPanel extends HTMLElement {
       ],
       ["Ofenkühlung", changes(coolingChanges)],
     ];
+    const observations = records.filter((record) => record.kind === "heating_observation");
+    if (observations.length) lanes.splice(5, 0, ["Heizrückmeldung", changes(observations.map((record) => ({
+      at: stamp(record.received_at),
+      label: record.payload.heating === true ? "Heizt" : record.payload.heating === false ? "Heizt nicht" : "Unbekannt",
+      color: record.payload.heating == null ? null : record.payload.heating ? color("ui-heater-on") : neutral,
+    })))]);
+    const proxyReports = reports.filter((report) => ["provisional_proxy", "proxy_retraction"].includes(report.assertion));
+    if (proxyReports.length) lanes.push(["Indirekte Präsenz", changes(proxyReports.map((report) => ({
+      at: stamp(report.effective_at), label: occupancy(report),
+      color: report.assertion === "proxy_retraction" || !report.available ? null : color("phase-ready"),
+    })))]);
     const activity = [
       ...records
-        .filter((r) => r.kind === "command" || r.kind === "light_command")
+        .filter((r) => r.kind === "command")
         .map((r) => ({
+          id: `command-${r.id ?? r.received_at}`,
           at: stamp(r.received_at),
           effective: r.payload.sent_at || r.received_at,
-          label:
-            r.kind === "command"
-              ? `Ofenbefehl ${r.payload.heat ? "Ein" : "Aus"}`
-              : `Lichtbefehl ${r.payload.brightness_pct == null ? "Aus" : `${num(r.payload.brightness_pct, 0)} %`}`,
+          label: `Ofenbefehl ${r.payload.heat ? "Ein" : "Aus"}`,
           source: "Geräteausgabe",
+          error: !!r.payload.service_error,
           detail: r.payload.service_error
             ? `Dienstfehler: ${r.payload.service_error}`
             : "Dienst abgeschlossen; Rückmeldung separat",
         })),
+      ...this.historyLightActivity(records),
+      ...this.historyAdditionalActivity(records),
+      ...this.historyFaultEvents(records).events,
       ...(timeline.processed || []).map((e) => ({
+        id: e.event_id,
         at: stamp(e.detected_at),
         effective: e.effective_at,
         label: events[e.kind] || e.kind,
@@ -7008,13 +7452,15 @@ class SaunaPanel extends HTMLElement {
         ref: e.event_id,
       })),
       ...direct.map((r) => ({
+        id: r.report_id,
         at: stamp(r.received_at),
         effective: r.effective_at,
         label: occupancy(r),
         source: "Präsenzsensor",
         detail: r.source,
       })),
-      ...decisions.map((d) => ({
+      ...decisions.map((d, index) => ({
+        id: `decision-${decisionRecords[index].id ?? index}`,
         at: stamp(d.created_at || d.at),
         effective: d.at,
         label: `Heizanforderung ${d.heat ? "Ein" : "Aus"}`,
@@ -7022,6 +7468,7 @@ class SaunaPanel extends HTMLElement {
         detail: cause(d.reason),
       })),
       ...(session.contactor_history || []).map((m) => ({
+        id: `contactor-${m.at}`,
         at: stamp(m.at),
         effective: m.at,
         label: `Ofenschalter ${m.state === true ? "Ein" : m.state === false ? "Aus" : "unbekannt"}`,
@@ -7032,13 +7479,26 @@ class SaunaPanel extends HTMLElement {
       .filter((e) => Number.isFinite(e.at))
       .sort((a, b) => a.at - b.at);
     const selected = activity.filter((e) => e.at <= cursor).at(-1);
-    const laneMarkup = lanes
+    const signature = (spans) => {
+      const values = [];
+      for (const span of spans) {
+        const status = span.label.startsWith("Ein") ? "Ein" : span.label.startsWith("Aus") ? "Aus" : "Unbekannt";
+        if (values.at(-1)?.status !== status) values.push({ at: span.at, status });
+      }
+      return JSON.stringify(values);
+    };
+    const sameHeaterEvidence = signature(lanes[3][1]) === signature(lanes[4][1]);
+    const combinedLanes = sameHeaterEvidence
+      ? lanes.filter((_, index) => index !== 4).map((lane, index) => index === 3 ? ["Anforderung / Schütz", lane[1]] : lane)
+      : lanes;
+    const visibleLanes = combinedLanes.filter(([name]) => name !== "Präsenzsensor" || direct.length || configurationModel?.presence?.sensor_configured);
+    const laneMarkup = visibleLanes
       .map(
         ([name, spans]) =>
-          `<div class="control-track"><span>${esc(name)}</span><div class="control-track-bar">${spans.map((v) => `<button type="button" data-control-time="${v.at}" style="left:${pct(v.at)}%;width:${pct(v.end) - pct(v.at)}%;${v.color ? `background:${v.color}` : "background:transparent"}" title="${esc(`${name}: ${v.label} · ${clock(v.at)} – ${clock(v.end)}`)}" aria-label="${esc(`${name}: ${v.label} ab ${clock(v.at)}`)}"></button>`).join("")}<i style="left:${pct(cursor)}%"></i></div></div>`,
+          `<div class="control-track" data-detail-key="lane-${esc(name)}"><span>${esc(name)}</span><div class="control-track-bar">${spans.map((v) => `<button type="button" data-control-time="${v.at}" style="left:${pct(v.at)}%;width:${pct(v.end) - pct(v.at)}%;${v.color ? `background:${v.color}` : "background:transparent"}" title="${esc(`${name}: ${v.label} · ${clock(v.at)} – ${clock(v.end)}`)}" aria-label="${esc(`${name}: ${v.label} ab ${clock(v.at)}`)}"></button>`).join("")}<i style="left:${pct(cursor)}%"></i></div></div>`,
       )
       .join("");
-    const stateMarkup = lanes
+    const stateMarkup = lanes.filter(([name]) => name !== "Präsenzsensor" || direct.length || configurationModel?.presence?.sensor_configured)
       .map(
         ([name, spans]) =>
           `<dt>${esc(name)}</dt><dd>${esc(
@@ -7055,8 +7515,10 @@ class SaunaPanel extends HTMLElement {
       .join("");
     this.updateMarkup(
       "#control-history",
-      `<div class="card"><div class="row"><span class="muted">${clock(start)} – ${clock(end)}</span></div><div class="scroll"><div class="control-history-lanes">${laneMarkup}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${clock(cursor)}"></div></div></div><p class="muted">Schraffiert: kein belegter Zustand.</p><div class="control-history-inspection"><div><h3>Status · ${clock(cursor)}</h3><dl>${stateMarkup}</dl></div><div><h3>Letztes Ereignis${selected ? ` · ${clock(selected.at)}` : ""}</h3>${selected ? `<p>${esc(selected.label)}</p><p class="muted">${esc(selected.detail)}</p>` : '<p class="muted">Noch kein Ereignis.</p>'}</div></div></div><div class="card control-history-events"><h2>Ereignisse</h2><div class="scroll"><table><thead><tr><th>Uhrzeit</th><th>Quelle</th><th>Ereignis</th><th>Status / Grund</th></tr></thead><tbody>${activity.map((e) => `<tr data-selected="${e === selected}"><td><button data-control-time="${e.at}">${clock(e.at)}</button></td><td>${esc(e.source)}</td><td>${esc(e.label)}</td><td title="${esc(e.ref || e.detail)}">${esc(e.detail)}</td></tr>`).join("")}</tbody></table></div></div>`,
+      `<div class="card" id="control-state-history"><div class="row"><h2>Betriebsverlauf</h2><span class="muted">${clock(start)} – ${clock(end)}</span><button data-action="detail-follow" ${latest > end ? "" : "disabled"}>Bis zum neuesten Stand</button></div><div class="control-history-lanes">${laneMarkup}<div class="control-time-axis">${[0, 0.25, 0.5, 0.75, 1].map((f) => `<span>${clock(start + (end - start) * f)}</span>`).join("")}</div><div class="control-cursor-row"><input id="control-history-cursor" class="control-cursor" type="range" min="0" max="${end - start}" step="1" value="${cursor - start}" aria-label="Zeitpunkt im Betriebsverlauf" aria-valuetext="${clock(cursor)}"></div></div><p class="muted">Schraffiert: kein belegter Zustand.${sameHeaterEvidence ? " Anforderung und Schütz haben hier denselben Verlauf." : " Anforderung und Schütz sind getrennte Belege."}</p><div class="control-history-inspection"><div><h3>Status · ${clock(cursor)}</h3><dl>${stateMarkup}</dl></div><div><h3>Letztes Ereignis${selected ? ` · ${clock(selected.at)}` : ""}</h3>${selected ? `<p>${esc(selected.label)}</p><p class="muted">${esc(selected.detail)}</p>` : '<p class="muted">Noch kein Ereignis.</p>'}</div></div></div>${this.renderHistoryValues(records, start, end, cursor)}${this.renderControlEvents(activity, selected)}${this.renderSessionEvidence(session)}${this.renderHistoryRecords(records)}`,
     );
+    this.controlHistoryRenderCache = { records, count: records.length, key: renderKey };
+    this.controlEvidenceTick = evidenceTick;
   }
   renderHistory(reasons = new Set(["viewport"])) {
     if (!this.isConnected || this.$("#history")?.hidden) return;
@@ -7135,8 +7597,7 @@ class SaunaPanel extends HTMLElement {
       const openEvents = [
         ...this.shadowRoot.querySelectorAll("#event-list details"),
       ].map((d) => d.open);
-      const diagnostics = this.historyRecords("diagnostic"),
-        traces = this.diagnosticData().traces;
+      const traces = this.diagnosticData().traces;
       const eventRows = orderedHistoryEvents(this.normalHistoryEvents());
       const eventGroups = [];
       for (const event of eventRows) {
@@ -7167,7 +7628,7 @@ class SaunaPanel extends HTMLElement {
           )
           .join(
             "",
-          )}</ol></details>${diagnostics.length ? `<details><summary>Historische Fehlerhinweise (${diagnostics.length})</summary>${diagnostics.map((r) => `<p><small>${clock(r.received_at)}</small> ${esc(r.payload.messages?.join(" ") || "Keine Störung gemeldet.")}</p>`).join("")}</details>` : ""}${t.retracted.length ? `<p class="muted">${t.retracted.length} vorläufige Erkennung(en) aufgehoben. Diese werden nicht als Gänge gezählt.</p>` : ""}</div>`,
+          )}</ol></details>${this.historyFaultMarkup(records)}${t.retracted.length ? `<p class="muted">${t.retracted.length} vorläufige Erkennung(en) aufgehoben. Diese werden nicht als Gänge gezählt.</p>` : ""}</div>`,
       );
       this.shadowRoot
         .querySelectorAll("#event-list details")
@@ -7190,11 +7651,19 @@ class SaunaPanel extends HTMLElement {
       this.historyIndex(records);
     return this.chartDataIndex.diagnostics;
   }
+  historyConfigurationModel() {
+    const session = this.shown?.session;
+    if (session?.configuration_model) return session.configuration_model;
+    return session?.timeline.session_id &&
+      session.timeline.session_id === this.state?.session?.timeline.session_id &&
+      !session.ended_at ? this.state?.configuration_model || null : null;
+  }
   diagnosticsParameters() {
-    const parameters = {
-      ...this.state.configuration?.parameters,
-      ...this.shown?.session.configuration?.parameters,
-    };
+    const session = this.shown?.session,
+      live = session?.timeline.session_id === this.state?.session?.timeline.session_id &&
+        !session?.ended_at,
+      parameters = session?.configuration?.parameters ||
+        (live ? this.state?.configuration?.parameters : {}) || {};
     return Object.fromEntries(
       Object.entries(parameters).filter(([key]) =>
         /^(door_|strong_|weak_|infusion_|vent_|person_step_seconds$)/.test(key),
@@ -7210,7 +7679,10 @@ class SaunaPanel extends HTMLElement {
       data.revision,
       this.eventNavigation(),
       this.diagnosticsParameters(),
+      this.historyConfigurationModel(),
       this.window,
+      this.highlightedEventId,
+      this.selectedDiagnosticTraceAt || data.traces[0]?.at || null,
       this.$("#detection-plots")?.getBoundingClientRect?.().width || 640,
       timeZone,
     ]);
@@ -7258,6 +7730,9 @@ class SaunaPanel extends HTMLElement {
       (node) => node.dataset.eventId === eventId,
     );
     nodes.forEach((node) => (node.dataset.selected = "true"));
+    this.shadowRoot.querySelectorAll(".diagnostic-marker").forEach((node) =>
+      node.setAttribute?.("aria-pressed", String(node.dataset.eventId === eventId)),
+    );
     if (reveal) {
       const row = nodes.find((node) => node.classList.contains("event-row"));
       const details = row?.closest?.("details");
@@ -7268,6 +7743,14 @@ class SaunaPanel extends HTMLElement {
   revealEventTarget(kind) {
     const pending = this.pendingEventFocus;
     if (!pending || pending.kind !== kind) return;
+    if (
+      (pending.sessionId && pending.sessionId !== this.shown?.session.timeline.session_id) ||
+      (kind === "marker" && this.view !== "diagnostics") ||
+      (kind === "row" && this.navigation?.main !== "history")
+    ) {
+      this.pendingEventFocus = null;
+      return;
+    }
     const target = [
       ...this.shadowRoot.querySelectorAll(
         kind === "row" ? "#event-list [data-action]" : ".diagnostic-marker",
@@ -7277,30 +7760,34 @@ class SaunaPanel extends HTMLElement {
         node.dataset.eventId === pending.eventId ||
         node.dataset.action === `event-row:${pending.eventId}`,
     );
+    // A reveal is a single navigation operation, never a latent request that
+    // can steal focus after unrelated data arrives.
+    this.pendingEventFocus = null;
     if (!target) return;
     this.highlightEvent(pending.eventId, kind === "row");
     target.scrollIntoView?.({ block: "center", behavior: "smooth" });
-    target.focus?.();
-    this.pendingEventFocus = null;
+    target.focus?.({ preventScroll: true });
   }
   focusEvent(eventId, revealRow = false) {
     const event = this.eventNavigation().find((item) => item.event_id === eventId),
-      at = stamp(event?.trace_at || event?.effective_at || event?.detected_at);
-    if (!event || !at) {
+      trace = event && this.diagnosticTraceForEvent(this.diagnosticData().traces, event),
+      at = stamp(trace?.at || event?.effective_at || event?.detected_at);
+    this.selectedDiagnosticTraceAt = trace?.at || null;
+    this.selectedDiagnosticTrace = trace || null;
+    if (!event || !Number.isFinite(at) || (!trace && !revealRow)) {
+      this.pendingEventFocus = null;
       this.highlightEvent(eventId, revealRow);
+      this.drawHistory("selection");
       return;
     }
     const [domainStart, domainEnd] = this.historyDomain();
-    const span = Math.min(domainEnd - domainStart, 30 * 60000);
-    const left = Math.max(domainStart, Math.min(domainEnd - span, at - span / 2));
-    this.setHistoryWindow(left, left + span);
-    this.drawHistory();
+    if (!this.window || at < this.window[0] || at > this.window[1]) {
+      const span = Math.min(domainEnd - domainStart, 5 * 60000),
+        left = Math.max(domainStart, Math.min(domainEnd - span, at - span / 2));
+      this.setHistoryWindow(left, left + span);
+    }
     this.highlightEvent(eventId, revealRow);
-    if (!revealRow)
-      this.$('.event-marker[data-selected="true"]')?.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
-      });
+    this.drawHistory("selection");
   }
   invalidateHistoryIndex() {
     this.historyDatasetRevision = (this.historyDatasetRevision || 0) + 1;
@@ -7640,27 +8127,17 @@ class SaunaPanel extends HTMLElement {
     return [start, Math.max(start + 1000, complete ? end : Math.min(end, now))];
   }
   ensureHistoryWindow() {
-    const [start, end] = this.historyDomain(),
-      width = end - start;
-    const previous = this.window,
-      followDomain = !this.window || this.zoom === 1;
-    if (followDomain || this.window[1] <= start || this.window[0] >= end)
-      this.window = [start, end];
-    const current = Math.max(
-      width / 256,
-      Math.min(width, this.window[1] - this.window[0]),
-    );
-    const left = Math.max(start, Math.min(end - current, this.window[0])),
-      next = [left, left + current];
-    if (!previous || previous[0] !== next[0] || previous[1] !== next[1])
-      this.historyWindowRevision = (this.historyWindowRevision || 0) + 1;
-    this.window = next;
-    this.zoom = width / current;
+    // Incoming data never moves a user's viewport or changes its zoom. Only a
+    // session change or the explicit full-session action clears this window.
+    if (this.window) return;
+    this.window = this.historyDomain();
+    this.zoom = 1;
+    this.historyWindowRevision = (this.historyWindowRevision || 0) + 1;
   }
   setHistoryWindow(left, right) {
     const [start, end] = this.historyDomain(),
       span = end - start,
-      minimum = span / 256;
+      minimum = Math.min(span / 256, this.window ? this.window[1] - this.window[0] : Infinity);
     const width = Math.max(minimum, Math.min(span, right - left));
     const nextLeft = Math.max(start, Math.min(end - width, left));
     const next = [nextLeft, nextLeft + width];
@@ -8024,10 +8501,11 @@ class SaunaPanel extends HTMLElement {
     const px = this.svgCoordinates(svg, clientX).x,
       fraction = Math.max(0, Math.min(1, (px - 65) / 1070));
     const [domainStart, domainEnd] = this.historyDomain();
-    const nextZoom = Math.max(1, Math.min(256, this.zoom * factor));
-    if (nextZoom === this.zoom) return;
-    const nextWidth = (domainEnd - domainStart) / nextZoom,
+    const currentWidth = this.window[1] - this.window[0],
+      minimum = Math.min(currentWidth, (domainEnd - domainStart) / 256),
+      nextWidth = Math.max(minimum, Math.min(domainEnd - domainStart, currentWidth / factor)),
       focus = this.window[0] + fraction * (this.window[1] - this.window[0]);
+    if (nextWidth === currentWidth) return;
     const left = Math.max(
       domainStart,
       Math.min(domainEnd - nextWidth, focus - fraction * nextWidth),
@@ -8164,8 +8642,8 @@ class SaunaPanel extends HTMLElement {
       {
         door_open: ["door_temperature_slope", "door_open"],
         door_close: ["door_temperature_slope", "door_close"],
-        person_strong: ["strong_temperature_slope", "person_strong"],
-        person_weak: ["weak_temperature_slope", "person_weak"],
+        person_strong: ["strong_humidity_slope", "person_strong"],
+        person_weak: ["weak_humidity_slope", "person_weak"],
         infusion: ["infusion_humidity_delta", "infusion"],
         ventilation_confirmed: [
           "ventilation_temperature_loss",
@@ -8211,23 +8689,14 @@ class SaunaPanel extends HTMLElement {
       ) || null
     );
   }
-  drawDiagnostics() {
-    if (!this.state?.permissions?.admin) {
-      this.updateMarkup("#detection-plots", "");
-      return;
-    }
-    if (!this.shown) {
-      this.$("#detection-plots").innerHTML = "<p>Keine Saunasitzung ausgewählt.</p>";
-      return;
-    }
-    const traces = this.diagnosticData().traces;
-    const groups = [
+  diagnosticMetricDefinitions() {
+    return [
       ["Türerkennung", "door_temperature_slope", "Temperaturänderung · °C/min"],
       ["Türerkennung", "door_humidity_delta", "Feuchteänderung · Prozentpunkte"],
       [
         "Starke Personenerkennung",
         "strong_temperature_slope",
-        "Temperaturtrend · °C/min",
+        "Temperaturtrend (Kontext) · °C/min",
       ],
       [
         "Starke Personenerkennung",
@@ -8237,7 +8706,7 @@ class SaunaPanel extends HTMLElement {
       [
         "Schwache Personenerkennung",
         "weak_temperature_slope",
-        "Temperaturtrend · °C/min",
+        "Temperaturtrend (Kontext) · °C/min",
       ],
       [
         "Schwache Personenerkennung",
@@ -8249,7 +8718,10 @@ class SaunaPanel extends HTMLElement {
         "infusion_humidity_delta",
         "Feuchteänderung · Prozentpunkte",
       ],
-      ["Aufgusserkennung", "infusion_temperature_delta", "Temperaturänderung · °C"],
+      ["Aufgusserkennung", "infusion_temperature_delta", "Temperaturänderung (Kontext) · °C"],
+      ["Starke Personenerkennung", "strong_absolute_humidity_delta", "Absoluter Feuchteanstieg · g/m³"],
+      ["Schwache Personenerkennung", "weak_absolute_humidity_delta", "Absoluter Feuchteanstieg · g/m³"],
+      ["Aufgusserkennung", "infusion_absolute_humidity_delta", "Absoluter Feuchteanstieg · g/m³"],
       ["Lüftungserkennung", "ventilation_temperature_loss", "Temperaturverlust · °C"],
       [
         "Lüftungserkennung",
@@ -8258,10 +8730,72 @@ class SaunaPanel extends HTMLElement {
         (v) => v * 100,
       ],
     ];
-    // The session snapshot is the effective configuration for archived data.
-    // Older sessions fall back to the current state when no snapshot exists.
+  }
+  diagnosticSelectionMarkup(traces) {
+    const event = this.eventNavigation().find((item) => item.event_id === this.highlightedEventId),
+      linked = event && this.diagnosticTraceForEvent(traces, event),
+      trace = linked || (traces.includes(this.selectedDiagnosticTrace) ? this.selectedDiagnosticTrace : null) || traces.find((item) => item.at === this.selectedDiagnosticTraceAt) ||
+        (!event ? traces[0] : null);
+    if (!trace)
+      return `<section id="diagnostic-selection" class="diagnostic-selection-context" aria-live="polite"><h3>Erkennungsnachweis</h3><p>${event ? "Für dieses Ereignis fehlt der gespeicherte Erkennungsnachweis." : "Noch keine gespeicherten Erkennungswerte."}</p></section>`;
+    this.selectedDiagnosticTraceAt = trace.at;
+    this.selectedDiagnosticTrace = trace;
+    const index = traces.indexOf(trace),
+      configurationModel = this.historyConfigurationModel(),
+      definitions = new Map(this.diagnosticMetricDefinitions().map((definition) => [definition[1], definition])),
+      labels = { ...signalText, ventilation: "Lüftung", ventilation_context: "Durchlüften bestätigt", ventilation_recovery: "Temperaturerholung", ventilation_temperature_drop: "Temperaturverlust ausreichend", ventilation_water_loss: "Wasserverlust ausreichend", ventilation_time_held: "Mindestdauer erreicht", ventilation_sources_coherent: "Messquellen durchgängig", ventilation_proven: "Durchlüften belegt" },
+      value = (item, key, kind) => {
+        if (item == null) return kind === "conditions" ? "Nicht geprüft" : "Nicht gespeichert";
+        if (kind === "checks" && typeof item === "boolean") return item ? "Prüfung aktiv" : "Nicht geprüft";
+        if (kind === "conditions" && typeof item === "boolean") return item ? "Erfüllt" : "Nicht erfüllt";
+        if (kind === "holds" && typeof item === "number") return `${num(item, 0)} Prüfpunkte`;
+        if (typeof item === "boolean") return item ? "Ja" : "Nein";
+        const definition = definitions.get(key);
+        if (definition && typeof item === "number") {
+          const converted = definition[3] ? definition[3](item) : item;
+          return `${num(converted, 2)} ${definition[2].split(" · ").at(-1)}`;
+        }
+        if (typeof item === "number") return num(item, 2);
+        return String(item);
+      },
+      label = (key) => {
+        const definition = definitions.get(key);
+        return definition ? `${definition[0]} · ${definition[2].split(" · ")[0]}` :
+          (labels[key] ? `${labels[key]}${configurationModel?.presence?.direct && ["strong", "weak"].includes(key) ? " (nicht führende Personenquelle)" : ""}` : this.detailFieldLabel?.(key) || key.replaceAll("_", " "));
+      },
+      entries = (items, kind) => Object.entries(items || {}).map(([key, item]) =>
+        `<dt data-key="label:${esc(key)}">${esc(label(key))}</dt><dd data-key="value:${esc(key)}">${item && typeof item === "object" ? `<dl>${entries(item, kind)}</dl>` : esc(value(item, key, kind))}</dd>`,
+      ).join("") || "<dt>Angaben</dt><dd>Nicht gespeichert</dd>",
+      groups = [
+        ["Prüfungen", trace.checks, "checks"],
+        ["Bedingungen erfüllt", trace.conditions, "conditions"],
+        ["Prüfpunkte", trace.holds, "holds"],
+        ...(Object.hasOwn(trace, "readiness") ? [["Bereitschaft", trace.readiness]] : []),
+        ...["upper", "lower"].filter((position) =>
+          configurationModel?.measurement_positions?.includes(position) ||
+          Object.hasOwn(trace.metrics || {}, position),
+        ).map((position) => [position === "upper" ? "Messwerte oben" : "Messwerte unten", trace.metrics?.[position]]),
+        ["Weitere Daten", Object.fromEntries(Object.entries(trace).filter(([key]) =>
+          !["at", "checks", "conditions", "holds", "readiness", "metrics", "signals", "channels"].includes(key),
+        ))],
+      ];
+    return `<section id="diagnostic-selection" class="diagnostic-selection-context" tabindex="-1" data-trace-at="${esc(trace.at)}"><h3>Erkennungsnachweis · ${when(trace.at)}</h3><p id="diagnostic-selection-label" aria-live="polite">${event ? esc(events[event.kind] || event.kind) : "Gespeicherter Prüfzeitpunkt"} · ${esc((trace.channels || []).map((position) => position === "upper" ? "oben" : position === "lower" ? "unten" : position).join(", ") || "Keine Messhöhe gespeichert")}${event ? ` <button data-action="event-history:${esc(event.event_id)}">Ereignis im Verlauf</button>` : ""}</p><div class="diagnostic-trace-navigation"><button data-action="diagnostic-trace:previous" ${index <= 0 ? "disabled" : ""} aria-label="Vorheriger Erkennungsnachweis">←</button><input id="diagnostic-trace-index" type="range" min="0" max="${traces.length - 1}" step="1" value="${index}" aria-label="Gespeicherten Erkennungszeitpunkt auswählen" aria-valuetext="${esc(when(trace.at))}"><button data-action="diagnostic-trace:next" ${index >= traces.length - 1 ? "disabled" : ""} aria-label="Nächster Erkennungsnachweis">→</button><span>${index + 1} / ${traces.length}</span></div><p>Signale: ${esc((trace.signals || []).map((key) => events[key] || key).join(", ") || "Keine")}</p>${groups.map(([label, items, kind]) => `<details id="diagnostic-values-${esc(label.toLowerCase().replaceAll(" ", "-"))}"><summary>${label}</summary><dl>${entries(items, kind)}</dl></details>`).join("")}</section>`;
+  }
+  drawDiagnostics() {
+    if (!this.state?.permissions?.admin) {
+      this.updateMarkup("#detection-plots", "");
+      return;
+    }
+    if (!this.shown) {
+      this.updateMarkup("#detection-plots", "<p>Keine Saunasitzung ausgewählt.</p>");
+      return;
+    }
+    const traces = this.diagnosticData().traces;
+    const groups = this.diagnosticMetricDefinitions();
+    // Archived thresholds are only those actually saved with the session.
     const parameters = this.diagnosticsParameters();
     const thresholds = (metric, position) => {
+      if (["strong_temperature_slope", "weak_temperature_slope", "infusion_temperature_delta"].includes(metric)) return [];
       if (metric === "door_temperature_slope")
         return [
           parameters.door_open_slope,
@@ -8281,11 +8815,19 @@ class SaunaPanel extends HTMLElement {
     const [start, end] = this.window;
     const detectionPlots = this.$("#detection-plots");
     let html =
-      '<details><summary>Hinweise zur Erkennung</summary><p class="muted">Die Kurven zeigen die gespeicherten Erkennungswerte, die gestrichelten Linien die zugehörigen Schwellen. Ein Grenzübertritt löst erst dann ein Ereignis aus, wenn auch die übrigen Bedingungen erfüllt sind. Die Gangerkennung läuft auch während der Ofenkühlung weiter. Weitere Aufgüsse werden im Gang weiter erkannt.</p></details>';
+      '<details id="diagnostic-help"><summary>Hinweise zur Erkennung</summary><p class="muted">Die Kurven zeigen die gespeicherten Erkennungswerte, die gestrichelten Linien die zugehörigen gespeicherten Schwellen. Ein Grenzübertritt löst erst dann ein Ereignis aus, wenn auch die übrigen Bedingungen erfüllt sind. Ein Marker hebt seinen Erkennungsnachweis hervor. Die Gangerkennung läuft auch während der Ofenkühlung weiter. Weitere Aufgüsse werden im Gang weiter erkannt.</p></details>';
+    const configurationModel = this.historyConfigurationModel(),
+      configuredPositions = configurationModel?.measurement_positions || [],
+      presenceCaption = !configurationModel ? "Die damalige Anlagenkonfiguration ist nicht gespeichert. Es werden die aufgezeichneten Merkmale gezeigt." : configurationModel.presence?.direct
+        ? "Personenquelle: Präsenzsensor mit Türereignis. Gespeicherte indirekte Personenmerkmale bleiben als ergänzende Daten sichtbar."
+        : "Personenquelle: Temperatur und Feuchte. Gespeicherte Prüfungen belegen, welche Erkennungswege zum jeweiligen Zeitpunkt aktiv waren.";
+    html += `<p class="muted" id="diagnostic-configuration">${presenceCaption}${configuredPositions.length ? ` Konfigurierte Messhöhen: ${configuredPositions.map((position) => position === "upper" ? "oben" : "unten").join(", ")}.` : ""}</p>`;
+    if (!Object.keys(parameters).length)
+      html += '<p class="muted" id="diagnostic-threshold-status">Für diese Sitzung sind keine historischen Schwellen gespeichert. Aktuelle Einstellungen werden nicht als damalige Schwellen angezeigt.</p>';
     if (!traces.length) {
-      this.$("#detection-plots").innerHTML =
-        html +
-        "<p>Für diese Saunasitzung liegen keine gespeicherten Erkennungsverläufe vor.</p>";
+      this.updateMarkup("#detection-plots", html +
+        "<p>Für diese Saunasitzung liegen keine gespeicherten Erkennungsverläufe vor.</p>");
+      this.pendingEventFocus = null;
       return;
     }
     const availableWidth = detectionPlots?.getBoundingClientRect?.().width || 640;
@@ -8298,7 +8840,10 @@ class SaunaPanel extends HTMLElement {
       plotRight = chartWidth - 25;
     const chartX = (t) =>
       plotLeft + ((stamp(t) - start) / (end - start)) * (plotRight - plotLeft);
-    html += '<div class="diagnostic-grid">';
+    const selectedEvent = this.eventNavigation().find((event) => event.event_id === this.highlightedEventId),
+      selectedRoute = this.diagnosticRoute(selectedEvent),
+      selectedTrace = selectedEvent && this.diagnosticTraceForEvent(traces, selectedEvent);
+    html += '<div class="diagnostic-grid" id="diagnostic-charts">';
     const visibleTraces = traces.filter((trace) => {
       const time = stamp(trace.at);
       return Number.isFinite(time) && time >= start && time <= end;
@@ -8311,10 +8856,8 @@ class SaunaPanel extends HTMLElement {
       // Pre-ventilation archives do not have these metrics.  Do not show an
       // empty zero line that could be mistaken for a measured loss.
       if (!vals.length) continue;
-      const lines = [
-        ...thresholds(metric, "upper"),
-        ...thresholds(metric, "lower"),
-      ].filter(Number.isFinite);
+      const positions = ["upper", "lower"].filter((position) => visibleTraces.some((trace) => Number.isFinite(trace.metrics?.[position]?.[metric]))),
+        lines = positions.flatMap((position) => thresholds(metric, position)).filter(Number.isFinite);
       const chartVals = vals.map(convert),
         chartLines = lines.map(convert);
       const [min, max] = [...chartVals, ...chartLines].reduce(
@@ -8333,10 +8876,10 @@ class SaunaPanel extends HTMLElement {
       let chart =
         '<svg class="chart detector-chart" viewBox="0 0 ' +
         chartWidth +
-        ' 200" role="img" aria-label="' +
+        ' 200" role="group" aria-label="' +
         esc(group + " " + label) +
         '">';
-      for (const pos of ["upper", "lower"]) {
+      for (const pos of positions) {
         let path = "",
           last = null;
         for (const t of visibleTraces) {
@@ -8349,10 +8892,13 @@ class SaunaPanel extends HTMLElement {
             time > end
           )
             continue;
-          path += `${last == null || time - last > parameters.person_step_seconds * 1000 ? "M" : "L"}${chartX(t.at).toFixed(2)},${y(convert(v)).toFixed(2)} `;
+          const point = `${chartX(t.at).toFixed(2)},${y(convert(v)).toFixed(2)}`;
+          path += !Number.isFinite(parameters.person_step_seconds) || last == null || time - last > parameters.person_step_seconds * 1000
+            ? `M${point}l0,0 `
+            : `L${point} `;
           last = time;
         }
-        chart += `<path class="${pos} ${quantity}" data-series="detector_${metric}_${pos}" d="${path}"/>`;
+        chart += `<path class="${pos} ${quantity}" data-series="detector_${metric}_${pos}" d="${path}" stroke-linecap="round"/>`;
         for (const v of thresholds(metric, pos).filter(Number.isFinite)) {
           const display = convert(v);
           chart += `<line x1="${plotLeft}" x2="${plotRight}" y1="${y(display)}" y2="${y(display)}" stroke="var(--sauna-color-chart-threshold)" stroke-dasharray="4 5"><title>Schwelle ${pos === "upper" ? "oben" : "unten"}: ${num(display, 2)}</title></line>`;
@@ -8363,46 +8909,31 @@ class SaunaPanel extends HTMLElement {
           t = start + ((end - start) * n) / 4;
         chart += `<text class="axis-${quantity}" x="4" y="${y(v) + 4}">${num(v, 1)}</text><text text-anchor="middle" x="${chartX(t)}" y="192">${clock(t)}</text>`;
       }
+      if (selectedRoute?.[0] === metric && selectedTrace) {
+        const time = stamp(selectedTrace.at), x = chartX(time);
+        if (time >= start && time <= end)
+          chart += `<rect class="diagnostic-selection-band" x="${Math.max(plotLeft, x - 8)}" y="20" width="16" height="145"/><line class="diagnostic-selection-guide" x1="${x}" x2="${x}" y1="20" y2="165"/>`;
+      }
       chart += markerLayout.markers
         .map((marker) => {
           const eventX = chartX(marker.at),
             pointX = chartX(marker.pointAt),
             pointY = y(convert(marker.value)),
             labelY = Math.max(14, pointY - 10 - marker.lane * 13);
-          return `<g class="event-marker diagnostic-marker" tabindex="0" role="button" data-action="event-marker:${esc(marker.event.event_id)}" data-event-id="${esc(marker.event.event_id)}" data-selected="false" aria-label="${esc(events[marker.event.kind] || marker.event.kind)}, ${when(marker.event.effective_at || marker.event.detected_at)} · ${marker.position === "upper" ? "oben" : "unten"}"><line class="event-marker-link" x1="${eventX.toFixed(2)}" y1="${pointY.toFixed(2)}" x2="${pointX.toFixed(2)}" y2="${pointY.toFixed(2)}"/><circle class="event-marker-point" cx="${pointX.toFixed(2)}" cy="${pointY.toFixed(2)}" r="2.5"/><circle class="event-marker-dot" cx="${eventX.toFixed(2)}" cy="${pointY.toFixed(2)}" r="5"/><text class="event-marker-label" text-anchor="middle" x="${eventX.toFixed(2)}" y="${labelY.toFixed(2)}">${marker.index + 1}</text></g>`;
+          return `<g class="event-marker diagnostic-marker" tabindex="0" role="button" data-action="event-marker:${esc(marker.event.event_id)}" data-event-id="${esc(marker.event.event_id)}" data-selected="${marker.event.event_id === this.highlightedEventId}" aria-pressed="${marker.event.event_id === this.highlightedEventId}" aria-label="${esc(events[marker.event.kind] || marker.event.kind)}, ${when(marker.event.effective_at || marker.event.detected_at)} · ${marker.position === "upper" ? "oben" : "unten"}"><line class="event-marker-link" x1="${eventX.toFixed(2)}" y1="${pointY.toFixed(2)}" x2="${pointX.toFixed(2)}" y2="${pointY.toFixed(2)}"/><circle class="event-marker-point" cx="${pointX.toFixed(2)}" cy="${pointY.toFixed(2)}" r="2.5"/><circle class="event-marker-dot" cx="${eventX.toFixed(2)}" cy="${pointY.toFixed(2)}" r="5"/><text class="event-marker-label" text-anchor="middle" x="${eventX.toFixed(2)}" y="${labelY.toFixed(2)}">${marker.index + 1}</text></g>`;
         })
         .join("");
       chart += "</svg>";
-      html += `<div class="plot-panel"><h3>${group} · <span style="color:var(--sauna-color-series-${quantity})">${label}</span></h3><div class="legend diagnostic-legend" style="color:var(--sauna-color-series-${quantity})"><span>━━ Oben</span><span>┄┄ Unten</span></div>${chart}</div>`;
+      const selectedMarker = markerLayout.markers.find((marker) => marker.event.event_id === this.highlightedEventId),
+        context = selectedMarker
+          ? `${esc(events[selectedMarker.event.kind] || selectedMarker.event.kind)} · Prüfung ${when(selectedMarker.pointAt)} · ${selectedMarker.position === "upper" ? "oben" : "unten"}: ${num(convert(selectedMarker.value), 2)} ${esc(label.split(" · ").at(-1))} <button data-action="diagnostic-inspect:${metric}">Prüfbedingungen</button>`
+          : "";
+      html += `<div class="plot-panel" data-key="diagnostic:${metric}" data-diagnostic-metric="${metric}" data-selected="${selectedRoute?.[0] === metric && !!selectedTrace}"><h3>${group} · <span style="color:var(--sauna-color-series-${quantity})">${label}</span></h3><p class="diagnostic-chart-context" data-key="context:${metric}" ${context ? "" : "hidden"}>${context}</p><div class="legend diagnostic-legend" style="color:var(--sauna-color-series-${quantity})">${positions.map((position) => `<span>${position === "upper" ? "━━ Oben" : "┄┄ Unten"}</span>`).join("")}</div>${chart}</div>`;
     }
-    html +=
-      '</div><div class="card"><h2>Erkennungsbedingungen und Bestätigung</h2><div class="scroll"><table><thead><tr><th>Zeit</th><th>Aktive Prüfungen</th><th>Bedingungen erfüllt</th><th>Erfüllte Prüfpunkte</th><th>Ausgelöste Signale</th></tr></thead><tbody>' +
-      traces
-        .filter((t) => t.signals.length)
-        .map(
-          (t) =>
-            `<tr><td>${when(t.at)}</td><td>${esc(
-              t.checks
-                ? Object.entries(t.checks)
-                    .filter(([, v]) => v)
-                    .map(([k]) => signalText[k] || "Erkennung")
-                    .join(", ")
-                : "Keine Angabe in älteren Daten",
-            )}</td><td>${esc(
-              Object.entries(t.conditions)
-                .filter(([, v]) => v)
-                .map(([k]) => signalText[k] || "Erkennungsbedingung")
-                .join(", "),
-            )}</td><td>${esc(
-              Object.entries(t.holds)
-                .filter(([, v]) => Number(v) > 0)
-                .map(([k, v]) => `${signalText[k] || "Signal"}: ${num(v)} Prüfpunkte`)
-                .join(" · "),
-            )}</td><td>${esc(t.signals.map((k) => events[k] || k).join(", "))}</td></tr>`,
-        )
-        .join("") +
-      "</tbody></table></div></div>";
-    this.$("#detection-plots").innerHTML = html;
+    html += "</div>" + this.diagnosticSelectionMarkup(traces);
+    this.updateMarkup("#detection-plots", html);
+    if (this.highlightedEventId && this.shadowRoot?.querySelectorAll)
+      this.highlightEvent(this.highlightedEventId, false);
     this.revealEventTarget("marker");
   }
   settingsParameterGroup({ id }) {
@@ -9211,7 +9742,7 @@ class SaunaPanel extends HTMLElement {
       ["#history", !["history", "diagnostics"].includes(view)],
       ["#settings", view !== "settings"],
       ["#control-history", !(main === "details" && detail === "detail-history")],
-      ["#history-inspection", main === "details" && detail === "detail-history"],
+      ["#history-inspection", main === "details"],
       [".history-plot-frame", main === "details" && detail === "detail-history"],
       [".history-readout", main === "details"],
       ["#history-legends", main === "details"],
@@ -9514,6 +10045,20 @@ class SaunaPanel extends HTMLElement {
     }
   }
   async action(action) {
+    if (action === "detail-follow" || action.startsWith("detail-record-page:") || action.startsWith("detail-event-page:")) {
+      if (!this.state?.permissions?.admin || !this.shown) return;
+      if (action === "detail-follow") {
+        this.controlHistoryEnd = Math.max(stamp(this.shown.session.timeline.session_started_at) + 1000, stamp(this.shown.session.ended_at || this.state.now));
+        this.controlHistoryCursor = this.controlHistoryEnd;
+      } else {
+        const page = Number(action.slice(action.indexOf(":") + 1));
+        if (!Number.isInteger(page)) return;
+        if (action.startsWith("detail-event-page:")) this.detailEventPage = Math.max(0, page);
+        else this.detailRecordPage = Math.max(0, page);
+      }
+      this.renderControlHistory();
+      return;
+    }
     if (action === "fullscreen") return this.toggleFullscreen();
     if (action === "menu") {
       if (!this.isPanelFullscreen() || !this.hasHomeAssistantNavigation()) return;
@@ -9623,19 +10168,48 @@ class SaunaPanel extends HTMLElement {
     if (action.startsWith("event-marker:")) {
       if (!permissions.admin) return;
       const eventId = action.slice(13);
-      this.historyDetail = false;
-      this.positions = new Set([this.historyPrimaryPosition()]);
-      this.pendingEventFocus = { kind: "row", eventId };
-      this.setPanelView("history", true);
-      this.focusEvent(eventId, true);
+      this.pendingEventFocus = { kind: "marker", eventId, sessionId: this.shown?.session.timeline.session_id };
+      this.setPanelView("diagnostics", true);
+      this.focusEvent(eventId);
       return;
     }
     if (action.startsWith("event-row:")) {
       if (!permissions.admin) return;
       const eventId = action.slice(10);
-      this.pendingEventFocus = { kind: "marker", eventId };
+      this.pendingEventFocus = { kind: "marker", eventId, sessionId: this.shown?.session.timeline.session_id };
       this.setPanelView("diagnostics", true);
       this.focusEvent(eventId);
+      return;
+    }
+    if (action.startsWith("event-history:")) {
+      if (!permissions.admin) return;
+      const eventId = action.slice("event-history:".length);
+      this.historyDetail = false;
+      this.positions = new Set([this.historyPrimaryPosition()]);
+      this.pendingEventFocus = { kind: "row", eventId, sessionId: this.shown?.session.timeline.session_id };
+      this.setPanelView("history", true);
+      this.focusEvent(eventId, true);
+      return;
+    }
+    if (action.startsWith("diagnostic-inspect:")) {
+      if (!permissions.admin) return;
+      const target = this.$("#diagnostic-selection");
+      target?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+      target?.focus?.({ preventScroll: true });
+      return;
+    }
+    if (action.startsWith("diagnostic-trace:")) {
+      if (!permissions.admin) return;
+      const traces = this.diagnosticData().traces,
+        index = traces.includes(this.selectedDiagnosticTrace) ? traces.indexOf(this.selectedDiagnosticTrace) : traces.findIndex((trace) => trace.at === this.selectedDiagnosticTraceAt),
+        next = Math.max(0, Math.min(traces.length - 1, index + (action.endsWith(":previous") ? -1 : 1)));
+      if (traces[next]) {
+        this.selectedDiagnosticTrace = traces[next];
+        this.selectedDiagnosticTraceAt = traces[next].at;
+        this.highlightedEventId = null;
+        this.pendingEventFocus = null;
+        this.drawDiagnostics();
+      }
       return;
     }
     if (action === "details") return this.action(this.navigation?.detail || "detail");

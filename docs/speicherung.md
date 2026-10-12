@@ -52,6 +52,33 @@ bleiben erhalten.
 Der Normalverlauf verwendet die führende Messposition der Regelung.
 Diagnoseansichten sind Administratoren vorbehalten und verwenden die zur Sitzung
 gespeicherten Einstellungen.
+Verfügbare Messpositionen, Präsenzquelle und Rückmeldequellen folgen dem gemeinsamen
+Anlagenmodell. Die Liveansicht verwendet die aktuelle Zuordnung, eine archivierte
+Sitzung ihren gespeicherten Aufbau. Fehlt dieser in älteren Daten, bleibt die
+Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
+
+Die Auswahl bezeichnet Aufzeichnungen mit Datum und Zeitspanne. Der Betriebsverlauf
+ordnet Messungen, Regelentscheidungen, Bedienhandlungen und Geräteausgaben nach
+ihrer Herkunft. Heizanforderung, Schützrückmeldung und beobachtete Heizung bleiben
+unterscheidbar; fehlende Rückmeldungen gelten nicht als ausgeschalteter Zustand.
+
+Erfolgreiche Lichtstellfolgen erscheinen zusammengefasst mit Beginn und letztem
+belegtem Wert. Phasenwechsel, Bedienhandlungen, Ausschalten und Fehler begrenzen
+die Abschnitte. Ein letzter Stellbefehl belegt allein kein abgeschlossenes
+Lichtprogramm. Einzelbefehle bleiben zugänglich; Fehler werden einzeln angezeigt.
+Der Fehlerzähler zählt aufgetretene Störungen, keine fehlerfreien Anfangszustände
+oder Entwarnungen.
+
+Laufende Aufzeichnungen werden im Hintergrund in größeren Abständen ergänzt.
+Nachträge erhalten Zeitfenster, Zoom, Markierungen und offene Abschnitte.
+**Gesamte Saunasitzung** übernimmt den inzwischen erweiterten Zeitraum.
+**Wird geladen** kennzeichnet den ersten Datenabruf. Bei einem fehlgeschlagenen
+Nachtrag bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
+
+Die Details zeigen gespeicherte Werte mit ihrer Herkunft. Nicht aufgezeichnete
+Messverläufe lassen sich rückwirkend nicht ergänzen; fehlende Angaben erscheinen
+entsprechend gekennzeichnet. Eine Heizbeobachtung bei einem Zustandswechsel ist
+keine fortlaufende Leistungsmessung.
 
 ### Daten und Zeitangaben
 

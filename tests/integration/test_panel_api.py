@@ -534,8 +534,11 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 kinds = {record["kind"] for record in projected["records"]}
                 self.assertIn("measurement", kinds)
                 self.assertIn("detector_trace", kinds)
-                self.assertNotIn("session", kinds)
-                self.assertNotIn("source_state", kinds)
+                self.assertIn("session", kinds)
+                for record in projected["records"]:
+                    if record["kind"] == "session":
+                        self.assertEqual(record["projection"], "session_state")
+                        self.assertNotIn("timeline", record["payload"])
                 self.assertIn("configuration", projected["session"])
             async with client.get(url + "/archive", params={"session_id": session_id, "projection": "invalid"}) as response:
                 self.assertEqual(response.status, 400)

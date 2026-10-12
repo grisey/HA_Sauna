@@ -355,5 +355,5 @@ for (const [reason, label] of [
     operational.html.includes(`>${label}</td>`),
     `${reason} has its German label in the decision history`,
   );
-  assert.ok(!operational.html.includes(reason), `${reason} is not shown as an ID`);
+  assert.ok(!operational.html.split('id="detail-records"')[0].includes(reason), `${reason} is not shown as an ID outside explicit archive fields`);
 }

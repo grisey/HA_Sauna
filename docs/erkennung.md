@@ -87,7 +87,15 @@ Lüftungsreferenz gilt stattdessen die beschriebene Pausenregel. Ein fortlaufend
 
 ### Diagnose im Verlauf
 
-Die Erkennungskontrolle zeigt gespeicherte Merkmale und erfüllte Prüfpunkte.
+Die Erkennungskontrolle zeigt gespeicherte Merkmale und ihre Schwellen.
+Ein Markerklick hebt den zugehörigen Diagrammabschnitt hervor und zeigt den
+auslösenden Erkennungsnachweis. Der Wechsel zur Ereignisliste erfolgt über
+**Ereignis im Verlauf**. Der ausgewählte Prüfzeitpunkt enthält auch unerfüllte
+Bedingungen und Prüfpunkte mit dem Zählerstand 0; fehlende Angaben werden davon
+unterschieden. Weitere gespeicherte Prüfzeitpunkte sind einzeln auswählbar.
+
+Schwellen beziehen sich auf die gespeicherte Sitzungskonfiguration. Fehlt diese
+in älteren Aufzeichnungen, ist der damalige Schwellenwert nicht belegt.
 Haltezähler zählen Prüfpunkte, keine Sekunden; ihr Abstand folgt dem Prüfschritt.
 Ein Ereignis verweist über `trace_at` auf seinen auslösenden Diagnosepunkt.
 Ältere Archive verwenden dafür den fachlichen Ereignisbeginn.

@@ -157,6 +157,12 @@ jobs:
         env:
           ENGINE: chromium
           HISTORY_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/live-history
+      - name: Detailansicht – Zustandserhalt und Marker
+        run: node tests/browser/live_history/details.cjs
+        timeout-minutes: 2
+        env:
+          ENGINE: chromium
+          DETAILS_EVIDENCE: ${{ runner.temp }}/ha-sauna-browser/details
       - name: Sitzungsverlauf – Zoom und Nachträge
         run: node tests/browser/live_history/interaction.cjs
         timeout-minutes: 2

@@ -147,9 +147,11 @@ const parameters = fixtureValues();
     $: (selector) => (selector === "#detection-plots" ? plots : null),
   });
   assert.equal(p.diagnosticTraceForEvent(traces, door), traces[1]);
+  p.highlightedEventId = "door-produced";
   p.drawDiagnostics();
   assert.match(plots.innerHTML, /event-marker:door-produced/);
-  assert.match(plots.innerHTML, /2 Prüfpunkte/);
+  assert.match(plots.innerHTML, /Prüfpunkte/);
+  assert.match(plots.innerHTML, /data-key="value:door_open">2 Prüfpunkte</);
 }
 
 {
@@ -291,7 +293,7 @@ const parameters = fixtureValues();
   );
   assert.match(
     plots.innerHTML,
-    /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62 L[\d.]+,28\.78 "/,
+    /data-series="detector_ventilation_absolute_humidity_loss_upper" d="M[\d.]+,66\.62l0,0 L[\d.]+,28\.78 "/,
   );
   assert.ok(
     plots.innerHTML.includes(
@@ -495,7 +497,8 @@ const parameters = fixtureValues();
   assert.equal(rows[1].scrolled, true);
 }
 
-// Both click actions expose their target before focusing it; nonadmins cannot enter diagnostics.
+// Marker and row actions both reveal the local diagnostic evidence. Returning
+// to the event list is an explicitly labelled separate action.
 {
   const calls = [];
   const p = Object.assign(Object.create(Panel.prototype), {
@@ -507,8 +510,8 @@ const parameters = fixtureValues();
   p.action("event-marker:infusion-8");
   p.action("event-row:door-7");
   assert.deepEqual(calls, [
-    ["view", "history"],
-    ["focus", "infusion-8", true],
+    ["view", "diagnostics"],
+    ["focus", "infusion-8", false],
     ["view", "diagnostics"],
     ["focus", "door-7", false],
   ]);
