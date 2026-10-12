@@ -7,7 +7,9 @@ const vm = require("node:vm");
 
 const panelPath = process.env.PANEL_PATH || "custom_components/ha_sauna/panel.js";
 const document = { hidden: false };
-const frontendDefaults = structuredClone(require("./catalog_fixture.cjs").catalog).frontend;
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).frontend;
 let Panel;
 vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   HTMLElement: class {
@@ -18,7 +20,10 @@ vm.runInNewContext(fs.readFileSync(panelPath, "utf8"), {
   clearTimeout,
   document,
 });
-const turn = () => new Promise((resolve) => setTimeout(resolve, require("./settings_fixture.cjs").setting("browser.poll_ms")));
+const turn = () =>
+  new Promise((resolve) =>
+    setTimeout(resolve, require("./settings_fixture.cjs").setting("browser.poll_ms")),
+  );
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => {

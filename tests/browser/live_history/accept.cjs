@@ -36,7 +36,9 @@ fs.mkdirSync(output, { recursive: true });
     await page.addScriptTag({
       path: path.join(root, "custom_components/ha_sauna/panel.js"),
     });
-    await page.evaluate(value => { window.testSettings = value; }, settings);
+    await page.evaluate((value) => {
+      window.testSettings = value;
+    }, settings);
     await page.addScriptTag({
       path: path.join(root, "tests/browser/live_history/fixture.js"),
     });
@@ -73,7 +75,8 @@ fs.mkdirSync(output, { recursive: true });
         );
       }
       assert(
-        f.panel.shown.records.length === f.initialRecordCount + f.inputs.accept_updates * f.recordsPerTick,
+        f.panel.shown.records.length ===
+          f.initialRecordCount + f.inputs.accept_updates * f.recordsPerTick,
         "all eight records retained per update",
       );
       assert(
@@ -105,7 +108,11 @@ fs.mkdirSync(output, { recursive: true });
       assert(
         f.panel.chartDataIndex.series
           .get("upper:temperature")
-          .some((point) => point.time === Date.parse(at) && point.value === f.inputs.late_temperature),
+          .some(
+            (point) =>
+              point.time === Date.parse(at) &&
+              point.value === f.inputs.late_temperature,
+          ),
         "the late value is available at its original measurement time",
       );
       assert(
@@ -340,7 +347,9 @@ fs.mkdirSync(output, { recursive: true });
     assert.deepEqual(p.errors, []);
     await p.close();
   }
-  const lifecycle = await fixture({ seconds: settings.fixtures.history.lifecycle_duration_seconds });
+  const lifecycle = await fixture({
+    seconds: settings.fixtures.history.lifecycle_duration_seconds,
+  });
   results.push(
     await lifecycle.evaluate(async () => {
       const p = f.panel;
@@ -360,11 +369,14 @@ fs.mkdirSync(output, { recursive: true });
       };
       await p.refresh();
       const load = p.historyLoad?.promise;
-      await new Promise((resolve) => setTimeout(resolve, testSettings.browser.settle_ms));
+      await new Promise((resolve) =>
+        setTimeout(resolve, testSettings.browser.settle_ms),
+      );
       if (p.busy || p.cache.get("synthetic").records.length < f.inputs.page_size)
         throw Error("partial data not usable");
       await load;
-      if (p.cache.get("synthetic").after !== f.inputs.page_size) throw Error("failed page cursor");
+      if (p.cache.get("synthetic").after !== f.inputs.page_size)
+        throw Error("failed page cursor");
       await p.refresh();
       await p.historyLoad?.promise;
       await f.settle();
@@ -382,7 +394,9 @@ fs.mkdirSync(output, { recursive: true });
         timeline: { ...f.session.timeline, session_id: "new" },
       };
       p.api = (path) =>
-        path.split("?")[0].endsWith("/state") ? Promise.resolve(newState) : original(path);
+        path.split("?")[0].endsWith("/state")
+          ? Promise.resolve(newState)
+          : original(path);
       p.selected = "synthetic";
       p.historySelectionGeneration = (p.historySelectionGeneration || 0) + 1;
       await p.refresh();
@@ -426,7 +440,8 @@ fs.mkdirSync(output, { recursive: true });
       p.cache.clear();
       p.state = { ...f.state, session: null };
       p.historySelectionGeneration++;
-      p.api = (path) => Promise.resolve(path.split("?")[0].endsWith("/state") ? p.state : []);
+      p.api = (path) =>
+        Promise.resolve(path.split("?")[0].endsWith("/state") ? p.state : []);
       await p.refresh();
       await p.historyLoad?.promise;
       await f.settle();

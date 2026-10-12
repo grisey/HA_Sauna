@@ -1316,7 +1316,8 @@ test("a pre-save poll is discarded; the next poll may report an external change"
   p.syncNavigation = () => {};
   p.drawSettings = () => {};
   p.api = async (path) => {
-    if (path.split("?")[0].endsWith("/state")) return ++polls === 1 ? oldPoll : external;
+    if (path.split("?")[0].endsWith("/state"))
+      return ++polls === 1 ? oldPoll : external;
     return {
       parameters: {
         target_temperature_c: 75,

@@ -7,7 +7,9 @@ const {
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const frontendDefaults = structuredClone(require("./catalog_fixture.cjs").catalog).frontend;
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).frontend;
 
 let Panel;
 const sandbox = {

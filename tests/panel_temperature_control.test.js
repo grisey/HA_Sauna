@@ -9,7 +9,9 @@ const {
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const frontendDefaults = structuredClone(require("./catalog_fixture.cjs").catalog).frontend;
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).frontend;
 
 let Panel;
 const sandbox = {
@@ -33,7 +35,9 @@ const sandbox = {
   clearTimeout,
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
-const appearanceCatalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
+const appearanceCatalog = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).appearance;
 vm.runInNewContext(source, sandbox);
 
 assert.match(source, /data-target-arc/);

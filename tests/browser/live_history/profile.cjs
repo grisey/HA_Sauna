@@ -33,7 +33,9 @@ fs.mkdirSync(output, { recursive: true });
   await page.addScriptTag({
     path: path.join(root, "custom_components/ha_sauna/panel.js"),
   });
-  await page.evaluate(value => { window.testSettings = value; }, settings);
+  await page.evaluate((value) => {
+    window.testSettings = value;
+  }, settings);
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
@@ -119,7 +121,16 @@ fs.mkdirSync(output, { recursive: true });
     };
   });
   assert.deepEqual(errors, []);
-  assert.equal(result.records, settings.fixtures.history.duration_seconds * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length + settings.fixtures.history.profile_updates * settings.fixtures.history.samples_per_tick * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length);
+  assert.equal(
+    result.records,
+    settings.fixtures.history.duration_seconds *
+      settings.fixtures.history.positions.length *
+      settings.fixtures.history.quantities.length +
+      settings.fixtures.history.profile_updates *
+        settings.fixtures.history.samples_per_tick *
+        settings.fixtures.history.positions.length *
+        settings.fixtures.history.quantities.length,
+  );
   assert.ok(Object.values(result.identity).every(Boolean));
   assert.equal(result.phaseCounts["curves.buildMainPath"] || 0, 0);
   assert.match(result.tooltip, /Temperatur:.*°C/);

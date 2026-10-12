@@ -19,7 +19,9 @@ def outputs():
         key: math.ceil(seconds / 60)
         for key, seconds in values["settings"]["timeouts_s"].items()
     }
-    derived = json.loads((ROOT / "tests/scenario_manifest.json").read_text())["scenarios"]
+    derived = json.loads((ROOT / "tests/scenario_manifest.json").read_text())[
+        "scenarios"
+    ]
     replays = json.loads((ROOT / "tests/replay_manifest.json").read_text())["sessions"]
     values["cases"] = [case["id"] for case in derived + replays]
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
@@ -30,12 +32,18 @@ def outputs():
 def install_ha():
     # requirements.txt is the sole version lock for every HA/browser job.
     names = {"homeassistant", "securetar", "cronsim"}
-    requirements = [line.strip() for line in (ROOT / "tests/browser/requirements.txt").read_text().splitlines()]
+    requirements = [
+        line.strip()
+        for line in (ROOT / "tests/browser/requirements.txt").read_text().splitlines()
+    ]
     packages = [line for line in requirements if line.split("==")[0] in names]
     if len(packages) != len(names):
         raise ValueError("Incomplete or duplicate Home Assistant dependency pins")
-    subprocess.run([sys.executable, "-m", "pip", "install", *packages], check=True,
-                   timeout=timeout("install_python"))
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", *packages],
+        check=True,
+        timeout=timeout("install_python"),
+    )
 
 
 if __name__ == "__main__":

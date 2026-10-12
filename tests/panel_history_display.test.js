@@ -7,7 +7,9 @@ const {
   parameterDefinition: fixtureDefinition,
 } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
-const appearanceCatalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
+const appearanceCatalog = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
 const curveStyles = {

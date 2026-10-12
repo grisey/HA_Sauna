@@ -7,14 +7,36 @@ const {
   parameterDefinition: fixtureDefinition,
 } = require("./catalog_fixture.cjs");
 const fs = require("node:fs");
-const appearanceCatalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
+const appearanceCatalog = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).appearance;
 const color = (id) =>
   appearanceCatalog.colors.find((item) => item.id === id).default.toLowerCase();
 const curveStyles = {
-  "upper:temperature": { stroke: color("series_temperature"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
-  "lower:temperature": { stroke: color("series_temperature"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
-  "upper:humidity": { stroke: color("series_humidity"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
-  "lower:humidity": { stroke: color("series_humidity"), lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default, globalAlpha: 1, lineDash: [] },
+  "upper:temperature": {
+    stroke: color("series_temperature"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
+  "lower:temperature": {
+    stroke: color("series_temperature"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
+  "upper:humidity": {
+    stroke: color("series_humidity"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
+  "lower:humidity": {
+    stroke: color("series_humidity"),
+    lineWidth: appearanceCatalog.preferences.chart_curve_width_px.default,
+    globalAlpha: 1,
+    lineDash: [],
+  },
 };
 const vm = require("node:vm");
 

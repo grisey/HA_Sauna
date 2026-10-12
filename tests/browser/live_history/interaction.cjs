@@ -16,8 +16,12 @@ const { webkit, chromium } = require("playwright");
 const root = path.resolve(process.env.HA_SAUNA_ROOT || process.cwd());
 const defaults = structuredClone(fixtureCatalog);
 const engine = process.env.ENGINE || settings.browser.engine;
-const steps = Number(process.env.INPUT_STEPS || settings.fixtures.history.interaction_steps);
-const tickEvery = Number(process.env.TICK_EVERY || settings.fixtures.history.tick_every);
+const steps = Number(
+  process.env.INPUT_STEPS || settings.fixtures.history.interaction_steps,
+);
+const tickEvery = Number(
+  process.env.TICK_EVERY || settings.fixtures.history.tick_every,
+);
 const output = path.resolve(
   process.env.INTERACTION_EVIDENCE ||
     path.join(require("node:os").tmpdir(), "ha-sauna-smooth", "interaction.json"),
@@ -78,7 +82,9 @@ async function addFixture(page) {
   await page.addScriptTag({
     path: path.join(root, "custom_components/ha_sauna/panel.js"),
   });
-  await page.evaluate(value => { window.testSettings = value; }, settings);
+  await page.evaluate((value) => {
+    window.testSettings = value;
+  }, settings);
   await page.addScriptTag({
     path: path.join(root, "tests/browser/live_history/fixture.js"),
   });
@@ -86,7 +92,9 @@ async function addFixture(page) {
     window.f = await window.installHistoryFixture({ defaults });
     window.f.assertClean();
     if (window.f.records.length !== f.initialRecordCount)
-      throw Error(`fixture expected ${f.initialRecordCount} records, got ${window.f.records.length}`);
+      throw Error(
+        `fixture expected ${f.initialRecordCount} records, got ${window.f.records.length}`,
+      );
   }, defaults);
 }
 
@@ -199,7 +207,11 @@ async function installInstrumentation(page) {
     root.addEventListener("pointermove", record, true);
     root.addEventListener("wheel", record, true);
     bench.latestId = () => bench.nextEventId;
-    bench.waitForRender = (afterId, type, timeoutMs = testSettings.browser.timeouts_ms.render) =>
+    bench.waitForRender = (
+      afterId,
+      type,
+      timeoutMs = testSettings.browser.timeouts_ms.render,
+    ) =>
       new Promise((resolve, reject) => {
         const deadline = performance.now() + timeoutMs;
         const check = () => {
@@ -485,7 +497,16 @@ async function runCase(browser) {
     await installInstrumentation(page);
     const input = await runInputSequence(page);
     const raw = await page.evaluate(() => window.__historyInteractionBench.summary());
-    if (raw.records !== settings.fixtures.history.duration_seconds * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length + input.ticks.length * settings.fixtures.history.samples_per_tick * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length)
+    if (
+      raw.records !==
+      settings.fixtures.history.duration_seconds *
+        settings.fixtures.history.positions.length *
+        settings.fixtures.history.quantities.length +
+        input.ticks.length *
+          settings.fixtures.history.samples_per_tick *
+          settings.fixtures.history.positions.length *
+          settings.fixtures.history.quantities.length
+    )
       throw Error(
         `expected 8 retained measurement records per live tick; got ${raw.records}`,
       );
@@ -542,7 +563,10 @@ async function runCase(browser) {
         browserVersion: browser.version(),
         panel: path.join(root, "custom_components/ha_sauna/panel.js"),
         fixture: path.join(root, "tests/browser/live_history/fixture.js"),
-        recordsPerInitialCase: settings.fixtures.history.duration_seconds * settings.fixtures.history.positions.length * settings.fixtures.history.quantities.length,
+        recordsPerInitialCase:
+          settings.fixtures.history.duration_seconds *
+          settings.fixtures.history.positions.length *
+          settings.fixtures.history.quantities.length,
         inputStepsPerStream: steps,
         tickEvery,
         notes: [

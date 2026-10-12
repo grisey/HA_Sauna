@@ -97,7 +97,8 @@ const makePanel = ({ admin = true, locked = false } = {}) => {
     "one reset POST is sent",
   );
   assert.equal(
-    test.calls.filter(([path]) => path === "/entry-1/state?include_catalog=false").length,
+    test.calls.filter(([path]) => path === "/entry-1/state?include_catalog=false")
+      .length,
     2,
     "waits through stale log and program state until defaults are loaded",
   );

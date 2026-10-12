@@ -1,16 +1,26 @@
 /* Synthetic transport only: every panel render/index/gesture method is real. */
-window.installHistoryFixture = async function ({ seconds, defaults, settings = window.testSettings } = {}) {
+window.installHistoryFixture = async function ({
+  seconds,
+  defaults,
+  settings = window.testSettings,
+} = {}) {
   const inputs = settings.fixtures.history;
   seconds = seconds ?? inputs.duration_seconds;
-  const initialRecordCount = seconds * inputs.positions.length * inputs.quantities.length;
-  const recordsPerTick = inputs.samples_per_tick * inputs.positions.length * inputs.quantities.length;
+  const initialRecordCount =
+    seconds * inputs.positions.length * inputs.quantities.length;
+  const recordsPerTick =
+    inputs.samples_per_tick * inputs.positions.length * inputs.quantities.length;
   const host = document.createElement("div");
   document.body.append(host);
   const outer = host.attachShadow({ mode: "open" });
-  outer.innerHTML =
-    `<div id="scroll" style="height:${inputs.outer_height_px}px;overflow:auto"><div id="content"></div><div style="height:${inputs.outer_tail_px}px"></div></div>`;
+  outer.innerHTML = `<div id="scroll" style="height:${inputs.outer_height_px}px;overflow:auto"><div id="content"></div><div style="height:${inputs.outer_tail_px}px"></div></div>`;
   const panel = document.createElement("ha-sauna-panel");
-  panel.panel = { config: { appearance_catalog: defaults.appearance, frontend_defaults: defaults.frontend } };
+  panel.panel = {
+    config: {
+      appearance_catalog: defaults.appearance,
+      frontend_defaults: defaults.frontend,
+    },
+  };
   outer.querySelector("#content").append(panel);
   panel.entry = "synthetic";
   panel._hass = { user: { name: "Synthetic", is_admin: false } };
@@ -19,7 +29,9 @@ window.installHistoryFixture = async function ({ seconds, defaults, settings = w
     iso = (t) => new Date(t).toISOString();
   const records = [];
   const addSecond = (second) => {
-    for (const [index, [position, quantity]] of inputs.positions.flatMap(position => inputs.quantities.map(quantity => [position, quantity])).entries()) {
+    for (const [index, [position, quantity]] of inputs.positions
+      .flatMap((position) => inputs.quantities.map((quantity) => [position, quantity]))
+      .entries()) {
       // Different source times remain four independent series, never aligned.
       const time = origin + second * 1000 + index * inputs.source_offset_ms;
       const value =
@@ -70,7 +82,12 @@ window.installHistoryFixture = async function ({ seconds, defaults, settings = w
       retracted: [],
     },
     heating: {
-      intervals: [{ started_at: iso(origin), ended_at: iso(origin + inputs.heating_seconds * 1000) }],
+      intervals: [
+        {
+          started_at: iso(origin),
+          ended_at: iso(origin + inputs.heating_seconds * 1000),
+        },
+      ],
       elapsed_seconds: inputs.heating_seconds,
     },
   };
@@ -90,7 +107,13 @@ window.installHistoryFixture = async function ({ seconds, defaults, settings = w
     configuration,
     frontend_defaults: defaults.frontend,
     appearance_catalog: defaults.appearance,
-    appearance: { preferences: Object.fromEntries(Object.entries(defaults.appearance.preferences).filter(([, spec]) => spec.configuration_surface === "panel").map(([key, spec]) => [key, spec.default])) },
+    appearance: {
+      preferences: Object.fromEntries(
+        Object.entries(defaults.appearance.preferences)
+          .filter(([, spec]) => spec.configuration_surface === "panel")
+          .map(([key, spec]) => [key, spec.default]),
+      ),
+    },
     configuration_model: {
       measurement_positions: inputs.positions,
       presence: { source: "proxy", direct: false, observer: false },

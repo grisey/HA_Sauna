@@ -18,13 +18,20 @@ function resolve(value, trail = []) {
   if (!value || typeof value !== "object") return value;
   if (Object.keys(value).length === 1 && (value.parameter || value.preference)) {
     const kind = value.parameter ? "parameter" : "preference";
-    const key = value[kind], identity = `${kind}:${key}`;
-    if (trail.includes(identity)) throw new Error(`Cyclic fixture reference: ${identity}`);
-    const definition = kind === "parameter" ? rawDefinitions.get(key) : rawCatalog.appearance.preferences[key];
+    const key = value[kind],
+      identity = `${kind}:${key}`;
+    if (trail.includes(identity))
+      throw new Error(`Cyclic fixture reference: ${identity}`);
+    const definition =
+      kind === "parameter"
+        ? rawDefinitions.get(key)
+        : rawCatalog.appearance.preferences[key];
     if (!definition) throw new Error(`Unknown fixture reference: ${identity}`);
     return resolve(definition.default, [...trail, identity]);
   }
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolve(item, trail)]));
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, resolve(item, trail)]),
+  );
 }
 
 const catalog = resolve(rawCatalog);
@@ -58,12 +65,28 @@ function parameterDefinitions(values = parameterValues()) {
 }
 
 function preferences(overrides = {}) {
-  return { ...Object.fromEntries(Object.entries(catalog.appearance.preferences).map(([key, item]) => [key, item.default])), ...overrides };
+  return {
+    ...Object.fromEntries(
+      Object.entries(catalog.appearance.preferences).map(([key, item]) => [
+        key,
+        item.default,
+      ]),
+    ),
+    ...overrides,
+  };
 }
 
 function panelFixture(panelOrClass) {
-  const panel = typeof panelOrClass === "function" ? Object.create(panelOrClass.prototype) : panelOrClass;
-  panel.panel = { config: { appearance_catalog: structuredClone(catalog.appearance), frontend_defaults: structuredClone(catalog.frontend) } };
+  const panel =
+    typeof panelOrClass === "function"
+      ? Object.create(panelOrClass.prototype)
+      : panelOrClass;
+  panel.panel = {
+    config: {
+      appearance_catalog: structuredClone(catalog.appearance),
+      frontend_defaults: structuredClone(catalog.frontend),
+    },
+  };
   return panel;
 }
 

@@ -58,7 +58,9 @@ test("brightness reports distinguish feedback, a plan and unknown independently 
 
 test("temperature controls retain whole degrees even with legacy fractional steps", () => {
   const p = panel();
-  p.state.appearance = { preferences: { temperature_step_c: 0.25, temperature_dial_step_c: 2 } };
+  p.state.appearance = {
+    preferences: { temperature_step_c: 0.25, temperature_dial_step_c: 2 },
+  };
   assert.equal(p.temperatureStep(), 1);
   assert.equal(p.clampTemperature(80.3), 80);
   assert.equal(p.clampTemperature(80.5), 81);

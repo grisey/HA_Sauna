@@ -10,7 +10,15 @@ const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const catalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
 const color = (role) => catalog.colors.find((item) => item.id === role);
 let Panel;
-vm.runInNewContext(source, { HTMLElement: class {}, customElements: { get: () => null, define: (_, value) => { Panel = value; } } });
+vm.runInNewContext(source, {
+  HTMLElement: class {},
+  customElements: {
+    get: () => null,
+    define: (_, value) => {
+      Panel = value;
+    },
+  },
+});
 const panel = panelFixture(Panel);
 const css = panel.appearanceStyles();
 
@@ -36,5 +44,8 @@ test("measurements share semantic colors and control surface uses a soft phase t
     "event_infusion",
   ].map((role) => color(role).default);
   assert.equal(new Set(distinct).size, distinct.length);
-  assert.deepEqual(Array.from(panel.historyCurveStyles()["upper:humidity"].lineDash), []);
+  assert.deepEqual(
+    Array.from(panel.historyCurveStyles()["upper:humidity"].lineDash),
+    [],
+  );
 });

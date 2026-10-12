@@ -4,7 +4,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const precision = require("./catalog_fixture.cjs").preferences().chart_coordinate_precision;
+const precision = require("./catalog_fixture.cjs").preferences()
+  .chart_coordinate_precision;
 
 class FakePath2D {
   constructor() {
@@ -48,7 +49,8 @@ const frozenSvgPath = (points, x, y) => {
     x(point.time ?? stamp(point.received_at)),
     y(point.value),
   ]);
-  if (xy.length === 1) return `M${xy[0][0].toFixed(precision)},${xy[0][1].toFixed(precision)}`;
+  if (xy.length === 1)
+    return `M${xy[0][0].toFixed(precision)},${xy[0][1].toFixed(precision)}`;
   const slopes = xy
     .slice(1)
     .map(
@@ -82,7 +84,10 @@ const svgControls = (path) =>
   ]);
 const compare = (points, x, y) => {
   const expected = JSON.stringify(svgControls(frozenSvgPath(points, x, y)));
-  assert.equal(JSON.stringify(monotoneHistoryCommands(points, x, y, null, precision)), expected);
+  assert.equal(
+    JSON.stringify(monotoneHistoryCommands(points, x, y, null, precision)),
+    expected,
+  );
   const target = new FakePath2D();
   monotoneHistoryCommands(points, x, y, target, precision);
   assert.equal(JSON.stringify(target.commands), expected);

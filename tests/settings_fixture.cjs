@@ -3,7 +3,9 @@
 // Data only: no product decisions and no acceptance oracles live here.
 const fs = require("node:fs");
 const path = require("node:path");
-const settings = JSON.parse(fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"));
+const settings = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "settings.json"), "utf8"),
+);
 
 function setting(name) {
   let value = settings;

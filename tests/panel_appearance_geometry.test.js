@@ -11,7 +11,9 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const catalog = structuredClone(require("./catalog_fixture.cjs").catalog).appearance;
-const frontendDefaults = structuredClone(require("./catalog_fixture.cjs").catalog).frontend;
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
+).frontend;
 
 let Panel;
 const sandbox = {
@@ -126,9 +128,23 @@ test("finite display scales bound ticks and preserve backend target limits", () 
     ),
     86,
   );
-  assert.ok(appearanceTickValues({ minimum: -1e300, maximum: 1e300 }, panel.preference("instrument_tick_target"), panel.preference("instrument_tick_maximum"), panel.preference("tick_epsilon"), panel.preference("tick_precision")).length <= 8);
   assert.ok(
-    appearanceTickValues({ minimum: 0, maximum: Number.MIN_VALUE }, panel.preference("instrument_tick_target"), panel.preference("instrument_tick_maximum"), panel.preference("tick_epsilon"), panel.preference("tick_precision")).length <= 8,
+    appearanceTickValues(
+      { minimum: -1e300, maximum: 1e300 },
+      panel.preference("instrument_tick_target"),
+      panel.preference("instrument_tick_maximum"),
+      panel.preference("tick_epsilon"),
+      panel.preference("tick_precision"),
+    ).length <= 8,
+  );
+  assert.ok(
+    appearanceTickValues(
+      { minimum: 0, maximum: Number.MIN_VALUE },
+      panel.preference("instrument_tick_target"),
+      panel.preference("instrument_tick_maximum"),
+      panel.preference("tick_epsilon"),
+      panel.preference("tick_precision"),
+    ).length <= 8,
   );
   panel.appearanceDraft = {
     colors: {},

@@ -215,27 +215,51 @@ test("record access consumes configured page sizes and keeps all pages reachable
     const p = panel();
     const recordPage = defaults.detail_records_per_page + change;
     const eventPage = defaults.detail_events_per_page + change;
-    p.state.appearance = { preferences: { ...defaults, detail_records_per_page: recordPage, detail_events_per_page: eventPage } };
+    p.state.appearance = {
+      preferences: {
+        ...defaults,
+        detail_records_per_page: recordPage,
+        detail_events_per_page: eventPage,
+      },
+    };
     const remaining = 13;
     const total = recordPage * 2 + remaining;
     const records = Array.from({ length: total }, (_, index) =>
       record(index + 1, "decision", { heat: false, reason: "operation_off" }),
     );
-    assert.equal((p.renderHistoryRecords(records).match(/<details data-record-id=/g) || []).length, recordPage);
+    assert.equal(
+      (p.renderHistoryRecords(records).match(/<details data-record-id=/g) || []).length,
+      recordPage,
+    );
     p.detailRecordPage = 2;
     const last = p.renderHistoryRecords(records);
     assert.equal((last.match(/<details data-record-id=/g) || []).length, remaining);
     assert.match(last, new RegExp(`data-record-id="${total}"`));
     assert.match(last, /Seite 3 von 3/);
-    assert.match(p.detailFields({ false_value: false, zero: 0, missing: null }), /Nein/);
-    assert.match(p.detailFields({ false_value: false, zero: 0, missing: null }), /Nicht aufgezeichnet/);
+    assert.match(
+      p.detailFields({ false_value: false, zero: 0, missing: null }),
+      /Nein/,
+    );
+    assert.match(
+      p.detailFields({ false_value: false, zero: 0, missing: null }),
+      /Nicht aufgezeichnet/,
+    );
     const errorIndex = eventPage + remaining;
     const events = Array.from({ length: errorIndex + 1 }, (_, index) => ({
-      id: `event-${index}`, at: Date.parse(iso(index)), label: "Ereignis", detail: "Beleg", source: "Regelung", error: index === errorIndex,
+      id: `event-${index}`,
+      at: Date.parse(iso(index)),
+      label: "Ereignis",
+      detail: "Beleg",
+      source: "Regelung",
+      error: index === errorIndex,
     }));
     const activity = p.renderControlEvents(events, null);
     assert.equal((activity.match(/<tr data-record-id=/g) || []).length, eventPage);
-    assert.match(activity, new RegExp(`data-record-id="error-event-${errorIndex}"`), "errors outside the current page remain immediately visible");
+    assert.match(
+      activity,
+      new RegExp(`data-record-id="error-event-${errorIndex}"`),
+      "errors outside the current page remain immediately visible",
+    );
   }
 });
 
