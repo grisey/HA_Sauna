@@ -54,6 +54,10 @@ fest, damit ihre spätere Auswertung dieselben fachlichen Vorgaben verwendet.
 Farben, Diagrammskalen und Instrumentenformen werden unter **Darstellung**
 gepflegt; die Programmbibliothek unter **Programme und Start**.
 
+Unter **Betrieb und Ofen → Heizzeit und Verbrauch** ist der **Strompreis**
+optional in €/kWh erfassbar. Der Werkwert ist leer; durch Löschen der Eingabe
+wird der gespeicherte Strompreis wieder entfernt.
+
 ### Darstellung und Aktualisierung
 
 Unter **Darstellung** sind Verlauf-Aktualisierung, Datensatzgrenzen,

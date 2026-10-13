@@ -37,6 +37,7 @@ _PARAMETER_KEYS = frozenset(
         "door_open_humidity_upper",
         "door_open_slope",
         "door_window_seconds",
+        "electricity_price_eur_per_kwh",
         "fault_confirmation_seconds",
         "feedback_timeout_seconds",
         "final_temperature_c",
@@ -105,6 +106,9 @@ _PARAMETER_KEYS = frozenset(
         "weak_window_seconds",
     ]
 )
+
+
+_OPTIONAL_PARAMETER_KEYS = frozenset({"electricity_price_eur_per_kwh"})
 
 
 _LEGACY_PARAMETER_KEYS = frozenset(
@@ -763,7 +767,7 @@ def validate_catalog(catalog):
             for name in ("allow_zero", "optional", "integer", "expert"):
                 if not isinstance(spec[name], bool):
                     raise ValueError(f"defaults.json: invalid {key}.{name}")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
-            if spec["optional"]:
+            if spec["optional"] and key not in _OPTIONAL_PARAMETER_KEYS:
                 raise ValueError(
                     f"defaults.json: invalid optional consumer value {key}"
                 )
@@ -799,7 +803,8 @@ def validate_catalog(catalog):
                 }:
                     raise ValueError(f"defaults.json: invalid default reference for {key}")
             elif value is None:
-                raise ValueError(f"defaults.json: missing default for {key}")
+                if not spec["optional"]:
+                    raise ValueError(f"defaults.json: missing default for {key}")
             else:
                 _number(value, key)
                 if spec["unit"] == "min":
@@ -831,6 +836,10 @@ def validate_catalog(catalog):
             if (
                 not isinstance(minimum_key, str)
                 or minimum_key not in definitions
+                or definition["optional"]
+                or definitions[minimum_key]["optional"]
+                or values[key] is None
+                or values[minimum_key] is None
                 or values[key] < values[minimum_key]
             ):
                 raise ValueError(f"defaults.json: invalid minimum reference for {key}")
@@ -843,6 +852,13 @@ def validate_catalog(catalog):
         ):
             raise ValueError(f"defaults.json: invalid divisor references for {key}")
         for divisor in multiples:
+            if (
+                definition["optional"]
+                or definitions[divisor]["optional"]
+                or values[key] is None
+                or values[divisor] is None
+            ):
+                raise ValueError(f"defaults.json: invalid divisor references for {key}")
             if values[divisor] <= 0 or values[key] % values[divisor]:
                 raise ValueError(f"defaults.json: {key} must be a multiple of {divisor}")
     if values["light_night_elevation_degrees"] >= values["light_day_elevation_degrees"]:

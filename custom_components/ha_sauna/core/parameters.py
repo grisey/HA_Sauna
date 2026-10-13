@@ -47,7 +47,9 @@ class ParameterDefinition:
         """Return the numeric boundary, including the implicit non-negative range."""
         return self.minimum if self.minimum is not None else 0
 
-    def validate(self, value: object) -> float:
+    def validate(self, value: object) -> float | None:
+        if value is None and self.optional:
+            return None
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ParameterError(self.key, "invalid_number")
         try:
@@ -119,7 +121,7 @@ SAUNA_TEMPERATURE_MAXIMUM_C = BY_KEY["target_temperature_c"].maximum
 class Parameters:
     """Validierter, unveränderlicher Stand; gespeicherte Werte sind keine Defaults."""
 
-    values: Mapping[str, float]
+    values: Mapping[str, float | None]
 
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
@@ -150,10 +152,8 @@ class Parameters:
         checked = {}
         for definition in DEFINITIONS:
             if definition.key not in values:
-                if definition.default is not None:
+                if definition.default is not None or definition.optional:
                     checked[definition.key] = definition.validate(definition.default)
-                    continue
-                if definition.optional:
                     continue
                 raise ParameterError(definition.key, "required")
             checked[definition.key] = definition.validate(values[definition.key])
@@ -212,10 +212,10 @@ class Parameters:
             return self.values[definition.minimum_parameter]
         return definition.lower_bound
 
-    def as_dict(self) -> dict[str, float]:
+    def as_dict(self) -> dict[str, float | None]:
         return dict(self.values)
 
-    def as_options(self) -> dict[str, float]:
+    def as_options(self) -> dict[str, float | None]:
         """Retain instance choices and changed legacy values needed on subsequent loads."""
         return {
             definition.key: self.values[definition.key]

@@ -1955,6 +1955,123 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state["configuration"]["parameters"][definition.key], factory + 4 * definition.number_step)
             self.assertNotIn("standards", state)
 
+    async def test_http_electricity_price_standards_restore_null_and_zero_by_scope(self):
+        key = "electricity_price_eur_per_kwh"
+        field = "parameters." + key
+        positive = BY_KEY[key].number_step
+        url = self.base + "/" + self.entry.entry_id + "/standards"
+        initial = deepcopy(dict(self.entry.options))
+        initial["parameters"][key] = positive
+        initial["field_standards"].pop(field, None)
+        async with ClientSession(headers=self.headers) as client:
+            for saved in (None, 0):
+                with self.subTest(saved=saved):
+                    self.hass.config_entries.async_update_entry(
+                        self.entry, options=deepcopy(initial),
+                    )
+                    await self.hass.async_block_till_done()
+                    request = {"action": "overwrite_standard", "field": field, "value": saved}
+                    async with client.post(url, json=request) as response:
+                        self.assertEqual(response.status, 200, await response.text())
+                        preview = await response.json()
+                    row = preview["fields"][0]
+                    self.assertEqual(row["id"], field)
+                    self.assertIsNone(row["factory"])
+                    self.assertEqual(
+                        (
+                            row["target"], row["target_standard"],
+                            row["target_has_standard"],
+                        ),
+                        (positive, saved, True),
+                    )
+                    preview_confirmation = preview["confirmation"]
+                    async with client.post(url, json={
+                        **request, "confirmation": preview_confirmation,
+                    }) as response:
+                        self.assertEqual(response.status, 200, await response.text())
+                        self.assertEqual(
+                            await response.json(), {**preview, "applied": True},
+                        )
+                    await self.hass.async_block_till_done()
+                    self.assertIn(field, self.entry.options["field_standards"])
+                    self.assertEqual(
+                        self.entry.options["field_standards"][field], saved,
+                    )
+                    self.assertEqual(self.entry.options["parameters"][key], positive)
+                    baseline = deepcopy(dict(self.entry.options))
+                    for scope in (
+                        {"field": field}, {"group": "operation"}, {"all": True},
+                    ):
+                        self.hass.config_entries.async_update_entry(
+                            self.entry, options=deepcopy(baseline),
+                        )
+                        await self.hass.async_block_till_done()
+                        for action in ("restore_standard", "restore_factory"):
+                            with self.subTest(scope=scope, action=action):
+                                target = saved if action == "restore_standard" else None
+                                request = {"action": action, **scope}
+                                async with client.post(
+                                    url, json=request,
+                                ) as response:
+                                    self.assertEqual(response.status, 200, await response.text())
+                                    preview = await response.json()
+                                row = next(
+                                    item for item in preview["fields"]
+                                    if item["id"] == field
+                                )
+                                self.assertEqual(preview["scope"], scope)
+                                self.assertEqual(
+                                    (
+                                        row["factory"], row["standard"],
+                                        row["has_standard"],
+                                    ),
+                                    (None, saved, True),
+                                )
+                                self.assertEqual(
+                                    (
+                                        row["target"], row["target_standard"],
+                                        row["target_has_standard"],
+                                    ),
+                                    (target, target, action == "restore_standard"),
+                                )
+                                preview_confirmation = preview["confirmation"]
+                                async with client.post(url, json={
+                                    **request, "confirmation": preview_confirmation,
+                                }) as response:
+                                    self.assertEqual(response.status, 200, await response.text())
+                                    self.assertEqual(
+                                        await response.json(),
+                                        {**preview, "applied": True},
+                                    )
+                                await self.hass.async_block_till_done()
+                                self.assertIn(key, self.entry.options["parameters"])
+                                self.assertEqual(
+                                    self.entry.options["parameters"][key], target,
+                                )
+                                configuration = self.entry.runtime_data.configuration
+                                self.assertEqual(
+                                    configuration.parameters.values[key], target,
+                                )
+                                if action == "restore_standard":
+                                    self.assertIn(
+                                        field, self.entry.options["field_standards"],
+                                    )
+                                    self.assertEqual(
+                                        self.entry.options["field_standards"][field],
+                                        saved,
+                                    )
+                                    self.assertIn(field, configuration.field_standards)
+                                    self.assertEqual(
+                                        configuration.field_standards[field], saved,
+                                    )
+                                else:
+                                    self.assertNotIn(
+                                        field, self.entry.options["field_standards"],
+                                    )
+                                    self.assertNotIn(
+                                        field, configuration.field_standards,
+                                    )
+
     async def test_field_standard_restores_apply_complete_scopes_and_preserve_excluded_owners(self):
         from harness import retain_session
 

@@ -304,12 +304,14 @@
         "data": {
           "power_heating_threshold_w": "Mindestleistung für gezählte Heizzeit",
           "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
-          "heat_reset_minutes": "Heizzeitzähler nach Heizpause zurücksetzen"
+          "heat_reset_minutes": "Heizzeitzähler nach Heizpause zurücksetzen",
+          "electricity_price_eur_per_kwh": "Electricity price"
         },
         "data_description": {
           "power_heating_threshold_w": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
           "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit geschätzt.",
-          "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null."
+          "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null.",
+          "electricity_price_eur_per_kwh": "Optional electricity price per kilowatt-hour."
         },
         "submit": "Speichern und zurück"
       },

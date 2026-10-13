@@ -500,13 +500,15 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             try:
                 if set(user_input) - keys:
                     raise ParameterError("base", "unknown_parameter")
+                submitted = dict(user_input)
                 for definition in definitions:
-                    if not definition.optional and definition.key not in user_input:
+                    if definition.optional:
+                        submitted.setdefault(definition.key, None)
+                    elif definition.key not in submitted:
                         raise ParameterError(definition.key, "required")
-                    if definition.key in user_input:
-                        definition.validate(user_input[definition.key])
+                    definition.validate(submitted[definition.key])
                 edits = {
-                    key: value for key, value in user_input.items()
+                    key: value for key, value in submitted.items()
                     if value != baseline.get(key)
                 }
                 change = parameter_change(

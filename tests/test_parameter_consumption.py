@@ -221,6 +221,109 @@ class ParameterConsumptionTests(unittest.TestCase):
         for copied in (configuration, restored, historical):
             self.assertEqual(dict(copied.field_standards), {field: standard})
 
+    def test_nullable_electricity_price_keeps_active_standard_and_factory_distinct(
+        self,
+    ):
+        catalog = load_catalog()
+        key = "electricity_price_eur_per_kwh"
+        definition = BY_KEY[key]
+        field = f"parameters.{key}"
+        self.assertEqual(
+            (
+                definition.unit,
+                definition.default,
+                definition.optional,
+                definition.step,
+                definition.configuration_surface,
+                definition.settings_group,
+                definition.settings_subgroup,
+            ),
+            (
+                "€/kWh",
+                None,
+                True,
+                "any",
+                "integration",
+                "operation",
+                "heater_accounting",
+            ),
+        )
+        self.assertEqual(Configuration.standard_field_groups()[field], "operation")
+        self.assertIn(field, Configuration.standard_fields(group="operation"))
+        self.assertIn(field, Configuration.standard_fields())
+        active = definition.number_step * 1.5
+        standard = definition.number_step * 2.5
+        self.assertTrue(0 < active < standard <= definition.maximum)
+        self.assertNotEqual(active, round(active, 2))
+        expected_parameters, _, _ = catalog_configuration(catalog)
+        expected_parameters.pop(key)
+        cases = (
+            ("old_options", {}, {}, None, None),
+            ("explicit_empty", {key: None}, {field: standard}, None, standard),
+            ("zero", {key: 0}, {field: standard}, 0, standard),
+            ("positive", {key: active}, {field: standard}, active, standard),
+            ("empty_standard", {key: active}, {field: None}, active, None),
+            ("zero_standard", {key: active}, {field: 0}, active, 0),
+        )
+        for case, parameters, standards, expected_active, expected_standard in cases:
+            with self.subTest(case=case):
+                options = {
+                    "bindings": bindings().as_dict(),
+                    "parameters": parameters,
+                    "field_standards": standards,
+                }
+                configuration = Configuration.from_options(options)
+                self.assertEqual(
+                    {
+                        name: configuration.parameters.values[name]
+                        for name in expected_parameters
+                    },
+                    expected_parameters,
+                )
+                self.assertEqual(
+                    tuple(
+                        configuration.field_value(field, source=source)
+                        for source in ("active", "standard", "factory")
+                    ),
+                    (expected_active, expected_standard, None),
+                )
+                for values in (
+                    configuration.parameters.as_dict(),
+                    configuration.parameters.as_options(),
+                ):
+                    self.assertIn(key, values)
+                    self.assertEqual(values[key], expected_active)
+                saved = configuration.as_options()
+                snapshot = configuration.as_snapshot()
+                for serialized in (saved, snapshot):
+                    self.assertIn(key, serialized["parameters"])
+                    self.assertEqual(serialized["parameters"][key], expected_active)
+                    self.assertEqual(serialized["field_standards"], standards)
+                for restored in (
+                    Configuration.from_options(json.loads(json.dumps(saved))),
+                    Configuration.from_options(
+                        json.loads(json.dumps(snapshot)), historical=True
+                    ),
+                    Configuration.from_options(options, historical=True),
+                ):
+                    self.assertEqual(restored, configuration)
+                emptied = configuration.with_field_values({field: None})
+                self.assertIsNone(emptied.field_value(field))
+                self.assertEqual(
+                    emptied.field_value(field, source="standard"), expected_standard
+                )
+                self.assertEqual(dict(emptied.field_standards), standards)
+                factory = configuration.with_field_values(
+                    {field: configuration.field_value(field, source="factory")}
+                ).without_field_standards([field])
+                for source in ("active", "standard", "factory"):
+                    self.assertIsNone(factory.field_value(field, source=source))
+                self.assertNotIn(field, factory.field_standards)
+                self.assertIsNone(factory.as_options()["parameters"][key])
+                self.assertIsNone(factory.as_snapshot()["parameters"][key])
+                self.assertEqual(dict(configuration.field_standards), standards)
+                self.assertEqual(configuration.field_value(field), expected_active)
+
     def test_loader_keeps_intrinsic_standards_and_discards_obsolete_entries(self):
         catalog = load_catalog()
         definition = BY_KEY["nominal_power_kw"]

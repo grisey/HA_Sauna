@@ -64,6 +64,10 @@ class DefaultsTests(unittest.TestCase):
                 spec for spec in data["parameters"]
                 if spec["key"] == "session_gap_minutes"
             ).update(default=None),
+            "optional_required_parameter": lambda data: next(
+                spec for spec in data["parameters"]
+                if spec["key"] == "session_gap_minutes"
+            ).update(optional=True),
             "null_color_default": lambda data: data["appearance"]["colors"][0].update(default=None),
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -174,6 +178,37 @@ class DefaultsTests(unittest.TestCase):
                 mutate(data)
                 with self.assertRaises(ValueError):
                     validate_catalog(data)
+        for relationship, message in (
+            ("minimum_parameter", "invalid minimum reference"),
+            ("multiple_of_parameters", "invalid divisor references"),
+        ):
+            for optional_source in (True, False):
+                for numeric_default in (False, True):
+                    with self.subTest(
+                        relationship=relationship,
+                        optional_source=optional_source,
+                        numeric_default=numeric_default,
+                    ):
+                        data = load_catalog()
+                        definitions = {
+                            spec["key"]: spec for spec in data["parameters"]
+                        }
+                        price = definitions["electricity_price_eur_per_kwh"]
+                        required = definitions["grid_seconds"]
+                        if numeric_default:
+                            # Equal numeric defaults would satisfy either
+                            # relation without the optionality guard.
+                            price["default"] = required["default"]
+                        source, target = (
+                            (price, required) if optional_source else (required, price)
+                        )
+                        source[relationship] = (
+                            target["key"]
+                            if relationship == "minimum_parameter"
+                            else [target["key"]]
+                        )
+                        with self.assertRaisesRegex(ValueError, message):
+                            validate_catalog(data)
 
     def test_catalog_views_are_detached_and_every_setting_has_group_metadata(self):
         catalog = section("parameters")

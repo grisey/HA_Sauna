@@ -3,7 +3,7 @@
   "source_curves": "fixtures/scenarios/source_curves.json",
   "source_curves_sha256": "a3a98cc4f2a0f526bc40f5e45c86f3d6820390f250679c9fcaeb6f9e69a0c7e6",
   "configuration_file": "fixtures/scenarios/configuration.json",
-  "configuration_sha256": "1db88f487e619062e0039bbb0dc413c864c305e9a9a2e4b23f4fb2441371a893",
+  "configuration_sha256": "ded2b2090544c0de5b28a13a8ad44dad3465cee0316c4d9ea3faaab2be48d664",
   "configuration_policy": "Resolved parameters and programme values are bound separately from UI metadata. Declared construction inputs and measurements stay byte-bound; changed effective inputs require review before rebinding.",
   "scenarios": [
     {

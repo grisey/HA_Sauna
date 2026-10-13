@@ -207,6 +207,26 @@
       "configuration_surface": "integration"
     },
     {
+      "key": "electricity_price_eur_per_kwh",
+      "label": "Strompreis",
+      "unit": "€/kWh",
+      "allow_zero": true,
+      "optional": true,
+      "maximum": 1000000,
+      "default": null,
+      "minimum": 0,
+      "integer": false,
+      "description": "Optionaler Strompreis pro Kilowattstunde.",
+      "group": "timer",
+      "expert": false,
+      "step": "any",
+      "number_step": 0.0001,
+      "settings_group": "operation",
+      "order": 22,
+      "settings_subgroup": "heater_accounting",
+      "configuration_surface": "integration"
+    },
+    {
       "key": "power_heating_threshold_w",
       "label": "Mindestleistung für gezählte Heizzeit",
       "unit": "W",
