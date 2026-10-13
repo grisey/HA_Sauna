@@ -1971,7 +1971,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         power_definition = BY_KEY["nominal_power_kw"]
         other = await create_sauna(self.hass, parameter_overrides={
             power_definition.key: power_definition.default + 4 * power_definition.number_step,
-        })
+        }, binding_overrides={"heater": "switch.restore_other_heater"})
         other_options = deepcopy(dict(other.options))
         other_configuration = other.runtime_data.configuration
         presence = "binary_sensor.restore_presence"
@@ -2127,10 +2127,48 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(invalid["fields"][0]["target"], newer)
                 self.assertIsNone(invalid["confirmation"])
                 self.assertIn("validation_error", invalid)
-                for body in (request, {"action": "restore_standard", "all": True},
+                whole_request = {"action": "restore_standard", "all": True}
+                async with client.post(url + "/standards", json=whole_request) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    whole_preview = await response.json()
+                whole_targets = {row["id"]: row["target"] for row in whole_preview["fields"]}
+                self.assertEqual(whole_targets[field], newer)
+                self.assertEqual(whole_targets["appearance.scales.temperature.maximum"], maximum)
+                for body in (request,
                              {"action": "overwrite_standard", "field": field, "value": saved}):
                     async with client.post(url + "/standards", json=body) as response:
                         self.assertEqual(response.status, 400, await response.text())
+                write.assert_not_called()
+            self.assertEqual(dict(self.entry.options), original)
+            self.assertIs(self.entry.runtime_data.configuration, configuration)
+            # Each S scalar is individually valid. Restoring the complete pair
+            # must still reject its contradictory minimum and maximum.
+            maximum_field = "appearance.scales.temperature.maximum"
+            overwrite_maximum = {"action": "overwrite_standard", "field": maximum_field, "value": saved}
+            async with client.post(url + "/standards", json=overwrite_maximum) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                confirmation = (await response.json())["confirmation"]
+            async with client.post(url + "/standards", json={**overwrite_maximum, "confirmation": confirmation}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.entry.options["field_standards"][field], newer)
+            self.assertEqual(self.entry.options["field_standards"][maximum_field], saved)
+            original = deepcopy(dict(self.entry.options))
+            configuration = self.entry.runtime_data.configuration
+            with patch.object(self.hass.config_entries, "async_update_entry",
+                              wraps=self.hass.config_entries.async_update_entry) as write:
+                async with client.post(url + "/standards", json=whole_request) as response:
+                    self.assertEqual(response.status, 400, await response.text())
+                async with client.post(url + "/standards", json={
+                    **whole_request, "confirmation": whole_preview["confirmation"],
+                }) as response:
+                    self.assertEqual(response.status, 409, await response.text())
+                    invalid_whole = (await response.json())["preview"]
+                invalid_targets = {row["id"]: row["target"] for row in invalid_whole["fields"]}
+                self.assertEqual(invalid_targets[field], newer)
+                self.assertEqual(invalid_targets[maximum_field], saved)
+                self.assertIsNone(invalid_whole["confirmation"])
+                self.assertIn("validation_error", invalid_whole)
                 write.assert_not_called()
             self.assertEqual(dict(self.entry.options), original)
             self.assertIs(self.entry.runtime_data.configuration, configuration)
