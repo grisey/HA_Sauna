@@ -370,9 +370,9 @@ fs.mkdirSync(output, { recursive: true });
             .filter((node) => node.dataset.quantity === quantity)
             .map((node) => node.nextElementSibling.textContent),
         button = p.$('[data-action="history-humidity"]'),
-        axis = [
-          ...p.$("[data-history-axes]").querySelectorAll(".axis-humidity"),
-        ].at(-1);
+        axis = [...p.$("[data-history-axes]").querySelectorAll(".axis-humidity")].at(
+          -1,
+        );
       return {
         mode: p.historyHumidityMode,
         label: button.textContent,
@@ -562,10 +562,10 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(initialHumidity.pressed, "false");
   assert.equal(initialHumidity.axis, "Relative Feuchte (%)");
   const legend = selectionPanel.locator("#history-legends");
-  assert.deepEqual(
-    await legend.locator(".history-legend > strong").allTextContents(),
-    ["Phasen", "Ereignisse"],
-  );
+  assert.deepEqual(await legend.locator(".history-legend > strong").allTextContents(), [
+    "Phasen",
+    "Ereignisse",
+  ]);
   assert.doesNotMatch(
     await legend.innerText(),
     /\b(?:Phasengrenze|Messwerte|Temperatur|oben|unten)\b/i,

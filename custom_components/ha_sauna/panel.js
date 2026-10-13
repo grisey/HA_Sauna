@@ -692,12 +692,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         quantity === "humidity" && humidity
           ? humidity.precision
           : panel.preference("value_precision");
-    const key = [
-      quantity,
-      unit,
-      precision,
-      sourceValue(nearest.value),
-    ].join("|");
+    const key = [quantity, unit, precision, sourceValue(nearest.value)].join("|");
     const cached = cacheable ? state.rowTextCache.get(source) : null;
     if (cached?.key === key) return cached.value;
     const value = `${number(nearest.value, precision)} ${unit}`;
@@ -10192,11 +10187,14 @@ class SaunaPanel extends HTMLElement {
       .filter((phase) => phaseAppearance[phase])
       .map((phase) => [phaseAppearance[phase].shape, phases[phase], phase]);
     const humidity = this.historyHumidityDisplay();
-    return `<div class="history-legend-groups"><button type="button" class="history-humidity-toggle" data-action="history-humidity" aria-pressed="${humidity.mode === "absolute"}">${esc(humidity.label)}</button>${this.historyLegend("Phasen", phaseItems)}${this.historyLegend("Ereignisse", [
-      ["event", "Tür geöffnet / geschlossen"],
-      ["door", "Tür offen"],
-      ["infusion", "Aufguss"],
-    ])}</div>`;
+    return `<div class="history-legend-groups"><button type="button" class="history-humidity-toggle" data-action="history-humidity" aria-pressed="${humidity.mode === "absolute"}">${esc(humidity.label)}</button>${this.historyLegend("Phasen", phaseItems)}${this.historyLegend(
+      "Ereignisse",
+      [
+        ["event", "Tür geöffnet / geschlossen"],
+        ["door", "Tür offen"],
+        ["infusion", "Aufguss"],
+      ],
+    )}</div>`;
   }
   historyPreparedSeries(position, quantity, start, end, ttl, pixels, cache) {
     const values = this.historyCurveSeries(position, quantity),

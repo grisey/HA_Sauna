@@ -25,10 +25,7 @@ def _received_at(payload):
 
 def _measurement(record, bindings):
     payload = record.get("payload")
-    if (
-        record.get("kind") not in MEASUREMENT_KINDS
-        or not isinstance(payload, Mapping)
-    ):
+    if record.get("kind") not in MEASUREMENT_KINDS or not isinstance(payload, Mapping):
         return None
     try:
         position = Position(payload["position"])
@@ -52,9 +49,12 @@ def _measurement(record, bindings):
         value = None
     raw_value = payload.get("raw_value")
     return Measurement(
-        position, quantity, value,
+        position,
+        quantity,
+        value,
         raw_value if isinstance(raw_value, str) else "",
-        source, received_at,
+        source,
+        received_at,
     )
 
 
@@ -99,8 +99,11 @@ class _SourceIndex:
 
 
 def project_absolute_humidity(
-    records: Iterable[Mapping], *, context: Iterable[Mapping] = (),
-    bindings: Mapping, timeout_seconds: float | None,
+    records: Iterable[Mapping],
+    *,
+    context: Iterable[Mapping] = (),
+    bindings: Mapping,
+    timeout_seconds: float | None,
 ) -> list[dict]:
     """Add display values without changing originals or returning page context.
 
@@ -135,20 +138,27 @@ def project_absolute_humidity(
     display = []
     for index, record in enumerate(records):
         payload = record.get("payload")
-        received_at = (
-            _received_at(payload) if isinstance(payload, Mapping) else None
+        received_at = _received_at(payload) if isinstance(payload, Mapping) else None
+        display.append(
+            {
+                "value": None,
+                "received_at": received_at.isoformat()
+                if received_at is not None
+                else None,
+                "valid_until": None,
+            }
         )
-        display.append({
-            "value": None,
-            "received_at": received_at.isoformat() if received_at is not None else None,
-            "valid_until": None,
-        })
         measurement = _measurement(record, bindings)
         identity = _record_id(record)
         if measurement is not None and identity is not None:
-            targets.append((
-                measurement.received_at, identity, index, measurement.position,
-            ))
+            targets.append(
+                (
+                    measurement.received_at,
+                    identity,
+                    index,
+                    measurement.position,
+                )
+            )
     targets.sort(key=lambda item: item[:2])
     cursor = 0
     for received_at, identity, index, position in targets:
@@ -165,7 +175,10 @@ def project_absolute_humidity(
                 if measurement is not None:
                     measurements[role] = measurement
         value = current_absolute_humidity(
-            measurements, position, received_at, timeout_seconds,
+            measurements,
+            position,
+            received_at,
+            timeout_seconds,
         )
         if value is not None:
             try:

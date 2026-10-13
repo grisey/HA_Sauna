@@ -661,8 +661,7 @@ test("absolute humidity readouts use the latest projection through its inclusive
     assert.deepEqual(humidityReadouts(tooltip), [expected]);
   }
   assert.equal(
-    panel.nearestMeasurement("upper", "absolute_humidity", at(timeout - step))
-      .source,
+    panel.nearestMeasurement("upper", "absolute_humidity", at(timeout - step)).source,
     first.display.absolute_humidity,
     "the available predecessor wins even when a future point is closer",
   );

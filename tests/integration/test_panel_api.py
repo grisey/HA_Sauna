@@ -525,7 +525,22 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url + "/archive", params={"session_id": session_id, "after": after, "projection": "history"}) as response:
                 self.assertEqual(response.status, 200)
                 projected = await response.json()
-                self.assertEqual(projected["records"], resumed["records"])
+                self.assertEqual(
+                    projected["records"],
+                    [
+                        {
+                            **record,
+                            "display": {
+                                "absolute_humidity": {
+                                    "value": None,
+                                    "received_at": None,
+                                    "valid_until": None,
+                                },
+                            },
+                        }
+                        for record in resumed["records"]
+                    ],
+                )
                 self.assertNotIn("configuration", projected["session"])
                 self.assertIsNone(projected["next_after"])
 
