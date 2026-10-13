@@ -777,6 +777,7 @@ class ArchiveView(HomeAssistantView):
             read_options["now"] = clock()
         if projection == "history":
             read_options.update(
+                humidity_display=True,
                 limit=runtime.configuration.parameters.values["archive_history_page_records"],
                 kinds=(
                     "measurement", "source_snapshot", "phase", "diagnostic",

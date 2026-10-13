@@ -44,6 +44,7 @@ from custom_components.ha_sauna.core.parameters import (
 from custom_components.ha_sauna.core.phases import project_session
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 from custom_components.ha_sauna.presentation import (
     decision_message,
     public_measurement,
@@ -235,13 +236,17 @@ class Preview:
             self.now,
             context_seconds=session["configuration"]["parameters"]["history_context_seconds"],
         )
-        records = [r for r in self.records
-                   if r["id"] > after and (
-                       r["session_id"] == session_id or (
-                           r["kind"] == "measurement"
-                           and window["started_at"] <= r["received_at"] <= window["ended_at"]
-                       )
+        context = [r for r in self.records
+                   if r["session_id"] == session_id or (
+                       r["kind"] == "measurement"
+                       and window["started_at"] <= r["received_at"] <= window["ended_at"]
                    )]
+        records = project_absolute_humidity(
+            [r for r in context if r["id"] > after],
+            context=context,
+            bindings=session["configuration"]["bindings"],
+            timeout_seconds=session["configuration"]["parameters"]["sensor_timeout_seconds"],
+        )
         if not self.admin:
             session = public_session(session)
             projection = public_phase_projection(projection)
@@ -268,6 +273,7 @@ class Preview:
         for quantity, value in (("temperature", self.c.temperature), ("humidity", self.humidity)):
             self.record("measurement", {"position":"upper", "quantity":quantity,
                 "value":value, "raw_value":str(value), "received_at":self.now,
+                "source":self.runtime.configuration.bindings.values[f"upper_{quantity}"],
                 "measured_at":self.now, "available":True})
         self.save_sessions()
 

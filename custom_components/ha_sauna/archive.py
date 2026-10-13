@@ -24,6 +24,7 @@ from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from .core.parameters import BY_KEY, Parameters
 from .core.models import TimedPhase
 from .core.phases import project_archive, project_session
+from .history_humidity import project_absolute_humidity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -147,6 +148,9 @@ class Archive:
                 DROP INDEX IF EXISTS records_measurement_clock;
                 CREATE INDEX IF NOT EXISTS records_measurement_context ON records(entry_id, julianday(received_at))
                     WHERE kind='measurement';
+                CREATE INDEX IF NOT EXISTS records_source_snapshot_context
+                    ON records(entry_id, session_id, julianday(json_extract(payload,'$.received_at')), id)
+                    WHERE kind='source_snapshot';
                 CREATE INDEX IF NOT EXISTS records_consumer_events ON records(entry_id)
                     WHERE kind='consumer_event';
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -492,7 +496,10 @@ class Archive:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
-    def read(self, session_id=None, *, after=0, limit=None, kinds=None, now=None):
+    def read(
+        self, session_id=None, *, after=0, limit=None, kinds=None, now=None,
+        humidity_display=False,
+    ):
         if limit is None:
             limit = self.parameters.values["archive_read_page_records"]
         # Capture before establishing the SQLite snapshot. An in-flight reader
@@ -572,6 +579,14 @@ class Archive:
                 + " UNION ".join(streams) + " ORDER BY id LIMIT ?) ORDER BY id",
                 (*stream_args, limit),
             ).fetchall()
+            page_records = [
+                {**dict(record), "payload": json.loads(record["payload"])}
+                for record in records
+            ]
+            if humidity_display:
+                page_records = self._humidity_display(
+                    db, session, page_records, sources
+                )
             if session.get("base_phases"):
                 projection = project_session(session, row["updated_at"])
             else:
@@ -582,11 +597,108 @@ class Archive:
                 "session": session,
                 "measurement_window": window,
                 "phase_projection": plain(projection),
-                "records": [
-                    {**dict(r), "payload": json.loads(r["payload"])} for r in records
-                ],
+                "records": page_records,
                 "next_after": records[-1]["id"] if len(records) == limit else None,
             }
+
+    def _humidity_display(self, db, session, records, sources):
+        """Read only this page's fresh source context in its SQLite snapshot."""
+        configuration = session.get("configuration", {})
+        bindings = configuration.get("bindings", {})
+        timeout = configuration.get("parameters", {}).get(
+            "sensor_timeout_seconds", self.parameters.values["sensor_timeout_seconds"]
+        )
+        context = {}
+        valid_timeout = (
+            not isinstance(timeout, bool)
+            and isinstance(timeout, (int, float))
+            and isfinite(timeout)
+            and timeout >= 0
+        )
+        received = []
+        if valid_timeout and sources:
+            source_roles = set(sources)
+            for record in records:
+                if record["kind"] not in {"measurement", "source_snapshot"}:
+                    continue
+                payload = record["payload"]
+                if not isinstance(payload, Mapping):
+                    continue
+                source_role = (
+                    payload.get("source"), payload.get("position"),
+                    payload.get("quantity"),
+                )
+                if (
+                    not all(isinstance(value, str) for value in source_role)
+                    or source_role not in source_roles
+                ):
+                    continue
+                try:
+                    at = datetime.fromisoformat(payload["received_at"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if at.utcoffset() is not None:
+                    received.append(at.astimezone(UTC))
+        windows = []
+        if received:
+            try:
+                ttl = timedelta(seconds=timeout)
+                for at in sorted(received):
+                    first = at - ttl
+                    if windows and first <= windows[-1][1]:
+                        windows[-1] = (windows[-1][0], at)
+                    else:
+                        windows.append((first, at))
+            except OverflowError:
+                windows = []
+        if windows:
+            page_ids = {record["id"] for record in records}
+            last_id = max(page_ids)
+            source_filter = (
+                " AND ("
+                + " OR ".join(
+                    "(json_extract(payload,'$.source')=? "
+                    "AND json_extract(payload,'$.position')=? "
+                    "AND json_extract(payload,'$.quantity')=?)" for _ in sources
+                ) + ")"
+            )
+            source_values = tuple(value for source in sources for value in source)
+            # Merge only overlapping freshness windows. An old copied source
+            # must not load the retained history between it and newer inputs.
+            for first, last in windows:
+                # Measurements use their actual received clock. Snapshots keep
+                # their original payload clock instead of refreshing a source.
+                queries = (
+                    (
+                        "SELECT * FROM records INDEXED BY records_measurement_context "
+                        "WHERE entry_id=? AND kind='measurement' AND id<=? "
+                        "AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
+                        + source_filter,
+                        (self.entry_id, last_id, first.isoformat(), last.isoformat(),
+                         *source_values),
+                    ),
+                    (
+                        # The partial payload-clock index bounds snapshot context
+                        # without walking all prior diagnostic IDs on every page.
+                        "SELECT * FROM records INDEXED BY records_source_snapshot_context "
+                        "WHERE entry_id=? AND session_id=? AND kind='source_snapshot' "
+                        "AND id<=? AND julianday(json_extract(payload,'$.received_at')) "
+                        "BETWEEN julianday(?) AND julianday(?)" + source_filter,
+                        (self.entry_id, session["timeline"]["session_id"], last_id,
+                         first.isoformat(), last.isoformat(), *source_values),
+                    ),
+                )
+                for query, arguments in queries:
+                    for record in db.execute(query, arguments):
+                        if record["id"] not in page_ids and record["id"] not in context:
+                            context[record["id"]] = {
+                                **dict(record),
+                                "payload": json.loads(record["payload"]),
+                            }
+        return project_absolute_humidity(
+            records, context=context.values(), bindings=bindings,
+            timeout_seconds=timeout,
+        )
 
     def _legacy_projection(self, db, session_id, session, row, *, generation):
         # Read cache identity and evidence in the caller's SQLite snapshot. In

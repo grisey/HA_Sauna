@@ -325,7 +325,8 @@ fs.mkdirSync(output, { recursive: true });
   const selectionPanel = selectionPage.locator("ha-sauna-panel"),
     selectionSurface = selectionPanel.locator("svg.session-chart"),
     selectionTooltip = selectionPanel.locator("#tooltip"),
-    readout = selectionPanel.locator(".history-readout");
+    readout = selectionPanel.locator(".history-readout"),
+    humidityButton = selectionPanel.locator('[data-action="history-humidity"]');
   const settleSelection = async () => {
     await selectionPage.evaluate(() => f.settle());
     await selectionPage.waitForFunction(() => f.panel.historyFrame == null, null, {
@@ -356,6 +357,77 @@ fs.mkdirSync(output, { recursive: true });
         ...f.panel.$("#tooltip").querySelectorAll(".history-tooltip-values"),
       ].map((node) => node.textContent),
     }));
+  const humidityState = () =>
+    selectionPage.evaluate(() => {
+      const p = f.panel,
+        labels = [...p.$("#tooltip").querySelectorAll(".history-tooltip-values")]
+          .filter((node) => !node.hidden)
+          .flatMap((node) => [
+            ...node.querySelectorAll("div:not([hidden]) > span[data-quantity]"),
+          ]),
+        values = (quantity) =>
+          labels
+            .filter((node) => node.dataset.quantity === quantity)
+            .map((node) => node.nextElementSibling.textContent),
+        button = p.$('[data-action="history-humidity"]'),
+        axis = [
+          ...p.$("[data-history-axes]").querySelectorAll(".axis-humidity"),
+        ].at(-1);
+      return {
+        mode: p.historyHumidityMode,
+        label: button.textContent,
+        pressed: button.getAttribute("aria-pressed"),
+        axis: axis.textContent,
+        humidity: values("humidity"),
+        labels: labels.map((node) => node.textContent),
+        curveValues: [
+          ...new Set(
+            p.historyChart.model.series
+              .get(`${[...p.positions][0]}:humidity`)
+              .values.filter((point) => point.value != null)
+              .map((point) => point.value),
+          ),
+        ],
+        focus: p.shadowRoot.activeElement === button,
+        retained: {
+          selection: structuredClone(p.historyValueSelection),
+          window: [...p.window],
+          zoom: p.zoom,
+          inspected: p.inspectedHistoryEventId,
+          inspection: p.$("#history-event-inspection").textContent,
+          heading: p.$(".history-tooltip-time")?.textContent,
+          temperature: values("temperature"),
+        },
+        identity: f.identity(),
+      };
+    });
+  const assertHumidity = async (mode, before) => {
+    const after = await humidityState(),
+      absolute = mode === "absolute",
+      label = absolute ? "Absolute Feuchte (g/m³)" : "Relative Feuchte (%)";
+    assert.equal(after.mode, mode);
+    assert.equal(after.label, label);
+    assert.equal(after.pressed, String(absolute));
+    assert.equal(after.axis, label);
+    assert.ok(after.humidity.length > 0, "the selected humidity readout is visible");
+    assert.ok(
+      after.humidity.every((value) => value.endsWith(absolute ? " g/m³" : " %")),
+      "the readout uses the selected humidity unit",
+    );
+    if (absolute) {
+      assert.deepEqual(after.curveValues, [settings.fixtures.history.temperature]);
+      assert.ok(
+        after.humidity.every(
+          (value) => value === `${settings.fixtures.history.temperature} g/m³`,
+        ),
+        "absolute readouts consume the opaque transport display value",
+      );
+    }
+    assert.doesNotMatch(after.labels.join(" "), /\b(?:oben|unten)\b/i);
+    assert.equal(after.focus, true, "the rebuilt humidity control retains focus");
+    assert.deepEqual(after.retained, before.retained);
+    assert.ok(Object.values(after.identity).every(Boolean));
+  };
   const selectionGuides = () =>
     selectionPage.evaluate(() => {
       const p = f.panel,
@@ -415,6 +487,33 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(cleared.clearDisabled, true);
   };
   await selectionPage.evaluate(async () => {
+    const original = f.panel.api;
+    // An opaque backend display value exercises transport consumption only.
+    // The Python projection tests own the temperature/RH physics calculation.
+    f.panel.api = async (path) => {
+      const response = await original(path);
+      if (!response.records) return response;
+      return {
+        ...response,
+        records: response.records.map((record) =>
+          ["measurement", "source_snapshot"].includes(record.kind)
+            ? {
+                ...record,
+                display: {
+                  absolute_humidity: {
+                    value: f.inputs.temperature,
+                    received_at: record.payload.received_at,
+                    valid_until: f.state.now,
+                  },
+                },
+              }
+            : record,
+        ),
+      };
+    };
+    f.panel.cache.clear();
+    f.panel.shown = null;
+    f.panel.historySessionId = null;
     const boundary = f.iso(f.origin + f.inputs.detail_event_seconds * 1000),
       infusionAt = f.iso(f.origin + f.inputs.detail_selected_seconds * 1000),
       events = [
@@ -457,6 +556,46 @@ fs.mkdirSync(output, { recursive: true });
     await f.refresh();
     f.assertClean();
   });
+  const initialHumidity = await humidityState();
+  assert.equal(initialHumidity.mode, "relative");
+  assert.equal(initialHumidity.label, "Relative Feuchte (%)");
+  assert.equal(initialHumidity.pressed, "false");
+  assert.equal(initialHumidity.axis, "Relative Feuchte (%)");
+  const legend = selectionPanel.locator("#history-legends");
+  assert.deepEqual(
+    await legend.locator(".history-legend > strong").allTextContents(),
+    ["Phasen", "Ereignisse"],
+  );
+  assert.doesNotMatch(
+    await legend.innerText(),
+    /\b(?:Phasengrenze|Messwerte|Temperatur|oben|unten)\b/i,
+  );
+  for (const [phase, shape, label] of [
+    ["bereit", "ready", "Bereit"],
+    ["saunagang", "gang", "Saunagang"],
+  ]) {
+    assert.equal(
+      await legend.locator(`[data-legend-phase="${phase}"]`).innerText(),
+      label,
+    );
+    assert.equal(
+      await legend.locator(`[data-legend-phase="${phase}"] svg rect.${shape}`).count(),
+      1,
+    );
+    assert.equal(
+      await selectionPanel.locator(`.history-background rect.${shape}`).count(),
+      1,
+    );
+  }
+  for (const [glyph, count] of [
+    ["line.history-event-guide", 1],
+    ["g.history-event-marker ellipse", 2],
+    ["rect.door", 1],
+    ["line.infusion", 1],
+  ]) {
+    assert.equal(await legend.locator(`svg ${glyph}`).count(), count);
+    assert.ok(await selectionPanel.locator(`.history-stack ${glyph}`).count());
+  }
   await selectionSurface.scrollIntoViewIfNeeded();
   const selectionTimes = await selectionPage.evaluate(() => {
     const p = f.panel,
@@ -599,6 +738,20 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(guide.x, guide.expectedX);
     assert.equal(guide.visibility, guide.expectedVisibility);
   }
+  const pointHumidity = await humidityState();
+  for (const mode of ["absolute", "relative"]) {
+    await humidityButton.focus();
+    await humidityButton.click();
+    await settleSelection();
+    await assertHumidity(mode, pointHumidity);
+  }
+  assert.deepEqual(
+    await selectedValues(),
+    pinned,
+    "returning to relative restores pin values",
+  );
+  await selectionSurface.scrollIntoViewIfNeeded();
+  await settleSelection();
   await selectionPage.evaluate(async () => {
     const projection = structuredClone(f.state.phase_projection);
     await f.tick();
@@ -645,6 +798,19 @@ fs.mkdirSync(output, { recursive: true });
     await selectedValues(),
     range,
     "marker inspection preserves range and boundary values",
+  );
+  const rangeHumidity = await humidityState();
+  await humidityButton.press("Enter");
+  await settleSelection();
+  await assertHumidity("absolute", rangeHumidity);
+  assert.equal(await infusionMarker.getAttribute("aria-pressed"), "true");
+  await humidityButton.press("Space");
+  await settleSelection();
+  await assertHumidity("relative", rangeHumidity);
+  assert.deepEqual(
+    await selectedValues(),
+    range,
+    "keyboard return restores range values",
   );
   await infusionMarker.focus();
   await selectionPage.evaluate(async () => {
@@ -942,7 +1108,7 @@ fs.mkdirSync(output, { recursive: true });
       haloX: Number(halo.getAttribute("cx")),
       expectedX: p.historyChart.model.x(p.historyHoverPreview.time),
       hint: hint.innerText,
-      expectedHint: `Phasengrenze · ${p.tooltipWhen(p.historyHoverPreview.time)}`,
+      expectedHint: `Saunagang · ${p.tooltipWhen(p.historyHoverPreview.time)}`,
       hintVisible: !hint.hidden && getComputedStyle(hint).display !== "none",
     };
   });
@@ -1041,6 +1207,20 @@ fs.mkdirSync(output, { recursive: true });
     "point",
     "real touch tap pins a point",
   );
+  const touchHumidity = await humidityState();
+  for (const mode of ["absolute", "relative"]) {
+    await humidityButton.focus();
+    await humidityButton.scrollIntoViewIfNeeded();
+    const bounds = await humidityButton.boundingBox();
+    await selectionPage.touchscreen.tap(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+    );
+    await settleSelection();
+    await assertHumidity(mode, touchHumidity);
+  }
+  await selectionSurface.scrollIntoViewIfNeeded();
+  await settleSelection();
   await selectionSurface.press("Escape");
   await settleSelection();
   let pinchVerified = false;

@@ -550,7 +550,7 @@ class HistoryCurves {
       historyStyleKey(style),
       ...(quantity === "temperature"
         ? [snapshot.low, snapshot.high]
-        : [snapshot.humidityHigh]),
+        : [snapshot.humidityHigh, snapshot.humidityMode]),
     ];
   }
 
@@ -686,15 +686,21 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   const rowText = (nearest, quantity) => {
     const source = nearest.source;
     const cacheable = source && typeof source === "object";
+    const humidity = panel.historyHumidityDisplay?.(),
+      unit = quantity === "temperature" ? "°C" : humidity?.unit || "%",
+      precision =
+        quantity === "humidity" && humidity
+          ? humidity.precision
+          : panel.preference("value_precision");
     const key = [
       quantity,
-      panel.preference("value_precision"),
+      unit,
+      precision,
       sourceValue(nearest.value),
     ].join("|");
     const cached = cacheable ? state.rowTextCache.get(source) : null;
     if (cached?.key === key) return cached.value;
-    const unit = quantity === "temperature" ? "°C" : "%";
-    const value = `${number(nearest.value, panel.preference("value_precision"))} ${unit}`;
+    const value = `${number(nearest.value, precision)} ${unit}`;
     if (cacheable) state.rowTextCache.set(source, { key, value });
     return value;
   };
@@ -907,13 +913,25 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
   };
   const readValues = (series, time, pinned) => {
     const ttl = historyMeasurementTtlSeconds(panel, panel.shown?.session) * 1000;
+    const humidity = panel.historyHumidityDisplay?.();
     const visible = new Set();
     for (const position of panel.positions || ["upper"])
       for (const quantity of ["temperature", "humidity"]) {
-        const nearest = panel.nearestMeasurement?.(position, quantity, time, pinned);
+        const absolute = quantity === "humidity" && humidity?.mode === "absolute",
+          nearest = panel.nearestMeasurement?.(
+            position,
+            absolute ? "absolute_humidity" : quantity,
+            time,
+            pinned,
+          );
         const available =
-          nearest?.value != null && (!ttl || Math.abs(nearest.time - time) <= ttl);
-        if (!available && !pinned) continue;
+          nearest?.value != null &&
+          (absolute
+            ? nearest.time <= time &&
+              Number.isFinite(nearest.validUntil) &&
+              time <= nearest.validUntil
+            : !ttl || Math.abs(nearest.time - time) <= ttl);
+        if (!available && !pinned && !absolute) continue;
         const key = `${position}:${quantity}`;
         const row = series.get(key);
         if (!row) continue;
@@ -965,13 +983,12 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     setText(
       nodes.snap,
       unique.length
-        ? `Phasengrenze · ${unique
+        ? unique
             .map(
               (snap) =>
-                panel.tooltipWhen?.(snap.time, timeZone) ||
-                dateLabel(snap.time, timeZone),
+                `${snap.boundary === "end" ? "Sitzung beendet" : phases[snap.phase] || "Unbekannt"} · ${panel.tooltipWhen?.(snap.time, timeZone) || dateLabel(snap.time, timeZone)}`,
             )
-            .join(" · ")}`
+            .join(" · ")
         : "",
     );
     tooltip.setAttribute("data-snap", String(unique.length > 0));
@@ -1299,10 +1316,10 @@ class HistoryChart {
     this.chromeKey = chromeKey;
     this.surface.setAttribute(
       "aria-label",
-      `Sitzungsverlauf: Temperatur und Luftfeuchte${panel.historyDetail ? " beider Messhöhen" : ""}`,
+      `Sitzungsverlauf: Temperatur und ${model.humidityMode === "absolute" ? "absolute" : "relative"} Luftfeuchte`,
     );
     const timeZone = localTimeZone();
-    const axisKey = `${JSON.stringify(panel.appearanceValue())}:${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${timeZone}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}`;
+    const axisKey = `${JSON.stringify(panel.appearanceValue())}:${model.width}:${model.height}:${model.left}:${model.right}:${model.top}:${model.bottom}:${model.start}:${model.end}:${model.low}:${model.high}:${model.humidityHigh}:${model.humidityMode}:${model.humidityPrecision}:${timeZone}:${geometry.canvas.cssWidth}:${geometry.canvas.cssHeight}`;
     if (axisKey !== this.axisKey) {
       panel.$("[data-history-axes]").innerHTML = panel.historyAxes(model, {
         width: geometry.canvas.cssWidth,
@@ -1322,8 +1339,14 @@ class HistoryChart {
     const legend = panel.$("#history-legends");
     const legendMarkup = panel.historyLegendMarkup();
     if (legend && legendMarkup !== this.legendMarkup) {
+      const humidityFocused =
+        panel.shadowRoot?.activeElement?.dataset?.action === "history-humidity";
       legend.innerHTML = legendMarkup;
       this.legendMarkup = legendMarkup;
+      if (humidityFocused)
+        legend.querySelector('[data-action="history-humidity"]')?.focus?.({
+          preventScroll: true,
+        });
     }
     // Revealing the height controls or changing a wrapped heading can move
     // the plot without resizing it. Read the new position in the next frame.
@@ -1768,6 +1791,7 @@ class SaunaPanel extends HTMLElement {
     this.generation = 0;
     this.positions = new Set(["upper"]);
     this.historyDetail = false;
+    this.historyHumidityMode = "relative";
     this.chartPointers = new Map();
     this.historyValueSelection = null;
     this.historyHoverPreview = null;
@@ -3286,16 +3310,18 @@ class SaunaPanel extends HTMLElement {
       }
       .history-legend { display: grid; grid-template-columns: ${this.preference("size_76_0_px")}px minmax(0, 1fr); align-items: baseline; gap: ${this.preference("layout_space_18_px")}px; }
       .history-legend > strong { font-size: ${this.preference("font_size_small_px")}px; font-weight: ${this.preference("font_weight_500_0_ratio")}; color: var(--sauna-card-muted-text); }
-      .history-legend .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(${this.preference("size_108_0_px")}px, 1fr)); gap: ${this.preference("control_group_gap_px")}px; margin: 0; }
+      .history-legend .legend { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: ${this.preference("control_group_gap_px")}px; margin: 0; }
       .history-legend .legend > span { display: flex; align-items: center; gap: ${this.preference("control_group_gap_px")}px; min-width: 0; padding: ${this.preference("layout_space_09_px")}px ${this.preference("control_group_gap_px")}px; border: ${this.preference("border_1_0_px")}px solid transparent; border-radius: calc(var(--sauna-control-radius) / 2); }
+      .history-legend [data-legend-phase] { background: color-mix(in srgb, var(--history-legend-color) ${this.preference("color_mix_16_0_percent")}%, transparent); }
+      .history-humidity-toggle { justify-self: start; min-height: ${this.preference("size_32_0_px")}px; padding: ${this.preference("layout_space_09_px")}px ${this.preference("layout_space_13_px")}px; font-size: ${this.preference("font_size_small_px")}px; color: var(--sauna-color-series-humidity); }
       .history-legend-groups { display: grid; gap: ${this.preference("layout_space_13_px")}px; padding-top: ${this.preference("layout_space_18_px")}px; margin-top: ${this.preference("layout_space_16_px")}px; border-top: ${this.preference("border_1_0_px")}px solid var(--sauna-color-border); font-size: ${this.preference("font_size_small_px")}px; }
       @container (max-width: ${this.preference("breakpoint_500_0_px")}px) {
         .history-legend { grid-template-columns: 1fr; gap: ${this.preference("layout_space_09_px")}px; }
-        .history-legend .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       .history-legend .legend-swatch { width: ${this.preference("size_22_0_px")}px; height: ${this.preference("size_12_0_px")}px; display: block; flex: 0 0 auto; background: transparent; }
       .legend-swatch .temperature { stroke: var(--sauna-color-series-temperature); stroke-width: ${this.preference("chart_curve_width_px")}; }
       .legend-swatch .humidity { stroke: var(--sauna-color-series-humidity); stroke-width: ${this.preference("chart_curve_width_px")}; }
+      .legend-swatch .history-event-marker { cursor: default; }
       .dot {
         display: inline-block;
         width: ${this.preference("size_10_0_px")}px;
@@ -9188,34 +9214,64 @@ class SaunaPanel extends HTMLElement {
         number = source.value == null ? NaN : Number(source.value),
         value = Number.isFinite(number) ? number : null;
       if (!Number.isFinite(time)) continue;
-      const key = `${source.position}:${source.quantity}`,
-        values = index.series.get(key) || [],
-        point = { time, value, source };
-      index.seriesState ??= new Map();
-      const state = index.seriesState.get(key) || { revision: 0 };
-      point.serial = ++state.revision;
-      if (value != null) state.hasValue = true;
-      index.seriesState.set(key, state);
-      // Raw observations retain nulls for truthful hover readouts. The
-      // curve index shares only valid point objects, making a valid neighbour
-      // across even a long missing interval available by binary search.
-      const targets = [values];
-      if (value != null) {
+      const observations = [{ quantity: source.quantity, time, value, source }],
+        absolute = record.display?.absolute_humidity,
+        absoluteTime = stamp(absolute?.received_at);
+      if (absolute && Number.isFinite(absoluteTime))
+        observations.push({
+          quantity: "absolute_humidity",
+          time: absoluteTime,
+          value:
+            typeof absolute.value === "number" && Number.isFinite(absolute.value)
+              ? absolute.value
+              : null,
+          source: absolute,
+          validUntil: stamp(absolute.valid_until),
+        });
+      for (const observation of observations) {
+        const { quantity, time, value, source: pointSource } = observation,
+          key = `${source.position}:${quantity}`,
+          values = index.series.get(key) || [],
+          point = { time, value, source: pointSource },
+          derived = quantity === "absolute_humidity";
+        if (derived) point.validUntil = observation.validUntil;
+        index.seriesState ??= new Map();
+        const state = index.seriesState.get(key) || { revision: 0 };
+        point.serial = ++state.revision;
+        if (value != null) state.hasValue = true;
+        index.seriesState.set(key, state);
+        // Raw observations retain nulls for truthful hover readouts. The
+        // curve index shares only valid point objects, making a valid neighbour
+        // across even a long missing interval available by binary search.
         const curveValues = index.curveSeries.get(key) || [];
-        index.curveSeries.set(key, curveValues);
-        targets.push(curveValues);
-      }
-      for (const target of targets) {
-        const display = index.display.get(target);
-        if (rebuild || !target.length || target.at(-1).time <= time) {
-          target.push(point);
-          if (display) this.appendHistoryDisplay(display, point, target.length - 1);
-        } else {
-          target.splice(lowerBoundHistory(target, time), 0, point);
-          index.display.delete(target);
+        if (derived) {
+          // A pair can become complete on the second record at the same time.
+          // Keep its final projection in both the raw and curve indexes.
+          for (const target of [values, curveValues]) {
+            const at = lowerBoundHistory(target, time);
+            if (target[at]?.time === time) {
+              target.splice(at, 1);
+              index.display.delete(target);
+            }
+          }
         }
+        const targets = [values];
+        if (value != null) {
+          index.curveSeries.set(key, curveValues);
+          targets.push(curveValues);
+        }
+        for (const target of targets) {
+          const display = index.display.get(target);
+          if ((!derived && rebuild) || !target.length || target.at(-1).time <= time) {
+            target.push(point);
+            if (display) this.appendHistoryDisplay(display, point, target.length - 1);
+          } else {
+            target.splice(lowerBoundHistory(target, time), 0, point);
+            index.display.delete(target);
+          }
+        }
+        index.series.set(key, values);
       }
-      index.series.set(key, values);
     }
     if (rebuild)
       for (const values of [...index.series.values(), ...index.curveSeries.values()])
@@ -9365,6 +9421,18 @@ class SaunaPanel extends HTMLElement {
   historyRecords(kind) {
     return this.chartDataIndex?.byKind.get(kind) || [];
   }
+  historyHumidityDisplay() {
+    const absolute = this.historyHumidityMode === "absolute";
+    return {
+      mode: absolute ? "absolute" : "relative",
+      quantity: absolute ? "absolute_humidity" : "humidity",
+      unit: absolute ? "g/m³" : "%",
+      label: absolute ? "Absolute Feuchte (g/m³)" : "Relative Feuchte (%)",
+      precision: this.preference(
+        absolute ? "absolute_humidity_precision" : "value_precision",
+      ),
+    };
+  }
   nearestMeasurement(position, quantity, time, pinned = false) {
     if (
       this.shown?.records &&
@@ -9372,8 +9440,14 @@ class SaunaPanel extends HTMLElement {
         this.chartDataIndex.indexedCount !== this.shown.records.length)
     )
       this.historyIndex(this.shown.records);
+    const values = this.series(position, quantity);
+    if (quantity === "absolute_humidity") {
+      const after = lowerBoundHistory(values, time),
+        index = values[after]?.time === time ? after : after - 1;
+      return values[index] || null;
+    }
     return nearestHistoryPoint(
-      this.series(position, quantity),
+      values,
       time,
       pinned ? -Infinity : this.window[0],
       pinned ? Infinity : this.window[1],
@@ -10060,10 +10134,14 @@ class SaunaPanel extends HTMLElement {
     if (!items.length) return "";
     return `<div class="history-legend" aria-label="${esc(label)}"><strong>${esc(label)}</strong><div class="legend">${items
       .map(([kind, text, phase]) => {
-        const shape = ["temperature", "humidity", "infusion"].includes(kind)
-          ? `<line class="${kind}" x1="2" x2="26" y1="7" y2="7"/>`
-          : `<rect class="${kind}" x="2" y="2" width="24" height="10" rx="2"/>`;
-        return `<span${phase ? ` data-legend-phase="${esc(phase)}"` : ""}><svg class="chart legend-swatch" viewBox="0 0 28 14" aria-hidden="true">${shape}</svg>${esc(text)}</span>`;
+        const marker = `<g class="history-event-marker"><ellipse cx="14" cy="4" rx="3" ry="3"/></g>`;
+        const shape =
+          kind === "event"
+            ? `<line class="history-event-guide" x1="14" x2="14" y1="1" y2="13"/>${marker}`
+            : kind === "infusion"
+              ? `<line class="infusion" x1="14" x2="14" y1="1" y2="13"/>${marker}`
+              : `<rect class="${kind}" x="2" y="2" width="24" height="10" rx="2"/>`;
+        return `<span${phase ? ` data-legend-phase="${esc(phase)}" style="--history-legend-color: var(--sauna-color-${phaseAppearance[phase].color.replaceAll("_", "-")})"` : ""}><svg class="chart legend-swatch" viewBox="0 0 28 14" aria-hidden="true">${shape}</svg>${esc(text)}</span>`;
       })
       .join("")}</div></div>`;
   }
@@ -10113,15 +10191,10 @@ class SaunaPanel extends HTMLElement {
     const phaseItems = presentPhases
       .filter((phase) => phaseAppearance[phase])
       .map((phase) => [phaseAppearance[phase].shape, phases[phase], phase]);
-    const position = this.historyPrimaryPosition();
-    return `<div class="history-legend-groups">${this.historyLegend("Messwerte", [
-      ["temperature", `Temperatur ${position === "upper" ? "oben" : "unten"} (°C)`],
-      [
-        "humidity",
-        `Relative Luftfeuchte ${position === "upper" ? "oben" : "unten"} (%)`,
-      ],
-    ])}${this.historyLegend("Phasen", phaseItems)}${this.historyLegend("Ereignisse", [
-      ["door", "Saunatür offen"],
+    const humidity = this.historyHumidityDisplay();
+    return `<div class="history-legend-groups"><button type="button" class="history-humidity-toggle" data-action="history-humidity" aria-pressed="${humidity.mode === "absolute"}">${esc(humidity.label)}</button>${this.historyLegend("Phasen", phaseItems)}${this.historyLegend("Ereignisse", [
+      ["event", "Tür geöffnet / geschlossen"],
+      ["door", "Tür offen"],
       ["infusion", "Aufguss"],
     ])}</div>`;
   }
@@ -10133,7 +10206,7 @@ class SaunaPanel extends HTMLElement {
       // Only inserts in this span change its length. Late inserts before it
       // shift both indices equally; stable neighbour identities still detect
       // an insertion that changes an edge tangent without changing the count.
-      key = `${this.historyProjection()}:${this.historyProjectionGeneration || 0}:${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
+      key = `${this.historyProjection()}:${this.historyProjectionGeneration || 0}:${quantity}:${quantity === "absolute_humidity" ? state?.revision || 0 : ""}:${start}:${end}:${ttl}:${pixels}:${after - first}:${values[first]?.serial || 0}:${values[after - 1]?.serial || 0}`;
     const name = `${position}:${quantity}`,
       old = cache.get(name);
     if (old?.source === values && old.key === key) return old;
@@ -10171,6 +10244,7 @@ class SaunaPanel extends HTMLElement {
       bottom = this.historyGeometry().bottom,
       ttl = historyMeasurementTtlSeconds(this, session) * 1000,
       positions = [...this.positions],
+      humidityDisplay = this.historyHumidityDisplay(),
       series = new Map();
     let lo = Infinity,
       hi = -Infinity,
@@ -10179,7 +10253,7 @@ class SaunaPanel extends HTMLElement {
       for (const quantity of ["temperature", "humidity"]) {
         const entry = this.historyPreparedSeries(
           position,
-          quantity,
+          quantity === "humidity" ? humidityDisplay.quantity : quantity,
           start,
           end,
           ttl,
@@ -10196,6 +10270,7 @@ class SaunaPanel extends HTMLElement {
       temperatureStep = this.preference("history_temperature_scale_step_c"),
       humidityPadding = this.preference("history_humidity_padding_percent"),
       humidityStep = this.preference("history_humidity_scale_step_percent"),
+      absoluteStep = 10 ** -humidityDisplay.precision,
       fallback = this.appearanceScale("temperature"),
       frozen = this.historyInputSnapshot?.model,
       low =
@@ -10212,11 +10287,15 @@ class SaunaPanel extends HTMLElement {
             )
           : fallback.maximum),
       humidityHigh =
-        frozen?.humidityHigh ??
-        Math.max(
-          this.preference("history_humidity_minimum_maximum_percent"),
-          Math.ceil((humidity + humidityPadding) / humidityStep) * humidityStep,
-        ),
+        (frozen && (frozen.humidityMode || "relative") === humidityDisplay.mode
+          ? frozen.humidityHigh
+          : null) ??
+        (humidityDisplay.mode === "absolute"
+          ? Math.max(absoluteStep, Math.ceil(humidity / absoluteStep) * absoluteStep)
+          : Math.max(
+              this.preference("history_humidity_minimum_maximum_percent"),
+              Math.ceil((humidity + humidityPadding) / humidityStep) * humidityStep,
+            )),
       x = (time) => left + ((time - start) / (end - start)) * (right - left),
       yT = (value) => bottom - ((value - low) / (high - low)) * (bottom - top),
       yH = (value) => bottom - (value / humidityHigh) * (bottom - top);
@@ -10234,6 +10313,9 @@ class SaunaPanel extends HTMLElement {
       low,
       high,
       humidityHigh,
+      humidityMode: humidityDisplay.mode,
+      humidityUnit: humidityDisplay.unit,
+      humidityPrecision: humidityDisplay.precision,
       ttl,
       positions,
       series,
@@ -10411,7 +10493,10 @@ class SaunaPanel extends HTMLElement {
         "axis-temperature",
       );
       svg += text(
-        this.num(humidityHigh * fraction, this.preference("value_precision")),
+        this.num(
+          humidityHigh * fraction,
+          model.humidityPrecision ?? this.preference("value_precision"),
+        ),
         Math.min(model.width, right + this.historyGeometry().left * scaleX),
         y,
         "axis-humidity",
@@ -10441,6 +10526,17 @@ class SaunaPanel extends HTMLElement {
         n === 0 ? "start" : n === timeTicks ? "end" : "middle",
       );
     }
+    const humidityHeadingRight = Math.min(
+      right,
+      Math.min(model.width, right + this.historyGeometry().left * scaleX) -
+        (this.num(
+          humidityHigh,
+          model.humidityPrecision ?? this.preference("value_precision"),
+        ).length *
+          this.preference("font_size_small_px") +
+          this.preference("control_group_gap_px")) *
+          scaleX,
+    );
     return (
       svg +
       text(
@@ -10450,8 +10546,10 @@ class SaunaPanel extends HTMLElement {
         "axis-temperature",
       ) +
       text(
-        "Relative Luftfeuchte (%)",
-        right,
+        model.humidityMode === "absolute"
+          ? "Absolute Feuchte (g/m³)"
+          : "Relative Feuchte (%)",
+        humidityHeadingRight,
         this.preference("font_size_small_px") * scaleY,
         "axis-humidity",
         "end",
@@ -12198,6 +12296,12 @@ class SaunaPanel extends HTMLElement {
   }
   async action(action) {
     if (action === "clear-history-selection") return this.clearHistorySelection();
+    if (action === "history-humidity") {
+      this.historyHumidityMode =
+        this.historyHumidityMode === "absolute" ? "relative" : "absolute";
+      this.scheduleHistoryRender("humidity");
+      return;
+    }
     if (action === "history-to-selection") {
       const selection = this.historyValueSelection;
       if (!selection) return;

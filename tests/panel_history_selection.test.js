@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 const { panelFixture, parameterValues } = require("./catalog_fixture.cjs");
+const { setting } = require("./settings_fixture.cjs");
 
 class EventTarget {
   constructor() {
@@ -127,11 +128,11 @@ const interval = (begin, end, phase = "bereit") => ({
   ended_at: iso(end),
   phase,
 });
-const record = (second, value) => ({
+const record = (second, value, quantity = "temperature") => ({
   kind: "measurement",
   payload: {
     position: "upper",
-    quantity: "temperature",
+    quantity,
     value,
     received_at: iso(second),
   },
@@ -142,6 +143,29 @@ const selectionBounds = (panel) => {
 };
 const visibleText = (node) =>
   node.hidden ? "" : node.text || node.children.map(visibleText).join("");
+const projectedRecord = (measurement, value, validUntil) => ({
+  ...measurement,
+  display: {
+    absolute_humidity: {
+      value,
+      received_at: measurement.payload.received_at,
+      valid_until: validUntil == null ? null : iso(validUntil),
+    },
+  },
+});
+const humidityReadouts = (tooltip) =>
+  tooltip
+    .querySelectorAll(".history-tooltip-values")
+    .filter((container) => !container.hidden)
+    .flatMap((container) =>
+      container.children
+        .filter(
+          (row) =>
+            !row.hidden &&
+            row.children[0]?.getAttribute("data-quantity") === "humidity",
+        )
+        .map(visibleText),
+    );
 
 const makeFixture = (catalogOverrides = {}, scale = 1) => {
   const panel = Object.assign(panelFixture(context.Panel), {
@@ -527,7 +551,7 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
       snapHint && !snapHint.hidden,
       "the phase boundary is visible before clicking",
     );
-    assert.equal(visibleText(snapHint), `Phasengrenze · ${panel.tooltipWhen(at(100))}`);
+    assert.equal(visibleText(snapHint), `Bereit · ${panel.tooltipWhen(at(100))}`);
     interaction.hover(point(at(100), radius + definition.step), model);
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
     assert.equal(previewHalo.getAttribute("visibility"), "hidden");
@@ -588,6 +612,213 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
       "a later plain hover cannot restore old snap feedback",
     );
   }
+});
+
+test("absolute humidity readouts use the latest projection through its inclusive expiry", async () => {
+  const { panel, interaction, chart, tooltip } = makeFixture({
+    history_phase_snap_radius_px: 0,
+  });
+  const inputs = setting("fixtures.history"),
+    archiveInputs = setting("fixtures.archive"),
+    timeout = panel.shown.session.configuration.parameters.sensor_timeout_seconds,
+    step = timeout / 10,
+    first = projectedRecord(
+      record(step, inputs.humidity, "humidity"),
+      archiveInputs.value_base,
+      timeout,
+    ),
+    future = projectedRecord(
+      record(timeout + step, inputs.temperature),
+      archiveInputs.value_base + 1 / archiveInputs.value_divisor,
+      2 * timeout,
+    );
+  panel.shown.records = [
+    projectedRecord(record(0, inputs.temperature), null, null),
+    first,
+    future,
+  ];
+  panel.state.now = iso(3 * timeout);
+  panel.historyIndex(panel.shown.records);
+  panel.setHistoryWindow(at(0), at(3 * timeout));
+  const render = (reason) => chart.render(new Set([reason]), panel.shown.session, []);
+  render("archive");
+  await panel.action("history-humidity");
+  render("humidity");
+  assert.equal(
+    panel.nearestMeasurement("upper", "absolute_humidity", at(-step)),
+    null,
+    "a future projection cannot supply a value before the first observation",
+  );
+  for (const [second, expected] of [
+    [step / 2, "Luftfeuchte: –"],
+    [step, "Luftfeuchte: 40,13 g/m³"],
+    [timeout - step, "Luftfeuchte: 40,13 g/m³"],
+    [timeout, "Luftfeuchte: 40,13 g/m³"],
+    [timeout + 0.001, "Luftfeuchte: –"],
+    [timeout + step, "Luftfeuchte: 40,25 g/m³"],
+  ]) {
+    interaction.previewTime(at(second), chart.model);
+    assert.deepEqual(humidityReadouts(tooltip), [expected]);
+  }
+  assert.equal(
+    panel.nearestMeasurement("upper", "absolute_humidity", at(timeout - step))
+      .source,
+    first.display.absolute_humidity,
+    "the available predecessor wins even when a future point is closer",
+  );
+  panel.setHistoryWindow(at(2 * step), at(2 * timeout));
+  render("viewport");
+  interaction.previewTime(at(2 * step), chart.model);
+  assert.ok(Date.parse(first.payload.received_at) < panel.window[0]);
+  assert.equal(
+    panel.nearestMeasurement("upper", "absolute_humidity", at(2 * step)).source,
+    first.display.absolute_humidity,
+    "a still-valid predecessor before the visible window remains readable",
+  );
+  assert.deepEqual(humidityReadouts(tooltip), ["Luftfeuchte: 40,13 g/m³"]);
+  panel.clearHistorySelection();
+  panel.selectHistoryTime(at(timeout));
+  assert.deepEqual(humidityReadouts(tooltip), ["Luftfeuchte: 40,13 g/m³"]);
+  panel.selectHistoryTime(at(timeout + 0.001));
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: –",
+  ]);
+});
+
+test("same-time humidity replacements refresh pinned values and legend toggles preserve the window", async () => {
+  const { panel, chart, tooltip, nodes } = makeFixture({
+    history_phase_snap_radius_px: 0,
+  });
+  const inputs = setting("fixtures.history"),
+    archiveInputs = setting("fixtures.archive"),
+    timeout = panel.shown.session.configuration.parameters.sensor_timeout_seconds,
+    step = timeout / 10,
+    first = projectedRecord(
+      record(step, inputs.humidity + 1 / archiveInputs.value_divisor, "humidity"),
+      archiveInputs.value_base,
+      step + timeout,
+    ),
+    last = projectedRecord(
+      record(2 * step, inputs.temperature),
+      archiveInputs.value_base,
+      step + timeout,
+    );
+  panel.shown.records = [
+    projectedRecord(record(step, inputs.temperature), null, null),
+    first,
+    last,
+  ];
+  panel.historyIndex(panel.shown.records);
+  panel.setHistoryWindow(at(step / 2), at(3 * step));
+  const render = (reason) => chart.render(new Set([reason]), panel.shown.session, []);
+  render("archive");
+  assert.equal(panel.series("upper", "absolute_humidity").length, 2);
+  assert.equal(panel.historyCurveSeries("upper", "absolute_humidity").length, 2);
+  assert.equal(
+    panel.series("upper", "absolute_humidity")[0].source,
+    first.display.absolute_humidity,
+    "the complete pair replaces the null projection at the same time",
+  );
+  panel.selectHistoryTime(at(step));
+  panel.selectHistoryTime(at(2 * step));
+  const pin = panel.historyValueSelection,
+    window = Array.from(panel.window),
+    windowRevision = panel.historyWindowRevision,
+    zoom = panel.zoom;
+  const assertPin = () => {
+    assert.equal(panel.historyValueSelection, pin);
+    assert.deepEqual(selectionBounds(panel), ["range", at(step), at(2 * step)]);
+    assert.deepEqual(Array.from(panel.window), window);
+    assert.equal(panel.historyWindowRevision, windowRevision);
+    assert.equal(panel.zoom, zoom);
+  };
+  const toggle = async () => {
+    await panel.action("history-humidity");
+    render("humidity");
+    assertPin();
+  };
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: 28,1 %",
+    "Luftfeuchte: 28,1 %",
+  ]);
+  assert.equal(panel.historyHumidityDisplay().unit, "%");
+  assert.equal(
+    panel.historyHumidityDisplay().precision,
+    panel.panel.config.appearance_catalog.preferences.value_precision.default,
+  );
+  assert.match(
+    nodes.get("#history-legends").innerHTML,
+    /data-action="history-humidity" aria-pressed="false">Relative Feuchte \(%\)/,
+  );
+  await toggle();
+  assert.equal(panel.historyHumidityMode, "absolute");
+  assert.equal(chart.model.humidityUnit, "g/m³");
+  assert.equal(
+    panel.historyHumidityDisplay().precision,
+    panel.panel.config.appearance_catalog.preferences.absolute_humidity_precision
+      .default,
+  );
+  assert.match(
+    nodes.get("#history-legends").innerHTML,
+    /data-action="history-humidity" aria-pressed="true">Absolute Feuchte \(g\/m³\)/,
+  );
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: 40,13 g/m³",
+    "Luftfeuchte: 40,13 g/m³",
+  ]);
+  const prepared = chart.model.series.get("upper:humidity"),
+    replacement = projectedRecord(
+      record(step, inputs.temperature + inputs.wave_amplitude),
+      archiveInputs.value_base + 1 / archiveInputs.value_divisor,
+      step + timeout,
+    );
+  panel.shown.records.push(replacement);
+  panel.historyIndex(panel.shown.records);
+  render("archive");
+  assertPin();
+  assert.equal(panel.series("upper", "absolute_humidity").length, 2);
+  assert.equal(panel.historyCurveSeries("upper", "absolute_humidity").length, 2);
+  assert.equal(
+    panel.nearestMeasurement("upper", "absolute_humidity", at(step)).source,
+    replacement.display.absolute_humidity,
+  );
+  assert.notEqual(chart.model.series.get("upper:humidity"), prepared);
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: 40,25 g/m³",
+    "Luftfeuchte: 40,13 g/m³",
+  ]);
+  await toggle();
+  assert.equal(panel.historyHumidityMode, "relative");
+  assert.equal(chart.model.humidityUnit, "%");
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: 28,1 %",
+    "Luftfeuchte: 28,1 %",
+  ]);
+  await toggle();
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: 40,25 g/m³",
+    "Luftfeuchte: 40,13 g/m³",
+  ]);
+  const unavailable = projectedRecord(record(step, null, "humidity"), null, null);
+  panel.shown.records.push(unavailable);
+  panel.historyIndex(panel.shown.records);
+  render("archive");
+  assertPin();
+  assert.equal(panel.series("upper", "absolute_humidity").length, 2);
+  assert.equal(
+    panel.nearestMeasurement("upper", "absolute_humidity", at(step)).source,
+    unavailable.display.absolute_humidity,
+  );
+  assert.equal(panel.historyCurveSeries("upper", "absolute_humidity").length, 1);
+  assert.equal(
+    panel.historyCurveSeries("upper", "absolute_humidity")[0].source,
+    last.display.absolute_humidity,
+  );
+  assert.deepEqual(humidityReadouts(tooltip), [
+    "Luftfeuchte: –",
+    "Luftfeuchte: 40,13 g/m³",
+  ]);
 });
 
 test("hover and pinned boundaries retain absolute times through zoom, pan and same-session append", () => {
