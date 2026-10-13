@@ -9,8 +9,15 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from math import isfinite
+from types import MappingProxyType
 
-from .appearance import appearance_options, default_appearance, validate_appearance
+from .appearance import (
+    APPEARANCE_CATALOG,
+    appearance_options,
+    default_appearance,
+    validate_appearance,
+)
 from .archive import encoded, encoded_plain, plain
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
@@ -27,16 +34,22 @@ from .core.button import (
 from .core.configuration_model import ConfigurationModel
 from .core.contracts import ConsumerEvent, PresenceReport
 from .core.controller import Controller, Result
-from .core.defaults import instance_default
+from .core.defaults import instance_default, preference_values
 from .core.detector import Detector
 from .core.models import Position, Session
-from .core.parameters import BY_KEY, CATALOG_PARAMETER_KEYS, Parameters
+from .core.parameters import (
+    BY_KEY,
+    CATALOG_PARAMETER_KEYS,
+    EDITABLE_DEFINITIONS,
+    Parameters,
+)
 from .core.presence import PresenceProjection, ProxyPresenceSource
 from .core.program_catalog import (
     DEFAULT_PROGRAMS,
     NamedTemperatureProgram,
     load_programs,
     migrate_legacy_programs,
+    validate_programs,
 )
 from .core.temperature_program import temperature_steps as validate_temperature_steps
 from .core.timeline import Event, Kind
@@ -71,6 +84,7 @@ class Configuration:
     temperature_steps: tuple[float, ...] | None = None
     appearance: dict = field(default_factory=default_appearance)
     button_session_gesture: str = instance_default("button_session_gesture")
+    field_standards: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
@@ -83,6 +97,16 @@ class Configuration:
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
         object.__setattr__(self, "appearance", validate_appearance(self.appearance))
+        standards = {}
+        if isinstance(self.field_standards, Mapping):
+            for name, value in self.field_standards.items():
+                try:
+                    standards[name] = self._validated_field_standard(name, value)
+                except ValueError:
+                    # An obsolete or newly invalid standard must not replace a
+                    # valid active setting. Its standard fallback remains W.
+                    continue
+        object.__setattr__(self, "field_standards", MappingProxyType(standards))
         minimum = self.parameters.minimum_for("target_temperature_c")
         maximum = BY_KEY["target_temperature_c"].maximum
         if self.temperature_steps is not None:
@@ -120,6 +144,181 @@ class Configuration:
         return ConfigurationModel.from_configuration(self).button.session_gestures
 
     @classmethod
+    def standard_field_groups(cls) -> dict[str, str]:
+        """Derive the permanent field scope from the existing catalog metadata."""
+        return {
+            f"parameters.{definition.key}": definition.settings_group
+            for definition in EDITABLE_DEFINITIONS
+            if definition.configuration_surface != "catalog"
+            and definition.settings_group != "programs"
+        } | {
+            f"appearance.colors.{definition['id']}": "appearance"
+            for definition in APPEARANCE_CATALOG["colors"]
+        } | {
+            f"appearance.scales.{name}.{bound}": "appearance"
+            for name, spec in APPEARANCE_CATALOG["scales"].items()
+            for bound in spec["default"]
+        } | {
+            f"appearance.instruments.{name}": "appearance"
+            for name in APPEARANCE_CATALOG["instruments"]
+        } | {
+            f"appearance.preferences.{name}": "appearance"
+            for name, definition in APPEARANCE_CATALOG["preferences"].items()
+            if definition["configuration_surface"] == "panel"
+        }
+
+    @classmethod
+    def standard_fields(cls, *, field=None, group=None) -> tuple[str, ...]:
+        """Resolve a field, settings group or global scope, including hidden fields."""
+        groups = cls.standard_field_groups()
+        if field is not None:
+            if group is not None or not isinstance(field, str) or field not in groups:
+                raise ValueError("Ungültiges Standardfeld")
+            return (field,)
+        if group is not None:
+            if not isinstance(group, str) or group not in groups.values():
+                raise ValueError("Ungültiger Standardbereich")
+            return tuple(name for name, owner in groups.items() if owner == group)
+        return tuple(groups)
+
+    def standard_field_metadata(self) -> dict[str, dict]:
+        """Project existing labels and applicability without shrinking reset scopes."""
+        model = ConfigurationModel.from_configuration(self)
+        result = {}
+        for name, group in self.standard_field_groups().items():
+            parts = name.split(".")
+            if parts[0] == "parameters":
+                definition = BY_KEY[parts[1]]
+                label, unit = definition.label, definition.unit
+                applicable = model.parameter_applicable(definition)
+            else:
+                category, key = parts[1:3]
+                if category == "colors":
+                    definition = next(
+                        spec for spec in APPEARANCE_CATALOG[category]
+                        if spec["id"] == key
+                    )
+                else:
+                    definition = APPEARANCE_CATALOG[category][key]
+                label, unit = definition.get("label", key), definition.get("unit", "")
+                applicable = True
+            result[name] = {
+                "group": group,
+                "label": label,
+                "unit": unit,
+                "applicable": applicable,
+            }
+            if parts[0] == "appearance" and parts[1] == "scales":
+                result[name]["bound"] = parts[3]
+        return result
+
+    @classmethod
+    def _validated_field_standard(cls, name, value):
+        """Check one stored scalar independently of the current active configuration."""
+        cls.standard_fields(field=name)
+        parts = name.split(".")
+        if parts[0] == "parameters":
+            return BY_KEY[parts[1]].validate(value)
+        category, key = parts[1:3]
+        if category in {"colors", "instruments"}:
+            return validate_appearance({category: {key: value}})[category][key]
+        if category == "preferences":
+            return preference_values(
+                {key: value}, reject_catalog_overrides=True
+            )[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("Ungültiger numerischer Feldstandard")
+        try:
+            number = float(value)
+        except OverflowError:
+            raise ValueError("Ungültiger numerischer Feldstandard") from None
+        if not isfinite(number):
+            raise ValueError("Ungültiger numerischer Feldstandard")
+        definition = APPEARANCE_CATALOG[category][key]
+        if (
+            number < definition.get("minimum", number)
+            or number > definition.get("maximum", number)
+        ):
+            raise ValueError("Feldstandard liegt außerhalb des zulässigen Bereichs")
+        return value
+
+    def field_value(self, name, *, source="active"):
+        """Read A, catalog W or independent S with its W fallback for one field."""
+        self.standard_fields(field=name)
+        if not isinstance(source, str) or source not in {
+            "active", "factory", "standard"
+        }:
+            raise ValueError("Ungültige Feldwertquelle")
+        if source == "standard" and name in self.field_standards:
+            return self.field_standards[name]
+        parts = name.split(".")
+        if parts[0] == "parameters":
+            return (
+                self.parameters.values[parts[1]] if source == "active"
+                else BY_KEY[parts[1]].default
+            )
+        category, key = parts[1:3]
+        if category == "colors":
+            factory = next(
+                spec["default"] for spec in APPEARANCE_CATALOG[category]
+                if spec["id"] == key
+            )
+        else:
+            factory = APPEARANCE_CATALOG[category][key]["default"]
+        if category == "scales":
+            return (
+                self.appearance[category][key][parts[3]] if source == "active"
+                else factory[parts[3]]
+            )
+        return (
+            self.appearance[category].get(key, factory) if source == "active"
+            else factory
+        )
+
+    def with_field_values(self, values: Mapping[str, object]) -> Configuration:
+        """Validate a complete A candidate while retaining all excluded owners."""
+        if not isinstance(values, Mapping):
+            raise ValueError("Ungültige Feldwerte")
+        parameters = self.parameters.as_dict()
+        appearance = validate_appearance(self.appearance)
+        for name, value in values.items():
+            self.standard_fields(field=name)
+            parts = name.split(".")
+            if parts[0] == "parameters":
+                parameters[parts[1]] = value
+            elif parts[1] == "scales":
+                appearance[parts[1]][parts[2]][parts[3]] = value
+            else:
+                appearance[parts[1]][parts[2]] = value
+        parameters = Parameters(parameters)
+        validate_programs(
+            self.temperature_programs,
+            minimum_c=parameters.minimum_for("target_temperature_c"),
+            maximum_c=BY_KEY["target_temperature_c"].maximum,
+            maximum_gangs=BY_KEY["temperature_gangs"].maximum,
+        )
+        return replace(self, parameters=parameters, appearance=appearance)
+
+    def with_field_standard(self, name, value) -> Configuration:
+        """Copy one validated draft value to S without changing active settings."""
+        value = self._validated_field_standard(name, value)
+        return replace(self, field_standards={**self.field_standards, name: value})
+
+    def without_field_standards(self, fields) -> Configuration:
+        """Remove S only in an explicitly resolved permanent field scope."""
+        names = set()
+        for name in fields:
+            self.standard_fields(field=name)
+            names.add(name)
+        return replace(
+            self,
+            field_standards={
+                name: value for name, value in self.field_standards.items()
+                if name not in names
+            },
+        )
+
+    @classmethod
     def from_options(cls, options: Mapping, *, historical=False) -> Configuration:
         if (
             not isinstance(options, Mapping)
@@ -141,6 +340,7 @@ class Configuration:
                 "temperature_steps",
                 "button_temperature_c",  # Obsolete saved option; ignored on load.
                 "appearance",
+                "field_standards",
             }
         ):
             raise ValueError(
@@ -255,6 +455,7 @@ class Configuration:
             steps,
             options.get("appearance", default_appearance()),
             options.get("button_session_gesture", instance_default("button_session_gesture")),
+            options.get("field_standards", {}),
         )
 
     def as_options(self, *, snapshot=False) -> dict:
@@ -278,10 +479,11 @@ class Configuration:
                 validate_appearance(self.appearance) if snapshot
                 else appearance_options(self.appearance)
             ),
+            "field_standards": dict(self.field_standards),
         }
 
     def as_snapshot(self) -> dict:
-        """Archive and publish every effective value, including catalog-owned standards."""
+        """Copy effective values and field standards for a historical snapshot."""
         return self.as_options(snapshot=True)
 
 

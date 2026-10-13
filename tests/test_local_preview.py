@@ -2,6 +2,7 @@
 import unittest
 from datetime import timedelta
 
+from custom_components.ha_sauna.settings import ConfigurationLocked
 from tools.local_preview import Preview
 
 
@@ -351,6 +352,107 @@ class LocalPreviewTests(unittest.TestCase):
         for gesture in ("short", "unknown"):
             with self.assertRaises(ValueError):
                 self.preview.action("/preview/button-gesture", {"gesture":gesture})
+
+    def test_preview_button_program_selection_preserves_live_settings_and_standards(self):
+        program = self.preview.runtime.configuration.temperature_programs[0]
+        for live_program in (
+            {"profile": program.id},
+            {"temperature_steps": [program.start_c, program.end_c]},
+        ):
+            with self.subTest(live_program=live_program):
+                self.preview.reset("manuell")
+                self.preview.admin = False
+                self.preview.action("/preview/program", live_program)
+                configuration = self.preview.runtime.configuration
+                field = configuration.standard_fields()[0]
+                configuration = configuration.with_field_standard(
+                    field, configuration.field_value(field, source="factory"),
+                )
+                self.preview.runtime.configuration = configuration
+                self.preview.entry.options = configuration.as_options()
+                self.assertIn(field, configuration.field_standards)
+                self.assertIsNone(self.preview.c.session)
+                self.assertFalse(self.preview.state()["permissions"]["admin"])
+                self.assertTrue(self.preview.state()["permissions"]["program"])
+                controller = self.preview.c
+                parameters = controller.parameters.as_dict()
+                targets = (
+                    controller.target_temperature, controller.thermostat_target,
+                    controller.next_gang_temperature,
+                )
+                steps = controller.temperature_steps
+                expected = configuration.as_snapshot()
+                expected_options = configuration.as_options()
+                for profile in (program.id, "constant"):
+                    with self.subTest(profile=profile):
+                        saved = self.preview.action(
+                            "/preview/button-program", {"profile": profile},
+                        )
+                        self.assertEqual(saved, {
+                            "success": True, "button_program": profile,
+                        })
+                        expected["button_program"] = profile
+                        expected_options["button_program"] = profile
+                        self.assertEqual(
+                            self.preview.runtime.configuration.as_snapshot(), expected,
+                        )
+                        self.assertEqual(self.preview.entry.options, expected_options)
+                        self.assertEqual(
+                            self.preview.state()["configuration"]["button_program"],
+                            profile,
+                        )
+                        self.assertIs(self.preview.runtime.controller, controller)
+                        self.assertIsNone(controller.session)
+                        self.assertEqual(controller.parameters.as_dict(), parameters)
+                        self.assertEqual((
+                            controller.target_temperature, controller.thermostat_target,
+                            controller.next_gang_temperature,
+                        ), targets)
+                        self.assertEqual(controller.temperature_steps, steps)
+
+    def test_preview_button_program_rejects_malformed_requests_without_mutation(self):
+        self.preview.reset("manuell")
+        self.preview.admin = False
+        configuration = self.preview.runtime.configuration
+        options = configuration.as_options()
+        malformed = [
+            [], None, {},
+            {"profile": "constant", "temperature_c": self.preview.c.target_temperature},
+        ]
+        invalid_profiles = [
+            {"profile": profile} for profile in (
+                "missing", "current", None, False, self.preview.c.target_temperature, [],
+            )
+        ]
+        for bodies, message in (
+            (malformed, "Tasterprogramm fehlt oder ist ungültig"),
+            (invalid_profiles, "Ungültiges Tasterprogramm"),
+        ):
+            for body in bodies:
+                with self.subTest(body=body), self.assertRaisesRegex(ValueError, message):
+                    self.preview.action("/preview/button-program", body)
+                self.assertIs(self.preview.runtime.configuration, configuration)
+                self.assertEqual(self.preview.entry.options, options)
+
+    def test_preview_button_program_observes_settings_locks_without_mutation(self):
+        for scenario, reconfiguring in (("aufheizen", False), ("manuell", True)):
+            with self.subTest(scenario=scenario, reconfiguring=reconfiguring):
+                self.preview.reset(scenario)
+                self.preview.admin = False
+                self.preview.runtime.reconfiguring = reconfiguring
+                configuration = self.preview.runtime.configuration
+                options = configuration.as_options()
+                session = self.preview.c.session
+                session_state = self.preview.state()["session"]
+                with self.assertRaises(ConfigurationLocked):
+                    self.preview.action(
+                        "/preview/button-program", {"profile": "constant"},
+                    )
+                self.assertIs(self.preview.runtime.configuration, configuration)
+                self.assertEqual(self.preview.entry.options, options)
+                self.assertIs(self.preview.c.session, session)
+                self.assertEqual(self.preview.state()["session"], session_state)
+                self.preview.runtime.reconfiguring = False
 
     def test_preview_native_button_consumes_classified_events_without_advancing_time(self):
         self.preview.reset("manuell")

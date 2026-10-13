@@ -188,7 +188,7 @@
     },
     {
       "key": "nominal_power_kw",
-      "label": "Ofenleistung für die Verbrauchsschätzung",
+      "label": "Ofenleistung",
       "unit": "kW",
       "allow_zero": false,
       "optional": false,
@@ -196,7 +196,7 @@
       "default": 4.5,
       "minimum": null,
       "integer": false,
-      "description": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit geschätzt.",
+      "description": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
       "group": "timer",
       "expert": false,
       "step": "any",
@@ -2088,6 +2088,23 @@
         "default": "#F4B183"
       }
     ],
+    "history_events": {
+      "door": {
+        "label": "Türvorgänge",
+        "default_visible": false,
+        "color": "event_door"
+      },
+      "infusion": {
+        "label": "Aufgüsse",
+        "default_visible": true,
+        "color": "event_infusion"
+      },
+      "heater": {
+        "label": "Ofen",
+        "default_visible": false,
+        "color": "ui_heater_on"
+      }
+    },
     "scales": {
       "temperature": {
         "default": {
@@ -2184,7 +2201,7 @@
         "step": 100,
         "integer": true,
         "unit": "ms",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "history_cache_records": {
         "label": "Archiv-Zwischenspeicher",
@@ -2342,6 +2359,30 @@
         "unit": "Faktor",
         "configuration_surface": "panel"
       },
+      "history_selection_context_fraction": {
+        "label": "Randbereich beim Auswahlzoom",
+        "description": "Anteil der ausgewählten Zeitspanne, der je Seite zusätzlich sichtbar bleibt. Der vorhandene Sitzungsbereich begrenzt die Anzeige.",
+        "group": "Verlauf",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "step": 0.01,
+        "integer": false,
+        "unit": "Anteil",
+        "configuration_surface": "catalog"
+      },
+      "history_view_transition_ms": {
+        "label": "Dauer des Ansichtswechsels",
+        "description": "Dauer des animierten Wechsels zwischen Zeitansichten. 0 schaltet die Animation aus. Bei reduzierter Bewegung erfolgt der Wechsel sofort.",
+        "group": "Verlauf",
+        "default": 350,
+        "minimum": 0,
+        "maximum": 2000,
+        "step": 10,
+        "integer": true,
+        "unit": "ms",
+        "configuration_surface": "catalog"
+      },
       "history_minimum_span_ms": {
         "label": "Mindestdauer einer Zeitachse",
         "description": "Mindestdauer einer Zeitachse. Gilt für die Darstellung dieser Sauna-Instanz.",
@@ -2474,6 +2515,18 @@
         "unit": "Nachkommastellen",
         "configuration_surface": "panel"
       },
+      "history_readout_precision": {
+        "label": "Nachkommastellen der Verlaufswerte",
+        "description": "Feste Anzahl der Nachkommastellen für die Werteanzeige des Hauptverlaufs. Zahlen und Einheiten werden getrennt ausgerichtet.",
+        "group": "Verlauf",
+        "default": 1,
+        "minimum": 0,
+        "maximum": 4,
+        "step": 1,
+        "integer": true,
+        "unit": "Nachkommastellen",
+        "configuration_surface": "catalog"
+      },
       "history_temperature_padding_c": {
         "label": "Rand der automatischen Temperaturskala",
         "description": "Rand der automatischen Temperaturskala. Gilt für die Darstellung dieser Sauna-Instanz.",
@@ -2595,8 +2648,8 @@
         "configuration_surface": "catalog"
       },
       "history_phase_snap_radius_px": {
-        "label": "Einrastabstand an Phasengrenzen",
-        "description": "Maximaler horizontaler Abstand in CSS-Pixeln zum Einrasten an tatsächlichen Phasengrenzen. 0 deaktiviert das Einrasten.",
+        "label": "Einrastabstand beim Phasenwechsel",
+        "description": "Maximaler horizontaler Abstand in CSS-Pixeln zum Einrasten am Beginn oder Ende einer Phase. 0 deaktiviert das Einrasten.",
         "group": "Bedienverhalten",
         "default": 8,
         "minimum": 0,
@@ -2625,6 +2678,30 @@
         "default": 17,
         "minimum": 5,
         "maximum": 60,
+        "step": 1,
+        "integer": true,
+        "unit": "px",
+        "configuration_surface": "catalog"
+      },
+      "history_event_dot_size_px": {
+        "label": "Durchmesser der Ereignispunkte im Hauptverlauf",
+        "description": "Sichtbarer Durchmesser der Ereignispunkte im Hauptverlauf in CSS-Pixeln. Platzbedarf und Trefferfläche werden über den Platzbedarf einer Ereignismarkierung festgelegt.",
+        "group": "Verlauf",
+        "default": 6,
+        "minimum": 2,
+        "maximum": 24,
+        "step": 1,
+        "integer": true,
+        "unit": "px",
+        "configuration_surface": "catalog"
+      },
+      "history_compact_band_height_px": {
+        "label": "Höhe kompakter Verlaufsbalken",
+        "description": "Sichtbare Höhe unbeschrifteter Phasen- und Ereignisbalken im Hauptverlauf. Die Beschriftungszusammenfassungen stehen außerhalb der Balken.",
+        "group": "Verlauf",
+        "default": 10,
+        "minimum": 4,
+        "maximum": 24,
         "step": 1,
         "integer": true,
         "unit": "px",
@@ -2820,7 +2897,7 @@
         "step": 0.5,
         "integer": false,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "instrument_tick_target": {
         "label": "Gewünschte Instrumententeilung",
@@ -2916,7 +2993,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "primary_action_height_px": {
         "label": "Höhe der Hauptaktion",
@@ -2928,7 +3005,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "control_radius_px": {
         "label": "Rundung der Bedienelemente",
@@ -2940,7 +3017,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "surface_radius_px": {
         "label": "Rundung der Flächen",
@@ -2952,7 +3029,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "surface_gap_px": {
         "label": "Abstand zwischen Flächen",
@@ -2964,7 +3041,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "surface_padding_px": {
         "label": "Innenabstand der Flächen",
@@ -2976,7 +3053,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "control_group_gap_px": {
         "label": "Abstand innerhalb einer Bediengruppe",
@@ -2988,7 +3065,7 @@
         "step": 1,
         "integer": true,
         "unit": "px",
-        "configuration_surface": "panel"
+        "configuration_surface": "catalog"
       },
       "detail_plot_side_padding_px": {
         "label": "Linker Achsenraum der Detailkurven",
@@ -5730,7 +5807,7 @@
         "label": "Höhenanteil des Sitzungsverlaufs",
         "description": "Höhenanteil des Sitzungsverlaufs. Zentrale Darstellungsvorgabe im Katalog.",
         "group": "Diagrammgeometrie",
-        "default": 44,
+        "default": 34,
         "minimum": 1,
         "maximum": 100,
         "step": 1,
@@ -5742,7 +5819,7 @@
         "label": "Höhenanteil des kompakten Verlaufs",
         "description": "Höhenanteil des kompakten Verlaufs. Zentrale Darstellungsvorgabe im Katalog.",
         "group": "Diagrammgeometrie",
-        "default": 42,
+        "default": 32,
         "minimum": 1,
         "maximum": 100,
         "step": 1,

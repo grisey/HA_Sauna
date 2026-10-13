@@ -15,6 +15,7 @@ from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.display import phase_timer, start_availability
 from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS, ParameterError
 from .core.power import watts
+from .core.timeline import project_door_cycles
 from .environment import environment_snapshot
 from .log import LEVELS
 from .runtime import Configuration
@@ -31,6 +32,10 @@ from .presentation import (
 )
 from .settings import (
     ConfigurationLocked,
+    StaleFieldStandardPreview,
+    async_apply_field_standard_action,
+    async_get_field_standards,
+    async_preview_field_standard_action,
     async_reset_parameters,
     async_set_appearance,
     async_set_button_gesture,
@@ -291,6 +296,12 @@ class StateView(HomeAssistantView):
                         },
                     }
                 )
+            for key in ("session", "last_session"):
+                serialized_session = result.get(key)
+                if serialized_session is not None:
+                    serialized_session["door_cycles"] = plain(
+                        project_door_cycles(serialized_session.get("timeline", {}))
+                    )
             if not request["hass_user"].is_admin:
                 result = public_state(result)
             return self.json(result)
@@ -500,6 +511,84 @@ class AppearanceView(HomeAssistantView):
         except ValueError as error:
             return self.json({"error": str(error)}, status_code=400)
         return self.json({"success": True, "appearance": appearance})
+
+
+def field_standard_action_arguments(body):
+    """Check transport keys and types; settings owns action and field semantics."""
+    if (
+        not isinstance(body, dict)
+        or "action" not in body
+        or set(body) - {"action", "field", "group", "all", "value", "confirmation"}
+    ):
+        raise ValueError("Ungültige Standardaktion")
+    for key in ("action", "field", "group", "confirmation"):
+        if key in body and (not isinstance(body[key], str) or not body[key]):
+            raise ValueError(f"{key} muss eine nicht leere Zeichenfolge sein")
+    if "all" in body and body["all"] is not True:
+        raise ValueError("all muss wahr sein")
+    return {
+        key: value
+        for key, value in body.items()
+        if key not in {"action", "confirmation"}
+    }
+
+
+class StandardsView(HomeAssistantView):
+    """Expose the existing settings owner's inventory and confirmed actions."""
+
+    url = "/api/ha_sauna/{entry_id}/standards"
+    name = "api:ha_sauna:standards"
+    requires_auth = True
+
+    async def get(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        try:
+            result = await async_get_field_standards(entry)
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except RuntimeError as error:
+            if runtime.closed or getattr(entry, "runtime_data", None) is not runtime:
+                raise web.HTTPServiceUnavailable() from error
+            raise
+        return self.json(result)
+
+    async def post(self, request, entry_id):
+        if not request["hass_user"].is_admin:
+            raise web.HTTPForbidden()
+        hass = request.app[KEY_HASS]
+        runtime = runtime_for(hass, entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        body = await json_body(request)
+        try:
+            arguments = field_standard_action_arguments(body)
+            if "confirmation" in body:
+                result = await async_apply_field_standard_action(
+                    hass, entry, body["action"],
+                    confirmation=body["confirmation"], **arguments,
+                )
+            else:
+                result = await async_preview_field_standard_action(
+                    entry, body["action"], **arguments
+                )
+        except ParameterError as error:
+            return self.json({"error": parameter_error(error)}, status_code=400)
+        except StaleFieldStandardPreview as error:
+            return self.json(
+                {"error": str(error), "preview": error.preview}, status_code=409
+            )
+        except ConfigurationLocked as error:
+            return self.json({"error": str(error)}, status_code=409)
+        except ValueError as error:
+            return self.json({"error": str(error)}, status_code=400)
+        except RuntimeError as error:
+            if runtime.closed or getattr(entry, "runtime_data", None) is not runtime:
+                raise web.HTTPServiceUnavailable() from error
+            raise
+        return self.json(result)
 
 
 class ProgramView(HomeAssistantView):
@@ -796,6 +885,9 @@ class ArchiveView(HomeAssistantView):
             raise web.HTTPNotFound()
         if session_id:
             session = result["session"]
+            session["door_cycles"] = plain(
+                project_door_cycles(session.get("timeline", {}))
+            )
             session["measurement_ttl_seconds"] = historical_measurement_ttl(
                 session, runtime.configuration.parameters.values["sensor_timeout_seconds"]
             )
@@ -953,6 +1045,7 @@ def register(hass):
     hass.http.register_view(TemperatureView)
     hass.http.register_view(ResetParametersView)
     hass.http.register_view(AppearanceView)
+    hass.http.register_view(StandardsView)
     hass.http.register_view(ProgramView)
     hass.http.register_view(ProgramsView)
     hass.http.register_view(ButtonProgramView)

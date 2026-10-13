@@ -143,11 +143,38 @@ class ParameterConsumptionTests(unittest.TestCase):
     def test_options_store_choices_and_snapshot_preserves_every_effective_value(self):
         catalog = load_catalog()
         preferences = catalog["appearance"]["preferences"]
-        key = "history_live_poll_ms"
-        choice = preferences[key]["default"] + preferences[key]["step"]
-        configuration = Configuration(
-            bindings(), Parameters({}), appearance={"preferences": {key: choice}}
+        key, spec = next(
+            (name, spec)
+            for name, spec in preferences.items()
+            if spec["configuration_surface"] == "panel"
+            and spec["integer"]
+            and spec["minimum"] <= spec["default"] - spec["step"]
+            and spec["default"] + spec["step"] <= spec["maximum"]
         )
+        factory = spec["default"]
+        choice = factory + spec["step"]
+        standard = factory - spec["step"]
+        field = f"appearance.preferences.{key}"
+        appearance = {"preferences": {key: choice}}
+        standards = {field: standard}
+        configuration = Configuration(
+            bindings(),
+            Parameters({}),
+            appearance=appearance,
+            field_standards=standards,
+        )
+        appearance["preferences"][key] = factory
+        standards[field] = factory
+        self.assertEqual(
+            tuple(
+                configuration.field_value(field, source=source)
+                for source in ("active", "standard", "factory")
+            ),
+            (choice, standard, factory),
+        )
+        self.assertEqual(len({choice, standard, factory}), 3)
+        with self.assertRaises(TypeError):
+            configuration.field_standards[field] = factory
         saved = configuration.as_options()
         snapshot = configuration.as_snapshot()
         self.assertEqual(
@@ -170,10 +197,67 @@ class ParameterConsumptionTests(unittest.TestCase):
         self.assertEqual(set(snapshot["appearance"]["preferences"]), set(preferences))
         self.assertEqual(snapshot["appearance"], configuration.appearance)
         self.assertEqual(saved["appearance"]["preferences"][key], choice)
-        self.assertEqual(Configuration.from_options(saved), configuration)
-        saved["appearance"]["preferences"][key] = preferences[key]["default"]
-        self.assertEqual(configuration.appearance["preferences"][key], choice)
+        self.assertEqual(saved["field_standards"], {field: standard})
+        self.assertEqual(snapshot["field_standards"], {field: standard})
+        restored = Configuration.from_options(saved)
+        historical = Configuration.from_options(snapshot, historical=True)
+        self.assertEqual(restored, configuration)
+        self.assertEqual(historical, configuration)
+        saved["appearance"]["preferences"][key] = factory
+        saved["field_standards"][field] = factory
         self.assertEqual(snapshot["appearance"]["preferences"][key], choice)
+        self.assertEqual(snapshot["field_standards"][field], standard)
+        snapshot["appearance"]["preferences"][key] = standard
+        snapshot["field_standards"][field] = choice
+        self.assertEqual(saved["appearance"]["preferences"][key], factory)
+        self.assertEqual(saved["field_standards"][field], factory)
+        updated = configuration.with_field_standard(field, choice)
+        cleared = configuration.without_field_standards([field])
+        self.assertEqual(updated.field_value(field, source="standard"), choice)
+        self.assertEqual(cleared.field_value(field, source="standard"), factory)
+        self.assertEqual(dict(cleared.field_standards), {})
+        for copied in (configuration, restored, historical, updated, cleared):
+            self.assertEqual(copied.appearance["preferences"][key], choice)
+        for copied in (configuration, restored, historical):
+            self.assertEqual(dict(copied.field_standards), {field: standard})
+
+    def test_loader_keeps_intrinsic_standards_and_discards_obsolete_entries(self):
+        catalog = load_catalog()
+        definition = BY_KEY["nominal_power_kw"]
+        active = definition.default + definition.number_step
+        self.assertLessEqual(active, definition.maximum)
+        configuration = Configuration(bindings(), Parameters({definition.key: active}))
+        scale = catalog["appearance"]["scales"]["humidity"]
+        scale_field = "appearance.scales.humidity.minimum"
+        standard = configuration.appearance["scales"]["humidity"]["maximum"]
+        self.assertGreaterEqual(standard, scale["minimum"])
+        self.assertLessEqual(standard, scale["maximum"])
+        catalog_key, catalog_spec = next(
+            (name, spec)
+            for name, spec in catalog["appearance"]["preferences"].items()
+            if spec["configuration_surface"] == "catalog"
+        )
+        options = configuration.as_options()
+        options["field_standards"] = {
+            scale_field: standard,
+            f"parameters.{definition.key}": definition.maximum + definition.number_step,
+            "unknown.field": standard,
+            f"appearance.preferences.{catalog_key}": catalog_spec["default"],
+        }
+        loaded = Configuration.from_options(options)
+        self.assertEqual(dict(loaded.field_standards), {scale_field: standard})
+        self.assertEqual(
+            loaded.parameters.as_dict(), configuration.parameters.as_dict()
+        )
+        self.assertEqual(loaded.appearance, configuration.appearance)
+        self.assertEqual(loaded.field_value(scale_field, source="standard"), standard)
+        self.assertEqual(
+            loaded.field_value(f"parameters.{definition.key}", source="standard"),
+            definition.default,
+        )
+        self.assertEqual(loaded.parameters.values[definition.key], active)
+        with self.assertRaises(ValueError):
+            loaded.with_field_values({scale_field: standard})
 
     def test_twilight_uses_both_nondefault_endpoints(self):
         values = Parameters({}).as_dict()

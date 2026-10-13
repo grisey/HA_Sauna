@@ -9,6 +9,10 @@ on:
         description: 'Comma-separated checks: core,ha,browser,sessions; empty runs all'
         type: string
         default: ''
+      core_tests:
+        description: 'Optional comma-separated core unittest names: test_module.Class.test_method; skips panel tests'
+        type: string
+        default: ''
       session_cases:
         description: 'Optional comma-separated manifest IDs for sessions, e.g. G02-proxy,R03'
         type: string
@@ -31,6 +35,7 @@ jobs:
       browser: ${{ steps.catalog.outputs.browser }}
       cases: ${{ steps.catalog.outputs.cases }}
       checks: ${{ steps.catalog.outputs.checks }}
+      core_tests: ${{ steps.catalog.outputs.core_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Dispatch-Auswahl prüfen
@@ -39,6 +44,7 @@ jobs:
         run: python tests/ci_settings.py outputs
         env:
           SAUNA_TEST_CHECKS: ${{ inputs.checks }}
+          SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
           SAUNA_SESSION_CASES: ${{ inputs.session_cases }}
           SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
   core:
@@ -51,11 +57,33 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
-      - run: python -m unittest discover -s tests -v
+      - name: Fachkern prüfen
+        run: |
+          mkdir -p "$SAUNA_CORE_EVIDENCE"
+          git rev-parse HEAD > "$SAUNA_CORE_EVIDENCE/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$SAUNA_CORE_EVIDENCE/tree.txt"
+          set +e
+          python tests/ci_settings.py core > "$SAUNA_CORE_EVIDENCE/process.log" 2>&1
+          result=$?
+          echo "$result" > "$SAUNA_CORE_EVIDENCE/exit-code.txt"
+          echo completed > "$SAUNA_CORE_EVIDENCE/process-completed.txt"
+          cat "$SAUNA_CORE_EVIDENCE/process.log"
+          exit "$result"
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
+        env:
+          SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
+          SAUNA_CORE_EVIDENCE: ${{ runner.temp }}/ha-sauna-core
       - run: node --test tests/panel_*.test.js
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.configuration.outputs.core_tests == '[]' }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.panel }}
+      - name: Fachkernprozess sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-tests
+          path: ${{ runner.temp }}/ha-sauna-core
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   ha:
     needs: configuration
     if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}

@@ -1,7 +1,9 @@
 """Gemeinsamer, serialisierter Schreibweg für Parameter aller Bedienoberflächen."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from hashlib import sha256
 
 from .appearance import validate_appearance
 from .core.button import validate_session_gesture
@@ -14,6 +16,237 @@ from .presentation import parameter_error
 
 class ConfigurationLocked(ValueError):
     """Eine Änderung würde die laufende Sitzung neu initialisieren."""
+
+
+class StaleFieldStandardPreview(ValueError):
+    """The current field sources require another explicit confirmation."""
+
+    def __init__(self, preview):
+        self.preview = preview
+        super().__init__(
+            "Die betroffenen Einstellungen haben sich geändert. "
+            "Bitte die aktuelle Vorschau erneut bestätigen."
+        )
+
+
+_NO_FIELD_VALUE = object()
+
+
+def _require_field_standard_runtime(entry, runtime):
+    runtime._require_open()
+    if entry.runtime_data is not runtime or runtime.reconfiguring:
+        raise ConfigurationLocked(
+            "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+        )
+
+
+def _field_standard_values(configuration, fields):
+    metadata = configuration.standard_field_metadata()
+    return [
+        {
+            "id": name,
+            **metadata[name],
+            "factory": configuration.field_value(name, source="factory"),
+            "standard": configuration.field_value(name, source="standard"),
+            "active": configuration.field_value(name),
+            "has_standard": name in configuration.field_standards,
+        }
+        for name in fields
+    ]
+
+
+def _field_standard_action_context(
+    configuration, action, *, field=None, group=None, all=False,
+    value=_NO_FIELD_VALUE,
+):
+    """Resolve the permanent scope and sign only current action dependencies."""
+    if not isinstance(action, str) or action not in {
+        "overwrite_standard", "restore_standard", "restore_factory"
+    }:
+        raise ValueError("Ungültige Standardaktion")
+    if (
+        not isinstance(all, bool)
+        or sum((field is not None, group is not None, all)) != 1
+    ):
+        raise ValueError("Genau ein Feld, Bereich oder Gesamtumfang ist erforderlich")
+    if action == "overwrite_standard":
+        if field is None or value is _NO_FIELD_VALUE:
+            raise ValueError(
+                "Ein Standard kann nur für ein einzelnes Feld gesetzt werden"
+            )
+    elif value is not _NO_FIELD_VALUE:
+        raise ValueError("Rücksetzen übernimmt keine Entwurfswerte")
+    names = configuration.standard_fields(field=field, group=group)
+    scope = {"field": field} if field is not None else (
+        {"group": group} if group is not None else {"all": True}
+    )
+    fields = _field_standard_values(configuration, names)
+    factory = action == "restore_factory"
+    overwrite = action == "overwrite_standard"
+    for row in fields:
+        row.update({
+            "target": row["active"] if overwrite else (
+                row["factory"] if factory else row["standard"]
+            ),
+            "target_standard": value if overwrite else (
+                row["factory"] if factory else row["standard"]
+            ),
+            "target_has_standard": True if overwrite else (
+                False if factory else row["has_standard"]
+            ),
+        })
+    validation = {}
+    if any(name.startswith("parameters.") for name in names):
+        # Full parameter validation includes cross-field relationships and the
+        # retained catalog/stages. Unrelated appearance is no dependency.
+        validation = {
+            "parameters": configuration.parameters.as_dict(),
+            "temperature_programs": [
+                program.as_dict() for program in configuration.temperature_programs
+            ],
+            "temperature_steps": configuration.temperature_steps,
+        }
+    scales = {
+        name.split(".")[2] for name in names
+        if name.startswith("appearance.scales.")
+    }
+    if scales:
+        validation["scales"] = {
+            name: dict(configuration.appearance["scales"][name])
+            for name in sorted(scales)
+        }
+    preview = {"action": action, "scope": scope, "fields": fields}
+    try:
+        signed = json.dumps(
+            {**preview, "validation": validation},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Ungültiger Feldstandard") from None
+    preview["confirmation"] = sha256(signed.encode("utf-8")).hexdigest()
+    return names, preview
+
+
+def _field_standard_candidate(configuration, action, names, value):
+    if action == "overwrite_standard":
+        name = names[0]
+        draft = configuration.with_field_values({name: value})
+        return configuration.with_field_standard(name, draft.field_value(name))
+    source = "factory" if action == "restore_factory" else "standard"
+    candidate = configuration.with_field_values({
+        name: configuration.field_value(name, source=source) for name in names
+    })
+    return (
+        candidate.without_field_standards(names)
+        if action == "restore_factory" else candidate
+    )
+
+
+def _field_standard_targets(preview, candidate):
+    for row in preview["fields"]:
+        name = row["id"]
+        row.update({
+            "target": candidate.field_value(name),
+            "target_standard": candidate.field_value(name, source="standard"),
+            "target_has_standard": name in candidate.field_standards,
+        })
+
+
+async def async_get_field_standards(entry):
+    """Read the complete W/S/A inventory, including hidden permanent fields."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        _require_field_standard_runtime(entry, runtime)
+        configuration = runtime.configuration
+        return {"fields": _field_standard_values(
+            configuration, configuration.standard_fields()
+        )}
+
+
+async def async_preview_field_standard_action(
+    entry, action, *, field=None, group=None, all=False, value=_NO_FIELD_VALUE,
+):
+    """Return a validated proposal without advancing or changing the runtime."""
+    runtime = entry.runtime_data
+    # serialized() drains input and delivers detection before yielding. The
+    # shared lock alone keeps this inventory/proposal strictly read-only.
+    async with runtime._lock:
+        _require_field_standard_runtime(entry, runtime)
+        configuration = runtime.configuration
+        names, preview = _field_standard_action_context(
+            configuration, action, field=field, group=group, all=all, value=value,
+        )
+        candidate = _field_standard_candidate(configuration, action, names, value)
+        _field_standard_targets(preview, candidate)
+        return preview
+
+
+async def async_apply_field_standard_action(
+    hass, entry, action, *, confirmation, field=None, group=None, all=False,
+    value=_NO_FIELD_VALUE,
+):
+    """Apply exactly the current confirmed proposal as one configuration write."""
+    runtime = entry.runtime_data
+    async with runtime._lock:
+        _require_field_standard_runtime(entry, runtime)
+        if not isinstance(confirmation, str) or not confirmation:
+            raise ValueError("Ungültige Standardbestätigung")
+        # A persisted options update may be waiting behind this lock. Never
+        # overwrite that newer source with an older live Configuration.
+        from .runtime import Configuration
+
+        configuration = runtime.configuration
+        if (
+            Configuration.from_options(entry.options).as_options()
+            != configuration.as_options()
+        ):
+            raise ConfigurationLocked(
+                "Die Grundeinstellungen werden gerade übernommen. Bitte kurz warten."
+            )
+        names, preview = _field_standard_action_context(
+            configuration, action, field=field, group=group, all=all, value=value,
+        )
+        stale = confirmation != preview["confirmation"]
+        try:
+            candidate = _field_standard_candidate(configuration, action, names, value)
+        except ValueError as error:
+            if not stale:
+                raise
+            preview["validation_error"] = (
+                parameter_error(error) if isinstance(error, ParameterError)
+                else str(error)
+            )
+            preview["confirmation"] = None
+            raise StaleFieldStandardPreview(preview) from None
+        _field_standard_targets(preview, candidate)
+        if stale:
+            raise StaleFieldStandardPreview(preview)
+        parameters_changed = (
+            candidate.parameters.as_dict() != configuration.parameters.as_dict()
+        )
+        if runtime.session and parameters_changed:
+            raise ConfigurationLocked(
+                "Während einer Saunasitzung sind nur Solltemperatur, "
+                "Steigerungsverteilung und Endtemperatur änderbar. "
+                "Andere Einstellungen gelten nach Ende der Sitzung."
+            )
+        # Everything, including serialization, is checked before the first
+        # write. Parameter restores retain the existing options-listener path;
+        # S-only and appearance changes have no controller or archive effects.
+        options = candidate.as_options()
+        if not parameters_changed:
+            runtime.configuration = candidate
+        try:
+            changed = hass.config_entries.async_update_entry(entry, options=options)
+        except BaseException:
+            runtime.configuration = configuration
+            raise
+        if parameters_changed:
+            runtime.reconfiguring = changed
+        elif candidate.appearance != configuration.appearance:
+            runtime.notify_entities()
+        return {**preview, "applied": True}
 
 
 PROGRAM_PROFILES = frozenset(("constant", "progressive", "program_1", "program_2"))
@@ -108,6 +341,7 @@ async def async_reset_parameters(hass, entry):
             button_event_type=runtime.configuration.button_event_type,
             presence_source=runtime.configuration.presence_source,
             appearance=runtime.configuration.appearance,
+            field_standards=runtime.configuration.field_standards,
         )
         # Ohne Änderung läuft kein Listener. Andernfalls hebt dieser die Sperre
         # nach direkter Übernahme oder durch das Neuladen der Laufzeit auf.

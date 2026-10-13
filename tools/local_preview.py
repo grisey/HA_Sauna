@@ -43,7 +43,7 @@ from custom_components.ha_sauna.core.parameters import (
 )
 from custom_components.ha_sauna.core.phases import project_session
 from custom_components.ha_sauna.core.presence import binary_presence
-from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.core.timeline import Event, Kind, project_door_cycles
 from custom_components.ha_sauna.history_humidity import project_absolute_humidity
 from custom_components.ha_sauna.presentation import (
     decision_message,
@@ -57,6 +57,7 @@ from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from custom_components.ha_sauna.settings import (
     async_set_appearance,
     async_set_button_gesture,
+    async_set_button_program,
     async_set_control_mode,
     async_set_parameters,
     async_set_program,
@@ -229,6 +230,7 @@ class Preview:
         if stored is None:
             return None
         session = dict(stored["session"])
+        session["door_cycles"] = plain(project_door_cycles(session.get("timeline", {})))
         projection = stored["phase_projection"]
         window = measurement_window(
             datetime.fromisoformat(session["timeline"]["session_started_at"]),
@@ -451,6 +453,12 @@ class Preview:
                          "normal":self.normal_light()}},
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
+        for key in ("session", "last_session"):
+            serialized_session = result.get(key)
+            if serialized_session is not None:
+                serialized_session["door_cycles"] = plain(
+                    project_door_cycles(serialized_session.get("timeline", {}))
+                )
         result["permissions"]["admin"] = self.admin
         result = result if self.admin else public_state(result)
         result["preview_feedback"] = {"following": self.follow_feedback, "on": c.contactor}
@@ -533,6 +541,11 @@ class Preview:
             configuration = asyncio.run(async_set_button_gesture(self.hass, self.entry, body["gesture"]))
             self.button_pressed = False
             return {"success":True, "button_session_gesture":configuration.button_session_gesture}
+        elif path.endswith("/button-program"):
+            if not isinstance(body, dict) or set(body) != {"profile"}:
+                raise ValueError("Tasterprogramm fehlt oder ist ungültig")
+            configuration = asyncio.run(async_set_button_program(self.hass, self.entry, body["profile"]))
+            return {"success":True, "button_program":configuration.button_program}
         elif path.endswith("/appearance"):
             appearance = asyncio.run(async_set_appearance(self.hass, self.entry, body))
             return {"appearance": appearance}

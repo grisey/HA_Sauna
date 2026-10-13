@@ -1,5 +1,6 @@
 """Real authenticated panel endpoints, session guard and HA options reload."""
 import asyncio
+from copy import deepcopy
 from math import nextafter
 import unittest
 from unittest.mock import patch
@@ -660,6 +661,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
         from custom_components.ha_sauna.core.presence import binary_presence
         from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.archive import plain
 
         entity_id = "binary_sensor.private_presence"
         self.hass.states.async_set(entity_id, "off", {"device_class": "occupancy"})
@@ -691,11 +693,27 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await door("entry-open", Kind.DOOR_OPEN, 10)
         await presence("on", 20)
         await door("entry-close", Kind.DOOR_CLOSE, 30)
+
+        def expected_cycles(gang_id, *, completed=False):
+            pairs = [("entry", 10, 30)] + ([("exit", 40, 60)] if completed else [])
+            return [{
+                "id": role + "-open",
+                "event_ids": [role + "-open", role + "-close"],
+                "started_at": (start + timedelta(milliseconds=opened)).isoformat(),
+                "ended_at": (start + timedelta(milliseconds=closed)).isoformat(),
+                "open": False,
+                "role": role,
+                "gang_id": gang_id,
+                "gang_links": [{"gang_id": gang_id, "role": role}],
+            } for role, opened, closed in pairs]
+
         user = await self.hass.auth.async_create_user("Public presence", group_ids=[GROUP_ID_USER])
         token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
         headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
         url = self.base + "/" + self.entry.entry_id
         async with ClientSession(headers=headers) as public, ClientSession(headers=self.headers) as admin:
+            live_session = runtime.session
+            original_live = plain(live_session)
             async with public.get(url + "/state") as response:
                 self.assertEqual(response.status, 200)
                 state = await response.json()
@@ -705,11 +723,15 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                                if item["kind"] == "presence_confirmed")
             self.assertEqual(active["recognition_event_id"], recognition["event_id"])
             self.assertEqual(active["session_id"], session_id)
+            self.assertEqual(state["session"]["door_cycles"], expected_cycles(active["gang_id"]))
             async with admin.get(url + "/state") as response:
                 administrative = await response.json()
             raw_id = runtime.session.timeline.active.gang_id
             self.assertIn(entity_id, raw_id)
             self.assertEqual(administrative["session"]["timeline"]["active"]["gang_id"], raw_id)
+            self.assertEqual(administrative["session"]["door_cycles"], expected_cycles(raw_id))
+            self.assertIs(runtime.session, live_session)
+            self.assertEqual(plain(runtime.session), original_live)
 
             await door("exit-open", Kind.DOOR_OPEN, 40)
             await presence("off", 50)
@@ -720,6 +742,9 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             clock[0] = start + timedelta(milliseconds=70)
             runtime.persist()
             await runtime.archive.flush()
+            live_session = runtime.session
+            original_live = plain(live_session)
+            original_archive = runtime.archive.read(session_id, now=clock[0], limit=10000)
             for query in ({"session_id": session_id},
                           {"session_id": session_id, "projection": "history"}):
                 async with public.get(url + "/archive", params=query) as response:
@@ -729,17 +754,30 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 completed = archived["session"]["timeline"]["completed"][0]
                 self.assertEqual(completed["gang_id"], active["gang_id"])
                 self.assertEqual(completed["recognition_event_id"], recognition["event_id"])
+                self.assertEqual(archived["session"]["door_cycles"],
+                                 expected_cycles(completed["gang_id"], completed=True))
                 self.assertEqual({item["source_id"] for item in archived["phase_projection"]["intervals"]
                                   if item["source_id"]}, {active["gang_id"]})
             async with admin.get(url + "/archive", params={"session_id": session_id}) as response:
                 administrative = await response.json()
             self.assertEqual(administrative["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
-            self.assertEqual(runtime.archive.read(session_id)["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
+            self.assertEqual(administrative["session"]["door_cycles"], expected_cycles(raw_id, completed=True))
+            self.assertEqual(original_archive["session"]["timeline"]["completed"][0]["gang_id"], raw_id)
+            self.assertNotIn("door_cycles", original_archive["session"])
 
             async with public.get(url + "/state") as response:
                 self.assertEqual(response.status, 200)
                 state = await response.json()
             self.assertNotIn(entity_id, json.dumps(state))
+            self.assertEqual(state["session"]["door_cycles"],
+                             expected_cycles(active["gang_id"], completed=True))
+            async with admin.get(url + "/state") as response:
+                self.assertEqual((await response.json())["session"]["door_cycles"],
+                                 expected_cycles(raw_id, completed=True))
+            self.assertIs(runtime.session, live_session)
+            self.assertEqual(plain(runtime.session), original_live)
+            administrative["session"]["door_cycles"][0]["gang_links"][0]["gang_id"] = "response copy"
+            self.assertEqual(runtime.archive.read(session_id, now=clock[0], limit=10000), original_archive)
             raw_phase_id = runtime.session.after_run.phase_id
             public_token = state["session"]["after_run"]["phase_id"]
             self.assertIn(entity_id, raw_phase_id)
@@ -767,6 +805,34 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(manual_ends), 1)
             self.assertEqual(manual_ends[0]["payload"]["token"], raw_phase_id)
 
+            # Finish this same productive session so the last_session consumer
+            # reads its retained timeline; no second recognition fixture is needed.
+            await runtime.set_operation(False)
+            runtime.controller.finish_session(clock[0], light_after_run=False)
+            await runtime._cycle()
+            await runtime.archive.flush()
+            completed_session = runtime.controller.completed_sessions[-1]
+            original_completed = plain(completed_session)
+            original_archive = runtime.archive.read(session_id, now=clock[0], limit=10000)
+            for client, expected_id in ((public, active["gang_id"]), (admin, raw_id)):
+                async with client.get(url + "/state") as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    state = await response.json()
+                self.assertIsNone(state["session"])
+                self.assertEqual(state["last_session"]["timeline"]["completed"][0]["gang_id"], expected_id)
+                self.assertEqual(state["last_session"]["door_cycles"],
+                                 expected_cycles(expected_id, completed=True))
+                async with client.get(url + "/archive", params={"session_id": session_id}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    archived = await response.json()
+                self.assertEqual(archived["session"]["door_cycles"], state["last_session"]["door_cycles"])
+                if client is public:
+                    self.assertNotIn(entity_id, json.dumps(state))
+                    self.assertNotIn(entity_id, json.dumps(archived))
+                    self.assertNotIn("configuration", archived["session"])
+            self.assertEqual(plain(completed_session), original_completed)
+            self.assertEqual(runtime.archive.read(session_id, now=clock[0], limit=10000), original_archive)
+
     async def test_malformed_json_is_a_client_error_across_write_endpoints(self):
         url = self.base + "/" + self.entry.entry_id
         original_options = dict(self.entry.options)
@@ -774,6 +840,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             for suffix in (
                 "/control", "/finish_phase", "/finish-session", "/parameters",
                 "/temperature", "/appearance", "/program", "/programs",
+                "/standards",
                 "/button-program", "/control-mode", "/light", "/heater", "/logging",
             ):
                 with self.subTest(suffix=suffix):
@@ -1654,9 +1721,12 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_constant_program_api_applies_standard_then_preserves_explicit_choice(self):
         """Follow the panel action through persistence, live control and reload."""
         options = dict(self.entry.options)
+        standard_definition = BY_KEY["standard_temperature_c"]
+        saved_standard = standard_definition.default + standard_definition.number_step
         self.hass.config_entries.async_update_entry(self.entry, options={
             **options,
             "parameters": {**options["parameters"], "standard_temperature_c": 87},
+            "field_standards": {"parameters.standard_temperature_c": saved_standard},
         })
         await self.hass.async_block_till_done()
         runtime = self.entry.runtime_data
@@ -1688,6 +1758,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             await runtime.tick()
             self.assertEqual(runtime.controller.target_temperature, 82)
             self.assertEqual(runtime.configuration.parameters.values["standard_temperature_c"], 87)
+            self.assertEqual(runtime.configuration.field_standards["parameters.standard_temperature_c"], saved_standard)
             async with client.get(url + "/state") as response:
                 self.assertEqual(response.status, 200, await response.text())
                 self.assertEqual((await response.json())["target_temperature"], 82)
@@ -1695,6 +1766,7 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         await self.hass.async_block_till_done()
         self.assertEqual(self.entry.runtime_data.controller.target_temperature, 82)
         self.assertEqual(self.entry.options["parameters"]["standard_temperature_c"], 87)
+        self.assertEqual(self.entry.options["field_standards"], {"parameters.standard_temperature_c": saved_standard})
 
     async def test_program_post_reports_runtime_selection_for_every_program_form(self):
         runtime = self.entry.runtime_data
@@ -1808,13 +1880,565 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             finally:
                 runtime.reconfiguring = False
 
+    async def test_field_standards_keep_factory_saved_and_active_values_separate(self):
+        from custom_components.ha_sauna.runtime import Configuration
+
+        definition = BY_KEY["nominal_power_kw"]
+        field = "parameters.nominal_power_kw"
+        factory = definition.default
+        active, saved, draft = (factory + count * definition.number_step for count in (1, 2, 3))
+        standards = {field: saved, "appearance.colors.event_door": "#102030"}
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "parameters": {**self.entry.options["parameters"], definition.key: active},
+            "field_standards": standards,
+        })
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        configuration = runtime.configuration
+        original = deepcopy(dict(self.entry.options))
+        snapshot = configuration.as_snapshot()
+        url = self.base + "/" + self.entry.entry_id
+        request = {"action": "overwrite_standard", "field": field, "value": draft}
+        async with ClientSession(headers=self.headers) as client:
+            with patch.object(self.hass.config_entries, "async_update_entry",
+                              wraps=self.hass.config_entries.async_update_entry) as write, \
+                    patch.object(runtime, "_cycle", wraps=runtime._cycle) as cycle:
+                async with client.get(url + "/standards") as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    inventory = await response.json()
+                row = next(item for item in inventory["fields"] if item["id"] == field)
+                self.assertEqual((row["factory"], row["standard"], row["active"], row["has_standard"]),
+                                 (factory, saved, active, True))
+                async with client.post(url + "/standards", json=request) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    preview = await response.json()
+                self.assertEqual(len(preview["fields"]), 1)
+                self.assertEqual((preview["fields"][0]["target"], preview["fields"][0]["target_standard"]),
+                                 (active, draft))
+                write.assert_not_called()
+                cycle.assert_not_called()
+            self.assertEqual(dict(self.entry.options), original)
+            self.assertIs(runtime.configuration, configuration)
+            self.assertEqual(configuration.as_snapshot(), snapshot)
+            inventory["fields"][0]["active"] = "unowned response edit"
+            async with client.get(url + "/standards") as response:
+                self.assertNotIn("unowned response edit", str(await response.json()))
+            async with client.post(url + "/standards", json={
+                **request, "confirmation": preview["confirmation"],
+            }) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                self.assertEqual(await response.json(), {**preview, "applied": True})
+            await self.hass.async_block_till_done()
+            standards = {**standards, field: draft}
+            self.assertEqual(self.entry.options["field_standards"], standards)
+            self.assertEqual(self.entry.options["parameters"][definition.key], active)
+            self.assertEqual(configuration.as_snapshot(), snapshot)
+            async with client.patch(url + "/parameters", json={definition.key: factory + 4 * definition.number_step}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            async with client.post(url + "/appearance", json={"colors": {"event_door": "#304050"}}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.entry.options["field_standards"], standards)
+        self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+        await self.hass.async_block_till_done()
+        restored = self.entry.runtime_data.configuration
+        self.assertEqual(dict(restored.field_standards), standards)
+        self.assertEqual(restored.parameters.values[definition.key], factory + 4 * definition.number_step)
+        self.assertEqual(restored.appearance["colors"]["event_door"], "#304050")
+        self.assertEqual(Configuration.from_options(restored.as_options()).as_options(), restored.as_options())
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url + "/state") as response:
+                state = await response.json()
+            self.assertEqual(state["configuration"]["field_standards"], standards)
+            self.assertEqual(state["configuration"]["parameters"][definition.key], factory + 4 * definition.number_step)
+            self.assertNotIn("standards", state)
+
+    async def test_field_standard_restores_apply_complete_scopes_and_preserve_excluded_owners(self):
+        from harness import retain_session
+
+        runtime = self.entry.runtime_data
+        await runtime.set_operation(True)
+        retain_session(runtime)
+        archived_id = runtime.session.session_id
+        await runtime.set_operation(False)
+        runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+        await runtime._cycle()
+        await runtime.archive.flush()
+        archive_clock = runtime._clock()
+        original_archive = runtime.archive.read(archived_id, now=archive_clock, limit=10000)
+        power_definition = BY_KEY["nominal_power_kw"]
+        other = await create_sauna(self.hass, parameter_overrides={
+            power_definition.key: power_definition.default + 4 * power_definition.number_step,
+        })
+        other_options = deepcopy(dict(other.options))
+        other_configuration = other.runtime_data.configuration
+        presence = "binary_sensor.restore_presence"
+        self.hass.states.async_set(presence, "off", {"device_class": "occupancy"})
+        hidden = "parameters.strong_window_seconds"
+        fallback = "parameters.sensor_timeout_seconds"
+        power = "parameters.nominal_power_kw"
+        color = "appearance.colors.event_door"
+        unchanged_factory = "appearance.colors.text"
+        hidden_definition = BY_KEY["strong_window_seconds"]
+        increment = BY_KEY["person_step_seconds"].default
+        catalog = deepcopy(self.entry.options["temperature_programs"])
+        catalog.append({**catalog[0], "id": "retained_standard_program", "name": "Erhaltenes Programm"})
+        program = catalog[-1]
+        stages = program.get("temperature_steps") or [program["start_c"], program["end_c"]]
+        baseline = {
+            **deepcopy(dict(self.entry.options)),
+            "presence_source": "ha_presence",
+            "bindings": {**self.entry.options["bindings"], "presence": presence},
+            "temperature_programs": catalog,
+            "selected_program_id": "retained_standard_program",
+            "button_program": "retained_standard_program",
+            "temperature_steps": stages,
+            "parameters": {
+                **self.entry.options["parameters"],
+                "strong_window_seconds": hidden_definition.default + increment,
+                "sensor_timeout_seconds": BY_KEY["sensor_timeout_seconds"].default + BY_KEY["sensor_timeout_seconds"].number_step,
+                "nominal_power_kw": power_definition.default + power_definition.number_step,
+            },
+            "appearance": {"colors": {"event_door": "#010203"}},
+            "field_standards": {
+                hidden: hidden_definition.default + 2 * increment,
+                power: power_definition.default + 2 * power_definition.number_step,
+                color: "#040506",
+                unchanged_factory: "#AABBCC",
+            },
+        }
+        sensor_fields = {"parameters." + spec["key"] for spec in section("parameters")
+                         if spec["settings_group"] == "sensors" and spec["configuration_surface"] != "catalog"}
+        excluded = ("bindings", "temperature_programs", "selected_program_id", "button_program",
+                    "temperature_steps", "presence_source", "program_mode", "control_mode")
+        url = self.base + "/" + self.entry.entry_id + "/standards"
+        async with ClientSession(headers=self.headers) as client:
+            for action in ("restore_standard", "restore_factory"):
+                for scope in ({"field": hidden}, {"group": "sensors"}, {"all": True}):
+                    with self.subTest(action=action, scope=scope):
+                        self.hass.config_entries.async_update_entry(self.entry, options=deepcopy(baseline))
+                        await self.hass.async_block_till_done()
+                        before_options = deepcopy(dict(self.entry.options))
+                        async with client.get(url) as response:
+                            self.assertEqual(response.status, 200, await response.text())
+                            before = {row["id"]: row for row in (await response.json())["fields"]}
+                        self.assertFalse(before[hidden]["applicable"])
+                        self.assertFalse(before[fallback]["has_standard"])
+                        self.assertEqual(before[unchanged_factory]["active"], before[unchanged_factory]["factory"])
+                        expected_scope = ({hidden} if "field" in scope else
+                                          sensor_fields if "group" in scope else set(before))
+                        request = {"action": action, **scope}
+                        async with client.post(url, json=request) as response:
+                            self.assertEqual(response.status, 200, await response.text())
+                            preview = await response.json()
+                        self.assertEqual({row["id"] for row in preview["fields"]}, expected_scope)
+                        self.assertEqual(preview["scope"], scope)
+                        self.assertEqual(dict(self.entry.options), before_options)
+                        for row in preview["fields"]:
+                            self.assertEqual(row["target"], before[row["id"]][
+                                "factory" if action == "restore_factory" else "standard"
+                            ])
+                        async with client.post(url, json={**request, "confirmation": preview["confirmation"]}) as response:
+                            self.assertEqual(response.status, 200, await response.text())
+                            self.assertEqual(await response.json(), {**preview, "applied": True})
+                        await self.hass.async_block_till_done()
+                        self.assertFalse(self.entry.runtime_data.reconfiguring)
+                        async with client.get(url) as response:
+                            self.assertEqual(response.status, 200, await response.text())
+                            after = {row["id"]: row for row in (await response.json())["fields"]}
+                        for name, row in before.items():
+                            if name in expected_scope:
+                                self.assertEqual(after[name]["active"], row[
+                                    "factory" if action == "restore_factory" else "standard"
+                                ])
+                                self.assertEqual(after[name]["has_standard"],
+                                                 action != "restore_factory" and row["has_standard"])
+                            else:
+                                self.assertEqual(after[name], row)
+                        expected_standards = {
+                            name: value for name, value in baseline["field_standards"].items()
+                            if action != "restore_factory" or name not in expected_scope
+                        }
+                        self.assertEqual(self.entry.options["field_standards"], expected_standards)
+                        for key in excluded:
+                            self.assertEqual(self.entry.options[key], before_options[key])
+                        for key in ("target_temperature_c", "final_temperature_c", "temperature_gangs"):
+                            self.assertEqual(self.entry.options["parameters"].get(key),
+                                             before_options["parameters"].get(key))
+                        self.assertEqual(dict(other.options), other_options)
+                        self.assertIs(other.runtime_data.configuration, other_configuration)
+                        self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+                        await self.hass.async_block_till_done()
+                        self.assertEqual(dict(self.entry.runtime_data.configuration.field_standards), expected_standards)
+                        retained = self.entry.runtime_data.archive.read(
+                            archived_id, now=archive_clock, limit=10000)
+                        self.assertEqual(retained["session"], original_archive["session"])
+                        original_ids = {row["id"] for row in original_archive["records"]}
+                        self.assertEqual([row for row in retained["records"] if row["id"] in original_ids],
+                                         original_archive["records"])
+
+    async def test_field_standard_confirmation_rechecks_sources_and_rejects_invalid_targets_atomically(self):
+        field = "appearance.scales.temperature.minimum"
+        bounds = section("appearance")["scales"]["temperature"]["default"]
+        maximum = bounds["maximum"]
+        increment = (maximum - bounds["minimum"]) / 10
+        active, saved, newer = (bounds["minimum"] + count * increment for count in (1, 2, 3))
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "appearance": {"scales": {"temperature": {"minimum": active, "maximum": maximum}}},
+            "field_standards": {field: saved, "parameters.nominal_power_kw":
+                                BY_KEY["nominal_power_kw"].default + BY_KEY["nominal_power_kw"].number_step},
+        })
+        await self.hass.async_block_till_done()
+        url = self.base + "/" + self.entry.entry_id
+        request = {"action": "restore_standard", "field": field}
+        async with ClientSession(headers=self.headers) as client:
+            async with client.post(url + "/standards", json=request) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                old = await response.json()
+            overwrite = {"action": "overwrite_standard", "field": field, "value": newer}
+            async with client.post(url + "/standards", json=overwrite) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                confirmation = (await response.json())["confirmation"]
+            async with client.post(url + "/standards", json={**overwrite, "confirmation": confirmation}) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            original = deepcopy(dict(self.entry.options))
+            async with client.post(url + "/standards", json={**request, "confirmation": old["confirmation"]}) as response:
+                self.assertEqual(response.status, 409, await response.text())
+                current = (await response.json())["preview"]
+            self.assertEqual(current["fields"][0]["target"], newer)
+            self.assertNotEqual(current["confirmation"], old["confirmation"])
+            self.assertEqual(dict(self.entry.options), original)
+            async with client.post(url + "/appearance", json={
+                "scales": {"temperature": {"minimum": active, "maximum": saved}},
+            }) as response:
+                self.assertEqual(response.status, 200, await response.text())
+            await self.hass.async_block_till_done()
+            original = deepcopy(dict(self.entry.options))
+            configuration = self.entry.runtime_data.configuration
+            with patch.object(self.hass.config_entries, "async_update_entry",
+                              wraps=self.hass.config_entries.async_update_entry) as write:
+                async with client.post(url + "/standards", json={**request, "confirmation": current["confirmation"]}) as response:
+                    self.assertEqual(response.status, 409, await response.text())
+                    invalid = (await response.json())["preview"]
+                self.assertEqual(invalid["fields"][0]["target"], newer)
+                self.assertIsNone(invalid["confirmation"])
+                self.assertIn("validation_error", invalid)
+                for body in (request, {"action": "restore_standard", "all": True},
+                             {"action": "overwrite_standard", "field": field, "value": saved}):
+                    async with client.post(url + "/standards", json=body) as response:
+                        self.assertEqual(response.status, 400, await response.text())
+                write.assert_not_called()
+            self.assertEqual(dict(self.entry.options), original)
+            self.assertIs(self.entry.runtime_data.configuration, configuration)
+
+    async def test_field_standard_permissions_validation_and_runtime_guards_are_atomic(self):
+        field = "parameters.nominal_power_kw"
+        url = self.base + "/" + self.entry.entry_id + "/standards"
+        definition = BY_KEY["nominal_power_kw"]
+        value = definition.default + definition.number_step
+        request = {"action": "overwrite_standard", "field": field, "value": value}
+        original = deepcopy(dict(self.entry.options))
+        runtime = self.entry.runtime_data
+        configuration = runtime.configuration
+        async with ClientSession(headers=self.headers) as admin:
+            async with admin.post(url, json=request) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                confirmed = {**request, "confirmation": (await response.json())["confirmation"]}
+        user = await self.hass.auth.async_create_user("Standard control only", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        for credentials, status in (({}, 401), (headers, 403)):
+            async with ClientSession(headers=credentials) as client:
+                async with client.get(url) as response:
+                    self.assertEqual(response.status, status)
+                for body in (request, confirmed):
+                    async with client.post(url, json=body) as response:
+                        self.assertEqual(response.status, status)
+        invalid = [
+            [], {}, {"action": None}, {"action": True}, {"action": ""},
+            {**request, "extra": True}, {**request, "field": None},
+            {**request, "confirmation": ""}, {**request, "value": None},
+            {**request, "value": BY_KEY["nominal_power_kw"].maximum + 1},
+            {"action": "missing", "field": field},
+            {"action": "overwrite_standard", "field": field},
+            {**request, "group": "operation"}, {**request, "all": True},
+            {"action": "overwrite_standard", "group": "operation", "value": value},
+            {"action": "restore_standard", "field": field, "value": value},
+            {"action": "restore_factory", "group": "missing"},
+            {"action": "restore_standard", "field": "bindings.heater"},
+            {"action": "overwrite_standard", "field": "parameters.target_temperature_c", "value": BY_KEY["target_temperature_c"].default},
+            {"action": "restore_factory", "field": "temperature_programs"},
+        ]
+        invalid += [{"action": "restore_standard", "all": value} for value in (False, 0, 1, None)]
+        async with ClientSession(headers=self.headers) as client:
+            with patch.object(self.hass.config_entries, "async_update_entry",
+                              wraps=self.hass.config_entries.async_update_entry) as write:
+                for body in invalid:
+                    with self.subTest(body=body):
+                        async with client.post(url, json=body) as response:
+                            self.assertEqual(response.status, 400, await response.text())
+                        self.assertEqual(dict(self.entry.options), original)
+                async with client.get(self.base + "/missing/standards") as response:
+                    self.assertEqual(response.status, 404)
+                for attribute, status in (("reconfiguring", 409), ("closed", 503)):
+                    with patch.object(runtime, attribute, True):
+                        async with client.get(url) as response:
+                            self.assertEqual(response.status, status)
+                        for body in (request, confirmed):
+                            async with client.post(url, json=body) as response:
+                                self.assertEqual(response.status, status)
+                write.assert_not_called()
+            self.assertEqual(dict(self.entry.options), original)
+            self.assertIs(runtime.configuration, configuration)
+            self.assertIsNone(runtime.session)
+
+    async def test_field_standard_and_appearance_actions_preserve_session_and_normalize_obsolete_standards(self):
+        from custom_components.ha_sauna.archive import plain
+        from custom_components.ha_sauna.runtime import Configuration
+
+        field = "parameters.nominal_power_kw"
+        color = "appearance.colors.event_door"
+        definition = BY_KEY["nominal_power_kw"]
+        active = definition.default + definition.number_step
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "parameters": {**self.entry.options["parameters"], definition.key: active},
+            "appearance": {"colors": {"event_door": "#010203"}},
+            "field_standards": {field: definition.default + 2 * definition.number_step, color: "#102030"},
+        })
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        now = runtime._clock()
+        runtime._clock = lambda: now
+        await runtime.set_operation(True)
+        await self.hass.async_block_till_done()
+        session = runtime.session
+        session_plain = plain(session)
+        controller, detector, device = runtime.controller, runtime.detector, runtime.device
+        url = self.base + "/" + self.entry.entry_id
+        request = {"action": "overwrite_standard", "field": field, "value": definition.default + 3 * definition.number_step}
+        async with ClientSession(headers=self.headers) as client:
+            with patch.object(device, "restore_light_ownership", wraps=device.restore_light_ownership) as light, \
+                    patch.object(device, "restore_heater_ownership", wraps=device.restore_heater_ownership) as heater, \
+                    patch.object(runtime.archive, "append", wraps=runtime.archive.append) as append, \
+                    patch.object(runtime.archive, "save_session", wraps=runtime.archive.save_session) as save_session:
+                async with client.post(url + "/standards", json=request) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    confirmation = (await response.json())["confirmation"]
+                async with client.post(url + "/standards", json={**request, "confirmation": confirmation}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                await self.hass.async_block_till_done()
+                self.hass.config_entries.async_update_entry(self.entry, options={
+                    **self.entry.options,
+                    "field_standards": {**self.entry.options["field_standards"], field: definition.default + 4 * definition.number_step},
+                })
+                await self.hass.async_block_till_done()
+                light.assert_not_called()
+                heater.assert_not_called()
+                append.assert_not_called()
+                save_session.assert_not_called()
+            self.assertIs(runtime.session, session)
+            self.assertEqual(plain(runtime.session), session_plain)
+            self.assertEqual(runtime.configuration.parameters.values[definition.key], active)
+            saved = deepcopy(self.entry.options["field_standards"])
+            for body in ({"action": "restore_standard", "field": color},
+                         {"action": "restore_factory", "field": color}):
+                async with client.post(url + "/standards", json=body) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    confirmation = (await response.json())["confirmation"]
+                async with client.post(url + "/standards", json={**body, "confirmation": confirmation}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                await self.hass.async_block_till_done()
+                self.assertIs(runtime.session, session)
+                self.assertEqual(plain(runtime.session), session_plain)
+            self.assertNotIn(color, self.entry.options["field_standards"])
+            self.assertEqual(self.entry.options["field_standards"][field], saved[field])
+            for stopped in (False, True):
+                if stopped:
+                    await runtime.set_operation(False)
+                before = deepcopy(dict(self.entry.options))
+                current_session = runtime.session
+                for action in ("restore_standard", "restore_factory"):
+                    body = {"action": action, "field": field}
+                    async with client.post(url + "/standards", json=body) as response:
+                        self.assertEqual(response.status, 200, await response.text())
+                        confirmation = (await response.json())["confirmation"]
+                    async with client.post(url + "/standards", json={**body, "confirmation": confirmation}) as response:
+                        self.assertEqual(response.status, 409, await response.text())
+                    self.assertEqual(dict(self.entry.options), before)
+                    self.assertIs(runtime.session, current_session)
+            self.assertIs(runtime.controller, controller)
+            self.assertIs(runtime.detector, detector)
+            self.assertIs(runtime.device, device)
+            self.assertIs(self.entry.runtime_data, runtime)
+            current_session = runtime.session
+            current_plain = plain(current_session)
+            self.hass.config_entries.async_update_entry(self.entry, options={
+                **self.entry.options,
+                "field_standards": {
+                    field: definition.maximum + 1, color: "#304050",
+                    "appearance.preferences.history_live_poll_ms": section("appearance")["preferences"]["history_live_poll_ms"]["default"],
+                    "unknown.field": 1,
+                },
+            })
+            await self.hass.async_block_till_done()
+            self.assertEqual(self.entry.options["field_standards"], {color: "#304050"})
+            self.assertEqual(runtime.configuration.parameters.values[definition.key], active)
+            self.assertIs(runtime.session, current_session)
+            self.assertEqual(plain(runtime.session), current_plain)
+            async with client.get(url + "/standards") as response:
+                row = next(item for item in (await response.json())["fields"] if item["id"] == field)
+            self.assertEqual((row["standard"], row["has_standard"], row["active"]),
+                             (definition.default, False, active))
+            self.assertEqual(dict(Configuration.from_options(self.entry.options).field_standards), {color: "#304050"})
+            # A real external live-target update must also canonicalize S when
+            # the accepted S set is otherwise identical to the runtime's set.
+            target = runtime.configuration.parameters.values["target_temperature_c"] - BY_KEY["target_temperature_c"].number_step
+            session_id = runtime.session.session_id
+            timeline, deadlines = runtime.session.timeline, runtime.session.deadlines
+            self.hass.config_entries.async_update_entry(self.entry, options={
+                **self.entry.options,
+                "parameters": {**self.entry.options["parameters"], "target_temperature_c": target},
+                "field_standards": {color: "#304050", field: definition.maximum + 1},
+            })
+            await self.hass.async_block_till_done()
+            self.assertIs(self.entry.runtime_data, runtime)
+            self.assertEqual(runtime.session.session_id, session_id)
+            self.assertEqual(runtime.session.timeline, timeline)
+            self.assertEqual(runtime.session.deadlines, deadlines)
+            self.assertEqual(runtime.controller.target_temperature, target)
+            self.assertEqual(runtime.configuration.parameters.values[definition.key], active)
+            self.assertEqual(self.entry.options["field_standards"], {color: "#304050"})
+            self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], target)
+        runtime.controller.finish_session(runtime._clock(), light_after_run=False)
+        await runtime._cycle()
+        self.assertTrue(await self.hass.config_entries.async_reload(self.entry.entry_id))
+        await self.hass.async_block_till_done()
+        self.assertEqual(dict(self.entry.runtime_data.configuration.field_standards), {color: "#304050"})
+        self.assertEqual(self.entry.runtime_data.configuration.parameters.values[definition.key], active)
+        self.assertEqual(self.entry.runtime_data.configuration.parameters.values["target_temperature_c"], target)
+
+    async def test_newer_standard_options_stop_stale_handoff_before_light_ownership_is_withdrawn(self):
+        from homeassistant.setup import async_setup_component
+        from test_device_path import TestLight
+
+        await self.attach_reporting_heater()
+        await async_setup_component(self.hass, "light", {})
+        light = TestLight()
+        await self.hass.data["light"].async_add_entities([light])
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "bindings": {**self.entry.options["bindings"],
+                         "heater_feedback": "binary_sensor.actual_heating", "light": light.entity_id},
+        })
+        await self.hass.async_block_till_done()
+        runtime = self.entry.runtime_data
+        original = deepcopy(dict(self.entry.options))
+        controller, detector, device = runtime.controller, runtime.detector, runtime.device
+        phase = controller.phase
+        completed_sessions = controller.completed_sessions
+        self.assertIsNone(runtime.session)
+        self.assertTrue(device._heater_owned)
+        self.assertTrue(device._light_owned)
+        entered, release, restored = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        prepare_heater = device.prepare_heater_handoff
+        restore_heater = device.restore_heater_ownership
+
+        async def paused_after_heater(**kwargs):
+            finished = await prepare_heater(**kwargs)
+            self.assertTrue(finished)
+            entered.set()
+            await release.wait()
+            return finished
+
+        def heater_restored():
+            restore_heater()
+            restored.set()
+
+        definition = BY_KEY["nominal_power_kw"]
+        field = "parameters." + definition.key
+        standard = definition.default + 2 * definition.number_step
+        newer = {**original, "field_standards": {field: standard}}
+        url = self.base + "/" + self.entry.entry_id
+        with (
+            patch.object(device, "prepare_heater_handoff", side_effect=paused_after_heater),
+            patch.object(device, "restore_heater_ownership", side_effect=heater_restored),
+            patch.object(device, "prepare_light_handoff", wraps=device.prepare_light_handoff) as prepare_light,
+            patch.object(device, "finish_session_light", wraps=device.finish_session_light) as finish_light,
+            patch.object(self.hass.config_entries, "async_reload", wraps=self.hass.config_entries.async_reload) as reload,
+        ):
+            try:
+                self.hass.config_entries.async_update_entry(self.entry, options={
+                    **original,
+                    "parameters": {**original["parameters"],
+                                   definition.key: original["parameters"][definition.key] + definition.number_step},
+                })
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
+                self.assertTrue(runtime.reconfiguring)
+                self.assertFalse(device._heater_owned)
+                self.assertTrue(device._light_owned)
+                self.hass.config_entries.async_update_entry(self.entry, options=newer)
+                await asyncio.wait_for(restored.wait(), async_timeout("service"))
+                self.assertFalse(runtime.reconfiguring)
+                self.assertTrue(device._heater_owned)
+                self.assertTrue(device._light_owned)
+                async with ClientSession(headers=self.headers) as client:
+                    async with client.get(url + "/standards") as response:
+                        self.assertEqual(response.status, 200, await response.text())
+                        row = next(item for item in (await response.json())["fields"] if item["id"] == field)
+                    self.assertEqual((row["active"], row["standard"]),
+                                     (original["parameters"][definition.key], standard))
+            finally:
+                release.set()
+                await asyncio.wait_for(self.hass.async_block_till_done(), async_timeout("reload"))
+            prepare_light.assert_not_called()
+            finish_light.assert_not_called()
+            reload.assert_not_called()
+        self.assertEqual(dict(self.entry.options), newer)
+        self.assertEqual(runtime.configuration.as_options(), newer)
+        self.assertIs(self.entry.runtime_data, runtime)
+        self.assertFalse(runtime.closed)
+        self.assertFalse(runtime.reconfiguring)
+        self.assertIs(runtime.controller, controller)
+        self.assertIs(runtime.detector, detector)
+        self.assertIs(runtime.device, device)
+        self.assertIsNone(runtime.session)
+        self.assertEqual(controller.completed_sessions, completed_sessions)
+        self.assertEqual(controller.phase, phase)
+        self.assertTrue(device._heater_owned)
+        self.assertTrue(device._light_owned)
+
     async def test_state_catalog_bootstrap_and_compact_poll_share_effective_preferences(self):
         url = self.base + "/" + self.entry.entry_id
         specifications = section("appearance")["preferences"]
         editable = {key for key, definition in specifications.items() if definition["configuration_surface"] == "panel"}
-        preference_key = "history_live_poll_ms"
+        preference_key = "detail_records_per_page"
         specification = specifications[preference_key]
         chosen = specification["default"] + specification["step"]
+        internal = {
+            "history_live_poll_ms", "chart_curve_width_px", "control_button_height_px",
+            "primary_action_height_px", "control_radius_px", "surface_radius_px",
+            "surface_gap_px", "surface_padding_px", "control_group_gap_px",
+        }
+        self.assertEqual(specifications["history_live_poll_ms"]["default"], 15000)
+        self.assertTrue(all(specifications[key]["configuration_surface"] == "catalog"
+                            for key in internal))
+        self.hass.config_entries.async_update_entry(self.entry, options={
+            **self.entry.options,
+            "appearance": {"preferences": {
+                key: specifications[key]["default"] + specifications[key]["step"]
+                for key in internal
+            }},
+            "field_standards": {
+                f"appearance.preferences.{key}": specifications[key]["default"]
+                for key in internal
+            },
+        })
+        await self.hass.async_block_till_done()
         async with ClientSession(headers=self.headers) as client:
             async with client.post(url + "/appearance", json={"preferences": {preference_key: chosen}}) as response:
                 self.assertEqual(response.status, 200, await response.text())
@@ -1828,15 +2452,38 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state["configuration"]["appearance"], state["appearance"])
                 self.assertEqual(set(state["frontend_defaults"]), set(section("frontend")))
                 self.assertNotIn(preference_key, state["frontend_defaults"])
+                for key in internal:
+                    self.assertNotIn(key, state["appearance"]["preferences"])
+                    if key in state["frontend_defaults"]:
+                        self.assertEqual(state["frontend_defaults"][key], specifications[key]["default"])
+                    if includes_catalog:
+                        self.assertEqual(state["appearance_catalog"]["preferences"][key], specifications[key])
             self.assertEqual(set(self.entry.options["appearance"]["preferences"]), editable)
             self.assertEqual(
                 set(self.entry.runtime_data.configuration.appearance["preferences"]),
                 set(specifications),
             )
+            for key in internal:
+                self.assertEqual(self.entry.runtime_data.configuration.appearance["preferences"][key],
+                                 specifications[key]["default"])
             self.assertEqual(
                 self.entry.runtime_data.configuration.as_snapshot()["appearance"],
                 self.entry.runtime_data.configuration.appearance,
             )
+            async with client.get(url + "/standards") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                standard_fields = {row["id"] for row in (await response.json())["fields"]}
+            self.assertTrue({f"appearance.preferences.{key}" for key in internal}.isdisjoint(standard_fields))
+            self.assertEqual(self.entry.options["field_standards"], {})
+            original = deepcopy(dict(self.entry.options))
+            for key in internal:
+                with self.subTest(internal=key):
+                    async with client.post(url + "/standards", json={
+                        "action": "overwrite_standard", "field": f"appearance.preferences.{key}",
+                        "value": specifications[key]["default"],
+                    }) as response:
+                        self.assertEqual(response.status, 400, await response.text())
+            self.assertEqual(dict(self.entry.options), original)
             readonly = next((key, definition) for key, definition in specifications.items()
                             if definition["configuration_surface"] == "catalog" and definition["default"] + definition["step"] <= definition["maximum"])
             key, definition = readonly
@@ -1992,6 +2639,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             **self.entry.options,
             "presence_source": "ha_presence",
             "bindings": {**self.entry.options["bindings"], "presence": entity_id},
+            "field_standards": {"appearance.colors.event_door": "#AABBCC",
+                                "parameters.sensor_timeout_seconds": BY_KEY["sensor_timeout_seconds"].default + 2 * BY_KEY["sensor_timeout_seconds"].number_step},
         })
         await self.hass.async_block_till_done()
         url = self.base + "/" + self.entry.entry_id
@@ -2032,6 +2681,10 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(self.entry.options["appearance"], saved)
             self.assertEqual(self.entry.runtime_data.configuration.appearance, stored)
+            self.assertEqual(self.entry.options["field_standards"], {
+                "appearance.colors.event_door": "#AABBCC",
+                "parameters.sensor_timeout_seconds": BY_KEY["sensor_timeout_seconds"].default + 2 * BY_KEY["sensor_timeout_seconds"].number_step,
+            })
             self.assertEqual(self.entry.options["presence_source"], "ha_presence")
             self.assertEqual(self.entry.options["bindings"]["presence"], entity_id)
             self.assertEqual(
@@ -2048,13 +2701,17 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         session = runtime.session
         first = {"colors": {"phase_ready": "#111111"}}
         latest = {"colors": {"phase_ready": "#222222"}}
+        standard_field = "appearance.colors.phase_ready"
+        latest_standards = {standard_field: "#304050"}
         async with runtime._lock:
             self.hass.config_entries.async_update_entry(
-                self.entry, options={**self.entry.options, "appearance": first}
+                self.entry, options={**self.entry.options, "appearance": first,
+                                     "field_standards": {standard_field: "obsolete color"}}
             )
             await asyncio.sleep(0)
             self.hass.config_entries.async_update_entry(
-                self.entry, options={**self.entry.options, "appearance": latest}
+                self.entry, options={**self.entry.options, "appearance": latest,
+                                     "field_standards": latest_standards}
             )
             await asyncio.sleep(0)
         await self.hass.async_block_till_done()
@@ -2062,6 +2719,8 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(runtime.session, session)
         self.assertEqual(runtime.configuration.appearance["colors"], latest["colors"])
         self.assertEqual(self.entry.options["appearance"]["colors"], latest["colors"])
+        self.assertEqual(self.entry.options["field_standards"], latest_standards)
+        self.assertEqual(dict(runtime.configuration.field_standards), latest_standards)
 
     async def test_appearance_is_independent_for_each_entry(self):
         from harness import create_sauna

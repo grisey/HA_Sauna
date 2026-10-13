@@ -13,6 +13,7 @@ import unittest
 from test_settings import setting, timeout
 
 ROOT = Path(__file__).resolve().parents[1]
+CORE_ROOT = ROOT / "tests"
 INTEGRATION_ROOT = ROOT / "tests/integration"
 CHECKS = ("core", "ha", "browser", "sessions")
 
@@ -30,20 +31,28 @@ def select_values(raw, available, label):
     return [value for value in available if value in selected]
 
 
-def select_integration_tests(raw):
-    """Validate complete test IDs from source without importing HA fixtures."""
+def select_test_methods(raw, test_root, label):
+    """Validate complete test IDs from source without importing test fixtures."""
     if not raw.strip():
         return []
     available = [
         f"{path.stem}.{definition.name}.{method.name}"
-        for path in sorted(INTEGRATION_ROOT.glob("test_*.py"))
+        for path in sorted(test_root.glob("test_*.py"))
         for definition in ast.parse(path.read_text(encoding="utf-8")).body
         if isinstance(definition, ast.ClassDef)
         for method in definition.body
         if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
         and method.name.startswith("test_")
     ]
-    return select_values(raw, available, "integration tests")
+    return select_values(raw, available, label)
+
+
+def select_core_tests(raw):
+    return select_test_methods(raw, CORE_ROOT, "core tests")
+
+
+def select_integration_tests(raw):
+    return select_test_methods(raw, INTEGRATION_ROOT, "integration tests")
 
 
 def outputs():
@@ -59,6 +68,10 @@ def outputs():
     values["checks"] = select_values(
         os.environ.get("SAUNA_TEST_CHECKS", ""), CHECKS, "checks"
     )
+    core_filter = os.environ.get("SAUNA_CORE_TESTS", "")
+    if core_filter.strip() and "core" not in values["checks"]:
+        raise ValueError("core_tests requires core in checks")
+    values["core_tests"] = select_core_tests(core_filter)
     cases_filter = os.environ.get("SAUNA_SESSION_CASES", "")
     if cases_filter.strip() and "sessions" not in values["checks"]:
         raise ValueError("session_cases requires sessions in checks")
@@ -91,6 +104,23 @@ def install_ha():
     )
 
 
+def run_core():
+    names = select_core_tests(os.environ.get("SAUNA_CORE_TESTS", ""))
+    # Named tests need the same module priority as core discovery.
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(CORE_ROOT))
+    print("CORE_TESTS", json.dumps(names or ["all"]), flush=True)
+    loader = unittest.defaultTestLoader
+    suite = (
+        loader.loadTestsFromNames(names) if names else loader.discover(str(CORE_ROOT))
+    )
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    successful = result.wasSuccessful() and result.testsRun > 0 and not result.skipped
+    if result.skipped:
+        print("Required core tests were skipped", flush=True)
+    raise SystemExit(0 if successful else 1)
+
+
 def run_integration():
     names = select_integration_tests(os.environ.get("SAUNA_INTEGRATION_TESTS", ""))
     # Named tests need the same module priority as integration discovery.
@@ -113,10 +143,11 @@ def run_integration():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("outputs", "install-ha", "integration"))
+    parser.add_argument("action", choices=("outputs", "install-ha", "core", "integration"))
     arguments = parser.parse_args()
     {
         "outputs": outputs,
         "install-ha": install_ha,
+        "core": run_core,
         "integration": run_integration,
     }[arguments.action]()

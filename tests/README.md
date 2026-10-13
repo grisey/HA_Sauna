@@ -237,3 +237,11 @@ getrennte vollständige Namen der Form `test_module.Class.test_method`. Ohne
 Auswahl läuft die vollständige Integration; unbekannte oder doppelte Namen sowie
 leere Einträge innerhalb einer Auswahl werden abgewiesen. Die Adapterprüfung
 bleibt Teil des Bereichs `ha`.
+
+`core_tests` begrenzt `core` auf vollständige Python-Testnamen derselben Form.
+Die Auswahl wird aus dem Testquelltext geprüft, ohne Testmodule zu importieren.
+Bei gesetztem Filter laufen ausschließlich diese Python-Tests; die Paneltests
+gehören dann nicht zum ausgewählten Umfang. Ohne Filter bleiben vollständige
+Python- und Panelprüfung erhalten. Leere Testsuiten, Fehler und übersprungene
+Python-Tests führen zu einem fehlgeschlagenen Core-Prozess. Das Artefakt
+`core-tests` enthält Commit, Tree, Prozessprotokoll, Exitcode und Abschlussstatus.

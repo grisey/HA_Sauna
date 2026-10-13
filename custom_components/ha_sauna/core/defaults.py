@@ -189,6 +189,8 @@ _PREFERENCE_KEYS = frozenset(
         "history_keyboard_pan_fraction",
         "history_keyboard_selection_fraction",
         "history_zoom_factor",
+        "history_selection_context_fraction",
+        "history_view_transition_ms",
         "history_minimum_span_ms",
         "program_drag_edge_px",
         "program_drag_scroll_px",
@@ -200,6 +202,7 @@ _PREFERENCE_KEYS = frozenset(
         "percentage_precision",
         "energy_precision",
         "absolute_humidity_precision",
+        "history_readout_precision",
         "history_temperature_padding_c",
         "history_temperature_scale_step_c",
         "history_humidity_padding_percent",
@@ -213,6 +216,8 @@ _PREFERENCE_KEYS = frozenset(
         "history_phase_snap_radius_px",
         "history_tap_movement_px",
         "event_marker_size_px",
+        "history_event_dot_size_px",
+        "history_compact_band_height_px",
         "event_marker_gap_px",
         "diagnostic_columns_breakpoint_px",
         "diagnostic_fallback_width_px",
@@ -904,7 +909,8 @@ def validate_catalog(catalog):
         raise ValueError("defaults.json: invalid button event type")  # noqa: TRY004 - uniform invalid-catalog ValueError contract.
     appearance = catalog["appearance"]
     _object(
-        appearance, {"colors", "scales", "instruments", "precision", "preferences"},
+        appearance,
+        {"colors", "scales", "instruments", "precision", "preferences", "history_events"},
         "appearance",
     )
     _object(appearance["preferences"], _PREFERENCE_KEYS, "display preferences")
@@ -975,6 +981,15 @@ def validate_catalog(catalog):
             raise ValueError("defaults.json: invalid appearance color")
     if roles != _COLOR_ROLES:
         raise ValueError("defaults.json: missing or unknown appearance role")
+    _object(appearance["history_events"], {"door", "infusion", "heater"}, "history events")
+    for name, event in appearance["history_events"].items():
+        _object(event, {"label", "default_visible", "color"}, f"history_events.{name}")
+        if not isinstance(event["label"], str) or not event["label"].strip():
+            raise ValueError(f"defaults.json: invalid history_events.{name}.label")
+        if not isinstance(event["default_visible"], bool):
+            raise ValueError(f"defaults.json: invalid history_events.{name}.default_visible")
+        if not isinstance(event["color"], str) or event["color"] not in roles:
+            raise ValueError(f"defaults.json: invalid history_events.{name}.color")
     _object(appearance["scales"], {"temperature", "humidity"}, "scales")
     for name, scale in appearance["scales"].items():
         required_bounds = {"minimum", "maximum"} if name == "humidity" else set()

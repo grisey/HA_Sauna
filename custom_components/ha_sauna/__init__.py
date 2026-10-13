@@ -129,10 +129,16 @@ async def async_options_updated(hass, entry):
             # Keep the persisted entry in step with the still-valid runtime;
             # otherwise the next reload would fail although this listener
             # rejected the external change.
+            restore_ownership = runtime.reconfiguring
             runtime.reconfiguring = False
             hass.config_entries.async_update_entry(
                 entry, options=runtime.configuration.as_options()
             )
+            # This rollback may cancel an older handoff. Its following no-op
+            # listener no longer restores ownership for S-only writes.
+            if runtime.device and restore_ownership:
+                runtime.device.restore_light_ownership()
+                runtime.device.restore_heater_ownership()
             return
         from dataclasses import replace
 
@@ -142,30 +148,59 @@ async def async_options_updated(hass, entry):
         after.pop("log_level")
         before.pop("appearance")
         after_appearance = after.pop("appearance")
-        if before == after:
+        before_active = dict(before)
+        after_active = dict(after)
+        before_active.pop("field_standards")
+        after_active.pop("field_standards")
+        if before_active == after_active:
             async with runtime._lock:
                 if getattr(entry, "runtime_data", None) is not runtime or runtime.closed:
                     return
                 # This listener may have waited behind a newer API write. Use
                 # the latest persisted entry, not its pre-lock snapshot.
+                current_entry_options = entry.options
                 try:
-                    current = Configuration.from_options(entry.options)
+                    current = Configuration.from_options(current_entry_options)
                 except (ValueError, TypeError):
                     return  # The newer listener will reject its invalid write.
                 current_options = current.as_options()
                 current_options.pop("log_level")
                 current_options.pop("appearance")
+                current_standards = current_options.pop("field_standards")
                 live_options = runtime.configuration.as_options()
                 live_options.pop("log_level")
                 live_options.pop("appearance")
+                live_options.pop("field_standards")
                 if current_options != live_options:
                     return
+                # Canonicalize only S; keep the latest writer's other options,
+                # including valid active values and legacy representations.
+                if (
+                    current_entry_options.get("field_standards", {})
+                    != current_standards
+                ):
+                    hass.config_entries.async_update_entry(
+                        entry,
+                        options={
+                            **current_entry_options,
+                            "field_standards": current_standards,
+                        },
+                    )
+                restore_ownership = (
+                    runtime.reconfiguring
+                    or runtime.configuration.appearance != current.appearance
+                    or runtime.configuration.log_level != current.log_level
+                )
                 runtime.configuration = replace(
-                    runtime.configuration, appearance=current.appearance
+                    runtime.configuration,
+                    appearance=current.appearance,
+                    field_standards=current.field_standards,
                 )
                 if runtime.configuration.log_level != current.log_level:
                     runtime.set_log_level(current.log_level)
-                if runtime.device:
+                # S-only writes neither withdraw nor resume actuator ownership.
+                # A newer non-reload write can still cancel an older handoff.
+                if runtime.device and restore_ownership:
                     runtime.device.restore_light_ownership()
                     runtime.device.restore_heater_ownership()
                 runtime.reconfiguring = False
@@ -196,11 +231,13 @@ async def async_options_updated(hass, entry):
                     return
                 # A later options update may have overtaken this listener
                 # while it waited for the live controller lock.
+                latest_entry_options = entry.options
                 try:
-                    latest = Configuration.from_options(entry.options)
+                    latest = Configuration.from_options(latest_entry_options)
                 except (ValueError, TypeError):
                     return  # The newer listener will reject its invalid write.
-                if latest.as_options() != updated.as_options():
+                latest_options = latest.as_options()
+                if latest_options != updated.as_options():
                     return
                 selected_parameters = updated.parameters
                 selected_mode = (
@@ -243,6 +280,20 @@ async def async_options_updated(hass, entry):
                     hass.config_entries.async_update_entry(
                         entry, options=runtime.configuration.as_options()
                     )
+                elif (
+                    entry.options == latest_entry_options
+                    and latest_entry_options.get("field_standards", {})
+                    != latest_options["field_standards"]
+                ):
+                    # Applying A can await output. Do not replace options that
+                    # a newer external writer persisted during that wait.
+                    hass.config_entries.async_update_entry(
+                        entry,
+                        options={
+                            **latest_entry_options,
+                            "field_standards": latest_options["field_standards"],
+                        },
+                    )
                 if runtime.device:
                     runtime.device.restore_light_ownership()
                     runtime.device.restore_heater_ownership()
@@ -267,6 +318,14 @@ async def async_options_updated(hass, entry):
             heater_finished = await runtime.device.prepare_heater_handoff(
                 restore_on_failure=False
             )
+            # A newer listener may have restored these owners while the
+            # heater handoff waited. Do not withdraw the light owner again.
+            if (
+                getattr(entry, "runtime_data", None) is not runtime
+                or runtime.closed
+                or entry.options != requested_options
+            ):
+                return
             if not heater_finished:
                 await _restore_failed_options(hass, entry, runtime, requested_options)
                 return
