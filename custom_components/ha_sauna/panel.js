@@ -12,6 +12,152 @@ const equalPresetColumns = (count, maximum) => {
   return 1;
 };
 const stamp = (v) => (v ? new Date(v).getTime() : null);
+const energyIntervalTransports = new WeakMap();
+// Date alone drops the owner's microseconds. Compare whole seconds and the
+// original fraction separately, retaining the wire strings at every boundary.
+const energyIntervalTime = (value) => {
+  const match =
+    typeof value === "string" &&
+    /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,6}))?(Z|[+-]\d\d:\d\d)$/.exec(
+      value,
+    );
+  if (!match) return null;
+  const seconds = Date.parse(`${match[1]}${match[3]}`);
+  return Number.isFinite(seconds)
+    ? [seconds, (match[2] || "").padEnd(6, "0")]
+    : null;
+};
+const compareEnergyIntervalTimes = (left, right) =>
+  left[0] - right[0] || (left[1] < right[1] ? -1 : left[1] > right[1] ? 1 : 0);
+const energyIntervalTransport = (energy) =>
+  energy && energyIntervalTransports.get(energy);
+const energyIntervalSignature = (energy) => {
+  if (!energy) return energy;
+  const { intervals, interval_delta, intervals_available, ...scalar } = energy,
+    transport = energyIntervalTransport(energy);
+  return {
+    ...scalar,
+    interval_horizon: transport?.horizon || null,
+    interval_revision: transport?.revision || 0,
+    interval_bootstrap_needed: !!transport?.bootstrapNeeded,
+  };
+};
+const mergeEnergyIntervals = (current, incoming, startedAt) => {
+  if (!incoming) return incoming;
+  const {
+    intervals,
+    interval_delta: delta,
+    intervals_available,
+    ...energy
+  } = incoming;
+  // Omitted evidence is legacy. It neither inherits a previous series nor
+  // supplies a cursor merely because its scalar accounted_at advanced.
+  if (!Object.hasOwn(incoming, "interval_delta")) return energy;
+  const previous = energyIntervalTransport(current),
+    transport = {
+      horizon: previous?.horizon || null,
+      revision: previous?.revision || 0,
+      intervals: previous?.intervals || [],
+      bootstrapNeeded: false,
+    },
+    finish = () => {
+      if (transport.horizon)
+        Object.defineProperty(energy, "intervals", { value: transport.intervals });
+      energyIntervalTransports.set(energy, transport);
+      return energy;
+    },
+    retry = () => {
+      transport.bootstrapNeeded = true;
+      return finish();
+    };
+  if (!delta || !Array.isArray(delta.intervals)) return retry();
+  const to = energyIntervalTime(delta.to),
+    accounted = energyIntervalTime(incoming.accounted_at),
+    bootstrap = delta.from === null,
+    from = energyIntervalTime(bootstrap ? startedAt : delta.from),
+    horizon = energyIntervalTime(transport.horizon);
+  if (
+    !to ||
+    !accounted ||
+    !from ||
+    compareEnergyIntervalTimes(to, accounted) !== 0 ||
+    compareEnergyIntervalTimes(from, to) > 0 ||
+    (!bootstrap && (!horizon || compareEnergyIntervalTimes(from, horizon) > 0))
+  )
+    return retry();
+  // Validate the entire received suffix before changing the cached prefix.
+  // This checks transport continuity and original provenance, not accounting.
+  let covered = from;
+  const additions = [];
+  for (const interval of delta.intervals) {
+    const start = energyIntervalTime(interval?.started_at),
+      end = energyIntervalTime(interval?.ended_at),
+      validSource =
+        (interval?.source === "unknown" && interval.power_kw === null) ||
+        (["measured", "estimated"].includes(interval?.source) &&
+          typeof interval.power_kw === "number" &&
+          Number.isFinite(interval.power_kw));
+    if (
+      !start ||
+      !end ||
+      !validSource ||
+      compareEnergyIntervalTimes(start, covered) !== 0 ||
+      compareEnergyIntervalTimes(end, start) <= 0 ||
+      compareEnergyIntervalTimes(end, to) > 0
+    )
+      return retry();
+    covered = end;
+    if (!bootstrap && compareEnergyIntervalTimes(end, horizon) <= 0) continue;
+    additions.push({
+      started_at:
+        !bootstrap && compareEnergyIntervalTimes(start, horizon) < 0
+          ? transport.horizon
+          : interval.started_at,
+      ended_at: interval.ended_at,
+      source: interval.source,
+      power_kw: interval.power_kw,
+    });
+  }
+  if (
+    compareEnergyIntervalTimes(covered, to) !== 0 ||
+    (bootstrap &&
+      !delta.intervals.length &&
+      ["measured_seconds", "estimated_seconds", "unknown_seconds"].some(
+        (key) => incoming[key] !== 0,
+      ))
+  )
+    return retry();
+  // A delayed, older snapshot cannot roll a confirmed series back. Archive
+  // and status streams own separate arrays, including across current/last IDs.
+  if (horizon && compareEnergyIntervalTimes(to, horizon) < 0) {
+    transport.bootstrapNeeded = !!previous.bootstrapNeeded;
+    return finish();
+  }
+  if (bootstrap) transport.intervals = [];
+  for (const interval of additions) {
+    const tail = transport.intervals.at(-1);
+    if (
+      tail &&
+      compareEnergyIntervalTimes(
+        energyIntervalTime(tail.ended_at),
+        energyIntervalTime(interval.started_at),
+      ) === 0 &&
+      tail.source === interval.source &&
+      tail.power_kw === interval.power_kw
+    )
+      transport.intervals[transport.intervals.length - 1] = {
+        ...tail,
+        ended_at: interval.ended_at,
+      };
+    else transport.intervals.push(interval);
+  }
+  if (bootstrap || !horizon || compareEnergyIntervalTimes(to, horizon) > 0)
+    transport.revision++;
+  transport.horizon = delta.to;
+  // A suffix cannot settle an earlier discontinuity: only a bootstrap can.
+  transport.bootstrapNeeded = !bootstrap && !!previous?.bootstrapNeeded;
+  return finish();
+};
 const orderedHistoryEvents = (items = []) =>
   items
     .map((event, index) => ({ event, index, at: stamp(event.effective_at) }))
@@ -5287,6 +5433,22 @@ class SaunaPanel extends HTMLElement {
     this.archiveRevision = revision;
     const previousSessionId = this.state?.session?.timeline?.session_id || null,
       previousLastSessionId = this.state?.last_session?.timeline?.session_id || null;
+    for (const key of ["session", "last_session"]) {
+      const session = state[key],
+        id = session?.timeline?.session_id,
+        previous =
+          !archiveChanged && id
+            ? [this.state?.session, this.state?.last_session].find(
+                (candidate) => candidate?.timeline?.session_id === id,
+              )
+            : null;
+      if (session)
+        session.energy = mergeEnergyIntervals(
+          previous?.energy,
+          session.energy,
+          session.timeline?.session_started_at,
+        );
+    }
     this.state = state;
     if (state.title !== undefined || state.instances)
       this.syncInstanceTitle(state.title, state.instances);
@@ -5349,6 +5511,27 @@ class SaunaPanel extends HTMLElement {
     this.invalidateHistoryIndex();
     this.clearHistoryDisplay();
   }
+  stateRequestPath(entry, includeEnergyIntervals = true) {
+    const query = [];
+    if (this.panel?.config?.appearance_catalog) query.push("include_catalog=false");
+    if (!includeEnergyIntervals) query.push("include_energy_intervals=false");
+    else if (entry === this.entry) {
+      for (const [key, idKey, afterKey] of [
+        ["session", "energy_session_id", "energy_after"],
+        ["last_session", "last_energy_session_id", "last_energy_after"],
+      ]) {
+        const session = this.state?.[key],
+          id = session?.timeline?.session_id,
+          transport = energyIntervalTransport(session?.energy);
+        if (id && transport?.horizon && !transport.bootstrapNeeded)
+          query.push(
+            `${idKey}=${encodeURIComponent(id)}`,
+            `${afterKey}=${encodeURIComponent(transport.horizon)}`,
+          );
+      }
+    }
+    return `/${entry}/state${query.length ? `?${query.join("&")}` : ""}`;
+  }
   async refresh(requested = false) {
     if (this.busy) {
       if (requested) this.refreshPending = true;
@@ -5376,9 +5559,7 @@ class SaunaPanel extends HTMLElement {
         this.syncInstanceTitle();
       }
       const entry = this.entry;
-      const state = await this.api(
-        `/${entry}/state${this.panel?.config?.appearance_catalog ? "?include_catalog=false" : ""}`,
-      );
+      const state = await this.api(this.stateRequestPath(entry));
       if (
         generation !== this.generation ||
         entry !== this.entry ||
@@ -5488,12 +5669,19 @@ class SaunaPanel extends HTMLElement {
     if (cache?.accessProjection && cache.accessProjection !== accessProjection)
       cache = null;
     if (!cache) {
-      cache = { records: [], after: 0, pageRunLoaded: false, finalSynced: false };
+      cache = {
+        sessionId: id,
+        records: [],
+        after: 0,
+        pageRunLoaded: false,
+        finalSynced: false,
+      };
       this.cache.set(id, cache);
     }
     // Map order is the most recent access order, including warm selections.
     this.cache.delete(id);
     this.cache.set(id, cache);
+    cache.sessionId ??= id;
     cache.accessProjection = accessProjection;
     cache.records ??= [];
     cache.after ??= 0;
@@ -5534,16 +5722,38 @@ class SaunaPanel extends HTMLElement {
     }
   }
   updateHistoryCacheMetadata(cache, page) {
+    const incomingSession = page.session;
+    if (
+      incomingSession &&
+      cache.sessionId &&
+      incomingSession.timeline?.session_id !== cache.sessionId
+    )
+      throw Error("Archivantwort für eine andere Sitzung.");
+    cache.sessionId ??= incomingSession?.timeline?.session_id;
     const measurementWindowSignature = JSON.stringify(page.measurement_window || null);
     if (cache.measurementWindowSignature !== measurementWindowSignature) {
       cache.measurement_window = page.measurement_window;
       cache.measurementWindowSignature = measurementWindowSignature;
       cache.metadataRevision = (cache.metadataRevision || 0) + 1;
     }
-    const session = page.session,
+    const session = incomingSession
+        ? {
+            ...incomingSession,
+            energy: mergeEnergyIntervals(
+              cache.energy,
+              incomingSession.energy,
+              incomingSession.timeline?.session_started_at,
+            ),
+          }
+        : incomingSession,
       projection = page.phase_projection,
-      sessionSignature = JSON.stringify(session || null),
+      sessionSignature = JSON.stringify(
+        session
+          ? { ...session, energy: energyIntervalSignature(session.energy) }
+          : null,
+      ),
       projectionSignature = JSON.stringify(projection || null);
+    cache.energy = session?.energy;
     if (cache.sessionSignature !== sessionSignature) {
       cache.session = session;
       cache.sessionSignature = sessionSignature;
@@ -5584,7 +5794,8 @@ class SaunaPanel extends HTMLElement {
     return (
       !cache.pageRunLoaded ||
       !cache.finalSynced ||
-      cache.measurement_window?.complete === false
+      cache.measurement_window?.complete === false ||
+      !!energyIntervalTransport(cache.energy)?.bootstrapNeeded
     );
   }
   showHistoryCache() {
@@ -5746,8 +5957,13 @@ class SaunaPanel extends HTMLElement {
           let more;
           do {
             const after = cache.after,
+              transport = energyIntervalTransport(cache.energy),
+              energyAfter =
+                transport?.horizon && !transport.bootstrapNeeded
+                  ? `&energy_after=${encodeURIComponent(transport.horizon)}`
+                  : "",
               page = await this.api(
-                `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history&after=${after}`,
+                `/${entry}/archive?session_id=${encodeURIComponent(id)}&projection=history&after=${after}${energyAfter}`,
               );
             if (!currentFor(id)) return;
             // Persist each complete page before the next request. A failed
@@ -7724,9 +7940,7 @@ class SaunaPanel extends HTMLElement {
       attempt++
     ) {
       try {
-        const state = await this.api(
-          `/${entry}/state${this.panel?.config?.appearance_catalog ? "?include_catalog=false" : ""}`,
-        );
+        const state = await this.api(this.stateRequestPath(entry, false));
         const current = state.configuration;
         if (
           Object.keys(current.parameters).length === Object.keys(parameters).length &&
@@ -9145,7 +9359,7 @@ class SaunaPanel extends HTMLElement {
     const signature = JSON.stringify({
       id: session.timeline.session_id,
       ended_at: session.ended_at,
-      energy: session.energy,
+      energy: energyIntervalSignature(session.energy),
       heating: session.heating,
       active: session.timeline.active,
       completed: session.timeline.completed,

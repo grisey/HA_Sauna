@@ -22,7 +22,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from custom_components.ha_sauna.appearance import APPEARANCE_CATALOG, frontend_preferences
-from custom_components.ha_sauna.archive import plain, session_has_gangs
+from custom_components.ha_sauna.archive import (
+    energy_interval_delta,
+    plain,
+    session_has_gangs,
+)
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.configuration_model import (
     ConfigurationModel,
@@ -216,9 +220,10 @@ class Preview:
         self.sessions[session.session_id] = {
             "session": saved,
             "phase_projection": plain(project_session(session, self.now)),
+            "energy": session.energy,
         }
 
-    def archive(self, session_id=None, after=0):
+    def archive(self, session_id=None, after=0, *, energy_after=None):
         if session_id is None:
             return [
                 {"session_id": item["session"]["timeline"]["session_id"],
@@ -230,6 +235,9 @@ class Preview:
         if stored is None:
             return None
         session = dict(stored["session"])
+        energy_delta = energy_interval_delta(stored.get("energy"), after=energy_after)
+        if energy_delta is not None:
+            session["energy"] = {**session["energy"], "interval_delta": energy_delta}
         session["door_cycles"] = plain(project_door_cycles(session.get("timeline", {})))
         projection = stored["phase_projection"]
         window = measurement_window(
@@ -377,12 +385,19 @@ class Preview:
             return 0
         return self.light
 
-    def state(self):
+    def state(
+        self, *, energy_session_id=None, energy_after=None,
+        last_energy_session_id=None, last_energy_after=None,
+        include_energy_intervals=True,
+    ):
         c, session = self.c, self.c.session
         configuration = self.runtime.configuration
         configuration_model = self.runtime.configuration_model
         active = session.timeline.active if session else None
         light_observation = self.observed_light()
+        last_session = next(
+            (s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None,
+        )
         measurements = [{"position":"upper", "quantity":q, "value":v,
                          "received_at":self.now, "measured_at":self.now}
                         for q,v in (("temperature", c.temperature), ("humidity",self.humidity))]
@@ -410,7 +425,7 @@ class Preview:
                 "source": PREVIEW_DEFAULTS["environment"]["source"],
                 "updated_at": self.now,
             },
-            "last_session":next((s for s in reversed(c.completed_sessions) if s.timeline.gang_count), None),
+            "last_session":last_session,
             "archive_revision":self.archive_revision, "preview_scenario":self.scenario,
             "preview_button":{"pressed":self.button_pressed,
                               "start_hold":self.runtime.button_start_hold_active},
@@ -453,12 +468,22 @@ class Preview:
                          "normal":self.normal_light()}},
             "permissions":{k:True for k in ("admin","control","temperature","program","light","heater")},
         })
-        for key in ("session", "last_session"):
+        for key, owner, owner_id, after in (
+            ("session", session, energy_session_id, energy_after),
+            ("last_session", last_session, last_energy_session_id, last_energy_after),
+        ):
             serialized_session = result.get(key)
             if serialized_session is not None:
                 serialized_session["door_cycles"] = plain(
                     project_door_cycles(serialized_session.get("timeline", {}))
                 )
+                if not include_energy_intervals:
+                    continue
+                energy_delta = energy_interval_delta(
+                    owner.energy, after=after if owner_id == owner.session_id else None,
+                )
+                if energy_delta is not None:
+                    serialized_session["energy"]["interval_delta"] = energy_delta
         result["permissions"]["admin"] = self.admin
         result = result if self.admin else public_state(result)
         result["preview_feedback"] = {"following": self.follow_feedback, "on": c.contactor}
@@ -622,11 +647,22 @@ class Handler(BaseHTTPRequestHandler):
                 "preview": PREVIEW_DEFAULTS,
             })
         elif path.endswith("/state"):
-            self.send(preview.state())
+            query = parse_qs(parsed.query)
+            self.send(preview.state(
+                energy_session_id=query.get("energy_session_id", [None])[0],
+                energy_after=query.get("energy_after", [None])[0],
+                last_energy_session_id=query.get("last_energy_session_id", [None])[0],
+                last_energy_after=query.get("last_energy_after", [None])[0],
+                include_energy_intervals=(
+                    query.get("include_energy_intervals", ["true"])[0] != "false"
+                ),
+            ))
         elif path.endswith("/archive"):
             query = parse_qs(parsed.query)
-            result = preview.archive(query.get("session_id", [None])[0],
-                                     int(query.get("after", [0])[0]))
+            result = preview.archive(
+                query.get("session_id", [None])[0], int(query.get("after", [0])[0]),
+                energy_after=query.get("energy_after", [None])[0],
+            )
             if result is None:
                 self.send_error(404)
                 return

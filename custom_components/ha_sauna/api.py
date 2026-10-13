@@ -9,7 +9,7 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.helpers import entity_registry as er
 
 from .appearance import APPEARANCE_CATALOG, frontend_preferences
-from .archive import plain
+from .archive import energy_interval_delta, plain
 from .const import DOMAIN
 from .core.configuration_model import ConfigurationModel, temperature_control
 from .core.display import phase_timer, start_availability
@@ -184,6 +184,13 @@ class StateView(HomeAssistantView):
                 **runtime.configuration.as_options(),
                 "parameters": runtime.configuration.parameters.as_dict(),
             }
+            last_session = next(
+                (
+                    item for item in reversed(controller.completed_sessions)
+                    if item.timeline.gang_count
+                ),
+                None,
+            )
             result = plain(
                     {
                         "title": request.app[KEY_HASS].config_entries.async_get_entry(entry_id).title,
@@ -208,10 +215,7 @@ class StateView(HomeAssistantView):
                            if request.query.get("include_catalog", "true") != "false"
                            else {}),
                         "frontend_defaults": frontend_preferences(runtime.configuration.appearance),
-                        "last_session": next((
-                            item for item in reversed(controller.completed_sessions)
-                            if item.timeline.gang_count
-                        ), None),
+                        "last_session": last_session,
                         "archive_revision": runtime.archive.revision if runtime.archive else 0,
                         "parameters": [
                             {
@@ -296,12 +300,28 @@ class StateView(HomeAssistantView):
                         },
                     }
                 )
-            for key in ("session", "last_session"):
+            for key, owner, session_id_key, after_key in (
+                ("session", session, "energy_session_id", "energy_after"),
+                (
+                    "last_session", last_session,
+                    "last_energy_session_id", "last_energy_after",
+                ),
+            ):
                 serialized_session = result.get(key)
                 if serialized_session is not None:
                     serialized_session["door_cycles"] = plain(
                         project_door_cycles(serialized_session.get("timeline", {}))
                     )
+                    if request.query.get("include_energy_intervals", "true") == "false":
+                        continue
+                    energy_delta = energy_interval_delta(
+                        owner.energy,
+                        after=request.query.get(after_key)
+                        if request.query.get(session_id_key) == owner.session_id
+                        else None,
+                    )
+                    if energy_delta is not None:
+                        serialized_session["energy"]["interval_delta"] = energy_delta
             if not request["hass_user"].is_admin:
                 result = public_state(result)
             return self.json(result)
@@ -861,6 +881,8 @@ class ArchiveView(HomeAssistantView):
         if projection not in (None, "history"):
             raise web.HTTPBadRequest(text="Unbekannte Archivansicht")
         read_options = {"after": after}
+        if "energy_after" in request.query:
+            read_options["energy_after"] = request.query["energy_after"]
         clock = getattr(runtime, "_clock", None)
         if callable(clock):
             read_options["now"] = clock()
@@ -947,6 +969,13 @@ class ArchiveView(HomeAssistantView):
                                 "configuration",
                             }
                         }
+                        energy = record["payload"].get("energy")
+                        if isinstance(energy, dict):
+                            record["payload"]["energy"] = {
+                                key: value
+                                for key, value in energy.items()
+                                if key != "interval_delta"
+                            }
             else:
                 result["session"] = public_session(session)
                 result["phase_projection"] = public_phase_projection(result["phase_projection"])

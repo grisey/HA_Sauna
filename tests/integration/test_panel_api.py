@@ -561,6 +561,287 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             async with client.get(url + "/archive", params={"session_id": session_id, "projection": "invalid"}) as response:
                 self.assertEqual(response.status, 400)
 
+    def energy_transport_fixture(self):
+        from datetime import timedelta
+
+        from harness import retain_session
+        from test_foundation import T0
+        from custom_components.ha_sauna.core.timeline import Event, Kind
+
+        runtime = self.entry.runtime_data
+        controller = runtime.controller
+        clock = [T0]
+        runtime._clock = lambda: clock[0]
+        controller.begin_session("api-energy-original", T0)
+        for kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
+            controller.process(Event(
+                f"fixture:{runtime.session.session_id}:{kind.value}",
+                runtime.session.session_id, kind, T0, T0,
+            ))
+        # This established fixture confirms a round through timeline.apply;
+        # last_session and archive retention both require that confirmation.
+        retain_session(runtime)
+        p = runtime.configuration.parameters
+        self.assertEqual(BY_KEY["nominal_power_kw"].unit, "kW")
+        self.assertEqual(BY_KEY["sensor_timeout_seconds"].unit, "s")
+        seconds = p.values["sensor_timeout_seconds"] / 4
+        span = timedelta(seconds=seconds)
+        nominal_kw = p.values["nominal_power_kw"]
+        measured_w = nominal_kw * 1000 / 3
+        measured_kw = measured_w / 1000
+        controller.report_fallback_heating(True, T0)
+        controller.report_heating(True, T0)
+        controller.report_power(measured_w, T0 + span, T0)
+        clock[0] = T0 + span * 2
+        controller.advance(clock[0], evaluate=False)
+        runtime.archive.save_session(
+            runtime.session, clock[0], runtime.configuration.as_snapshot()
+        )
+        controller.report_power(None, None, clock[0])
+        controller.report_heating(False, clock[0])
+        clock[0] = T0 + span * 3
+        controller.advance(clock[0], evaluate=False)
+        controller.report_heating(None, clock[0])
+        controller.report_fallback_heating(None, clock[0])
+        clock[0] = T0 + span * 4
+        controller.advance(clock[0], evaluate=False)
+        runtime.archive.save_session(
+            runtime.session, clock[0], runtime.configuration.as_snapshot()
+        )
+        # These boundaries/rates follow the inputs above, independently of the
+        # archive serializer or energy_interval_delta transport helper.
+        intervals = [
+            {
+                "started_at": (T0 + span * index).isoformat(),
+                "ended_at": (T0 + span * (index + 1)).isoformat(),
+                "source": source,
+                "power_kw": rate,
+            }
+            for index, (source, rate) in enumerate((
+                ("measured", measured_kw), ("estimated", nominal_kw),
+                ("estimated", 0), ("unknown", None),
+            ))
+        ]
+        self.assertAlmostEqual(runtime.session.energy.measured_kwh, measured_kw * seconds / 3600)
+        self.assertAlmostEqual(runtime.session.energy.estimated_kwh, nominal_kw * seconds / 3600)
+        self.assertEqual(
+            (runtime.session.energy.measured_seconds,
+             runtime.session.energy.estimated_seconds,
+             runtime.session.energy.unknown_seconds),
+            (seconds, seconds * 2, seconds),
+        )
+        return runtime, clock, span, nominal_kw, intervals
+
+    async def test_state_energy_cursors_bind_current_and_last_session_ids(self):
+        from custom_components.ha_sauna.archive import plain
+        from test_foundation import T0
+
+        runtime, clock, span, nominal_kw, last_intervals = self.energy_transport_fixture()
+        last_id = runtime.session.session_id
+        last_end = clock[0]
+        runtime.controller.finish_session(last_end, light_after_run=False)
+        runtime.persist()
+        last = runtime.controller.completed_sessions[-1]
+        self.assertGreater(last.timeline.gang_count, 0)
+        clock[0] = last_end + span
+        current_start = clock[0]
+        runtime.controller.begin_session("api-energy-current", current_start)
+        current_w = nominal_kw * 1000 / 2
+        current_kw = current_w / 1000
+        runtime.controller.report_power(current_w, current_start + span, current_start)
+        clock[0] = current_start + span
+        runtime.controller.advance(clock[0], evaluate=False)
+        current = runtime.session
+        original_current, original_last = current.energy, last.energy
+        current_intervals = [{
+            "started_at": current_start.isoformat(), "ended_at": clock[0].isoformat(),
+            "source": "measured", "power_kw": current_kw,
+        }]
+        bootstrap = {
+            "session": {"from": None, "to": clock[0].isoformat(), "intervals": current_intervals},
+            "last_session": {"from": None, "to": last_end.isoformat(), "intervals": last_intervals},
+        }
+        url = self.base + "/" + self.entry.entry_id + "/state"
+        async with ClientSession(headers=self.headers) as client:
+            async def read(query=None):
+                async with client.get(url, params=query) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    return await response.json()
+
+            initial = await read()
+            for key, expected in bootstrap.items():
+                self.assertEqual(initial[key]["energy"]["interval_delta"], expected)
+                self.assertNotIn("intervals", initial[key]["energy"])
+            self.assertEqual(initial["session"]["timeline"]["session_id"], current.session_id)
+            self.assertEqual(initial["last_session"]["timeline"]["session_id"], last_id)
+            self.assertAlmostEqual(
+                initial["session"]["energy"]["measured_kwh"],
+                current_kw * span.total_seconds() / 3600,
+            )
+            current_cursor, last_cursor = current_start + span / 2, T0 + span / 2
+            continued = await read({
+                "energy_session_id": current.session_id, "energy_after": current_cursor.isoformat(),
+                "last_energy_session_id": last_id, "last_energy_after": last_cursor.isoformat(),
+            })
+            for key, cursor in (("session", current_cursor), ("last_session", last_cursor)):
+                expected = bootstrap[key]
+                clipped = [
+                    {**expected["intervals"][0], "started_at": cursor.isoformat()},
+                    *expected["intervals"][1:],
+                ]
+                self.assertEqual(continued[key]["energy"]["interval_delta"], {
+                    "from": cursor.isoformat(), "to": expected["to"], "intervals": clipped,
+                })
+            unchanged = await read({
+                "energy_session_id": current.session_id, "energy_after": clock[0].isoformat(),
+                "last_energy_session_id": last_id, "last_energy_after": last_end.isoformat(),
+            })
+            for key, expected in bootstrap.items():
+                self.assertEqual(unchanged[key]["energy"]["interval_delta"], {
+                    "from": expected["to"], "to": expected["to"], "intervals": [],
+                })
+            mismatched = await read({
+                "energy_session_id": last_id, "energy_after": clock[0].isoformat(),
+                "last_energy_session_id": current.session_id, "last_energy_after": last_end.isoformat(),
+            })
+            unbound = await read({
+                "energy_after": clock[0].isoformat(), "last_energy_after": last_end.isoformat(),
+            })
+            for result in (mismatched, unbound):
+                for key, expected in bootstrap.items():
+                    self.assertEqual(result[key]["energy"]["interval_delta"], expected)
+        self.assertEqual(runtime.session.energy, original_current)
+        self.assertEqual(last.energy, original_last)
+        for key, owner in (("session", current), ("last_session", last)):
+            self.assertEqual(
+                {name: value for name, value in initial[key]["energy"].items() if name != "interval_delta"},
+                plain(owner.energy),
+            )
+
+    async def test_state_energy_omission_skips_helper_and_keeps_scalars_and_door_cycles(self):
+        from custom_components.ha_sauna.archive import energy_interval_delta
+
+        runtime, clock, span, _, _ = self.energy_transport_fixture()
+        runtime.controller.finish_session(clock[0], light_after_run=False)
+        runtime.persist()
+        clock[0] += span
+        runtime.controller.begin_session("api-energy-current", clock[0])
+        url = self.base + "/" + self.entry.entry_id + "/state"
+        async with ClientSession(headers=self.headers) as client:
+            async with client.get(url) as response:
+                self.assertEqual(response.status, 200, await response.text())
+                complete = await response.json()
+            self.assertTrue(complete["last_session"]["door_cycles"])
+            with patch("custom_components.ha_sauna.api.energy_interval_delta", wraps=energy_interval_delta) as helper:
+                async with client.get(url, params={"include_energy_intervals": "false"}) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    omitted = await response.json()
+                helper.assert_not_called()
+            for key in ("session", "last_session"):
+                self.assertIn("interval_delta", complete[key]["energy"])
+                self.assertEqual(omitted[key]["energy"], {
+                    name: value for name, value in complete[key]["energy"].items()
+                    if name != "interval_delta"
+                })
+                self.assertEqual(omitted[key]["door_cycles"], complete[key]["door_cycles"])
+            self.assertEqual(omitted["energy_kwh"], complete["energy_kwh"])
+            self.assertEqual(omitted["energy_source"], complete["energy_source"])
+
+    async def test_archive_energy_cursor_is_independent_of_history_pages_and_public_filter(self):
+        import json
+
+        from test_foundation import T0
+
+        runtime, clock, span, nominal_kw, intervals = self.energy_transport_fixture()
+        session_id = runtime.session.session_id
+        ended_at = clock[0]
+        private_source = runtime.configuration.bindings.values["upper_temperature"]
+        runtime.archive.append("detector_trace", ended_at, {"entity_id": private_source}, session_id)
+        runtime.archive.append("measurement", ended_at, {
+            "position": "upper", "quantity": "temperature",
+            "value": runtime.configuration.parameters.values["sauna_min_temperature_c"],
+            "source": private_source, "received_at": ended_at,
+            "valid_until": ended_at + span,
+        }, session_id)
+        runtime.controller.finish_session(ended_at, light_after_run=False)
+        runtime.persist()
+        clock[0] = ended_at + span
+        runtime.controller.begin_session("api-energy-unrelated", clock[0])
+        runtime.controller.report_power(nominal_kw * 1000, clock[0] + span, clock[0])
+        clock[0] += span
+        runtime.controller.advance(clock[0], evaluate=False)
+        runtime.persist()
+        await runtime.archive.flush()
+        user = await self.hass.auth.async_create_user("Public energy history", group_ids=[GROUP_ID_USER])
+        token = await self.hass.auth.async_create_refresh_token(user, client_id="http://localhost/")
+        headers = {"Authorization": "Bearer " + self.hass.auth.async_create_access_token(token)}
+        url = self.base + "/" + self.entry.entry_id
+        query = {"session_id": session_id, "projection": "history"}
+        bootstrap = {"from": None, "to": ended_at.isoformat(), "intervals": intervals}
+        async with ClientSession(headers=self.headers) as admin, ClientSession(headers=headers) as public:
+            async def read(client, params):
+                async with client.get(url + "/archive", params=params) as response:
+                    self.assertEqual(response.status, 200, await response.text())
+                    return await response.json()
+
+            async with admin.get(url + "/state") as response:
+                self.assertEqual(response.status, 200, await response.text())
+                live = await response.json()
+            self.assertEqual(live["session"]["timeline"]["session_id"], "api-energy-unrelated")
+            self.assertEqual(live["session"]["energy"]["accounted_at"], clock[0].isoformat())
+            administrative = await read(admin, query)
+            published = await read(public, query)
+            for result in (administrative, published):
+                self.assertEqual(result["session"]["energy"]["interval_delta"], bootstrap)
+                self.assertEqual(result["session"]["energy"]["accounted_at"], ended_at.isoformat())
+                self.assertAlmostEqual(
+                    result["session"]["energy"]["measured_kwh"],
+                    nominal_kw / 3 * span.total_seconds() / 3600,
+                )
+                self.assertAlmostEqual(
+                    result["session"]["energy"]["estimated_kwh"],
+                    nominal_kw * span.total_seconds() / 3600,
+                )
+            self.assertEqual(published["session"]["energy"], administrative["session"]["energy"])
+            self.assertNotIn("configuration", published["session"])
+            self.assertNotIn(private_source, json.dumps(published))
+            self.assertTrue(published["records"])
+            self.assertTrue(all(row["kind"] in {"measurement", "source_snapshot", "phase"}
+                                for row in published["records"]))
+            raw = await read(admin, {"session_id": session_id})
+            originals = {row["id"]: row for row in raw["records"] if row["kind"] == "session"}
+            projected = [row for row in administrative["records"] if row["kind"] == "session"]
+            self.assertTrue(projected)
+            for row in projected:
+                self.assertEqual(row["projection"], "session_state")
+                original = originals[row["id"]]["payload"]["energy"]
+                self.assertIn("interval_delta", original)
+                self.assertEqual(row["payload"]["energy"], {
+                    name: value for name, value in original.items() if name != "interval_delta"
+                })
+                self.assertNotIn("intervals", row["payload"]["energy"])
+            self.assertTrue(any(
+                row["payload"]["energy"]["interval_delta"] == {
+                    "from": (T0 + span * 2).isoformat(),
+                    "to": ended_at.isoformat(), "intervals": intervals[2:],
+                }
+                for row in originals.values()
+            ))
+            record_after = max(row["id"] for row in raw["records"])
+            cursor = T0 + span / 2
+            suffix_query = {
+                **query, "after": str(record_after), "energy_after": cursor.isoformat(),
+            }
+            suffix = {
+                "from": cursor.isoformat(), "to": ended_at.isoformat(),
+                "intervals": [{**intervals[0], "started_at": cursor.isoformat()}, *intervals[1:]],
+            }
+            for client in (admin, public):
+                result = await read(client, suffix_query)
+                self.assertEqual(result["records"], [])
+                self.assertEqual(result["session"]["energy"]["interval_delta"], suffix)
+                self.assertEqual(result["session"]["door_cycles"], published["session"]["door_cycles"])
+
     async def test_archive_measurement_context_keeps_originals_until_window_complete(self):
         import json
         from datetime import timedelta

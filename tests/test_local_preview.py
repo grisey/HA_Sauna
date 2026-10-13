@@ -1,9 +1,12 @@
 """The local review transport must preserve actual control/role contracts."""
 import unittest
+from copy import deepcopy
+from dataclasses import asdict
 from datetime import timedelta
+from unittest.mock import patch
 
 from custom_components.ha_sauna.settings import ConfigurationLocked
-from tools.local_preview import Preview
+from tools.local_preview import PREVIEW_DEFAULTS, Preview
 
 
 class LocalPreviewTests(unittest.TestCase):
@@ -299,6 +302,98 @@ class LocalPreviewTests(unittest.TestCase):
 
     def test_completed_session_keeps_history_after_restart_and_for_user(self):
         session_id = self.preview.c.session.session_id
+        original_energy = self.preview.c.session.energy
+        original_snapshot = deepcopy(original_energy)
+        stored_snapshot = deepcopy(self.preview.sessions[session_id])
+        energy_values = asdict(original_energy)
+        intervals = energy_values.pop("intervals")
+        energy_values["accounted_at"] = original_energy.accounted_at.isoformat()
+        bootstrap = {
+            "from": None,
+            "to": original_energy.accounted_at.isoformat(),
+            "intervals": [
+                {**interval,
+                 "started_at": interval["started_at"].isoformat(),
+                 "ended_at": interval["ended_at"].isoformat()}
+                for interval in intervals
+            ],
+        }
+        empty = {"from": bootstrap["to"], "to": bootstrap["to"], "intervals": []}
+        for admin in (True, False):
+            with self.subTest(current_admin=admin):
+                self.preview.admin = admin
+                expected = {**energy_values, "interval_delta": bootstrap}
+                self.assertEqual(self.preview.state()["session"]["energy"], expected)
+                self.assertEqual(
+                    self.preview.archive(session_id)["session"]["energy"], expected,
+                )
+                expected_empty = {**energy_values, "interval_delta": empty}
+                self.assertEqual(self.preview.state(
+                    energy_session_id=session_id, energy_after=bootstrap["to"],
+                )["session"]["energy"], expected_empty)
+                self.assertEqual(self.preview.archive(
+                    session_id, energy_after=bootstrap["to"],
+                )["session"]["energy"], expected_empty)
+                self.assertEqual(self.preview.state(
+                    energy_session_id=f"{session_id}:stale",
+                    energy_after=bootstrap["to"],
+                )["session"]["energy"], expected)
+                self.assertIs(self.preview.c.session.energy, original_energy)
+                self.assertEqual(original_energy, original_snapshot)
+                self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
+        self.preview.admin = True
+
+        seconds = PREVIEW_DEFAULTS["sequence"]["action_seconds"]
+        measured_kw = self.preview.c.parameters.values["nominal_power_kw"] / 3
+        started_at = self.preview.now
+        ended_at = started_at + timedelta(seconds=seconds)
+        valid_until = started_at + timedelta(
+            seconds=self.preview.c.parameters.values["sensor_timeout_seconds"],
+        )
+        self.preview.c.report_power(measured_kw * 1000, valid_until, started_at)
+        self.preview.step(seconds)
+        original_suffix = self.preview.c.session.energy.intervals[-1]
+        self.assertEqual((
+            original_suffix.started_at, original_suffix.ended_at,
+            original_suffix.source, original_suffix.power_kw,
+        ), (started_at, ended_at, "measured", measured_kw))
+        suffix = {
+            "from": bootstrap["to"], "to": ended_at.isoformat(),
+            "intervals": [{
+                "started_at": started_at.isoformat(), "ended_at": ended_at.isoformat(),
+                "source": "measured", "power_kw": measured_kw,
+            }],
+        }
+        current_energy = self.preview.c.session.energy
+        current_snapshot = deepcopy(current_energy)
+        stored_snapshot = deepcopy(self.preview.sessions[session_id])
+        current_values = asdict(current_energy)
+        current_values.pop("intervals")
+        current_values["accounted_at"] = current_energy.accounted_at.isoformat()
+        state_energy = self.preview.state(
+            energy_session_id=session_id, energy_after=bootstrap["to"],
+        )["session"]["energy"]
+        self.assertEqual(state_energy, {**current_values, "interval_delta": suffix})
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=bootstrap["to"],
+        )["session"]["energy"], state_energy)
+        clipped_from = started_at + timedelta(seconds=seconds / 2)
+        clipped = {
+            **suffix, "from": clipped_from.isoformat(),
+            "intervals": [{**suffix["intervals"][0],
+                           "started_at": clipped_from.isoformat()}],
+        }
+        self.assertEqual(self.preview.state(
+            energy_session_id=session_id, energy_after=clipped_from.isoformat(),
+        )["session"]["energy"]["interval_delta"], clipped)
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=clipped_from.isoformat(),
+        )["session"]["energy"]["interval_delta"], clipped)
+        self.assertIs(self.preview.c.session.energy, current_energy)
+        self.assertEqual(current_energy, current_snapshot)
+        self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
+        self.preview.c.report_power(None, None, self.preview.now)
+
         self.preview.action("/preview/control", {"enabled":False})
         token = next(d.token for d in self.preview.c.session.deadlines
                      if d.purpose == "session_gap")
@@ -314,11 +409,74 @@ class LocalPreviewTests(unittest.TestCase):
         self.assertIsNotNone(completed["session"]["ended_at"])
         self.assertTrue(completed["records"])
         self.assertTrue(completed["phase_projection"]["intervals"])
+        last_energy = self.preview.c.completed_sessions[-1].energy
+        last_snapshot = deepcopy(last_energy)
+        stored_snapshot = deepcopy(self.preview.sessions[session_id])
+        last_values = asdict(last_energy)
+        last_intervals = last_values.pop("intervals")
+        last_values["accounted_at"] = last_energy.accounted_at.isoformat()
+        last_bootstrap = {
+            "from": None, "to": last_energy.accounted_at.isoformat(),
+            "intervals": [
+                {**interval,
+                 "started_at": interval["started_at"].isoformat(),
+                 "ended_at": interval["ended_at"].isoformat()}
+                for interval in last_intervals
+            ],
+        }
+        expected_last = {**last_values, "interval_delta": last_bootstrap}
+        self.assertEqual(completed["session"]["energy"], expected_last)
+        self.assertEqual(self.preview.state()["last_session"]["energy"], expected_last)
+        last_empty = {
+            "from": last_bootstrap["to"], "to": last_bootstrap["to"], "intervals": [],
+        }
+        self.assertEqual(self.preview.state(
+            last_energy_session_id=session_id, last_energy_after=last_bootstrap["to"],
+        )["last_session"]["energy"], {**last_values, "interval_delta": last_empty})
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=last_bootstrap["to"],
+        )["session"]["energy"], {**last_values, "interval_delta": last_empty})
+        last_interval = last_energy.intervals[-1]
+        last_cursor = last_interval.started_at + (
+            last_interval.ended_at - last_interval.started_at
+        ) / 2
+        last_suffix = {
+            "from": last_cursor.isoformat(), "to": last_bootstrap["to"],
+            "intervals": [{**last_bootstrap["intervals"][-1],
+                           "started_at": last_cursor.isoformat()}],
+        }
+        self.assertEqual(self.preview.state(
+            last_energy_session_id=session_id, last_energy_after=last_cursor.isoformat(),
+        )["last_session"]["energy"], {**last_values, "interval_delta": last_suffix})
+        self.assertEqual(self.preview.archive(
+            session_id, energy_after=last_cursor.isoformat(),
+        )["session"]["energy"], {**last_values, "interval_delta": last_suffix})
+        self.assertIs(self.preview.c.completed_sessions[-1].energy, last_energy)
+        self.assertEqual(last_energy, last_snapshot)
+        self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
         for action in ("door_open", "door_close", "infusion"):
             with self.assertRaisesRegex(ValueError, "Ohne laufende Sitzung"):
                 self.preview.action("/simulate", {"action":action})
         self.preview.action("/preview/control", {"enabled":True})
         self.assertNotEqual(self.preview.c.session.session_id, session_id)
+        current_id = self.preview.c.session.session_id
+        self.assertEqual(self.preview.state(
+            last_energy_session_id=current_id, last_energy_after=last_bootstrap["to"],
+        )["last_session"]["energy"], expected_last)
+        stored_snapshot = deepcopy(self.preview.sessions)
+        current_energy = self.preview.c.session.energy
+        current_values = asdict(current_energy)
+        current_values.pop("intervals")
+        current_values["accounted_at"] = current_energy.accounted_at.isoformat()
+        with patch("tools.local_preview.energy_interval_delta") as energy_delta:
+            scalars = self.preview.state(include_energy_intervals=False)
+            energy_delta.assert_not_called()
+        self.assertEqual(scalars["session"]["energy"], current_values)
+        self.assertEqual(scalars["last_session"]["energy"], last_values)
+        self.assertIs(self.preview.c.session.energy, current_energy)
+        self.assertIs(self.preview.c.completed_sessions[-1].energy, last_energy)
+        self.assertEqual(last_energy, last_snapshot)
+        self.assertEqual(self.preview.sessions, stored_snapshot)
         continued = self.preview.archive(session_id)
         self.assertEqual(continued["session"], completed["session"])
         self.assertEqual(continued["phase_projection"], completed["phase_projection"])
@@ -336,9 +494,29 @@ class LocalPreviewTests(unittest.TestCase):
         self.preview.admin = False
         public = self.preview.archive(session_id)
         self.assertNotIn("configuration", public["session"])
+        self.assertEqual(public["session"]["energy"], expected_last)
+        self.assertEqual(self.preview.state()["last_session"]["energy"], expected_last)
         self.assertTrue(public["records"])
         self.assertTrue(all(r["kind"] in ("measurement", "source_snapshot", "phase")
                             for r in public["records"]))
+
+    def test_legacy_saved_session_preserves_energy_without_inventing_intervals(self):
+        session_id = self.preview.c.session.session_id
+        saved = deepcopy(self.preview.sessions[session_id])
+        saved.pop("energy")
+        self.preview.sessions[session_id] = saved
+        stored_snapshot = deepcopy(saved)
+        energy_values = deepcopy(saved["session"]["energy"])
+        self.assertNotIn("intervals", energy_values)
+        self.assertNotIn("interval_delta", energy_values)
+        for admin in (True, False):
+            for after in (None, energy_values["accounted_at"]):
+                with self.subTest(admin=admin, after=after):
+                    self.preview.admin = admin
+                    archived = self.preview.archive(session_id, energy_after=after)
+                    self.assertEqual(archived["session"]["energy"], energy_values)
+                    self.assertNotIn("energy", self.preview.sessions[session_id])
+                    self.assertEqual(self.preview.sessions[session_id], stored_snapshot)
 
     def test_preview_gesture_selection_uses_settings_validation(self):
         for gesture in ("double", "triple"):

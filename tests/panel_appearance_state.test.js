@@ -167,6 +167,6 @@ test("catalog-free polls retain the bootstrap catalog and updated appearance", a
   await p.waitForConfiguration("first", next.configuration.parameters);
   assert.deepEqual(paths, [
     "/first/state?include_catalog=false",
-    "/first/state?include_catalog=false",
+    "/first/state?include_catalog=false&include_energy_intervals=false",
   ]);
 });
