@@ -10,8 +10,7 @@ playbackButton.id = "preview-playback";
 playbackButton.type = "button";
 const playbackTiming = document.createElement("small");
 const sequence = bootstrap.preview.sequence;
-playbackTiming.textContent =
-  `${sequence.advance_seconds} s Simulation je ${sequence.sample_seconds} s`;
+playbackTiming.textContent = `${sequence.advance_seconds} s Simulation je ${sequence.sample_seconds} s`;
 document.querySelector("#sim-time").before(playbackButton, playbackTiming);
 const previewError = document.querySelector("#preview-error");
 let playbackRunning = false;
@@ -142,12 +141,7 @@ const refresh = async (
   syncPlaybackButton();
 };
 const schedulePlayback = () => {
-  if (
-    !playbackRunning ||
-    previewClosed ||
-    pendingSimulations ||
-    playbackTimer !== null
-  )
+  if (!playbackRunning || previewClosed || pendingSimulations || playbackTimer !== null)
     return;
   const generation = playbackGeneration;
   playbackTimer = setTimeout(() => {
@@ -170,8 +164,7 @@ const simulate = (action, value, playback = null) => {
         previewClosed ||
         generation !== previewGeneration ||
         (reset && scenario !== scenarioRevision) ||
-        (playback !== null &&
-          (!playbackRunning || playback !== playbackGeneration))
+        (playback !== null && (!playbackRunning || playback !== playbackGeneration))
       )
         return;
       previewError.textContent = "";

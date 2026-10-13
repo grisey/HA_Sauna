@@ -953,9 +953,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
     }
     nodes.eventList.hidden = nearbyEvents.length === 0;
   };
-  const showSnap = (targets) => {
+  const showSnap = (targets, timeZone) => {
     const nodes = tooltipNodes(),
-      timeZone = localTimeZone(),
       unique = [
         ...new Map(targets.filter(Boolean).map((snap) => [snap.time, snap])).values(),
       ];
@@ -969,7 +968,8 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         ? `Phasengrenze · ${unique
             .map(
               (snap) =>
-                panel.tooltipWhen?.(snap.time, timeZone) || dateLabel(snap.time, timeZone),
+                panel.tooltipWhen?.(snap.time, timeZone) ||
+                dateLabel(snap.time, timeZone),
             )
             .join(" · ")}`
         : "",
@@ -1066,15 +1066,11 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
       [selection.startSnap, selection.endSnap, preview?.snap].map(
         (snap) => panel.historyCurrentSnap?.(snap) || null,
       ),
+      timeZone,
     );
     if (!state.tooltipVisible) tooltip.hidden = false;
     state.tooltipVisible = true;
-    if (
-      preview &&
-      model &&
-      preview.time >= model.start &&
-      preview.time <= model.end
-    )
+    if (preview && model && preview.time >= model.start && preview.time <= model.end)
       showCursor(
         model.x(preview.time),
         panel.historyCurrentSnap?.(preview.snap),
@@ -1125,7 +1121,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
         ? `Werte am Ereigniszeitpunkt · ${label}`
         : "Werte am markierten Zeitpunkt",
     );
-    showSnap([snap]);
+    showSnap([snap], timeZone);
     const eventTolerance = preview.eventId
       ? 0
       : ((model.end - model.start) / (model.right - model.left)) *
@@ -1154,8 +1150,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
       return refreshSelection(snapshotTransform);
     const hit = event?.resolved
       ? event.hit
-      : event?.hit ||
-        timeAt(event, event?.model || snapshotTransform, event?.geometry);
+      : event?.hit || timeAt(event, event?.model || snapshotTransform, event?.geometry);
     if (!hit) {
       panel.historyHoverPreview = null;
       if (panel.historyValueSelection) return refreshSelection(snapshotTransform);
@@ -1174,8 +1169,7 @@ function HistoryInteraction(panel, surface, wrap, tooltip, cursor, overview) {
             ((inputModel?.end ?? hit.end) - (inputModel?.start ?? hit.start))) *
             ((inputModel?.right ?? hit.right) - (inputModel?.left ?? hit.left)),
       },
-      target =
-        event?.preview ||
+      target = event?.preview ||
         panel.historySnapTarget?.(hit.time, inputModel, hit.geometry) || {
           time: hit.time,
           snap: null,
@@ -9591,7 +9585,8 @@ class SaunaPanel extends HTMLElement {
           (model.width / Math.max(1, geometry?.rects?.surface?.width || model.width)),
         ry =
           radius *
-          (model.height / Math.max(1, geometry?.rects?.surface?.height || model.height));
+          (model.height /
+            Math.max(1, geometry?.rects?.surface?.height || model.height));
       for (const [halo, x] of [
         [firstHalo, left],
         [lastHalo, right],
@@ -9688,7 +9683,9 @@ class SaunaPanel extends HTMLElement {
       this.historyHoverPreview = null;
       this.historyChart?.interaction.previewTime(this.historyKeyboardTime);
     } else
-      this.selectHistoryTime(this.historyKeyboardTarget?.time ?? this.historyKeyboardTime);
+      this.selectHistoryTime(
+        this.historyKeyboardTarget?.time ?? this.historyKeyboardTime,
+      );
   }
   beginHistoryInput() {
     if (this.historyInputSnapshot) return;

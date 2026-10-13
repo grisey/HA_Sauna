@@ -371,7 +371,8 @@ fs.mkdirSync(output, { recursive: true });
           visibility: getComputedStyle(node).visibility,
           expectedVisibility:
             (boundary === "start" || selection.kind === "range") &&
-            time >= model.start && time <= model.end
+            time >= model.start &&
+            time <= model.end
               ? "visible"
               : "hidden",
         };
@@ -393,8 +394,9 @@ fs.mkdirSync(output, { recursive: true });
         tooltipHidden: p.$("#tooltip").hidden,
         inspectionHidden: p.$("#history-event-inspection").hidden,
         visibility: nodes.map((node) => getComputedStyle(node).visibility),
-        markers: [...p.shadowRoot.querySelectorAll("[data-history-event-id]")]
-          .map((node) => node.getAttribute("aria-pressed")),
+        markers: [...p.shadowRoot.querySelectorAll("[data-history-event-id]")].map(
+          (node) => node.getAttribute("aria-pressed"),
+        ),
         snaps: nodes.map((node) => node.getAttribute("data-snap")),
         clearDisabled: p.$('[data-action="clear-history-selection"]').disabled,
       };
@@ -404,8 +406,10 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(cleared.inspected, null);
     assert.equal(cleared.tooltipHidden, true);
     assert.equal(cleared.inspectionHidden, true);
-    assert.ok(cleared.visibility.every((value) => value === "hidden"),
-      "clearing hides every SVG child, including the range end guide");
+    assert.ok(
+      cleared.visibility.every((value) => value === "hidden"),
+      "clearing hides every SVG child, including the range end guide",
+    );
     assert.ok(cleared.markers.every((value) => value === "false"));
     assert.ok(cleared.snaps.every((value) => value !== "true"));
     assert.equal(cleared.clearDisabled, true);
@@ -499,19 +503,20 @@ fs.mkdirSync(output, { recursive: true });
   const hoverPoint = await chartPoint(null, selectionTimes.first);
   await selectionPage.mouse.move(hoverPoint.x, hoverPoint.y);
   await settleSelection();
-  const hoverState = () => selectionPage.evaluate(() => {
-    const p = f.panel,
-      model = p.historyChart.model,
-      preview = p.historyHoverPreview;
-    return {
-      time: preview?.time,
-      x: Number(p.$("#cursor").getAttribute("x1")),
-      expectedX: preview && model.x(preview.time),
-      visibility: getComputedStyle(p.$("#cursor")).visibility,
-      tooltipHidden: p.$("#tooltip").hidden,
-      text: p.$("#tooltip").innerText,
-    };
-  });
+  const hoverState = () =>
+    selectionPage.evaluate(() => {
+      const p = f.panel,
+        model = p.historyChart.model,
+        preview = p.historyHoverPreview;
+      return {
+        time: preview?.time,
+        x: Number(p.$("#cursor").getAttribute("x1")),
+        expectedX: preview && model.x(preview.time),
+        visibility: getComputedStyle(p.$("#cursor")).visibility,
+        tooltipHidden: p.$("#tooltip").hidden,
+        text: p.$("#tooltip").innerText,
+      };
+    });
   const hovered = await hoverState();
   assert.equal(hovered.visibility, "visible");
   const keyboardSteps = await selectionPage.evaluate(() => {
@@ -519,10 +524,11 @@ fs.mkdirSync(output, { recursive: true });
       model = p.historyChart.model,
       roomAfterHover = model.end - p.historyHoverPreview.time;
     return {
-      zoom: Math.ceil(
-        Math.log((model.end - model.start) / roomAfterHover) /
-          Math.log(p.preference("history_zoom_factor")),
-      ) + 1,
+      zoom:
+        Math.ceil(
+          Math.log((model.end - model.start) / roomAfterHover) /
+            Math.log(p.preference("history_zoom_factor")),
+        ) + 1,
       pan: Math.ceil(1 / p.preference("history_keyboard_pan_fraction")) + 1,
     };
   });
@@ -559,7 +565,10 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(restoredHover.time, hovered.time);
   assert.equal(restoredHover.visibility, "visible");
   assert.equal(restoredHover.x, restoredHover.expectedX);
-  results.push({ case: "absolute-hover-through-keyboard-zoom-and-pan", time: hovered.time });
+  results.push({
+    case: "absolute-hover-through-keyboard-zoom-and-pan",
+    time: hovered.time,
+  });
   const firstPoint = await chartPoint(null, selectionTimes.first);
   await selectionPage.mouse.click(firstPoint.x, firstPoint.y);
   await settleSelection();
@@ -600,8 +609,16 @@ fs.mkdirSync(output, { recursive: true });
     f.panel.drawHistory("status");
   });
   await settleSelection();
-  assert.deepEqual(await selectedValues(), pinned, "a live append keeps the pinned time and values");
-  assert.deepEqual(await selectionGuides(), pointGuides, "the pinned guide stays at its absolute time");
+  assert.deepEqual(
+    await selectedValues(),
+    pinned,
+    "a live append keeps the pinned time and values",
+  );
+  assert.deepEqual(
+    await selectionGuides(),
+    pointGuides,
+    "the pinned guide stays at its absolute time",
+  );
   const secondPoint = await chartPoint(null, selectionTimes.second);
   await selectionPage.mouse.click(secondPoint.x, secondPoint.y);
   await settleSelection();
@@ -739,16 +756,22 @@ fs.mkdirSync(output, { recursive: true });
   const rangeGuidesBeforeZoom = await selectionGuides();
   await selectionZoom.click();
   await settleSelection();
-  assert.deepEqual((await selectedValues()).selection, range.selection,
-    "zoom preserves both absolute range times");
+  assert.deepEqual(
+    (await selectedValues()).selection,
+    range.selection,
+    "zoom preserves both absolute range times",
+  );
   const rangeGuidesZoomed = await selectionGuides();
   for (const guide of rangeGuidesZoomed) {
     assert.equal(guide.x, guide.expectedX);
     assert.equal(guide.visibility, guide.expectedVisibility);
   }
-  assert.ok(rangeGuidesZoomed.some((guide, index) =>
-    guide.x !== rangeGuidesBeforeZoom[index].x),
-    "range guides move to the new projection while their absolute times stay fixed");
+  assert.ok(
+    rangeGuidesZoomed.some(
+      (guide, index) => guide.x !== rangeGuidesBeforeZoom[index].x,
+    ),
+    "range guides move to the new projection while their absolute times stay fixed",
+  );
   await selectionZoom.focus();
   await selectionPage.evaluate(() => {
     window.selectionBeforeAppend = {
@@ -792,8 +815,11 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(appended.tooltipVisible, true);
   assert.ok(Object.values(appended.identity).every(Boolean));
   assert.deepEqual((await selectedValues()).values, range.values);
-  assert.deepEqual(await selectionGuides(), rangeGuidesZoomed,
-    "same-session appends keep the range's absolute guide positions");
+  assert.deepEqual(
+    await selectionGuides(),
+    rangeGuidesZoomed,
+    "same-session appends keep the range's absolute guide positions",
+  );
 
   await selectionPanel.locator('[data-action="reset-zoom"]').click();
   await settleSelection();
@@ -802,7 +828,11 @@ fs.mkdirSync(output, { recursive: true });
   await selectionPage.mouse.click(thirdClick.x, thirdClick.y);
   await settleSelection();
   await assertSelectionCleared();
-  assert.equal((await selectedValues()).selection, null, "the third plot click clears completely");
+  assert.equal(
+    (await selectedValues()).selection,
+    null,
+    "the third plot click clears completely",
+  );
 
   // The fixture's tick projects one ready interval. Restore the same source
   // transition before inspecting the nearby event and the phase snap feedback.
@@ -827,7 +857,9 @@ fs.mkdirSync(output, { recursive: true });
   // Event inspection without a pin still enables the actual clear control.
   await infusionMarker.click();
   await settleSelection();
-  const clearSelection = selectionPanel.locator('[data-action="clear-history-selection"]');
+  const clearSelection = selectionPanel.locator(
+    '[data-action="clear-history-selection"]',
+  );
   assert.equal(await clearSelection.isEnabled(), true);
   assert.equal(await infusionMarker.getAttribute("aria-pressed"), "true");
   const eventReadout = await selectionPage.evaluate(() => {
@@ -848,8 +880,11 @@ fs.mkdirSync(output, { recursive: true });
   });
   assert.equal(eventReadout.selection, null);
   assert.equal(eventReadout.inspected, "infusion-proof");
-  assert.equal(eventReadout.heading, eventReadout.expectedHeading,
-    "an event near a phase boundary shows its exact event time");
+  assert.equal(
+    eventReadout.heading,
+    eventReadout.expectedHeading,
+    "an event near a phase boundary shows its exact event time",
+  );
   assert.equal(eventReadout.x, eventReadout.expectedX);
   assert.equal(eventReadout.visibility, "visible");
   assert.equal(eventReadout.snap, "false");
@@ -880,8 +915,17 @@ fs.mkdirSync(output, { recursive: true });
     };
   });
   const previewHeading = await selectionTooltip.locator("strong").first().innerText();
-  const boundaryValues = () => selectionTooltip.locator(".history-tooltip-values > div").allTextContents();
+  const boundaryValues = () =>
+    selectionTooltip
+      .locator(".history-tooltip-values > div > span[data-quantity]")
+      .evaluateAll((labels) => labels.map((label) => label.parentElement.textContent));
   const valuesBeforeSnap = await boundaryValues();
+  assert.equal(
+    valuesBeforeSnap.length,
+    settings.fixtures.history.positions.length *
+      settings.fixtures.history.quantities.length,
+    "the comparison includes every measurement row",
+  );
   await selectionPage.mouse.move(snapPoint.x, snapPoint.y);
   await settleSelection();
   const snapPreview = await selectionPage.evaluate(() => {
@@ -909,26 +953,51 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(snapPreview.cursorX, snapPreview.expectedX);
   assert.equal(snapPreview.haloX, snapPreview.expectedX);
   assert.equal(snapPreview.hint, snapPreview.expectedHint);
-  assert.equal(snapPreview.hintVisible, true, "snap feedback is visible before pointerup");
+  assert.equal(
+    snapPreview.hintVisible,
+    true,
+    "snap feedback is visible before pointerup",
+  );
   assert.deepEqual((await selectedValues()).selection, nextPin);
-  assert.equal(await selectionTooltip.locator("strong").first().innerText(), previewHeading);
-  assert.deepEqual(await boundaryValues(), valuesBeforeSnap, "previewing a boundary preserves the pinned values");
-  await selectionPage.mouse.move(snapPoint.boundaryX - snapPoint.radius * 2, snapPoint.y);
+  assert.equal(
+    await selectionTooltip.locator("strong").first().innerText(),
+    previewHeading,
+  );
+  assert.deepEqual(
+    await boundaryValues(),
+    valuesBeforeSnap,
+    "previewing a boundary preserves the pinned values",
+  );
+  await selectionPage.mouse.move(
+    snapPoint.boundaryX - snapPoint.radius * 2,
+    snapPoint.y,
+  );
   await settleSelection();
-  assert.deepEqual(await selectionPage.evaluate(() => {
-    const p = f.panel,
-      hint = p.$(".history-tooltip-snap");
-    return {
-      snap: p.$("#cursor").getAttribute("data-snap") === "true",
-      halo: getComputedStyle(p.$("[data-history-snap-halo]")).visibility,
-      hint: !!hint && !hint.hidden,
-    };
-  }), { snap: false, halo: "hidden", hint: false }, "moving beyond the catalogue radius removes snap feedback");
+  assert.deepEqual(
+    await selectionPage.evaluate(() => {
+      const p = f.panel,
+        hint = p.$(".history-tooltip-snap");
+      return {
+        snap: p.$("#cursor").getAttribute("data-snap") === "true",
+        halo: getComputedStyle(p.$("[data-history-snap-halo]")).visibility,
+        hint: !!hint && !hint.hidden,
+      };
+    }),
+    { snap: false, halo: "hidden", hint: false },
+    "moving beyond the catalogue radius removes snap feedback",
+  );
   await selectionPage.mouse.move(snapPoint.x, snapPoint.y);
   await selectionPage.mouse.down();
   await settleSelection();
-  assert.equal(await selectionPanel.locator("#cursor").getAttribute("data-snap"), "true");
-  assert.deepEqual((await selectedValues()).selection, nextPin, "pointerdown keeps the existing pin until completion");
+  assert.equal(
+    await selectionPanel.locator("#cursor").getAttribute("data-snap"),
+    "true",
+  );
+  assert.deepEqual(
+    (await selectedValues()).selection,
+    nextPin,
+    "pointerdown keeps the existing pin until completion",
+  );
   await selectionPage.mouse.up();
   await settleSelection();
   const snappedRange = await selectedValues();
@@ -942,8 +1011,18 @@ fs.mkdirSync(output, { recursive: true });
     snapPoint.at,
     "nearby click snaps to the real source phase boundary",
   );
-  assert.equal(await selectionPanel.locator("[data-history-selection-start]").getAttribute("data-snap"), "true");
-  assert.equal(await selectionPanel.locator("[data-history-selection-start-snap]").evaluate((node) => getComputedStyle(node).visibility), "visible");
+  assert.equal(
+    await selectionPanel
+      .locator("[data-history-selection-start]")
+      .getAttribute("data-snap"),
+    "true",
+  );
+  assert.equal(
+    await selectionPanel
+      .locator("[data-history-selection-start-snap]")
+      .evaluate((node) => getComputedStyle(node).visibility),
+    "visible",
+  );
   await selectionSurface.press("Escape");
   await settleSelection();
   await assertSelectionCleared();
@@ -1101,7 +1180,11 @@ fs.mkdirSync(output, { recursive: true });
   const narrowPoint = await chartPoint(1 / 2);
   await selectionPage.touchscreen.tap(narrowPoint.x, narrowPoint.y);
   await settleSelection();
-  assert.equal((await selectedValues()).selection, null, "a third touch tap clears the range");
+  assert.equal(
+    (await selectedValues()).selection,
+    null,
+    "a third touch tap clears the range",
+  );
   await assertSelectionCleared();
   await selectionPage.touchscreen.tap(narrowPoint.x, narrowPoint.y);
   await settleSelection();

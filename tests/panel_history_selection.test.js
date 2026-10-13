@@ -443,7 +443,17 @@ test("selection snippets include their beginning and exclude their end exactly o
 
 test("phase snapping uses the catalogue radius in CSS pixels at its inclusive boundary", () => {
   for (const scale of [1, 0.5]) {
-    const { panel, interaction, chart, surface, tooltip, cursor, nodes, point, refreshModel } = makeFixture({}, scale);
+    const {
+      panel,
+      interaction,
+      chart,
+      surface,
+      tooltip,
+      cursor,
+      nodes,
+      point,
+      refreshModel,
+    } = makeFixture({}, scale);
     const plot = panel.historyGeometry();
     // One logical pixel is one second; the independent screen-pixel offsets
     // below therefore have exact millisecond boundaries even at half width.
@@ -458,9 +468,16 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     const liveEnd = Date.parse(phase.ended_at),
       besideLiveEnd = liveEnd - (originalRadius / 2) * (1000 / scale);
     assert.equal(panel.shown.session.ended_at ?? null, null);
-    const liveTarget = panel.historySnapTarget(besideLiveEnd, model, interaction.geometry);
-    assert.equal(liveTarget.time, besideLiveEnd,
-      "complete evidence does not make the live read horizon a phase transition");
+    const liveTarget = panel.historySnapTarget(
+      besideLiveEnd,
+      model,
+      interaction.geometry,
+    );
+    assert.equal(
+      liveTarget.time,
+      besideLiveEnd,
+      "complete evidence does not make the live read horizon a phase transition",
+    );
     assert.equal(liveTarget.snap, null);
     panel.shown.session.ended_at = phase.ended_at;
     for (const radius of [definition.default, definition.default + definition.step]) {
@@ -506,12 +523,18 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.equal(previewHalo.getAttribute("visibility"), "visible");
     assert.equal(Number(previewHalo.getAttribute("cx")), model.x(at(100)));
     const snapHint = tooltip.querySelector(".history-tooltip-snap");
-    assert.ok(snapHint && !snapHint.hidden, "the phase boundary is visible before clicking");
+    assert.ok(
+      snapHint && !snapHint.hidden,
+      "the phase boundary is visible before clicking",
+    );
     assert.equal(visibleText(snapHint), `Phasengrenze · ${panel.tooltipWhen(at(100))}`);
     interaction.hover(point(at(100), radius + definition.step), model);
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
     assert.equal(previewHalo.getAttribute("visibility"), "hidden");
-    assert.ok(!snapHint.parentNode || snapHint.hidden, "moving beyond the radius removes snap feedback");
+    assert.ok(
+      !snapHint.parentNode || snapHint.hidden,
+      "moving beyond the radius removes snap feedback",
+    );
     const input = { ...nearStart, type: "pointerdown" };
     panel.beginChartPointer(input, surface);
     panel.endChartPointer({ ...input, type: "pointerup" });
@@ -545,8 +568,10 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
     assert.equal(previewHalo.getAttribute("visibility"), "hidden");
     const correctedHint = tooltip.querySelector(".history-tooltip-snap");
-    assert.ok(!correctedHint || correctedHint.hidden,
-      "retracted phase boundaries lose their feedback without moving the selected times");
+    assert.ok(
+      !correctedHint || correctedHint.hidden,
+      "retracted phase boundaries lose their feedback without moving the selected times",
+    );
     panel.clearHistorySelection();
     assert.equal(panel.historyHoverPreview, null);
     assert.equal(cursor.getAttribute("visibility"), "hidden");
@@ -558,12 +583,16 @@ test("phase snapping uses the catalogue radius in CSS pixels at its inclusive bo
     interaction.hover(point(at(200)), model);
     assert.notEqual(cursor.getAttribute("data-snap"), "true");
     const clearedHint = tooltip.querySelector(".history-tooltip-snap");
-    assert.ok(!clearedHint || clearedHint.hidden, "a later plain hover cannot restore old snap feedback");
+    assert.ok(
+      !clearedHint || clearedHint.hidden,
+      "a later plain hover cannot restore old snap feedback",
+    );
   }
 });
 
 test("hover and pinned boundaries retain absolute times through zoom, pan and same-session append", () => {
-  const { panel, interaction, chart, surface, tooltip, cursor, point, nodes } = makeFixture();
+  const { panel, interaction, chart, surface, tooltip, cursor, point, nodes } =
+    makeFixture();
   const render = (reason = "viewport") =>
     chart.render(new Set([reason]), panel.shown.session, []);
   render("status");

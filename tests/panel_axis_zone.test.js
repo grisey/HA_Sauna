@@ -68,6 +68,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
       $: node,
       historyDetail: false,
       positions: new Set(["upper"]),
+      chartPointers: new Map(),
       historyTimelineRevision: 1,
       historyTitle: () => "Archiv",
       historyModel: () => model,
@@ -90,6 +91,7 @@ test("history axes use the fixed local zone and reuse unchanged layers", () => {
           canvas: { cssWidth: 1200, cssHeight: 480 },
         }),
         invalidateGeometry() {},
+        refreshHover() {},
       },
       curves: { update() {} },
     });
@@ -142,6 +144,7 @@ test("normal history never exposes height comparison controls or its note", () =
     selected: "live",
     historyDetail: false,
     positions: new Set(["upper"]),
+    chartPointers: new Map(),
     state: { now: session.ended_at, session, operation_enabled: true },
     shown: { session, phase_projection: null },
     historyModel: () => model,
@@ -190,6 +193,7 @@ test("normal history never exposes height comparison controls or its note", () =
         canvas: { cssWidth: 1200, cssHeight: 480 },
       }),
       invalidateGeometry() {},
+      refreshHover() {},
     },
     curves: { update() {} },
   });

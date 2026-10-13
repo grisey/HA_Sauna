@@ -168,7 +168,7 @@ test("record-budget LRU keeps active sources and reloads an evicted archive from
       frontend_defaults: fixtureCatalog.frontend,
       session: { timeline: { session_id: "live" } },
     },
-    $: () => ({ hidden: false }),
+    $: () => ({ hidden: false, setAttribute() {}, replaceChildren() {} }),
     drawHistory() {},
     syncHistorySessions() {},
     message() {},
