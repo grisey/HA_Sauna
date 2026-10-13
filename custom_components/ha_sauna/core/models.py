@@ -105,6 +105,16 @@ class HeatingTime:
 
 
 @dataclass(frozen=True)
+class EnergyInterval:
+    """Zeitlich begrenzter Abrechnungsbeitrag mit unveränderter Herkunft."""
+
+    started_at: datetime
+    ended_at: datetime
+    source: str
+    power_kw: float | None
+
+
+@dataclass(frozen=True)
 class Energy:
     measured_kwh: float = 0.0
     estimated_kwh: float = 0.0
@@ -112,6 +122,7 @@ class Energy:
     estimated_seconds: float = 0.0
     unknown_seconds: float = 0.0
     accounted_at: datetime | None = None
+    intervals: tuple[EnergyInterval, ...] = ()
 
     @property
     def total_kwh(self):

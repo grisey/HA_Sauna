@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
 from .core.parameters import BY_KEY, Parameters
-from .core.models import TimedPhase
+from .core.models import Energy, TimedPhase
 from .core.phases import project_archive, project_session
 from .history_humidity import project_absolute_humidity
 
@@ -31,8 +31,11 @@ _LOGGER = logging.getLogger(__name__)
 
 def plain(value):
     if is_dataclass(value):
+        # Separater Intervalltransport ist noch offen; keine Vollreihe kopieren.
         result = {
-            field.name: plain(getattr(value, field.name)) for field in fields(value)
+            field.name: plain(getattr(value, field.name))
+            for field in fields(value)
+            if not (isinstance(value, Energy) and field.name == "intervals")
         }
         if isinstance(value, TimedPhase):
             result.update(
