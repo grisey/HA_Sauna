@@ -1,8 +1,9 @@
 """Kausaler laufender Tür-/Gangdetektor ohne HA, NumPy oder Recorderwissen."""
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
+from hashlib import sha256
 from math import ceil, isclose, isfinite
 from statistics import median
 
@@ -31,6 +32,17 @@ class _CurveCandidate:
     first_observed_at: object
     context: tuple
     features: CurveFeatures
+    original_points: tuple
+
+
+@dataclass(frozen=True)
+class _CurveProposal:
+    """Ein erstmals zugleich belegter Satz im vorhandenen Ereigniskontext."""
+
+    context: tuple
+    candidates: tuple
+    first_observed_at: object
+    ambiguous: bool = False
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -129,6 +141,8 @@ class Detector:
         self._curve_candidates = {}
         self._curve_evaluated = {}
         self._curve_status = {}
+        self._curve_proposals = {}
+        self._curve_proposal_status = {}
         self._curve_fit_cache = {}
         self._curve_door_context = 0
         self._curve_closed_since = self.origin
@@ -149,6 +163,7 @@ class Detector:
             for key in tuple(mapping):
                 if key[1] == position:
                     mapping.pop(key, None)
+        self._invalidate_curve_proposals("source_context", position=position)
 
     def _record_curve_sample(self, measurement, now):
         """Originale einmal zählen; Geräte- und Empfangsuhr nicht vermischen."""
@@ -173,7 +188,8 @@ class Detector:
         ):
             self._clear_curve_series(position, quantity)
         points = series["points"]
-        if points and points[-1][0] == point_at:
+        corrected = bool(points and points[-1][0] == point_at)
+        if corrected:
             # Eine Korrektur derselben Originalprobe ersetzt ihren Wert. Sie
             # erzeugt weder einen weiteren Stützpunkt noch zusätzliche Zeit.
             if points[-1][1] == measurement.value:
@@ -190,11 +206,19 @@ class Detector:
             received_at=measurement.received_at,
         )
         series["version"] += 1
+        if corrected:
+            self._correct_curve_proposals(position, quantity, point_at, measurement.value)
 
-    def _clear_curve_route(self, route, *, keep_status=False):
-        mappings = (self._curve_candidates, self._curve_evaluated)
+    def _clear_curve_route(self, route, *, keep_status=False, reason=None):
+        if reason is not None:
+            self._invalidate_curve_proposals(reason, route=route)
+        mappings = (
+            self._curve_candidates, self._curve_evaluated, self._curve_proposals,
+        )
         if not keep_status:
             mappings += (self._curve_status,)
+            if reason is None:
+                mappings += (self._curve_proposal_status,)
         for mapping in mappings:
             for key in tuple(mapping):
                 if key[0] == route:
@@ -262,17 +286,7 @@ class Detector:
             "newest_at": points[-1][0] if points else None,
         }
         if features is not None:
-            direction = (
-                features.slope_change > 0 and features.slope_before < 0
-                if route == "door_close"
-                else features.slope_change < 0 and features.slope_after < 0
-                if route == "door_open"
-                else features.slope_change > 0 and features.slope_after > 0
-            )
-            supported = (
-                features.evidence == "supports"
-                and direction and features.onset_at >= floor
-            )
+            supported = self._curve_supports(route, features, floor)
             status.update(
                 status="supported" if supported else "rejected",
                 onset_at=features.onset_at,
@@ -298,7 +312,7 @@ class Detector:
                 )
                 candidate = _CurveCandidate(
                     candidate_id, features.onset_at, first_observed_at,
-                    context, features,
+                    context, features, points,
                 )
                 self._curve_candidates[key] = candidate
                 status["first_observed_at"] = candidate.first_observed_at
@@ -307,39 +321,171 @@ class Detector:
                 self._curve_candidates.pop(key, None)
         self._curve_status[key] = status
 
+    @staticmethod
+    def _curve_supports(route, features, floor):
+        if features is None:
+            return False
+        direction = (
+            features.slope_change > 0 and features.slope_before < 0
+            if route == "door_close"
+            else features.slope_change < 0 and features.slope_after < 0
+            if route == "door_open"
+            else features.slope_change > 0 and features.slope_after > 0
+        )
+        return features.evidence == "supports" and direction and features.onset_at >= floor
+
+    def _curve_coherence_window(self, route):
+        return (
+            self.p["infusion_window_seconds"] if route == "infusion"
+            else max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
+        )
+
+    def _invalidate_curve_proposal(self, key, reason):
+        self._curve_proposals.pop(key, None)
+        if key in self._curve_proposal_status:
+            self._curve_proposal_status[key] = {
+                **self._curve_proposal_status[key], "status": "invalid", "reason": reason,
+            }
+
+    def _invalidate_curve_proposals(
+        self, reason, *, route=None, position=None, quantities=None,
+    ):
+        for key in tuple(self._curve_proposals):
+            if (
+                (route is None or key[0] == route)
+                and (position is None or position in key[1])
+                and (quantities is None or key[2] == quantities)
+            ):
+                self._invalidate_curve_proposal(key, reason)
+
+    def _curve_proposal_diagnostic(self, key, proposal):
+        _, positions, quantities = key
+        candidate_ids = tuple(candidate.candidate_id for _, candidate in proposal.candidates)
+        identity = "|".join((proposal.first_observed_at.isoformat(), *candidate_ids))
+        return {
+            "proposal_id": f"{key[0]}:{sha256(identity.encode()).hexdigest()}",
+            "status": "ambiguous" if proposal.ambiguous else "available",
+            "owner_context": proposal.context[0],
+            "positions": tuple(position.value for position in positions),
+            "quantities": tuple(quantity.value for quantity in quantities),
+            "first_observed_at": proposal.first_observed_at,
+            "onset_at": min(candidate.onset_at for _, candidate in proposal.candidates),
+            "candidate_ids": candidate_ids,
+            "onsets": tuple(candidate.onset_at for _, candidate in proposal.candidates),
+            "witnesses": tuple({
+                "position": candidate_key[1].value,
+                "quantity": candidate_key[2].value,
+                "candidate_id": candidate.candidate_id,
+                "source": self._curve_series[candidate_key[1], candidate_key[2]]["source"],
+                "time_basis": self._curve_series[candidate_key[1], candidate_key[2]]["time_basis"],
+                "source_epochs": candidate.context[1],
+                "onset_at": candidate.onset_at,
+                "first_observed_at": candidate.first_observed_at,
+                "first_at": candidate.original_points[0][0],
+                "newest_at": candidate.features.newest_at,
+                "point_count": len(candidate.original_points),
+            } for candidate_key, candidate in proposal.candidates),
+        }
+
+    def _remember_curve_proposal(
+        self, route, positions, quantities, *, floor, context, observed_at,
+    ):
+        """Nur einen zugleich vollständigen Satz als historischen Vorschlag halten."""
+        if not positions:
+            return
+        key = (route, tuple(positions), tuple(quantities))
+        context = (context, tuple(
+            (position, tuple(
+                self._curve_series[position, quantity]["epoch"]
+                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+            )) for position in positions
+        ))
+        proposal = self._curve_proposals.get(key)
+        if proposal is not None and (
+            proposal.context != context
+            or any(candidate.onset_at < floor for _, candidate in proposal.candidates)
+        ):
+            self._invalidate_curve_proposal(key, "owner_context")
+            proposal = None
+        candidates = []
+        for position in positions:
+            for quantity in quantities:
+                candidate_key = (route, position, quantity)
+                candidate = self._curve_candidates.get(candidate_key)
+                if (
+                    candidate is None or candidate.onset_at < floor
+                    or self._curve_status.get(candidate_key, {}).get("status") != "supported"
+                ):
+                    return
+                candidates.append((candidate_key, candidate))
+        onsets = [candidate.onset_at for _, candidate in candidates]
+        window = self._curve_coherence_window(route)
+        if (max(onsets) - min(onsets)).total_seconds() > window:
+            return
+        if proposal is None:
+            proposal = _CurveProposal(context, tuple(candidates), observed_at)
+            self._curve_proposals[key] = proposal
+            self._curve_proposal_status[key] = self._curve_proposal_diagnostic(key, proposal)
+        elif not proposal.ambiguous:
+            onsets.extend(candidate.onset_at for _, candidate in proposal.candidates)
+            if (max(onsets) - min(onsets)).total_seconds() > window:
+                proposal = replace(proposal, ambiguous=True)
+                self._curve_proposals[key] = proposal
+                self._curve_proposal_status[key] = {
+                    **self._curve_proposal_status[key], "status": "ambiguous",
+                    "reason": "competing_complete_proposal",
+                    "competing_onsets": tuple(candidate.onset_at for _, candidate in candidates),
+                }
+
+    def _correct_curve_proposals(self, position, quantity, corrected_at, value):
+        """Nur geänderte Zeugnisstützen am unverrückten Beginn neu prüfen."""
+        for key, proposal in tuple(self._curve_proposals.items()):
+            corrected = []
+            changed = False
+            for candidate_key, candidate in proposal.candidates:
+                if candidate_key[1:] != (position, quantity) or not any(
+                    stamp == corrected_at for stamp, _ in candidate.original_points
+                ):
+                    corrected.append((candidate_key, candidate))
+                    continue
+                points = tuple(
+                    (stamp, value if stamp == corrected_at else original)
+                    for stamp, original in candidate.original_points
+                )
+                features = curve_change(
+                    points, policy=self.curve_policy, onset_at=candidate.onset_at,
+                    direction=-1 if key[0] == "door_open" else 1,
+                    onset_not_before=candidate.context[2],
+                )
+                if not self._curve_supports(key[0], features, candidate.context[2]):
+                    self._invalidate_curve_proposal(key, "original_corrected")
+                    break
+                corrected.append((candidate_key, replace(
+                    candidate, features=features, original_points=points,
+                )))
+                changed = True
+            else:
+                if changed:
+                    proposal = replace(proposal, candidates=tuple(corrected))
+                    self._curve_proposals[key] = proposal
+                    self._curve_proposal_status[key] = {
+                        **self._curve_proposal_status[key],
+                        **self._curve_proposal_diagnostic(key, proposal),
+                    }
+
     def _curve_beginning(
         self, route, positions, quantities, fallback, *, floor, kind,
         now, decision_at, onset_allowed=None,
         boundary_reason="outside_current_context",
     ):
         """Den passenden Kandidaten am allein führenden Bestätigungspfad binden."""
-        candidates = []
-        for position in positions:
-            for quantity in quantities:
-                key = (route, position, quantity)
-                candidate = self._curve_candidates.get(key)
-                if (
-                    candidate is None
-                    or self._curve_status.get(key, {}).get("status") != "supported"
-                ):
-                    return fallback
-                if candidate.onset_at < floor:
-                    self._curve_status[key] = {
-                        **self._curve_status[key],
-                        "attribution_rejected": boundary_reason,
-                    }
-                    return fallback
-                candidates.append((key, candidate))
-        if not candidates:
+        proposal_key = (route, tuple(positions), tuple(quantities))
+        proposal = self._curve_proposals.get(proposal_key)
+        if proposal is None or proposal.ambiguous:
             return fallback
-        window = (
-            self.p["infusion_window_seconds"] if route == "infusion"
-            else max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
-        )
-        if (
-            max(candidate.onset_at for _, candidate in candidates)
-            - min(candidate.onset_at for _, candidate in candidates)
-        ).total_seconds() > window:
+        candidates = proposal.candidates
+        if any(candidate.onset_at < floor for _, candidate in candidates):
+            self._invalidate_curve_proposal(proposal_key, boundary_reason)
             return fallback
         beginning = min(candidate.onset_at for _, candidate in candidates)
         if beginning > fallback:
@@ -348,17 +494,21 @@ class Detector:
             beginning < fallback and onset_allowed is not None
             and not onset_allowed(kind, beginning, now)
         ):
-            for key, _ in candidates:
-                self._curve_status[key] = {
-                    **self._curve_status[key],
-                    "attribution_rejected": "controller_context",
-                }
+            self._invalidate_curve_proposal(proposal_key, "controller_context")
             return fallback
-        for key, _ in candidates:
-            self._curve_status[key] = {
-                **self._curve_status[key], "status": "confirmed",
-                "confirmed_at": decision_at,
-            }
+        self._curve_proposal_status[proposal_key] = {
+            **self._curve_proposal_status[proposal_key], "status": "consumed",
+            "confirmed_at": decision_at, "consumed_onset_at": beginning,
+        }
+        for key, candidate in candidates:
+            status = self._curve_status.get(key, {})
+            if (
+                status.get("candidate_id") == candidate.candidate_id
+                and status.get("status") == "supported"
+            ):
+                self._curve_status[key] = {
+                    **status, "status": "confirmed", "confirmed_at": decision_at,
+                }
         return beginning
 
     def report_heating(self, heating, at):
@@ -366,6 +516,9 @@ class Detector:
         if heating is not True:
             self.heating_since = None
             self.counts["door_heating"] = 0
+            self._invalidate_curve_proposals(
+                "heating_context", route="door_open", quantities=(Quantity.TEMPERATURE,),
+            )
             if self.door_episode:
                 for hints in self.door_episode["hints"].values():
                     hints.pop("thermal", None)
@@ -879,7 +1032,7 @@ class Detector:
             self.counts.clear()
             self.levels.clear()
             self._curve_infusion_since = None
-            self._clear_curve_route("infusion")
+            self._clear_curve_route("infusion", reason="positions_changed")
         self.active_positions, self.faults = channels, tuple(faults)
         trace = {
             "at": now,
@@ -896,12 +1049,16 @@ class Detector:
                 curve_candidates.setdefault(route, {}).setdefault(position.value, {})[
                     quantity.value
                 ] = dict(status)
+            curve_proposals = {}
+            for (route, _, _), status in self._curve_proposal_status.items():
+                curve_proposals.setdefault(route, []).append(dict(status))
             trace.update(
                 holds=dict(self.counts),
                 signals=tuple(d.kind for d in output),
                 door_open=self.open,
                 ventilation_context=self.ventilated,
                 curve_candidates=curve_candidates,
+                curve_proposals=curve_proposals,
             )
             self.diagnostic = trace
             if self.observer:
@@ -929,6 +1086,8 @@ class Detector:
             self._curve_open_effective_at or self.opened_at or self.origin
             if self.open else self._curve_closed_since
         )
+        if self.open and self._curve_ventilation_at is not None:
+            curve_floor = max(curve_floor, self._curve_ventilation_at)
         for position in curve_positions:
             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
                 self._curve_candidate(
@@ -1026,6 +1185,40 @@ class Detector:
                 closing_slopes[position] > p["door_close_slope"]
                 for position in closing_positions
             )
+        if episode:
+            if self.open:
+                self._remember_curve_proposal(
+                    "door_close", closing_positions,
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                    floor=curve_floor,
+                    context=(self._curve_door_context, episode["started_at"], curve_floor),
+                    observed_at=decision_at,
+                )
+            else:
+                proposal_floor = max(
+                    self._curve_closed_since,
+                    episode["started_at"] - timedelta(
+                        seconds=self._curve_coherence_window("door_open")
+                    ),
+                )
+                self._remember_curve_proposal(
+                    "door_open", episode["positions"],
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+                    floor=proposal_floor,
+                    context=(self._curve_door_context, episode["started_at"], proposal_floor),
+                    observed_at=decision_at,
+                )
+                if self.heating_since is not None:
+                    thermal_floor = max(proposal_floor, self.heating_since)
+                    self._remember_curve_proposal(
+                        "door_open", episode["positions"], (Quantity.TEMPERATURE,),
+                        floor=thermal_floor,
+                        context=(
+                            self._curve_door_context, episode["started_at"],
+                            thermal_floor, self.heating_since,
+                        ),
+                        observed_at=decision_at,
+                    )
         opening_loss = bool(episode and complete_episode) and all(
             episode["temperatures"][position] is not None
             and self.frames[position][-1]["Tm"] is not None
@@ -1067,7 +1260,7 @@ class Detector:
             close_effective = self._curve_beginning(
                 "door_close", closing_positions,
                 (Quantity.TEMPERATURE, Quantity.HUMIDITY), now,
-                floor=max(close_floor, now - timedelta(seconds=p["curve_window_seconds"])),
+                floor=close_floor,
                 kind=Kind.DOOR_CLOSE, now=now, decision_at=decision_at,
                 onset_allowed=onset_allowed,
                 boundary_reason=(
@@ -1098,6 +1291,9 @@ class Detector:
             if self._ventilation_proof(channels, now, trace):
                 self.ventilated = True
                 self._curve_ventilation_at = now
+                self._clear_curve_route(
+                    "door_close", keep_status=True, reason="ventilation_after_onset",
+                )
                 emit(Kind.VENTILATION)
         elif not self.open and (mixed_toggle or thermal_toggle):
             open_floor = max(
@@ -1105,7 +1301,6 @@ class Detector:
                 episode["started_at"] - timedelta(
                     seconds=max(p["door_window_seconds"], p["door_humidity_seconds"])
                 ),
-                now - timedelta(seconds=p["curve_window_seconds"]),
             )
             if thermal_toggle and not mixed_toggle and self.heating_since is not None:
                 open_floor = max(open_floor, self.heating_since)
@@ -1133,7 +1328,7 @@ class Detector:
             self._curve_ventilation_at = None
             self._curve_door_context += 1
             self._clear_curve_route("door_open", keep_status=True)
-            self._clear_curve_route("infusion")
+            self._clear_curve_route("infusion", reason="door_open")
             self._curve_infusion_since = None
             emit(Kind.DOOR_OPEN, open_effective, episode["positions"])
         elif not self.open and episode:
@@ -1144,6 +1339,9 @@ class Detector:
                 (now - episode["started_at"]).total_seconds() > expiry
                 and not (mixed_opening or thermal_opening)
             ):
+                self._clear_curve_route(
+                    "door_open", keep_status=True, reason="door_episode_expired",
+                )
                 self.door_episode = None
                 self.counts["door"] = 0
                 self.counts["door_heating"] = 0
@@ -1153,7 +1351,7 @@ class Detector:
         if not channels:
             self._update_moisture_state(None, now)
             self._curve_infusion_since = None
-            self._clear_curve_route("infusion")
+            self._clear_curve_route("infusion", reason="unavailable")
             observe()
             return output
 
@@ -1179,14 +1377,9 @@ class Detector:
                 self._curve_close_effective_at or self.origin,
                 recognition_since or self.origin,
             )
-            for position in channels:
-                self._curve_candidate(
-                    "infusion", position, Quantity.HUMIDITY, now, decision_at, infusion_floor,
-                    (self._curve_door_context, infusion_floor),
-                )
         else:
             self._curve_infusion_since = None
-            self._clear_curve_route("infusion")
+            self._clear_curve_route("infusion", reason="admission_context")
         infusion = infusion_check
         if infusion_check:
             for c in channels:
@@ -1206,12 +1399,39 @@ class Detector:
                 )
         sustained = self._sustain("infusion", infusion, p["infusion_hold_seconds"])
         trace["conditions"]["infusion"] = infusion if infusion_check else None
+        if infusion_check:
+            count = self.counts["infusion"]
+            attempt_start = (
+                now - timedelta(seconds=(count - 1) * self.grid_seconds)
+                if count else None
+            )
+            if attempt_start is not None:
+                # Die AH-Endpunkte enthalten je M/grid Medianstützen. Der
+                # erste True-Tick beginnt den vorhandenen Bestätigungsversuch.
+                infusion_floor = max(
+                    infusion_floor,
+                    attempt_start - timedelta(
+                        seconds=p["infusion_window_seconds"]
+                        + p["median_seconds"] - self.grid_seconds
+                    ),
+                )
+            context = (self._curve_door_context, infusion_floor, attempt_start)
+            for position in channels:
+                self._curve_candidate(
+                    "infusion", position, Quantity.HUMIDITY, now, decision_at, infusion_floor,
+                    context,
+                )
+            if count:
+                self._remember_curve_proposal(
+                    "infusion", channels, (Quantity.HUMIDITY,), floor=infusion_floor,
+                    context=context, observed_at=decision_at,
+                )
+            else:
+                self._invalidate_curve_proposals("infusion_attempt", route="infusion")
         if self._edge("infusion", sustained):
             infusion_effective = self._curve_beginning(
                 "infusion", channels, (Quantity.HUMIDITY,), now,
-                floor=max(
-                    infusion_floor, now - timedelta(seconds=p["curve_window_seconds"])
-                ),
+                floor=infusion_floor,
                 kind=Kind.INFUSION, now=now, decision_at=decision_at,
                 onset_allowed=onset_allowed,
             )

@@ -29,18 +29,27 @@ Parameterkatalog und sind keine Einstellungen der Oberfläche.
 Die Auswertung verwendet Originalmesspunkte innerhalb zusammenhängender
 Quellenabschnitte mit einheitlicher Zeitbasis. Vorhandene gültige Messzeiten
 bleiben erhalten; ersatzweise verwendete Empfangszeiten bilden eine eigene
-Zeitbasis. Raster-Haltewerte liefern keine zusätzliche Evidenz. Ein Kandidat
-behält seinen Beginn und wird mit neuen Originalmessungen erneut geprüft.
-Gegenbelege verwerfen ihn; fehlende Evidenz ist kein Gegenbeleg und bestätigt
-ihn nicht. Quellenwechsel, ungültige oder veraltete Messungen und ein Wechsel
-des Ereigniskontexts beenden seine Gültigkeit.
+Zeitbasis. Raster-Haltewerte liefern keine zusätzliche Evidenz.
+
+Ein lokaler Befund gilt für feste Originalmesspunkte und einen unverrückten
+Beginn. Nur wenn die Nachweise aller für den Erkennungsweg erforderlichen
+Messgrößen und Positionen zugleich vollständig vorliegen und zeitlich
+zusammenpassen, kann der erste solche Beleg bis zur fachlichen Bestätigung
+erhalten bleiben. Spätere Modellvergleiche über andere Messpunkte und das
+Ablaufen des Rechenfensters löschen diesen historischen Beleg nicht.
+
+Quellen- oder Kontextbrüche beenden seine Gültigkeit. Korrekturen seiner
+Originalmessungen erfordern eine erneute Prüfung an denselben Messpunkten und
+am selben Beginn; bleibt er danach unbelegt, wird er verworfen. Fehlende
+Evidenz bestätigt keinen Kandidaten.
 
 Erst die folgenden fachlichen Tür- und Aufgussregeln bestätigen ein Ereignis;
 Mindestverluste, Feuchtenachweise und Bestätigungsdauern bleiben unverändert.
 Dabei kann ein passender, weiterhin belegter Kandidatenbeginn zugeordnet werden.
-Fehlt er oder überschreitet er den zulässigen Kontext, bleibt die bisherige
-Zeitzuordnung bestehen. Die frühere Zuordnung zieht weder die fachliche
-Bestätigung noch die reale Erkennungszeit vor. Die Bedeutung der Zeitfelder
+Fehlt er, überschreitet er den zulässigen Kontext oder ist die Zuordnung
+mehrdeutig, bleibt die bisherige Zeitzuordnung bestehen. Die frühere Zuordnung
+zieht weder die fachliche Bestätigung noch die reale Erkennungszeit vor.
+Die Bedeutung der Zeitfelder
 ist unter [Zeitangaben](speicherung.md#daten-und-zeitangaben) und
 [nachträgliche Zuordnung im Verlauf](speicherung.md#nachträgliche-zuordnung-im-verlauf)
 beschrieben.

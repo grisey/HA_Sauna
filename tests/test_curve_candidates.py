@@ -90,24 +90,29 @@ class CurveCandidateTests(unittest.TestCase):
         opening = openings[0]
         old_opening = next(event for event in baseline if event.kind == Kind.DOOR_OPEN)
         self.assertLess(opening.effective_at, old_opening.effective_at)
-        confirmed = [
-            status
+        consumed = [
+            proposal
             for row in observed if row["at"] == opening.trace_at
-            for status in row["curve_candidates"]["door_open"]["upper"].values()
-            if status["status"] == "confirmed"
+            for proposal in row["curve_proposals"]["door_open"]
+            if proposal["status"] == "consumed"
         ]
-        self.assertTrue(confirmed)
-        self.assertEqual(opening.effective_at, min(status["onset_at"] for status in confirmed))
-        for status in confirmed:
-            self.assertLess(status["first_observed_at"], opening.detected_at)
-            self.assertEqual(status["confirmed_at"], opening.detected_at)
+        self.assertEqual(len(consumed), 1)
+        proposal = consumed[0]
+        self.assertEqual(opening.effective_at, proposal["consumed_onset_at"])
+        self.assertEqual(opening.effective_at, min(proposal["onsets"]))
+        self.assertLess(proposal["first_observed_at"], opening.detected_at)
+        self.assertEqual(proposal["confirmed_at"], opening.detected_at)
+        for witness in proposal["witnesses"]:
+            self.assertLessEqual(witness["first_observed_at"], proposal["first_observed_at"])
+            self.assertLessEqual(witness["newest_at"], proposal["first_observed_at"])
+            self.assertIn(witness["onset_at"], {at(second) for second in range(90)})
             history = [
                 previous
                 for row in observed
                 for previous in row["curve_candidates"].get("door_open", {}).get("upper", {}).values()
-                if previous.get("candidate_id") == status["candidate_id"]
+                if previous.get("candidate_id") == witness["candidate_id"]
             ]
-            self.assertEqual({previous["onset_at"] for previous in history}, {status["onset_at"]})
+            self.assertEqual({previous["onset_at"] for previous in history}, {witness["onset_at"]})
 
     def test_ticks_repeated_reports_and_a_correction_do_not_add_original_evidence(self):
         detector = self._detector()
@@ -155,6 +160,13 @@ class CurveCandidateTests(unittest.TestCase):
                 detector = self._detector()
                 last = self._seed(detector)
                 previous = dict(candidate_statuses(detector)[Quantity.TEMPERATURE.value])
+                quantities = (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+                key = ("door_open", detector.positions, quantities)
+                detector._remember_curve_proposal(
+                    "door_open", detector.positions, quantities, floor=T0,
+                    context=(detector._curve_door_context, T0), observed_at=at(last),
+                )
+                self.assertEqual(detector._curve_proposal_status[key]["status"], "available")
                 reset = last + detector.grid_seconds
                 if boundary == "gap":
                     reset += detector.p["sensor_timeout_seconds"]
@@ -169,6 +181,8 @@ class CurveCandidateTests(unittest.TestCase):
                     status.get("candidate_id") != previous["candidate_id"]
                     for status in candidate_statuses(detector).values()
                 ))
+                self.assertNotIn(key, detector._curve_proposals)
+                self.assertEqual(detector._curve_proposal_status[key]["status"], "invalid")
 
                 self._seed(detector, start=reset + detector.grid_seconds, measured=measured, source=source)
                 current = candidate_statuses(detector)[Quantity.TEMPERATURE.value]
@@ -252,5 +266,14 @@ class CurveCandidateTests(unittest.TestCase):
         self.assertEqual(candidates[Quantity.TEMPERATURE.value]["status"], "supported")
         self.assertEqual(candidates[Quantity.TEMPERATURE.value]["onset_at"], at(70))
         self.assertNotEqual(candidates[Quantity.HUMIDITY.value]["status"], "supported")
+        self.assertTrue(any(
+            proposal["status"] == "available" and proposal["quantities"] == ("temperature",)
+            for previous in observed if previous["at"] < opening.trace_at
+            for proposal in previous["curve_proposals"].get("door_open", ())
+        ))
+        self.assertFalse(any(
+            proposal["status"] == "consumed"
+            for proposal in row["curve_proposals"].get("door_open", ())
+        ))
         self.assertEqual(events, baseline)
         self.assertGreater(opening.effective_at, at(70))
