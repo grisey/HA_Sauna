@@ -181,7 +181,7 @@ class Detector:
             episode is not None and episode["phase"] == "active"
             and position in episode["positions"]
         ):
-            episode["interrupted"] = True
+            episode["interrupted"].update(episode["positions"])
             episode["context"] = None
             episode["decays"].clear()
             episode["levels"].clear()
@@ -251,9 +251,9 @@ class Detector:
         else:
             series["last_original_version"] = series["version"]
 
-    def _clear_curve_route(self, route, *, keep_status=False, reason=None):
+    def _clear_curve_route(self, route, *, keep_status=False, reason=None, position=None):
         if reason is not None:
-            self._invalidate_curve_proposals(reason, route=route)
+            self._invalidate_curve_proposals(reason, route=route, position=position)
         mappings = (
             self._curve_candidates, self._curve_evaluated, self._curve_proposals,
         )
@@ -263,7 +263,10 @@ class Detector:
                 mappings += (self._curve_proposal_status,)
         for mapping in mappings:
             for key in tuple(mapping):
-                if key[0] == route:
+                if key[0] == route and (
+                    position is None or key[1] == position
+                    or isinstance(key[1], tuple) and position in key[1]
+                ):
                     mapping.pop(key, None)
 
     def _curve_points(self, position, quantity, now, *, points_not_before=None):
@@ -763,7 +766,7 @@ class Detector:
             self._finish_infusion_context("pending_admission_context")
             return
         if episode is not None and episode["phase"] == "active":
-            episode["interrupted"] = True
+            episode["interrupted"].update(episode["positions"])
             episode["context"] = None
             episode["decays"].clear()
             episode["levels"].clear()
@@ -785,14 +788,17 @@ class Detector:
             "onset_at": beginning,
             "observed_at": now,
             "context": None,
-            "decay_floor": beginning,
-            "last_rise_at": beginning,
+            "decay_floor": {position: beginning for position in positions},
+            "last_rise_at": {
+                key[1]: candidate.onset_at
+                for key, candidate in self._curve_proposals[rise_key].candidates
+            },
             "rise_ids": set(),
             "decays": {},
             "levels": {},
             "level_evaluated": {},
             "level_end_at": None,
-            "interrupted": False,
+            "interrupted": set(),
             "end_basis": None,
             "rise_key": rise_key,
             "water": water,
@@ -912,7 +918,7 @@ class Detector:
                         self._finish_infusion_context("water_original_corrected")
                     else:
                         episode["phase"] = "active"
-                        episode["interrupted"] = True
+                        episode["interrupted"].update(episode["positions"])
                         episode["context"] = None
                         episode["decays"].clear()
                         episode["levels"].clear()
@@ -991,13 +997,13 @@ class Detector:
             return False
         if episode["context"] != context:
             if episode["context"] is not None:
-                episode["interrupted"] = True
+                episode["interrupted"].update(positions)
             episode["context"] = context
             episode["decays"].clear()
             episode["levels"].clear()
             episode["level_evaluated"].clear()
             self._clear_curve_route("infusion_decay", reason="source_context")
-        new_rises = []
+        new_rises = {}
         for position in positions if episode["phase"] == "active" else ():
             key = ("infusion", position, Quantity.HUMIDITY)
             candidate = self._curve_candidates.get(key)
@@ -1007,18 +1013,20 @@ class Detector:
                 and candidate.candidate_id not in episode["rise_ids"]
             ):
                 episode["rise_ids"].add(candidate.candidate_id)
-                if candidate.onset_at > episode["last_rise_at"]:
-                    new_rises.append(candidate.onset_at)
-        if new_rises:
-            episode["interrupted"] = False
-            episode["last_rise_at"] = max(new_rises)
-            episode["decay_floor"] = episode["last_rise_at"]
-            episode["decays"].clear()
-            episode["levels"].clear()
-            episode["level_evaluated"].clear()
-            self._clear_curve_route("infusion_decay", reason="continued_infusion")
-        decay_floor = max(floor, episode["decay_floor"])
+                if candidate.onset_at > episode["last_rise_at"][position]:
+                    new_rises[position] = candidate.onset_at
+        for position, beginning in new_rises.items():
+            episode["interrupted"].discard(position)
+            episode["last_rise_at"][position] = beginning
+            episode["decay_floor"][position] = beginning
+            episode["decays"].pop(position, None)
+            episode["levels"].pop(position, None)
+            episode["level_evaluated"].pop(position, None)
+            self._clear_curve_route(
+                "infusion_decay", position=position, reason="continued_infusion",
+            )
         for position in positions:
+            decay_floor = max(floor, episode["decay_floor"][position])
             self._curve_candidate(
                 "infusion_decay", position, Quantity.HUMIDITY, now, decision_at,
                 decay_floor, (context, episode["onset_at"], decay_floor),
@@ -1033,7 +1041,7 @@ class Detector:
                 episode["decays"].setdefault(position, candidate)
             if episode["phase"] == "pending":
                 continue
-            if position not in episode["decays"] and not episode["interrupted"]:
+            if position not in episode["decays"] and position not in episode["interrupted"]:
                 continue
             series = self._curve_series[position, Quantity.HUMIDITY]
             if episode["level_evaluated"].get(position) == series["version"]:
@@ -1043,7 +1051,7 @@ class Detector:
                 max(floor, *(
                     self._curve_series[position, quantity]["started_at"] or floor
                     for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
-                )) if episode["interrupted"]
+                )) if position in episode["interrupted"]
                 else episode["decays"][position].onset_at
             )
             points = tuple(
@@ -1085,6 +1093,7 @@ class Detector:
                 **previous, "features": level, "original_points": tail,
             }
         if episode["phase"] == "pending":
+            decay_floor = max(floor, episode["onset_at"])
             self._remember_curve_proposal(
                 "infusion_decay", positions, (Quantity.HUMIDITY,),
                 floor=decay_floor,
@@ -1764,7 +1773,7 @@ class Detector:
                         "onset_at": self._infusion_episode["onset_at"],
                         "level_end_at": self._infusion_episode["level_end_at"],
                         "end_basis": self._infusion_episode["end_basis"],
-                        "interrupted": self._infusion_episode["interrupted"],
+                        "interrupted": bool(self._infusion_episode["interrupted"]),
                         "confirmed_at": self._infusion_episode["confirmed_at"],
                         "water_change": {
                             position.value: witness["change"]
@@ -2227,14 +2236,20 @@ class Detector:
                         # inside the supposed final tail. It extends the same
                         # infusion; an onset floor must not turn it into a new one.
                         episode["phase"] = "active"
-                        episode["decay_floor"] = beginning
-                        episode["last_rise_at"] = beginning
+                        episode["decay_floor"] = {
+                            key[1]: candidate.onset_at
+                            for key, candidate in proposal.candidates
+                        }
+                        episode["last_rise_at"] = dict(episode["decay_floor"])
+                        episode["interrupted"].difference_update(episode["last_rise_at"])
                         episode["rise_ids"] = {
                             candidate.candidate_id for _, candidate in proposal.candidates
                         }
                         episode["decays"].clear()
                         episode["levels"].clear()
                         episode["level_evaluated"].clear()
+                        episode["level_end_at"] = None
+                        episode["end_basis"] = None
                         self._clear_curve_route(
                             "infusion_decay", reason="continued_infusion",
                         )

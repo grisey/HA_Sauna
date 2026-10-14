@@ -26,7 +26,7 @@ from custom_components.ha_sauna.core.moisture import (
     saturation_vapor_pressure,
 )
 from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
-from custom_components.ha_sauna.core.timeline import Event, Kind
+from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
@@ -188,17 +188,59 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(max(calls.values()), 1)
 
     def test_opening_loss_can_follow_short_humidity_signal_during_continuous_cooling(self):
-        detector = Detector(detection_parameters(), T0)
+        traces = []
+        detector = Detector(detection_parameters(), T0, observer=traces.append)
         events = []
         for second in range(280):
             fall = max(0, second - 70)
             events += sample(detector, second, 80 - .04 * fall,
                              30 - min(.6, .12 * fall))
-        self.assertEqual([e.kind for e in events].count(Kind.DOOR_OPEN), 1)
-        opening = next(e for e in events if e.kind == Kind.DOOR_OPEN)
-        self.assertGreaterEqual((opening.detected_at - T0).total_seconds(), 95)
+        diagnostic = self._door_failure_message(events, traces, input_turns_s=(70, 75))
+        openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
+        self.assertEqual(len(openings), 1, msg=diagnostic)
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events], msg=diagnostic)
+        opening = openings[0]
+        # Resolve the declared input turn within the existing bounded knot search.
+        resolution = max(detector.grid_seconds, ceil(
+            detector.p["curve_window_seconds"]
+            / max(1, detector.curve_policy.max_candidates - 1)
+        ))
+        self.assertLessEqual(
+            abs((opening.effective_at - T0).total_seconds() - 70), resolution,
+            msg=diagnostic,
+        )
+        self.assertLess(opening.effective_at, opening.detected_at, msg=diagnostic)
+        self.assertEqual(opening.trace_at, opening.detected_at, msg=diagnostic)
+        consumed = [
+            proposal for row in traces if row["at"] == opening.trace_at
+            for proposal in row["curve_proposals"].get("door_open", ())
+            if proposal["status"] == "consumed"
+        ]
+        self.assertEqual(len(consumed), 1, msg=diagnostic)
+        proposal = consumed[0]
+        self.assertEqual(proposal["consumed_onset_at"], opening.effective_at, msg=diagnostic)
+        self.assertLess(proposal["first_observed_at"], opening.detected_at, msg=diagnostic)
+        self.assertEqual(proposal["confirmed_at"], opening.detected_at, msg=diagnostic)
+        self.assertEqual(
+            {(item["position"], item["quantity"]) for item in proposal["witnesses"]},
+            {(position.value, quantity.value) for position in detector.positions
+             for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)},
+            msg=diagnostic,
+        )
+        confirmations = {item["candidate_id"]: item for item in proposal["confirmation"]}
+        original_times = {T0 + timedelta(seconds=second) for second in range(280)}
+        for witness in proposal["witnesses"]:
+            confirmation = confirmations[witness["candidate_id"]]
+            self.assertIn(witness["onset_at"], original_times, msg=diagnostic)
+            self.assertLessEqual(witness["newest_at"], proposal["first_observed_at"],
+                                 msg=diagnostic)
+            self.assertTrue(confirmation["supported"], msg=diagnostic)
+            self.assertIn(confirmation["fresh_newest_at"], original_times, msg=diagnostic)
+            self.assertGreater(confirmation["fresh_newest_at"], witness["first_newest_at"],
+                               msg=diagnostic)
+            self.assertLessEqual(confirmation["newest_at"], opening.trace_at, msg=diagnostic)
 
-    def test_small_closed_door_fluctuations_do_not_open_either_route(self):
+    def test_small_coherent_door_shapes_do_not_repeat_during_plateau(self):
         for thermal in (False, True):
             for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
                 with self.subTest(thermal=thermal, positions=positions):
@@ -208,47 +250,120 @@ class DetectorTests(unittest.TestCase):
                     events = []
                     for second in range(130):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
-                        # Fast enough to satisfy both old trend/hold rules,
-                        # but only 0.8 °C of mixing before full recovery.
+                        # Both routes receive an exact small form with turns at
+                        # 30/50/70; its amplitude does not make it mere noise.
                         fall = max(0, min(second - 30, 70 - second, 20))
                         events += sample(
                             detector, second, 80 - .04 * fall,
                             30 if thermal else 30 - .08 * fall, positions,
                         )
-                    self.assertNotIn(
-                        Kind.DOOR_OPEN, [e.kind for e in events],
-                        msg=self._door_failure_message(
-                            events, traces, thermal=thermal, positions=positions,
-                            input_turns_s=(30, 50, 70),
-                        ),
+                    diagnostic = self._door_failure_message(
+                        events, traces, thermal=thermal, positions=positions,
+                        input_turns_s=(30, 50, 70),
                     )
-                    # A subsequent substantial loss must still open normally.
+                    doors = [item for item in events
+                             if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
+                    self.assertEqual([item.kind for item in doors],
+                                     [Kind.DOOR_OPEN, Kind.DOOR_CLOSE], msg=diagnostic)
+                    resolution = max(detector.grid_seconds, ceil(
+                        detector.p["curve_window_seconds"]
+                        / max(1, detector.curve_policy.max_candidates - 1)
+                    ))
+                    for item, onset in zip(doors, (30, 50), strict=True):
+                        self.assertLessEqual(
+                            abs((item.effective_at - T0).total_seconds() - onset),
+                            resolution, msg=diagnostic,
+                        )
+                    # No fresh shape starts in the constant tail from 70 to 130.
+                    self.assertFalse(any(
+                        T0 + timedelta(seconds=70) <= item.effective_at
+                        < T0 + timedelta(seconds=130) for item in doors
+                    ), msg=diagnostic)
+                    # A separate loss begins at 130; its plateau begins at 150.
                     for second in range(130, 180):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
                         fall = min(20, second - 130)
                         events += sample(detector, second, 80 - .15 * fall,
                                          30 if thermal else 30 - .1 * fall, positions)
-                    self.assertEqual([e.kind for e in events].count(Kind.DOOR_OPEN), 1)
+                    diagnostic = self._door_failure_message(
+                        events, traces, thermal=thermal, positions=positions,
+                        input_turns_s=(30, 50, 70, 130, 150),
+                    )
+                    doors = [item for item in events
+                             if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
+                    self.assertIn([item.kind for item in doors], (
+                        [Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.DOOR_OPEN],
+                        [Kind.DOOR_OPEN, Kind.DOOR_CLOSE, Kind.DOOR_OPEN, Kind.DOOR_CLOSE],
+                    ), msg=diagnostic)
+                    for item, onset in zip(doors[2:], (130, 150)):
+                        self.assertLessEqual(
+                            abs((item.effective_at - T0).total_seconds() - onset),
+                            resolution, msg=diagnostic,
+                        )
 
-    def test_minimum_opening_loss_requires_both_original_positions(self):
-        traces = []
-        detector = Detector(detection_parameters(), T0, observer=traces.append)
-        events = []
-        for second in range(90):
-            detector.report_heating(True, T0 + timedelta(seconds=second))
-            fall = min(20, max(0, second - 30))
-            for position, rate in ((Position.UPPER, .12), (Position.LOWER, .03)):
-                detector.accept(measurement(position, Quantity.TEMPERATURE,
-                                            80 - rate * fall, second))
-                detector.accept(measurement(position, Quantity.HUMIDITY,
-                                            30 - .08 * fall, second))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertNotIn(
-            Kind.DOOR_OPEN, [e.kind for e in events],
-            msg=self._door_failure_message(
-                events, traces, plateau_from_s=50, temperature_rates=(.12, .03),
-            ),
-        )
+    def test_opening_shape_requires_original_temperature_evidence_at_both_positions(self):
+        for lower_falls in (True, False):
+            with self.subTest(lower_falls=lower_falls):
+                traces = []
+                detector = Detector(detection_parameters(), T0, observer=traces.append)
+                events = []
+                lower_rate = .03 if lower_falls else 0
+                for second in range(90):
+                    detector.report_heating(True, T0 + timedelta(seconds=second))
+                    fall = min(20, max(0, second - 30))
+                    for position, rate in ((Position.UPPER, .12), (Position.LOWER, lower_rate)):
+                        detector.accept(measurement(position, Quantity.TEMPERATURE,
+                                                    80 - rate * fall, second))
+                        detector.accept(measurement(position, Quantity.HUMIDITY,
+                                                    30 - .08 * fall, second))
+                    events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+                diagnostic = self._door_failure_message(
+                    events, traces, input_turns_s=(30, 50), temperature_rates=(.12, lower_rate),
+                )
+                openings = [item for item in events if item.kind == Kind.DOOR_OPEN]
+                if not lower_falls:
+                    # RH still falls at both positions, but the lower T has no turn.
+                    self.assertEqual(openings, [], msg=diagnostic)
+                    continue
+                self.assertEqual(len(openings), 1, msg=diagnostic)
+                opening = openings[0]
+                self.assertEqual(opening.channels, ("upper", "lower"), msg=diagnostic)
+                resolution = max(detector.grid_seconds, ceil(
+                    detector.p["curve_window_seconds"]
+                    / max(1, detector.curve_policy.max_candidates - 1)
+                ))
+                self.assertLessEqual(
+                    abs((opening.effective_at - T0).total_seconds() - 30), resolution,
+                    msg=diagnostic,
+                )
+                consumed = [
+                    proposal for row in traces if row["at"] == opening.trace_at
+                    for route in ("door_open", "door_open_heating")
+                    for proposal in row["curve_proposals"].get(route, ())
+                    if proposal["status"] == "consumed"
+                ]
+                self.assertEqual(len(consumed), 1, msg=diagnostic)
+                proposal = consumed[0]
+                self.assertEqual(proposal["positions"], ("upper", "lower"), msg=diagnostic)
+                self.assertEqual(proposal["consumed_onset_at"], opening.effective_at, msg=diagnostic)
+                self.assertLess(proposal["first_observed_at"], opening.detected_at, msg=diagnostic)
+                self.assertEqual(proposal["confirmed_at"], opening.detected_at, msg=diagnostic)
+                temperature_witnesses = [item for item in proposal["witnesses"]
+                                         if item["quantity"] == Quantity.TEMPERATURE.value]
+                self.assertEqual({item["position"] for item in temperature_witnesses},
+                                 {"upper", "lower"}, msg=diagnostic)
+                confirmations = {item["candidate_id"]: item for item in proposal["confirmation"]}
+                original_times = {T0 + timedelta(seconds=second) for second in range(90)}
+                for witness in temperature_witnesses:
+                    confirmation = confirmations[witness["candidate_id"]]
+                    self.assertEqual(witness["source"], f"sensor.{witness['position']}_temperature",
+                                     msg=diagnostic)
+                    self.assertIn(witness["onset_at"], original_times, msg=diagnostic)
+                    self.assertTrue(confirmation["supported"], msg=diagnostic)
+                    self.assertIn(confirmation["fresh_newest_at"], original_times, msg=diagnostic)
+                    self.assertGreater(confirmation["fresh_newest_at"], witness["first_newest_at"],
+                                       msg=diagnostic)
+                    self.assertLessEqual(confirmation["newest_at"], opening.trace_at, msg=diagnostic)
 
     def test_finite_temperature_outlier_keeps_archived_cycle_and_output_alive(self):
         async def exercise(path):
@@ -446,10 +561,17 @@ class DetectorTests(unittest.TestCase):
         )
         self.assertEqual([item.kind for item in observed if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
                          [Kind.DOOR_OPEN, Kind.DOOR_CLOSE], msg=diagnostic)
-        self.assertTrue(any(item.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) for item in observed),
-                        msg=diagnostic)
+        warm_time = T0 + timedelta(seconds=warm_at)
+        self.assertTrue(any(
+            item.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) and item.trace_at >= warm_time
+            for item in observed
+        ), msg=diagnostic)
+        # The continuing RH rise has neither a peak nor a falling original tail.
+        self.assertNotIn(Kind.INFUSION, [item.kind for item in observed], msg=diagnostic)
         self.assertIsNotNone(c.session.timeline.active, msg=diagnostic)
-        self.assertEqual(c.session.timeline.active.started_at, T0 + timedelta(seconds=warm_at),
+        self.assertEqual(c.session.timeline.active.started_at, warm_time,
+                         msg=diagnostic)
+        self.assertEqual(c.session.timeline.active.confirmation, Confirmation.PROVISIONAL,
                          msg=diagnostic)
 
 
@@ -1126,8 +1248,9 @@ class InfusionLifecycleTests(unittest.TestCase):
         if controller is not None:
             controller.set_temperature(temperature, now)
         for position in detector.positions:
+            position_humidity = humidity[position] if isinstance(humidity, dict) else humidity
             for quantity, value in (
-                (Quantity.TEMPERATURE, temperature), (Quantity.HUMIDITY, humidity),
+                (Quantity.TEMPERATURE, temperature), (Quantity.HUMIDITY, position_humidity),
             ):
                 source = humidity_source if quantity == Quantity.HUMIDITY else None
                 self.assertTrue(detector.accept(measurement(
@@ -1158,8 +1281,12 @@ class InfusionLifecycleTests(unittest.TestCase):
               temperatures=None, controller=None):
         second = (detector.index + 1) * self.step
         while second <= through:
+            humidity = (
+                {position: self._value(values, second) for position, values in points.items()}
+                if isinstance(points, dict) else self._value(points, second)
+            )
             self._send(
-                detector, second, self._value(points, second), events,
+                detector, second, humidity, events,
                 humidity_source=humidity_source, controller=controller,
                 temperature=(self._value(temperatures, second)
                              if temperatures is not None else None),
@@ -1363,6 +1490,123 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(len(self._infusions(events)), 1)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
         self.assertEqual(detector._infusion_episode["end_basis"], "decay_and_level")
+
+    def test_upper_peak_preserves_lower_tail_until_shared_level_and_next_infusion(self):
+        first_peak = self.begin + self.width
+        first_fall = first_peak + self.width
+        upper_rise = first_fall + (self.side + 1) * self.step
+        upper_peak = upper_rise + self.width
+        upper_fall = upper_peak + self.width
+        settled = upper_fall + self.p["infusion_window_seconds"] + 2 * self.step
+        next_rise = settled + (self.side + 3) * self.step
+        next_peak = next_rise + self.width
+        next_fall = next_peak + self.width
+        upper_points = [
+            (0, self.baseline), (self.begin, self.baseline), (first_peak, self.peak),
+            (first_fall, self.level), (upper_rise, self.level), (upper_peak, self.peak),
+            (upper_fall, self.level), (next_rise, self.level), (next_peak, self.peak),
+            (next_fall, self.level),
+        ]
+        # Disjoint valid RH ranges identify the two original inputs to the
+        # controlled math; the lower input has no intermediate rise or fall.
+        lower_points = [
+            (0, self.baseline / 2), (self.begin, self.baseline / 2),
+            (first_peak, self.peak / 2), (first_fall, self.level / 2),
+            (next_rise, self.level / 2), (next_peak, self.peak / 2),
+            (next_fall, self.level / 2),
+        ]
+        points = {Position.UPPER: upper_points, Position.LOWER: lower_points}
+        common_shapes = [
+            self._shape("rise", self.begin, first_peak),
+            self._shape("decay", first_peak, first_fall),
+            self._shape("rise", next_rise, next_peak),
+            self._shape("decay", next_peak, next_fall),
+        ]
+        upper_shapes = common_shapes + [
+            self._shape("rise", upper_rise, upper_peak),
+            self._shape("decay", upper_peak, upper_fall),
+        ]
+
+        def evidence(samples, **kwargs):
+            shapes = (common_shapes if samples and samples[0][1] <= self.peak / 2
+                      else upper_shapes)
+            return self._math_curve(shapes, samples, **kwargs)
+
+        for paused in (False, True):
+            with self.subTest(paused=paused):
+                detector = Detector(self.parameters, T0)
+                controller = Controller(self.parameters)
+                controller.set_temperature(self.temperature, T0)
+                controller.begin_session("s", T0)
+                controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
+                controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
+                events = []
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change", side_effect=evidence,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_level",
+                    side_effect=self._math_level,
+                ):
+                    self._feed(detector, first_fall - self.step, points, events,
+                               controller=controller)
+                    self.assertEqual(len(self._infusions(events)), 1)
+                    self.assertEqual(detector._infusion_episode["phase"], "active")
+                    lower_decay = detector._infusion_episode["decays"][Position.LOWER]
+                    self.assertEqual(lower_decay.onset_at, self._at(first_peak))
+                    first_gang = controller.session.timeline.active
+                    self.assertIsNotNone(first_gang)
+                    self.assertEqual(len(first_gang.infusion_events), 1)
+                    if paused:
+                        # A global gap removes both decays. Afterwards the lower
+                        # position can recover a fresh level without a new peak.
+                        self._send(detector, first_fall, None, events, controller=controller)
+                    self._feed(detector, upper_peak, points, events, controller=controller)
+                    episode = detector._infusion_episode
+                    self.assertEqual(episode["phase"], "active")
+                    self.assertIsNone(episode["level_end_at"])
+                    self.assertNotIn(Position.UPPER, episode["decays"])
+                    self.assertEqual(len(self._infusions(events)), 1)
+                    self.assertEqual(episode["onset_at"], self._at(self.begin))
+                    if not paused:
+                        preserved = episode["decays"][Position.LOWER]
+                        self.assertEqual(preserved.candidate_id, lower_decay.candidate_id)
+                        self.assertEqual(preserved.original_points, lower_decay.original_points)
+                    lower_level = episode["levels"][Position.LOWER]
+                    self.assertIsNotNone(lower_level["fresh_newest_at"])
+                    self.assertEqual(len(controller.session.timeline.active.infusion_events), 1)
+                    self.assertEqual(len([item for item in controller.consumer_events
+                                          if item.kind == "infusion"]), 1)
+                    # The upper position still needs its own falling originals
+                    # and a fresh level before the shared episode can end.
+                    self._feed(detector, settled, points, events, controller=controller)
+                    episode = detector._infusion_episode
+                    self.assertEqual(episode["phase"], "ended")
+                    self.assertEqual(episode["decays"][Position.UPPER].onset_at, self._at(upper_peak))
+                    self.assertGreater(episode["level_end_at"], self._at(upper_peak))
+                    for position in detector.positions:
+                        level = episode["levels"][position]
+                        self.assertGreater(level["fresh_newest_at"], level["first_newest_at"])
+                    self.assertEqual(len(self._infusions(events)), 1)
+                    self._feed(detector, next_fall, points, events, controller=controller)
+                infusions = self._infusions(events)
+                self.assertEqual(len(infusions), 2)
+                self.assertEqual([item.effective_at for item in infusions],
+                                 [self._at(self.begin), self._at(next_rise)])
+                self.assertTrue(all(item.channels == ("upper", "lower") for item in infusions))
+                self.assertTrue(all(item.effective_at < item.trace_at for item in infusions))
+                gang = controller.session.timeline.active
+                self.assertIsNotNone(gang)
+                self.assertEqual(gang.gang_id, first_gang.gang_id)
+                self.assertEqual(controller.session.timeline.gang_count, 1)
+                self.assertEqual([item.effective_at for item in gang.infusion_events],
+                                 [item.effective_at for item in infusions])
+                self.assertEqual([item.trace_at for item in gang.infusion_events],
+                                 [item.trace_at for item in infusions])
+                consumed = [item for item in controller.consumer_events if item.kind == "infusion"]
+                self.assertEqual([item.effective_at for item in consumed],
+                                 [item.effective_at for item in infusions])
+                self.assertEqual([item.received_at for item in consumed],
+                                 [item.detected_at for item in infusions])
 
     def test_new_pulse_after_confirmed_level_counts_again(self):
         points, shapes, rise_two, fall_two = self._scenario(merged=False)

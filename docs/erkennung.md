@@ -112,6 +112,10 @@ die Steuerung reagiert bei der Bestätigung. Ein fortgesetzter Anstieg allein
 bestätigt keinen Aufguss. Weitere Spitzen gehören bis zum belegten Abschluss
 zu diesem einen Aufguss.
 
+Weitere Spitzen werden je Messposition verfolgt. Eine zusätzliche Spitze an
+einer Position entwertet nur dort den bisherigen Abklingnachweis; die gültigen
+Nachweise der anderen Position bleiben erhalten.
+
 Bei ununterbrochenem Verlauf müssen zum Abschluss nach der Feuchtespitze ein
 Abfall und anschließend an allen beteiligten Positionen ein neues Niveau belegt
 sein. Der Niveauvergleich verwendet den jüngsten zusammenhängenden
