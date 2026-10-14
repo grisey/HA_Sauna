@@ -1597,7 +1597,8 @@ class InfusionLifecycleTests(unittest.TestCase):
                 gang = controller.session.timeline.active
                 self.assertIsNotNone(gang)
                 self.assertEqual(gang.gang_id, first_gang.gang_id)
-                self.assertEqual(controller.session.timeline.gang_count, 1)
+                # Only completed confirmed gangs contribute to gang_count.
+                self.assertEqual(controller.session.timeline.gang_count, 0)
                 self.assertEqual([item.effective_at for item in gang.infusion_events],
                                  [item.effective_at for item in infusions])
                 self.assertEqual([item.trace_at for item in gang.infusion_events],
