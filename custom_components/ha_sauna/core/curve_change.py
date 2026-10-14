@@ -14,13 +14,16 @@ For the first-order hinge, original sides can supply separate counterevidence
 when both prefer lines:
 a shared slope or a resolved contrary change can oppose the global hinge.
 Curved or unresolved sides cannot supply that additional counterevidence.
+A complete smooth fall and recovery is assessed by classifying the same
+polynomials and requiring independent directions on their original flanks.
+Its fitted minimum is geometry, never a physical event time.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import starmap
 from math import fsum, isfinite, log, sqrt, ulp
 from operator import mul
@@ -96,6 +99,36 @@ class CurveTrendFeatures:
     score_gain: float | None
     exact_constant: bool
     exact_linear: bool
+
+
+@dataclass(frozen=True)
+class CurveRecoveryFeatures:
+    """A complete observed fall and recovery, without a contact/onset claim.
+
+    valley_at is fitted geometry only. The original flank windows describe
+    actual directed support; the caller owns its sources, identity, and fresh
+    confirmation. Scores compare the same smooth polynomial family partitioned
+    by shape. An unresolved fit or missing original flank returns None instead.
+    """
+
+    evidence: str
+    start_at: datetime
+    newest_at: datetime
+    count: int
+    noise_scale: float
+    model: str
+    recovery_score: float | None
+    other_score: float | None
+    score_gain: float | None
+    valley_at: datetime | None = None
+    before_count: int = 0
+    after_count: int = 0
+    decline_start_at: datetime | None = None
+    decline_newest_at: datetime | None = None
+    recovery_start_at: datetime | None = None
+    recovery_newest_at: datetime | None = None
+    before_trend: CurveTrendFeatures | None = None
+    after_trend: CurveTrendFeatures | None = None
 
 
 @dataclass(frozen=True)
@@ -254,7 +287,7 @@ def _fit(rows, values, noise, policy):
     return (coefficients, loss) if isfinite(loss) else None
 
 
-def _models(times, values, noise, knots, policy, *, hinge_order=1):
+def _smooth_models(times, values, noise, policy):
     linear = [[1.0, time] for time in times]
     quadratic = [[1.0, time, time * time] for time in times]
     cubic = [[1.0, time, time * time, time**3] for time in times]
@@ -267,9 +300,19 @@ def _models(times, values, noise, knots, policy, *, hinge_order=1):
             return None
         smooth.append((
             fitted[1] + len(rows[0]) * log(len(values)), name,
-            _residuals(rows, values, fitted[0]),
+            _residuals(rows, values, fitted[0]), fitted[0],
         ))
-    smooth_score, smooth_model, residuals = min(smooth, key=lambda item: item[:2])
+    return quadratic, smooth
+
+
+def _models(times, values, noise, knots, policy, *, hinge_order=1):
+    result = _smooth_models(times, values, noise, policy)
+    if result is None:
+        return None
+    quadratic, smooth = result
+    smooth_score, smooth_model, residuals, _ = min(
+        smooth, key=lambda item: item[:2],
+    )
     changes = []
     for index, knot in knots:
         rows = [row + [
@@ -662,6 +705,210 @@ def curve_trend(
                 return None
             rescue = _trend_models(retained, policy)
             if rescue is None or rescue[0].direction != features.direction:
+                return None
+        return features
+    except (
+        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        ZeroDivisionError,
+    ):
+        return None
+
+
+def _smooth_valley(coefficients, value_resolution, count):
+    """Return a normalized minimum, False for another shape, or None if unclear."""
+    if len(coefficients) == 2:
+        return False
+    scale = max(abs(value) for value in coefficients[1:])
+    if scale == 0:
+        return False
+    first = coefficients[1] / scale
+    linear = 2 * (coefficients[2] / scale)
+    quadratic = 3 * (coefficients[3] / scale) if len(coefficients) == 4 else 0.0
+    last = fsum((first, linear, quadratic))
+    resolution = max(
+        value_resolution / scale,
+        count * _FLOAT_EPSILON * fsum(map(abs, (first, linear, quadratic))),
+    )
+    if not isfinite(resolution) or min(abs(first), abs(last)) <= resolution:
+        return None
+    if first >= 0 or last <= 0:
+        return False
+    if quadratic == 0:
+        roots = [-first / linear]
+    else:
+        discriminant = linear * linear - 4 * quadratic * first
+        discriminant_resolution = count * ulp(max(
+            linear * linear, abs(4 * quadratic * first),
+        ))
+        if discriminant <= discriminant_resolution:
+            return None
+        root = sqrt(discriminant)
+        numerator = -.5 * (linear + (root if linear >= 0 else -root))
+        if numerator == 0:
+            return None
+        roots = [numerator / quadratic, first / numerator]
+    minima = [root for root in roots if (
+        isfinite(root) and 0 < root < 1
+        and linear + 2 * quadratic * root > resolution
+    )]
+    if len(minima) != 1:
+        return None
+    root = minima[0]
+    if min(root, 1 - root) <= count * _FLOAT_EPSILON:
+        return None
+    return root
+
+
+def _recovery_assessment(samples, selected, noise, current_not_before, policy):
+    start, newest = samples[0][0], samples[-1][0]
+    span = (newest - start).total_seconds()
+    times = [(stamp - start).total_seconds() / span for stamp, _ in selected]
+    raw_values = [value for _, value in selected]
+    center = median(raw_values)
+    values = [value - center for value in raw_values]
+    if not all(isfinite(value) for value in values):
+        return None
+    result = _smooth_models(times, values, noise, policy)
+    if result is None:
+        return None
+    _, smooth = result
+    value_resolution = len(selected) * ulp(max(abs(value) for value in raw_values))
+    recovery, other = [], []
+    for model in smooth:
+        valley = _smooth_valley(model[3], value_resolution, len(selected))
+        if valley is None:
+            return None
+        (other if valley is False else recovery).append((*model, valley))
+    other_score, other_name, residuals, _, _ = min(other, key=lambda item: item[:2])
+    if not recovery:
+        return CurveRecoveryFeatures(
+            evidence="rejects", start_at=start, newest_at=newest, count=len(samples),
+            noise_scale=noise, model=other_name, recovery_score=None,
+            other_score=other_score, score_gain=None,
+        ), residuals
+    recovery_score, name, _, _, valley = min(recovery, key=lambda item: item[:2])
+    score_gain = other_score - recovery_score
+    score_resolution = len(selected) * ulp(max(abs(other_score), abs(recovery_score)))
+    if abs(score_gain) <= score_resolution:
+        return None
+    if score_gain < 0:
+        return CurveRecoveryFeatures(
+            evidence="rejects", start_at=start, newest_at=newest, count=len(samples),
+            noise_scale=noise, model=other_name, recovery_score=recovery_score,
+            other_score=other_score, score_gain=score_gain,
+        ), residuals
+    valley_at = start + timedelta(seconds=valley * span)
+    before = [point for point in samples if point[0] < valley_at]
+    after = [point for point in samples if (
+        point[0] > valley_at
+        and (current_not_before is None or point[0] >= current_not_before)
+    )]
+    if min(len(before), len(after)) < policy.min_side_samples:
+        return None
+    before_trend = curve_trend(before, policy=policy)
+    after_trend = curve_trend(after, policy=policy)
+    if before_trend is None or after_trend is None:
+        return None
+    supported = before_trend.direction == -1 and after_trend.direction == 1
+    return CurveRecoveryFeatures(
+        evidence="supports" if supported else "rejects",
+        start_at=start, newest_at=newest, count=len(samples), noise_scale=noise,
+        model=name, recovery_score=recovery_score, other_score=other_score,
+        score_gain=score_gain, valley_at=valley_at,
+        before_count=len(before), after_count=len(after),
+        decline_start_at=before[0][0], decline_newest_at=before[-1][0],
+        recovery_start_at=after[0][0], recovery_newest_at=after[-1][0],
+        before_trend=before_trend, after_trend=after_trend,
+    ), residuals
+
+
+def curve_recovery(
+    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    current_not_before: datetime | None = None,
+) -> CurveRecoveryFeatures | None:
+    """Assess a complete smooth fall and rise without assigning an event onset.
+
+    The caller supplies one coherent original segment in its permitted context.
+    The existing linear, quadratic and cubic models share cubic-residual MAD,
+    Huber loss and their usual BIC costs. A resolved single interior valley
+    belongs to the recovery class; the same fit cannot also oppose that class.
+    Its stationary time is derived geometry, with no searched-knot parameter.
+
+    Actual originals strictly before the valley must support a falling trend.
+    Originals strictly after it, additionally restricted by the inclusive
+    current_not_before, must support a rising current trend. Neither direction
+    comes from extrapolating the fitted derivatives. The entire form and both
+    original flanks must survive removal of an influential competing-fit value.
+    None means unresolved or insufficient evidence; a resolved counterform
+    returns rejects. Sources, identity and fresh confirmation remain the caller's.
+    """
+    try:
+        if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
+            return None
+        if current_not_before is not None and not isinstance(
+            current_not_before, datetime,
+        ):
+            return None
+        stamps = [stamp for stamp, _ in samples]
+        raw_values = [value for _, value in samples]
+        if any(not isinstance(stamp, datetime) for stamp in stamps):
+            return None
+        if any(a >= b for a, b in zip(stamps, stamps[1:])):
+            return None
+        if any(isinstance(value, bool) or not isfinite(value) for value in raw_values):
+            return None
+        span = (stamps[-1] - stamps[0]).total_seconds()
+        if not isfinite(span) or span <= 0:
+            return None
+        selected = _bounded_samples(samples, policy.max_points, None)
+        if len(selected) < 2 * policy.min_side_samples:
+            return None
+        times = [(stamp - stamps[0]).total_seconds() / span for stamp, _ in selected]
+        values = [value for _, value in selected]
+        center = median(values)
+        centered = [value - center for value in values]
+        if not all(isfinite(value) for value in centered):
+            return None
+        cubic = [[1.0, time, time * time, time**3] for time in times]
+        preliminary = _least_squares(cubic, centered, [1.0] * len(centered))
+        if preliminary is None:
+            return None
+        residuals = _residuals(cubic, centered, preliminary)
+        residual_center = median(residuals)
+        noise = _MAD_NORMALIZATION * median(
+            abs(residual - residual_center) for residual in residuals
+        )
+        resolution = len(values) * ulp(max(abs(value) for value in raw_values))
+        if not isfinite(noise) or noise <= resolution:
+            exact = curve_trend(samples, policy=policy)
+            if exact is None or not (exact.exact_constant or exact.exact_linear):
+                return None
+            return CurveRecoveryFeatures(
+                evidence="rejects", start_at=stamps[0], newest_at=stamps[-1],
+                count=len(samples), noise_scale=0.0,
+                model="constant" if exact.exact_constant else "linear",
+                recovery_score=None, other_score=None, score_gain=None,
+            )
+        result = _recovery_assessment(
+            samples, selected, noise, current_not_before, policy,
+        )
+        if result is None:
+            return None
+        features, residuals = result
+        if features.evidence == "supports":
+            removed = max(range(len(selected)), key=lambda point: (
+                abs(residuals[point]), point,
+            ))
+            removed_at = selected[removed][0]
+            retained = [point for point in samples if point[0] != removed_at]
+            retained_selected = [point for index, point in enumerate(selected)
+                                 if index != removed]
+            if len(retained_selected) < 2 * policy.min_side_samples:
+                return None
+            rescue = _recovery_assessment(
+                retained, retained_selected, noise, current_not_before, policy,
+            )
+            if rescue is None or rescue[0].evidence != "supports":
                 return None
         return features
     except (

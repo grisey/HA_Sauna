@@ -7,7 +7,14 @@ from hashlib import sha256
 from math import ceil, isclose, isfinite
 from statistics import median
 
-from .curve_change import CurveFeatures, CurvePolicy, curve_change, curve_level, curve_trend
+from .curve_change import (
+    CurveFeatures,
+    CurvePolicy,
+    curve_change,
+    curve_level,
+    curve_recovery,
+    curve_trend,
+)
 from .models import Measurement, Position, Quantity
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
 from .parameters import BY_KEY
@@ -140,6 +147,7 @@ class Detector:
                 "received_at": None,
                 "version": 0,
                 "last_original_version": None,
+                "last_original_received_at": None,
                 "epoch": 0,
             }
             for position in self.positions
@@ -167,6 +175,7 @@ class Detector:
         series.update(source=None, time_basis=None, started_at=None, received_at=None)
         series["version"] += 1
         series["last_original_version"] = None
+        series["last_original_received_at"] = None
         series["epoch"] += 1
         self._curve_recovery_evidence.pop((position, quantity), None)
         episode = self._infusion_episode
@@ -249,6 +258,7 @@ class Detector:
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
         else:
             series["last_original_version"] = series["version"]
+            series["last_original_received_at"] = measurement.received_at
 
     def _clear_curve_route(self, route, *, keep_status=False, reason=None, position=None):
         if reason is not None:
@@ -486,7 +496,8 @@ class Detector:
         series = self._curve_series[position, quantity]
         key = (position, quantity)
         evaluation = (candidate.candidate_id, series["version"])
-        previous = self._curve_recovery_evidence.get(key)
+        record = self._curve_recovery_evidence.get(key, {})
+        previous = record if "evaluation" in record else None
         start = max(candidate.onset_at, now - timedelta(
             seconds=self.p[
                 "door_window_seconds" if quantity == Quantity.TEMPERATURE
@@ -518,6 +529,7 @@ class Detector:
                     and within_window(previous))
             )
             previous = {
+                **record,
                 "evaluation": evaluation, "trend": trend,
                 "original_supported": original_supported,
                 "start_at": points[0][0] if points else None,
@@ -543,6 +555,139 @@ class Detector:
             },
         }
         return current_supported
+
+    def _smooth_close_confirmation(self, positions, episode, *, floor, now):
+        """Die volle Fall-Tal-Erholung nur durch neue Originale fortbestätigen.
+
+        Der Formbeleg führt weder einen Türzustand noch einen Ereignisbeginn.
+        Seine beobachteten Flanken müssen zur selben Öffnung und Quelle gehören.
+        Ein neuer Bogen setzt den Erstbeleg zurück; reine Rasterzeit kann keinen
+        Beleg erwerben und lässt aus dem Arbeitsfenster laufende Stützen verfallen.
+        """
+        supports = []
+        confirmations = []
+        fresh_original = False
+        window_start = now - timedelta(seconds=self.p["curve_window_seconds"])
+        recovery_start = max(floor, now - timedelta(
+            seconds=self.p["door_window_seconds"],
+        ))
+
+        def within_window(features):
+            return (
+                features is not None
+                and features.evidence == "supports"
+                and max(floor, window_start) <= features.decline_start_at
+                <= features.decline_newest_at <= now
+                and recovery_start <= features.recovery_start_at
+                <= features.recovery_newest_at <= now
+            )
+
+        for position in positions:
+            series = self._curve_series[position, Quantity.TEMPERATURE]
+            record = self._curve_recovery_evidence.setdefault(
+                (position, Quantity.TEMPERATURE), {},
+            )
+            previous = record.get("smooth_form")
+            context = (
+                self._curve_door_context, episode["started_at"], floor,
+                series["source"], series["time_basis"], series["epoch"],
+            )
+            evaluation = (series["version"], context)
+            same_source = (
+                series["source"] == episode["sources"][position][0]
+                and series["epoch"] == episode["epochs"][position][0]
+            )
+            if previous is None or previous["evaluation"] != evaluation:
+                points = self._curve_points(
+                    position, Quantity.TEMPERATURE, now,
+                    points_not_before=max(floor, series["started_at"] or floor),
+                )
+                features = curve_recovery(
+                    points, policy=self.curve_policy,
+                    current_not_before=recovery_start,
+                ) if same_source else None
+                supported = features is not None and features.evidence == "supports"
+                old_features = previous["features"] if previous is not None else None
+                same_form = (
+                    supported and previous is not None
+                    and previous["evaluation"][1] == context
+                    and previous["original_supported"] and old_features is not None
+                    and features.decline_start_at <= old_features.decline_newest_at
+                    <= features.decline_newest_at
+                    and features.recovery_start_at <= old_features.recovery_newest_at
+                    <= features.recovery_newest_at
+                )
+                original_received = series["last_original_received_at"]
+                new_original = (
+                    series["last_original_version"] == series["version"]
+                    and original_received is not None
+                    and now - timedelta(seconds=self.grid_seconds)
+                    < original_received <= now
+                )
+                original_supported = supported and (
+                    new_original or same_form and within_window(old_features)
+                )
+                first_newest_at = (
+                    previous["first_newest_at"] if same_form else
+                    features.newest_at if original_supported else None
+                )
+                fresh_newest_at = previous["fresh_newest_at"] if same_form else None
+                fresh_observed_at = previous["fresh_observed_at"] if same_form else None
+                if (
+                    original_supported and new_original
+                    and features.newest_at > first_newest_at
+                ):
+                    fresh_newest_at = features.newest_at
+                    fresh_observed_at = now
+                previous = {
+                    "evaluation": evaluation, "features": features,
+                    "original_supported": original_supported,
+                    "first_newest_at": first_newest_at,
+                    "fresh_newest_at": fresh_newest_at,
+                    "fresh_observed_at": fresh_observed_at,
+                }
+                record["smooth_form"] = previous
+            features = previous["features"]
+            current_window = within_window(features)
+            supported = previous["original_supported"] and current_window
+            confirmed = (
+                supported and previous["fresh_newest_at"] is not None
+                and previous["fresh_newest_at"] > previous["first_newest_at"]
+            )
+            supports.append(supported)
+            confirmations.append(confirmed)
+            fresh_original |= confirmed and previous["fresh_observed_at"] == now
+            key = ("door_close", position, Quantity.TEMPERATURE)
+            self._curve_status[key] = {
+                **self._curve_status.get(key, {}),
+                "smooth_recovery": {
+                    "supported": supported, "within_window": current_window,
+                    "source": series["source"], "time_basis": series["time_basis"],
+                    "source_epochs": (series["epoch"],),
+                    "start_at": features.start_at if features is not None else None,
+                    "newest_at": features.newest_at if features is not None else None,
+                    "valley_at": features.valley_at if features is not None else None,
+                    "decline_start_at": (
+                        features.decline_start_at if features is not None else None
+                    ),
+                    "decline_newest_at": (
+                        features.decline_newest_at if features is not None else None
+                    ),
+                    "recovery_start_at": (
+                        features.recovery_start_at if features is not None else None
+                    ),
+                    "recovery_newest_at": (
+                        features.recovery_newest_at if features is not None else None
+                    ),
+                    "first_newest_at": previous["first_newest_at"],
+                    "fresh_newest_at": previous["fresh_newest_at"],
+                    "fresh_observed_at": previous["fresh_observed_at"],
+                },
+            }
+        return (
+            bool(supports) and all(supports),
+            bool(confirmations) and all(confirmations) and fresh_original,
+        )
 
     def _invalidate_curve_proposal(self, key, reason):
         self._curve_proposals.pop(key, None)
@@ -694,6 +839,7 @@ class Detector:
         self._curve_proposal_status[key] = {
             **self._curve_proposal_status[key],
             **self._curve_proposal_diagnostic(key, proposal),
+            "anchor_confirmation": self._curve_proposal_status[key]["confirmation"],
         }
 
     def _curve_confirmation(
@@ -1239,16 +1385,38 @@ class Detector:
         self, route, positions, quantities, fallback, *, floor, kind,
         now, decision_at, onset_allowed=None,
         boundary_reason="outside_current_context",
+        require_bound=False,
     ):
         """Den passenden Kandidaten am allein führenden Bestätigungspfad binden."""
         proposal_key = (route, tuple(positions), tuple(quantities))
         proposal = self._curve_proposals.get(proposal_key)
-        if proposal is None or proposal.ambiguous:
+        if (
+            proposal is None or proposal.ambiguous
+            or require_bound and proposal.evidence_bound_at is None
+        ):
             return fallback
         candidates = proposal.candidates
         if any(candidate.onset_at < floor for _, candidate in candidates):
             self._invalidate_curve_proposal(proposal_key, boundary_reason)
             return fallback
+        if require_bound:
+            # Ein historischer T-Knick gehört nur dann zur bestätigten Form,
+            # wenn seine Originalzeit noch in deren beobachteter Fallflanke liegt.
+            for candidate_key, candidate in candidates:
+                form = self._curve_recovery_evidence.get(candidate_key[1:], {}).get(
+                    "smooth_form", {},
+                )
+                features = form.get("features")
+                if (
+                    features is None or not form.get("original_supported", False)
+                    or not features.decline_start_at <= candidate.onset_at
+                    <= features.decline_newest_at
+                    or not self._curve_onset_available(candidate, self._curve_points(
+                        candidate_key[1], candidate_key[2], now,
+                        points_not_before=features.decline_start_at,
+                    ))
+                ):
+                    return fallback
         beginning = min(candidate.onset_at for _, candidate in candidates)
         if beginning > fallback:
             return fallback
@@ -1951,6 +2119,7 @@ class Detector:
                     )
         mixed_opening = thermal_opening = closing = None
         mixed_toggle = thermal_toggle = close_toggle = False
+        smooth_close_only = False
         closing_positions = ()
         closing_quantities = (Quantity.TEMPERATURE,)
         if episode and self.open:
@@ -2023,8 +2192,16 @@ class Detector:
                     recovery_quantity=Quantity.HUMIDITY,
                 )
             )
-            closing = temperature_recovery or mixed_recovery or humidity_close_toggle
+            smooth_recovery, smooth_close_toggle = self._smooth_close_confirmation(
+                closing_positions, episode, floor=curve_floor, now=now,
+            )
+            closing = (
+                temperature_recovery or mixed_recovery or humidity_close_toggle
+                or smooth_recovery
+            )
             close_toggle = recovery_toggle or mixed_close_toggle or humidity_close_toggle
+            smooth_close_only = smooth_close_toggle and not close_toggle
+            close_toggle |= smooth_close_toggle
             if mixed_close_toggle and not recovery_toggle:
                 closing_quantities = (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         elif episode:
@@ -2117,7 +2294,46 @@ class Detector:
                     "ventilation_after_onset" if self._curve_ventilation_at is not None
                     else "outside_door_episode"
                 ),
+                require_bound=smooth_close_only,
             )
+            if smooth_close_only:
+                proposal_key = (
+                    "door_close", closing_positions, (Quantity.TEMPERATURE,),
+                )
+                proposal_status = self._curve_proposal_status.get(proposal_key, {})
+                anchor_consumed = (
+                    proposal_status.get("status") == "consumed"
+                    and proposal_status.get("confirmed_at") == decision_at
+                    and proposal_status.get("consumed_onset_at") == close_effective
+                )
+                confirmation = {
+                    "confirmation_method": "smooth_recovery",
+                    "confirmed_at": decision_at,
+                    "effective_at": close_effective,
+                    "onset_basis": (
+                        "bound_temperature_anchor" if anchor_consumed else "now_fallback"
+                    ),
+                    "anchor_proposal_id": (
+                        proposal_status["proposal_id"] if anchor_consumed else None
+                    ),
+                    "anchor_confirmation": (
+                        proposal_status["anchor_confirmation"] if anchor_consumed else ()
+                    ),
+                    "confirmation": tuple({
+                        "position": position.value,
+                        "quantity": Quantity.TEMPERATURE.value,
+                        **self._curve_status[
+                            "door_close", position, Quantity.TEMPERATURE
+                        ]["smooth_recovery"],
+                    } for position in closing_positions),
+                }
+                trace["door_close_confirmation"] = confirmation
+                if anchor_consumed:
+                    self._curve_proposal_status[proposal_key] = {
+                        **proposal_status,
+                        "unused_confirmation": proposal_status.get("confirmation", ()),
+                        **confirmation,
+                    }
             self.open = False
             self.closed_at = now
             self.weak_anchor_at = now if enabled and gang_permitted else None

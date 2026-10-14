@@ -16,7 +16,7 @@ from test_detector import detection_parameters, measurement, trace
 from test_foundation import T0
 from test_settings import fixture
 
-from custom_components.ha_sauna.core.curve_change import CurveTrendFeatures
+from custom_components.ha_sauna.core.curve_change import CurveRecoveryFeatures, CurveTrendFeatures
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.timeline import Kind
@@ -40,9 +40,70 @@ def local_features(samples, *, policy, onset_at=None, direction=None, onset_not_
     return result
 
 
+def full_recovery(samples, *, policy, current_not_before, decline_start, valley):
+    """Controlled full-form evidence whose two flanks contain real originals."""
+    before = [(stamp, value) for stamp, value in samples if decline_start <= stamp < valley]
+    after = [(stamp, value) for stamp, value in samples
+             if stamp > valley and stamp >= current_not_before]
+    if min(len(before), len(after)) < policy.min_side_samples:
+        return None
+    if not all(right < left for (_, left), (_, right) in zip(before, before[1:])):
+        return None
+    if not all(right > left for (_, left), (_, right) in zip(after, after[1:])):
+        return None
+    trend = {
+        "noise_scale": 1.0, "level_score": 1.0, "trend_score": 0.0,
+        "score_gain": 1.0, "exact_constant": False, "exact_linear": False,
+    }
+    return CurveRecoveryFeatures(
+        evidence="supports", start_at=samples[0][0], newest_at=samples[-1][0],
+        count=len(samples), noise_scale=1.0, model="quadratic",
+        recovery_score=0.0, other_score=1.0, score_gain=1.0, valley_at=valley,
+        before_count=len(before), after_count=len(after),
+        decline_start_at=before[0][0], decline_newest_at=before[-1][0],
+        recovery_start_at=after[0][0], recovery_newest_at=after[-1][0],
+        before_trend=CurveTrendFeatures(direction=-1, slope=-.1, **trend),
+        after_trend=CurveTrendFeatures(direction=1, slope=.1, **trend),
+    )
+
+
 class CurveCandidateLifecycleTests(unittest.TestCase):
     def _detector(self):
         return Detector(detection_parameters(), T0, (Position.UPPER,))
+
+    def _smooth_opening(self, positions=(Position.UPPER,)):
+        detector = Detector(detection_parameters(), T0, positions)
+        opened = 2 * detector.curve_policy.min_side_samples * detector.grid_seconds
+        events = []
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change",
+            side_effect=supported_opening,
+        ):
+            for second in range(0, opened + detector.grid_seconds, detector.grid_seconds):
+                events.extend(self._smooth_sample(detector, second, valley=opened))
+        self.assertEqual([item.kind for item in events], [Kind.DOOR_OPEN])
+        self.assertTrue(detector.open)
+        return detector, opened
+
+    def _smooth_sample(
+        self, detector, second, *, valley, positions=None, measured_second=None,
+        temperature=None, temperature_source=None, humidity=40, humidity_source=None,
+        **advance,
+    ):
+        grid = detector.grid_seconds
+        original_second = second if measured_second is None else measured_second
+        value = (trace(0)[0] + .1 * abs(original_second - valley) / grid
+                 if temperature is None else temperature)
+        for position in detector.positions if positions is None else positions:
+            for quantity, observed, source in (
+                (Quantity.TEMPERATURE, value, temperature_source),
+                (Quantity.HUMIDITY, humidity, humidity_source),
+            ):
+                self.assertTrue(detector.accept(measurement(
+                    position, quantity, observed, second, source=source,
+                    measured=at(second if measured_second is None else measured_second),
+                )))
+        return detector.advance(at(second), enabled=True, **advance)
 
     def _remember(self, detector, route="door_open"):
         now = at(detector.index * detector.grid_seconds)
@@ -71,6 +132,364 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                 self.assertEqual(original_sample(detector, second, measured=at(second)), [])
                 if detector.door_episode is not None:
                     self._remember(detector, route)
+
+    def test_smooth_close_requires_a_later_original_from_every_temperature_position(self):
+        detector, opened = self._smooth_opening((Position.UPPER, Position.LOWER))
+        grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
+        valley = opened + (side + 1) * grid
+        first = valley + side * grid
+
+        def recovery(samples, **kwargs):
+            return full_recovery(
+                samples, decline_start=at(opened + grid), valley=at(valley), **kwargs,
+            )
+
+        def status(position):
+            return detector.diagnostic["curve_candidates"]["door_close"][position.value][
+                "temperature"
+            ]["smooth_recovery"]
+
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change", return_value=None,
+        ), patch(
+            "custom_components.ha_sauna.core.detector.curve_trend", return_value=None,
+        ), patch(
+            "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
+        ) as fitted:
+            for second in range(opened + grid, first + grid, grid):
+                self.assertEqual(self._smooth_sample(detector, second, valley=valley), [])
+            for position in detector.positions:
+                self.assertTrue(status(position)["supported"])
+                self.assertEqual(status(position)["first_newest_at"], at(first))
+                self.assertIsNone(status(position)["fresh_newest_at"])
+            calls = fitted.call_count
+            self.assertEqual(detector.advance(at(first + grid), enabled=True), [])
+            self.assertEqual(self._smooth_sample(
+                detector, first + 2 * grid, valley=valley, measured_second=first,
+            ), [])
+            self.assertEqual(fitted.call_count, calls)
+            self.assertEqual(self._smooth_sample(
+                detector, first + 3 * grid, valley=valley, measured_second=first,
+                temperature=trace(0)[0] + .1 * side + .01,
+            ), [])
+            self.assertGreater(fitted.call_count, calls)
+            for position in detector.positions:
+                self.assertIsNone(status(position)["fresh_newest_at"])
+            self.assertEqual(self._smooth_sample(
+                detector, first + 4 * grid, valley=valley, positions=(Position.UPPER,),
+            ), [])
+            self.assertEqual(status(Position.UPPER)["fresh_newest_at"], at(first + 4 * grid))
+            self.assertIsNone(status(Position.LOWER)["fresh_newest_at"])
+            events = self._smooth_sample(
+                detector, first + 5 * grid, valley=valley, positions=(Position.LOWER,),
+            )
+        self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
+        self.assertEqual(events[0].channels, ("upper", "lower"))
+        self.assertEqual(events[0].effective_at, events[0].trace_at)
+        self.assertEqual(events[0].trace_at, at(first + 5 * grid))
+        self.assertFalse(detector.open)
+
+    def test_smooth_close_expired_flanks_and_a_different_arc_restart_confirmation(self):
+        for boundary in ("expiry", "new_arc", "ventilation_floor"):
+            with self.subTest(boundary=boundary):
+                detector, opened = self._smooth_opening()
+                grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
+                valley = opened + (side + 1) * grid
+                first = valley + side * grid
+                shape = [opened + grid, valley]
+
+                def recovery(samples, **kwargs):
+                    return full_recovery(
+                        samples, decline_start=at(shape[0]), valley=at(shape[1]), **kwargs,
+                    )
+
+                def status():
+                    return detector.diagnostic["curve_candidates"]["door_close"]["upper"][
+                        "temperature"
+                    ]["smooth_recovery"]
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change", return_value=None,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_trend", return_value=None,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
+                ) as fitted:
+                    for second in range(opened + grid, first + grid, grid):
+                        self.assertEqual(self._smooth_sample(detector, second, valley=valley), [])
+                    old = dict(status())
+                    calls = fitted.call_count
+                    if boundary == "new_arc":
+                        shape[:] = [first + grid, first + (side + 1) * grid]
+                        next_first = shape[1] + side * grid
+                        self.assertEqual(detector.advance(at(next_first - grid), enabled=True), [])
+                        self.assertFalse(status()["supported"])
+                        self.assertEqual(fitted.call_count, calls)
+                        # The complete later arc arrives together. Its original
+                        # flanks, rather than the unchanged overall input start,
+                        # identify it as a new first form observation.
+                        for original in range(shape[0], next_first + grid, grid):
+                            for quantity, value in zip(QUANTITIES, (
+                                trace(0)[0] + .1 * abs(original - shape[1]) / grid, trace(0)[1],
+                            ), strict=True):
+                                self.assertTrue(detector.accept(measurement(
+                                    Position.UPPER, quantity, value, next_first,
+                                    measured=at(original),
+                                )))
+                        self.assertEqual(detector.advance(at(next_first), enabled=True), [])
+                        self.assertLess(old["decline_newest_at"], status()["decline_start_at"])
+                        self.assertLess(old["recovery_newest_at"], status()["recovery_start_at"])
+                    elif boundary == "ventilation_floor":
+                        expires = valley + grid + detector.p["door_window_seconds"] + grid
+                        with patch.object(detector, "_ventilation_proof", return_value=True):
+                            ventilation = detector.advance(at(expires), enabled=True)
+                        self.assertEqual([item.kind for item in ventilation], [Kind.VENTILATION])
+                        self.assertEqual(detector._curve_ventilation_at, at(expires))
+                        self.assertEqual(fitted.call_count, calls)
+                        shape[:] = [expires + grid, expires + (side + 1) * grid]
+                        next_first = shape[1] + side * grid
+                        for second in range(expires + grid, next_first + grid, grid):
+                            self.assertEqual(self._smooth_sample(
+                                detector, second, valley=shape[1],
+                            ), [])
+                        self.assertTrue(all(
+                            stamp >= at(expires) for stamp, _ in fitted.call_args.args[0]
+                        ))
+                    else:
+                        expires = first + detector.p["door_window_seconds"] + grid
+                        self.assertEqual(detector.advance(at(expires), enabled=True), [])
+                        self.assertFalse(status()["supported"])
+                        self.assertEqual(fitted.call_count, calls)
+                        next_first = expires + side * grid
+                        for second in range(expires + grid, next_first + grid, grid):
+                            self.assertEqual(self._smooth_sample(detector, second, valley=valley), [])
+                    self.assertTrue(status()["supported"])
+                    self.assertEqual(status()["first_newest_at"], at(next_first))
+                    self.assertIsNone(status()["fresh_newest_at"])
+                    events = self._smooth_sample(detector, next_first + grid, valley=shape[1])
+                self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
+                self.assertEqual(events[0].trace_at, at(next_first + grid))
+                self.assertEqual(events[0].effective_at, events[0].trace_at)
+
+    def test_smooth_close_respects_temperature_source_epochs_but_survives_humidity_loss(self):
+        for boundary in ("temperature_source", "temperature_epoch", "humidity_missing", "humidity_source"):
+            with self.subTest(boundary=boundary):
+                detector, opened = self._smooth_opening()
+                grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
+                valley = opened + (side + 1) * grid
+                first = valley + side * grid
+                episode = detector.door_episode
+
+                def recovery(samples, **kwargs):
+                    return full_recovery(
+                        samples, decline_start=at(opened + grid), valley=at(valley), **kwargs,
+                    )
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change", return_value=None,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_trend", return_value=None,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
+                ):
+                    for second in range(opened + grid, first + grid, grid):
+                        self.assertEqual(self._smooth_sample(detector, second, valley=valley), [])
+                    if boundary == "temperature_epoch":
+                        self.assertTrue(detector.accept(measurement(
+                            Position.UPPER, Quantity.TEMPERATURE, None, first + grid,
+                            measured=at(first + grid),
+                        )))
+                        self.assertEqual(detector.advance(at(first + grid), enabled=True), [])
+                    else:
+                        events = self._smooth_sample(
+                            detector, first + grid, valley=valley,
+                            temperature_source=("sensor.replaced_temperature"
+                                                if boundary == "temperature_source" else None),
+                            humidity=None if boundary == "humidity_missing" else trace(0)[1],
+                            humidity_source=("sensor.replaced_humidity"
+                                             if boundary == "humidity_source" else None),
+                        )
+                        if boundary.startswith("humidity"):
+                            self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
+                            self.assertEqual(events[0].channels, ("upper",))
+                            self.assertEqual(events[0].trace_at, at(first + grid))
+                            continue
+                        self.assertEqual(events, [])
+                    for second in range(first + 2 * grid, first + (side + 2) * grid, grid):
+                        self.assertEqual(self._smooth_sample(
+                            detector, second, valley=valley,
+                            temperature_source=("sensor.replaced_temperature"
+                                                if boundary == "temperature_source" else None),
+                        ), [])
+                    self.assertTrue(detector.open)
+                    self.assertIs(detector.door_episode, episode)
+                    self.assertNotEqual(
+                        detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["epoch"],
+                        episode["epochs"][Position.UPPER][0],
+                    )
+
+    def test_smooth_close_uses_the_common_emit_and_only_a_valid_bound_contact_time(self):
+        for anchor in ("none", "unbound", "bound", "controller_rejected", "new_arc", "new_arc_gap"):
+            with self.subTest(anchor=anchor):
+                detector, opened = self._smooth_opening()
+                grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
+                valley = opened + (side + 1) * grid
+                first = valley + side * grid
+                close_at = first + grid
+                contact_at = at(opened + grid)
+                shape = [contact_at, at(valley)]
+                received, onset_checks = [], []
+                owner = detector._curve_door_context
+                episode, opening_floor = detector.door_episode, detector._curve_open_effective_at
+
+                def hinge(samples, **kwargs):
+                    if (not samples or samples[0][1] < 50 or anchor == "none"
+                            or anchor == "unbound" and samples[-1][0] < at(close_at)):
+                        return None
+                    return local_features(samples, target=contact_at, **kwargs)
+
+                def recovery(samples, **kwargs):
+                    if shape is None:
+                        return None
+                    return full_recovery(
+                        samples, decline_start=shape[0], valley=shape[1], **kwargs,
+                    )
+
+                def allowed_onset(kind, beginning, now):
+                    onset_checks.append((kind, beginning, now))
+                    return anchor != "controller_rejected"
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change", side_effect=hinge,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_trend", return_value=None,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
+                ):
+                    for second in range(opened + grid, first + grid, grid):
+                        self.assertEqual(self._smooth_sample(
+                            detector, second, valley=valley, on_detection=received.append,
+                            onset_allowed=allowed_onset,
+                        ), [])
+                    key = ("door_close", detector.positions, (Quantity.TEMPERATURE,))
+                    if anchor in ("bound", "controller_rejected", "new_arc", "new_arc_gap"):
+                        self.assertEqual(detector._curve_proposal_status[key]["status"], "bound")
+                        self.assertLess(detector._curve_proposals[key].evidence_bound_at, at(first))
+                        bound = dict(detector._curve_proposal_status[key])
+                        self.assertEqual(bound["onset_at"], contact_at)
+                    if anchor.startswith("new_arc"):
+                        old = dict(detector._curve_status[
+                            "door_close", Position.UPPER, Quantity.TEMPERATURE
+                        ]["smooth_recovery"])
+                        self.assertTrue(old["supported"])
+                        self.assertEqual(old["first_newest_at"], at(first))
+                        self.assertIsNone(old["fresh_newest_at"])
+                        start = first + grid
+                        if anchor == "new_arc_gap":
+                            shape = None
+                            self.assertEqual(self._smooth_sample(
+                                detector, start, valley=valley,
+                            ), [])
+                            self.assertFalse(detector._curve_status[
+                                "door_close", Position.UPPER, Quantity.TEMPERATURE
+                            ]["smooth_recovery"]["supported"])
+                            start += grid
+                        self.assertEqual(detector._curve_proposal_status[key]["status"], "bound")
+                        self.assertEqual(detector._curve_proposal_status[key]["proposal_id"],
+                                         bound["proposal_id"])
+                        valley = start + side * grid
+                        first = valley + side * grid
+                        close_at = first + grid
+                        shape = [at(start), at(valley)]
+                        self.assertLess(at(close_at), bound["onset_at"] + timedelta(
+                            seconds=detector.p["curve_window_seconds"],
+                        ))
+                        # A complete disjoint B arrives with its own originals;
+                        # neither its first fit nor a gap can reuse A's freshness.
+                        for original in range(start, first + grid, grid):
+                            for quantity, value in zip(QUANTITIES, (
+                                trace(0)[0] + .1 * abs(original - valley) / grid, trace(0)[1],
+                            ), strict=True):
+                                self.assertTrue(detector.accept(measurement(
+                                    Position.UPPER, quantity, value, first, measured=at(original),
+                                )))
+                        self.assertEqual(detector.advance(at(first), enabled=True), [])
+                        current = detector._curve_status[
+                            "door_close", Position.UPPER, Quantity.TEMPERATURE
+                        ]["smooth_recovery"]
+                        self.assertTrue(current["supported"])
+                        self.assertLess(old["decline_newest_at"], current["decline_start_at"])
+                        self.assertLess(old["recovery_newest_at"], current["recovery_start_at"])
+                        self.assertEqual(current["first_newest_at"], at(first))
+                        self.assertIsNone(current["fresh_newest_at"])
+                        for field in ("source", "time_basis", "source_epochs"):
+                            self.assertEqual(current[field], old[field])
+                        self.assertIs(detector.door_episode, episode)
+                        self.assertEqual(detector._curve_door_context, owner)
+                        self.assertEqual(detector._curve_open_effective_at, opening_floor)
+                        self.assertIsNone(detector._curve_ventilation_at)
+                        self.assertEqual(detector._curve_proposal_status[key]["status"], "bound")
+                        self.assertEqual(detector._curve_proposal_status[key]["proposal_id"],
+                                         bound["proposal_id"])
+                    events = self._smooth_sample(
+                        detector, close_at, valley=valley, on_detection=received.append,
+                        onset_allowed=allowed_onset,
+                    )
+                self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
+                self.assertEqual(received, events)
+                close = events[0]
+                self.assertEqual(close.trace_at, at(close_at))
+                self.assertEqual(close.detected_at, close.trace_at)
+                self.assertEqual(close.effective_at, contact_at if anchor == "bound" else close.trace_at)
+                self.assertNotEqual(close.effective_at, at(valley))
+                self.assertEqual(detector.diagnostic["signals"], (Kind.DOOR_CLOSE,))
+                self.assertFalse(detector.open)
+                self.assertIsNone(detector.door_episode)
+                self.assertEqual(detector._curve_closed_since, close.trace_at)
+                self.assertEqual(detector._curve_close_effective_at, close.effective_at)
+                self.assertEqual(detector.weak_anchor_at, close.trace_at)
+                self.assertEqual(detector._curve_door_context, owner + 1)
+                confirmation = detector.diagnostic["door_close_confirmation"]
+                self.assertEqual(confirmation["confirmation_method"], "smooth_recovery")
+                self.assertEqual(confirmation["confirmed_at"], close.detected_at)
+                self.assertEqual(confirmation["effective_at"], close.effective_at)
+                self.assertEqual(
+                    confirmation["onset_basis"],
+                    "bound_temperature_anchor" if anchor == "bound" else "now_fallback",
+                )
+                self.assertEqual(len(confirmation["confirmation"]), 1)
+                current = confirmation["confirmation"][0]
+                self.assertEqual((current["position"], current["quantity"]), ("upper", "temperature"))
+                self.assertTrue(current["supported"])
+                self.assertEqual(current["first_newest_at"], at(first))
+                self.assertEqual(current["fresh_newest_at"], close.trace_at)
+                self.assertEqual(current["fresh_observed_at"], close.trace_at)
+                self.assertEqual(current["newest_at"], close.trace_at)
+                self.assertEqual(current["valley_at"], at(valley))
+                if anchor == "bound":
+                    selected = detector._curve_proposal_status[key]
+                    self.assertEqual(confirmation["anchor_proposal_id"], bound["proposal_id"])
+                    self.assertEqual(confirmation["anchor_confirmation"], bound["anchor_confirmation"])
+                    self.assertEqual(selected["confirmation"], confirmation["confirmation"])
+                    self.assertEqual(selected["witnesses"], bound["witnesses"])
+                    self.assertTrue(all(item["supported"] for item in confirmation["anchor_confirmation"]))
+                    self.assertTrue(all(
+                        item["fresh_newest_at"] < close.trace_at
+                        for item in confirmation["anchor_confirmation"]
+                    ))
+                else:
+                    self.assertIsNone(confirmation["anchor_proposal_id"])
+                    self.assertEqual(confirmation["anchor_confirmation"], ())
+                if anchor in ("bound", "controller_rejected"):
+                    self.assertEqual(onset_checks, [(Kind.DOOR_CLOSE, contact_at, close.trace_at)])
+                    self.assertEqual(
+                        detector._curve_proposal_status[key]["status"],
+                        "consumed" if anchor == "bound" else "invalid",
+                    )
+                else:
+                    self.assertEqual(onset_checks, [])
+                    if anchor == "unbound":
+                        self.assertIsNone(detector._curve_proposal_status[key]["evidence_bound_at"])
 
     def test_r04_short_close_confirms_the_physical_recovery_before_the_old_trigger(self):
         started = perf_counter()
@@ -477,6 +896,9 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     "custom_components.ha_sauna.core.detector.curve_change", side_effect=historical,
                 ), patch(
                     "custom_components.ha_sauna.core.detector.curve_trend", side_effect=recovery,
+                ), patch(
+                    # This method isolates recovery of a historical T anchor.
+                    "custom_components.ha_sauna.core.detector.curve_recovery", return_value=None,
                 ):
                     send(opening_at + grid, temperature - .1)
                     send(bound_at, temperature - .2)

@@ -45,9 +45,9 @@ Knick. Bei gekrümmten oder nicht eindeutig bewertbaren Seiten bleibt der
 übergreifende Modellvergleich maßgeblich. Eine gleichmäßig fallende Temperatur
 belegt keine Abbremsung.
 
-Die Bestätigung benötigt für jede erforderliche Messgröße und Position einen
-erneut unterstützten Modellvergleich am selben Beginn mit später
-hinzugekommenen Originalmessungen. Die einzelnen Anfänge müssen innerhalb der
+Die Bestätigung eines Kurvenbeginns benötigt für jede erforderliche Messgröße
+und Position einen erneut unterstützten Modellvergleich am selben Beginn mit
+später hinzugekommenen Originalmessungen. Die einzelnen Anfänge müssen innerhalb der
 zugehörigen Vergleichszeit liegen. Zeitversetzte Meldungen behalten jeweils
 ihren ersten Befund; der zuletzt vollständig gewordene Satz startet keine
 zusätzliche Wartefrist. Wiederholte Rasterprüfungen und Korrekturen derselben
@@ -92,9 +92,32 @@ des früheren Knicks gebunden. Spätere Messungen prüfen die aktuelle Erholung;
 ein verschobenes Arbeitsfenster ersetzt die ursprünglichen Knickbelege nicht.
 Quellenwechsel, Originalkorrekturen und der Kandidatenablauf gelten weiterhin.
 Die Erholung wird an den jüngsten Originaltemperaturen innerhalb der
-Türvergleichszeit geprüft. Alternativ
-kann ein Abbremsen des Temperaturabfalls zusammen mit einer passenden Erholung
-der Feuchte einen früheren Schluss vor dem Temperaturminimum belegen. Dabei
+Türvergleichszeit geprüft.
+
+Auch ein vollständiger glatter Temperaturverlauf aus Abfall, Tal und Anstieg
+kann dieselbe Schließung ohne abrupten Knick bestätigen. Der Modellvergleich
+unterscheidet diese Form von anderen glatten Verläufen; die Originalmessungen
+vor und nach dem berechneten Tal müssen die fallende und steigende Richtung
+getrennt belegen. Die vollständige Form und beide Richtungen müssen auch nach
+Weglassen eines besonders einflussreichen Messpunkts bestehen bleiben.
+Jede noch auswertbare beteiligte Temperaturposition benötigt nach ihrem ersten
+Formbeleg eine erneute Stützung durch später hinzugekommene frische Originale.
+Die Temperaturquellen und ihre ununterbrochenen Messabschnitte müssen zur
+erkannten Öffnung gehören. Der Formbeleg bleibt innerhalb des Analysefensters;
+sein aktueller Anstieg muss zusätzlich in der Türvergleichszeit liegen.
+Originale vor der Öffnung oder einem späteren bestätigten Lüftungsnachweis
+werden nicht verwendet. Rasterprüfungen und Korrekturen derselben Originalprobe
+liefern keine frische Bestätigung.
+
+Der berechnete Talzeitpunkt (`valley_at`) beschreibt nur die Kurvengeometrie
+und legt keinen Schließbeginn fest. Ein früherer Beginn benötigt einen noch
+gültigen, durch neue Originalmessungen gebundenen Temperaturbremsknick. Der
+zugehörige Originalmesspunkt muss an jeder beteiligten Position innerhalb der
+aktuell belegten Fallflanke liegen.
+Andernfalls gilt der tatsächliche Bestätigungszeitpunkt.
+
+Alternativ kann ein Abbremsen des Temperaturabfalls zusammen mit einer passenden
+Erholung der Feuchte einen früheren Schluss vor dem Temperaturminimum belegen. Dabei
 darf die relative Feuchte bereits wieder steigen. Dieser gemischte Nachweis
 muss aus derselben gemeinsam belegten Öffnung stammen und bleibt an die
 ursprünglichen Feuchtequellen und deren ununterbrochene Messabschnitte gebunden.
@@ -205,5 +228,8 @@ neue Kurvennachweise verwenden die beschriebene Originalbestätigung.
 Haltezähler zählen Prüfpunkte, keine Sekunden; ihr Abstand folgt dem Prüfschritt.
 Ein Ereignis verweist über `trace_at` auf seinen auslösenden Diagnosepunkt.
 Ältere Archive verwenden dafür den fachlichen Ereignisbeginn.
+Bei einer durch glatte Erholung bestätigten Schließung trennt der gespeicherte
+Nachweis die historischen Ankerbelege von der tatsächlich verwendeten aktuellen
+Form.
 
 [Zeitliche Zuordnung](speicherung.md#nachträgliche-zuordnung-im-verlauf) · [Originaldaten](speicherung.md)

@@ -20,6 +20,7 @@ from custom_components.ha_sauna.core.curve_change import (
     CurvePolicy,
     curve_change,
     curve_level,
+    curve_recovery,
     curve_trend,
 )
 
@@ -54,6 +55,23 @@ def level_trace_points(*, noisy=True):
         (T0 + timedelta(seconds=second),
          trace(second)[1] + noise * pattern[index % len(pattern)])
         for index, second in enumerate(range(85, 150))
+    ]
+
+
+def recovery_trace_points(degree=2):
+    """A smooth U with a known geometric minimum and existing fixture noise."""
+    source = level_trace_points()
+    valley = source[len(source) // 2][0]
+    tail = (source[-1][0] - valley).total_seconds()
+    falling_step = trace(70)[0] - trace(71)[0]
+    slower_step = trace(280)[0] - trace(281)[0]
+    return [
+        (stamp, trace(0)[0] + falling_step * tail / 2 * (
+            ((stamp - valley).total_seconds() / tail)**2
+            + (slower_step / falling_step * ((stamp - valley).total_seconds() / tail)**3
+               if degree == 3 else 0)
+        ) + value - trace(100)[1])
+        for stamp, value in source
     ]
 
 
@@ -288,6 +306,116 @@ class CurveTrendTests(unittest.TestCase):
                 self.assertIsNone(curve_trend(invalid, policy=policy))
         duplicate = points[:1] + [(points[0][0], points[1][1])] + points[2:]
         self.assertIsNone(curve_trend(duplicate, policy=policy))
+
+
+class CurveRecoveryTests(unittest.TestCase):
+    def test_smooth_recovery_requires_both_original_flanks_without_an_onset_claim(self):
+        policy = curve_policy()
+        window = timedelta(seconds=parameters().values["door_window_seconds"])
+        for degree in (2, 3):
+            with self.subTest(degree=degree):
+                points = recovery_trace_points(degree)
+                geometric_valley = points[len(points) // 2][0]
+                previous = None
+                # Only the second input contains the final new original. The
+                # stateless feature reports that frontier; its caller confirms
+                # freshness and owns any event time separately.
+                for originals in (points[:-1], points):
+                    cutoff = originals[-1][0] - window
+                    result = curve_recovery(
+                        originals, policy=policy, current_not_before=cutoff,
+                    )
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result.evidence, "supports", result)
+                    self.assertFalse(hasattr(result, "onset_at"))
+                    self.assertEqual(result.start_at, originals[0][0])
+                    self.assertEqual(result.newest_at, originals[-1][0])
+                    self.assertEqual(result.count, len(originals))
+                    self.assertLessEqual(
+                        abs((result.valley_at - geometric_valley).total_seconds()),
+                        parameters().values["grid_seconds"],
+                    )
+                    self.assertEqual(result.before_trend.direction, -1)
+                    self.assertEqual(result.after_trend.direction, 1)
+                    self.assertGreaterEqual(result.before_count, policy.min_side_samples)
+                    self.assertGreaterEqual(result.after_count, policy.min_side_samples)
+                    self.assertLess(result.decline_newest_at, result.valley_at)
+                    self.assertLess(result.valley_at, result.recovery_start_at)
+                    self.assertEqual(result.recovery_start_at, cutoff)
+                    self.assertLess(result.decline_start_at, cutoff)
+                    self.assertEqual(result.recovery_newest_at, originals[-1][0])
+                    for stamp in (
+                        result.decline_start_at, result.decline_newest_at,
+                        result.recovery_start_at, result.recovery_newest_at,
+                    ):
+                        self.assertIn(stamp, {stamp for stamp, _ in originals})
+                    if previous is not None:
+                        self.assertGreater(result.newest_at, previous.newest_at)
+                        self.assertGreater(result.recovery_newest_at, previous.recovery_newest_at)
+                    previous = result
+
+    def test_falling_level_heating_and_one_excursion_do_not_supply_full_recovery(self):
+        source = level_trace_points()
+        start, stop = source[0][0], source[-1][0]
+        span = (stop - start).total_seconds()
+        falling_step = trace(70)[0] - trace(71)[0]
+        variants = {
+            "continuing fall": [
+                (stamp, trace(0)[0] - falling_step * (stamp - start).total_seconds()
+                 + value - trace(100)[1])
+                for stamp, value in source
+            ],
+            "fall slows to an endpoint": [
+                (stamp, trace(0)[0] + falling_step * (stop - stamp).total_seconds()**2 / (2 * span)
+                 + value - trace(100)[1])
+                for stamp, value in source
+            ],
+            "level": [(stamp, trace(0)[0] + value - trace(100)[1])
+                      for stamp, value in source],
+            "continuing heat": [
+                (stamp, trace(0)[0] + falling_step * (stamp - start).total_seconds()
+                 + value - trace(100)[1])
+                for stamp, value in source
+            ],
+        }
+        isolated = list(variants["level"])
+        middle = len(isolated) // 2
+        isolated[middle] = (isolated[middle][0], trace(85)[0])
+        variants["one isolated valley original"] = isolated
+        for name, points in variants.items():
+            with self.subTest(shape=name):
+                result = curve_recovery(
+                    points, policy=curve_policy(),
+                    current_not_before=stop - timedelta(
+                        seconds=parameters().values["door_window_seconds"],
+                    ),
+                )
+                self.assertTrue(result is None or result.evidence == "rejects", result)
+
+    def test_current_cutoff_cannot_replace_missing_decline_or_current_originals(self):
+        policy = curve_policy()
+        points = recovery_trace_points()
+        window = timedelta(seconds=parameters().values["door_window_seconds"])
+        cutoff = points[-1][0] - window
+        supported = curve_recovery(points, policy=policy, current_not_before=cutoff)
+        self.assertIsNotNone(supported)
+        self.assertEqual(supported.evidence, "supports", supported)
+        self.assertEqual(supported.recovery_start_at, cutoff)
+        self.assertEqual(
+            supported, curve_recovery(points, policy=policy, current_not_before=cutoff),
+        )
+        rising_only = points[len(points) // 2:]
+        cases = (
+            (rising_only, cutoff),
+            (points, points[-(policy.min_side_samples - 1)][0]),
+            (points, points[-1][0] + window),
+        )
+        for originals, current_not_before in cases:
+            with self.subTest(start=originals[0][0], current_not_before=current_not_before):
+                result = curve_recovery(
+                    originals, policy=policy, current_not_before=current_not_before,
+                )
+                self.assertTrue(result is None or result.evidence == "rejects", result)
 
 
 class CurveChangeTests(unittest.TestCase):

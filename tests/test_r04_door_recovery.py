@@ -22,6 +22,102 @@ from custom_components.ha_sauna.core.timeline import Kind
 
 
 class R04DoorRecoveryTests(unittest.TestCase):
+    def _assert_smooth_close_originals(
+        self, row, event, inputs, opening_witnesses, values, floor, consumed,
+    ):
+        """Validate current full-form evidence without making its valley an onset."""
+        selected = row["door_close_confirmation"]
+        self.assertEqual(selected["confirmation_method"], "smooth_recovery")
+        self.assertEqual(selected["confirmed_at"], event.trace_at)
+        self.assertEqual(selected["effective_at"], event.effective_at)
+        confirmations = {item["position"]: item for item in selected["confirmation"]}
+        self.assertEqual(set(confirmations), set(event.channels))
+        freshness = []
+        for position in event.channels:
+            evidence = row["curve_candidates"]["door_close"][position]["temperature"]["smooth_recovery"]
+            confirmed = confirmations[position]
+            self.assertEqual(confirmed["quantity"], "temperature")
+            self.assertEqual({key: confirmed[key] for key in evidence}, evidence)
+            self.assertNotIn("onset_at", confirmed)
+            witness = opening_witnesses[position, "temperature"]
+            self.assertTrue(evidence["supported"], evidence)
+            self.assertTrue(evidence["within_window"], evidence)
+            for key in ("source", "time_basis", "source_epochs"):
+                self.assertEqual(evidence[key], witness[key], evidence)
+            self.assertGreater(evidence["fresh_newest_at"], evidence["first_newest_at"])
+            self.assertLessEqual(evidence["fresh_observed_at"], event.trace_at)
+            freshness.append(evidence["fresh_observed_at"])
+            self.assertGreaterEqual(
+                evidence["decline_start_at"], max(
+                    floor, event.trace_at - timedelta(seconds=values["curve_window_seconds"]),
+                ),
+            )
+            self.assertLessEqual(evidence["decline_start_at"], evidence["decline_newest_at"])
+            self.assertLess(evidence["decline_newest_at"], evidence["valley_at"])
+            self.assertLess(evidence["valley_at"], evidence["recovery_start_at"])
+            self.assertGreaterEqual(
+                evidence["recovery_start_at"], max(
+                    floor, event.trace_at - timedelta(seconds=values["door_window_seconds"]),
+                ),
+            )
+            self.assertLessEqual(evidence["recovery_start_at"], evidence["recovery_newest_at"])
+            self.assertLessEqual(evidence["recovery_newest_at"], event.trace_at)
+            self.assertEqual(evidence["newest_at"], evidence["recovery_newest_at"])
+            for stamp in (
+                evidence["start_at"], evidence["newest_at"],
+                evidence["decline_start_at"], evidence["decline_newest_at"],
+                evidence["recovery_start_at"], evidence["recovery_newest_at"],
+                evidence["first_newest_at"], evidence["fresh_newest_at"],
+            ):
+                self.assertTrue(any(
+                    item.position.value == position and item.quantity == Quantity.TEMPERATURE
+                    and item.source == evidence["source"] and item.received_at == stamp
+                    for item in inputs
+                ), evidence)
+        self.assertIn(event.trace_at, freshness)
+        if selected["onset_basis"] == "now_fallback":
+            self.assertEqual(event.effective_at, event.trace_at)
+            self.assertEqual(consumed, [])
+            self.assertIsNone(selected["anchor_proposal_id"])
+            self.assertEqual(selected["anchor_confirmation"], ())
+            return
+        self.assertEqual(selected["onset_basis"], "bound_temperature_anchor")
+        self.assertEqual(len(consumed), 1)
+        package = consumed[0]
+        self.assertEqual(package["confirmation_method"], "smooth_recovery")
+        self.assertEqual(package["onset_basis"], selected["onset_basis"])
+        self.assertEqual(package["confirmation"], selected["confirmation"])
+        self.assertEqual(package["proposal_id"], selected["anchor_proposal_id"])
+        self.assertEqual(package["anchor_confirmation"], selected["anchor_confirmation"])
+        self.assertIn("unused_confirmation", package)
+        self.assertEqual(package["consumed_onset_at"], event.effective_at)
+        self.assertEqual(
+            event.effective_at, min(witness["onset_at"] for witness in package["witnesses"]),
+        )
+        self.assertGreater(event.trace_at, event.effective_at)
+        self.assertIsNotNone(package["evidence_bound_at"])
+        self.assertGreaterEqual(package["evidence_bound_at"], package["first_observed_at"])
+        self.assertLessEqual(package["evidence_bound_at"], event.trace_at)
+        anchors = {item["candidate_id"]: item for item in selected["anchor_confirmation"]}
+        self.assertEqual(set(anchors), set(package["candidate_ids"]))
+        for witness in package["witnesses"]:
+            anchor = anchors[witness["candidate_id"]]
+            opening_witness = opening_witnesses[witness["position"], witness["quantity"]]
+            for key in ("source", "time_basis", "source_epochs"):
+                self.assertEqual(witness[key], opening_witness[key])
+            self.assertTrue(anchor["supported"], anchor)
+            self.assertGreater(anchor["fresh_newest_at"], witness["first_newest_at"])
+            self.assertLessEqual(anchor["fresh_observed_at"], package["evidence_bound_at"])
+            self.assertLessEqual(anchor["newest_at"], package["evidence_bound_at"])
+            self.assertGreaterEqual(witness["onset_at"], floor)
+            for stamp in (witness["onset_at"], anchor["fresh_newest_at"]):
+                self.assertTrue(any(
+                    item.position.value == witness["position"]
+                    and item.quantity.value == witness["quantity"]
+                    and item.source == witness["source"] and item.received_at == stamp
+                    for item in inputs
+                ), anchor)
+
     def test_first_two_door_sequences_recover_from_original_temperature(self):
         started = perf_counter()
         origin = datetime.fromisoformat(fixture("session")["origin"])
@@ -100,12 +196,13 @@ class R04DoorRecoveryTests(unittest.TestCase):
             msg=repr(diagnostics),
         )
         opening_witnesses = {}
+        opening_floor = None
         for event, (_, earliest, latest, confirmation_limit) in zip(door_events, intervals):
             with self.subTest(kind=event.kind, onset=event.effective_at):
-                self.assertGreaterEqual(event.effective_at, earliest)
-                self.assertLessEqual(event.effective_at, latest)
+                with self.subTest(assessment="physical_event_onset"):
+                    self.assertGreaterEqual(event.effective_at, earliest)
+                    self.assertLessEqual(event.effective_at, latest)
                 self.assertLessEqual(event.trace_at, confirmation_limit)
-                self.assertGreater(event.trace_at, event.effective_at)
                 self.assertEqual(event.detected_at, event.trace_at)
 
                 row = next(item for item in observed if item["at"] == event.trace_at)
@@ -117,9 +214,21 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     if proposal["status"] == "consumed"
                     and proposal["confirmed_at"] == event.trace_at
                 ]
+                if row.get("door_close_confirmation", {}).get("confirmation_method") == "smooth_recovery":
+                    floor = max([opening_floor, *(
+                        item.effective_at for item in events
+                        if item.kind == Kind.VENTILATION
+                        and opening_floor <= item.trace_at <= event.trace_at
+                    )])
+                    self._assert_smooth_close_originals(
+                        row, event, inputs, opening_witnesses, parameters.values, floor, consumed,
+                    )
+                    continue
+                self.assertGreater(event.trace_at, event.effective_at)
                 self.assertEqual(len(consumed), 1)
                 package = consumed[0]
                 if event.kind == Kind.DOOR_OPEN:
+                    opening_floor = event.effective_at
                     opening_witnesses = {
                         (witness["position"], witness["quantity"]): witness
                         for witness in package["witnesses"]
@@ -208,10 +317,12 @@ class R04DoorRecoveryTests(unittest.TestCase):
         # fall-to-plateau recovery, not a ten-second physical contact timestamp:
         # at 15:26:00/20/40 upper T is 86.14/85.29/84.99 and lower T is
         # 78.40/77.07/76.78; RH settles before recovering. Both use raw originals.
+        # The first input continues to 14:52 because its upper T rises only
+        # around 14:51:20-30. This adds observation time, not a new contact time.
         cases = (
             (
                 "after_ventilation", at(14, 48, 40), at(14, 50, 5), at(14, 50, 20),
-                at(14, 50, 20) + timedelta(seconds=values["curve_window_seconds"]),
+                at(14, 52),
                 at(14, 50, 13, 541953), (at(14, 50, 24), at(14, 50, 45)),
             ),
             (
@@ -451,6 +562,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                             "at": row["at"],
                             "signals": row["signals"],
                             "conditions": row["conditions"],
+                            "door_close_confirmation": row.get("door_close_confirmation"),
                             "candidates": {
                                 route: {
                                     position: {
@@ -458,7 +570,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                                             "status", "onset_at", "first_observed_at",
                                             "fresh_observed_at", "slope_before",
                                             "slope_after", "score_gain", "after_trend",
-                                            "recovery_trend",
+                                            "recovery_trend", "smooth_recovery",
                                         )}
                                         for quantity, candidate in quantities.items()
                                     }
@@ -491,6 +603,29 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     f"wall_seconds={perf_counter() - started:.6f} "
                     f"events={diagnostics['events']!r}",
                 )
+                print("R04 physical onset versus observed close decision: " + json.dumps({
+                    "case": name, "physical_interval": (earliest, latest),
+                    "input_through": end,
+                    "close_decisions": [
+                        {"effective_at": event.effective_at, "detected_at": event.detected_at,
+                         "trace_at": event.trace_at,
+                         "confirmation": next(
+                             item.get("door_close_confirmation") for item in observed
+                             if item["at"] == event.trace_at
+                         ),
+                         "effective_in_physical_interval": earliest <= event.effective_at <= latest}
+                        for event in events if event.kind == Kind.DOOR_CLOSE
+                    ],
+                }, default=str, sort_keys=True))
+                if name == "after_ventilation":
+                    negative_context = math_contexts[name][0]
+                    with self.subTest(assessment="still_open_after_earlier_temperature_binding"):
+                        self.assertFalse(any(
+                            event.kind == Kind.DOOR_CLOSE
+                            and negative_context["ticks"][0] <= event.trace_at
+                            <= negative_context["floor_context_end"]
+                            for event in events
+                        ), msg=diagnostic)
                 doors = [event for event in events
                          if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
                 if retrospective_inputs and [event.kind for event in doors] != [
@@ -546,7 +681,10 @@ class R04DoorRecoveryTests(unittest.TestCase):
                                 for witness in proposal["witnesses"]
                             }
                             for confirmation in proposal.get("confirmation", ()):
-                                confirmations_by_position[positions[confirmation["candidate_id"]]] = (
+                                position = confirmation.get("position") or positions.get(
+                                    confirmation.get("candidate_id"),
+                                )
+                                confirmations_by_position[position] = (
                                     proposal["status"],
                                     *(confirmation.get(key) for key in columns["bound"][1:]),
                                 )
@@ -593,21 +731,38 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 }
                 self.assertLess(opening.effective_at, close.effective_at, msg=diagnostic)
                 self.assertLess(opening.trace_at, close.trace_at, msg=diagnostic)
-                self.assertGreaterEqual(close.effective_at, earliest, msg=diagnostic)
-                self.assertLessEqual(close.effective_at, latest, msg=diagnostic)
+                with self.subTest(assessment="physical_closure_onset"):
+                    self.assertGreaterEqual(close.effective_at, earliest, msg=diagnostic)
+                    self.assertLessEqual(close.effective_at, latest, msg=diagnostic)
                 self.assertLessEqual(close.trace_at, end, msg=diagnostic)
+                row = next(item for item in observed if item["at"] == close.trace_at)
+                smooth_selected = (
+                    row.get("door_close_confirmation", {}).get("confirmation_method")
+                    == "smooth_recovery"
+                )
                 for event in doors:
+                    if event.kind == Kind.DOOR_CLOSE and smooth_selected:
+                        continue
                     self.assertGreater(event.trace_at, event.effective_at, msg=diagnostic)
                     self.assertEqual(event.detected_at, event.trace_at, msg=diagnostic)
                     self.assertIn(
                         event.effective_at, {item.received_at for item in inputs},
                         msg=diagnostic,
                     )
-                row = next(item for item in observed if item["at"] == close.trace_at)
                 consumed = [
                     proposal for proposal in row["curve_proposals"].get("door_close", ())
                     if proposal["status"] == "consumed"
                 ]
+                if smooth_selected:
+                    floor = max([opening.effective_at, *(
+                        event.effective_at for event in events
+                        if event.kind == Kind.VENTILATION
+                        and opening.trace_at <= event.trace_at <= close.trace_at
+                    )])
+                    self._assert_smooth_close_originals(
+                        row, close, inputs, opening_witnesses, values, floor, consumed,
+                    )
+                    continue
                 self.assertEqual(len(consumed), 1, msg=diagnostic)
                 package = consumed[0]
                 self.assertEqual(
