@@ -19,36 +19,39 @@ Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
 
 ## Kurvenbeginn und Bestätigung
 
-Für Türöffnung, Türschluss und Aufguss kann ein mathematischer
-Kurvenbeginn-Kandidat einen früheren Beginn vorschlagen. Der lokale
-Kurvenvergleich berücksichtigt das gemessene Rauschen, glatte Trends und den
-Einfluss einzelner Ausreißer. Sein Score ist keine Ereigniswahrscheinlichkeit
-und löst allein kein Ereignis aus. Die Vorgaben stammen aus dem internen
-Parameterkatalog und sind keine Einstellungen der Oberfläche.
+Für Türöffnung, Türschluss und Aufguss vergleicht die Erkennung eine lokale
+Kurvenänderung mit glatten Trends. Dabei berücksichtigt sie das gemessene
+Rauschen und den Einfluss einzelner Ausreißer. Ein unterstützter Kurvenbeginn
+ist zunächst ein Kandidat; der Modellscore ist keine Ereigniswahrscheinlichkeit.
+Vergleichszeiten und technische Modellvorgaben stehen im
+[`Parameterkatalog`](../custom_components/ha_sauna/defaults.json).
+Die technischen Modellvorgaben sind keine Einstellungen der Oberfläche.
 
 Die Auswertung verwendet Originalmesspunkte innerhalb zusammenhängender
 Quellenabschnitte mit einheitlicher Zeitbasis. Vorhandene gültige Messzeiten
 bleiben erhalten; ersatzweise verwendete Empfangszeiten bilden eine eigene
 Zeitbasis. Raster-Haltewerte liefern keine zusätzliche Evidenz.
 
-Ein lokaler Befund gilt für feste Originalmesspunkte und einen unverrückten
-Beginn. Nur wenn die Nachweise aller für den Erkennungsweg erforderlichen
-Messgrößen und Positionen zugleich vollständig vorliegen und zeitlich
-zusammenpassen, kann der erste solche Beleg bis zur fachlichen Bestätigung
-erhalten bleiben. Spätere Modellvergleiche über andere Messpunkte und das
-Ablaufen des Rechenfensters löschen diesen historischen Beleg nicht.
+Die Bestätigung benötigt für jede erforderliche Messgröße und Position einen
+erneut unterstützten Modellvergleich am selben Beginn mit später
+hinzugekommenen Originalmessungen. Die einzelnen Anfänge müssen innerhalb der
+zugehörigen Vergleichszeit liegen. Zeitversetzte Meldungen behalten jeweils
+ihren ersten Befund; der zuletzt vollständig gewordene Satz startet keine
+zusätzliche Wartefrist. Wiederholte Rasterprüfungen und Korrekturen derselben
+Originalprobe ersetzen diesen neuen Nachweis nicht.
 
-Quellen- oder Kontextbrüche beenden seine Gültigkeit. Korrekturen seiner
-Originalmessungen erfordern eine erneute Prüfung an denselben Messpunkten und
-am selben Beginn; bleibt er danach unbelegt, wird er verworfen. Fehlende
-Evidenz bestätigt keinen Kandidaten.
+Quellen- oder Kontextbrüche, widerlegte Kurvenformen und das Ablaufen eines
+Kandidaten beenden seinen Nachweis. Korrekturen seiner Originalmessungen
+erfordern eine erneute Prüfung an denselben Messpunkten und am selben Beginn;
+bleibt er danach unbelegt, wird er verworfen. Fehlende Evidenz bestätigt keinen
+Kandidaten.
 
-Erst die folgenden fachlichen Tür- und Aufgussregeln bestätigen ein Ereignis;
-Mindestverluste, Feuchtenachweise und Bestätigungsdauern bleiben unverändert.
-Dabei kann ein passender, weiterhin belegter Kandidatenbeginn zugeordnet werden.
-Fehlt er, überschreitet er den zulässigen Kontext oder ist die Zuordnung
-mehrdeutig, bleibt die bisherige Zeitzuordnung bestehen. Die frühere Zuordnung
-zieht weder die fachliche Bestätigung noch die reale Erkennungszeit vor.
+Erst der vollständige neue Nachweis unter den folgenden fachlichen Bedingungen
+bestätigt ein Ereignis. Sein belegter Kandidatenbeginn kann innerhalb des
+zulässigen Tür- und Betriebskontexts als früherer Beginn zugeordnet werden.
+Wird diese Zuordnung vom laufenden Kontext abgewiesen, gilt der
+Bestätigungszeitpunkt. Die frühere Zuordnung zieht weder die fachliche
+Bestätigung noch die reale Erkennungszeit vor.
 Die Bedeutung der Zeitfelder
 ist unter [Zeitangaben](speicherung.md#daten-und-zeitangaben) und
 [nachträgliche Zuordnung im Verlauf](speicherung.md#nachträgliche-zuordnung-im-verlauf)
@@ -56,23 +59,25 @@ beschrieben.
 
 ## Öffnen und Schließen der Tür
 
-Eine Öffnung benötigt entweder fallende Temperatur und Feuchte oder einen
-Temperaturabfall bei durchgehend bestätigtem Heizen. Temperatur- und
-Feuchteabfall dürfen zeitlich versetzt auftreten. Eine vollständige Messposition
-genügt; bei zwei verfügbaren Positionen müssen beide den Abfall belegen.
-Die Regeln gelten auch bei hoher Temperatur.
+Eine Öffnung benötigt eine unterstützte Änderung zu fallender Temperatur und
+relativer Feuchte. Beide Änderungen dürfen zeitlich versetzt auftreten.
+Eine vollständige Messposition genügt; bei zwei beteiligten Positionen müssen
+beide den gemeinsamen Verlauf belegen. Die Regeln gelten auch bei hoher
+Temperatur.
 
-Zusätzlich muss die geglättete Temperatur jeder beteiligten Position den
-eingestellten Mindesttemperaturverlust einer Türöffnung erreichen. Bezug ist
-ihr höchster Wert im vorherigen Trendfenster und während des Öffnungshinweises.
-Erst dann beginnt die Bestätigungsdauer.
+Ein zusätzlicher Öffnungsweg verwendet allein die Temperaturform bei
+durchgehend bestätigtem Heizen. Sämtliche Originalmessungen seines
+Kurvenvergleichs müssen aus diesem Heizabschnitt stammen. Eine
+Heizunterbrechung verwirft diesen Nachweis.
 
-Ein belegter Temperatur-/Feuchteabfall bleibt bei weiter fallender Temperatur
-derselben Quellen gültig, auch wenn die Feuchte nicht weiter fällt. Endet der
-Temperaturabfall oder wechselt eine Quelle, verfällt dieser Öffnungsnachweis.
-
-Eine Schließung setzt eine erkannte Öffnung und Temperaturerholung voraus.
-Gültige Temperaturwerte können sie auch bei gestörter Feuchtemessung belegen.
+Eine Schließung setzt eine erkannte Öffnung voraus. Eine Änderung vom
+Temperaturabfall zu steigender Temperatur kann sie an allen noch auswertbaren
+beteiligten Positionen auch bei gestörter Feuchtemessung belegen. Alternativ
+kann ein Abbremsen des Temperaturabfalls zusammen mit einer passenden Erholung
+der Feuchte einen früheren Schluss vor dem Temperaturminimum belegen. Dabei
+darf die relative Feuchte bereits wieder steigen. Dieser gemischte Nachweis
+muss aus derselben gemeinsam belegten Öffnung stammen und bleibt an die
+ursprünglichen Feuchtequellen und deren ununterbrochene Messabschnitte gebunden.
 
 ## Anwesenheit und Aufgüsse erkennen
 
@@ -85,6 +90,22 @@ mit anschließender Schließung für die eingestellte Bestätigungsfrist. Sie be
 einen gültigen Temperaturbezug und einen neuen Feuchteanstieg nach der Öffnung;
 bestätigtes Durchlüften ist nicht erforderlich. Eine weitere Öffnung beginnt
 einen neuen Türbezug.
+
+Ein Aufguss wird bereits beim erneut durch neue Originalmessungen bestätigten
+Feuchteanstieg erfasst, sofern der absolute Wassergehalt an allen beteiligten
+Positionen zunimmt. Weitere Spitzen gehören bis zum belegten Abschluss zu
+diesem einen Aufguss.
+
+Bei ununterbrochenem Verlauf müssen zum Abschluss nach der Feuchtespitze ein
+Abfall und anschließend an allen beteiligten Positionen ein neues Niveau belegt
+sein. Der Niveauvergleich verwendet den jüngsten zusammenhängenden
+Originalverlauf über die
+Aufgussvergleichszeit und muss durch weitere neue Originalmessungen bestätigt
+werden. Das Niveau wird gegenüber glatten Trends frei bestimmt; eine Rückkehr
+zum Wert vor dem Aufguss ist nicht erforderlich. Ein später erkannter Anstieg,
+der schon vor diesem Abschluss begann, setzt denselben Aufguss fort. Erst ein
+nach dem belegten Abschluss begonnener Anstieg kann einen weiteren Aufguss
+ergeben.
 
 Personen- und Aufgusssignale eröffnen bei Erkennung aus Temperatur und Feuchte
 nur nach erkannter Türöffnung und anschließender Schließung einen Gang;
@@ -118,14 +139,22 @@ eine gültige Abwesenheitsmeldung.
 
 ## Erkennungen bei Messlücken prüfen
 
-Zusammenhängende Bestätigungsnachweise enden beim Wechsel oder Ausfall der
-beteiligten vollständigen Messpositionen oder am Ende der Türöffnung. Für die
-Lüftungsreferenz gilt stattdessen die beschriebene Pausenregel. Ein fortlaufender
-Öffnungsnachweis darf mehrere Merkmalsfenster überdauern.
+Personenhaltezähler beginnen nach einem Wechsel oder Ausfall der beteiligten
+vollständigen Messpositionen neu. Unbestätigte Kurvennachweise bleiben an ihre
+jeweiligen Quellenabschnitte gebunden. Für die Lüftungsreferenz gilt die
+beschriebene Pausenregel.
+
+Bei einem bereits gezählten Aufguss pausieren Messlücken, Quellenwechsel und
+vorübergehend fehlende Auswertbarkeit den Abschluss. Die Zuordnung bleibt
+bestehen; ein unbekannter Verlauf belegt weder Abklingen noch ein neues Niveau.
+Nach Wiedererwerb muss ein neues Niveau auf den wieder zusammenhängenden
+Messreihen aller ursprünglich beteiligten Positionen erneut belegt werden.
+Die Zuordnung endet bei einer bestätigten Türöffnung oder Betriebsunterbrechung.
+Ein Aus- und Einschalten bleibt auch zwischen Rasterpunkten wirksam.
 
 ### Diagnose im Verlauf
 
-Die Erkennungskontrolle zeigt gespeicherte Merkmale und ihre Schwellen.
+Die Erkennungskontrolle zeigt gespeicherte Merkmale und Erkennungsnachweise.
 Ein Markerklick hebt den zugehörigen Diagrammabschnitt hervor und zeigt den
 auslösenden Erkennungsnachweis. Der Wechsel zur Ereignisliste erfolgt über
 **Ereignis im Verlauf**. Der ausgewählte Prüfzeitpunkt enthält auch unerfüllte
@@ -134,6 +163,8 @@ unterschieden. Weitere gespeicherte Prüfzeitpunkte sind einzeln auswählbar.
 
 Schwellen beziehen sich auf die gespeicherte Sitzungskonfiguration. Fehlt diese
 in älteren Aufzeichnungen, ist der damalige Schwellenwert nicht belegt.
+Historische Tür- und Aufgussschwellen beschreiben die damalige Erkennung;
+neue Kurvennachweise verwenden die beschriebene Originalbestätigung.
 Haltezähler zählen Prüfpunkte, keine Sekunden; ihr Abstand folgt dem Prüfschritt.
 Ein Ereignis verweist über `trace_at` auf seinen auslösenden Diagnosepunkt.
 Ältere Archive verwenden dafür den fachlichen Ereignisbeginn.

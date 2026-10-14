@@ -2451,17 +2451,19 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             str(marker): self.entry.options["parameters"][str(marker)]
             for marker in flow["data_schema"].schema
         }
+        parameter_key = "door_window_seconds"
+        changed = values[parameter_key] + DEFAULT_PARAMETERS["grid_seconds"]
         result = await self.hass.config_entries.options.async_configure(
-            flow["flow_id"], {**values, "door_open_slope": -2.1})
+            flow["flow_id"], {**values, parameter_key: changed})
         self.assertEqual((result["type"], result["step_id"], result["flow_id"]), ("menu", "sensors", flow["flow_id"]))
         await self.hass.async_block_till_done()
         self.runtime = self.entry.runtime_data
-        self.assertEqual(self.entry.options["parameters"]["door_open_slope"], -2.1)
+        self.assertEqual(self.entry.options["parameters"][parameter_key], changed)
         for key, value in saved_proxy.items():
             self.assertEqual(self.entry.options["parameters"][key], value)
         await self.panel.evaluate("p => p.refresh(true)")
         await expect(link).to_be_visible()
-        await expect(self.panel.locator('input[name="door_open_slope"]')).to_have_count(0)
+        await expect(self.panel.locator(f'input[name="{parameter_key}"]')).to_have_count(0)
         self.assertEqual(self.errors, [])
         self.assertEqual(self.ws_errors, [])
 

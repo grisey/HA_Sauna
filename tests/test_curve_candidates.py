@@ -1,6 +1,7 @@
 """Originaleingänge, feste Kandidaten und Bestätigung durch neue Originale."""
 
 from datetime import timedelta
+from math import ceil
 import unittest
 from unittest.mock import patch
 
@@ -88,7 +89,16 @@ class CurveCandidateTests(unittest.TestCase):
         openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(openings), 1)
         opening = openings[0]
-        self.assertEqual(opening.effective_at, at(70))
+        # The trace starts falling at 70. A bounded knot search need only
+        # resolve that beginning to one search interval across its input span.
+        # This limit comes from the catalogue before observing the fitted time.
+        resolution = max(detector.grid_seconds, ceil(
+            detector.p["curve_window_seconds"]
+            / max(1, detector.curve_policy.max_candidates - 1)
+        ))
+        self.assertLessEqual(
+            abs((opening.effective_at - at(70)).total_seconds()), resolution,
+        )
         self.assertLess(opening.effective_at, opening.detected_at)
         self.assertEqual(opening.detected_at, opening.trace_at)
         self.assertEqual(opening.channels, (Position.UPPER.value,))

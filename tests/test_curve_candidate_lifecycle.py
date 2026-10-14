@@ -181,7 +181,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
             expired = detector._curve_proposal_status[key]
             self.assertEqual(expired["proposal_id"], package["proposal_id"])
             self.assertEqual(expired["status"], "invalid")
-            self.assertEqual(expired["reason"], "door_episode_expired")
+            self.assertEqual(expired["reason"], "candidate_expired")
             self.assertFalse(detector._curve_confirmation(
                 "door_open", detector.positions, QUANTITIES, floor=T0,
             ))
@@ -276,6 +276,74 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         window = max(detector.p["door_window_seconds"], detector.p["door_humidity_seconds"])
         shift = (ceil(window / (2 * grid)) + 1) * grid
         original = (side - 1) * grid
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change",
+            side_effect=local_features,
+        ):
+            self._feed_until(detector, (2 * side - 1) * grid)
+            key = self._remember(detector)
+            first = dict(detector._curve_proposal_status[key])
+            self._feed_until(detector, original + 2 * shift + side * grid)
+            self.assertEqual(detector._curve_proposal_status[key], first)
+
+        def supported_hypothesis(onset):
+            # The frozen candidate search cannot move without rejecting its
+            # old witness. Supply a separate, still-supported complete
+            # hypothesis directly to isolate the proposal ambiguity contract.
+            # Its onset and all support points remain observed originals.
+            now = at(detector.index * grid)
+            for candidate_key in tuple(detector._curve_candidates):
+                if candidate_key[0] != "door_open":
+                    continue
+                candidate = detector._curve_candidates[candidate_key]
+                features = local_features(
+                    candidate.original_points, policy=detector.curve_policy,
+                    onset_at=onset, direction=-1, onset_not_before=T0,
+                )
+                self.assertIsNotNone(features)
+                replacement = replace(
+                    candidate, candidate_id=f"{candidate.candidate_id}:{onset.isoformat()}",
+                    onset_at=onset, first_observed_at=now, features=features,
+                    first_newest_at=features.newest_at, fresh_newest_at=None,
+                    fresh_observed_at=None,
+                )
+                detector._curve_candidates[candidate_key] = replacement
+                detector._curve_status[candidate_key] = {
+                    **detector._curve_status[candidate_key],
+                    "candidate_id": replacement.candidate_id,
+                    "onset_at": onset, "first_observed_at": now,
+                    "before_count": features.before_count,
+                    "after_count": features.after_count,
+                    "first_newest_at": features.newest_at,
+                    "fresh_newest_at": None, "fresh_observed_at": None,
+                }
+            self._remember(detector)
+
+        supported_hypothesis(at(original + shift))
+        self.assertEqual(detector._curve_proposal_status[key], first)
+        supported_hypothesis(at(original + 2 * shift))
+        ambiguous = dict(detector._curve_proposal_status[key])
+        self.assertEqual(ambiguous["status"], "ambiguous")
+        self.assertEqual(ambiguous["proposal_id"], first["proposal_id"])
+        self.assertEqual(ambiguous["onsets"], first["onsets"])
+        supported_hypothesis(at(original))
+        self.assertEqual(detector._curve_proposal_status[key], ambiguous)
+        self.assertFalse(detector._curve_confirmation(
+            "door_open", detector.positions, QUANTITIES, floor=T0,
+        ))
+        fallback = at(detector.index * grid)
+        self.assertEqual(detector._curve_beginning(
+            "door_open", detector.positions, QUANTITIES, fallback,
+            floor=T0, kind=Kind.DOOR_OPEN, now=fallback, decision_at=fallback,
+        ), fallback)
+
+    def test_counterevidence_retires_the_old_package_before_a_new_candidate_replaces_it(self):
+        detector = self._detector()
+        grid = detector.grid_seconds
+        side = detector.curve_policy.min_side_samples
+        window = max(detector.p["door_window_seconds"], detector.p["door_humidity_seconds"])
+        shift = (ceil(window / (2 * grid)) + 1) * grid
+        original = (side - 1) * grid
         target = [at(original)]
 
         def evidence(samples, **kwargs):
@@ -290,21 +358,14 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
             first = dict(detector._curve_proposal_status[key])
             target[0] = at(original + shift)
             self._feed_until(detector, original + shift + side * grid)
-            self.assertEqual(detector._curve_proposal_status[key], first)
-            target[0] = at(original + 2 * shift)
-            self._feed_until(detector, original + 2 * shift + side * grid)
-            ambiguous = dict(detector._curve_proposal_status[key])
-            self.assertEqual(ambiguous["status"], "ambiguous")
-            self.assertEqual(ambiguous["proposal_id"], first["proposal_id"])
-            self.assertEqual(ambiguous["onsets"], first["onsets"])
-            target[0] = at(original)
-            self._feed_until(detector, detector.index * grid + 2 * grid)
-            self.assertEqual(detector._curve_proposal_status[key], ambiguous)
-        fallback = at(detector.index * grid)
-        self.assertEqual(detector._curve_beginning(
-            "door_open", detector.positions, QUANTITIES, fallback,
-            floor=T0, kind=Kind.DOOR_OPEN, now=fallback, decision_at=fallback,
-        ), fallback)
+        replacement = detector._curve_proposal_status[key]
+        self.assertEqual(replacement["status"], "available")
+        self.assertNotEqual(replacement["proposal_id"], first["proposal_id"])
+        self.assertEqual(replacement["onset_at"], target[0])
+        self.assertTrue(set(first["candidate_ids"]).isdisjoint(replacement["candidate_ids"]))
+        self.assertFalse(detector._curve_confirmation(
+            "door_open", detector.positions, QUANTITIES, floor=T0,
+        ))
 
     def test_only_simultaneous_complete_support_can_bind_within_owner_and_ventilation_bounds(self):
         detector = self._detector()
