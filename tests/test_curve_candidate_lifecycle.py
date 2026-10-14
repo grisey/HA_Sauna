@@ -16,6 +16,7 @@ from test_detector import detection_parameters, measurement, trace
 from test_foundation import T0
 from test_settings import fixture
 
+from custom_components.ha_sauna.core.curve_change import CurveTrendFeatures
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.timeline import Kind
@@ -412,6 +413,75 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         self.assertNotIn(key, detector._curve_proposals)
         self.assertEqual(detector._curve_proposal_status[key]["reason"], "owner_context")
 
+    def test_temperature_recovery_cache_expires_without_a_tick_refit(self):
+        detector = self._detector()
+        grid = detector.grid_seconds
+        side = detector.curve_policy.min_side_samples
+        events = []
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change",
+            side_effect=supported_opening,
+        ):
+            for second in range(0, (2 * side + 1) * grid, grid):
+                events.extend(original_sample(detector, second, measured=at(second)))
+        self.assertEqual([item.kind for item in events], [Kind.DOOR_OPEN])
+        positive = CurveTrendFeatures(
+            direction=1, slope=.1, noise_scale=0.0,
+            level_score=None, trend_score=None, score_gain=None,
+            exact_constant=False, exact_linear=True,
+        )
+
+        def recovery(samples, *, policy):
+            return positive if len(samples) >= policy.min_side_samples else None
+
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change", side_effect=local_features,
+        ), patch(
+            "custom_components.ha_sauna.core.detector.curve_trend", side_effect=recovery,
+        ) as fitted:
+            # Keep the real opening and its supported close candidate available
+            # while isolating the lifetime of its separate recovery evidence.
+            with patch.object(detector, "_curve_confirmation", return_value=False):
+                for offset in (1, 2):
+                    second = (2 * side + offset) * grid
+                    self.assertEqual(original_sample(
+                        detector, second, values=(trace(0)[0] + .1 * offset, trace(0)[1]),
+                        measured=at(second),
+                    ), [])
+                key = ("door_close", Position.UPPER, Quantity.TEMPERATURE)
+                candidate = detector._curve_candidates[key]
+                last = detector.index * grid
+                self.assertTrue(detector._temperature_recovery(Position.UPPER, candidate, at(last)))
+                calls = fitted.call_count
+                oldest = fitted.call_args.args[0][0][0]
+                first_expiry = oldest + timedelta(seconds=detector.p["door_window_seconds"] + grid)
+                self.assertLessEqual((first_expiry - at(last)).total_seconds(),
+                                     detector.p["door_window_seconds"])
+                self.assertEqual(detector.advance(first_expiry, enabled=True), [])
+                self.assertFalse(detector._temperature_recovery(Position.UPPER, candidate, first_expiry))
+                self.assertEqual(fitted.call_count, calls)
+                expired = last + detector.p["door_window_seconds"] + grid
+                self.assertLess(expired - last, detector.p["sensor_timeout_seconds"])
+                self.assertLess(expired - last, detector.p["curve_window_seconds"])
+                self.assertEqual(detector.advance(at(expired), enabled=True), [])
+                self.assertFalse(detector._temperature_recovery(Position.UPPER, candidate, at(expired)))
+                self.assertEqual(fitted.call_count, calls)
+                self.assertEqual(detector._curve_candidates[key].candidate_id, candidate.candidate_id)
+                for offset in range(1, side + 1):
+                    second = expired + offset * grid
+                    self.assertEqual(original_sample(
+                        detector, second, values=(trace(0)[0] + .2 + .1 * offset, trace(0)[1]),
+                        measured=at(second),
+                    ), [])
+            fresh = detector._curve_candidates[key]
+            self.assertEqual(fresh.candidate_id, candidate.candidate_id)
+            self.assertTrue(detector._temperature_recovery(Position.UPPER, fresh, at(second)))
+            self.assertGreater(fitted.call_count, calls)
+            self.assertTrue(detector._curve_confirmation(
+                "door_close", detector.positions, (Quantity.TEMPERATURE,),
+                floor=detector._curve_open_effective_at, recovery=True,
+            ))
+
     def test_unconfirmed_earlier_infusion_support_cannot_backdate_a_later_fresh_candidate(self):
         selected = detection_parameters()
         old_onset = at(180)
@@ -420,23 +490,38 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
 
         def infusion_evidence(samples, **kwargs):
             # A single old local witness cannot confirm itself. The existing
-            # trace's later +3 RH flank supplies a different fixed candidate.
-            if kwargs["direction"] != 1 or not samples:
+            # trace's later +3 RH flank and subsequent fall form another pulse.
+            if not samples:
                 return None
             newest = samples[-1][0]
-            if newest == at(200):
+            if kwargs["direction"] == 1 and newest == at(200):
                 target = old_onset
-            elif newest in (at(245), at(246)):
+            elif kwargs["direction"] == 1 and newest in (at(245), at(246)):
                 target = at(240)
+            elif kwargs["direction"] == -1 and newest in (at(285), at(286)):
+                target = at(280)
             else:
                 return None
             result = local_features(samples, target=target, **kwargs)
-            return None if result is None else replace(result, slope_before=0.0, slope_after=1.0)
+            if result is None:
+                return None
+            rising = kwargs["direction"] == 1
+            return replace(
+                result, slope_before=0.0 if rising else 1.0,
+                slope_after=1.0 if rising else -1.0,
+                slope_change=1.0 if rising else -2.0,
+                signed_strength=1.0 if rising else -2.0,
+                after_trend=CurveTrendFeatures(
+                    direction=1 if rising else -1, slope=1.0 if rising else -1.0,
+                    noise_scale=1.0, level_score=1.0, trend_score=0.0, score_gain=1.0,
+                    exact_constant=False, exact_linear=False,
+                ),
+            )
 
         actual = []
         admitted_again = 200 + selected.values["infusion_window_seconds"]
         with patch("custom_components.ha_sauna.core.detector.curve_change", side_effect=infusion_evidence):
-            for second in range(261):
+            for second in range(291):
                 for quantity, value in zip(QUANTITIES, trace(second), strict=True):
                     detector.accept(measurement(Position.UPPER, quantity, value, second))
                 # A controller admission boundary replaces the old hold-attempt
@@ -464,7 +549,10 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         ))
         infusions = [event for event in actual if event.kind == Kind.INFUSION]
         self.assertEqual(len(infusions), 1)
-        self.assertEqual(infusions[0].trace_at, at(246))
+        rising = next(row for row in observed if row["at"] == at(246))
+        self.assertNotIn(Kind.INFUSION, rising["signals"])
+        self.assertEqual(rising["infusion_episode"]["phase"], "pending")
+        self.assertEqual(infusions[0].trace_at, at(286))
         self.assertEqual(infusions[0].effective_at, at(240))
         consumed = next(
             proposal for row in observed if row["at"] == infusions[0].trace_at

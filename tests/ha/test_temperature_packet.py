@@ -27,7 +27,7 @@ class TemperaturePacketTests(unittest.TestCase):
             + values["grid_seconds"]
         )
         # The helper's original-report prefix follows comparison admission.
-        prefix_lead = (3 * values["curve_min_side_samples"] + 4) * values["grid_seconds"]
+        prefix_lead = (5 * values["curve_min_side_samples"] + 6) * values["grid_seconds"]
         packet_at = fixtures.T0 + timedelta(seconds=admission_lead + prefix_lead)
         await fixture.prepare_infusion_packet(
             runtime, adapter, clock, packet_at, temperature=initial,

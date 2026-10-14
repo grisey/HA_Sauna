@@ -446,14 +446,24 @@ class Detector:
         oder Korrekturstand veranlasst die Auswertung des jüngsten festen Fensters;
         Rasterzeit allein verschiebt keine Evidenz. Eine Korrektur darf einen
         gerichteten Nachweis verwerfen, aber keinen neuen Originalbeleg erwerben.
+        Verlässt eine tragende Probe das aktuelle Fenster, verfällt die Freigabe
+        ohne Neuberechnung; auch eine Korrektur kann sie dann nicht erneuern.
         """
         series = self._curve_series[position, Quantity.TEMPERATURE]
         evaluation = (candidate.candidate_id, series["version"])
         previous = self._curve_recovery_evidence.get(position)
+        start = max(candidate.onset_at, now - timedelta(
+            seconds=self.p["door_window_seconds"]
+        ))
+
+        def within_window(evidence):
+            return (
+                evidence is not None and evidence["start_at"] is not None
+                and evidence["newest_at"] is not None
+                and start <= evidence["start_at"] <= evidence["newest_at"] <= now
+            )
+
         if previous is None or previous["evaluation"] != evaluation:
-            start = max(candidate.onset_at, now - timedelta(
-                seconds=self.p["door_window_seconds"]
-            ))
             points = tuple(
                 point for point in series["points"] if start <= point[0] <= now
             )
@@ -465,7 +475,8 @@ class Detector:
             directed = trend is not None and trend.direction == 1
             original_supported = directed and (
                 series["last_original_version"] == series["version"]
-                or (same_candidate and previous["original_supported"])
+                or (same_candidate and previous["original_supported"]
+                    and within_window(previous))
             )
             previous = {
                 "evaluation": evaluation, "trend": trend,
@@ -475,6 +486,7 @@ class Detector:
             }
             self._curve_recovery_evidence[position] = previous
         trend = previous["trend"]
+        current_supported = previous["original_supported"] and within_window(previous)
         key = ("door_close", position, Quantity.TEMPERATURE)
         self._curve_status[key] = {
             **self._curve_status.get(key, {}),
@@ -482,10 +494,11 @@ class Detector:
                 "start_at": previous["start_at"], "newest_at": previous["newest_at"],
                 "direction": trend.direction if trend is not None else None,
                 "slope": trend.slope if trend is not None else None,
-                "original_supported": previous["original_supported"],
+                "original_supported": current_supported,
+                "within_window": within_window(previous),
             },
         }
-        return previous["original_supported"]
+        return current_supported
 
     def _invalidate_curve_proposal(self, key, reason):
         self._curve_proposals.pop(key, None)

@@ -137,21 +137,23 @@ class DeviceFeedbackTests(unittest.TestCase):
     async def prepare_infusion_packet(
         self, runtime, adapter, clock, at, *, temperature=90,
     ):
-        """Prepare an unconfirmed RH flank using genuine HA original reports.
+        """Prepare a pending RH pulse using genuine HA original reports.
 
-        The existing 20-to-24 input remains a linear rise, with its final 24
-        report reserved for the caller's same-time packet. A bounded prefix
-        stops at its first local candidate; subsequent ticks add no originals.
-        No completed detection or confirmation time supplies fixture values.
+        Original reports rise from 20 to a peak above the caller's final 24,
+        then decline until the first supported, unconfirmed decay candidate.
+        Subsequent ticks add no originals; the final 24 report remains reserved
+        for the caller's same-time packet. No completed detection or
+        confirmation time supplies fixture values.
 
-        Minimum lead is (3 * curve_min_side_samples + 4) * grid_seconds.
+        Minimum lead is (5 * curve_min_side_samples + 6) * grid_seconds.
         Callers also provide the ordinary RH/AH comparison and median warmup.
         """
         values = runtime.configuration.parameters.values
         side = values["curve_min_side_samples"]
         step = timedelta(seconds=values["grid_seconds"])
-        rise_steps = 2 * side + 2
-        rising_at = at - rise_steps * step
+        flank_steps = 2 * side + 2
+        peak_at = at - flank_steps * step
+        rising_at = peak_at - flank_steps * step
         baseline_start = rising_at - (side + 1) * step
         baseline_end = baseline_start - step
         self.assertLessEqual(
@@ -167,6 +169,8 @@ class DeviceFeedbackTests(unittest.TestCase):
             event.event_id for event in runtime.session.timeline.processed
             if event.kind == Kind.INFUSION
         )
+        baseline_humidity, final_humidity = 20, 24
+        peak_humidity = final_humidity + (final_humidity - baseline_humidity)
 
         async def originals(humidity):
             await asyncio.gather(*(
@@ -185,6 +189,17 @@ class DeviceFeedbackTests(unittest.TestCase):
                 if event.kind == Kind.INFUSION
             ), prior_infusions, "Prefix consumed the caller's reserved confirmation")
 
+        def pending_pulse():
+            episode = runtime.detector.diagnostic["infusion_episode"]
+            self.assertIsNotNone(episode, runtime.detector.diagnostic)
+            self.assertEqual(episode["phase"], "pending")
+            self.assertIsNone(episode["confirmed_at"])
+            self.assertEqual(set(episode["water_change"]), set(positions))
+            self.assertTrue(all(
+                change > 0 for change in episode["water_change"].values()
+            ))
+            return episode
+
         # The lightweight adapter fixture acknowledges ordinary relay commands
         # here; this long healthy baseline must not create a separate fault.
         def acknowledge():
@@ -196,21 +211,34 @@ class DeviceFeedbackTests(unittest.TestCase):
         acknowledge()
         while clock[0] < baseline_end:
             clock[0] = min(baseline_end, clock[0] + interval)
-            await originals(20)
+            await originals(baseline_humidity)
             acknowledge()
         for index in range(side + 2):
             clock[0] = baseline_start + index * step
-            await originals(20)
+            await originals(baseline_humidity)
             acknowledge()
 
-        prepared = None
-        for index in range(1, rise_steps):
+        for index in range(1, flank_steps + 1):
             clock[0] = rising_at + index * step
-            await originals(20 + (24 - 20) * index / rise_steps)
+            await originals(
+                baseline_humidity
+                + (peak_humidity - baseline_humidity) * index / flank_steps,
+            )
             acknowledge()
             no_early_confirmation()
+        onset_at = pending_pulse()["onset_at"]
+
+        prepared = None
+        for index in range(1, flank_steps):
+            clock[0] = peak_at + index * step
+            await originals(
+                peak_humidity + (final_humidity - peak_humidity) * index / flank_steps,
+            )
+            acknowledge()
+            no_early_confirmation()
+            self.assertEqual(pending_pulse()["onset_at"], onset_at)
             statuses = runtime.detector.diagnostic["curve_candidates"].get(
-                "infusion", {},
+                "infusion_decay", {},
             )
             candidates = [statuses.get(position, {}).get("humidity", {})
                           for position in positions]
@@ -220,14 +248,17 @@ class DeviceFeedbackTests(unittest.TestCase):
                 prepared = tuple(candidate["candidate_id"] for candidate in candidates)
                 break
         self.assertIsNotNone(
-            prepared, "Declared RH prefix supplied no first local candidate",
+            prepared,
+            "Declared pulse prefix supplied no first decay candidate: "
+            f"{runtime.detector.diagnostic!r}",
         )
         while clock[0] + step < at:
             clock[0] += step
             await runtime.tick()
             acknowledge()
         no_early_confirmation()
-        statuses = runtime.detector.diagnostic["curve_candidates"]["infusion"]
+        self.assertEqual(pending_pulse()["onset_at"], onset_at)
+        statuses = runtime.detector.diagnostic["curve_candidates"]["infusion_decay"]
         candidates = [statuses[position]["humidity"] for position in positions]
         self.assertEqual(
             tuple(candidate["candidate_id"] for candidate in candidates), prepared,

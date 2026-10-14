@@ -8,7 +8,7 @@ from unittest.mock import patch
 from test_detector import detection_parameters, measurement, sample, trace
 from test_foundation import T0
 
-from custom_components.ha_sauna.core.curve_change import CurveFeatures
+from custom_components.ha_sauna.core.curve_change import CurveFeatures, CurveTrendFeatures
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.timeline import Kind
@@ -43,6 +43,11 @@ def supported_opening(
         slope_change=-1.0, signed_strength=-1.0,
         smooth_score=1.0, change_score=0.0, score_gain=1.0,
         smooth_model="linear",
+        after_trend=CurveTrendFeatures(
+            direction=-1, slope=-1.0, noise_scale=1.0,
+            level_score=1.0, trend_score=0.0, score_gain=1.0,
+            exact_constant=False, exact_linear=False,
+        ),
     )
 
 
