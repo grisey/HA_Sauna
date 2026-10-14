@@ -13,6 +13,8 @@ import gzip
 import hashlib
 import json
 import math
+import os
+import shutil
 import sqlite3
 from bisect import bisect_right
 from collections import Counter
@@ -20,7 +22,7 @@ from contextlib import closing
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -505,6 +507,7 @@ class SessionRun:
                                if isinstance(value, dict) and "since_s" in value)
         events += [(t, 2, 0, "tick", None) for t in checkpoints if 0 <= t <= duration]
         events.sort(key=lambda row: row[:3])
+        archive_ready = False
         try:
             initial = self.case.get("initial_state", {})
             for role, spec in initial.items():
@@ -514,6 +517,7 @@ class SessionRun:
                 self.device.ingest(role, self.states[BINDINGS[role]], self.now, initial=True)
             self.device.refresh(self.now)
             await self.runtime.start_archive(Path(self._temporary.name) / "sessions.sqlite", "fixture")
+            archive_ready = True
             for t, _, _, kind, payload in events:
                 if t < 0:
                     raise ValueError("Use initial_state for pre-session received values")
@@ -571,6 +575,7 @@ class SessionRun:
             if preservation_before is not None:
                 self._verify_preserved_measurements(samples, stored, preservation_before)
         finally:
+            failure = sys.exception()
             # Preserve the state at failure/end before adapter teardown can
             # close an unfinished session and obscure the original failure.
             self.final_sessions = [plain(s) for s in self.runtime.controller.completed_sessions]
@@ -579,10 +584,42 @@ class SessionRun:
                         *((self.runtime.session,) if self.runtime.session else ()))
             self.detections = [plain(e) for s in sessions for e in s.timeline.processed]
             try:
-                await self.runtime.close()
+                evidence = os.environ.get("SAUNA_SESSION_EVIDENCE")
+                if evidence:
+                    try:
+                        if not archive_ready:
+                            raise RuntimeError("Archive startup did not complete; evidence is unavailable")
+                        await self._export_archive(Path(evidence))
+                    except Exception as error:
+                        message = (f"Session evidence export failed for {self.case['id']}: "
+                                   f"{type(error).__name__}: {error}")
+                        if failure is None:
+                            raise RuntimeError(message) from error
+                        failure.add_note(message)
+                        print(message, file=sys.stderr, flush=True)
             finally:
-                self._temporary.cleanup()
+                try:
+                    await self.runtime.close()
+                finally:
+                    self._temporary.cleanup()
         return self
+
+    async def _export_archive(self, folder):
+        """Keep the original run archive before teardown can finalize a session."""
+        folder.mkdir(parents=True, exist_ok=True)
+        exported, staged = None, None
+        try:
+            exported = Path(await self.runtime.archive.export())
+            with NamedTemporaryFile(dir=folder, prefix=".sauna-session-", suffix=".zip",
+                                    delete=False) as handle:
+                staged = Path(handle.name)
+            shutil.move(exported, staged)
+            staged.replace(folder / f"{self.case['id']}.archive.zip")
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+            if exported is not None:
+                exported.unlink(missing_ok=True)
 
     def _observe_recording_history(self, sessions):
         """Preserve accumulated evidence; do not prescribe a switching schedule."""
