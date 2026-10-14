@@ -9,6 +9,8 @@ A separate fixed-tail comparison assesses a freely fitted level against the
 same smooth trends. The detector owns tail selection and event completion.
 Direction after a chosen knot is assessed separately on its actual right-hand
 originals; a global hinge derivative cannot supply that observed direction.
+Independent lines on both original sides, using the supplied onset floor,
+must also agree with the hinge's sense of change.
 """
 
 from __future__ import annotations
@@ -276,7 +278,50 @@ def _models(times, values, noise, knots, policy):
     return smooth_score, smooth_model, residuals, changes
 
 
-def _supported_without_point(times, values, noise, index, residuals, penalty, policy):
+def _side_change_direction(
+    times, values, noise, knot, start, value_resolution, policy,
+):
+    """Check the hinge's sense against independent lines at its fixed split.
+
+    The existing onset floor excludes earlier state shapes from this additional
+    consistency check. If its left side is too short, only the nearest earlier
+    originals needed for the existing side minimum are retained. This also
+    permits a change exactly at the inclusive floor. The global fit still owns
+    noise and model evidence.
+    Each side uses its own time span so a short side cannot inherit an
+    artificially precise slope from the duration of the whole window.
+    """
+    before, after = [], []
+    for time, value in zip(times, values, strict=True):
+        if time <= knot:
+            before.append((time, value))
+        else:
+            after.append((time, value))
+    first = sum(time < start for time, _ in before)
+    first = min(first, max(0, len(before) - policy.min_side_samples))
+    before = before[first:]
+    slopes, resolutions = [], []
+    for points in (before, after):
+        if len(points) < policy.min_side_samples:
+            return None
+        span = points[-1][0] - points[0][0]
+        rows = [[1.0, (time - points[0][0]) / span] for time, _ in points]
+        fitted = _fit(rows, [value for _, value in points], noise, policy)
+        if fitted is None:
+            return None
+        slopes.append(fitted[0][1] / span)
+        resolutions.append(value_resolution / span)
+    change = slopes[1] - slopes[0]
+    resolution = fsum(resolutions)
+    if not isfinite(change) or not isfinite(resolution):
+        return None
+    return (1 if change > 0 else -1) if abs(change) > resolution else 0
+
+
+def _supported_without_point(
+    times, values, noise, index, residuals, penalty, policy,
+    *, shape_start, value_resolution,
+):
     """One bounded refit rejects evidence that rests on one influential value."""
     removed = max(range(len(values)), key=lambda point: (abs(residuals[point]), point))
     knot = times[index]
@@ -284,16 +329,25 @@ def _supported_without_point(times, values, noise, index, residuals, penalty, po
     before = sum(times[point] <= knot for point in retained)
     if min(before, len(retained) - before) < policy.min_side_samples:
         return None
-    result = _models(
-        [times[point] for point in retained],
-        [values[point] for point in retained], noise, [(index, knot)], policy,
-    )
+    retained_times = [times[point] for point in retained]
+    retained_values = [values[point] for point in retained]
+    result = _models(retained_times, retained_values, noise, [(index, knot)], policy)
     if result is None:
         return None
     smooth_score, _, _, changes = result
     score, _, coefficients = changes[0]
     resolution = len(values) * ulp(max(abs(smooth_score), abs(score + penalty)))
-    return smooth_score - score - penalty > resolution, coefficients[3]
+    side_direction = _side_change_direction(
+        retained_times, retained_values, noise, knot, shape_start,
+        value_resolution, policy,
+    )
+    if side_direction is None:
+        return None
+    return (
+        smooth_score - score - penalty > resolution
+        and side_direction * coefficients[3] > 0,
+        coefficients[3],
+    )
 
 
 def _level_models(times, raw_values, policy):
@@ -578,6 +632,9 @@ def curve_change(
     scale. Fixed-onset and replacement comparisons use the same query limits.
     A supported hinge remains usable when its separate right-hand direction is
     insufficient; the caller must require after_trend for a directed route.
+    Independent lines on the original sides use onset_not_before, retaining
+    nearest earlier originals only when needed for the existing side minimum.
+    Their sense must agree with the hinge, including after point removal.
     """
     try:
         if direction is not None and (
@@ -690,9 +747,21 @@ def curve_change(
         # bracketed; it cannot supply a precise earlier candidate beginning.
         if supported and index in support_boundaries:
             return None
+        shape_start = (
+            (onset_not_before - stamps[0]).total_seconds() / span
+            if onset_not_before is not None else times[0]
+        )
+        if supported:
+            side_direction = _side_change_direction(
+                times, values, noise, times[index], shape_start, resolution, policy,
+            )
+            if side_direction is None:
+                return None
+            supported = side_direction * coefficients[3] > 0
         if supported:
             rescue = _supported_without_point(
                 times, values, noise, index, residuals, search_penalty, policy,
+                shape_start=shape_start, value_resolution=resolution,
             )
             if rescue is None or not rescue[0] or rescue[1] * coefficients[3] <= 0:
                 return None

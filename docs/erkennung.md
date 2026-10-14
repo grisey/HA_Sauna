@@ -37,6 +37,9 @@ Originalmessungen geprüft. Eine Gerade wird mit einem konstanten Niveau
 verglichen; der Nachweis berücksichtigt das lokale Rauschen und muss auch
 nach Weglassen eines besonders einflussreichen Messpunkts bestehen bleiben.
 Die Ableitung der übergreifenden Kurvenanpassung genügt dafür nicht.
+Auch die Richtung der Steigungsänderung muss zu den getrennt ausgewerteten
+Originalverläufen vor und nach dem Knick passen. Eine gleichmäßig fallende
+Temperatur belegt keine Abbremsung.
 
 Die Bestätigung benötigt für jede erforderliche Messgröße und Position einen
 erneut unterstützten Modellvergleich am selben Beginn mit später

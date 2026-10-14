@@ -441,6 +441,57 @@ class CurveChangeTests(unittest.TestCase):
         self.assertLess(result.slope_before, result.slope_after)
         self.assertLess(result.slope_after, 0)
 
+    def test_fixed_onset_cannot_invent_braking_during_continuous_cooling(self):
+        # The existing detector input starts cooling at 70 and never slows.
+        # This is its full 60-second original window at the false close tick;
+        # neither the frozen hypothesis nor its owner floor can move for a fit.
+        points = [
+            (T0 + timedelta(seconds=second), 80 - .04 * max(0, second - 70))
+            for second in range(43, 104)
+        ]
+        onset = T0 + timedelta(seconds=90)
+        result = curve_change(
+            points, policy=curve_policy(), onset_at=onset, direction=1,
+            onset_not_before=T0 + timedelta(seconds=68),
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "rejects", result)
+        self.assertEqual(result.onset_at, onset)
+        self.assertEqual(result.newest_at, points[-1][0])
+
+    def test_owner_floor_preserves_real_braking_after_earlier_heating(self):
+        policy = curve_policy()
+        opening = 70
+        braking = 90
+        falling_step = trace(70)[0] - trace(71)[0]
+        slower_step = trace(280)[0] - trace(281)[0]
+        # A smooth heating history reaches its maximum at the known opening.
+        # The quadratic background and the real positive hinge are both in the
+        # existing model family; their input rates come from the trace fixture.
+        # Before the owner floor, the old heating has the opposite local sense.
+        points = [
+            (T0 + timedelta(seconds=second),
+             trace(0)[0] - falling_step * (second - opening)**2 / (braking - opening)
+             + (2 * falling_step - slower_step) * max(0, second - braking))
+            for second in range(43, braking + 2 * policy.min_side_samples)
+        ]
+        onset = T0 + timedelta(seconds=braking)
+        with patch.object(curves, "_models", wraps=curves._models) as fits:
+            result = curve_change(
+                points, policy=policy, onset_at=onset, direction=1,
+                onset_not_before=T0 + timedelta(seconds=opening),
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "supports", result)
+        self.assertEqual(result.onset_at, onset)
+        self.assertGreater(result.slope_change, 0)
+        self.assertLess(result.slope_before, result.slope_after)
+        self.assertLess(result.slope_after, 0)
+        self.assertIsNotNone(result.after_trend)
+        self.assertEqual(result.after_trend.direction, -1)
+        self.assertEqual(len(fits.call_args_list[0].args[0]), len(points))
+        self.assertEqual(result.before_count + result.after_count, len(points))
+
     def test_smooth_trends_and_an_isolated_outlier_do_not_support_a_change(self):
         policy = curve_policy()
         source = trace_points(80)
