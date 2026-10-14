@@ -17,7 +17,7 @@
       "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
       "native_button_event": "Bereits erkannte Tastergesten behalten ihre Bedeutung. Hier ist nur ein zusätzlicher Name für kurze Betätigung möglich.",
       "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
-      "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
+      "button_gesture_incompatible": "Der gewählte Taster meldet nur Drücken und Loslassen. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
       "invalid_configuration": "Die Gerätezuordnung passt nicht zu den gespeicherten Einstellungen.",
       "ambiguous_entity": "Mehrere passende Entitäten vorhanden. Die gewünschte Messung bitte auswählen."
     },
@@ -108,7 +108,7 @@
             },
             "data_description": {
               "heater_feedback": "Zusätzlicher binärer Heiznachweis. Der Heizschütz muss hier nicht erneut zugeordnet werden.",
-              "heater_power": "Gültige Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
+              "heater_power": "Gültige Leistungsmesswerte dienen als Heiznachweis und zur Berechnung des Energieverbrauchs.",
               "audio_output": "Noch ohne Audioausgabe."
             }
           },
@@ -164,7 +164,7 @@
       "invalid_event_types": "Der Taster muss unterstützte Ereignisarten bereitstellen.",
       "native_button_event": "Bereits erkannte Tastergesten behalten ihre Bedeutung. Hier ist nur ein zusätzlicher Name für kurze Betätigung möglich.",
       "internal_control_source": "Eine Steuerentität der Sauna-Integration kann nicht als Gerät, Bedieneingang oder Heizrückmeldung zugeordnet werden.",
-      "button_gesture_incompatible": "Der gewählte Binärtaster meldet keine doppelte oder dreifache Betätigung. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
+      "button_gesture_incompatible": "Der gewählte Taster meldet nur Drücken und Loslassen. Zuerst die Sitzungsgeste in den Sauna-Einstellungen auf Halten ändern.",
       "invalid_configuration": "Die Eingabe passt nicht zu den übrigen gespeicherten Einstellungen.",
       "invalid_number": "Bitte eine gültige Zahl eingeben.",
       "positive": "Der Wert muss größer als null sein.",
@@ -238,12 +238,12 @@
       "parameters_session_controls": {
         "title": "Sitzung und Taster",
         "data": {
-          "button_hold_seconds": "Haltezeit des Binärtasters",
+          "button_hold_seconds": "Haltezeit des Tasters",
           "session_gap_minutes": "Sitzung nach Ausschalten fortsetzen",
           "manual_override_minutes": "Dauer manueller Ofen- und Lichtwahl"
         },
         "data_description": {
-          "button_hold_seconds": "Erforderliche Haltezeit eines Binärtasters; Ereignistaster liefern die erkannte Geste selbst.",
+          "button_hold_seconds": "Erforderliche Haltezeit für einen Taster, der nur Drücken und Loslassen meldet. Vom Gerät erkannte Gesten werden direkt übernommen.",
           "session_gap_minutes": "Innerhalb dieser Pause mit Lichtnachlauf setzt erneutes Einschalten dieselbe Sitzung fort.",
           "manual_override_minutes": "In Automatik endet eine manuelle Ofen- oder Lichtwahl spätestens nach dieser Zeit, bei einem passenden Zustandswechsel früher. Die Betriebsart Manuell ist davon unabhängig."
         },
@@ -303,13 +303,13 @@
         "title": "Heizzeit und Verbrauch",
         "data": {
           "power_heating_threshold_w": "Mindestleistung für gezählte Heizzeit",
-          "nominal_power_kw": "Ofenleistung für die Verbrauchsschätzung",
+          "nominal_power_kw": "Ofenleistung",
           "heat_reset_minutes": "Heizzeitzähler nach Heizpause zurücksetzen",
           "electricity_price_eur_per_kwh": "Strompreis"
         },
         "data_description": {
           "power_heating_threshold_w": "Erst oberhalb dieser gemessenen Leistung zählt Heizzeit; kleinere Leistungen bleiben im Energieverbrauch enthalten.",
-          "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit geschätzt.",
+          "nominal_power_kw": "Ohne nutzbare Leistungsmessung wird die Energie aus dieser Leistung und der gemeldeten Heizzeit berechnet.",
           "heat_reset_minutes": "Nach dieser durchgehend bestätigten Zeit ohne Heizen beginnt der Heizzeitzähler wieder bei null.",
           "electricity_price_eur_per_kwh": "Optionaler Strompreis pro Kilowattstunde."
         },
@@ -574,7 +574,7 @@
             },
             "data_description": {
               "heater_feedback": "Zusätzlicher binärer Heiznachweis. Der Heizschütz muss hier nicht erneut zugeordnet werden.",
-              "heater_power": "Gültige Messwerte ersetzen die Schätzung von Heizzeit und Energieverbrauch.",
+              "heater_power": "Gültige Leistungsmesswerte dienen als Heiznachweis und zur Berechnung des Energieverbrauchs.",
               "audio_output": "Noch ohne Audioausgabe."
             }
           },

@@ -1404,7 +1404,7 @@ class SaunaRuntime:
                 self._button_start_hold_session_id = self.session.session_id
                 if self.device:
                     self.device.begin_button_hold_light(
-                        self.session.session_id, starting=True
+                        self.session.session_id, starting=True, at=now
                     )
         elif action == START_RELEASE:
             session_id = self._button_start_hold_session_id
@@ -1420,7 +1420,7 @@ class SaunaRuntime:
             self.controller.set_operation(False, now)
             self._button_hold_session_id = session_id
             if self.device:
-                self.device.begin_button_hold_light(session_id)
+                self.device.begin_button_hold_light(session_id, at=now)
         elif action == END_RELEASE:
             session_id = self._button_hold_session_id
             if session_id is not None:
@@ -1542,12 +1542,33 @@ class SaunaRuntime:
         """Record a UI or physical light selection within the current lock."""
         self.device.set_light_override(value, at=now)
         self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
-        if self.archive:
+
+    def record_manual_light_changes(self, changes, *, selection=None):
+        """Archive original light-owner changes before asynchronous output."""
+        if self.archive is None:
+            return
+        for change in changes:
+            if not isinstance(change.at, datetime):
+                continue
+            payload = {
+                "value": (selection["value"]
+                          if selection is not None else change.value),
+                "change": plain(change),
+            }
+            if (
+                change.reason == "selection"
+                and change.previous_value is not None
+                and change.previous_session_id != change.session_id
+            ):
+                self.archive.append(
+                    "manual_light", change.at,
+                    {**payload, "ends_previous_only": True},
+                    change.previous_session_id,
+                )
             self.archive.append(
-                "manual_light",
-                now,
-                {"value": value},
-                self.session.session_id if self.session else None,
+                "manual_light", change.at, payload,
+                change.session_id if change.reason in {"selection", "keep"}
+                else change.previous_session_id,
             )
 
     def _validate_heater_override(self, value):
@@ -1659,7 +1680,7 @@ class SaunaRuntime:
                 # A manual brightness must not be restored after the required
                 # session-light OFF.  The due LightAfterRun object keeps the
                 # adapter's normal OFF/retry path responsible for the output.
-                self.device.set_light_override(None)
+                self.device.set_light_override(None, at=now)
                 self.device.light_output.finish_automatic()
             self.log.info(
                 "session_light_finished_manually",

@@ -739,10 +739,14 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_session_finish_ends_the_automatic_gap_light(self):
         await self.runtime.set_operation(True)
-        await self.runtime.set_light_override(50)
+        identity = self.runtime.session.session_id
         await self.runtime.set_operation(False)
+        await self.runtime.set_light_override(50)
+        first_ends_at = self.runtime.device.light_output.manual_ends_at
         token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
 
+        self.now += timedelta(seconds=1)
+        first_finished_at = self.now
         await self.runtime.finish_session_gap(token)
         await self.hass.async_block_till_done()
         self.assertFalse(self.runtime.session.operation_enabled)
@@ -754,10 +758,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.light.is_on)
 
         await self.runtime.set_operation(True)
-        await self.runtime.set_light_override(50)
         await self.runtime.set_operation(False)
+        await self.runtime.set_light_override(50)
+        second_ends_at = self.runtime.device.light_output.manual_ends_at
         token = next(deadline.token for deadline in self.runtime.session.deadlines if deadline.purpose == "session_gap")
         self.light.fail_commands = True
+        self.now += timedelta(seconds=1)
+        second_finished_at = self.now
         await self.runtime.finish_session_gap(token)
         self.assertFalse(self.runtime.session.operation_enabled)
         self.assertFalse(self.heater.is_on)
@@ -765,6 +772,22 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.tick()
         await self.hass.async_block_till_done()
         self.assertFalse(self.light.is_on)
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual([record["payload"]["change"]["reason"] for record in records],
+                         ["selection", "explicit", "selection", "explicit"])
+        for record, at, ends_at in (
+            (records[1], first_finished_at, first_ends_at),
+            (records[3], second_finished_at, second_ends_at),
+        ):
+            with self.subTest(service_error=at == second_finished_at):
+                self.assertEqual(record["session_id"], identity)
+                self.assertEqual(record["received_at"], at.isoformat())
+                self.assertEqual(record["payload"]["change"]["at"], at.isoformat())
+                self.assertEqual(record["payload"]["change"]["previous_value"], 50)
+                self.assertEqual(record["payload"]["change"]["previous_ends_at"], ends_at.isoformat())
+                self.assertEqual(record["payload"]["change"]["previous_session_id"], identity)
+                self.assertIsNone(record["payload"]["change"]["value"])
 
     async def test_custom_session_light_survives_options_reload_and_new_start_cancels_it(self):
         from custom_components.ha_sauna.settings import async_set_parameters
@@ -902,6 +925,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_external_light_selection_expires_but_unchanged_report_does_not_extend_it(self):
         await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
+        selected_at = self.now
         await self.set_light_externally(True, 128)
         output = self.runtime.device.light_output
         self.assertAlmostEqual(output.manual_brightness, 128 * 100 / 255)
@@ -912,8 +937,27 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.light.async_write_ha_state()  # state_report, not another choice
         await self.hass.async_block_till_done()
         self.assertEqual(output.manual_ends_at, ends_at)
-        await self.healthy_until(ends_at)
+        await self.healthy_until(ends_at - timedelta(microseconds=1))
+        calls = len(self.light.calls)
+        self.now = ended_at = ends_at + timedelta(seconds=1)
+        await self.runtime.tick()
+        await self.hass.async_block_till_done()
         self.assertIsNone(output.manual_brightness)
+        self.assertEqual(len(self.light.calls), calls)
+        self.assertEqual(output.drain_manual_changes(), ())
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual([record["payload"]["change"]["reason"] for record in records],
+                         ["selection", "timeout"])
+        self.assertEqual(records[0]["received_at"], selected_at.isoformat())
+        self.assertAlmostEqual(records[0]["payload"]["change"]["value"], 128 * 100 / 255)
+        timeout = records[1]
+        self.assertEqual(timeout["session_id"], identity)
+        self.assertEqual(timeout["received_at"], ended_at.isoformat())
+        self.assertEqual(timeout["payload"]["change"]["at"], ended_at.isoformat())
+        self.assertEqual(timeout["payload"]["change"]["previous_ends_at"], ends_at.isoformat())
+        self.assertAlmostEqual(timeout["payload"]["change"]["previous_value"], 128 * 100 / 255)
+        self.assertIsNone(timeout["payload"]["change"]["value"])
 
     async def test_external_light_off_is_the_same_manual_selection(self):
         await self.runtime.set_operation(True)
@@ -1024,27 +1068,61 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_light_override(False)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
         await self.runtime.set_operation(True)
+        identity = self.runtime.session.session_id
         await self.time(self.runtime.configuration.parameters.values["light_transition_seconds"])
         self.assertTrue(self.light.is_on)
         calls = len(self.light.calls)
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
         await self.runtime.set_light_override(True)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
         self.assertEqual(len(self.light.calls), calls)
+        await self.runtime.archive.flush()
+        self.assertEqual(self.runtime.archive.read(identity, kinds=("manual_light",))["records"], records)
         await self.runtime.set_light_override(42)
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 42)
         deadline = self.runtime.device.light_output.manual_ends_at
         calls = len(self.light.calls)
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["payload"]["value"], 42)
         self.now += timedelta(seconds=1)
         for value in (True, 42):
             await self.runtime.set_light_override(value)
             self.assertEqual(self.runtime.device.light_output.manual_brightness, 42)
             self.assertEqual(self.runtime.device.light_output.manual_ends_at, deadline)
         self.assertEqual(len(self.light.calls), calls)
+        await self.runtime.archive.flush()
+        self.assertEqual(self.runtime.archive.read(identity, kinds=("manual_light",))["records"], records)
         await self.runtime.set_light_override(None)
         self.assertIsNone(self.runtime.device.light_output.manual_brightness)
         self.assertIsNone(self.runtime.device.light_output.manual_ends_at)
         await self.set_light_externally(True, 128)
         self.assertAlmostEqual(self.runtime.device.light_output.manual_brightness, 128 * 100 / 255)
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        accepted_at = self.now
+        async with self.runtime.serialized():
+            self.runtime._set_light_override(17, accepted_at)
+            self.runtime._set_light_override(17, accepted_at)
+            await self.runtime._cycle()
+        await self.runtime.archive.flush()
+        updated = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual(updated[:-2], records)
+        first, second = updated[-2:]
+        self.assertNotEqual(first["id"], second["id"])
+        for record in (first, second):
+            self.assertEqual(record["session_id"], identity)
+            self.assertEqual(record["received_at"], accepted_at.isoformat())
+            self.assertEqual(record["payload"]["value"], 17)
+            self.assertEqual(record["payload"]["change"]["at"], accepted_at.isoformat())
+            self.assertEqual(record["payload"]["change"]["reason"], "selection")
+            self.assertEqual(record["payload"]["change"]["value"], 17)
+            self.assertEqual(record["payload"]["change"]["previous_session_id"], identity)
+            self.assertEqual(record["payload"]["change"]["session_id"], identity)
+            self.assertNotIn("ends_previous_only", record["payload"])
+        self.assertEqual(second["payload"]["change"]["previous_value"], 17)
 
     async def test_unavailable_feedback_is_not_an_off_noop(self):
         self.heater.accept_commands = False
@@ -1224,6 +1302,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 35)
         await self.set_source("upper_temperature", c.thermostat_restart_temperature)
         self.assertTrue(self.heater.is_on)
+        self.now = selected_at = self.runtime._clock()
+        self.runtime._clock = lambda: self.now
         await self.runtime.set_light_override(40)
         before_off = self.runtime._clock()
         await self.runtime.set_heater_override(False)
@@ -1237,6 +1317,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(before_off, stopped_at)
         self.assertLessEqual(stopped_at, after_off)
         self.assertIsNone(saved["session"]["ended_at"])
+        gap = next(d for d in self.runtime.session.deadlines if d.purpose == "session_gap")
+        await self.healthy_until(gap.due_at - timedelta(microseconds=1))
         ended_at = await self.expire_recording_gap()
         await self.runtime.archive.flush()
         saved = self.runtime.archive.read(identity)
@@ -1247,6 +1329,65 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r["payload"]["value"] for r in records if r["kind"] == "manual_light"], [40])
         self.assertTrue(any(r["kind"] == "consumer_event" and
                             r["payload"]["kind"] == "gang_ended" for r in records))
+        previous_identity, previous_value = identity, 40
+        previous_records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual(previous_records[0]["received_at"], selected_at.isoformat())
+        original_records = None
+        for value in (50, None):
+            with self.subTest(replacement=value):
+                self.assertEqual(self.runtime.device.light_output.manual_brightness, previous_value)
+                self.assertIsNone(self.runtime.device.light_output.manual_ends_at)
+                self.now += timedelta(seconds=1)
+                await self.runtime.set_heater_override(True)
+                current_identity = self.runtime.session.session_id
+                self.assertNotEqual(current_identity, previous_identity)
+                self.assertEqual(self.runtime.device.light_output.manual_brightness, previous_value)
+                self.now += timedelta(seconds=1)
+                changed_at = self.now
+                await self.runtime.set_light_override(value)
+                await self.runtime.archive.flush()
+                old_records = self.runtime.archive.read(
+                    previous_identity, kinds=("manual_light",),
+                )["records"]
+                new_records = self.runtime.archive.read(
+                    current_identity, kinds=("manual_light",),
+                )["records"]
+                self.assertEqual(old_records[:-1], previous_records)
+                ended = old_records[-1]
+                self.assertEqual(ended["session_id"], previous_identity)
+                self.assertEqual(ended["received_at"], changed_at.isoformat())
+                self.assertEqual(ended["payload"]["value"], value)
+                change = ended["payload"]["change"]
+                self.assertEqual(change["at"], changed_at.isoformat())
+                self.assertEqual(change["previous_value"], previous_value)
+                self.assertEqual(change["previous_phase_key"], ["manual"])
+                self.assertEqual(change["previous_session_id"], previous_identity)
+                self.assertIsNone(change["previous_ends_at"])
+                self.assertEqual(change["value"], value)
+                if value is not None:
+                    self.assertIs(ended["payload"]["ends_previous_only"], True)
+                    self.assertEqual(change["reason"], "selection")
+                    self.assertEqual(change["phase_key"], ["manual"])
+                    self.assertEqual(change["session_id"], current_identity)
+                    self.assertEqual(len(new_records), 1)
+                    self.assertEqual(new_records[0]["session_id"], current_identity)
+                    self.assertEqual(new_records[0]["received_at"], changed_at.isoformat())
+                    self.assertEqual(new_records[0]["payload"], {"value": value, "change": change})
+                    original_records = old_records
+                    previous_identity, previous_value = current_identity, value
+                    previous_records = new_records
+                    retain_session(self.runtime)
+                    await self.runtime.set_heater_override(False)
+                    gap = next(d for d in self.runtime.session.deadlines if d.purpose == "session_gap")
+                    await self.healthy_until(gap.due_at - timedelta(microseconds=1))
+                    await self.expire_recording_gap()
+                else:
+                    self.assertNotIn("ends_previous_only", ended["payload"])
+                    self.assertEqual(change["reason"], "explicit")
+                    self.assertEqual(new_records, [])
+                    self.assertEqual(self.runtime.archive.read(
+                        identity, kinds=("manual_light",),
+                    )["records"], original_records)
 
     async def test_manual_enable_is_not_skipped_when_external_contactor_is_already_on(self):
         from custom_components.ha_sauna.settings import async_set_control_mode
@@ -1397,6 +1538,44 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
         self.assertFalse(self.heater.is_on)
         self.assertFalse(self.light.is_on)
+
+        # Let the real mode action consume the gap before replacing its choice.
+        self.base = self.now = self.runtime._clock()
+        self.runtime._clock = lambda: self.now
+        await async_set_control_mode(self.hass, self.entry, "automatic")
+        await self.runtime.set_operation(True)
+        retain_session(self.runtime)
+        identity = self.runtime.session.session_id
+        await self.runtime.set_operation(False)
+        phase = self.runtime.controller.light_after_run
+        await self.healthy_until(phase.ends_at - timedelta(microseconds=1))
+        selected_at = self.now
+        await self.runtime.set_light_override(80)
+        ends_at = self.runtime.device.light_output.manual_ends_at
+        self.assertGreater(ends_at, phase.ends_at)
+        self.now = changed_at = phase.ends_at + timedelta(seconds=1)
+        await async_set_control_mode(self.hass, self.entry, "manual")
+        self.assertIsNone(self.runtime.session)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["payload"]["value"], 80)
+        self.assertEqual(records[0]["received_at"], selected_at.isoformat())
+        ended = records[1]
+        self.assertEqual(ended["session_id"], identity)
+        self.assertEqual(ended["received_at"], changed_at.isoformat())
+        self.assertIs(ended["payload"]["ends_previous_only"], True)
+        self.assertEqual(ended["payload"]["value"], 0)
+        self.assertEqual(ended["payload"]["change"]["reason"], "selection")
+        self.assertEqual(ended["payload"]["change"]["at"], changed_at.isoformat())
+        self.assertEqual(ended["payload"]["change"]["previous_value"], 80)
+        self.assertEqual(ended["payload"]["change"]["previous_phase_key"],
+                         ["session_light", identity, phase.started_at.isoformat()])
+        self.assertEqual(ended["payload"]["change"]["previous_session_id"], identity)
+        self.assertEqual(ended["payload"]["change"]["previous_ends_at"], ends_at.isoformat())
+        self.assertEqual(ended["payload"]["change"]["value"], 0)
+        self.assertIsNone(ended["payload"]["change"]["session_id"])
 
     async def test_delayed_automatic_echo_does_not_replace_external_dimmer_selection(self):
         self.light.defer_state_writes = True
@@ -2390,6 +2569,10 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_light_override(False)
         await self.hass.async_block_till_done()
         override_ends_at = self.runtime.device.light_output.manual_ends_at
+        await self.runtime.archive.flush()
+        manual_records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual(manual_records[-1]["payload"]["change"]["reason"], "selection")
+        self.assertEqual(manual_records[-1]["payload"]["change"]["value"], 0)
         await push("btn_down")
         self.assertTrue(self.light.is_on)
         self.assertAlmostEqual(self.light.brightness, 255 * self.runtime.configuration.parameters.values[
@@ -2402,10 +2585,13 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.session.session_id, identity)
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
         self.assertEqual(self.runtime.device.light_output.manual_ends_at, override_ends_at)
+        await self.runtime.archive.flush()
+        self.assertEqual(self.runtime.archive.read(identity, kinds=("manual_light",))["records"], manual_records)
         before = len(self.light.calls)
         await push("btn_down")
         self.assertTrue(self.light.is_on)
         await push("long_push")
+        ended_at = self.now
         self.assertEqual(self.runtime.session.session_id, identity)
         self.assertFalse(self.runtime.session.operation_enabled)
         self.assertFalse(self.light.is_on)
@@ -2414,6 +2600,18 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.controller.light_after_run.ends_at, deadline.due_at)
         await push("btn_up")
         self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
+        await self.runtime.archive.flush()
+        records = self.runtime.archive.read(identity, kinds=("manual_light",))["records"]
+        self.assertEqual(records[:-1], manual_records)
+        ended = records[-1]
+        self.assertEqual(ended["session_id"], identity)
+        self.assertEqual(ended["received_at"], ended_at.isoformat())
+        self.assertEqual(ended["payload"]["change"]["reason"], "explicit")
+        self.assertEqual(ended["payload"]["change"]["at"], ended_at.isoformat())
+        self.assertEqual(ended["payload"]["change"]["previous_value"], 0)
+        self.assertEqual(ended["payload"]["change"]["previous_ends_at"], override_ends_at.isoformat())
+        self.assertEqual(ended["payload"]["change"]["previous_session_id"], identity)
+        self.assertIsNone(ended["payload"]["change"]["value"])
 
     async def test_native_press_light_feedback_restores_short_and_confirms_long(self):
         await self.check_press_light_feedback_and_short_restoration(native=True)
@@ -2708,6 +2906,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.runtime.device._button_hold_session_id)
 
     async def test_manual_mode_keeps_explicit_light_without_session(self):
+        from custom_components.ha_sauna.core.light_output import LightOutput
         from custom_components.ha_sauna.settings import async_set_control_mode
 
         await async_set_control_mode(self.hass, self.entry, "manual")
@@ -2717,6 +2916,18 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.set_operation(False)
         self.assertIsNone(self.runtime.session)
         self.assertAlmostEqual(self.light.brightness, 255 * .35, delta=1)
+        output = self.runtime.device.light_output
+        with patch.object(self.runtime, "archive", None):
+            self.runtime.device.set_light_override(36, at=self.now)
+        self.assertEqual(output.drain_manual_changes(), ())
+        local = LightOutput(self.runtime.configuration.parameters)
+        local.set_manual(37, ends_at=10)
+        self.assertTrue(local.expire_manual(11))
+        with patch.object(self.runtime.archive, "append") as append:
+            self.runtime.record_manual_light_changes(output.drain_manual_changes())
+            self.runtime.record_manual_light_changes(local.drain_manual_changes())
+        append.assert_not_called()
+        self.assertIsNone(self.runtime.session)
 
     async def test_reassignment_waits_for_running_on_before_final_off(self):
         from custom_components.ha_sauna.runtime import SaunaRuntime

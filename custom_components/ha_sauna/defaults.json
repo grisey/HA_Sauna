@@ -389,7 +389,7 @@
     },
     {
       "key": "button_hold_seconds",
-      "label": "Haltezeit des Binärtasters",
+      "label": "Haltezeit des Tasters",
       "unit": "s",
       "allow_zero": true,
       "optional": false,
@@ -397,7 +397,7 @@
       "default": 2,
       "minimum": null,
       "integer": false,
-      "description": "Erforderliche Haltezeit eines Binärtasters; Ereignistaster liefern die erkannte Geste selbst.",
+      "description": "Erforderliche Haltezeit für einen Taster, der nur Drücken und Loslassen meldet. Vom Gerät erkannte Gesten werden direkt übernommen.",
       "group": "operation",
       "expert": false,
       "step": "any",
@@ -2212,8 +2212,8 @@
         "configuration_surface": "catalog"
       },
       "history_live_poll_ms": {
-        "label": "Nachträge laufender Sitzungen",
-        "description": "Nachträge laufender Sitzungen. Gilt für die Darstellung dieser Sauna-Instanz.",
+        "label": "Aktualisierung laufender Sitzungen",
+        "description": "Mindestabstand zwischen automatischen Abrufen neuer Verlaufsdaten einer laufenden Sitzung bei geöffneter Verlaufsansicht. Gilt für die Darstellung dieser Sauna-Instanz.",
         "group": "Aktualisierung",
         "default": 15000,
         "minimum": 1000,

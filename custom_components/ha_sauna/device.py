@@ -1124,11 +1124,17 @@ class HADevice:
         # Planer dabei seinen laufenden Übergang oder Override verliert.
         self.light_output.parameters = self.runtime.configuration.parameters
         if self.runtime.controller.control_mode == "manual":
-            self.light_output.keep_manual()
+            self.light_output.keep_manual(at=now)
+            self.runtime.record_manual_light_changes(
+                self.light_output.drain_manual_changes(),
+            )
         if (
             self.runtime.controller.control_mode == "automatic"
             and self.light_output.expire_manual(now)
         ):
+            self.runtime.record_manual_light_changes(
+                self.light_output.drain_manual_changes(),
+            )
             self.runtime.log.info(
                 "light_override_expired",
                 "Manuelle Lichtwahl abgelaufen; Licht folgt wieder der Automatik.",
@@ -1156,6 +1162,9 @@ class HADevice:
         plan = light_plan(
             self.light_output, self.runtime.controller, now, actual,
             self.normal_light_brightness(),
+        )
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(),
         )
         # Kurve und Istwert behalten ihre Genauigkeit. Nur die gemeinsame
         # Befehlsgrundlage für Dienst, Echo und Archiv wird quantisiert.
@@ -1833,6 +1842,9 @@ class HADevice:
             self.light_output, self.runtime.controller, value, now,
             self.normal_light_brightness(),
         )
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(), selection={"value": value},
+        )
         self._light_override_dirty = True
 
     @property
@@ -1883,12 +1895,16 @@ class HADevice:
         ):
             self._button_press_light = None
 
-    def begin_button_hold_light(self, session_id, *, starting=False):
+    def begin_button_hold_light(self, session_id, *, starting=False, at=None):
         """Mark acknowledgement for regular output after the heater command."""
         self._button_press_light = None
         self._button_hold_session_id = session_id
         self._button_hold_starting = starting
-        self.light_output.return_to_automatic()
+        now = self.runtime._clock() if at is None else at
+        self.light_output.return_to_automatic(at=now)
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(),
+        )
 
     async def show_button_hold_light(self, now, session_id):
         """Keep the long-press acknowledgement above all normal phases."""
