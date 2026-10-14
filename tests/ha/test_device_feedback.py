@@ -134,45 +134,114 @@ class DeviceFeedbackTests(unittest.TestCase):
         controller.set_heater_override(False, at)
         controller.set_heater_override(None, at)
 
-    async def prepare_infusion_packet(self, runtime, adapter, clock, at, *, temperature=90):
-        """Supply a healthy baseline and an ordinary four-point RH increase.
+    async def prepare_infusion_packet(
+        self, runtime, adapter, clock, at, *, temperature=90,
+    ):
+        """Prepare an unconfirmed RH flank using genuine HA original reports.
 
-        This prepares the last sample of the configured median/hold interval;
-        callers retain the final same-time packet whose HA ordering they test.
-        No detector parameter is shortened and no detection result is copied.
+        The existing 20-to-24 input remains a linear rise, with its final 24
+        report reserved for the caller's same-time packet. A bounded prefix
+        stops at its first local candidate; subsequent ticks add no originals.
+        No completed detection or confirmation time supplies fixture values.
+
+        Minimum lead is (3 * curve_min_side_samples + 4) * grid_seconds.
+        Callers also provide the ordinary RH/AH comparison and median warmup.
         """
-        from math import ceil
-
         values = runtime.configuration.parameters.values
-        delay = (int(values["median_seconds"]) - 1) // 2 + ceil(values["infusion_hold_seconds"])
-        rising_at = at - timedelta(seconds=delay)
+        side = values["curve_min_side_samples"]
+        step = timedelta(seconds=values["grid_seconds"])
+        rise_steps = 2 * side + 2
+        rising_at = at - rise_steps * step
+        baseline_start = rising_at - (side + 1) * step
+        baseline_end = baseline_start - step
+        self.assertLessEqual(
+            clock[0], baseline_end, "Insufficient original-report prefix",
+        )
         interval = timedelta(seconds=values["sensor_timeout_seconds"] / 2)
-        positions = tuple(position for position in ("upper", "lower")
-                          if f"{position}_temperature" in runtime.configuration.bindings.values)
+        positions = tuple(
+            position for position in ("upper", "lower")
+            if f"{position}_temperature" in runtime.configuration.bindings.values
+        )
+        self.assertTrue(positions)
+        prior_infusions = tuple(
+            event.event_id for event in runtime.session.timeline.processed
+            if event.kind == Kind.INFUSION
+        )
+
+        async def originals(humidity):
+            await asyncio.gather(*(
+                runtime.device_input(self.detection_edge(
+                    runtime, f"{position}_{quantity}", value,
+                ))
+                for position in positions
+                for quantity, value in (
+                    ("temperature", temperature), ("humidity", humidity),
+                )
+            ))
+
+        def no_early_confirmation():
+            self.assertEqual(tuple(
+                event.event_id for event in runtime.session.timeline.processed
+                if event.kind == Kind.INFUSION
+            ), prior_infusions, "Prefix consumed the caller's reserved confirmation")
+
         # The lightweight adapter fixture acknowledges ordinary relay commands
         # here; this long healthy baseline must not create a separate fault.
         def acknowledge():
-            adapter.ingest("heater", state("on" if adapter.command else "off"), clock[0])
+            adapter.ingest(
+                "heater", state("on" if adapter.command else "off"), clock[0],
+            )
             adapter.refresh(clock[0])
 
         acknowledge()
-        baseline_end = rising_at - timedelta(seconds=1)
         while clock[0] < baseline_end:
             clock[0] = min(baseline_end, clock[0] + interval)
-            await asyncio.gather(*(
-                runtime.device_input(self.detection_edge(runtime, f"{position}_{quantity}", value))
-                for position in positions
-                for quantity, value in (("temperature", temperature), ("humidity", 20))
-            ))
+            await originals(20)
             acknowledge()
-        clock[0] = rising_at
-        await asyncio.gather(*(
-            runtime.device_input(self.detection_edge(runtime, f"{position}_humidity", 24))
-            for position in positions
-        ))
-        while clock[0] + timedelta(seconds=1) < at:
-            clock[0] += timedelta(seconds=1)
+        for index in range(side + 2):
+            clock[0] = baseline_start + index * step
+            await originals(20)
+            acknowledge()
+
+        prepared = None
+        for index in range(1, rise_steps):
+            clock[0] = rising_at + index * step
+            await originals(20 + (24 - 20) * index / rise_steps)
+            acknowledge()
+            no_early_confirmation()
+            statuses = runtime.detector.diagnostic["curve_candidates"].get(
+                "infusion", {},
+            )
+            candidates = [statuses.get(position, {}).get("humidity", {})
+                          for position in positions]
+            if all(candidate.get("status") == "supported" for candidate in candidates):
+                self.assertTrue(all(candidate["fresh_newest_at"] is None
+                                    for candidate in candidates))
+                prepared = tuple(candidate["candidate_id"] for candidate in candidates)
+                break
+        self.assertIsNotNone(
+            prepared, "Declared RH prefix supplied no first local candidate",
+        )
+        while clock[0] + step < at:
+            clock[0] += step
             await runtime.tick()
+            acknowledge()
+        no_early_confirmation()
+        statuses = runtime.detector.diagnostic["curve_candidates"]["infusion"]
+        candidates = [statuses[position]["humidity"] for position in positions]
+        self.assertEqual(
+            tuple(candidate["candidate_id"] for candidate in candidates), prepared,
+        )
+        self.assertTrue(all(candidate["status"] == "supported"
+                            and candidate["fresh_newest_at"] is None
+                            for candidate in candidates))
+        self.assertTrue(all(
+            (at - candidate["onset_at"]).total_seconds()
+            <= values["curve_window_seconds"]
+            and (at - candidate["newest_at"]).total_seconds()
+            <= values["sensor_timeout_seconds"]
+            for candidate in candidates
+        ))
         clock[0] = at
 
     def test_received_readiness_releases_override_before_current_output(self):
@@ -597,6 +666,8 @@ class DeviceFeedbackTests(unittest.TestCase):
             old = runtime.session.timeline.active
             await self.prepare_infusion_packet(runtime, adapter, clock,
                                                T0 + timedelta(seconds=confirmation_at))
+            self.assertEqual(clock[0], T0 + timedelta(seconds=confirmation_at))
+            self.assertFalse(old.infusion_events)
             if tick_first in ("control_split", "control_last"):
                 upper = runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
                 lower = runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24))

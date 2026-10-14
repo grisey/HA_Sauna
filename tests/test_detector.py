@@ -61,6 +61,67 @@ def trace(second):
 
 
 class DetectorTests(unittest.TestCase):
+    @staticmethod
+    def _door_failure_message(events, traces, **context):
+        """Keep complete numbers from the actual event ticks, relative to T0."""
+        def relative(value):
+            if value is None:
+                return None
+            return (value - T0).total_seconds()
+
+        def owner(value):
+            if isinstance(value, tuple):
+                return tuple(owner(item) for item in value)
+            return relative(value) if hasattr(value, "tzinfo") else value
+
+        rows = []
+        for row in traces:
+            if not any(kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE) for kind in row["signals"]):
+                continue
+            candidates = []
+            proposals = []
+            for route in ("door_open", "door_open_heating", "door_close"):
+                for position, quantities in row["curve_candidates"].get(route, {}).items():
+                    for quantity, evidence in quantities.items():
+                        candidates.append((
+                            route, position, quantity, evidence.get("status"),
+                            *(relative(evidence.get(key)) for key in (
+                                "onset_at", "first_observed_at", "newest_at",
+                                "first_newest_at", "fresh_newest_at",
+                            )),
+                            *(evidence.get(key) for key in (
+                                "slope_before", "slope_after", "slope_change",
+                                "noise_scale", "score_gain",
+                            )),
+                        ))
+                for proposal in row["curve_proposals"].get(route, ()):
+                    proposals.append((
+                        route, proposal["status"], owner(proposal.get("owner_context")),
+                        tuple(relative(stamp) for stamp in proposal.get("onsets", ())),
+                        relative(proposal.get("confirmed_at")), proposal.get("reason"),
+                    ))
+            rows.append({
+                "at_s": relative(row["at"]),
+                "signals": tuple(kind.value for kind in row["signals"]),
+                "door_metrics": {
+                    position: {key: value for key, value in metrics.items()
+                               if key.startswith("door_")}
+                    for position, metrics in row["metrics"].items()
+                },
+                "candidates": candidates, "proposals": proposals,
+            })
+        event_rows = [
+            (item.kind.value, relative(item.effective_at), relative(item.trace_at),
+             relative(item.detected_at)) for item in events
+        ]
+        return (
+            f"context={context!r}\nevents(kind,effective_s,trace_s,detected_s)={event_rows!r}\n"
+            "candidates(route,position,quantity,status,onset_s,first_observed_s,newest_s,"
+            "first_newest_s,fresh_newest_s,slope_before,slope_after,slope_change,noise,gain)\n"
+            "proposals(route,status,owner_context_s,onsets_s,confirmed_s,reason)\n"
+            + "\n".join(repr(row) for row in rows)
+        )
+
     def test_complete_additive_ventilation_lookback_ends_confirmed_gang(self):
         defaults = parameters().values
         p = detection_parameters(door_humidity_seconds=defaults["strong_window_seconds"],
@@ -136,7 +197,9 @@ class DetectorTests(unittest.TestCase):
         for thermal in (False, True):
             for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
                 with self.subTest(thermal=thermal, positions=positions):
-                    detector = Detector(detection_parameters(), T0, positions)
+                    traces = []
+                    detector = Detector(detection_parameters(), T0, positions,
+                                        observer=traces.append)
                     events = []
                     for second in range(130):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
@@ -147,7 +210,13 @@ class DetectorTests(unittest.TestCase):
                             detector, second, 80 - .04 * fall,
                             30 if thermal else 30 - .08 * fall, positions,
                         )
-                    self.assertNotIn(Kind.DOOR_OPEN, [e.kind for e in events])
+                    self.assertNotIn(
+                        Kind.DOOR_OPEN, [e.kind for e in events],
+                        msg=self._door_failure_message(
+                            events, traces, thermal=thermal, positions=positions,
+                            input_turns_s=(30, 50, 70),
+                        ),
+                    )
                     # A subsequent substantial loss must still open normally.
                     for second in range(130, 180):
                         detector.report_heating(thermal, T0 + timedelta(seconds=second))
@@ -157,7 +226,8 @@ class DetectorTests(unittest.TestCase):
                     self.assertEqual([e.kind for e in events].count(Kind.DOOR_OPEN), 1)
 
     def test_minimum_opening_loss_requires_both_original_positions(self):
-        detector = Detector(detection_parameters(), T0)
+        traces = []
+        detector = Detector(detection_parameters(), T0, observer=traces.append)
         events = []
         for second in range(90):
             detector.report_heating(True, T0 + timedelta(seconds=second))
@@ -168,7 +238,12 @@ class DetectorTests(unittest.TestCase):
                 detector.accept(measurement(position, Quantity.HUMIDITY,
                                             30 - .08 * fall, second))
             events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        self.assertNotIn(Kind.DOOR_OPEN, [e.kind for e in events])
+        self.assertNotIn(
+            Kind.DOOR_OPEN, [e.kind for e in events],
+            msg=self._door_failure_message(
+                events, traces, plateau_from_s=50, temperature_rates=(.12, .03),
+            ),
+        )
 
     def test_finite_temperature_outlier_keeps_archived_cycle_and_output_alive(self):
         async def exercise(path):
@@ -319,7 +394,8 @@ class DetectorTests(unittest.TestCase):
 
 
     def test_cold_entry_keeps_weak_detection_available_after_warming(self):
-        detector = self._entry_detector()
+        traces = []
+        detector = Detector(detection_parameters(), T0, observer=traces.append)
         c = Controller(Parameters(detector.p))
         minimum = c.parameters.values["sauna_min_temperature_c"]
         c.set_temperature(minimum - 1, T0)
@@ -359,11 +435,17 @@ class DetectorTests(unittest.TestCase):
                              recognition_context=c.recognition_context_at, on_detection=received)
             if second < warm_at:
                 self.assertIsNone(c.session.timeline.active)
+        diagnostic = self._door_failure_message(
+            observed, traces, baseline_s=baseline, close_at_s=close_at,
+            warm_at_s=warm_at, minimum=minimum,
+        )
         self.assertEqual([item.kind for item in observed if item.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)],
-                         [Kind.DOOR_OPEN, Kind.DOOR_CLOSE])
-        self.assertTrue(any(item.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) for item in observed))
-        self.assertIsNotNone(c.session.timeline.active)
-        self.assertEqual(c.session.timeline.active.started_at, T0 + timedelta(seconds=warm_at))
+                         [Kind.DOOR_OPEN, Kind.DOOR_CLOSE], msg=diagnostic)
+        self.assertTrue(any(item.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) for item in observed),
+                        msg=diagnostic)
+        self.assertIsNotNone(c.session.timeline.active, msg=diagnostic)
+        self.assertEqual(c.session.timeline.active.started_at, T0 + timedelta(seconds=warm_at),
+                         msg=diagnostic)
 
 
     def test_close_recovers_when_lower_humidity_drops_out(self):
