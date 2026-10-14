@@ -84,6 +84,19 @@ class HeatingInterval:
 
 
 @dataclass(frozen=True)
+class HeatingStateMark:
+    """Vom Heizzeitbesitzer wirksam übernommene Rückmeldung."""
+
+    at: datetime
+    heating: bool | None
+
+    def __post_init__(self) -> None:
+        if self.heating is not None and not isinstance(self.heating, bool):
+            raise ValueError("Heizrückmeldung muss wahr, falsch oder unbekannt sein")
+        object.__setattr__(self, "at", utc(self.at))
+
+
+@dataclass(frozen=True)
 class HeatingTime:
     """Tatsächlich rückgemeldete Heizintervalle und lokale Zeitführung."""
 
@@ -93,6 +106,7 @@ class HeatingTime:
     off_since: datetime | None = None
     last_reset_at: datetime | None = None
     intervals: tuple[HeatingInterval, ...] = ()
+    state_history: tuple[HeatingStateMark, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -102,6 +116,8 @@ class HeatingTime:
             or self.elapsed_seconds < 0
         ):
             raise ValueError("Heizzeit muss endlich und nicht negativ sein")
+        if not isinstance(self.state_history, tuple):
+            raise ValueError("Heizverlauf benötigt Heizrückmeldungen als Tupel")
 
 
 @dataclass(frozen=True)
@@ -238,6 +254,23 @@ class ThermostatState:
 
 
 @dataclass(frozen=True)
+class TemperatureTargetMark:
+    """Zum Zeitpunkt wirksamer Sollwert des bestehenden Sitzungsbesitzers."""
+
+    at: datetime
+    target_c: float | None
+
+    def __post_init__(self) -> None:
+        if self.target_c is not None and (
+            isinstance(self.target_c, bool)
+            or not isinstance(self.target_c, (int, float))
+            or not isfinite(self.target_c)
+        ):
+            raise ValueError("Solltemperatur muss endlich oder unbekannt sein")
+        object.__setattr__(self, "at", utc(self.at))
+
+
+@dataclass(frozen=True)
 class Session:
     """Besitzt Gangmodell, Heizzeit und Fristen; Konfiguration bleibt außerhalb."""
 
@@ -269,8 +302,11 @@ class Session:
     next_gang_temperature_blocked_by: str | None = None
     active_gang_temperature_c: float | None = None
     active_gang_temperature_id: str | None = None
+    target_history: tuple[TemperatureTargetMark, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.target_history, tuple):
+            raise ValueError("Sollverlauf benötigt Sollwertmarken als Tupel")
         purposes = set()
         for deadline in self.deadlines:
             if deadline.session_id != self.session_id:

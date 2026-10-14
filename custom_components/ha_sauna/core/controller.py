@@ -23,6 +23,7 @@ from .models import (
     Energy,
     LightAfterRun,
     Session,
+    TemperatureTargetMark,
     ThermostatState,
     TimedPhase,
 )
@@ -1722,6 +1723,7 @@ class Controller:
                 self.door_request = replace(
                     self.door_request, eligible_open=False, invalidated=True
                 )
+        self._record_temperature_target(at)
         self.consumer_events.extend(gang_changes(
             self._consumer_snapshot, self._session, self._received_at(at),
         ))
@@ -1731,6 +1733,22 @@ class Controller:
         if phase_key != self._phase_key:
             self._phase_key, self.phase_since = phase_key, at
         return decision
+
+    def _record_temperature_target(self, at):
+        """Keep only targets booked by this controller at their actual use time."""
+        session = self._session
+        if session is None:
+            return
+        at = utc(at)
+        target = self._temperature_target()
+        history = session.target_history
+        if history and history[-1].target_c == target:
+            return
+        if history and history[-1].at == at:
+            history = history[:-1]
+        if not history or history[-1].target_c != target:
+            history += (TemperatureTargetMark(at, target),)
+        self._session = replace(session, target_history=history)
 
     def _record_base_phase(self, at):
         session = self._session
@@ -1755,6 +1773,7 @@ class Controller:
 
     def _complete_session(self, at, *, light_after_run):
         """Archive the current session and complete its active state."""
+        self._record_temperature_target(at)
         session = self._session
         if session is None:
             return None
@@ -1907,6 +1926,7 @@ class Controller:
                     active_gang_temperature_c=None,
                     active_gang_temperature_id=None,
                 )
+                self._record_temperature_target(now)
         elif deadline.purpose == "after_run":
             phase = session.after_run
             if phase is not None:

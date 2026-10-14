@@ -95,7 +95,22 @@ class EnergyTests(unittest.TestCase):
                 c.report_fallback_heating(fallback, T0)
                 c.report_heating(True, T0)
                 c.report_power(measured_kw * 1000, expiry, T0)
+                self.assertEqual(
+                    tuple(
+                        (mark.at, mark.heating)
+                        for mark in c.session.heating.state_history
+                    ),
+                    ((T0, True),),
+                )
                 c.advance(ended_at)
+                self.assertEqual(
+                    tuple(
+                        (mark.at, mark.heating)
+                        for mark in c.session.heating.state_history
+                    ),
+                    ((T0, True),) if fallback is True
+                    else ((T0, True), (expiry, fallback)),
+                )
                 state = c.session.energy
                 self.assertAlmostEqual(state.measured_kwh, measured_kw * ttl / 3600)
                 self.assertAlmostEqual(

@@ -19,6 +19,8 @@ from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.energy import advance
 from custom_components.ha_sauna.core.timeline import Kind
 from custom_components.ha_sauna.core.models import Position, Quantity
+from custom_components.ha_sauna.core.parameters import BY_KEY, Parameters
+from custom_components.ha_sauna.presentation import public_session
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, event, parameters, bindings
 from test_detector import measurement
@@ -43,6 +45,86 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
     def record(self, n):
         m = measurement(Position.UPPER, Quantity.TEMPERATURE, 70 + n / 1000, n / 1000)
         self.archive.append("measurement", m.received_at, m, "s")
+
+    async def test_controller_histories_survive_archive_and_public_projection(self):
+        initial_parameters = self.c.parameters
+        initial_target = initial_parameters.values["target_temperature_c"]
+        maximum = BY_KEY["target_temperature_c"].maximum
+        changed_target = (
+            maximum if initial_target != maximum
+            else initial_parameters.minimum_for("target_temperature_c")
+        )
+        changed_parameters = Parameters({
+            **initial_parameters.as_dict(), "target_temperature_c": changed_target,
+        })
+        on_at = T0 + timedelta(seconds=10, microseconds=123456)
+        off_at = T0 + timedelta(seconds=20, microseconds=234567)
+        target_at = T0 + timedelta(seconds=25, microseconds=345678)
+        unknown_at = T0 + timedelta(seconds=30, microseconds=456789)
+        final_off_at = T0 + timedelta(seconds=40, microseconds=567890)
+        ended_at = T0 + timedelta(seconds=50, microseconds=678901)
+        record_at = ended_at + timedelta(seconds=17, microseconds=789012)
+        self.c.report_heating(True, on_at)
+        self.c.report_heating(True, on_at + timedelta(seconds=1))
+        self.c.report_heating(False, off_at)
+        self.c.update_temperature_parameters(
+            changed_parameters, target_at, explicit_target=True,
+        )
+        self.c.report_heating(None, unknown_at)
+        self.c.report_heating(False, final_off_at)
+        self.c.finish_session(ended_at, light_after_run=False)
+        completed = self.c.completed_sessions[-1]
+        serialized = plain(completed)
+        expected_heating = [
+            {"at": T0.isoformat(), "heating": None},
+            {"at": on_at.isoformat(), "heating": True},
+            {"at": off_at.isoformat(), "heating": False},
+            {"at": unknown_at.isoformat(), "heating": None},
+            {"at": final_off_at.isoformat(), "heating": False},
+        ]
+        expected_targets = [
+            {"at": T0.isoformat(), "target_c": initial_target},
+            {"at": target_at.isoformat(), "target_c": changed_target},
+        ]
+        configuration = {**self.config, "parameters": changed_parameters.as_dict()}
+        self.archive.save_session(completed, record_at, configuration)
+        await self.archive.flush()
+        stored = self.archive.read("s")["session"]
+        public = public_session(stored)
+        self.assertNotIn("configuration", public)
+
+        next_at = record_at + timedelta(seconds=1)
+        self.c.begin_session("next-history", next_at)
+        self.c.report_heating(True, next_at + timedelta(seconds=1))
+        self.c.update_temperature_parameters(
+            initial_parameters, next_at + timedelta(seconds=2), explicit_target=True,
+        )
+        for stage, payload in (
+            ("plain", serialized), ("archive", stored), ("public", public),
+            ("completed_after_next_session", plain(completed)),
+        ):
+            with self.subTest(stage=stage):
+                self.assertEqual(payload["heating"]["state_history"], expected_heating)
+                self.assertEqual(payload["target_history"], expected_targets)
+                self.assertEqual(payload["ended_at"], ended_at.isoformat())
+
+        legacy_id = "legacy-missing-histories"
+        legacy = {
+            **serialized,
+            "timeline": {**serialized["timeline"], "session_id": legacy_id},
+            "heating": {
+                key: value for key, value in serialized["heating"].items()
+                if key != "state_history"
+            },
+            "configuration": configuration,
+        }
+        legacy.pop("target_history")
+        self.archive.append("session", record_at, legacy, legacy_id)
+        await self.archive.flush()
+        stored_legacy = self.archive.read(legacy_id)["session"]
+        for payload in (stored_legacy, public_session(stored_legacy)):
+            self.assertNotIn("state_history", payload["heating"])
+            self.assertNotIn("target_history", payload)
 
     async def test_energy_tail_and_metadata_cursor_preserve_original_boundaries(self):
         p = parameters()
