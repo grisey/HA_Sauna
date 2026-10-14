@@ -11,9 +11,9 @@ from custom_components.ha_sauna.core.timeline import Confirmation, Door, Event, 
 
 class DirectPresenceControlTests(unittest.TestCase):
     def setUp(self):
-        self.c = controller()
-        self.c.presence_source = "ha_presence"
-        self.c.presence_entity = "binary_sensor.presence"
+        self.c = controller(
+            presence_source="ha_presence", presence_entity="binary_sensor.presence",
+        )
 
     def report(self, state, second, *, effective=None, source=None):
         return self.c.observe_direct_presence(binary_presence(

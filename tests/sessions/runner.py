@@ -667,6 +667,8 @@ class SessionRun:
                 archived = {"heating": payload["heating"]["intervals"],
                             "contactor": payload["contactor_history"],
                             "energy": payload["energy"]}
+                # SQLite transport metadata is not an Energy scalar.
+                archived["energy"].pop("intervals_available", None)
                 if archived != self.recording_history.get(identity):
                     self.recording_history_errors.append({
                         "t": self.seconds, "session_id": identity,

@@ -880,6 +880,46 @@
       "configuration_surface": "integration"
     },
     {
+      "key": "presence_fallback_delay_seconds",
+      "label": "Wartezeit bis zur Proxy-Erkennung",
+      "unit": "s",
+      "allow_zero": false,
+      "optional": false,
+      "maximum": 3600,
+      "default": 120,
+      "minimum": 1,
+      "integer": true,
+      "description": "Nach dieser durchgehenden Nichtverfügbarkeit des konfigurierten Präsenzsensors übernimmt die Proxy-Erkennung aus Temperatur und Feuchte.",
+      "group": "detection",
+      "expert": true,
+      "step": 1,
+      "number_step": 1,
+      "settings_group": "sensors",
+      "order": 34,
+      "settings_subgroup": "presence_direct",
+      "configuration_surface": "integration"
+    },
+    {
+      "key": "presence_recovery_delay_seconds",
+      "label": "Wartezeit bis zum Präsenzsensor",
+      "unit": "s",
+      "allow_zero": false,
+      "optional": false,
+      "maximum": 3600,
+      "default": 10,
+      "minimum": 1,
+      "integer": true,
+      "description": "Nach dieser durchgehenden Verfügbarkeit eines gültigen Ein-/Aus-Zustands übernimmt wieder der konfigurierte Präsenzsensor.",
+      "group": "detection",
+      "expert": true,
+      "step": 1,
+      "number_step": 1,
+      "settings_group": "sensors",
+      "order": 35,
+      "settings_subgroup": "presence_direct",
+      "configuration_surface": "integration"
+    },
+    {
       "key": "person_step_seconds",
       "label": "Auswertungsabstand der Personenerkennung",
       "unit": "s",
@@ -6240,6 +6280,14 @@
         "id": "door",
         "label": "Türöffnung und Türschluss",
         "description": "Öffnen und Schließen werden aus Temperatur und Feuchte erkannt; ein Präsenzsensor ersetzt diese Erkennung nicht."
+      },
+      {
+        "id": "presence_direct",
+        "label": "Präsenzsensor",
+        "presence_sources": [
+          "ha_presence"
+        ],
+        "description": "Bei anhaltendem Ausfall übernimmt die Proxy-Erkennung. Gültige Zustände „anwesend“ und „abwesend“ haben kein Höchstalter."
       },
       {
         "id": "presence_evaluation",

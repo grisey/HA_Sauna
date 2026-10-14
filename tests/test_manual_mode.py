@@ -6,6 +6,7 @@ from datetime import timedelta
 from test_foundation import T0, event, parameters
 
 from custom_components.ha_sauna.core.controller import Controller
+from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.presence import binary_presence
@@ -17,9 +18,12 @@ def at(seconds):
 
 
 class ManualModeTests(unittest.TestCase):
-    def controller(self, **values):
+    def controller(
+        self, *, presence_source=instance_default("presence_source"), presence_entity=None, **values,
+    ):
         return Controller(
-            Parameters({**parameters().as_dict(), **values}), control_mode="manual"
+            Parameters({**parameters().as_dict(), **values}), control_mode="manual",
+            presence_source=presence_source, presence_entity=presence_entity,
         )
 
     def start(self, controller):
@@ -143,9 +147,9 @@ class ManualModeTests(unittest.TestCase):
         self.assertIn(deadline, controller.session.deadlines)
 
     def test_manual_entry_waits_for_minimum_and_exit_remains_possible_below_it(self):
-        controller = self.controller()
-        controller.presence_source = "ha_presence"
-        controller.presence_entity = "binary_sensor.presence"
+        controller = self.controller(
+            presence_source="ha_presence", presence_entity="binary_sensor.presence",
+        )
         minimum = controller.parameters.values["sauna_min_temperature_c"]
         controller.set_temperature(minimum - 1, at(0))
         controller.set_heater_override(True, at(1))

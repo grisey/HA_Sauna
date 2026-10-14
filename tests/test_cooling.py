@@ -4,6 +4,7 @@ import unittest
 
 from custom_components.ha_sauna.archive import plain
 from custom_components.ha_sauna.core.controller import Controller
+from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from test_foundation import T0, event, parameters
@@ -13,10 +14,14 @@ def at(seconds):
     return T0 + timedelta(seconds=seconds)
 
 
-def controller(**overrides):
+def controller(
+    *, presence_source=instance_default("presence_source"), presence_entity=None, **overrides,
+):
     # The target is an explicit selected program input; timing policy is unchanged.
     values = {**parameters().as_dict(), "target_temperature_c": 80, **overrides}
-    result = Controller(Parameters(values))
+    result = Controller(
+        Parameters(values), presence_source=presence_source, presence_entity=presence_entity,
+    )
     result.set_temperature(70, T0)
     result.set_operation(True, T0, session_id="s")
     return result

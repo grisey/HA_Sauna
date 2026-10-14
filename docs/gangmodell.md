@@ -1,11 +1,31 @@
 # Beginn, Bestätigung und Ende eines Saunagangs
 
-Die gewählte Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
+Die wirksame Präsenzquelle bestimmt, wie ein Saunagang erkannt wird: mit einem
 direkten Präsenzsensor oder aus [Temperatur und Feuchte](erkennung.md)
 (Proxyverfahren).
 
 Die Erkennungsregeln gelten auch während der manuellen Aufzeichnung.
 Heizanforderungen, Ofenkühlung und Temperaturstufen wirken nur in Automatik.
+
+## Wirksame Präsenzquelle
+
+Ein gewählter Präsenzsensor führt die Gangerkennung. Bei durchgehender
+Nichtverfügbarkeit übernimmt nach der **Wartezeit bis zur Proxy-Erkennung** das
+Proxyverfahren. Nach durchgehend gültigen Zuständen `on` oder `off` übernimmt
+nach der **Wartezeit bis zum Präsenzsensor** wieder der Sensor. Beide Wartezeiten
+sind unter **Sensoren und Erkennung** einstellbar; ihre Vorgaben stehen im
+[Parameterkatalog](../custom_components/ha_sauna/defaults.json).
+Ein gültiger, unveränderter Zustand verfällt nicht durch sein Alter. Ein Wechsel
+zwischen `on` und `off` unterbricht die Verfügbarkeit nicht. Ist das Proxyverfahren
+gewählt, bleibt es wirksam.
+
+Ein laufender Gang behält beim Quellenwechsel seine Kennung, seinen Beginn,
+seinen Bestätigungsstand und seine Aufgüsse. Eine laufende Ofenkühlung bleibt
+erhalten. Liegen bereits eine passende Austrittsöffnung und bestätigtes
+Durchlüften vor, kann die Proxyübernahme den Gang zum tatsächlichen
+Quellenwechsel beenden. Die Rückkehr zum Sensor erzeugt allein keinen neuen Gang
+und verwendet keinen zuvor abgeschlossenen Eintritt erneut.
+Im Verlauf gilt für jeden Zeitabschnitt die damals wirksame Präsenzquelle.
 
 ## Eintritt, Aufenthalt und Verlassen
 
@@ -57,10 +77,10 @@ Gang beenden.
 Aufgüsse werden dem Gang zugeordnet, bestätigen ihn aber nicht erneut.
 Gemeldete Zustandszeiten gelten ohne Abzug eines vermuteten Sensorverzugs.
 
-`unknown` und `unavailable` belegen keine Abwesenheit. Der Gang bleibt offen,
-seine zusätzliche Heizanforderung entfällt bis zur Rückkehr der Quelle.
-Thermostat und Schutz bleiben wirksam. Es gibt keinen automatischen Wechsel zum
-Proxyverfahren und keine Tür-Mindestheizhilfe.
+`unknown` und `unavailable` belegen keine Abwesenheit. Solange der Präsenzsensor
+führt, bleibt der Gang offen und seine zusätzliche Heizanforderung entfällt.
+Thermostat und Schutz bleiben wirksam; eine Tür-Mindestheizhilfe gibt es in
+diesem Verfahren nicht.
 
 ## Gang aus Temperatur und Feuchte erkennen
 

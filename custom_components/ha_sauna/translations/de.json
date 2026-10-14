@@ -320,6 +320,7 @@
         "menu_options": {
           "parameters_signals": "Messwerte",
           "parameters_door": "Türöffnung und Türschluss",
+          "parameters_presence_direct": "Präsenzsensor",
           "parameters_presence_evaluation": "Personenerkennung und Gangbestätigung",
           "parameters_presence_strong": "Deutliche Personenhinweise",
           "parameters_presence_weak": "Schwache Personenhinweise nach Eintritt",
@@ -368,6 +369,19 @@
           "door_heating_hold_seconds": "So lange muss der zusätzliche Öffnungsnachweis bestehen; eine Heizunterbrechung verwirft ihn.",
           "door_close_slope": "Der Temperaturtrend aller noch auswertbaren beteiligten Messpositionen muss diesen Wert überschreiten.",
           "door_close_hold_seconds": "So lange muss der Temperaturanstieg für einen Türschluss bestehen."
+        },
+        "description": "{description}",
+        "submit": "Speichern und zurück"
+      },
+      "parameters_presence_direct": {
+        "title": "Präsenzsensor",
+        "data": {
+          "presence_fallback_delay_seconds": "Wartezeit bis zur Proxy-Erkennung",
+          "presence_recovery_delay_seconds": "Wartezeit bis zum Präsenzsensor"
+        },
+        "data_description": {
+          "presence_fallback_delay_seconds": "Nach dieser durchgehenden Nichtverfügbarkeit des konfigurierten Präsenzsensors übernimmt die Proxy-Erkennung aus Temperatur und Feuchte.",
+          "presence_recovery_delay_seconds": "Nach dieser durchgehenden Verfügbarkeit eines gültigen Ein-/Aus-Zustands übernimmt wieder der konfigurierte Präsenzsensor."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"

@@ -357,14 +357,73 @@ def project_door_cycles(timeline: Timeline | Mapping) -> list[dict]:
     return cycles
 
 
-def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = None) -> Timeline:
+def reconcile_presence_source(
+    state: Timeline, *, presence_source: str, at: datetime,
+) -> Timeline:
+    """Die aktuellen Türbezüge an die wirksame Präsenzquelle übergeben.
+
+    Der Quellenwechsel ist kein neues physisches Ereignis. Der Lüftungsbezug
+    bleibt unverändert; ein bestätigter Gang endet erst bei dieser Verarbeitung.
+    Bei direkter Führung wird ein bereits abgeschlossener Eintritt pensioniert;
+    für den laufenden Gang entfällt der Proxyvorbehalt der offenen Austrittsfolge.
+    """
+    if presence_source not in ("proxy", "ha_presence"):
+        raise ValueError("Gültige Präsenzquelle erforderlich")
+    at = utc(at)
+    if (at < state.session_started_at
+            or (state.processed and at < state.processed[-1].booking_at)
+            or (state.active is not None and at < state.active.detected_at)):
+        raise ValueError("Präsenzquellenwechsel liegt vor dem aktuellen Timelinezustand")
+    if presence_source == "ha_presence":
+        if state.active is None and state.entry_cycle_available:
+            # This closure was already observed under the previous source.
+            # An available entry has not yet rejected its anchor ID.
+            return replace(state, rejected_start_sources=(
+                *state.rejected_start_sources, state.anchor.event_id,
+            ))
+        opening = state.opening
+        if (state.door == Door.OPEN and state.active is not None
+                and opening is not None
+                and opening.effective_at > state.active.started_at
+                and opening.event_id in state.rejected_start_sources):
+            # Proxy marks this opening before an exit is proven. A completed
+            # presence exit would already have removed the active gang.
+            return replace(state, rejected_start_sources=tuple(
+                source for source in state.rejected_start_sources
+                if source != opening.event_id
+            ))
+        return state
+    if state.presence_exit_at(at) != at:
+        return state
+
+    gang, ventilation = state.active, state.exit_ventilation
+    if gang.confirmation == Confirmation.PROVISIONAL:
+        return replace(state, active=None, retracted=state.retracted + (gang,))
+    finished = replace(gang, ended_at=at, end_event_id=ventilation.event_id,
+                       end_reason="ventilation")
+    return replace(state, active=None, completed=state.completed + (finished,))
+
+
+def apply(
+    state: Timeline, event: Event, *, gang_start_at: datetime | None = None,
+    presence_source: str | None = None,
+) -> Timeline:
     """Ein Ereignis verarbeiten, ohne den bisherigen Zustand zu verändern.
 
     `active` umfasst vorläufige und bestätigte Gänge. Vorbereitung gehört zur
     letzten abgeschlossenen Türöffnungsepisode. Jeder neue Gang benötigt eine
     ungenutzte vollständige Öffnungs- und Schließfolge.
     Ein bestehender Gang behält seine ursprüngliche Zuordnung bei Türbetätigung.
+    Die aktuelle Präsenzquelle bestimmt die Ende- und Türverbrauchspolicy;
+    ohne Angabe bleibt die bisherige Ableitung aus der Gangerkennung erhalten.
     """
+    if presence_source not in (None, "proxy", "ha_presence"):
+        raise ValueError("Gültige Präsenzquelle erforderlich")
+    proxy_presence = (
+        presence_source == "proxy" if presence_source is not None
+        else state.active is not None
+        and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED
+    )
     if event.session_id != state.session_id:
         raise ValueError("Ereignis gehört zu einer anderen Session")
     for previous in state.processed:
@@ -391,7 +450,7 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             preparation=None,
             rejected_start_sources=(
                 (event.event_id,) if state.active is not None
-                and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED else ()
+                and proxy_presence else ()
             ),
         )
     elif event.kind == Kind.DOOR_CLOSE:
@@ -479,8 +538,7 @@ def apply(state: Timeline, event: Event, *, gang_start_at: datetime | None = Non
             raise UnresolvedTransition("Durchlüften ohne zugeordnete Öffnung")
         # Mehrere Bestätigungen derselben Episode ändern deren ersten Beleg nicht.
         result = replace(state, open_ventilation=state.open_ventilation or event)
-        if (state.active is not None
-                and state.active.recognition_kind != Kind.PRESENCE_CONFIRMED):
+        if state.active is not None and proxy_presence:
             if state.active.confirmation == Confirmation.PROVISIONAL:
                 result = replace(result, active=None,
                                  retracted=state.retracted + (state.active,))

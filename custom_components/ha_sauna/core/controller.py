@@ -29,10 +29,13 @@ from .models import (
 )
 from .oven_cooling import calculate_oven_cooling
 from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
+from .presence import PresenceSourceSelection
 from .temperature_program import TemperatureProgram
 from .temporary_door_heat import TemporaryDoorHeatState
 from .temporary_door_heat import advance as advance_door_heat
-from .timeline import Confirmation, Door, Event, Kind, apply, utc
+from .timeline import (
+    Confirmation, Door, Event, Kind, apply, reconcile_presence_source, utc,
+)
 
 GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION, Kind.PRESENCE_CONFIRMED)
 PROGRAM_MODES = frozenset(("constant", "progressive"))
@@ -73,12 +76,12 @@ class Controller:
             raise ValueError("Ungültiger Temperaturprogrammmodus")
         if control_mode not in CONTROL_MODES:
             raise ValueError("Ungültiger Betriebsmodus")
-        if presence_source not in ("proxy", "ha_presence"):
-            raise ValueError("Ungültige Präsenzquelle")
-        self.presence_source = presence_source
+        self._presence_source_selection = PresenceSourceSelection(presence_source)
+        self._presence_source_history = []
         self.presence_entity = presence_entity
         self.direct_presence = None
         self._direct_presence_history = []
+        self._direct_presence_report_ids = set()
         self._direct_presence_catchup = 0
         self._presence_entry: PresenceEntry | None = None
         self.parameters = parameters
@@ -168,6 +171,59 @@ class Controller:
         finally:
             self._direct_presence_catchup -= 1
 
+    @property
+    def presence_source(self) -> str:
+        """Wirksame Quelle; die Konfiguration bleibt unabhängig erhalten."""
+        return self._presence_source_selection.effective_source
+
+    @property
+    def configured_presence_source(self) -> str:
+        return self._presence_source_selection.configured_source
+
+    def _presence_source_context_at(self, at):
+        for generation in range(len(self._presence_source_history) - 1, -1, -1):
+            changed_at, source = self._presence_source_history[generation]
+            if changed_at <= at:
+                return source, generation
+        return self.configured_presence_source, -1
+
+    def _presence_source_context_current(self, source, at):
+        return (
+            self.presence_source == source
+            and self._presence_source_context_at(at)
+            == (source, len(self._presence_source_history) - 1)
+        )
+
+    def advance_presence_source(self, at: datetime) -> bool:
+        """Qualify source health only at a real, serialized processing step."""
+        at = utc(at)
+        if self._last_at is not None and at < self._last_at:
+            raise ValueError("Präsenzverarbeitung liegt vor der Laufzeituhr")
+        if not self._presence_source_selection.advance(
+            at,
+            fallback_delay_seconds=self.parameters.values["presence_fallback_delay_seconds"],
+            recovery_delay_seconds=self.parameters.values["presence_recovery_delay_seconds"],
+        ):
+            return False
+        self._presence_source_history.append((at, self.presence_source))
+        self._presence_entry = None
+        if self.presence_source == "ha_presence":
+            self._door_request_pending = False
+            if self.door_request.door_open:
+                self.door_request = replace(
+                    self.door_request, eligible_open=False, invalidated=True,
+                )
+        self.advance(at, evaluate=False)
+        previous = self._session
+        if previous is not None:
+            timeline = reconcile_presence_source(
+                previous.timeline, presence_source=self.presence_source, at=at,
+            )
+            if timeline != previous.timeline:
+                self._apply_timeline_transition(previous, timeline, at)
+        self._evaluate(at)
+        return True
+
     def _record_recognition_gate(self, at):
         """Remember only admission results booked by this leading controller."""
         session = self._session
@@ -218,6 +274,8 @@ class Controller:
         return (
             self._recognition_context_current(at)
             and self.recognition_context_at(at)[1] is None
+            and (kind == Kind.INFUSION and self._session.timeline.active is not None
+                 or self._presence_source_context_current("proxy", at))
             and (self._proxy_cooling_evidence_allowed(at)
                  or self._session.timeline.active is not None
                  or (self._gang_temperature_blocked_at(at) is None
@@ -887,7 +945,7 @@ class Controller:
         if event.effective_at < previous.started_at:
             raise ValueError("Ereignis liegt vor dem Sessionbeginn")
         if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
-            apply(previous.timeline, event)  # Validieren vor Fortschreiben der Uhr.
+            apply(previous.timeline, event, presence_source=self.presence_source)
         self.advance(event.booking_at, evaluate=False, inclusive_confirmation=False)
         previous = self._session
         if previous is None:
@@ -928,9 +986,24 @@ class Controller:
             blocked = observed_blocked
         elif event.kind in GANG_SIGNALS and not context_current:
             blocked = "recognition_context_changed"
+        proxy_signal = (
+            event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
+            or (event.kind == Kind.INFUSION and previous.timeline.active is None)
+        )
+        if (proxy_signal and (
+                not self._presence_source_context_current("proxy", event.effective_at)
+                or not self._presence_source_context_current(
+                    "proxy", recognition_at or event.effective_at,
+                ))):
+            blocked = ("direct_presence_leads" if self.presence_source == "ha_presence"
+                       else "presence_source_context_changed")
         cooling_person_signal = bool(
             blocked is None
             and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
+            and self._presence_source_context_current("proxy", event.effective_at)
+            and self._presence_source_context_current(
+                "proxy", recognition_at or event.effective_at,
+            )
             and self._proxy_cooling_evidence_allowed(
                 recognition_at or event.effective_at
             )
@@ -948,11 +1021,6 @@ class Controller:
             blocked = self._proxy_entry_blocked(
                 previous.timeline, event.booking_at, event.effective_at,
             )
-        if self.presence_source == "ha_presence" and (
-            event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
-            or (event.kind == Kind.INFUSION and previous.timeline.active is None)
-        ):
-            blocked = "direct_presence_leads"
         if blocked:
             self._session = replace(
                 previous,
@@ -967,19 +1035,49 @@ class Controller:
             gang_start_at=(self._gang_entry_start_at(previous.timeline)
                            if event.kind in GANG_SIGNALS
                            and previous.timeline.active is None else None),
+            presence_source=self.presence_source,
         )
         if (observed_blocked is not None or not context_current) and event.kind in (
             Kind.DOOR_CLOSE, Kind.VENTILATION
         ):
             # A door cycle across operation-OFF cannot start a resumed session.
             timeline = replace(timeline, anchor=None, preparation=None)
-        self._session = replace(previous, timeline=timeline)
         if event.kind == Kind.DOOR_OPEN:
             self._presence_entry = None
+        self._apply_timeline_transition(
+            previous, timeline, event.booking_at,
+            operation_off=event.kind == Kind.OPERATION_OFF,
+        )
+        if event.kind == Kind.OPERATION_OFF:
+            self._abort_after_run(event.booking_at)
+            self._session = replace(
+                self._session,
+                operation_enabled=False,
+                operation_off_at=event.booking_at,
+            )
+            ends_at = event.booking_at + timedelta(
+                seconds=self.parameters.seconds("session_gap_minutes")
+            )
+            self._schedule(
+                "session_gap",
+                ends_at,
+            )
+            if self.control_mode == "automatic":
+                self._create_session_light(
+                    self._session.session_id, event.booking_at, ends_at
+                )
+        if event.kind == Kind.DOOR_CLOSE:
+            self._reconcile_direct_presence(event.booking_at, entry_event=event)
+        self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
+        return Result(self._session, True, "gang_model_updated", event.event_id)
+
+    def _apply_timeline_transition(self, previous, timeline, at, *, operation_off=False):
+        """Share gang effects between ordinary events and source reconciliation."""
+        self._session = replace(previous, timeline=timeline)
         if previous.timeline.active is None and timeline.active is not None:
             self._presence_entry = None
             if gang_start_interrupts_cooling(self.control_mode, self.presence_source):
-                self._abort_after_run(event.booking_at)
+                self._abort_after_run(at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None
                      or timeline.active.gang_id != previous.active_gang_temperature_id)):
@@ -1028,31 +1126,9 @@ class Controller:
             len(timeline.completed) > len(previous.timeline.completed)
             and timeline.completed[-1].confirmation == Confirmation.CONFIRMED
             and "cooling" in self.regulation_causes
-            and event.kind != Kind.OPERATION_OFF
+            and not operation_off
         ):
-            self._begin_after_run(timeline.completed[-1].gang_id, event.booking_at)
-        if event.kind == Kind.OPERATION_OFF:
-            self._abort_after_run(event.booking_at)
-            self._session = replace(
-                self._session,
-                operation_enabled=False,
-                operation_off_at=event.booking_at,
-            )
-            ends_at = event.booking_at + timedelta(
-                seconds=self.parameters.seconds("session_gap_minutes")
-            )
-            self._schedule(
-                "session_gap",
-                ends_at,
-            )
-            if self.control_mode == "automatic":
-                self._create_session_light(
-                    self._session.session_id, event.booking_at, ends_at
-                )
-        if event.kind == Kind.DOOR_CLOSE:
-            self._reconcile_direct_presence(event.booking_at, entry_event=event)
-        self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
-        return Result(self._session, True, "gang_model_updated", event.event_id)
+            self._begin_after_run(timeline.completed[-1].gang_id, at)
 
     def recognition_allowed(self, kind: Kind) -> bool:
         """Freigabe für Gangzuordnung oder die laufende Proxykühlung."""
@@ -1083,6 +1159,8 @@ class Controller:
             phase is None or not session.operation_enabled
             or cooling_presence_policy(self.control_mode, self.presence_source)
             != "proxy_person_minimum"
+            or (at is not None
+                and not self._presence_source_context_current("proxy", at))
         ):
             return False
         if at is not None and at < (phase.requested_at or phase.started_at):
@@ -1536,22 +1614,31 @@ class Controller:
         self._session = replace(session, thermostat=state)
         return decision
 
-    def observe_direct_presence(self, report, at, *, defer_evaluation=False):
-        """Use only the selected entity; absence alone never finishes a round."""
-        if (self.presence_source != "ha_presence"
-                or report.source != self.presence_entity
+    def observe_direct_presence(self, report, at=None, *, defer_evaluation=False):
+        """Observe selected health even in fallback, using actual processing time."""
+        if (report.source != self.presence_entity
                 or report.assertion != "direct_presence"):
             return False
         previous = self.direct_presence
-        if previous is not None and (
-            report.report_id == previous.report_id
-            or report.effective_at < previous.effective_at
-        ):
+        if (report.report_id in self._direct_presence_report_ids
+                or (previous is not None and (
+                    report.effective_at < previous.effective_at
+                    or report.received_at < previous.received_at
+                ))):
             return False
+        at = utc(at if at is not None else (
+            self._decision_clock() if self._decision_clock is not None
+            else report.received_at
+        ))
+        if (not defer_evaluation and self._last_at is not None
+                and at < self._last_at):
+            raise ValueError("Präsenzverarbeitung liegt vor der Laufzeituhr")
+        self._presence_source_selection.observe(report.available, at)
         if not defer_evaluation:
             self.advance(at, evaluate=False)
         self.direct_presence = report
         self._direct_presence_history.append(report)
+        self._direct_presence_report_ids.add(report.report_id)
         if (self._presence_entry is not None
                 and report.effective_at >= self._presence_entry.closure.effective_at
                 and (not report.available or report.occupancy != "present")):
@@ -1596,6 +1683,12 @@ class Controller:
                 or not self._recognition_context_current(opening.effective_at)):
             return False
         if t.active is None:
+            # A still-open proxy episode can close after sensor recovery.
+            # A closure completed before that recovery cannot revive an entry.
+            if (closure is None or not self._presence_source_context_current(
+                "ha_presence", closure.effective_at,
+            )):
+                return False
             # Presence and proxy door recognition can be processed in either
             # order. The state at the actual recorded closure is decisive;
             # a new ON after that closure still cannot reuse an empty entry.
@@ -1922,7 +2015,9 @@ class Controller:
                 )
                 self._session = replace(
                     self._session,
-                    timeline=apply(session.timeline, event),
+                    timeline=apply(
+                        session.timeline, event, presence_source=self.presence_source,
+                    ),
                     active_gang_temperature_c=None,
                     active_gang_temperature_id=None,
                 )

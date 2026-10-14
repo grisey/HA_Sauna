@@ -15,9 +15,9 @@ from custom_components.ha_sauna.core.timeline import Kind
 
 class GangPhaseRulesTests(unittest.TestCase):
     def setUp(self):
-        self.c = controller()
-        self.c.presence_source = "ha_presence"
-        self.c.presence_entity = "binary_sensor.presence"
+        self.c = controller(
+            presence_source="ha_presence", presence_entity="binary_sensor.presence",
+        )
         self.minimum = self.c.parameters.values["sauna_min_temperature_c"]
 
     def presence(self, state, second):
@@ -89,7 +89,9 @@ class GangPhaseRulesTests(unittest.TestCase):
                 self.assertIsNone(self.c.session.timeline.active)
 
     def test_cold_door_cycle_is_observed_without_extra_door_heating(self):
-        self.c.presence_source = "proxy"
+        self.c = controller(
+            presence_source="proxy", presence_entity="binary_sensor.presence",
+        )
         self.c.set_temperature(self.minimum - 1, at(0))
         self.door(Kind.DOOR_OPEN, 1)
         self.door(Kind.DOOR_CLOSE, 2)
@@ -99,7 +101,9 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertIsNone(self.c.session.timeline.active)
 
     def test_temperature_at_closure_controls_door_heating_not_door_observation(self):
-        self.c.presence_source = "proxy"
+        self.c = controller(
+            presence_source="proxy", presence_entity="binary_sensor.presence",
+        )
         self.c.set_temperature(self.minimum - 1, at(0))
         self.door(Kind.DOOR_OPEN, 1)
         self.c.set_temperature(self.minimum, at(2))
@@ -119,7 +123,9 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertIn("heater_service_unavailable", self.c.protection)
 
     def test_proxy_return_preserves_cooling_identity_and_elapsed_off_time(self):
-        self.c.presence_source = "proxy"
+        self.c = controller(
+            presence_source="proxy", presence_entity="binary_sensor.presence",
+        )
         self.door(Kind.DOOR_OPEN, 1)
         self.door(Kind.DOOR_CLOSE, 2)
         self.c.process(event("first-infusion", Kind.INFUSION, 3))

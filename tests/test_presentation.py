@@ -22,9 +22,9 @@ from custom_components.ha_sauna.presentation import (
 
 class PresentationTests(unittest.TestCase):
     def test_direct_presence_public_ids_preserve_live_archive_and_phase_references(self):
-        sauna = controller()
-        sauna.presence_source = "ha_presence"
-        sauna.presence_entity = "binary_sensor.private_presence"
+        sauna = controller(
+            presence_source="ha_presence", presence_entity="binary_sensor.private_presence",
+        )
         sauna.process(event("entry-open", Kind.DOOR_OPEN, 1))
         sauna.observe_direct_presence(binary_presence(
             sauna.presence_entity, "on", at(2), at(2),

@@ -67,6 +67,8 @@ _PARAMETER_KEYS = frozenset(
         "person_step_seconds",
         "phase_completion_tolerance_seconds",
         "power_heating_threshold_w",
+        "presence_fallback_delay_seconds",
+        "presence_recovery_delay_seconds",
         "preset_count",
         "preset_start_c",
         "preset_step_c",

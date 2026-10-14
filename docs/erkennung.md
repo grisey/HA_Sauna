@@ -1,7 +1,8 @@
 # Türöffnung, Aufguss und Durchlüften erkennen
 
-Die gewählte Gangerkennung bestimmt den Anwesenheitsnachweis. Türereignisse
-und Aufgüsse stammen in beiden Verfahren aus Temperatur und Feuchte.
+Die [wirksame Präsenzquelle](gangmodell.md#wirksame-präsenzquelle) bestimmt den
+Anwesenheitsnachweis. Türereignisse und Aufgüsse stammen in beiden Verfahren
+aus Temperatur und Feuchte.
 
 | Erkennung | Aus Temperatur und Feuchte | Mit Präsenzsensor |
 | --- | --- | --- |
@@ -51,8 +52,8 @@ einen neuen Türbezug.
 Personen- und Aufgusssignale eröffnen bei Erkennung aus Temperatur und Feuchte
 nur nach erkannter Türöffnung und anschließender Schließung einen Gang;
 es gelten die [Startbedingungen](gangmodell.md#gang-aus-temperatur-und-feuchte-erkennen).
-Während eines Gangs werden weitere Aufgüsse erkannt; bei direkter Präsenzführung
-ersetzen Personensignale den gewählten Präsenzsensor nicht.
+Während eines Gangs werden weitere Aufgüsse erkannt; solange der Präsenzsensor
+führt, ersetzen Personensignale ihn nicht.
 
 ## Durchlüften
 

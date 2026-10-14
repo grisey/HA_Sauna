@@ -563,8 +563,8 @@ class SaunaRuntime:
             if self.device and "presence_illuminance" in self.configuration.bindings.values:
                 self.device.archive_illuminance_snapshot(self._clock())
             self.archive.append("presence_source", self._clock(), {
-                "configured_source": self.configuration.presence_source,
-                "effective_source": self.configuration.presence_source,
+                "configured_source": self.controller.configured_presence_source,
+                "effective_source": self.controller.presence_source,
                 "entity_id": self.configuration.bindings.values.get("presence"),
                 "external_snapshot": self.presence.external,
             }, session_id)
@@ -630,15 +630,42 @@ class SaunaRuntime:
 
     async def _run_cycle(self):
         await self._drain_device_inputs()
-        now = self._clock()
-        self._deliver_detection(now)
+        self._deliver_detection(self._clock())
         self._report_detector_availability()
+        # Finish the previously admitted detector window before booking a
+        # source boundary at its actual current processing time.
+        now = self._clock()
+        self._advance_presence_source(now)
         self.controller.advance(now, finish_confirmation_batch=True)
         if self.device:
             self.device.refresh(now)
         if self.device:
             await self.device.apply(now)
         self.notify()
+
+    def _advance_presence_source(self, at):
+        """Qualify the central source owner only at a current input boundary."""
+        previous_source = self.controller.presence_source
+        changed = self.controller.advance_presence_source(at)
+        session_id = self.session.session_id if self.session else None
+        if changed and self.archive:
+            self.archive.append("presence_source", at, {
+                "configured_source": self.controller.configured_presence_source,
+                "effective_source": self.controller.presence_source,
+                "previous_source": previous_source,
+                "entity_id": self.configuration.bindings.values.get("presence"),
+                "reason": "availability_qualified",
+            }, session_id)
+        if changed and self.controller.presence_source == "proxy":
+            # A new source section has no person evidence from an earlier one.
+            # Archive its unknown report after the same-time source boundary.
+            reference = f"{session_id or 'no_session'}:{at.isoformat()}"
+            self._record_presence(PresenceReport(
+                f"presence:proxy:source:{reference}",
+                "unknown", "provisional_proxy", "proxy", f"presence_source:proxy:{reference}",
+                at, at, self._detector_presence_available(), "no_proxy_evidence",
+            ), session_id=session_id)
+        return changed
 
     def _deliver_detection(self, through, *, include_current=True):
         """Book received recognition chronologically, without actuator I/O."""
@@ -719,10 +746,17 @@ class SaunaRuntime:
             self.controller.discard_recognition_context_before(sampled_at)
             self._sync_detector()
 
+    def _detector_presence_available(self):
+        return bool(
+            self.detector is not None
+            and self.session is not None
+            and self.detector.active_positions
+        )
+
     def _report_detector_availability(self):
         if self.detector is None or self.session is None:
             return
-        available = bool(self.detector.active_positions)
+        available = self._detector_presence_available()
         current = self.presence.current
         now = self._clock()
         if current is None or current.available != available:
@@ -853,8 +887,10 @@ class SaunaRuntime:
                     # Booking facts has no actuator I/O. A waiting command must
                     # enter before output awaits can admit an endless input stream.
                     await self._drain_device_inputs()
+                source_changed = False
                 if not self.closed and not semantic_event:
                     self._deliver_detection(self._clock())
+                    source_changed = self._advance_presence_source(self._clock())
                 command_error = None
                 try:
                     yield
@@ -863,9 +899,9 @@ class SaunaRuntime:
                     raise
                 finally:
                     # Configuration-only and rejected commands must also deliver
-                    # consumed inputs. One current cycle is sufficient; new inputs
-                    # remain the responsibility of their waiting handlers.
-                    if drained and not self.closed:
+                    # consumed inputs and source changes. New inputs remain the
+                    # responsibility of their waiting handlers.
+                    if (drained or source_changed) and not self.closed:
                         try:
                             await self._cycle()
                         except BaseException as error:
@@ -899,8 +935,8 @@ class SaunaRuntime:
         await self.archive.start()
         self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
         self.archive.append("presence_source", self._clock(), {
-            "configured_source": self.configuration.presence_source,
-            "effective_source": self.configuration.presence_source,
+            "configured_source": self.controller.configured_presence_source,
+            "effective_source": self.controller.presence_source,
             "entity_id": self.configuration.bindings.values.get("presence"),
             "reason": "configuration_loaded",
         })
@@ -934,9 +970,9 @@ class SaunaRuntime:
             self._record_presence(report)
             direct = self.configuration_model.direct_presence
             accepted = self.controller.observe_direct_presence(
-                report, self._clock(), defer_evaluation=direct,
+                report, self._clock(), defer_evaluation=True,
             )
-            if direct:
+            if direct or accepted:
                 # Catch-up recognition must use the report already received by
                 # this callback, without advancing past queued device inputs.
                 with self.controller.confirmation_batch(self._clock):
@@ -944,8 +980,6 @@ class SaunaRuntime:
                         await self._drain_device_inputs()
                         self._deliver_detection(self._clock())
                     await self._run_cycle()
-            elif accepted:
-                await self._run_cycle()
             self.notify()
 
     def _process_event(self, event, *, defer_confirmation=False, recognition_at=None):
@@ -1020,19 +1054,15 @@ class SaunaRuntime:
         return ConfigurationModel.from_configuration(
             self.configuration,
             button_event_types=device.button_event_types if device else None,
+            effective_presence_source=self.controller.presence_source,
         )
 
     @property
     def presence_status(self):
-        model = self.configuration_model
         return {
             "current": (self.controller.direct_presence
-                        if model.direct_presence
+                        if self.controller.presence_source == "ha_presence"
                         else self.presence.current),
-            "external": (
-                self.presence.external
-                if model.presence_sensor_configured and not model.direct_presence else {}
-            ),
         }
 
     def persist_completed_sessions(self):

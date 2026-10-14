@@ -593,9 +593,9 @@ class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
                 await archive.close()
 
     async def test_delayed_direct_absence_links_exit_at_booking_after_door_close(self):
-        c = controller()
-        c.presence_source = "ha_presence"
-        c.presence_entity = "binary_sensor.presence"
+        c = controller(
+            presence_source="ha_presence", presence_entity="binary_sensor.presence",
+        )
         c.process(event("o1", Kind.DOOR_OPEN, 1))
         c.observe_direct_presence(
             binary_presence(c.presence_entity, "on", at(2), at(2)), at(2),
