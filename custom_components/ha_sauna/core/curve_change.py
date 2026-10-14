@@ -12,7 +12,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import starmap
 from math import fsum, isfinite, log, sqrt, ulp
+from operator import mul
 from statistics import NormalDist, median
 
 
@@ -129,22 +131,22 @@ def _least_squares(rows, values, weights):
     upper = [[0.0] * count for _ in range(count)]
     orthogonal = []
     for index, column in enumerate(columns):
-        original_norm = sqrt(fsum(value * value for value in column))
+        original_norm = sqrt(fsum(map(mul, column, column)))
         for _ in range(2):
             for prior, basis in enumerate(orthogonal):
-                projection = fsum(a * b for a, b in zip(basis, column, strict=True))
+                projection = fsum(starmap(mul, zip(basis, column, strict=True)))
                 upper[prior][index] += projection
                 column = [
                     value - projection * basis_value
                     for value, basis_value in zip(column, basis, strict=True)
                 ]
-        norm = sqrt(fsum(value * value for value in column))
+        norm = sqrt(fsum(map(mul, column, column)))
         if not isfinite(norm) or norm <= _FLOAT_EPSILON * len(rows) * original_norm:
             return None
         upper[index][index] = norm
         orthogonal.append([value / norm for value in column])
     projected = [
-        fsum(a * b for a, b in zip(basis, target, strict=True))
+        fsum(starmap(mul, zip(basis, target, strict=True)))
         for basis in orthogonal
     ]
     result = [0.0] * count
@@ -160,7 +162,7 @@ def _least_squares(rows, values, weights):
 
 def _residuals(rows, values, coefficients):
     return [
-        value - fsum(a * b for a, b in zip(row, coefficients, strict=True))
+        value - fsum(starmap(mul, zip(row, coefficients, strict=True)))
         for row, value in zip(rows, values, strict=True)
     ]
 
