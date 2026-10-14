@@ -168,8 +168,7 @@ class Detector:
         series["version"] += 1
         series["last_original_version"] = None
         series["epoch"] += 1
-        if quantity == Quantity.TEMPERATURE:
-            self._curve_recovery_evidence.pop(position, None)
+        self._curve_recovery_evidence.pop((position, quantity), None)
         episode = self._infusion_episode
         if (
             episode is not None and episode["phase"] == "pending"
@@ -471,7 +470,11 @@ class Detector:
         )
 
     def _temperature_recovery(self, position, candidate, now):
-        """Denselben aktuellen Originaltrend für beide Erholungsgates verwenden.
+        """Denselben aktuellen Originaltrend für beide T-Erholungsgates verwenden."""
+        return self._curve_recovery(position, Quantity.TEMPERATURE, candidate, now)
+
+    def _curve_recovery(self, position, quantity, candidate, now):
+        """Den aktuellen Originaltrend am gebundenen T-Beginn prüfen.
 
         Der alte Knick bleibt am festen Beginn gebunden. Nur ein neuer Original-
         oder Korrekturstand veranlasst die Auswertung des jüngsten festen Fensters;
@@ -480,11 +483,15 @@ class Detector:
         Verlässt eine tragende Probe das aktuelle Fenster, verfällt die Freigabe
         ohne Neuberechnung; auch eine Korrektur kann sie dann nicht erneuern.
         """
-        series = self._curve_series[position, Quantity.TEMPERATURE]
+        series = self._curve_series[position, quantity]
+        key = (position, quantity)
         evaluation = (candidate.candidate_id, series["version"])
-        previous = self._curve_recovery_evidence.get(position)
+        previous = self._curve_recovery_evidence.get(key)
         start = max(candidate.onset_at, now - timedelta(
-            seconds=self.p["door_window_seconds"]
+            seconds=self.p[
+                "door_window_seconds" if quantity == Quantity.TEMPERATURE
+                else "door_humidity_seconds"
+            ]
         ))
 
         def within_window(evidence):
@@ -520,10 +527,10 @@ class Detector:
                     previous["fresh_observed_at"] if same_candidate else None
                 ),
             }
-            self._curve_recovery_evidence[position] = previous
+            self._curve_recovery_evidence[key] = previous
         trend = previous["trend"]
         current_supported = previous["original_supported"] and within_window(previous)
-        key = ("door_close", position, Quantity.TEMPERATURE)
+        key = ("door_close", position, quantity)
         self._curve_status[key] = {
             **self._curve_status.get(key, {}),
             "recovery_trend": {
@@ -689,7 +696,10 @@ class Detector:
             **self._curve_proposal_diagnostic(key, proposal),
         }
 
-    def _curve_confirmation(self, route, positions, quantities, *, floor, recovery=False):
+    def _curve_confirmation(
+        self, route, positions, quantities, *, floor, recovery=False,
+        recovery_quantity=Quantity.TEMPERATURE,
+    ):
         """Den historischen Satz mit neuen Originalen am festen Beginn bestätigen.
 
         Jeder Zeuge braucht einen erneuten unterstützenden Modellvergleich nach
@@ -698,6 +708,8 @@ class Detector:
         ersten Befund; der letzte vollständige Satz startet keine neue Wartezeit.
         Beim gebundenen T-Schluss ist dieser Knicknachweis abgeschlossen. Seine
         Ausgabe braucht anschließend den aktuellen Originalnachweis der Erholung.
+        Eine RH-Erholung ergänzt nur einen weiterhin aktuell belegten T-Knick
+        derselben Identität; dessen historische Bindung allein genügt dafür nicht.
         """
         key = (route, tuple(positions), tuple(quantities))
         proposal = self._curve_proposals.get(key)
@@ -710,24 +722,68 @@ class Detector:
             recovery and proposal.evidence_bound_at is not None
             and route == "door_close" and tuple(quantities) == (Quantity.TEMPERATURE,)
         )
+        if recovery_quantity == Quantity.HUMIDITY and not bound_recovery:
+            return False
         for candidate_key, original in proposal.candidates:
             if original.onset_at < floor:
                 self._invalidate_curve_proposal(key, "outside_current_context")
                 return False
             if bound_recovery:
-                supported = self._temperature_recovery(candidate_key[1], original, now)
-                evidence = self._curve_recovery_evidence[candidate_key[1]]
+                position = candidate_key[1]
+                supported = (
+                    self._temperature_recovery(position, original, now)
+                    if recovery_quantity == Quantity.TEMPERATURE else
+                    self._curve_recovery(position, recovery_quantity, original, now)
+                )
+                evidence = self._curve_recovery_evidence[position, recovery_quantity]
+                series = self._curve_series[position, recovery_quantity]
+                current = self._curve_candidates.get(candidate_key)
+                current_temperature = (
+                    current is not None and current.candidate_id == original.candidate_id
+                    and self._curve_status.get(candidate_key, {}).get("status") == "supported"
+                    and current.fresh_newest_at is not None
+                    and current.fresh_newest_at > original.first_newest_at
+                    and now - timedelta(seconds=self.p["door_window_seconds"])
+                    <= current.features.newest_at <= now
+                )
+                if recovery_quantity == Quantity.HUMIDITY:
+                    # Der gebundene historische T-Knick allein darf keinen
+                    # späteren freien RH-Puls zum Schluss machen.
+                    supported = supported and current_temperature
                 confirmed.append({
                     "candidate_id": original.candidate_id,
                     "newest_at": original.features.newest_at,
                     "fresh_newest_at": original.fresh_newest_at,
                     "fresh_observed_at": original.fresh_observed_at,
+                    "recovery_quantity": recovery_quantity.value,
+                    "recovery_source": series["source"],
+                    "recovery_time_basis": series["time_basis"],
+                    "recovery_source_epochs": (series["epoch"],),
                     "recovery_start_at": evidence["start_at"],
                     "recovery_newest_at": evidence["newest_at"],
                     "recovery_observed_at": evidence["fresh_observed_at"],
                     "supported": supported,
+                    **({
+                        "current_temperature_supported": current_temperature,
+                        "current_temperature_newest_at": (
+                            current.features.newest_at if current is not None else None
+                        ),
+                        "current_temperature_fresh_observed_at": (
+                            current.fresh_observed_at if current is not None else None
+                        ),
+                    } if recovery_quantity == Quantity.HUMIDITY else {}),
                 })
-                new_original |= supported and evidence["fresh_observed_at"] == now
+                if recovery_quantity == Quantity.TEMPERATURE:
+                    new_original |= supported and evidence["fresh_observed_at"] == now
+                else:
+                    new_original |= supported and (
+                        current.fresh_observed_at == now
+                        or evidence["fresh_observed_at"] == now
+                        and series["last_original_version"] == series["version"]
+                        and series["received_at"] is not None
+                        and now - timedelta(seconds=self.grid_seconds)
+                        < series["received_at"] <= now
+                    )
                 continue
             candidate = self._curve_candidates.get(candidate_key)
             status = self._curve_status.get(candidate_key, {})
@@ -1924,9 +1980,9 @@ class Detector:
                 is not None and self._temperature_recovery(position, candidate, now)
                 for position in closing_positions
             )
-            # Ein früher Schluss vor der Talsohle benötigt die RH-Abbremsung
-            # der belegten Öffnung. Ein späterer freier Feuchtepuls oder eine
-            # nach Quellenbruch neu gebildete RH-Reihe kann sie nicht ersetzen.
+            # Ein früher Schluss vor der Talsohle benötigt die RH-Erholung
+            # der belegten Öffnung. Eine nach Quellenbruch neu gebildete
+            # RH-Reihe kann sie nicht ersetzen.
             same_opening_humidity = bool(episode["opening_humidity"]) and all(
                 self._value(position, Quantity.HUMIDITY, now) is not None
                 and self._curve_series[position, Quantity.HUMIDITY]["source"]
@@ -1943,7 +1999,6 @@ class Detector:
                     for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
                 )
             )
-            closing = temperature_recovery or mixed_recovery
             recovery_toggle = temperature_recovery and self._curve_confirmation(
                 "door_close", closing_positions, (Quantity.TEMPERATURE,),
                 floor=curve_floor, recovery=True,
@@ -1958,7 +2013,18 @@ class Detector:
                 "door_close", closing_positions,
                 (Quantity.TEMPERATURE, Quantity.HUMIDITY), floor=curve_floor,
             )
-            close_toggle = recovery_toggle or mixed_close_toggle
+            humidity_close_toggle = (
+                not (recovery_toggle or mixed_close_toggle)
+                and closing_positions == episode["positions"]
+                and same_opening_humidity
+                and self._curve_confirmation(
+                    "door_close", closing_positions, (Quantity.TEMPERATURE,),
+                    floor=curve_floor, recovery=True,
+                    recovery_quantity=Quantity.HUMIDITY,
+                )
+            )
+            closing = temperature_recovery or mixed_recovery or humidity_close_toggle
+            close_toggle = recovery_toggle or mixed_close_toggle or humidity_close_toggle
             if mixed_close_toggle and not recovery_toggle:
                 closing_quantities = (Quantity.TEMPERATURE, Quantity.HUMIDITY)
         elif episode:

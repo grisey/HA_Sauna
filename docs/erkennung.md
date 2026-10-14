@@ -98,6 +98,11 @@ der Feuchte einen früheren Schluss vor dem Temperaturminimum belegen. Dabei
 darf die relative Feuchte bereits wieder steigen. Dieser gemischte Nachweis
 muss aus derselben gemeinsam belegten Öffnung stammen und bleibt an die
 ursprünglichen Feuchtequellen und deren ununterbrochene Messabschnitte gebunden.
+Steigende Feuchte ohne neuen Feuchteknick ergänzt nur einen weiterhin aktuell
+gestützten Temperaturknick. Dazu müssen die jüngsten Originaltemperaturen in
+der Türvergleichszeit und die Originalfeuchtewerte in der Feuchtevergleichszeit
+liegen. Die historische Bindung des Temperaturknicks allein genügt für diesen
+Weg nicht.
 
 ## Anwesenheit und Aufgüsse erkennen
 

@@ -414,7 +414,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         self.assertEqual(detector._curve_proposal_status[key]["reason"], "owner_context")
 
     def test_fresh_temperature_close_keeps_its_history_until_current_recovery(self):
-        for boundary in (None, "source", "correction", "expiry"):
+        for boundary in (None, "source", "correction", "expiry", "humidity_source"):
             with self.subTest(boundary=boundary):
                 detector = self._detector()
                 grid = detector.grid_seconds
@@ -459,7 +459,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         exact_constant=False, exact_linear=False,
                     )
 
-                source = None
+                source = humidity_source = None
 
                 def send(second, value, *, measured=None):
                     for quantity, observed in (
@@ -467,7 +467,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     ):
                         self.assertTrue(detector.accept(measurement(
                             Position.UPPER, quantity, observed, second,
-                            source=source if quantity == Quantity.TEMPERATURE else None,
+                            source=(source if quantity == Quantity.TEMPERATURE
+                                    else humidity_source),
                             measured=at(second if measured is None else measured),
                         )))
                     events.extend(detector.advance(at(second), enabled=True))
@@ -493,6 +494,11 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     if boundary == "source":
                         source = "sensor.replaced_temperature"
                         send(bound_at + grid, temperature - .3)
+                    elif boundary == "humidity_source":
+                        # Broken RH provenance disables only the supplementary
+                        # RH route; original T recovery remains independent.
+                        humidity_source = "sensor.replaced_humidity"
+                        send(bound_at + grid, temperature - .3)
                     elif boundary == "correction":
                         send(bound_at + grid, temperature - 4, measured=bound_at)
                     elif boundary == "expiry":
@@ -504,7 +510,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         through = recovery_start + detector.p["door_window_seconds"]
                     else:
                         events.extend(detector.advance(at(bound_at + grid), enabled=True))
-                    if boundary is not None:
+                    if boundary not in (None, "humidity_source"):
                         self.assertNotIn(key, detector._curve_proposals)
                         self.assertEqual(detector._curve_proposal_status[key]["status"], "invalid")
                     for second in range((detector.index + 1) * grid, through + grid, grid):
@@ -513,13 +519,13 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                             bottom = temperature - .1 * (recovery_start - opening_at) / grid
                             value = bottom + .1 * (second - recovery_start) / grid
                         send(second, value)
-                        if boundary is None and second < through:
+                        if boundary in (None, "humidity_source") and second < through:
                             saved = detector._curve_proposals[key].candidates[0][1]
                             self.assertEqual(saved.original_points, originals)
                             self.assertEqual(saved.candidate_id, witness.candidate_id)
                             self.assertEqual(events, [])
                 closes = [item for item in events if item.kind == Kind.DOOR_CLOSE]
-                if boundary is None:
+                if boundary in (None, "humidity_source"):
                     self.assertEqual(len(closes), 1, msg=f"actual detections: {events!r}")
                     self.assertEqual(closes[0].effective_at, witness.onset_at)
                     self.assertEqual(closes[0].trace_at, at(through))
@@ -530,6 +536,173 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     self.assertEqual(confirmed["recovery_observed_at"], at(through))
                 else:
                     self.assertEqual(closes, [])
+
+    def test_late_humidity_recovery_needs_the_current_bound_temperature_identity(self):
+        for current_temperature in ("supported", "held", "insufficient", "rejected", "replaced"):
+            with self.subTest(current_temperature=current_temperature):
+                observed = []
+                detector = Detector(
+                    detection_parameters(), T0, (Position.UPPER, Position.LOWER),
+                    observer=observed.append,
+                )
+                grid = detector.grid_seconds
+                side = detector.curve_policy.min_side_samples
+                opening_at = 2 * side * grid
+                bound_at = opening_at + 2 * grid
+                humidity = trace(0)[1]
+                temperatures = {
+                    Position.UPPER: trace(0)[0], Position.LOWER: trace(85)[0],
+                }
+                falling_step = trace(280)[0] - trace(281)[0]
+                humidity_step = trace(151)[1] - trace(150)[1]
+                events = []
+
+                def send(second, *, pulse_start=None, held_temperature=False):
+                    for position, temperature in temperatures.items():
+                        values = (
+                            (Quantity.TEMPERATURE,
+                             temperature - falling_step * max(0, second - opening_at) / grid),
+                            (Quantity.HUMIDITY,
+                             humidity + humidity_step * max(0, second - pulse_start) / grid
+                             if pulse_start is not None else humidity),
+                        )
+                        for quantity, value in values:
+                            if (held_temperature and position == Position.LOWER
+                                    and quantity == Quantity.TEMPERATURE):
+                                continue
+                            self.assertTrue(detector.accept(measurement(
+                                position, quantity, value, second, measured=at(second),
+                            )))
+                    events.extend(detector.advance(at(second), enabled=True))
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change",
+                    side_effect=supported_opening,
+                ):
+                    for second in range(0, opening_at + grid, grid):
+                        send(second)
+                self.assertEqual([item.kind for item in events], [Kind.DOOR_OPEN])
+                self.assertTrue(detector.door_episode["opening_humidity"])
+                self.assertEqual(detector.door_episode["positions"], detector.positions)
+                opening_humidity_sources = {
+                    position: (
+                        detector._curve_series[position, Quantity.HUMIDITY]["source"],
+                        detector._curve_series[position, Quantity.HUMIDITY]["epoch"],
+                    ) for position in detector.positions
+                }
+                events.clear()
+
+                def current_evidence(samples, **kwargs):
+                    if not samples or samples[0][1] not in temperatures.values():
+                        # No RH hinge is supplied: the new route must use the
+                        # independently directed current original RH segment.
+                        return None
+                    lower = samples[0][1] == temperatures[Position.LOWER]
+                    later = samples[-1][0] > at(bound_at)
+                    if lower and later and current_temperature == "insufficient":
+                        return None
+                    replacement = at(bound_at)
+                    rejected = lower and later and (
+                        current_temperature == "rejected"
+                        or (current_temperature == "replaced"
+                            and kwargs["onset_at"] not in (None, replacement))
+                    )
+                    result = local_features(
+                        samples, target=(replacement if lower and later
+                                         and current_temperature == "replaced" else None),
+                        **kwargs,
+                    )
+                    return replace(result, evidence="rejects") if rejected and result else result
+
+                def directed_originals(samples, *, policy):
+                    if len(samples) < policy.min_side_samples:
+                        return None
+                    rising = all(right > left for (_, left), (_, right) in zip(samples, samples[1:]))
+                    return CurveTrendFeatures(
+                        direction=1 if rising else -1,
+                        slope=humidity_step if rising else -falling_step,
+                        noise_scale=1.0, level_score=1.0, trend_score=0.0, score_gain=1.0,
+                        exact_constant=False, exact_linear=False,
+                    )
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change",
+                    side_effect=current_evidence,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_trend",
+                    side_effect=directed_originals,
+                ):
+                    send(opening_at + grid)
+                    send(bound_at)
+                    key = ("door_close", detector.positions, (Quantity.TEMPERATURE,))
+                    first = dict(detector._curve_proposal_status[key])
+                    self.assertEqual(first["status"], "bound")
+                    self.assertEqual(first["evidence_bound_at"], at(bound_at))
+                    self.assertEqual(events, [])
+                    bound_ids = {
+                        candidate_key[1]: candidate.candidate_id
+                        for candidate_key, candidate in detector._curve_proposals[key].candidates
+                    }
+                    pulse_start = bound_at + side * grid
+                    through = pulse_start + detector.p["door_humidity_seconds"]
+                    self.assertGreater(through - bound_at, detector.p["door_window_seconds"])
+                    self.assertLess(through - bound_at, detector.p["sensor_timeout_seconds"])
+                    self.assertLess(through - opening_at, detector.p["curve_window_seconds"])
+                    for second in range(bound_at + grid, through + grid, grid):
+                        send(
+                            second, pulse_start=pulse_start,
+                            held_temperature=current_temperature == "held",
+                        )
+                        if second < through:
+                            self.assertEqual(events, [], msg=repr(detector.diagnostic))
+
+                diagnostic = repr({
+                    "current_temperature": current_temperature,
+                    "events": [(item.kind, item.effective_at, item.trace_at) for item in events],
+                    "bound_ids": bound_ids,
+                    "candidates": detector.diagnostic["curve_candidates"].get("door_close", {}),
+                    "proposals": detector.diagnostic["curve_proposals"].get("door_close", ()),
+                })
+                closes = [item for item in events if item.kind == Kind.DOOR_CLOSE]
+                if current_temperature == "supported":
+                    self.assertEqual(len(closes), 1, msg=diagnostic)
+                    self.assertEqual(closes[0].effective_at, first["onset_at"], msg=diagnostic)
+                    self.assertEqual(closes[0].trace_at, at(through), msg=diagnostic)
+                    self.assertEqual(detector._curve_proposal_status[key]["status"], "consumed")
+                    self.assertEqual(
+                        detector._curve_proposal_status[key]["candidate_ids"],
+                        first["candidate_ids"], msg=diagnostic,
+                    )
+                    for confirmed in detector._curve_proposal_status[key]["confirmation"]:
+                        position = next(
+                            position for position, identity in bound_ids.items()
+                            if identity == confirmed["candidate_id"]
+                        )
+                        source, epoch = opening_humidity_sources[position]
+                        self.assertTrue(confirmed["supported"], msg=diagnostic)
+                        self.assertEqual(confirmed["recovery_quantity"], "humidity")
+                        self.assertEqual(confirmed["recovery_source"], source)
+                        self.assertEqual(confirmed["recovery_time_basis"], "measured")
+                        self.assertEqual(confirmed["recovery_source_epochs"], (epoch,))
+                        self.assertEqual(confirmed["recovery_newest_at"], at(through))
+                        self.assertEqual(confirmed["recovery_observed_at"], at(through))
+                        self.assertTrue(confirmed["current_temperature_supported"])
+                        self.assertEqual(confirmed["current_temperature_newest_at"], at(through))
+                else:
+                    self.assertEqual(closes, [], msg=diagnostic)
+                    self.assertTrue(detector.open, msg=diagnostic)
+                    self.assertEqual(detector._curve_proposal_status[key]["status"], "bound")
+                    lower_key = ("door_close", Position.LOWER, Quantity.TEMPERATURE)
+                    status = detector._curve_status[lower_key]
+                    if current_temperature == "held":
+                        self.assertEqual(status["status"], "supported", msg=diagnostic)
+                        self.assertEqual(status["newest_at"], at(bound_at), msg=diagnostic)
+                        self.assertEqual(status["candidate_id"], bound_ids[Position.LOWER])
+                    elif current_temperature == "replaced":
+                        self.assertEqual(status["status"], "supported", msg=diagnostic)
+                        self.assertNotEqual(status["candidate_id"], bound_ids[Position.LOWER])
+                    else:
+                        self.assertEqual(status["status"], current_temperature, msg=diagnostic)
 
     def test_temperature_recovery_cache_expires_without_a_tick_refit(self):
         detector = self._detector()
