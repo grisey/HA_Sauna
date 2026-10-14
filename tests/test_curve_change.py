@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 import gzip
 import json
+from math import log
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -56,14 +57,46 @@ class CurveChangeTests(unittest.TestCase):
 
         for role, points in samples.items():
             with self.subTest(role=role):
-                result = curve_change(points, policy=curve_policy())
-                self.assertIsNotNone(result)
-                self.assertEqual(result.evidence, "supports")
-                self.assertLessEqual(abs((result.onset_at - reference).total_seconds()), 10)
-                self.assertLess(result.slope_before, result.slope_after)
-                self.assertLess(result.slope_after, 0)
-                self.assertIn(result.onset_at, {at for at, _ in points})
-                self.assertEqual(result.newest_at, points[-1][0])
+                full_window_fits = []
+                models = curves._models
+
+                def observed_models(times, values, noise, knots, policy):
+                    fitted = models(times, values, noise, knots, policy)
+                    if not full_window_fits:
+                        full_window_fits.append((tuple(knots), fitted))
+                    return fitted
+
+                with patch.object(curves, "_models", side_effect=observed_models):
+                    result = curve_change(points, policy=curve_policy())
+                knot_diagnostics = []
+                for knots, fitted in full_window_fits:
+                    if fitted is None:
+                        continue
+                    smooth_score, _, _, changes = fitted
+                    span = (points[-1][0] - points[0][0]).total_seconds()
+                    original_at = {
+                        (stamp - points[0][0]).total_seconds() / span: stamp
+                        for stamp, _ in points
+                    }
+                    knot_times = dict(knots)
+                    search_cost = 2 * log(len(knots))
+                    knot_diagnostics.extend({
+                        "original_at": original_at[knot_times[index]].isoformat(),
+                        "hinge": coefficients[3],
+                        "slope_change_per_second": coefficients[3] / span,
+                        "score_gain_after_search": smooth_score - score - search_cost,
+                    } for score, index, coefficients in changes)
+                diagnostic = f"{role}: {result!r}; full_window_knots={knot_diagnostics!r}"
+                self.assertIsNotNone(result, msg=diagnostic)
+                self.assertEqual(result.evidence, "supports", msg=diagnostic)
+                self.assertLessEqual(
+                    abs((result.onset_at - reference).total_seconds()), 10,
+                    msg=diagnostic,
+                )
+                self.assertLess(result.slope_before, result.slope_after, msg=diagnostic)
+                self.assertLess(result.slope_after, 0, msg=diagnostic)
+                self.assertIn(result.onset_at, {at for at, _ in points}, msg=diagnostic)
+                self.assertEqual(result.newest_at, points[-1][0], msg=diagnostic)
 
     def test_positive_change_can_leave_both_slopes_negative(self):
         policy = replace(curve_policy(), max_candidates=curve_policy().max_points)
