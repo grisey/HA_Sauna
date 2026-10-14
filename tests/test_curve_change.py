@@ -459,6 +459,23 @@ class CurveChangeTests(unittest.TestCase):
         self.assertEqual(result.onset_at, onset)
         self.assertEqual(result.newest_at, points[-1][0])
 
+        # The plateau fixture supplies balanced measurement noise, independent
+        # of the fitted models. From 70 onward the underlying rate stays -.04
+        # on both sides of the frozen onset, so there is no physical slowdown.
+        noisy_points = [
+            (at, value + noisy_level - trace(100)[1])
+            for (at, value), (_, noisy_level) in zip(
+                points, level_trace_points()[:len(points)], strict=True,
+            )
+        ]
+        noisy_result = curve_change(
+            noisy_points, policy=curve_policy(), onset_at=onset, direction=1,
+            onset_not_before=T0 + timedelta(seconds=68),
+        )
+        self.assertTrue(
+            noisy_result is None or noisy_result.evidence == "rejects", noisy_result,
+        )
+
     def test_owner_floor_preserves_real_braking_after_earlier_heating(self):
         policy = curve_policy()
         opening = 70

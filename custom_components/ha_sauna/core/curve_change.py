@@ -9,8 +9,9 @@ A separate fixed-tail comparison assesses a freely fitted level against the
 same smooth trends. The detector owns tail selection and event completion.
 Direction after a chosen knot is assessed separately on its actual right-hand
 originals; a global hinge derivative cannot supply that observed direction.
-Independent lines on both original sides, using the supplied onset floor,
-must also agree with the hinge's sense of change.
+Original sides can supply separate counterevidence when both prefer lines:
+a shared slope or a resolved contrary change can oppose the global hinge.
+Curved or unresolved sides cannot supply that additional counterevidence.
 """
 
 from __future__ import annotations
@@ -278,18 +279,24 @@ def _models(times, values, noise, knots, policy):
     return smooth_score, smooth_model, residuals, changes
 
 
-def _side_change_direction(
-    times, values, noise, knot, start, value_resolution, policy,
+def _side_change_rejects(
+    times, values, noise, knot, start, change, value_resolution, policy,
 ):
-    """Check the hinge's sense against independent lines at its fixed split.
+    """Assess relative counterevidence only on independently linear sides.
 
     The existing onset floor excludes earlier state shapes from this additional
     consistency check. If its left side is too short, only the nearest earlier
     originals needed for the existing side minimum are retained. This also
     permits a change exactly at the inclusive floor. The global fit still owns
-    noise and model evidence.
-    Each side uses its own time span so a short side cannot inherit an
-    artificially precise slope from the duration of the whole window.
+    noise and primary model evidence. None means auxiliary uncertainty and
+    cannot suppress that primary support.
+
+    Each side must prefer a line to both a quadratic and cubic before its mean
+    slope is usable here. Those linear sides then compare one shared slope
+    against separate slopes, with independent intercepts in both models. The
+    fixed split pays no knot-search cost. A shared slope is relative evidence
+    for continuation; separate slopes oppose the hinge only with a resolved
+    contrary difference. This is no independent positive change confirmation.
     """
     before, after = [], []
     for time, value in zip(times, values, strict=True):
@@ -300,22 +307,56 @@ def _side_change_direction(
     first = sum(time < start for time, _ in before)
     first = min(first, max(0, len(before) - policy.min_side_samples))
     before = before[first:]
-    slopes, resolutions = [], []
+    slopes, losses, resolutions = [], [], []
     for points in (before, after):
         if len(points) < policy.min_side_samples:
             return None
         span = points[-1][0] - points[0][0]
-        rows = [[1.0, (time - points[0][0]) / span] for time, _ in points]
-        fitted = _fit(rows, [value for _, value in points], noise, policy)
-        if fitted is None:
+        local_times = [(time - points[0][0]) / span for time, _ in points]
+        side_values = [value for _, value in points]
+        rows = [[1.0, time] for time in local_times]
+        linear = _fit(rows, side_values, noise, policy)
+        if linear is None:
             return None
-        slopes.append(fitted[0][1] / span)
+        linear_score = linear[1] + 2 * log(len(points))
+        for degree in (2, 3):
+            rows = [[time**power for power in range(degree + 1)]
+                    for time in local_times]
+            smooth = _fit(rows, side_values, noise, policy)
+            if smooth is None:
+                return None
+            smooth_score = smooth[1] + (degree + 1) * log(len(points))
+            score_resolution = len(points) * ulp(max(
+                abs(linear_score), abs(smooth_score),
+            ))
+            if smooth_score - linear_score <= score_resolution:
+                return None
+        slopes.append(linear[0][1] / span)
+        losses.append(linear[1])
         resolutions.append(value_resolution / span)
-    change = slopes[1] - slopes[0]
-    resolution = fsum(resolutions)
-    if not isfinite(change) or not isfinite(resolution):
+    points = before + after
+    rows = [[1.0, float(time > knot), time] for time, _ in points]
+    common = _fit(rows, [value for _, value in points], noise, policy)
+    if common is None:
         return None
-    return (1 if change > 0 else -1) if abs(change) > resolution else 0
+    common_score = common[1] + 3 * log(len(points))
+    separate_score = fsum(losses) + 4 * log(len(points))
+    score_gain = common_score - separate_score
+    score_resolution = len(points) * ulp(max(
+        abs(common_score), abs(separate_score),
+    ))
+    if not isfinite(score_gain) or abs(score_gain) <= score_resolution:
+        return None
+    if score_gain < 0:
+        return True
+    difference = slopes[1] - slopes[0]
+    resolution = fsum(resolutions)
+    if (
+        not isfinite(difference) or not isfinite(resolution)
+        or abs(difference) <= resolution
+    ):
+        return None
+    return difference * change < 0
 
 
 def _supported_without_point(
@@ -337,15 +378,15 @@ def _supported_without_point(
     smooth_score, _, _, changes = result
     score, _, coefficients = changes[0]
     resolution = len(values) * ulp(max(abs(smooth_score), abs(score + penalty)))
-    side_direction = _side_change_direction(
-        retained_times, retained_values, noise, knot, shape_start,
+    if smooth_score - score - penalty <= resolution:
+        return False, coefficients[3]
+    side_rejects = _side_change_rejects(
+        retained_times, retained_values, noise, knot, shape_start, coefficients[3],
         value_resolution, policy,
     )
-    if side_direction is None:
-        return None
     return (
         smooth_score - score - penalty > resolution
-        and side_direction * coefficients[3] > 0,
+        and side_rejects is not True,
         coefficients[3],
     )
 
@@ -634,7 +675,9 @@ def curve_change(
     insufficient; the caller must require after_trend for a directed route.
     Independent lines on the original sides use onset_not_before, retaining
     nearest earlier originals only when needed for the existing side minimum.
-    Their sense must agree with the hinge, including after point removal.
+    When both sides prefer lines, a shared slope or a resolved contrary change
+    supplies additional counterevidence, including after point removal. Curved
+    or unresolved sides leave the primary global comparison unchanged.
     """
     try:
         if direction is not None and (
@@ -752,12 +795,11 @@ def curve_change(
             if onset_not_before is not None else times[0]
         )
         if supported:
-            side_direction = _side_change_direction(
-                times, values, noise, times[index], shape_start, resolution, policy,
+            side_rejects = _side_change_rejects(
+                times, values, noise, times[index], shape_start, coefficients[3],
+                resolution, policy,
             )
-            if side_direction is None:
-                return None
-            supported = side_direction * coefficients[3] > 0
+            supported = side_rejects is not True
         if supported:
             rescue = _supported_without_point(
                 times, values, noise, index, residuals, search_penalty, policy,
