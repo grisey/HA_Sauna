@@ -28,7 +28,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
     def _assert_smooth_close_originals(
         self, row, event, inputs, opening_witnesses, values, floor, consumed,
     ):
-        """Validate current full-form evidence without making its valley an onset."""
+        """Separate the bound original form from its current recovery continuation."""
         selected = row["door_close_confirmation"]
         self.assertEqual(selected["confirmation_method"], "smooth_recovery")
         self.assertEqual(selected["confirmed_at"], event.trace_at)
@@ -47,12 +47,16 @@ class R04DoorRecoveryTests(unittest.TestCase):
             self.assertTrue(evidence["within_window"], evidence)
             for key in ("source", "time_basis", "source_epochs"):
                 self.assertEqual(evidence[key], witness[key], evidence)
+            bound_at = evidence["bound_at"]
+            self.assertIsNotNone(bound_at, evidence)
+            self.assertGreaterEqual(bound_at, floor)
+            self.assertLessEqual(bound_at, event.trace_at)
             self.assertGreater(evidence["fresh_newest_at"], evidence["first_newest_at"])
-            self.assertLessEqual(evidence["fresh_observed_at"], event.trace_at)
-            freshness.append(evidence["fresh_observed_at"])
+            self.assertEqual(evidence["fresh_observed_at"], bound_at)
+            self.assertEqual(evidence["fresh_newest_at"], evidence["newest_at"])
             self.assertGreaterEqual(
                 evidence["decline_start_at"], max(
-                    floor, event.trace_at - timedelta(seconds=values["curve_window_seconds"]),
+                    floor, bound_at - timedelta(seconds=values["curve_window_seconds"]),
                 ),
             )
             self.assertLessEqual(evidence["decline_start_at"], evidence["decline_newest_at"])
@@ -60,23 +64,50 @@ class R04DoorRecoveryTests(unittest.TestCase):
             self.assertLess(evidence["valley_at"], evidence["recovery_start_at"])
             self.assertGreaterEqual(
                 evidence["recovery_start_at"], max(
-                    floor, event.trace_at - timedelta(seconds=values["door_window_seconds"]),
+                    floor, bound_at - timedelta(seconds=values["door_window_seconds"]),
                 ),
             )
             self.assertLessEqual(evidence["recovery_start_at"], evidence["recovery_newest_at"])
-            self.assertLessEqual(evidence["recovery_newest_at"], event.trace_at)
+            self.assertLessEqual(evidence["recovery_newest_at"], bound_at)
             self.assertEqual(evidence["newest_at"], evidence["recovery_newest_at"])
+            originals = [
+                item.received_at for item in inputs
+                if item.position.value == position and item.quantity == Quantity.TEMPERATURE
+                and item.source == evidence["source"]
+            ]
+            self.assertEqual(evidence["original_count"], sum(
+                evidence["start_at"] <= stamp <= evidence["newest_at"]
+                for stamp in originals
+            ))
             for stamp in (
                 evidence["start_at"], evidence["newest_at"],
                 evidence["decline_start_at"], evidence["decline_newest_at"],
                 evidence["recovery_start_at"], evidence["recovery_newest_at"],
                 evidence["first_newest_at"], evidence["fresh_newest_at"],
             ):
-                self.assertTrue(any(
-                    item.position.value == position and item.quantity == Quantity.TEMPERATURE
-                    and item.source == evidence["source"] and item.received_at == stamp
-                    for item in inputs
-                ), evidence)
+                self.assertIn(stamp, originals, evidence)
+            # The complete form may have left today's curve window. Its
+            # continuation still needs a directed current original tail.
+            current = evidence["current_recovery"]
+            self.assertIsNotNone(current, evidence)
+            self.assertEqual(current["direction"], 1, current)
+            self.assertTrue(current["original_supported"], current)
+            self.assertTrue(current["within_window"], current)
+            self.assertGreaterEqual(current["start_at"], max(
+                floor, evidence["recovery_start_at"],
+                event.trace_at - timedelta(seconds=values["door_window_seconds"]),
+            ))
+            self.assertLessEqual(current["start_at"], current["newest_at"])
+            self.assertLessEqual(current["newest_at"], event.trace_at)
+            self.assertGreaterEqual(current["fresh_observed_at"], bound_at)
+            self.assertLessEqual(current["fresh_observed_at"], event.trace_at)
+            self.assertLessEqual(current["start_at"], current["last_positive_at"])
+            self.assertLessEqual(current["last_positive_at"], current["newest_at"])
+            for stamp in (
+                current["start_at"], current["newest_at"], current["last_positive_at"],
+            ):
+                self.assertIn(stamp, originals, current)
+            freshness.append(current["fresh_observed_at"])
         self.assertIn(event.trace_at, freshness)
         if selected["onset_basis"] == "now_fallback":
             self.assertEqual(event.effective_at, event.trace_at)

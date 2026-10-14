@@ -102,18 +102,25 @@ getrennt belegen. Die vollständige Form und beide Richtungen müssen auch nach
 Weglassen eines besonders einflussreichen Messpunkts bestehen bleiben.
 Jede noch auswertbare beteiligte Temperaturposition benötigt nach ihrem ersten
 Formbeleg eine erneute Stützung durch später hinzugekommene frische Originale.
+Nach diesen beiden vollständigen Originalbefunden bleiben die Formstützen
+gebunden, auch wenn ihre Fallflanke aus dem wandernden Analysefenster läuft.
+Die weitere Bestätigung benötigt einen steigenden Trend aktueller
+Originaltemperaturen innerhalb der Türvergleichszeit, der die zuletzt positiv
+belegte Originalmessung noch enthält. Ein fallender Trend oder das Ablaufen
+dieses Messpunkts verwirft den Formnachweis; ein gleichbleibender oder nicht
+eindeutig bewertbarer Verlauf pausiert die Bestätigung.
 Die Temperaturquellen und ihre ununterbrochenen Messabschnitte müssen zur
-erkannten Öffnung gehören. Der Formbeleg bleibt innerhalb des Analysefensters;
-sein aktueller Anstieg muss zusätzlich in der Türvergleichszeit liegen.
+erkannten Öffnung gehören; Quellen- und Kontextbrüche verwerfen den Formnachweis.
 Originale vor der Öffnung oder einem späteren bestätigten Lüftungsnachweis
 werden nicht verwendet. Rasterprüfungen und Korrekturen derselben Originalprobe
-liefern keine frische Bestätigung.
+liefern keine frische Bestätigung. Korrekturen verwendeter Originale entwerten
+die betroffenen Form- oder aktuellen Erholungsbelege.
 
 Der berechnete Talzeitpunkt (`valley_at`) beschreibt nur die Kurvengeometrie
 und legt keinen Schließbeginn fest. Ein früherer Beginn benötigt einen noch
 gültigen, durch neue Originalmessungen gebundenen Temperaturbremsknick. Der
 zugehörige Originalmesspunkt muss an jeder beteiligten Position innerhalb der
-aktuell belegten Fallflanke liegen.
+Fallflanke der gebundenen Form liegen.
 Andernfalls gilt der tatsächliche Bestätigungszeitpunkt.
 
 Alternativ kann ein Abbremsen des Temperaturabfalls zusammen mit einer passenden
@@ -229,7 +236,8 @@ Haltezähler zählen Prüfpunkte, keine Sekunden; ihr Abstand folgt dem Prüfsch
 Ein Ereignis verweist über `trace_at` auf seinen auslösenden Diagnosepunkt.
 Ältere Archive verwenden dafür den fachlichen Ereignisbeginn.
 Bei einer durch glatte Erholung bestätigten Schließung trennt der gespeicherte
-Nachweis die historischen Ankerbelege von der tatsächlich verwendeten aktuellen
-Form.
+Nachweis die historischen Ankerbelege, die gebundene vollständige Form mit ihrem
+Bindungszeitpunkt (`bound_at`) und die aktuelle Originalerholung
+(`current_recovery`).
 
 [Zeitliche Zuordnung](speicherung.md#nachträgliche-zuordnung-im-verlauf) · [Originaldaten](speicherung.md)

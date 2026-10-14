@@ -210,6 +210,25 @@ class Detector:
             ):
                 self._invalidate_curve_proposal(key, "source_context")
 
+    def _correct_smooth_close_evidence(self, position, quantity, corrected_at):
+        """Benutzte Originale vor einem folgenden Append synchron entwerten."""
+        if quantity != Quantity.TEMPERATURE:
+            return
+        record = self._curve_recovery_evidence.get((position, quantity), {})
+        form = record.get("smooth_form")
+        if form is None:
+            return
+        if any(stamp == corrected_at for stamp, _ in form.get("original_points", ())):
+            record.pop("smooth_form")
+            return
+        current = form.get("current_recovery")
+        if current is not None and any(
+            stamp == corrected_at for stamp, _ in current["points"]
+        ):
+            form["current_recovery"] = {
+                **current, "original_supported": False, "fresh_observed_at": None,
+            }
+
     def _record_curve_sample(self, measurement, now):
         """Originale einmal zählen; Geräte- und Empfangsuhr nicht vermischen."""
         position, quantity = measurement.position, measurement.quantity
@@ -254,6 +273,7 @@ class Detector:
         )
         series["version"] += 1
         if corrected:
+            self._correct_smooth_close_evidence(position, quantity, point_at)
             self._correct_curve_proposals(position, quantity, point_at, measurement.value)
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
         else:
@@ -557,12 +577,12 @@ class Detector:
         return current_supported
 
     def _smooth_close_confirmation(self, positions, episode, *, floor, now):
-        """Die volle Fall-Tal-Erholung nur durch neue Originale fortbestätigen.
+        """Die volle Fall-Tal-Erholung binden und ihre Originalerholung fortführen.
 
         Der Formbeleg führt weder einen Türzustand noch einen Ereignisbeginn.
-        Seine beobachteten Flanken müssen zur selben Öffnung und Quelle gehören.
-        Ein neuer Bogen setzt den Erstbeleg zurück; reine Rasterzeit kann keinen
-        Beleg erwerben und lässt aus dem Arbeitsfenster laufende Stützen verfallen.
+        Zwei vollständige Originalbefunde binden die beobachteten Flanken.
+        Danach bestätigt nur ein aktueller, überlappender Originaltrend die
+        Fortsetzung. Das wandernde Analysefenster widerlegt keine alte Fallflanke.
         """
         supports = []
         confirmations = []
@@ -582,6 +602,13 @@ class Detector:
                 <= features.recovery_newest_at <= now
             )
 
+        def current_within_window(current):
+            return (
+                current is not None and current["start_at"] is not None
+                and current["newest_at"] is not None
+                and recovery_start <= current["start_at"] <= current["newest_at"] <= now
+            )
+
         for position in positions:
             series = self._curve_series[position, Quantity.TEMPERATURE]
             record = self._curve_recovery_evidence.setdefault(
@@ -597,7 +624,58 @@ class Detector:
                 series["source"] == episode["sources"][position][0]
                 and series["epoch"] == episode["epochs"][position][0]
             )
-            if previous is None or previous["evaluation"] != evaluation:
+            original_received = series["last_original_received_at"]
+            new_original = (
+                series["last_original_version"] == series["version"]
+                and original_received is not None
+                and now - timedelta(seconds=self.grid_seconds)
+                < original_received <= now
+            )
+            if previous is not None and (
+                previous["evaluation"][1] != context or not same_source
+            ):
+                previous = None
+            invalid_reason = None
+            if previous is not None and previous.get("bound_at") is not None:
+                features = previous["features"]
+                points = tuple(
+                    point for point in series["points"]
+                    if max(recovery_start, features.recovery_start_at) <= point[0] <= now
+                )
+                frontier = previous["last_positive_at"]
+                if not any(stamp == frontier for stamp, _ in points):
+                    previous = None
+                    invalid_reason = "recovery_frontier_expired"
+                elif previous["evaluation"] != evaluation:
+                    trend = curve_trend(points, policy=self.curve_policy)
+                    if trend is not None and trend.direction == -1:
+                        previous = None
+                        invalid_reason = "recovery_counterevidence"
+                    else:
+                        old_current = previous["current_recovery"]
+                        directed = trend is not None and trend.direction == 1
+                        fresh = directed and new_original and points[-1][0] > frontier
+                        current = {
+                            "points": points, "trend": trend,
+                            "start_at": points[0][0] if points else None,
+                            "newest_at": points[-1][0] if points else None,
+                            "original_supported": directed and (
+                                fresh or old_current["original_supported"]
+                                and current_within_window(old_current)
+                            ),
+                            "fresh_observed_at": (
+                                now if fresh else old_current["fresh_observed_at"]
+                            ),
+                        }
+                        previous = {
+                            **previous, "evaluation": evaluation,
+                            "current_recovery": current,
+                            "last_positive_at": points[-1][0] if fresh else frontier,
+                        }
+            if (
+                previous is None or previous.get("bound_at") is None
+                and previous["evaluation"] != evaluation
+            ):
                 points = self._curve_points(
                     position, Quantity.TEMPERATURE, now,
                     points_not_before=max(floor, series["started_at"] or floor),
@@ -605,7 +683,9 @@ class Detector:
                 features = curve_recovery(
                     points, policy=self.curve_policy,
                     current_not_before=recovery_start,
-                ) if same_source else None
+                ) if same_source and new_original and invalid_reason != (
+                    "recovery_counterevidence"
+                ) else None
                 supported = features is not None and features.evidence == "supports"
                 old_features = previous["features"] if previous is not None else None
                 same_form = (
@@ -616,13 +696,6 @@ class Detector:
                     <= features.decline_newest_at
                     and features.recovery_start_at <= old_features.recovery_newest_at
                     <= features.recovery_newest_at
-                )
-                original_received = series["last_original_received_at"]
-                new_original = (
-                    series["last_original_version"] == series["version"]
-                    and original_received is not None
-                    and now - timedelta(seconds=self.grid_seconds)
-                    < original_received <= now
                 )
                 original_supported = supported and (
                     new_original or same_form and within_window(old_features)
@@ -639,29 +712,72 @@ class Detector:
                 ):
                     fresh_newest_at = features.newest_at
                     fresh_observed_at = now
-                previous = {
-                    "evaluation": evaluation, "features": features,
-                    "original_supported": original_supported,
-                    "first_newest_at": first_newest_at,
-                    "fresh_newest_at": fresh_newest_at,
-                    "fresh_observed_at": fresh_observed_at,
-                }
-                record["smooth_form"] = previous
+                if (
+                    features is None and previous is not None
+                    and previous["original_supported"] and old_features is not None
+                    and recovery_start <= old_features.recovery_newest_at <= now
+                    and any(stamp == old_features.recovery_newest_at for stamp, _ in points)
+                ):
+                    # Ein unaufgelöster Zwischenstand ist kein zweiter Formbeleg
+                    # und widerlegt die erste belegte Originalform nicht.
+                    previous = {
+                        **previous, "evaluation": evaluation,
+                        "current_form_supported": False,
+                    }
+                else:
+                    previous = {
+                        "evaluation": evaluation, "features": features,
+                        "original_supported": original_supported,
+                        "current_form_supported": original_supported,
+                        "original_points": points if original_supported else (),
+                        "first_newest_at": first_newest_at,
+                        "fresh_newest_at": fresh_newest_at,
+                        "fresh_observed_at": fresh_observed_at,
+                        "bound_at": None, "current_recovery": None,
+                        "last_positive_at": None, "invalid_reason": invalid_reason,
+                    }
+                    if (
+                        original_supported and fresh_newest_at is not None
+                        and fresh_newest_at > first_newest_at
+                    ):
+                        recovery_points = tuple(
+                            point for point in points
+                            if features.recovery_start_at <= point[0]
+                            <= features.recovery_newest_at
+                        )
+                        previous.update(
+                            bound_at=now,
+                            last_positive_at=features.recovery_newest_at,
+                            current_recovery={
+                                "points": recovery_points, "trend": features.after_trend,
+                                "start_at": features.recovery_start_at,
+                                "newest_at": features.recovery_newest_at,
+                                "original_supported": True, "fresh_observed_at": now,
+                            },
+                        )
+            record["smooth_form"] = previous
             features = previous["features"]
-            current_window = within_window(features)
-            supported = previous["original_supported"] and current_window
-            confirmed = (
-                supported and previous["fresh_newest_at"] is not None
-                and previous["fresh_newest_at"] > previous["first_newest_at"]
+            current = previous.get("current_recovery")
+            bound = previous.get("bound_at") is not None
+            current_window = (
+                current_within_window(current) if bound else within_window(features)
             )
+            supported = current_window and (
+                current["original_supported"] if bound else
+                previous["original_supported"] and previous["current_form_supported"]
+            )
+            confirmed = bound and supported
             supports.append(supported)
             confirmations.append(confirmed)
-            fresh_original |= confirmed and previous["fresh_observed_at"] == now
+            fresh_original |= confirmed and current["fresh_observed_at"] == now
             key = ("door_close", position, Quantity.TEMPERATURE)
             self._curve_status[key] = {
                 **self._curve_status.get(key, {}),
                 "smooth_recovery": {
                     "supported": supported, "within_window": current_window,
+                    "bound_at": previous.get("bound_at"),
+                    "historical_within_window": within_window(features),
+                    "invalid_reason": previous.get("invalid_reason"),
                     "source": series["source"], "time_basis": series["time_basis"],
                     "source_epochs": (series["epoch"],),
                     "start_at": features.start_at if features is not None else None,
@@ -682,6 +798,16 @@ class Detector:
                     "first_newest_at": previous["first_newest_at"],
                     "fresh_newest_at": previous["fresh_newest_at"],
                     "fresh_observed_at": previous["fresh_observed_at"],
+                    "original_count": len(previous["original_points"]),
+                    "current_recovery": ({
+                        "start_at": current["start_at"], "newest_at": current["newest_at"],
+                        "direction": (
+                            current["trend"].direction if current["trend"] is not None else None
+                        ),
+                        "original_supported": supported, "within_window": current_window,
+                        "fresh_observed_at": current["fresh_observed_at"],
+                        "last_positive_at": previous["last_positive_at"],
+                    } if current is not None else None),
                 },
             }
         return (

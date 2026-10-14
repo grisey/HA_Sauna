@@ -67,6 +67,19 @@ def full_recovery(samples, *, policy, current_not_before, decline_start, valley)
     )
 
 
+def directed_recovery(samples, *, policy):
+    """Controlled terminal direction over a current tail of real originals."""
+    if len(samples) < policy.min_side_samples:
+        return None
+    change = samples[-1][1] - samples[-2][1]
+    direction = 1 if change > 0 else -1 if change < 0 else 0
+    return CurveTrendFeatures(
+        direction=direction, slope=change, noise_scale=1.0,
+        level_score=1.0, trend_score=0.0, score_gain=1.0,
+        exact_constant=direction == 0, exact_linear=False,
+    )
+
+
 class CurveCandidateLifecycleTests(unittest.TestCase):
     def _detector(self):
         return Detector(detection_parameters(), T0, (Position.UPPER,))
@@ -96,7 +109,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                  if temperature is None else temperature)
         for position in detector.positions if positions is None else positions:
             for quantity, observed, source in (
-                (Quantity.TEMPERATURE, value, temperature_source),
+                (Quantity.TEMPERATURE,
+                 value[position] if isinstance(value, dict) else value, temperature_source),
                 (Quantity.HUMIDITY, humidity, humidity_source),
             ):
                 self.assertTrue(detector.accept(measurement(
@@ -152,7 +166,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         with patch(
             "custom_components.ha_sauna.core.detector.curve_change", return_value=None,
         ), patch(
-            "custom_components.ha_sauna.core.detector.curve_trend", return_value=None,
+            "custom_components.ha_sauna.core.detector.curve_trend", side_effect=directed_recovery,
         ), patch(
             "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
         ) as fitted:
@@ -172,29 +186,176 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                 detector, first + 3 * grid, valley=valley, measured_second=first,
                 temperature=trace(0)[0] + .1 * side + .01,
             ), [])
-            self.assertGreater(fitted.call_count, calls)
+            self.assertEqual(fitted.call_count, calls)
             for position in detector.positions:
+                self.assertIsNone(status(position)["first_newest_at"])
                 self.assertIsNone(status(position)["fresh_newest_at"])
             self.assertEqual(self._smooth_sample(
                 detector, first + 4 * grid, valley=valley, positions=(Position.UPPER,),
             ), [])
-            self.assertEqual(status(Position.UPPER)["fresh_newest_at"], at(first + 4 * grid))
+            self.assertEqual(status(Position.UPPER)["first_newest_at"], at(first + 4 * grid))
+            self.assertIsNone(status(Position.UPPER)["fresh_newest_at"])
+            self.assertIsNone(status(Position.LOWER)["fresh_newest_at"])
+            self.assertEqual(self._smooth_sample(
+                detector, first + 5 * grid, valley=valley, positions=(Position.LOWER,),
+            ), [])
+            self.assertEqual(status(Position.LOWER)["first_newest_at"], at(first + 5 * grid))
+            self.assertEqual(self._smooth_sample(
+                detector, first + 6 * grid, valley=valley, positions=(Position.UPPER,),
+            ), [])
+            self.assertEqual(status(Position.UPPER)["fresh_newest_at"], at(first + 6 * grid))
             self.assertIsNone(status(Position.LOWER)["fresh_newest_at"])
             events = self._smooth_sample(
-                detector, first + 5 * grid, valley=valley, positions=(Position.LOWER,),
+                detector, first + 7 * grid, valley=valley,
             )
         self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
         self.assertEqual(events[0].channels, ("upper", "lower"))
         self.assertEqual(events[0].effective_at, events[0].trace_at)
-        self.assertEqual(events[0].trace_at, at(first + 5 * grid))
+        self.assertEqual(events[0].trace_at, at(first + 7 * grid))
         self.assertFalse(detector.open)
 
+        for continuation in ("positive", "negative", "gap", "correction_append"):
+            with self.subTest(continuation=continuation):
+                detector, opened = self._smooth_opening((Position.UPPER, Position.LOWER))
+                valley = opened + (side + 1) * grid
+                first, bound_at = valley + side * grid, valley + (side + 1) * grid
+                upper_start = opened + detector.p["curve_window_seconds"] + grid
+                upper_valley = upper_start + side * grid
+                close_at = upper_valley + (side + 1) * grid
+                forms = {
+                    Position.LOWER: (opened + grid, valley),
+                    Position.UPPER: (upper_start, upper_valley),
+                }
+                fits = {position: 0 for position in detector.positions}
+                pause_trend = False
+
+                def recovery(samples, **kwargs):
+                    position = Position.UPPER if samples[-1][1] >= 90 else Position.LOWER
+                    fits[position] += 1
+                    decline, bottom = forms[position]
+                    return full_recovery(
+                        samples, decline_start=at(decline), valley=at(bottom), **kwargs,
+                    )
+
+                def trend(samples, **kwargs):
+                    return None if pause_trend else directed_recovery(samples, **kwargs)
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change", return_value=None,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_trend", side_effect=trend,
+                ) as trended, patch(
+                    "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
+                ):
+                    for second in range(opened + grid, bound_at + grid, grid):
+                        self.assertEqual(self._smooth_sample(
+                            detector, second, valley=valley, positions=(Position.LOWER,),
+                        ), [])
+                    historical = dict(status(Position.LOWER))
+                    self.assertEqual(historical["first_newest_at"], at(first))
+                    self.assertEqual(historical["bound_at"], at(bound_at))
+                    lower_fits = fits[Position.LOWER]
+                    events = []
+                    for second in range(bound_at + grid, close_at + grid, grid):
+                        pause_trend = continuation == "positive" and second in (
+                            bound_at + grid, bound_at + 8 * grid,
+                        )
+                        lower_value = trace(0)[0] + .1 * (second - valley) / grid
+                        if continuation == "positive" and second == bound_at + 3 * grid:
+                            lower_value = trace(0)[0] + .1 * (second - grid - valley) / grid
+                        if continuation == "negative" and second >= upper_start:
+                            lower_value = (trace(0)[0] + .1 * (upper_start - grid - valley) / grid
+                                           - .1 * (second - upper_start + grid) / grid)
+                        corrected = (
+                            bound_at if continuation == "correction_append"
+                            and second == bound_at + grid else
+                            second - grid if continuation == "positive"
+                            and second in (bound_at + 6 * grid, bound_at + 8 * grid) else None
+                        )
+                        if corrected is not None:
+                            self.assertTrue(detector.accept(measurement(
+                                Position.LOWER, Quantity.TEMPERATURE,
+                                trace(0)[0] + .1 * (corrected - valley) / grid + .01,
+                                second, measured=at(corrected),
+                            )))
+                        values = {Position.LOWER: lower_value}
+                        if continuation == "gap" and (
+                            upper_start - detector.p["door_window_seconds"] - grid
+                            < second <= upper_start
+                        ):
+                            values.clear()
+                        if second >= upper_start:
+                            values[Position.UPPER] = 100 + .1 * abs(second - upper_valley) / grid
+                        current_events = self._smooth_sample(
+                            detector, second, valley=valley, positions=tuple(values),
+                            temperature=values,
+                        )
+                        events.extend(current_events)
+                        lower = status(Position.LOWER)
+                        if continuation == "positive":
+                            self.assertEqual(fits[Position.LOWER], lower_fits)
+                            for field in ("first_newest_at", "fresh_newest_at", "fresh_observed_at",
+                                          "bound_at", "decline_start_at", "decline_newest_at"):
+                                self.assertEqual(lower[field], historical[field])
+                            if second in (bound_at + grid, bound_at + 3 * grid, bound_at + 8 * grid):
+                                self.assertFalse(lower["supported"])
+                            else:
+                                self.assertTrue(lower["supported"])
+                                self.assertEqual(lower["current_recovery"]["newest_at"], at(second))
+                            if corrected is not None:
+                                evaluated = trended.call_args.args[0]
+                                self.assertIn((at(corrected), trace(0)[0]
+                                               + .1 * (corrected - valley) / grid + .01), evaluated)
+                                self.assertIn((at(second), lower_value), evaluated)
+                                self.assertEqual(lower["current_recovery"]["direction"],
+                                                 None if pause_trend else 1)
+                                self.assertEqual(lower["current_recovery"]["last_positive_at"],
+                                                 at(second - grid if pause_trend else second))
+                        if continuation == "correction_append" and second == bound_at + grid:
+                            self.assertIsNone(lower["bound_at"])
+                            self.assertEqual(lower["first_newest_at"], at(second))
+                            self.assertIsNone(lower["fresh_newest_at"])
+                        if continuation == "correction_append" and second == bound_at + 2 * grid:
+                            self.assertEqual(lower["first_newest_at"], at(bound_at + grid))
+                            self.assertEqual(lower["fresh_newest_at"], at(second))
+                            self.assertEqual(lower["bound_at"], at(second))
+                        if continuation in ("negative", "gap") and second == upper_start:
+                            self.assertIsNone(lower["bound_at"])
+                            self.assertEqual(lower["invalid_reason"], (
+                                "recovery_counterevidence" if continuation == "negative"
+                                else "recovery_frontier_expired"
+                            ))
+                        if second < close_at:
+                            self.assertEqual(current_events, [])
+                    if continuation in ("positive", "correction_append"):
+                        self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
+                        self.assertEqual(events[0].channels, ("upper", "lower"))
+                        self.assertEqual(events[0].trace_at, at(close_at))
+                        self.assertEqual(events[0].effective_at, events[0].trace_at)
+                        self.assertFalse(status(Position.LOWER)["historical_within_window"])
+                        self.assertLess(status(Position.LOWER)["decline_start_at"],
+                                        at(close_at - detector.p["curve_window_seconds"]))
+                        self.assertEqual(status(Position.UPPER)["first_newest_at"], at(close_at - grid))
+                        self.assertEqual(status(Position.UPPER)["fresh_newest_at"], at(close_at))
+                        self.assertEqual(status(Position.LOWER)["current_recovery"]["newest_at"],
+                                         at(close_at))
+                        self.assertEqual(status(Position.LOWER)["current_recovery"]["direction"], 1)
+                    else:
+                        self.assertEqual(events, [])
+                        self.assertTrue(detector.open)
+                        self.assertIsNone(status(Position.LOWER)["bound_at"])
+
     def test_smooth_close_expired_flanks_and_a_different_arc_restart_confirmation(self):
-        for boundary in ("expiry", "new_arc", "ventilation_floor"):
+        for boundary in ("expiry", "new_arc", "ventilation_floor", "moving_decline_edge"):
             with self.subTest(boundary=boundary):
-                detector, opened = self._smooth_opening()
+                detector, opened = self._smooth_opening(
+                    (Position.UPPER, Position.LOWER) if boundary == "ventilation_floor"
+                    else (Position.UPPER,),
+                )
                 grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
                 valley = opened + (side + 1) * grid
+                if boundary == "moving_decline_edge":
+                    valley = opened + grid + detector.p["curve_window_seconds"] - side * grid
                 first = valley + side * grid
                 shape = [opened + grid, valley]
 
@@ -204,7 +365,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     )
 
                 def status():
-                    return detector.diagnostic["curve_candidates"]["door_close"]["upper"][
+                    position = "lower" if boundary == "ventilation_floor" else "upper"
+                    return detector.diagnostic["curve_candidates"]["door_close"][position][
                         "temperature"
                     ]["smooth_recovery"]
 
@@ -219,7 +381,12 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         self.assertEqual(self._smooth_sample(detector, second, valley=valley), [])
                     old = dict(status())
                     calls = fitted.call_count
-                    if boundary == "new_arc":
+                    if boundary == "moving_decline_edge":
+                        self.assertEqual(old["decline_start_at"], at(
+                            first - detector.p["curve_window_seconds"],
+                        ))
+                        next_first = first
+                    elif boundary == "new_arc":
                         shape[:] = [first + grid, first + (side + 1) * grid]
                         next_first = shape[1] + side * grid
                         self.assertEqual(detector.advance(at(next_first - grid), enabled=True), [])
@@ -240,6 +407,11 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         self.assertLess(old["decline_newest_at"], status()["decline_start_at"])
                         self.assertLess(old["recovery_newest_at"], status()["recovery_start_at"])
                     elif boundary == "ventilation_floor":
+                        self.assertEqual(self._smooth_sample(
+                            detector, first + grid, valley=valley, positions=(Position.LOWER,),
+                        ), [])
+                        self.assertEqual(status()["bound_at"], at(first + grid))
+                        calls = fitted.call_count
                         expires = valley + grid + detector.p["door_window_seconds"] + grid
                         with patch.object(detector, "_ventilation_proof", return_value=True):
                             ventilation = detector.advance(at(expires), enabled=True)
@@ -270,11 +442,15 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                 self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
                 self.assertEqual(events[0].trace_at, at(next_first + grid))
                 self.assertEqual(events[0].effective_at, events[0].trace_at)
+                if boundary == "moving_decline_edge":
+                    self.assertEqual(status()["first_newest_at"], at(first))
+                    self.assertEqual(status()["fresh_newest_at"], events[0].trace_at)
+                    self.assertGreater(status()["decline_start_at"], old["decline_start_at"])
 
     def test_smooth_close_respects_temperature_source_epochs_but_survives_humidity_loss(self):
         for boundary in ("temperature_source", "temperature_epoch", "humidity_missing", "humidity_source"):
             with self.subTest(boundary=boundary):
-                detector, opened = self._smooth_opening()
+                detector, opened = self._smooth_opening((Position.UPPER, Position.LOWER))
                 grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
                 valley = opened + (side + 1) * grid
                 first = valley + side * grid
@@ -288,21 +464,27 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                 with patch(
                     "custom_components.ha_sauna.core.detector.curve_change", return_value=None,
                 ), patch(
-                    "custom_components.ha_sauna.core.detector.curve_trend", return_value=None,
+                    "custom_components.ha_sauna.core.detector.curve_trend", side_effect=directed_recovery,
                 ), patch(
                     "custom_components.ha_sauna.core.detector.curve_recovery", side_effect=recovery,
                 ):
                     for second in range(opened + grid, first + grid, grid):
                         self.assertEqual(self._smooth_sample(detector, second, valley=valley), [])
+                    self.assertEqual(self._smooth_sample(
+                        detector, first + grid, valley=valley, positions=(Position.LOWER,),
+                    ), [])
+                    self.assertEqual(detector._curve_status[
+                        "door_close", Position.LOWER, Quantity.TEMPERATURE
+                    ]["smooth_recovery"]["bound_at"], at(first + grid))
                     if boundary == "temperature_epoch":
                         self.assertTrue(detector.accept(measurement(
-                            Position.UPPER, Quantity.TEMPERATURE, None, first + grid,
-                            measured=at(first + grid),
+                            Position.LOWER, Quantity.TEMPERATURE, None, first + 2 * grid,
+                            measured=at(first + 2 * grid),
                         )))
-                        self.assertEqual(detector.advance(at(first + grid), enabled=True), [])
+                        self.assertEqual(detector.advance(at(first + 2 * grid), enabled=True), [])
                     else:
                         events = self._smooth_sample(
-                            detector, first + grid, valley=valley,
+                            detector, first + 2 * grid, valley=valley,
                             temperature_source=("sensor.replaced_temperature"
                                                 if boundary == "temperature_source" else None),
                             humidity=None if boundary == "humidity_missing" else trace(0)[1],
@@ -311,11 +493,14 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         )
                         if boundary.startswith("humidity"):
                             self.assertEqual([item.kind for item in events], [Kind.DOOR_CLOSE])
-                            self.assertEqual(events[0].channels, ("upper",))
-                            self.assertEqual(events[0].trace_at, at(first + grid))
+                            self.assertEqual(events[0].channels, ("upper", "lower"))
+                            self.assertEqual(events[0].trace_at, at(first + 2 * grid))
                             continue
                         self.assertEqual(events, [])
-                    for second in range(first + 2 * grid, first + (side + 2) * grid, grid):
+                    self.assertIsNone(detector._curve_status.get((
+                        "door_close", Position.LOWER, Quantity.TEMPERATURE,
+                    ), {}).get("smooth_recovery", {}).get("bound_at"))
+                    for second in range(first + 3 * grid, first + (side + 3) * grid, grid):
                         self.assertEqual(self._smooth_sample(
                             detector, second, valley=valley,
                             temperature_source=("sensor.replaced_temperature"
@@ -324,8 +509,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     self.assertTrue(detector.open)
                     self.assertIs(detector.door_episode, episode)
                     self.assertNotEqual(
-                        detector._curve_series[Position.UPPER, Quantity.TEMPERATURE]["epoch"],
-                        episode["epochs"][Position.UPPER][0],
+                        detector._curve_series[Position.LOWER, Quantity.TEMPERATURE]["epoch"],
+                        episode["epochs"][Position.LOWER][0],
                     )
 
     def test_smooth_close_uses_the_common_emit_and_only_a_valid_bound_contact_time(self):
