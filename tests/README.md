@@ -233,10 +233,10 @@ Replaymanifesten. Ohne Auswahl laufen alle Bereiche und Fälle; unbekannte oder
 doppelte IDs werden abgewiesen. Eine Szenario-ID umfasst ihre gebundenen
 Varianten. Die Auswahl verändert weder Eingaben noch Bewertungskriterien.
 `integration_tests` begrenzt innerhalb von `ha` die Integration auf durch Kommas
-getrennte vollständige Namen der Form `test_module.Class.test_method`. Ohne
-Auswahl läuft die vollständige Integration; unbekannte oder doppelte Namen sowie
-leere Einträge innerhalb einer Auswahl werden abgewiesen. Die Adapterprüfung
-bleibt Teil des Bereichs `ha`.
+getrennte vollständige Namen der Form `test_module.Class.test_method`.
+Unbekannte oder doppelte Namen sowie leere Einträge innerhalb einer Auswahl
+werden abgewiesen. Bei gesetztem Filter laufen ausschließlich diese
+Integrationstests. Ohne Auswahl laufen Adapterprüfung und vollständige Integration.
 
 `core_tests` begrenzt `core` auf vollständige Python-Testnamen derselben Form.
 Die Auswahl wird aus dem Testquelltext geprüft, ohne Testmodule zu importieren.

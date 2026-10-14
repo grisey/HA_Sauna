@@ -70,10 +70,10 @@ Der Fehlerzähler zählt aufgetretene Störungen, keine fehlerfreien Anfangszust
 oder Entwarnungen.
 
 Laufende Aufzeichnungen werden im Hintergrund in größeren Abständen ergänzt.
-Nachträge erhalten Zeitfenster, Zoom, Markierungen und offene Abschnitte.
+Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
 **Gesamte Saunasitzung** übernimmt den inzwischen erweiterten Zeitraum.
-**Wird geladen** kennzeichnet den ersten Datenabruf. Bei einem fehlgeschlagenen
-Nachtrag bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
+**Wird geladen** kennzeichnet den ersten Datenabruf. Bei einer fehlgeschlagenen
+Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
 
 Die Details zeigen gespeicherte Werte mit ihrer Herkunft. Nicht aufgezeichnete
 Messverläufe lassen sich rückwirkend nicht ergänzen; fehlende Angaben erscheinen

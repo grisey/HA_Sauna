@@ -36,6 +36,7 @@ jobs:
       cases: ${{ steps.catalog.outputs.cases }}
       checks: ${{ steps.catalog.outputs.checks }}
       core_tests: ${{ steps.catalog.outputs.core_tests }}
+      integration_tests: ${{ steps.catalog.outputs.integration_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Dispatch-Auswahl prüfen
@@ -108,6 +109,7 @@ jobs:
           print(f"Version: {version}; Format: {version.strategy.value}; Beta: {version.beta}")
           PY
       - run: python -m unittest discover -s tests/ha -v
+        if: ${{ needs.configuration.outputs.integration_tests == '[]' }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_adapter }}
         env:
           HA_TEST_REQUIRED: '1'

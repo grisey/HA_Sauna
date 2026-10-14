@@ -13,7 +13,7 @@ gewählte Tastergeste startet Automatik
 mit der gespeicherten Tastervorgabe, auch aus dem manuellen Modus. Die Auswahl
 richtet sich nach den Ereignismeldungen des Tasters. Vom Gerät erkannte Gesten
 werden unmittelbar übernommen; die Integration misst deren Haltezeit nicht erneut.
-Nur ein Binärtaster, der lediglich Drücken und Loslassen meldet, verwendet die
+Nur ein Taster, der lediglich Drücken und Loslassen meldet, verwendet die
 eingestellte Haltezeit. Einmaliges Drücken bleibt der direkten Ofensteuerung
 vorbehalten. Nicht als Sitzungsgeste gewählte Mehrfachgesten lösen keine
 zusätzlichen Ofenhandlungen aus. Die Tastervorgabe

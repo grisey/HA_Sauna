@@ -20,7 +20,7 @@ Administratorrechten nach vollständigem Sitzungsende änderbar.
 Integrationskonfiguration und Panel verwenden dieselbe
 Anwendbarkeit: Eingabefelder erscheinen nur für zugeordnete Messpositionen und
 Quellen, Personenschwellen nur beim indirekten Verfahren und die Haltezeit nur
-bei Binärtastern. Ein vorübergehender Sensorausfall ändert
+bei Tastern, die Drücken und Loslassen melden. Ein vorübergehender Sensorausfall ändert
 die Anwendbarkeit nicht. Gespeicherte Werte bleiben für einen späteren
 Konfigurationswechsel erhalten.
 

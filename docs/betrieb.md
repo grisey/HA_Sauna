@@ -82,8 +82,8 @@ Heizfreigabe, nicht die tatsächliche Leistung hinter einem internen Thermostat.
 Nach der eingestellten durchgehend bestätigten Auszeit wird die lokale Heizsumme
 zurückgesetzt.
 
-Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus Heizzeit mal
-konfigurierter Ofenleistung. Gemessene, geschätzte und unbekannte Anteile werden
+Energie stammt aus gültigen Leistungsmessungen, ersatzweise aus belegter Heizzeit
+mal konfigurierter Ofenleistung. Gemessene, berechnete und unbekannte Anteile werden
 unterschieden. Kühlung und Heizzeitrücksetzung löschen keinen Sitzungsverbrauch.
 
 ## Fehlender Temperaturanstieg

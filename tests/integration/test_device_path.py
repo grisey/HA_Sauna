@@ -1551,9 +1551,15 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         await self.healthy_until(phase.ends_at - timedelta(microseconds=1))
         selected_at = self.now
         await self.runtime.set_light_override(80)
+        # Finish this selection's HA feedback before advancing the test clock.
+        await self.hass.async_block_till_done()
         ends_at = self.runtime.device.light_output.manual_ends_at
         self.assertGreater(ends_at, phase.ends_at)
+        self.assertEqual(self.runtime.device.light_output.manual_brightness, 80)
+        self.assertEqual(self.runtime.controller.control_mode, "automatic")
+        self.assertEqual(self.runtime.session.session_id, identity)
         self.now = changed_at = phase.ends_at + timedelta(seconds=1)
+        self.assertLess(changed_at, ends_at)
         await async_set_control_mode(self.hass, self.entry, "manual")
         self.assertIsNone(self.runtime.session)
         self.assertEqual(self.runtime.device.light_output.manual_brightness, 0)
