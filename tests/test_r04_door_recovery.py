@@ -15,6 +15,7 @@ import unittest
 from test_detector import detection_parameters, measurement
 from test_settings import fixture
 
+from custom_components.ha_sauna.core.curve_change import curve_change
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.timeline import Kind
@@ -218,6 +219,103 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 at(15, 28), at(15, 25, 21, 10284), (at(15, 26, 50), at(15, 27)),
             ),
         )
+
+        def retrospective_math(snapshots, policy):
+            """Stateless failure diagnosis; the later opening owner was unknown."""
+            floor = at(15, 25, 54, 659854)
+            archived_confirmation = at(15, 26, 47)
+            native_onsets = {
+                Position.UPPER: at(15, 26, 21, 977371),
+                Position.LOWER: at(15, 26, 24, 104382),
+            }
+            queries, overlap = [], []
+
+            def assess(tick, role, points, mode, onset=None):
+                result = curve_change(
+                    points, policy=policy, onset_at=onset, direction=1,
+                    onset_not_before=floor,
+                )
+                knot = onset if onset is not None else (
+                    result.onset_at if result is not None else None
+                )
+                before = sum(stamp <= knot for stamp, _ in points) if knot else None
+                after = len(points) - before if before is not None else None
+                record = {
+                    "tick": tick, "role": f"{role[0].value}_{role[1].value}",
+                    "query": mode, "floor": floor, "fixed_onset": onset,
+                    "first_original": points[0][0] if points else None,
+                    "newest_original": points[-1][0] if points else None,
+                    "input_count": len(points), "before_count": before,
+                    "after_count": after,
+                    "fixed_eligible": (
+                        onset >= floor and onset in {stamp for stamp, _ in points}
+                        and min(before, after) >= policy.min_side_samples
+                    ) if onset is not None else None,
+                    "support_boundary": (
+                        min(before, after) == policy.min_side_samples
+                        if knot is not None else None
+                    ),
+                    "evidence": result.evidence if result is not None else None,
+                    **({key: getattr(result, key) for key in (
+                        "onset_at", "smooth_model", "smooth_score", "change_score",
+                        "score_gain", "slope_before", "slope_after", "slope_change",
+                    )} if result is not None else {}),
+                    "after_direction": (
+                        result.after_trend.direction
+                        if result is not None and result.after_trend is not None else None
+                    ),
+                }
+                return record, result
+
+            for tick, roles in snapshots.items():
+                supported, reconfirmed = {"free": [], "fixed": []}, {"free": [], "fixed": []}
+                for role, snapshot in roles.items():
+                    modes = [("free", None)]
+                    if role[1] == Quantity.TEMPERATURE:
+                        modes.append(("fixed", native_onsets[role[0]]))
+                    for mode, onset in modes:
+                        record, result = assess(tick, role, snapshot["points"], mode, onset)
+                        if result is not None and result.evidence == "supports":
+                            supported[mode].append(role)
+                            fresh = snapshot.get("fresh")
+                            if fresh is not None:
+                                fresh_tick, fresh_points = fresh
+                                checked, confirmation = assess(
+                                    fresh_tick, role, fresh_points,
+                                    "frozen_first_fresh", result.onset_at,
+                                )
+                                checked["initial_newest_original"] = snapshot["points"][-1][0]
+                                checked["relative_to_archived_open_confirmation"] = (
+                                    "before" if fresh_tick < archived_confirmation
+                                    else "same_tick" if fresh_tick == archived_confirmation
+                                    else "after"
+                                )
+                                record["first_fresh_recheck"] = checked
+                                if confirmation is not None and confirmation.evidence == "supports":
+                                    reconfirmed[mode].append(role)
+                        queries.append(record)
+                overlap.append({
+                    "tick": tick,
+                    "temperature_support": {
+                        mode: [role[0].value for role in supported_roles
+                               if role[1] == Quantity.TEMPERATURE]
+                        for mode, supported_roles in supported.items()
+                    },
+                    "temperature_frozen_fresh_support": {
+                        mode: [role[0].value for role in supported_roles
+                               if role[1] == Quantity.TEMPERATURE]
+                        for mode, supported_roles in reconfirmed.items()
+                    },
+                    "four_role_free_shape_overlap": len(supported["free"]) == len(roles),
+                })
+            return {
+                "scope": "retrospective stateless math only; no detector event or owner authority",
+                "retrospective_opening_floor": floor,
+                "archived_opening_route": "door_open_heating",
+                "archived_opening_confirmed_at": archived_confirmation,
+                "queries": queries, "shape_overlap": overlap,
+            }
+
         path = Path(__file__).parent / "fixtures/replay/R04.samples.jsonl.gz"
         for case in cases:
             name, opening_reference, earliest, latest, end, heating_at, checkpoints = case
@@ -250,6 +348,11 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         ))
 
                 events = []
+                retrospective_ticks = (
+                    {at(15, 26, second) for second in (25, 30, 35, 40, 45)}
+                    if name == "short_under_heating" else set()
+                )
+                retrospective_inputs = {}
                 cursor = heating_cursor = 0
                 now = begin
                 while now <= end:
@@ -264,6 +367,25 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         detector.report_heating(heating, reported_at)
                         heating_cursor += 1
                     events.extend(detector.advance(now, enabled=True))
+                    # Snapshot the normal unfiltered close inputs only. Fits
+                    # run separately after the feed, and only on a failed case.
+                    if now in retrospective_ticks:
+                        retrospective_inputs[now] = {
+                            (position, quantity): {"points": detector._curve_points(
+                                position, quantity, now,
+                            )}
+                            for position in detector.positions
+                            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+                        }
+                    for initial_tick, roles in retrospective_inputs.items():
+                        if initial_tick >= now:
+                            continue
+                        for (position, quantity), snapshot in roles.items():
+                            if "fresh" in snapshot or not snapshot["points"]:
+                                continue
+                            points = detector._curve_points(position, quantity, now)
+                            if points and points[-1][0] > snapshot["points"][-1][0]:
+                                snapshot["fresh"] = (now, points)
                     now += timedelta(seconds=detector.grid_seconds)
 
                 diagnostic_times = {*checkpoints, latest, end}
@@ -304,6 +426,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                                         "status", "onset_at", "onsets", "quantities",
                                         "first_observed_at", "evidence_bound_at",
                                         "confirmed_at", "consumed_onset_at", "reason",
+                                        "confirmation",
                                     )}
                                     for proposal in proposals
                                 ]
@@ -323,6 +446,75 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 )
                 doors = [event for event in events
                          if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
+                if retrospective_inputs and [event.kind for event in doors] != [
+                    Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
+                ]:
+                    print("R04 retrospective stateless diagnosis: " + json.dumps(
+                        retrospective_math(retrospective_inputs, detector.curve_policy),
+                        default=str, sort_keys=True,
+                    ))
+                if name == "after_ventilation" and [event.kind for event in doors] != [
+                    Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
+                ]:
+                    columns = {
+                        "T": ("status", "onset_at"),
+                        "RH": ("direction", "original_supported", "within_window"),
+                        "bound": (
+                            "proposal_status", "recovery_quantity",
+                            "current_temperature_supported",
+                            "current_temperature_fresh_observed_at",
+                            "fresh_observed_at", "recovery_observed_at",
+                        ),
+                    }
+                    gate_intervals = (
+                        ("still_open_before_physical_close", at(14, 49, 18), at(14, 49, 46)),
+                        ("after_accepted_physical_close", checkpoints[0], checkpoints[-1]),
+                    )
+                    rows = {label: [] for label, _, _ in gate_intervals}
+                    for row in observed:
+                        interval = next((
+                            label for label, start, stop in gate_intervals
+                            if start <= row["at"] <= stop
+                        ), None)
+                        if interval is None:
+                            continue
+                        confirmations_by_position = {}
+                        for proposal in row["curve_proposals"].get("door_close", ()):
+                            if (proposal.get("evidence_bound_at") is None
+                                    or proposal["quantities"] != ("temperature",)):
+                                continue
+                            positions = {
+                                witness["candidate_id"]: witness["position"]
+                                for witness in proposal["witnesses"]
+                            }
+                            for confirmation in proposal.get("confirmation", ()):
+                                confirmations_by_position[positions[confirmation["candidate_id"]]] = (
+                                    proposal["status"],
+                                    *(confirmation.get(key) for key in columns["bound"][1:]),
+                                )
+                        rows[interval].append({
+                            "at": row["at"],
+                            **{
+                                position: {
+                                    "T": tuple(quantities.get("temperature", {}).get(key)
+                                               for key in columns["T"]),
+                                    "RH": tuple(quantities.get("humidity", {}).get(
+                                        "recovery_trend", {},
+                                    ).get(key) for key in columns["RH"]),
+                                    "bound": confirmations_by_position.get(position),
+                                }
+                                for position, quantities in row["curve_candidates"].get(
+                                    "door_close", {},
+                                ).items()
+                            },
+                        })
+                    for label, start, stop in gate_intervals:
+                        print("R04 observed supplement timing diagnosis: " + json.dumps(
+                            {"case": name, "interval": label, "window": (start, stop),
+                             "accepted_closure_interval": (earliest, latest),
+                             "columns": columns, "rows": rows[label]},
+                            default=str, sort_keys=True,
+                        ))
                 self.assertEqual(
                     [event.kind for event in doors],
                     [Kind.DOOR_OPEN, Kind.DOOR_CLOSE], msg=diagnostic,
