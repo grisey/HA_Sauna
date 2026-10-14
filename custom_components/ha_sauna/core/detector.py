@@ -46,6 +46,7 @@ class _CurveProposal:
     candidates: tuple
     first_observed_at: object
     ambiguous: bool = False
+    evidence_bound_at: object | None = None
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -265,6 +266,38 @@ class Detector:
                 if key[0] == route:
                     mapping.pop(key, None)
 
+    def _curve_points(self, position, quantity, now, *, points_not_before=None):
+        window_start = now - timedelta(seconds=self.p["curve_window_seconds"])
+        return tuple(
+            point for point in self._curve_series[position, quantity]["points"]
+            if window_start <= point[0] <= now
+            and (points_not_before is None or point[0] >= points_not_before)
+        )
+
+    @staticmethod
+    def _curve_onset_available(candidate, points):
+        return any(point[0] == candidate.onset_at for point in points)
+
+    def _expire_held_curve_proposals(self, now):
+        """Historisch gebundene, noch ungezählte Belege behalten den Ablauf."""
+        episode = self._infusion_episode
+        pending_key = (
+            episode["rise_key"]
+            if episode is not None and episode["phase"] == "pending" else None
+        )
+        for key, proposal in tuple(self._curve_proposals.items()):
+            if proposal.evidence_bound_at is None and key != pending_key:
+                continue
+            if any(
+                not self._curve_onset_available(candidate, self._curve_points(
+                    candidate_key[1], candidate_key[2], now,
+                    points_not_before=candidate.context[3],
+                )) for candidate_key, candidate in proposal.candidates
+            ):
+                self._invalidate_curve_proposal(key, "candidate_expired")
+                if key == pending_key:
+                    self._finish_infusion_context("candidate_expired")
+
     def _curve_candidate(
         self, route, position, quantity, now, observed_at, floor, context,
         *, points_not_before=None,
@@ -292,15 +325,10 @@ class Detector:
         if candidate is not None and candidate.context != context:
             self._curve_candidates.pop(key, None)
             candidate = None
-        window_start = now - timedelta(seconds=self.p["curve_window_seconds"])
-        points = tuple(
-            point for point in series["points"]
-            if window_start <= point[0] <= now
-            and (points_not_before is None or point[0] >= points_not_before)
+        points = self._curve_points(
+            position, quantity, now, points_not_before=points_not_before,
         )
-        if candidate is not None and not any(
-            point[0] == candidate.onset_at for point in points
-        ):
+        if candidate is not None and not self._curve_onset_available(candidate, points):
             self._invalidate_curve_identity(candidate, "candidate_expired")
             self._curve_candidates.pop(key, None)
             self._curve_status[key] = {
@@ -473,8 +501,9 @@ class Detector:
                 and previous["evaluation"][0] == candidate.candidate_id
             )
             directed = trend is not None and trend.direction == 1
+            new_original = series["last_original_version"] == series["version"]
             original_supported = directed and (
-                series["last_original_version"] == series["version"]
+                new_original
                 or (same_candidate and previous["original_supported"]
                     and within_window(previous))
             )
@@ -483,6 +512,10 @@ class Detector:
                 "original_supported": original_supported,
                 "start_at": points[0][0] if points else None,
                 "newest_at": points[-1][0] if points else None,
+                "fresh_observed_at": (
+                    now if directed and new_original else
+                    previous["fresh_observed_at"] if same_candidate else None
+                ),
             }
             self._curve_recovery_evidence[position] = previous
         trend = previous["trend"]
@@ -496,6 +529,7 @@ class Detector:
                 "slope": trend.slope if trend is not None else None,
                 "original_supported": current_supported,
                 "within_window": within_window(previous),
+                "fresh_observed_at": previous["fresh_observed_at"],
             },
         }
         return current_supported
@@ -512,6 +546,14 @@ class Detector:
         if candidate is None:
             return
         for key, proposal in tuple(self._curve_proposals.items()):
+            if (
+                reason == "shape_counterevidence"
+                and proposal.evidence_bound_at is not None
+                and key[0] == "door_close" and key[2] == (Quantity.TEMPERATURE,)
+            ):
+                # Ein später verschobenes Arbeitsfenster widerlegt nicht die
+                # bereits frisch bestätigten historischen Originalstützen.
+                continue
             if any(
                 witness.candidate_id == candidate.candidate_id
                 for _, witness in proposal.candidates
@@ -535,11 +577,15 @@ class Detector:
         identity = "|".join((proposal.first_observed_at.isoformat(), *candidate_ids))
         return {
             "proposal_id": f"{key[0]}:{sha256(identity.encode()).hexdigest()}",
-            "status": "ambiguous" if proposal.ambiguous else "available",
+            "status": (
+                "ambiguous" if proposal.ambiguous else
+                "bound" if proposal.evidence_bound_at is not None else "available"
+            ),
             "owner_context": proposal.context[0],
             "positions": tuple(position.value for position in positions),
             "quantities": tuple(quantity.value for quantity in quantities),
             "first_observed_at": proposal.first_observed_at,
+            "evidence_bound_at": proposal.evidence_bound_at,
             "onset_at": min(candidate.onset_at for _, candidate in proposal.candidates),
             "candidate_ids": candidate_ids,
             "onsets": tuple(candidate.onset_at for _, candidate in proposal.candidates),
@@ -614,6 +660,32 @@ class Detector:
                     "competing_onsets": tuple(candidate.onset_at for _, candidate in candidates),
                 }
 
+    def _bind_close_evidence(self, positions, *, floor, now):
+        """Den vollständigen T-Knick nach echter Originalfortbestätigung binden."""
+        key = ("door_close", tuple(positions), (Quantity.TEMPERATURE,))
+        proposal = self._curve_proposals.get(key)
+        if (
+            proposal is None or proposal.ambiguous
+            or proposal.evidence_bound_at is not None
+            or not self._curve_confirmation(
+                "door_close", positions, (Quantity.TEMPERATURE,), floor=floor,
+            )
+        ):
+            return
+        proposal = replace(
+            proposal,
+            candidates=tuple(
+                (candidate_key, self._curve_candidates[candidate_key])
+                for candidate_key, _ in proposal.candidates
+            ),
+            evidence_bound_at=now,
+        )
+        self._curve_proposals[key] = proposal
+        self._curve_proposal_status[key] = {
+            **self._curve_proposal_status[key],
+            **self._curve_proposal_diagnostic(key, proposal),
+        }
+
     def _curve_confirmation(self, route, positions, quantities, *, floor, recovery=False):
         """Den historischen Satz mit neuen Originalen am festen Beginn bestätigen.
 
@@ -621,6 +693,8 @@ class Detector:
         seinem ersten Befund. Ein Rasterpunkt oder die Korrektur derselben Probe
         erwirbt diesen Nachweis nicht. Asynchrone Zeugen behalten ihren eigenen
         ersten Befund; der letzte vollständige Satz startet keine neue Wartezeit.
+        Beim gebundenen T-Schluss ist dieser Knicknachweis abgeschlossen. Seine
+        Ausgabe braucht anschließend den aktuellen Originalnachweis der Erholung.
         """
         key = (route, tuple(positions), tuple(quantities))
         proposal = self._curve_proposals.get(key)
@@ -629,12 +703,31 @@ class Detector:
         confirmed = []
         new_original = False
         now = self.origin + timedelta(seconds=self.index * self.grid_seconds)
+        bound_recovery = (
+            recovery and proposal.evidence_bound_at is not None
+            and route == "door_close" and tuple(quantities) == (Quantity.TEMPERATURE,)
+        )
         for candidate_key, original in proposal.candidates:
-            candidate = self._curve_candidates.get(candidate_key)
-            status = self._curve_status.get(candidate_key, {})
             if original.onset_at < floor:
                 self._invalidate_curve_proposal(key, "outside_current_context")
                 return False
+            if bound_recovery:
+                supported = self._temperature_recovery(candidate_key[1], original, now)
+                evidence = self._curve_recovery_evidence[candidate_key[1]]
+                confirmed.append({
+                    "candidate_id": original.candidate_id,
+                    "newest_at": original.features.newest_at,
+                    "fresh_newest_at": original.fresh_newest_at,
+                    "fresh_observed_at": original.fresh_observed_at,
+                    "recovery_start_at": evidence["start_at"],
+                    "recovery_newest_at": evidence["newest_at"],
+                    "recovery_observed_at": evidence["fresh_observed_at"],
+                    "supported": supported,
+                })
+                new_original |= supported and evidence["fresh_observed_at"] == now
+                continue
+            candidate = self._curve_candidates.get(candidate_key)
+            status = self._curve_status.get(candidate_key, {})
             if candidate is None or candidate.candidate_id != original.candidate_id:
                 if status.get("status") in ("rejected", "expired", "supported"):
                     self._invalidate_curve_proposal(key, "shape_counterevidence")
@@ -1639,6 +1732,7 @@ class Detector:
                 self._curve_infusion_since = None
                 self._clear_curve_route("infusion", reason="positions_changed")
         self.active_positions, self.faults = channels, tuple(faults)
+        self._expire_held_curve_proposals(now)
         trace = {
             "at": now,
             "channels": tuple(c.value for c in channels),
@@ -1799,8 +1893,25 @@ class Detector:
                 position for position in episode["positions"]
                 if self._value(position, Quantity.TEMPERATURE, now) is not None
             )
+            close_context = (self._curve_door_context, episode["started_at"], curve_floor)
+            self._remember_curve_proposal(
+                "door_close", closing_positions, (Quantity.TEMPERATURE,),
+                floor=curve_floor, context=close_context, observed_at=decision_at,
+            )
+            self._bind_close_evidence(closing_positions, floor=curve_floor, now=now)
+            close_proposal = self._curve_proposals.get((
+                "door_close", closing_positions, (Quantity.TEMPERATURE,),
+            ))
+            bound_temperatures = (
+                {candidate_key[1]: candidate
+                 for candidate_key, candidate in close_proposal.candidates}
+                if close_proposal is not None and not close_proposal.ambiguous
+                and close_proposal.evidence_bound_at is not None else {}
+            )
             temperature_recovery = bool(closing_positions) and all(
-                (candidate := supported_curve(position, Quantity.TEMPERATURE))
+                (candidate := bound_temperatures.get(position) or supported_curve(
+                    position, Quantity.TEMPERATURE,
+                ))
                 is not None and self._temperature_recovery(position, candidate, now)
                 for position in closing_positions
             )
@@ -1824,11 +1935,6 @@ class Detector:
                 )
             )
             closing = temperature_recovery or mixed_recovery
-            close_context = (self._curve_door_context, episode["started_at"], curve_floor)
-            self._remember_curve_proposal(
-                "door_close", closing_positions, (Quantity.TEMPERATURE,),
-                floor=curve_floor, context=close_context, observed_at=decision_at,
-            )
             recovery_toggle = temperature_recovery and self._curve_confirmation(
                 "door_close", closing_positions, (Quantity.TEMPERATURE,),
                 floor=curve_floor, recovery=True,

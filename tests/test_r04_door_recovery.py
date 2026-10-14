@@ -119,6 +119,11 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 package = consumed[0]
                 self.assertEqual(package["consumed_onset_at"], event.effective_at)
                 self.assertLess(package["first_observed_at"], event.trace_at)
+                bound_at = package.get("evidence_bound_at")
+                if event.kind == Kind.DOOR_CLOSE and package["quantities"] == ("temperature",):
+                    self.assertIsNotNone(bound_at)
+                    self.assertGreaterEqual(bound_at, package["first_observed_at"])
+                    self.assertLessEqual(bound_at, event.trace_at)
                 confirmations = {
                     item["candidate_id"]: item for item in package["confirmation"]
                 }
@@ -127,7 +132,16 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     self.assertTrue(fresh["supported"])
                     self.assertGreater(fresh["fresh_newest_at"], witness["first_newest_at"])
                     self.assertLessEqual(fresh["newest_at"], event.trace_at)
-                    for stamp in (witness["onset_at"], fresh["fresh_newest_at"]):
+                    stamps = [witness["onset_at"], fresh["fresh_newest_at"]]
+                    if bound_at is not None:
+                        self.assertLessEqual(fresh["fresh_observed_at"], bound_at)
+                        self.assertLessEqual(fresh["recovery_newest_at"], event.trace_at)
+                        self.assertGreaterEqual(
+                            fresh["recovery_start_at"],
+                            event.trace_at - timedelta(seconds=parameters.values["door_window_seconds"]),
+                        )
+                        stamps.extend((fresh["recovery_start_at"], fresh["recovery_newest_at"]))
+                    for stamp in stamps:
                         self.assertTrue(any(
                             item.position.value == witness["position"]
                             and item.quantity.value == witness["quantity"]
@@ -135,3 +149,8 @@ class R04DoorRecoveryTests(unittest.TestCase):
                             and item.received_at == stamp
                             for item in inputs
                         ))
+                if bound_at is not None:
+                    self.assertTrue(any(
+                        item["recovery_observed_at"] == event.trace_at
+                        for item in confirmations.values()
+                    ))

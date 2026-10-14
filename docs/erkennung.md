@@ -80,6 +80,10 @@ Eine Schließung setzt eine erkannte Öffnung voraus. Eine Änderung vom
 Temperaturabfall zu steigender Temperatur kann sie an allen noch auswertbaren
 beteiligten Positionen auch bei gestörter Feuchtemessung belegen. Der frühere
 Knick und die inzwischen eingetretene Erholung sind getrennte Nachweise:
+Nach der erneuten Stützung durch neue Originalmessungen bleiben die Belege
+des früheren Knicks gebunden. Spätere Messungen prüfen die aktuelle Erholung;
+ein verschobenes Arbeitsfenster ersetzt die ursprünglichen Knickbelege nicht.
+Quellenwechsel, Originalkorrekturen und der Kandidatenablauf gelten weiterhin.
 Die Erholung wird an den jüngsten Originaltemperaturen innerhalb der
 Türvergleichszeit geprüft. Alternativ
 kann ein Abbremsen des Temperaturabfalls zusammen mit einer passenden Erholung
@@ -157,7 +161,9 @@ jeweiligen Quellenabschnitte gebunden. Für die Lüftungsreferenz gilt die
 beschriebene Pausenregel.
 
 Ein noch unbestätigter Aufgusskandidat wird bei einem Bruch seiner Quellen
-oder seines Tür- und Betriebskontexts verworfen.
+oder seines Tür- und Betriebskontexts verworfen. Auch sein Beginn muss noch
+im Analysefenster vorhanden sein; ein abgelaufener Anstieg wird keinem späteren
+Aufguss zugeordnet.
 
 Bei einem bereits gezählten Aufguss pausieren Messlücken, Quellenwechsel und
 vorübergehend fehlende Auswertbarkeit den Abschluss. Die Zuordnung bleibt

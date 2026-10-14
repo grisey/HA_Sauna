@@ -413,6 +413,124 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         self.assertNotIn(key, detector._curve_proposals)
         self.assertEqual(detector._curve_proposal_status[key]["reason"], "owner_context")
 
+    def test_fresh_temperature_close_keeps_its_history_until_current_recovery(self):
+        for boundary in (None, "source", "correction", "expiry"):
+            with self.subTest(boundary=boundary):
+                detector = self._detector()
+                grid = detector.grid_seconds
+                side = detector.curve_policy.min_side_samples
+                opening_at = 2 * side * grid
+                bound_at = opening_at + 2 * grid
+                events = []
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change",
+                    side_effect=supported_opening,
+                ):
+                    for second in range(0, opening_at + grid, grid):
+                        events.extend(original_sample(detector, second, measured=at(second)))
+                self.assertEqual([item.kind for item in events], [Kind.DOOR_OPEN])
+                events.clear()
+                temperature, humidity = trace(0)
+
+                def historical(samples, **kwargs):
+                    if not samples or samples[0][1] < (temperature + humidity) / 2:
+                        return None
+                    features = local_features(samples, **kwargs)
+                    if features is None:
+                        return None
+                    corrected = any(
+                        stamp == at(bound_at) and value != temperature - .2
+                        for stamp, value in samples
+                    )
+                    return replace(
+                        features, evidence=(
+                            "rejects" if corrected or samples[-1][0] > at(bound_at)
+                            else "supports"
+                        ),
+                    )
+
+                def recovery(samples, *, policy):
+                    if len(samples) < policy.min_side_samples:
+                        return None
+                    rising = all(right > left for (_, left), (_, right) in zip(samples, samples[1:]))
+                    return CurveTrendFeatures(
+                        direction=1 if rising else -1, slope=.1 if rising else -.1,
+                        noise_scale=1.0, level_score=1.0, trend_score=0.0, score_gain=1.0,
+                        exact_constant=False, exact_linear=False,
+                    )
+
+                source = None
+
+                def send(second, value, *, measured=None):
+                    for quantity, observed in (
+                        (Quantity.TEMPERATURE, value), (Quantity.HUMIDITY, humidity),
+                    ):
+                        self.assertTrue(detector.accept(measurement(
+                            Position.UPPER, quantity, observed, second,
+                            source=source if quantity == Quantity.TEMPERATURE else None,
+                            measured=at(second if measured is None else measured),
+                        )))
+                    events.extend(detector.advance(at(second), enabled=True))
+
+                with patch(
+                    "custom_components.ha_sauna.core.detector.curve_change", side_effect=historical,
+                ), patch(
+                    "custom_components.ha_sauna.core.detector.curve_trend", side_effect=recovery,
+                ):
+                    send(opening_at + grid, temperature - .1)
+                    send(bound_at, temperature - .2)
+                    key = ("door_close", detector.positions, (Quantity.TEMPERATURE,))
+                    proposal = detector._curve_proposals[key]
+                    witness = proposal.candidates[0][1]
+                    self.assertIsNotNone(witness.fresh_newest_at)
+                    self.assertGreater(witness.fresh_newest_at, witness.first_newest_at)
+                    self.assertEqual(detector._curve_proposal_status[key]["status"], "bound")
+                    self.assertEqual(detector._curve_proposal_status[key]["evidence_bound_at"], at(bound_at))
+                    originals = witness.original_points
+                    self.assertEqual(events, [])
+                    recovery_start = bound_at + side * grid
+                    through = recovery_start + detector.p["door_window_seconds"]
+                    if boundary == "source":
+                        source = "sensor.replaced_temperature"
+                        send(bound_at + grid, temperature - .3)
+                    elif boundary == "correction":
+                        send(bound_at + grid, temperature - 4, measured=bound_at)
+                    elif boundary == "expiry":
+                        expired = witness.onset_at + timedelta(
+                            seconds=detector.p["curve_window_seconds"] + grid,
+                        )
+                        events.extend(detector.advance(expired, enabled=True))
+                        recovery_start = int((expired - T0).total_seconds())
+                        through = recovery_start + detector.p["door_window_seconds"]
+                    else:
+                        events.extend(detector.advance(at(bound_at + grid), enabled=True))
+                    if boundary is not None:
+                        self.assertNotIn(key, detector._curve_proposals)
+                        self.assertEqual(detector._curve_proposal_status[key]["status"], "invalid")
+                    for second in range((detector.index + 1) * grid, through + grid, grid):
+                        value = temperature - .1 * (second - opening_at) / grid
+                        if second > recovery_start:
+                            bottom = temperature - .1 * (recovery_start - opening_at) / grid
+                            value = bottom + .1 * (second - recovery_start) / grid
+                        send(second, value)
+                        if boundary is None and second < through:
+                            saved = detector._curve_proposals[key].candidates[0][1]
+                            self.assertEqual(saved.original_points, originals)
+                            self.assertEqual(saved.candidate_id, witness.candidate_id)
+                            self.assertEqual(events, [])
+                closes = [item for item in events if item.kind == Kind.DOOR_CLOSE]
+                if boundary is None:
+                    self.assertEqual(len(closes), 1, msg=f"actual detections: {events!r}")
+                    self.assertEqual(closes[0].effective_at, witness.onset_at)
+                    self.assertEqual(closes[0].trace_at, at(through))
+                    self.assertEqual(detector._curve_proposal_status[key]["status"], "consumed")
+                    confirmed = detector._curve_proposal_status[key]["confirmation"][0]
+                    self.assertEqual(confirmed["fresh_newest_at"], at(bound_at))
+                    self.assertEqual(confirmed["recovery_newest_at"], at(through))
+                    self.assertEqual(confirmed["recovery_observed_at"], at(through))
+                else:
+                    self.assertEqual(closes, [])
+
     def test_temperature_recovery_cache_expires_without_a_tick_refit(self):
         detector = self._detector()
         grid = detector.grid_seconds
@@ -491,7 +609,10 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
         def infusion_evidence(samples, **kwargs):
             # A single old local witness cannot confirm itself. The existing
             # trace's later +3 RH flank and subsequent fall form another pulse.
-            if not samples:
+            if not samples or any(
+                value != trace((stamp - T0).total_seconds())[1]
+                for stamp, value in samples
+            ):
                 return None
             newest = samples[-1][0]
             if kwargs["direction"] == 1 and newest == at(200):
@@ -548,7 +669,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
             for proposal in blocked["curve_proposals"].get("infusion", ())
         ))
         infusions = [event for event in actual if event.kind == Kind.INFUSION]
-        self.assertEqual(len(infusions), 1)
+        self.assertEqual(len(infusions), 1, msg=f"actual detections: {actual!r}")
         rising = next(row for row in observed if row["at"] == at(246))
         self.assertNotIn(Kind.INFUSION, rising["signals"])
         self.assertEqual(rising["infusion_episode"]["phase"], "pending")

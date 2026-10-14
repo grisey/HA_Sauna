@@ -1218,9 +1218,68 @@ class InfusionLifecycleTests(unittest.TestCase):
             ))
             self._feed(detector, end, points, events)
         self.assertEqual(self._infusions(events), [])
-        self.assertEqual(detector._infusion_episode["phase"], "pending")
-        self.assertIsNone(detector._infusion_episode["confirmed_at"])
         self.assertIn(Kind.PERSON_STRONG, [item.kind for item in events])
+
+    def test_expired_pending_rise_cannot_own_a_later_decay_or_new_pulse(self):
+        old_peak = self.begin + self.width
+        expired = self.begin + self.p["curve_window_seconds"] + self.step
+        unrelated_peak = expired + self.step
+        unrelated_fall = unrelated_peak + self.width
+        next_rise = (
+            unrelated_fall + self.p["infusion_window_seconds"] + (self.side + 3) * self.step
+        )
+        next_peak = next_rise + self.width
+        next_fall = next_peak + self.width
+        points = [
+            (0, self.baseline), (self.begin, self.baseline), (old_peak, self.peak),
+            (unrelated_peak, self.peak), (unrelated_fall, self.level),
+            (next_rise, self.level), (next_peak, self.peak), (next_fall, self.level),
+        ]
+        shapes = [
+            self._shape("rise", self.begin, old_peak),
+            self._shape("decay", unrelated_peak, unrelated_fall),
+            self._shape("rise", next_rise, next_peak),
+            self._shape("decay", next_peak, next_fall),
+        ]
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        key = ("infusion", detector.positions, (Quantity.HUMIDITY,))
+        with self._patch_math(shapes), patch(
+            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
+        ):
+            self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
+            self.assertEqual(detector._infusion_episode["phase"], "pending")
+            old = dict(detector._curve_proposal_status[key])
+            self._feed(detector, expired, points, events)
+            self.assertIsNone(detector._infusion_episode)
+            self.assertEqual(self._infusions(events), [])
+            self.assertEqual(detector._curve_proposal_status[key]["status"], "invalid")
+            self.assertEqual(detector._curve_proposal_status[key]["reason"], "candidate_expired")
+            self._feed(detector, unrelated_fall, points, events)
+            self.assertIsNone(detector._infusion_episode)
+            self.assertEqual(self._infusions(events), [])
+            first_rise = next_rise + self.side * self.step
+            self._feed(detector, first_rise, points, events)
+            rise = detector.diagnostic["curve_candidates"]["infusion"]["upper"]["humidity"]
+            self.assertEqual(rise["onset_at"], self._at(next_rise))
+            self.assertIsNone(rise["fresh_newest_at"])
+            self.assertIsNone(detector._infusion_episode)
+            self._feed(detector, first_rise + self.step, points, events)
+            self.assertEqual(detector._infusion_episode["phase"], "pending")
+            self.assertEqual(detector._infusion_episode["onset_at"], self._at(next_rise))
+            self.assertTrue(set(old["candidate_ids"]).isdisjoint(
+                detector._curve_proposal_status[key]["candidate_ids"],
+            ))
+            first_decay = next_peak + self.side * self.step
+            self._feed(detector, first_decay, points, events)
+            decay = detector.diagnostic["curve_candidates"]["infusion_decay"]["upper"]["humidity"]
+            self.assertIsNone(decay["fresh_newest_at"])
+            self.assertEqual(self._infusions(events), [])
+            self._feed(detector, next_fall, points, events)
+        infusions = self._infusions(events)
+        self.assertEqual(len(infusions), 1)
+        self.assertEqual(infusions[0].effective_at, self._at(next_rise))
+        self.assertGreater(infusions[0].trace_at, self._at(first_decay))
 
     def test_global_rise_without_supported_original_direction_cannot_start_a_pulse(self):
         points, shapes, _, _ = self._scenario(merged=False)
