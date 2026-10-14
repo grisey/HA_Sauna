@@ -25,6 +25,22 @@ on:
         description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
         type: string
         default: ''
+      curve_compare:
+        description: 'Run only a paired comparison of the unchanged CurveChangeTests class'
+        type: boolean
+        default: false
+      curve_base:
+        description: 'Exact full base commit SHA for curve_compare'
+        type: string
+        default: ''
+      curve_candidate:
+        description: 'Exact full candidate commit SHA for curve_compare'
+        type: string
+        default: ''
+      curve_repetitions:
+        description: 'Complete class repetitions per measured block'
+        type: number
+        default: 10
 permissions:
   contents: read
 concurrency:
@@ -54,7 +70,7 @@ jobs:
           SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
   core:
     needs: configuration
-    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
+    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -89,9 +105,158 @@ jobs:
           path: ${{ runner.temp }}/ha-sauna-core
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+  curve_compare:
+    needs: configuration
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_ha }}
+      - name: Bestehende Kurven-Testklasse gepaart messen
+        timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.core }}
+        env:
+          CURVE_BASE: ${{ inputs.curve_base }}
+          CURVE_CANDIDATE: ${{ inputs.curve_candidate }}
+          CURVE_REPETITIONS: ${{ inputs.curve_repetitions }}
+          CURVE_SELECTION: ${{ needs.configuration.outputs.core_tests }}
+          CURVE_SETTINGS: ${{ needs.configuration.outputs.settings }}
+          CURVE_EVIDENCE: ${{ runner.temp }}/ha-sauna-curve-comparison
+        run: |
+          python - <<'PY'
+          import ast, hashlib, json, os, platform, re, subprocess, sys, tempfile
+          from pathlib import Path
+
+          evidence = Path(os.environ['CURVE_EVIDENCE'])
+          evidence.mkdir(parents=True, exist_ok=True)
+          settings = json.loads(os.environ['CURVE_SETTINGS'])
+          report = {'description': 'Existing CurveChangeTests: synthetic cases and real R04 fixture; class times only, not full replay performance.', 'blocks': []}
+          worktrees = {}
+          status = 1
+          def git(*arguments, cwd=None):
+              return subprocess.check_output(['git', *arguments], cwd=cwd, text=True, stderr=subprocess.STDOUT, timeout=settings['timeouts_s']['git']).strip()
+
+          worker = evidence / 'worker.py'
+          worker.write_text(r'''
+          import json, sys, time, traceback, unittest
+          from pathlib import Path
+
+          root, output = map(Path, sys.argv[1:3])
+          repeats = int(sys.argv[3])
+          sys.path[:0] = [str(root / 'tests'), str(root)]
+          result = {'wall_ns': None, 'process_cpu_ns': None, 'testsRun': 0, 'failures': 0, 'errors': 0, 'skips': 0}
+          status = 1
+          try:
+              from test_curve_change import CurveChangeTests
+              names = unittest.defaultTestLoader.getTestCaseNames(CurveChangeTests)
+              result['test_ids'] = ['test_curve_change.CurveChangeTests.' + name for name in names]
+              suite = unittest.TestSuite(CurveChangeTests(name) for _ in range(repeats) for name in names)
+              wall, cpu = time.perf_counter_ns(), time.process_time_ns()
+              try:
+                  tested = unittest.TextTestRunner(verbosity=2).run(suite)
+              finally:
+                  result.update(wall_ns=time.perf_counter_ns() - wall, process_cpu_ns=time.process_time_ns() - cpu)
+              result.update(testsRun=tested.testsRun, failures=len(tested.failures), errors=len(tested.errors), skips=len(tested.skipped))
+              status = 0 if tested.wasSuccessful() and tested.testsRun == len(names) * repeats and names and not tested.skipped else 1
+          except BaseException:
+              traceback.print_exc()
+          finally:
+              result.update(exit_code=status, worker_completed=True)
+              output.write_text(json.dumps(result, indent=2) + '\n')
+          sys.exit(status)
+          ''', encoding='utf-8')
+          # The literal above is unindented after YAML removes the run-block indent.
+          worker_sha = hashlib.sha256(worker.read_bytes()).hexdigest()
+          try:
+              refs = {'A': os.environ['CURVE_BASE'], 'B': os.environ['CURVE_CANDIDATE']}
+              if not all(re.fullmatch(r'[0-9a-f]{40}', value) for value in refs.values()):
+                  raise ValueError('Both references must be exact full lowercase commit SHAs')
+              repeats = int(os.environ['CURVE_REPETITIONS'])
+              if repeats < 1:
+                  raise ValueError('curve_repetitions must be a positive integer')
+              report.update(requested_refs=refs, repetitions=repeats, worker_sha256=worker_sha,
+                            workflow_commit=git('rev-parse', 'HEAD'), workflow_tree=git('rev-parse', 'HEAD^{tree}'),
+                            github_sha=os.environ['GITHUB_SHA'], python=sys.version, executable=sys.executable,
+                            runner={key: os.environ.get(key) for key in ('RUNNER_NAME', 'RUNNER_OS', 'RUNNER_ARCH')},
+                            platform=platform.platform())
+              for label, ref in refs.items():
+                  (evidence / f'fetch-{label}.log').write_text(git('fetch', '--no-tags', '--depth=1', 'origin', ref) + '\n')
+                  if git('rev-parse', '--verify', ref + '^{commit}') != ref:
+                      raise ValueError('Fetched commit differs from requested SHA')
+              diff = git('diff', '--name-status', refs['A'], refs['B'])
+              (evidence / 'product-diff.txt').write_text(diff + '\n')
+              curve = 'custom_components/ha_sauna/core/curve_change.py'
+              if git('diff', '--name-only', refs['A'], refs['B']).splitlines() != [curve]:
+                  raise ValueError('Paired references must differ only in curve_change.py')
+              with tempfile.TemporaryDirectory(prefix='sauna-curve-', dir=os.environ['RUNNER_TEMP']) as temporary:
+                  metadata = {}
+                  try:
+                      for label, ref in refs.items():
+                          path = Path(temporary) / label
+                          git('worktree', 'add', '--detach', str(path), ref)
+                          worktrees[label] = path
+                          metadata[label] = {name: git('rev-parse', expression, cwd=path) for name, expression in (
+                              ('actualCommit', 'HEAD'), ('tree', 'HEAD^{tree}'), ('curveblob', 'HEAD:' + curve),
+                              ('test_tree', 'HEAD:tests'), ('defaultsblob', 'HEAD:custom_components/ha_sauna/defaults.json'))}
+                          if metadata[label]['actualCommit'] != ref:
+                              raise ValueError('Worktree commit differs from requested SHA')
+                      report['states'] = metadata
+                      for key in ('test_tree', 'defaultsblob'):
+                          if metadata['A'][key] != metadata['B'][key]:
+                              raise ValueError('Tests, fixtures or defaults differ')
+                      source = ast.parse((worktrees['A'] / 'tests/test_curve_change.py').read_text())
+                      definition = next(node for node in source.body if isinstance(node, ast.ClassDef) and node.name == 'CurveChangeTests')
+                      names = sorted('test_curve_change.CurveChangeTests.' + node.name for node in definition.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_'))
+                      selection = json.loads(os.environ['CURVE_SELECTION'])
+                      if not names or (selection and sorted(selection) != names):
+                          raise ValueError('core_tests must select the complete unchanged CurveChangeTests class')
+                      report['test_ids'] = names
+                      plan = [('A', 1, True), ('B', 1, True)] + [(label, repeats, False) for label in 'ABBABAAB']
+                      report['plan'] = plan
+                      environment = {**os.environ, 'PYTHONHASHSEED': '0', 'PYTHONDONTWRITEBYTECODE': '1'}
+                      environment.pop('PYTHONPATH', None)
+                      for index, (label, count, warmup) in enumerate(plan):
+                          block = evidence / f'{index:02d}-{label}'
+                          block.mkdir()
+                          meta = {**metadata[label], 'label': label, 'repetitions': count, 'warmup': warmup,
+                                  'worker_sha256': worker_sha, 'python': report['python'], 'runner': report['runner']}
+                          (block / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
+                          with (block / 'process.log').open('w') as log:
+                              process = subprocess.run([sys.executable, '-B', str(worker), str(worktrees[label]), str(block / 'result.json'), str(count)], cwd=worktrees[label], env=environment, stdout=log, stderr=subprocess.STDOUT)
+                          (block / 'exit-code.txt').write_text(str(process.returncode) + '\n')
+                          (block / 'process-completed.txt').write_text('completed\n')
+                          measured = json.loads((block / 'result.json').read_text())
+                          report['blocks'].append({**meta, **measured, 'process_exit': process.returncode})
+                          if process.returncode or measured['test_ids'] != names or measured['testsRun'] != len(names) * count:
+                              raise RuntimeError('Incomplete or unsuccessful class block; see process evidence')
+                      status = 0
+                  finally:
+                      for path in worktrees.values():
+                          git('worktree', 'remove', '--force', str(path))
+          except BaseException as error:
+              status = 1
+              report['error'] = repr(error)
+          finally:
+              report.update(exit_code=status, process_completed=True)
+              (evidence / 'comparison.json').write_text(json.dumps(report, indent=2) + '\n')
+              (evidence / 'exit-code.txt').write_text(str(status) + '\n')
+              (evidence / 'process-completed.txt').write_text('completed\n')
+          print(json.dumps(report))
+          sys.exit(status)
+          PY
+      - name: Gepaarte Kurvenmessung sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: curve-comparison
+          path: ${{ runner.temp }}/ha-sauna-curve-comparison
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   ha:
     needs: configuration
-    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
+    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
@@ -125,7 +290,7 @@ jobs:
           SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
   sessions:
     needs: configuration
-    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
+    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
@@ -171,7 +336,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   browser:
     needs: configuration
-    if: ${{ contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
+    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
