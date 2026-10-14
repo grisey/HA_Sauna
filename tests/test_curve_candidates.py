@@ -1,4 +1,4 @@
-"""Originaleingänge, Kandidatenherkunft und bestehende Ereignisbestätigung."""
+"""Originaleingänge, feste Kandidaten und Bestätigung durch neue Originale."""
 
 from datetime import timedelta
 import unittest
@@ -30,7 +30,11 @@ def supported_opening(
         ), None)
     if onset_at is None or (onset_not_before is not None and onset_at < onset_not_before):
         return None
+    if onset_at not in {stamp for stamp, _ in samples}:
+        return None
     before = sum(stamp <= onset_at for stamp, _ in samples)
+    if min(before, len(samples) - before) < policy.min_side_samples:
+        return None
     return CurveFeatures(
         evidence="supports", onset_at=onset_at, newest_at=samples[-1][0],
         before_count=before, after_count=len(samples) - before,
@@ -66,30 +70,28 @@ class CurveCandidateTests(unittest.TestCase):
                 detector, second, values=trace(index),
                 measured=at(second) if measured else None, source=source,
             ), [])
+            if candidate_statuses(detector).get(
+                Quantity.TEMPERATURE.value, {},
+            ).get("status") == "supported":
+                # A reset may already contain its first original. Stop at the
+                # first support, before a later original can confirm the event.
+                return second
         return second
 
-    def test_real_curve_candidate_moves_the_beginning_without_moving_confirmation(self):
+    def test_real_curve_confirms_the_fixed_original_beginning_with_new_evidence(self):
         observed = []
         detector = self._detector(observer=observed.append)
         events = []
         for second in range(90):
             events += sample(detector, second, *trace(second), detector.positions)
 
-        reference = self._detector()
-        baseline = []
-        with patch("custom_components.ha_sauna.core.detector.curve_change", return_value=None):
-            for second in range(90):
-                baseline += sample(reference, second, *trace(second), reference.positions)
-
-        self.assertEqual(
-            [(event.kind, event.detected_at, event.trace_at, event.channels) for event in events],
-            [(event.kind, event.detected_at, event.trace_at, event.channels) for event in baseline],
-        )
         openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(openings), 1)
         opening = openings[0]
-        old_opening = next(event for event in baseline if event.kind == Kind.DOOR_OPEN)
-        self.assertLess(opening.effective_at, old_opening.effective_at)
+        self.assertEqual(opening.effective_at, at(70))
+        self.assertLess(opening.effective_at, opening.detected_at)
+        self.assertEqual(opening.detected_at, opening.trace_at)
+        self.assertEqual(opening.channels, (Position.UPPER.value,))
         consumed = [
             proposal
             for row in observed if row["at"] == opening.trace_at
@@ -102,10 +104,17 @@ class CurveCandidateTests(unittest.TestCase):
         self.assertEqual(opening.effective_at, min(proposal["onsets"]))
         self.assertLess(proposal["first_observed_at"], opening.detected_at)
         self.assertEqual(proposal["confirmed_at"], opening.detected_at)
+        confirmations = {
+            item["candidate_id"]: item for item in proposal["confirmation"]
+        }
         for witness in proposal["witnesses"]:
             self.assertLessEqual(witness["first_observed_at"], proposal["first_observed_at"])
             self.assertLessEqual(witness["newest_at"], proposal["first_observed_at"])
             self.assertIn(witness["onset_at"], {at(second) for second in range(90)})
+            confirmation = confirmations[witness["candidate_id"]]
+            self.assertTrue(confirmation["supported"])
+            self.assertGreater(confirmation["fresh_newest_at"], witness["first_newest_at"])
+            self.assertLessEqual(confirmation["newest_at"], opening.trace_at)
             history = [
                 previous
                 for row in observed
@@ -122,6 +131,8 @@ class CurveCandidateTests(unittest.TestCase):
             last = self._seed(detector)
             initial = dict(candidate_statuses(detector)[Quantity.TEMPERATURE.value])
             count = initial["before_count"] + initial["after_count"]
+            self.assertEqual(initial["first_newest_at"], at(last))
+            self.assertIsNone(initial["fresh_newest_at"])
             calls = fitted.call_count
             detector.advance(at(last + detector.grid_seconds), enabled=True)
             self.assertEqual(fitted.call_count, calls)
@@ -132,6 +143,7 @@ class CurveCandidateTests(unittest.TestCase):
             repeated = candidate_statuses(detector)[Quantity.TEMPERATURE.value]
             self.assertEqual(repeated["candidate_id"], initial["candidate_id"])
             self.assertEqual(repeated["newest_at"], at(last))
+            self.assertIsNone(repeated["fresh_newest_at"])
 
             corrected = trace(71)[0]
             detector.accept(measurement(
@@ -145,6 +157,11 @@ class CurveCandidateTests(unittest.TestCase):
             self.assertEqual(current["candidate_id"], initial["candidate_id"])
             self.assertEqual(current["first_observed_at"], initial["first_observed_at"])
             self.assertEqual(current["onset_at"], initial["onset_at"])
+            self.assertIsNone(current["fresh_newest_at"])
+            self.assertFalse(detector._curve_confirmation(
+                "door_open", detector.positions,
+                (Quantity.TEMPERATURE, Quantity.HUMIDITY), floor=T0,
+            ))
             points = fitted.call_args.args[0]
             self.assertEqual(len(points), len({stamp for stamp, _ in points}))
             self.assertEqual(points[-1], (at(last), corrected))
@@ -164,7 +181,10 @@ class CurveCandidateTests(unittest.TestCase):
                 key = ("door_open", detector.positions, quantities)
                 detector._remember_curve_proposal(
                     "door_open", detector.positions, quantities, floor=T0,
-                    context=(detector._curve_door_context, T0), observed_at=at(last),
+                    context=(
+                        detector._curve_door_context,
+                        detector.door_episode["started_at"], T0,
+                    ), observed_at=at(last),
                 )
                 self.assertEqual(detector._curve_proposal_status[key]["status"], "available")
                 reset = last + detector.grid_seconds
@@ -202,7 +222,11 @@ class CurveCandidateTests(unittest.TestCase):
         with patch(
             "custom_components.ha_sauna.core.detector.curve_change", side_effect=supported_opening,
         ):
-            self.assertEqual(detector.advance(at(count - 1), enabled=True, detected_at=decision_at), [])
+            # Stop at the first supported package: later pending originals must
+            # not be mistaken for evidence already observed at that first tick.
+            self.assertEqual(detector.advance(
+                at(count - 2), enabled=True, detected_at=decision_at,
+            ), [])
         statuses = candidate_statuses(detector)
         self.assertTrue(statuses)
         for status in statuses.values():
@@ -210,21 +234,10 @@ class CurveCandidateTests(unittest.TestCase):
             self.assertLess(status["onset_at"], status["first_observed_at"])
             self.assertLessEqual(status["newest_at"], detector.diagnostic["at"])
 
-    def test_simultaneous_opening_routes_cannot_attribute_a_temperature_only_mixed_start(self):
-        values = detection_parameters().values
-        selected = detection_parameters(door_heating_hold_seconds=values["door_open_hold_seconds"])
+    def test_heated_temperature_route_owns_its_start_without_a_mixed_humidity_claim(self):
+        selected = detection_parameters()
         observed = []
         detector = Detector(selected, T0, (Position.UPPER,), observer=observed.append)
-        reference = Detector(selected, T0, detector.positions)
-        toggles = {}
-        sustain = detector._sustain
-
-        def observed_sustain(name, *args, **kwargs):
-            result = sustain(name, *args, **kwargs)
-            if name in ("door", "door_heating"):
-                toggles.setdefault(detector.index, {})[name] = result
-            return result
-
         def temperature_only(
             points, *, policy, onset_at=None, direction=None, onset_not_before=None,
         ):
@@ -242,26 +255,20 @@ class CurveCandidateTests(unittest.TestCase):
                 direction=direction, onset_not_before=onset_not_before,
             )
 
-        events, baseline = [], []
-        with (
-            patch.object(detector, "_sustain", side_effect=observed_sustain),
-            patch("custom_components.ha_sauna.core.detector.curve_change", side_effect=temperature_only),
+        events = []
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change", side_effect=temperature_only,
         ):
             for second in range(90):
                 now = at(second)
                 detector.report_heating(True, now)
                 events += sample(detector, second, *reversed(trace(second)), detector.positions)
-        with patch("custom_components.ha_sauna.core.detector.curve_change", return_value=None):
-            for second in range(90):
-                reference.report_heating(True, at(second))
-                baseline += sample(reference, second, *reversed(trace(second)), reference.positions)
-
         openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
         self.assertEqual(len(openings), 1)
         opening = openings[0]
-        index = int((opening.trace_at - T0).total_seconds() / detector.grid_seconds)
-        self.assertEqual(toggles[index], {"door": True, "door_heating": True})
         row = next(row for row in observed if row["at"] == opening.trace_at)
+        self.assertTrue(row["conditions"]["door_heating"])
+        self.assertFalse(row["conditions"]["door_open"])
         candidates = row["curve_candidates"]["door_open"]["upper"]
         self.assertEqual(candidates[Quantity.TEMPERATURE.value]["status"], "supported")
         self.assertEqual(candidates[Quantity.TEMPERATURE.value]["onset_at"], at(70))
@@ -269,11 +276,27 @@ class CurveCandidateTests(unittest.TestCase):
         self.assertTrue(any(
             proposal["status"] == "available" and proposal["quantities"] == ("temperature",)
             for previous in observed if previous["at"] < opening.trace_at
-            for proposal in previous["curve_proposals"].get("door_open", ())
+            for proposal in previous["curve_proposals"].get("door_open_heating", ())
         ))
-        self.assertFalse(any(
-            proposal["status"] == "consumed"
-            for proposal in row["curve_proposals"].get("door_open", ())
-        ))
-        self.assertEqual(events, baseline)
-        self.assertGreater(opening.effective_at, at(70))
+        consumed = [
+            proposal
+            for proposal in row["curve_proposals"].get("door_open_heating", ())
+            if proposal["status"] == "consumed"
+        ]
+        self.assertEqual(len(consumed), 1)
+        self.assertEqual(consumed[0]["quantities"], ("temperature",))
+        self.assertTrue(all(item["supported"] for item in consumed[0]["confirmation"]))
+        self.assertEqual(opening.effective_at, at(70))
+
+        # A heater starting after the observed fall cannot make the earlier,
+        # unheated original segment into a temperature-only heating witness.
+        late = Detector(selected, T0, detector.positions)
+        late_events = []
+        with patch(
+            "custom_components.ha_sauna.core.detector.curve_change", side_effect=temperature_only,
+        ):
+            for second in range(90):
+                if second >= 71:
+                    late.report_heating(True, at(second))
+                late_events += sample(late, second, *reversed(trace(second)), late.positions)
+        self.assertFalse(any(event.kind == Kind.DOOR_OPEN for event in late_events))
