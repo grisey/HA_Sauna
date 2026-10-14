@@ -80,6 +80,15 @@ def directed_recovery(samples, *, policy):
     )
 
 
+def smooth_inputs():
+    """Consume the existing trace's position levels and temperature ramps."""
+    return {
+        "temperatures": {Position.UPPER: trace(0)[0], Position.LOWER: trace(85)[0]},
+        "step": trace(280)[0] - trace(281)[0],
+        "correction_step": trace(151)[0] - trace(150)[0],
+    }
+
+
 class CurveCandidateLifecycleTests(unittest.TestCase):
     def _detector(self):
         return Detector(detection_parameters(), T0, (Position.UPPER,))
@@ -100,17 +109,19 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
 
     def _smooth_sample(
         self, detector, second, *, valley, positions=None, measured_second=None,
-        temperature=None, temperature_source=None, humidity=40, humidity_source=None,
+        temperature=None, temperature_source=None, humidity=trace(0)[1], humidity_source=None,
         **advance,
     ):
         grid = detector.grid_seconds
+        inputs = smooth_inputs()
         original_second = second if measured_second is None else measured_second
-        value = (trace(0)[0] + .1 * abs(original_second - valley) / grid
-                 if temperature is None else temperature)
         for position in detector.positions if positions is None else positions:
+            value = (inputs["temperatures"][position]
+                     + inputs["step"] * abs(original_second - valley) / grid
+                     if temperature is None else
+                     temperature[position] if isinstance(temperature, dict) else temperature)
             for quantity, observed, source in (
-                (Quantity.TEMPERATURE,
-                 value[position] if isinstance(value, dict) else value, temperature_source),
+                (Quantity.TEMPERATURE, value, temperature_source),
                 (Quantity.HUMIDITY, humidity, humidity_source),
             ):
                 self.assertTrue(detector.accept(measurement(
@@ -148,6 +159,11 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     self._remember(detector, route)
 
     def test_smooth_close_requires_a_later_original_from_every_temperature_position(self):
+        inputs = smooth_inputs()
+        temperatures, step = inputs["temperatures"], inputs["step"]
+        correction_step = inputs["correction_step"]
+        self.assertGreater(correction_step, 0)
+        self.assertLess(correction_step, step)
         detector, opened = self._smooth_opening((Position.UPPER, Position.LOWER))
         grid, side = detector.grid_seconds, detector.curve_policy.min_side_samples
         valley = opened + (side + 1) * grid
@@ -184,7 +200,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
             self.assertEqual(fitted.call_count, calls)
             self.assertEqual(self._smooth_sample(
                 detector, first + 3 * grid, valley=valley, measured_second=first,
-                temperature=trace(0)[0] + .1 * side + .01,
+                temperature={position: temperatures[position] + step * side + correction_step
+                             for position in detector.positions},
             ), [])
             self.assertEqual(fitted.call_count, calls)
             for position in detector.positions:
@@ -222,6 +239,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                 upper_start = opened + detector.p["curve_window_seconds"] + grid
                 upper_valley = upper_start + side * grid
                 close_at = upper_valley + (side + 1) * grid
+                self.assertLess(temperatures[Position.LOWER] + step * (close_at - valley) / grid,
+                                temperatures[Position.UPPER])
                 forms = {
                     Position.LOWER: (opened + grid, valley),
                     Position.UPPER: (upper_start, upper_valley),
@@ -230,7 +249,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                 pause_trend = False
 
                 def recovery(samples, **kwargs):
-                    position = Position.UPPER if samples[-1][1] >= 90 else Position.LOWER
+                    position = (Position.UPPER if samples[-1][1] >= temperatures[Position.UPPER]
+                                else Position.LOWER)
                     fits[position] += 1
                     decline, bottom = forms[position]
                     return full_recovery(
@@ -260,12 +280,14 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         pause_trend = continuation == "positive" and second in (
                             bound_at + grid, bound_at + 8 * grid,
                         )
-                        lower_value = trace(0)[0] + .1 * (second - valley) / grid
+                        lower_value = temperatures[Position.LOWER] + step * (second - valley) / grid
                         if continuation == "positive" and second == bound_at + 3 * grid:
-                            lower_value = trace(0)[0] + .1 * (second - grid - valley) / grid
+                            lower_value = (temperatures[Position.LOWER]
+                                           + step * (second - grid - valley) / grid)
                         if continuation == "negative" and second >= upper_start:
-                            lower_value = (trace(0)[0] + .1 * (upper_start - grid - valley) / grid
-                                           - .1 * (second - upper_start + grid) / grid)
+                            lower_value = (temperatures[Position.LOWER]
+                                           + step * (upper_start - grid - valley) / grid
+                                           - step * (second - upper_start + grid) / grid)
                         corrected = (
                             bound_at if continuation == "correction_append"
                             and second == bound_at + grid else
@@ -275,7 +297,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         if corrected is not None:
                             self.assertTrue(detector.accept(measurement(
                                 Position.LOWER, Quantity.TEMPERATURE,
-                                trace(0)[0] + .1 * (corrected - valley) / grid + .01,
+                                temperatures[Position.LOWER]
+                                + step * (corrected - valley) / grid + correction_step,
                                 second, measured=at(corrected),
                             )))
                         values = {Position.LOWER: lower_value}
@@ -285,7 +308,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         ):
                             values.clear()
                         if second >= upper_start:
-                            values[Position.UPPER] = 100 + .1 * abs(second - upper_valley) / grid
+                            values[Position.UPPER] = (temperatures[Position.UPPER]
+                                                      + step * abs(second - upper_valley) / grid)
                         current_events = self._smooth_sample(
                             detector, second, valley=valley, positions=tuple(values),
                             temperature=values,
@@ -304,8 +328,9 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                                 self.assertEqual(lower["current_recovery"]["newest_at"], at(second))
                             if corrected is not None:
                                 evaluated = trended.call_args.args[0]
-                                self.assertIn((at(corrected), trace(0)[0]
-                                               + .1 * (corrected - valley) / grid + .01), evaluated)
+                                self.assertIn((at(corrected), temperatures[Position.LOWER]
+                                               + step * (corrected - valley) / grid
+                                               + correction_step), evaluated)
                                 self.assertIn((at(second), lower_value), evaluated)
                                 self.assertEqual(lower["current_recovery"]["direction"],
                                                  None if pause_trend else 1)
@@ -346,6 +371,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         self.assertIsNone(status(Position.LOWER)["bound_at"])
 
     def test_smooth_close_expired_flanks_and_a_different_arc_restart_confirmation(self):
+        inputs = smooth_inputs()
+        temperature, step = inputs["temperatures"][Position.UPPER], inputs["step"]
         for boundary in ("expiry", "new_arc", "ventilation_floor", "moving_decline_edge"):
             with self.subTest(boundary=boundary):
                 detector, opened = self._smooth_opening(
@@ -397,7 +424,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         # identify it as a new first form observation.
                         for original in range(shape[0], next_first + grid, grid):
                             for quantity, value in zip(QUANTITIES, (
-                                trace(0)[0] + .1 * abs(original - shape[1]) / grid, trace(0)[1],
+                                temperature + step * abs(original - shape[1]) / grid, trace(0)[1],
                             ), strict=True):
                                 self.assertTrue(detector.accept(measurement(
                                     Position.UPPER, quantity, value, next_first,
@@ -514,6 +541,8 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                     )
 
     def test_smooth_close_uses_the_common_emit_and_only_a_valid_bound_contact_time(self):
+        inputs = smooth_inputs()
+        temperature, step = inputs["temperatures"][Position.UPPER], inputs["step"]
         for anchor in ("none", "unbound", "bound", "controller_rejected", "new_arc", "new_arc_gap"):
             with self.subTest(anchor=anchor):
                 detector, opened = self._smooth_opening()
@@ -593,7 +622,7 @@ class CurveCandidateLifecycleTests(unittest.TestCase):
                         # neither its first fit nor a gap can reuse A's freshness.
                         for original in range(start, first + grid, grid):
                             for quantity, value in zip(QUANTITIES, (
-                                trace(0)[0] + .1 * abs(original - valley) / grid, trace(0)[1],
+                                temperature + step * abs(original - valley) / grid, trace(0)[1],
                             ), strict=True):
                                 self.assertTrue(detector.accept(measurement(
                                     Position.UPPER, quantity, value, first, measured=at(original),

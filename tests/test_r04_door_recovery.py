@@ -4,6 +4,7 @@ Der Heizkontext stammt aus dem ausgeführten R04. Die Ausschnitte prüfen den
 Detektor mit diesem Kontext, nicht die Folgen einer geänderten Heizsteuerung.
 """
 
+from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 import gzip
@@ -550,6 +551,17 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 )
                 recovery_calls, owner_rows = [], []
                 active_recovery = None
+                candidate_window = (
+                    (at(14, 50, 15), at(14, 51, 41)) if name == "after_ventilation"
+                    else (at(15, 26, 15), at(15, 27, 2))
+                )
+                candidate_calls, candidate_owner_rows, invalidations = [], [], []
+                bound_originals = {}
+                active_candidate = None
+                real_candidate = detector._curve_candidate
+                real_change = detector_module.curve_change
+                real_invalidate_identity = detector._invalidate_curve_identity
+                real_invalidate_proposal = detector._invalidate_curve_proposal
                 original_positions = {
                     (item.received_at, item.value): item.position.value
                     for item in inputs if item.quantity == Quantity.TEMPERATURE
@@ -566,6 +578,205 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         "first": points[0][0] if points else None,
                         "newest": points[-1][0] if points else None,
                     }
+
+                def candidate_state(key):
+                    candidate = detector._curve_candidates.get(key)
+                    status = detector._curve_status.get(key, {})
+                    return deepcopy({
+                        "candidate_id": (
+                            candidate.candidate_id if candidate is not None else None
+                        ),
+                        "context": candidate.context if candidate is not None else None,
+                        "evaluation": detector._curve_evaluated.get(key),
+                        **{key: status.get(key) for key in (
+                            "status", "onset_at", "first_observed_at", "fresh_observed_at",
+                        )},
+                        "status_candidate_id": status.get("candidate_id"),
+                    })
+
+                def candidate_owner_snapshot():
+                    proposals = []
+                    for key in dict.fromkeys((
+                        *detector._curve_proposals, *detector._curve_proposal_status,
+                    )):
+                        if key[0] not in ("door_open", "door_open_heating", "door_close"):
+                            continue
+                        proposal = detector._curve_proposals.get(key)
+                        status = detector._curve_proposal_status.get(key, {})
+                        proposals.append({
+                            "route": key[0],
+                            "positions": tuple(position.value for position in key[1]),
+                            "quantities": tuple(quantity.value for quantity in key[2]),
+                            "context": proposal.context if proposal is not None else None,
+                            "ambiguous": proposal.ambiguous if proposal is not None else None,
+                            **{key: status.get(key) for key in (
+                                "proposal_id", "status", "owner_context", "candidate_ids",
+                                "evidence_bound_at", "anchor_confirmation", "reason",
+                            )},
+                        })
+                        if proposal is not None and proposal.evidence_bound_at is not None:
+                            witnesses = {
+                                item["candidate_id"]: item
+                                for item in status.get("witnesses", ())
+                            }
+                            for _, candidate in proposal.candidates:
+                                bound_originals.setdefault(candidate.candidate_id, {
+                                    "bound_at": proposal.evidence_bound_at,
+                                    "context": candidate.context,
+                                    "witness": deepcopy(witnesses.get(candidate.candidate_id)),
+                                    "original_points": candidate.original_points,
+                                })
+                    return deepcopy({
+                        "door_context": detector._curve_door_context,
+                        "open": detector.open,
+                        "episode_started_at": (
+                            detector.door_episode["started_at"]
+                            if detector.door_episode is not None else None
+                        ),
+                        "candidates": [
+                            {"route": key[0], "position": key[1].value,
+                             "quantity": key[2].value, **candidate_state(key)}
+                            for key in dict.fromkeys((
+                                *detector._curve_candidates, *detector._curve_status,
+                            ))
+                            if key[0] in ("door_open", "door_open_heating", "door_close")
+                            and key[2] == Quantity.TEMPERATURE
+                        ],
+                        "proposals": proposals,
+                    })
+
+                def observe_candidate(*args, **kwargs):
+                    nonlocal active_candidate
+                    route, position, quantity, tick, observed_at, floor, context = args
+                    if (route not in ("door_open", "door_open_heating", "door_close")
+                            or quantity != Quantity.TEMPERATURE):
+                        return real_candidate(*args, **kwargs)
+                    key = (route, position, quantity)
+                    series = detector._curve_series[position, quantity]
+                    call = {
+                        "now": tick, "observed_at": observed_at, "route": route,
+                        "position": position.value, "quantity": quantity.value,
+                        "floor": floor, "context": context,
+                        "points_not_before": kwargs.get("points_not_before"),
+                        **{key: series[key] for key in (
+                            "source", "time_basis", "epoch", "version",
+                            "last_original_version", "last_original_received_at",
+                        )},
+                        "before": candidate_state(key), "curve_change_calls": [],
+                    }
+                    candidate_calls.append(call)
+                    previous = active_candidate
+                    active_candidate = call
+                    try:
+                        result = real_candidate(*args, **kwargs)
+                        call["after"] = candidate_state(key)
+                        return result
+                    finally:
+                        active_candidate = previous
+
+                def observe_change(*args, **kwargs):
+                    result = real_change(*args, **kwargs)
+                    if active_candidate is not None:
+                        active_candidate["curve_change_calls"].append({
+                            **{key: kwargs.get(key) for key in (
+                                "onset_at", "direction", "onset_not_before",
+                            )},
+                            "input": endpoints(args[0]),
+                            "return": {
+                                **{key: getattr(result, key) for key in (
+                                    "evidence", "onset_at", "score_gain", "slope_before",
+                                    "slope_after", "slope_change", "smooth_model",
+                                )},
+                                "after_trend": (
+                                    asdict(result.after_trend)
+                                    if result.after_trend is not None else None
+                                ),
+                            } if result is not None else None,
+                        })
+                    return result
+
+                def observe_invalidate_identity(*args, **kwargs):
+                    candidate, reason = args
+                    if not candidate_window[0] <= now <= candidate_window[1]:
+                        return real_invalidate_identity(*args, **kwargs)
+                    identity = candidate.candidate_id if candidate is not None else None
+                    if identity is None or not identity.startswith((
+                        "door_open:", "door_open_heating:", "door_close:",
+                    )):
+                        return real_invalidate_identity(*args, **kwargs)
+
+                    def related_proposals():
+                        return [
+                            proposal for proposal in candidate_owner_snapshot()["proposals"]
+                            if identity in (proposal["candidate_ids"] or ())
+                        ]
+
+                    item = {
+                        "now": now, "call": "invalidate_identity", "reason": reason,
+                        "candidate_id": identity,
+                        "route": identity.split(":", 3)[0],
+                        "quantity": identity.split(":", 3)[2],
+                        "context": candidate.context if candidate is not None else None,
+                        "candidate_call_index": (
+                            len(candidate_calls) - 1 if active_candidate is not None else None
+                        ),
+                        "proposals_before": related_proposals(),
+                    }
+                    invalidations.append(item)
+                    result = real_invalidate_identity(*args, **kwargs)
+                    item["proposals_after"] = related_proposals()
+                    return result
+
+                def observe_invalidate_proposal(*args, **kwargs):
+                    key, reason = args
+                    if (not candidate_window[0] <= now <= candidate_window[1]
+                            or key[0] not in ("door_open", "door_open_heating", "door_close")):
+                        return real_invalidate_proposal(*args, **kwargs)
+
+                    def affected_proposal():
+                        return next((
+                            item for item in candidate_owner_snapshot()["proposals"]
+                            if item["route"] == key[0]
+                            and item["positions"] == tuple(p.value for p in key[1])
+                            and item["quantities"] == tuple(q.value for q in key[2])
+                        ), None)
+
+                    item = {
+                        "now": now, "call": "invalidate_proposal", "reason": reason,
+                        "route": key[0],
+                        "proposal_id": detector._curve_proposal_status.get(key, {}).get(
+                            "proposal_id",
+                        ),
+                        "before": affected_proposal(),
+                    }
+                    invalidations.append(item)
+                    result = real_invalidate_proposal(*args, **kwargs)
+                    item["after"] = affected_proposal()
+                    return result
+
+                def advance_with_candidate_observation():
+                    if not candidate_window[0] <= now <= candidate_window[1]:
+                        return detector.advance(now, enabled=True)
+                    before = candidate_owner_snapshot()
+                    call_start = len(candidate_calls)
+                    with (
+                        patch.object(detector, "_curve_candidate", observe_candidate),
+                        patch.object(detector_module, "curve_change", observe_change),
+                        patch.object(detector, "_invalidate_curve_identity",
+                                     observe_invalidate_identity),
+                        patch.object(detector, "_invalidate_curve_proposal",
+                                     observe_invalidate_proposal),
+                    ):
+                        result = detector.advance(now, enabled=True)
+                    candidate_owner_rows.append({
+                        "now": now, "before": before,
+                        "after": candidate_owner_snapshot(),
+                        "candidate_call_indices": list(range(call_start, len(candidate_calls))),
+                        "invalidation_indices": list(range(
+                            tick_invalidation_start, len(invalidations),
+                        )),
+                    })
+                    return result
 
                 def observe_recovery(points, *, policy, current_not_before=None):
                     nonlocal active_recovery
@@ -649,16 +860,24 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 cursor = heating_cursor = 0
                 now = begin
                 while now <= end:
-                    while cursor < len(inputs) and inputs[cursor].received_at <= now:
-                        self.assertTrue(detector.accept(inputs[cursor]))
-                        cursor += 1
-                    while (
-                        heating_cursor < len(heating_reports)
-                        and heating_reports[heating_cursor][0] <= now
+                    tick_invalidation_start = len(invalidations)
+                    # Source/epoch/correction invalidation can precede advance.
+                    with (
+                        patch.object(detector, "_invalidate_curve_identity",
+                                     observe_invalidate_identity),
+                        patch.object(detector, "_invalidate_curve_proposal",
+                                     observe_invalidate_proposal),
                     ):
-                        reported_at, heating = heating_reports[heating_cursor]
-                        detector.report_heating(heating, reported_at)
-                        heating_cursor += 1
+                        while cursor < len(inputs) and inputs[cursor].received_at <= now:
+                            self.assertTrue(detector.accept(inputs[cursor]))
+                            cursor += 1
+                        while (
+                            heating_cursor < len(heating_reports)
+                            and heating_reports[heating_cursor][0] <= now
+                        ):
+                            reported_at, heating = heating_reports[heating_cursor]
+                            detector.report_heating(heating, reported_at)
+                            heating_cursor += 1
                     if recovery_window[0] <= now <= recovery_window[1]:
                         # Forward each real call once. Missing later stages
                         # remain unknown, rather than being fitted a second time.
@@ -670,7 +889,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                             patch.object(curves, "_smooth_valley", observe_valley),
                             patch.object(curves, "curve_trend", observe_trend),
                         ):
-                            events.extend(detector.advance(now, enabled=True))
+                            events.extend(advance_with_candidate_observation())
                         positions = {}
                         for position in detector.positions:
                             key = (position, Quantity.TEMPERATURE)
@@ -717,7 +936,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                             "positions": positions,
                         })
                     else:
-                        events.extend(detector.advance(now, enabled=True))
+                        events.extend(advance_with_candidate_observation())
                     # Snapshot the normal unfiltered close inputs only. Fits
                     # run separately after the feed, and only on a failed case.
                     if now in retrospective_ticks:
@@ -828,6 +1047,13 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         "case": name, "window": recovery_window,
                         "scope": "actual calls only; an unexecuted stage remains unknown",
                         "owner_rows": owner_rows, "recovery_calls": recovery_calls,
+                    }, default=str, sort_keys=True), flush=True)
+                    print("R04 executed candidate owner diagnosis: " + json.dumps({
+                        "case": name, "window": candidate_window,
+                        "scope": "actual calls and owner transitions; no additional fits",
+                        "candidate_calls": candidate_calls,
+                        "owner_rows": candidate_owner_rows, "invalidations": invalidations,
+                        "bound_originals": bound_originals,
                     }, default=str, sort_keys=True), flush=True)
                 if retrospective_inputs and [event.kind for event in doors] != [
                     Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
