@@ -6,6 +6,7 @@ from datetime import timedelta
 from math import ceil, isclose, isfinite
 from statistics import median
 
+from .curve_change import CurveFeatures, CurvePolicy, curve_change
 from .models import Measurement, Position, Quantity
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
 from .parameters import BY_KEY
@@ -19,6 +20,17 @@ class Detection:
     detected_at: object
     channels: tuple[str, ...]
     trace_at: object | None = None
+
+
+@dataclass(frozen=True)
+class _CurveCandidate:
+    """Vorläufiger Kurvenbeginn bis zur bestehenden Ereignisbestätigung."""
+
+    candidate_id: str
+    onset_at: object
+    first_observed_at: object
+    context: tuple
+    features: CurveFeatures
 
 
 def robust_slope(values, step=BY_KEY["grid_seconds"].default):
@@ -94,6 +106,258 @@ class Detector:
         self.moisture_states = {
             "weak": {"active": False, "onset_at": None, "unknown": False}
         }
+        self.curve_policy = CurvePolicy(
+            min_side_samples=self.p["curve_min_side_samples"],
+            max_points=self.p["curve_max_points"],
+            max_candidates=self.p["curve_max_candidates"],
+            robust_iterations=self.p["curve_robust_iterations"],
+            huber_delta=self.p["curve_huber_delta"],
+        )
+        self._curve_series = {
+            (position, quantity): {
+                "points": deque(maxlen=self.p["curve_max_points"]),
+                "source": None,
+                "time_basis": None,
+                "started_at": None,
+                "received_at": None,
+                "version": 0,
+                "epoch": 0,
+            }
+            for position in self.positions
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+        }
+        self._curve_candidates = {}
+        self._curve_evaluated = {}
+        self._curve_status = {}
+        self._curve_fit_cache = {}
+        self._curve_door_context = 0
+        self._curve_closed_since = self.origin
+        self._curve_open_effective_at = None
+        self._curve_close_effective_at = None
+        self._curve_ventilation_at = None
+        self._curve_infusion_since = None
+
+    def _clear_curve_series(self, position, quantity):
+        series = self._curve_series[position, quantity]
+        series["points"].clear()
+        series.update(source=None, time_basis=None, started_at=None, received_at=None)
+        series["version"] += 1
+        series["epoch"] += 1
+        for mapping in (
+            self._curve_candidates, self._curve_evaluated, self._curve_status
+        ):
+            for key in tuple(mapping):
+                if key[1] == position:
+                    mapping.pop(key, None)
+
+    def _record_curve_sample(self, measurement, now):
+        """Originale einmal zählen; Geräte- und Empfangsuhr nicht vermischen."""
+        position, quantity = measurement.position, measurement.quantity
+        if self._value(position, quantity, now) is None:
+            self._clear_curve_series(position, quantity)
+            return
+        series = self._curve_series[position, quantity]
+        measured = measurement.measured_at
+        time_basis = (
+            "measured" if measured is not None and measured <= measurement.received_at
+            else "received"
+        )
+        point_at = measured if time_basis == "measured" else measurement.received_at
+        timeout = self.p["sensor_timeout_seconds"]
+        if series["points"] and (
+            series["source"] != measurement.source
+            or series["time_basis"] != time_basis
+            or point_at < series["points"][-1][0]
+            or (point_at - series["points"][-1][0]).total_seconds() > timeout
+            or (measurement.received_at - series["received_at"]).total_seconds() > timeout
+        ):
+            self._clear_curve_series(position, quantity)
+        points = series["points"]
+        if points and points[-1][0] == point_at:
+            # Eine Korrektur derselben Originalprobe ersetzt ihren Wert. Sie
+            # erzeugt weder einen weiteren Stützpunkt noch zusätzliche Zeit.
+            if points[-1][1] == measurement.value:
+                series["received_at"] = measurement.received_at
+                return
+            points[-1] = (point_at, measurement.value)
+        else:
+            points.append((point_at, measurement.value))
+        if series["started_at"] is None:
+            series["started_at"] = point_at
+        series.update(
+            source=measurement.source,
+            time_basis=time_basis,
+            received_at=measurement.received_at,
+        )
+        series["version"] += 1
+
+    def _clear_curve_route(self, route, *, keep_status=False):
+        mappings = (self._curve_candidates, self._curve_evaluated)
+        if not keep_status:
+            mappings += (self._curve_status,)
+        for mapping in mappings:
+            for key in tuple(mapping):
+                if key[0] == route:
+                    mapping.pop(key, None)
+
+    def _curve_candidate(
+        self, route, position, quantity, now, observed_at, floor, context
+    ):
+        """Einen eingefrorenen Beginn nur mit neuen Originalproben nachprüfen."""
+        key = (route, position, quantity)
+        series = self._curve_series[position, quantity]
+        pair = tuple(
+            self._curve_series[position, q]["epoch"]
+            for q in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+        )
+        floor = max(
+            floor,
+            *(self._curve_series[position, q]["started_at"] or floor
+              for q in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
+        )
+        context = (context, pair, floor)
+        evaluation = (series["version"], context)
+        previous_evaluation = self._curve_evaluated.get(key)
+        candidate = self._curve_candidates.get(key)
+        if candidate is not None and candidate.context != context:
+            self._curve_candidates.pop(key, None)
+            candidate = None
+        window_start = now - timedelta(seconds=self.p["curve_window_seconds"])
+        points = tuple(
+            point for point in series["points"]
+            if window_start <= point[0] <= now
+        )
+        if candidate is not None and not any(
+            point[0] == candidate.onset_at for point in points
+        ):
+            self._curve_candidates.pop(key, None)
+            self._curve_status[key] = {
+                **self._curve_status.get(key, {}), "status": "expired",
+            }
+            candidate = None
+            self._curve_evaluated[key] = evaluation
+            if previous_evaluation is not None and previous_evaluation[0] == series["version"]:
+                return
+        if previous_evaluation == evaluation:
+            return
+        self._curve_evaluated[key] = evaluation
+        onset_at = candidate.onset_at if candidate is not None else None
+        fit_key = (position, quantity, points, onset_at)
+        if fit_key not in self._curve_fit_cache:
+            self._curve_fit_cache[fit_key] = curve_change(
+                points, policy=self.curve_policy, onset_at=onset_at,
+            )
+        features = self._curve_fit_cache[fit_key]
+        status = {
+            "status": "insufficient",
+            "source": series["source"],
+            "time_basis": series["time_basis"],
+            "candidate_id": candidate.candidate_id if candidate is not None else None,
+            "first_observed_at": (
+                candidate.first_observed_at if candidate is not None else None
+            ),
+            "onset_at": candidate.onset_at if candidate is not None else None,
+            "newest_at": points[-1][0] if points else None,
+        }
+        if features is not None:
+            direction = (
+                features.slope_change > 0 and features.slope_before < 0
+                if route == "door_close"
+                else features.slope_change < 0 and features.slope_after < 0
+                if route == "door_open"
+                else features.slope_change > 0 and features.slope_after > 0
+            )
+            supported = (
+                features.evidence == "supports"
+                and direction and features.onset_at >= floor
+            )
+            status.update(
+                status="supported" if supported else "rejected",
+                onset_at=features.onset_at,
+                newest_at=features.newest_at,
+                before_count=features.before_count,
+                after_count=features.after_count,
+                noise_scale=features.noise_scale,
+                slope_before=features.slope_before,
+                slope_after=features.slope_after,
+                slope_change=features.slope_change,
+                signed_strength=features.signed_strength,
+                score_gain=features.score_gain,
+                smooth_model=features.smooth_model,
+            )
+            if supported:
+                first_observed_at = (
+                    candidate.first_observed_at if candidate is not None else observed_at
+                )
+                candidate_id = (
+                    candidate.candidate_id if candidate is not None else
+                    f"{route}:{position.value}:{quantity.value}:{series['source']}:"
+                    f"{pair}:{features.onset_at.isoformat()}:{first_observed_at.isoformat()}"
+                )
+                candidate = _CurveCandidate(
+                    candidate_id, features.onset_at, first_observed_at,
+                    context, features,
+                )
+                self._curve_candidates[key] = candidate
+                status["first_observed_at"] = candidate.first_observed_at
+                status["candidate_id"] = candidate.candidate_id
+            else:
+                self._curve_candidates.pop(key, None)
+        self._curve_status[key] = status
+
+    def _curve_beginning(
+        self, route, positions, quantities, fallback, *, floor, kind,
+        now, decision_at, onset_allowed=None,
+        boundary_reason="outside_current_context",
+    ):
+        """Den passenden Kandidaten am allein führenden Bestätigungspfad binden."""
+        candidates = []
+        for position in positions:
+            for quantity in quantities:
+                key = (route, position, quantity)
+                candidate = self._curve_candidates.get(key)
+                if (
+                    candidate is None
+                    or self._curve_status.get(key, {}).get("status") != "supported"
+                ):
+                    return fallback
+                if candidate.onset_at < floor:
+                    self._curve_status[key] = {
+                        **self._curve_status[key],
+                        "attribution_rejected": boundary_reason,
+                    }
+                    return fallback
+                candidates.append((key, candidate))
+        if not candidates:
+            return fallback
+        window = (
+            self.p["infusion_window_seconds"] if route == "infusion"
+            else max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
+        )
+        if (
+            max(candidate.onset_at for _, candidate in candidates)
+            - min(candidate.onset_at for _, candidate in candidates)
+        ).total_seconds() > window:
+            return fallback
+        beginning = min(candidate.onset_at for _, candidate in candidates)
+        if beginning > fallback:
+            return fallback
+        if (
+            beginning < fallback and onset_allowed is not None
+            and not onset_allowed(kind, beginning, now)
+        ):
+            for key, _ in candidates:
+                self._curve_status[key] = {
+                    **self._curve_status[key],
+                    "attribution_rejected": "controller_context",
+                }
+            return fallback
+        for key, _ in candidates:
+            self._curve_status[key] = {
+                **self._curve_status[key], "status": "confirmed",
+                "confirmed_at": decision_at,
+            }
+        return beginning
 
     def report_heating(self, heating, at):
         """Zusatzregel nur bei durchgehend bestätigtem Heizbetrieb verwenden."""
@@ -138,6 +402,8 @@ class Detector:
                 continue
             if old and old.source != m.source:
                 self.frames[m.position].clear()
+                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                    self._clear_curve_series(m.position, quantity)
                 if self.open and m.position in self.ventilation_positions:
                     self.ventilation_invalid.add(m.position)
                     self.ventilation_degraded = True
@@ -146,6 +412,7 @@ class Detector:
                 self.counts.clear()
                 self.levels.clear()
             self.latest[key] = m
+            self._record_curve_sample(m, now)
 
     def _value(self, position, quantity, now):
         m = self.latest.get((position, quantity))
@@ -445,6 +712,7 @@ class Detector:
         heating_intervals=None, heating_after=None, heating_gates=None,
         recognition_context=None, allowed_at=None,
         before_sample=None, after_sample=None, include_current=True, detected_at=None,
+        onset_allowed=None,
     ):
         """Laufzeitkontext vor jeder Prüfung lesen; Ereignisse sofort zurückmelden.
 
@@ -459,6 +727,8 @@ class Detector:
         False vor einer Probe beendet die Zustellung einer abgeschlossenen Session.
         include_current=False lässt das Raster für gleichzeitige Eingänge offen.
         detected_at kann die reale Erkennungsuhr liefern, getrennt vom Rasterende.
+        onset_allowed prüft allein die frühere Zuordnung; die Bestätigung bleibt
+        bei einer Ablehnung mit ihrem bisherigen Ereignisbeginn bestehen.
         """
         at = utc(at)
         final = int((at - self.origin).total_seconds() // self.grid_seconds)
@@ -532,6 +802,7 @@ class Detector:
                 now, utc(detected_at() if callable(detected_at) else detected_at or at),
                 sample_enabled, sample_allowed, on_detection,
                 gang_permitted=gang_permitted, recognition_since=recognition_since,
+                onset_allowed=onset_allowed,
             ))
             if after_sample is not None:
                 after_sample(now)
@@ -539,9 +810,10 @@ class Detector:
 
     def _sample(
         self, now, decision_at, enabled, allowed=None, on_detection=None,
-        *, gang_permitted=True, recognition_since=None,
+        *, gang_permitted=True, recognition_since=None, onset_allowed=None,
     ):
         p = self.p
+        self._curve_fit_cache = {}
         if not enabled or not gang_permitted:
             # An operation-OFF stretch cannot leave a later weak-person opportunity.
             # Door observation itself continues without inventing an edge.
@@ -561,6 +833,11 @@ class Detector:
                 "T": self._value(position, Quantity.TEMPERATURE, now),
                 "H": self._value(position, Quantity.HUMIDITY, now),
             }
+            for name, quantity in (
+                ("T", Quantity.TEMPERATURE), ("H", Quantity.HUMIDITY)
+            ):
+                if raw[name] is None and self._curve_series[position, quantity]["points"]:
+                    self._clear_curve_series(position, quantity)
             valid = all(v is not None for v in raw.values())
             frame = dict(raw)
             frame["Ts"] = (
@@ -599,6 +876,8 @@ class Detector:
                 self._update_moisture_state(None, now)
             self.counts.clear()
             self.levels.clear()
+            self._curve_infusion_since = None
+            self._clear_curve_route("infusion")
         self.active_positions, self.faults = channels, tuple(faults)
         trace = {
             "at": now,
@@ -610,11 +889,17 @@ class Detector:
         output = []
 
         def observe():
+            curve_candidates = {}
+            for (route, position, quantity), status in self._curve_status.items():
+                curve_candidates.setdefault(route, {}).setdefault(position.value, {})[
+                    quantity.value
+                ] = dict(status)
             trace.update(
                 holds=dict(self.counts),
                 signals=tuple(d.kind for d in output),
                 door_open=self.open,
                 ventilation_context=self.ventilated,
+                curve_candidates=curve_candidates,
             )
             self.diagnostic = trace
             if self.observer:
@@ -631,6 +916,23 @@ class Detector:
             output.append(detection)
             if on_detection:
                 on_detection(detection)
+
+        curve_route = "door_close" if self.open else "door_open"
+        self._clear_curve_route("door_open" if self.open else "door_close")
+        curve_positions = (
+            self.door_episode["positions"] if self.open and self.door_episode
+            else channels
+        )
+        curve_floor = (
+            self._curve_open_effective_at or self.opened_at or self.origin
+            if self.open else self._curve_closed_since
+        )
+        for position in curve_positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                self._curve_candidate(
+                    curve_route, position, quantity, now, decision_at, curve_floor,
+                    (self._curve_door_context, curve_floor),
+                )
 
         hints, door_slopes = {}, {}
         for c in channels:
@@ -757,12 +1059,30 @@ class Detector:
         # Erholung beendet zuerst die kurze Öffnung. Ein gerade am selben Raster
         # sichtbarer Verlust darf sie nicht nachträglich zur Lüftung machen.
         if self.open and close_toggle:
+            close_floor = self._curve_open_effective_at or self.opened_at or self.origin
+            if self._curve_ventilation_at is not None:
+                close_floor = max(close_floor, self._curve_ventilation_at)
+            close_effective = self._curve_beginning(
+                "door_close", closing_positions,
+                (Quantity.TEMPERATURE, Quantity.HUMIDITY), now,
+                floor=max(close_floor, now - timedelta(seconds=p["curve_window_seconds"])),
+                kind=Kind.DOOR_CLOSE, now=now, decision_at=decision_at,
+                onset_allowed=onset_allowed,
+                boundary_reason=(
+                    "ventilation_after_onset" if self._curve_ventilation_at is not None
+                    else "outside_door_episode"
+                ),
+            )
             self.open = False
             self.closed_at = now
             self.weak_anchor_at = now if enabled and gang_permitted else None
             self.counts["door"] = 0
             self.counts["door_heating"] = 0
-            emit(Kind.DOOR_CLOSE, now, closing_positions)
+            self._curve_close_effective_at = close_effective
+            self._curve_closed_since = now
+            self._curve_door_context += 1
+            self._clear_curve_route("door_close", keep_status=True)
+            emit(Kind.DOOR_CLOSE, close_effective, closing_positions)
             self.baseline = {}
             self.ventilation_degraded = False
             self.ventilation_positions = ()
@@ -775,8 +1095,26 @@ class Detector:
         elif self.open and not self.ventilated:
             if self._ventilation_proof(channels, now, trace):
                 self.ventilated = True
+                self._curve_ventilation_at = now
                 emit(Kind.VENTILATION)
         elif not self.open and (mixed_toggle or thermal_toggle):
+            open_floor = max(
+                self._curve_closed_since,
+                episode["started_at"] - timedelta(
+                    seconds=max(p["door_window_seconds"], p["door_humidity_seconds"])
+                ),
+                now - timedelta(seconds=p["curve_window_seconds"]),
+            )
+            if thermal_toggle and not mixed_toggle and self.heating_since is not None:
+                open_floor = max(open_floor, self.heating_since)
+            open_effective = self._curve_beginning(
+                "door_open", episode["positions"],
+                (Quantity.TEMPERATURE, Quantity.HUMIDITY) if mixed_toggle else
+                (Quantity.TEMPERATURE,),
+                episode["started_at"], floor=open_floor,
+                kind=Kind.DOOR_OPEN, now=now, decision_at=decision_at,
+                onset_allowed=onset_allowed,
+            )
             self.open = True
             self.weak_anchor_at = None
             self.counts["door"] = 0
@@ -788,7 +1126,14 @@ class Detector:
             )
             self.counts["weak"] = 0
             self.levels["weak"] = False
-            emit(Kind.DOOR_OPEN, episode["started_at"], episode["positions"])
+            self._curve_open_effective_at = open_effective
+            self._curve_close_effective_at = None
+            self._curve_ventilation_at = None
+            self._curve_door_context += 1
+            self._clear_curve_route("door_open", keep_status=True)
+            self._clear_curve_route("infusion")
+            self._curve_infusion_since = None
+            emit(Kind.DOOR_OPEN, open_effective, episode["positions"])
         elif not self.open and episode:
             expiry = max(p["door_window_seconds"], p["door_humidity_seconds"])
             # Feature windows limit the age of individual hints. A complete,
@@ -805,6 +1150,8 @@ class Detector:
                 self.ventilation_invalid = set()
         if not channels:
             self._update_moisture_state(None, now)
+            self._curve_infusion_since = None
+            self._clear_curve_route("infusion")
             observe()
             return output
 
@@ -822,6 +1169,22 @@ class Detector:
             and (allowed is None or allowed(Kind.INFUSION))
         )
         trace["checks"]["infusion"] = infusion_check
+        if infusion_check:
+            if self._curve_infusion_since is None:
+                self._curve_infusion_since = now
+            infusion_floor = max(
+                self._curve_infusion_since,
+                self._curve_close_effective_at or self.origin,
+                recognition_since or self.origin,
+            )
+            for position in channels:
+                self._curve_candidate(
+                    "infusion", position, Quantity.HUMIDITY, now, decision_at, infusion_floor,
+                    (self._curve_door_context, infusion_floor),
+                )
+        else:
+            self._curve_infusion_since = None
+            self._clear_curve_route("infusion")
         infusion = infusion_check
         if infusion_check:
             for c in channels:
@@ -842,7 +1205,17 @@ class Detector:
         sustained = self._sustain("infusion", infusion, p["infusion_hold_seconds"])
         trace["conditions"]["infusion"] = infusion if infusion_check else None
         if self._edge("infusion", sustained):
-            emit(Kind.INFUSION)
+            infusion_effective = self._curve_beginning(
+                "infusion", channels, (Quantity.HUMIDITY,), now,
+                floor=max(
+                    infusion_floor, now - timedelta(seconds=p["curve_window_seconds"])
+                ),
+                kind=Kind.INFUSION, now=now, decision_at=decision_at,
+                onset_allowed=onset_allowed,
+            )
+            self._curve_infusion_since = now
+            self._clear_curve_route("infusion", keep_status=True)
+            emit(Kind.INFUSION, infusion_effective)
         # In operation the controller owns entry and its admission window.
         # A cold entry may wait for the minimum temperature beyond the original
         # closure window. The standalone measurement replay has no controller.

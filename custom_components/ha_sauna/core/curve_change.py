@@ -1,0 +1,376 @@
+"""Stateless local curve evidence from distinct, causal original measurements.
+
+The detector owns source continuity, candidate identity, and every event decision.
+Here a quadratic with a hinge competes with a line, a smooth quadratic, and a
+smooth cubic. All share one normal-consistent MAD noise scale and Huber loss.
+The score uses BIC parameter cost and a separate cost for the searched knots;
+it is local model evidence, not a calibrated event probability.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from math import fsum, isfinite, log, sqrt, ulp
+from statistics import NormalDist, median
+
+
+_MAD_NORMALIZATION = 1 / NormalDist().inv_cdf(0.75)
+_FLOAT_EPSILON = ulp(1.0)
+
+
+@dataclass(frozen=True)
+class CurvePolicy:
+    """Numerical work limits supplied by the central parameter catalogue."""
+
+    min_side_samples: int
+    max_points: int
+    max_candidates: int
+    robust_iterations: int
+    huber_delta: float
+
+
+@dataclass(frozen=True)
+class CurveFeatures:
+    """Local evidence; slope units are input units per second.
+
+    Positive slope_change means a more positive trend, even if both slopes
+    remain negative. ``rejects`` is usable counterevidence at a fixed onset;
+    None from curve_change means insufficient or degenerate observations.
+    """
+
+    evidence: str
+    onset_at: datetime
+    newest_at: datetime
+    before_count: int
+    after_count: int
+    noise_scale: float
+    slope_before: float
+    slope_after: float
+    slope_change: float
+    signed_strength: float
+    smooth_score: float
+    change_score: float
+    score_gain: float
+    smooth_model: str
+
+
+def _policy_valid(policy):
+    counts = (
+        policy.min_side_samples, policy.max_points,
+        policy.max_candidates, policy.robust_iterations,
+    )
+    return (
+        all(isinstance(value, int) and not isinstance(value, bool) for value in counts)
+        and policy.min_side_samples >= 3
+        and policy.max_points >= 2 * policy.min_side_samples
+        and policy.max_candidates >= 1
+        and policy.robust_iterations >= 0
+        and not isinstance(policy.huber_delta, bool)
+        and isfinite(policy.huber_delta)
+        and policy.huber_delta > 0
+    )
+
+
+def _indices(length, limit):
+    """Keep actual points at deterministic positions, including both bounds."""
+    if length <= limit:
+        return list(range(length))
+    if limit == 1:
+        return [length - 1]
+    return [index * (length - 1) // (limit - 1) for index in range(limit)]
+
+
+def _sample_index_at(samples, at):
+    left, right = 0, len(samples)
+    while left < right:
+        middle = (left + right) // 2
+        if samples[middle][0] < at:
+            left = middle + 1
+        else:
+            right = middle
+    return left
+
+
+def _bounded_samples(samples, limit, onset_at):
+    """Keep original points nearest deterministic time nodes, plus a fixed onset."""
+    pinned = _sample_index_at(samples, onset_at) if onset_at is not None else None
+    if pinned is not None and (
+        pinned == len(samples) or samples[pinned][0] != onset_at
+    ):
+        return None
+    if len(samples) <= limit:
+        return list(samples)
+    count = limit - (pinned is not None)
+    indices = {0, len(samples) - 1}
+    start, end = samples[0][0], samples[-1][0]
+    for node in range(1, count - 1):
+        target = start + (end - start) * (node / (count - 1))
+        right = min(_sample_index_at(samples, target), len(samples) - 1)
+        left = max(0, right - 1)
+        nearer_left = target - samples[left][0] <= samples[right][0] - target
+        nearest = left if nearer_left else right
+        indices.add(nearest)
+    if pinned is not None:
+        indices.add(pinned)
+    return [samples[index] for index in sorted(indices)]
+
+
+def _least_squares(rows, values, weights):
+    """Small weighted QR with reorthogonalization and relative rank checks."""
+    roots = [sqrt(weight) for weight in weights]
+    target = [value * root for value, root in zip(values, roots, strict=True)]
+    columns = [
+        [row[index] * root for row, root in zip(rows, roots, strict=True)]
+        for index in range(len(rows[0]))
+    ]
+    count = len(columns)
+    upper = [[0.0] * count for _ in range(count)]
+    orthogonal = []
+    for index, column in enumerate(columns):
+        original_norm = sqrt(fsum(value * value for value in column))
+        for _ in range(2):
+            for prior, basis in enumerate(orthogonal):
+                projection = fsum(a * b for a, b in zip(basis, column, strict=True))
+                upper[prior][index] += projection
+                column = [
+                    value - projection * basis_value
+                    for value, basis_value in zip(column, basis, strict=True)
+                ]
+        norm = sqrt(fsum(value * value for value in column))
+        if not isfinite(norm) or norm <= _FLOAT_EPSILON * len(rows) * original_norm:
+            return None
+        upper[index][index] = norm
+        orthogonal.append([value / norm for value in column])
+    projected = [
+        fsum(a * b for a, b in zip(basis, target, strict=True))
+        for basis in orthogonal
+    ]
+    result = [0.0] * count
+    for index in reversed(range(count)):
+        result[index] = (
+            projected[index] - fsum(
+                upper[index][following] * result[following]
+                for following in range(index + 1, count)
+            )
+        ) / upper[index][index]
+    return result if all(isfinite(value) for value in result) else None
+
+
+def _residuals(rows, values, coefficients):
+    return [
+        value - fsum(a * b for a, b in zip(row, coefficients, strict=True))
+        for row, value in zip(rows, values, strict=True)
+    ]
+
+
+def _fit(rows, values, noise, policy):
+    weights = [1.0] * len(values)
+    coefficients = None
+    for iteration in range(policy.robust_iterations + 1):
+        coefficients = _least_squares(rows, values, weights)
+        if coefficients is None:
+            return None
+        residuals = _residuals(rows, values, coefficients)
+        if iteration != policy.robust_iterations:
+            weights = [
+                policy.huber_delta / ratio if ratio > policy.huber_delta else 1.0
+                for ratio in (abs(residual / noise) for residual in residuals)
+            ]
+    # Twice the standard Huber loss equals squared normalized residuals in its
+    # quadratic part. Its scale is identical for every competing model.
+    normalized = [abs(residual / noise) for residual in residuals]
+    loss = fsum(
+        residual * residual if residual <= policy.huber_delta
+        else 2 * policy.huber_delta * residual - policy.huber_delta**2
+        for residual in normalized
+    )
+    return (coefficients, loss) if isfinite(loss) else None
+
+
+def _models(times, values, noise, knots, policy):
+    linear = [[1.0, time] for time in times]
+    quadratic = [[1.0, time, time * time] for time in times]
+    cubic = [[1.0, time, time * time, time**3] for time in times]
+    smooth = []
+    for name, rows in (
+        ("linear", linear), ("quadratic", quadratic), ("cubic", cubic),
+    ):
+        fitted = _fit(rows, values, noise, policy)
+        if fitted is None:
+            return None
+        smooth.append((
+            fitted[1] + len(rows[0]) * log(len(values)), name,
+            _residuals(rows, values, fitted[0]),
+        ))
+    smooth_score, smooth_model, residuals = min(smooth, key=lambda item: item[:2])
+    changes = []
+    for index, knot in knots:
+        rows = [row + [max(0.0, time - knot)] for row, time in zip(
+            quadratic, times, strict=True
+        )]
+        fitted = _fit(rows, values, noise, policy)
+        if fitted is None:
+            continue
+        # Five model parameters include the fitted hinge time. The additional
+        # 2 log(m) cost explicitly accounts for the discrete search over m knots.
+        score = fitted[1] + 5 * log(len(values))
+        changes.append((score, index, fitted[0]))
+    if not changes:
+        return None
+    return smooth_score, smooth_model, residuals, changes
+
+
+def _supported_without_point(times, values, noise, index, residuals, penalty, policy):
+    """One bounded refit rejects evidence that rests on one influential value."""
+    removed = max(range(len(values)), key=lambda point: (abs(residuals[point]), point))
+    knot = times[index]
+    retained = [point for point in range(len(values)) if point != removed]
+    before = sum(times[point] <= knot for point in retained)
+    if min(before, len(retained) - before) < policy.min_side_samples:
+        return None
+    result = _models(
+        [times[point] for point in retained],
+        [values[point] for point in retained], noise, [(index, knot)], policy,
+    )
+    if result is None:
+        return None
+    smooth_score, _, _, changes = result
+    score, _, coefficients = changes[0]
+    resolution = len(values) * ulp(max(abs(smooth_score), abs(score + penalty)))
+    return smooth_score - score - penalty > resolution, coefficients[3]
+
+
+def curve_change(
+    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+    onset_at: datetime | None = None,
+) -> CurveFeatures | None:
+    """Compare local smooth and changed curves without retaining any state.
+
+    The caller supplies one coherent original source segment in strictly
+    increasing time order. Downsampling keeps original observations and bounds
+    the numerical work; it never creates interpolated evidence. A supplied onset
+    is re-evaluated without moving it. None cannot reject a detector candidate.
+    """
+    try:
+        if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
+            return None
+        selected = _bounded_samples(samples, policy.max_points, onset_at)
+        if selected is None or len(selected) < 2 * policy.min_side_samples:
+            return None
+        stamps = [sample[0] for sample in selected]
+        if any(not isinstance(stamp, datetime) for stamp in stamps):
+            return None
+        if any(a >= b for a, b in zip(stamps, stamps[1:])):
+            return None
+        raw_values = [sample[1] for sample in selected]
+        if any(isinstance(value, bool) or not isfinite(value) for value in raw_values):
+            return None
+        span = (stamps[-1] - stamps[0]).total_seconds()
+        if not isfinite(span) or span <= 0:
+            return None
+        times = [(stamp - stamps[0]).total_seconds() / span for stamp in stamps]
+        center = median(raw_values)
+        values = [value - center for value in raw_values]
+        if not all(isfinite(value) for value in values):
+            return None
+        cubic = [[1.0, time, time * time, time**3] for time in times]
+        preliminary = _least_squares(cubic, values, [1.0] * len(values))
+        if preliminary is None:
+            return None
+        residuals = _residuals(cubic, values, preliminary)
+        residual_center = median(residuals)
+        noise = _MAD_NORMALIZATION * median(
+            abs(residual - residual_center) for residual in residuals
+        )
+        # A zero/numerically unresolved MAD provides no defensible noise ratio.
+        # This is a floating-point resolution check, never a physical noise floor.
+        resolution = len(values) * ulp(max(abs(value) for value in raw_values))
+        if not isfinite(noise) or noise <= resolution:
+            return None
+        eligible = list(range(
+            policy.min_side_samples - 1, len(times) - policy.min_side_samples
+        ))
+        searched = [eligible[index] for index in _indices(
+            len(eligible), policy.max_candidates
+        )]
+        if onset_at is not None:
+            index = stamps.index(onset_at)
+            if index not in eligible:
+                return None
+            if index not in searched:
+                if len(searched) == policy.max_candidates:
+                    nearest = min(range(len(searched)), key=lambda point: (
+                        abs(times[searched[point]] - times[index]), point,
+                    ))
+                    searched[nearest] = index
+                else:
+                    searched.append(index)
+                searched.sort()
+        knots = [(index, times[index]) for index in searched]
+        result = _models(times, values, noise, knots, policy)
+        if result is None:
+            return None
+        smooth_score, smooth_model, residuals, changes = result
+        if onset_at is None:
+            change_score, index, coefficients = min(changes, key=lambda item: item[:2])
+        else:
+            fitted = next((item for item in changes if item[1] == index), None)
+            if fitted is None:
+                return None
+            change_score, index, coefficients = fitted
+        search_penalty = 2 * log(len(searched))
+        change_score += search_penalty
+        score_gain = smooth_score - change_score
+        score_resolution = len(values) * ulp(max(abs(smooth_score), abs(change_score)))
+        if abs(score_gain) <= score_resolution:
+            return None
+        supported = score_gain > score_resolution
+        if supported and onset_at is not None:
+            best_score = min(item[0] for item in changes)
+            # A newly optimized knot must repay its BIC time-parameter cost and
+            # the same discrete-search cost before displacing a frozen onset.
+            # Tiny movements of the optimum are not counterevidence, while a
+            # distinctly better later change cannot legitimize an old onset.
+            replacement_penalty = log(len(values)) + search_penalty
+            if change_score - search_penalty - best_score > (
+                replacement_penalty + score_resolution
+            ):
+                supported = False
+        # A best knot at the admissible search boundary is not temporally
+        # bracketed; it cannot supply a precise earlier candidate beginning.
+        if supported and index in (eligible[0], eligible[-1]):
+            return None
+        if supported:
+            rescue = _supported_without_point(
+                times, values, noise, index, residuals, search_penalty, policy,
+            )
+            if rescue is None or not rescue[0] or rescue[1] * coefficients[3] <= 0:
+                return None
+        slope_before = (coefficients[1] + 2 * coefficients[2] * times[index]) / span
+        slope_change = coefficients[3] / span
+        slope_after = slope_before + slope_change
+        strength = coefficients[3] * (times[-1] - times[index]) / noise
+        finite = (
+            slope_before, slope_after, slope_change, strength,
+            smooth_score, change_score,
+        )
+        if not all(isfinite(value) for value in finite):
+            return None
+        return CurveFeatures(
+            evidence="supports" if supported else "rejects",
+            onset_at=stamps[index], newest_at=stamps[-1],
+            before_count=index + 1, after_count=len(times) - index - 1,
+            noise_scale=noise, slope_before=slope_before,
+            slope_after=slope_after, slope_change=slope_change,
+            signed_strength=strength, smooth_score=smooth_score,
+            change_score=change_score, score_gain=score_gain,
+            smooth_model=smooth_model,
+        )
+    except (
+        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        ZeroDivisionError,
+    ):
+        # Bad/degenerate local windows must not interrupt the product loop.
+        return None

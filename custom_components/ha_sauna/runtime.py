@@ -689,9 +689,10 @@ class SaunaRuntime:
                     detection.effective_at,
                     detection.detected_at,
                     booking_at=booking_at,
+                    trace_at=detection.trace_at,
                 )
                 self._process_event(
-                    event, defer_confirmation=True, recognition_at=detection.trace_at,
+                    event, defer_confirmation=True,
                 )
                 self.log.info(
                     "detection",
@@ -733,6 +734,7 @@ class SaunaRuntime:
                 heating_gates=self._detector_heating_gates,
                 recognition_context=self.controller.recognition_context_at,
                 allowed_at=self.controller.recognition_allowed_at,
+                onset_allowed=self.controller.detection_onset_allowed,
                 before_sample=before_sample,
                 after_sample=after_sample,
                 include_current=include_current,

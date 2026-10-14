@@ -52,12 +52,19 @@ class UnresolvedTransition(ValueError):
 
 @dataclass(frozen=True)
 class Event:
+    """Ereignis mit dem ursprünglichen Diagnose-/Bestätigungsraster.
+
+    ``trace_at`` transportiert dessen Zeitpunkt; die reale Erkennungszeit
+    bleibt ``detected_at``.
+    """
+
     event_id: str
     session_id: str
     kind: Kind
     effective_at: datetime
     detected_at: datetime
     booking_at: datetime | None = None
+    trace_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.session_id or not isinstance(self.kind, Kind):
@@ -72,6 +79,17 @@ class Event:
             raise ValueError("Der Ereigniszeitpunkt darf nicht in der Zukunft liegen")
         if not self.effective_at <= self.booking_at <= self.detected_at:
             raise ValueError("Buchungszeit muss zwischen Ereignis- und Erkennungszeit liegen")
+        if self.trace_at is not None:
+            object.__setattr__(self, "trace_at", utc(self.trace_at))
+            if not self.effective_at <= self.trace_at <= self.booking_at <= self.detected_at:
+                raise ValueError(
+                    "Bestätigungszeit muss zwischen Ereignis- und Buchungszeit liegen"
+                )
+
+    @property
+    def confirmation_at(self) -> datetime:
+        """Ursprüngliche Bestätigung, ohne Rasterangabe bisheriger Ereigniszeitpunkt."""
+        return self.trace_at if self.trace_at is not None else self.effective_at
 
 
 @dataclass(frozen=True)

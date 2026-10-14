@@ -284,6 +284,30 @@ class Controller:
             and self.recognition_allowed(kind)
         )
 
+    def detection_onset_allowed(self, kind, proposed_at, recognition_at):
+        """Attribute an earlier onset only without crossing existing control gates."""
+        session = self._session
+        proposed_at, recognition_at = utc(proposed_at), utc(recognition_at)
+        if (session is None or proposed_at < session.started_at
+                or proposed_at > recognition_at
+                or self.recognition_context_at(proposed_at)
+                != self.recognition_context_at(recognition_at)):
+            return False
+        if kind == Kind.INFUSION:
+            return (
+                self.recognition_allowed_at(kind, proposed_at)
+                and (not self._proxy_cooling_evidence_allowed(recognition_at)
+                     or self._presence_source_context_current("proxy", proposed_at))
+            )
+        active = session.timeline.active
+        if kind == Kind.DOOR_OPEN:
+            # An earlier opening must remain a new exit for the same stay.
+            return active is None or (
+                (proposed_at > active.started_at)
+                == (recognition_at > active.started_at)
+            )
+        return kind == Kind.DOOR_CLOSE
+
     @property
     def control_mode_change_allowed(self) -> bool:
         """A recording survives mode changes; active automatic control is locked."""
@@ -918,6 +942,10 @@ class Controller:
     def process(
         self, event: Event, *, defer_confirmation=False, recognition_at=None,
     ) -> Result:
+        if event.trace_at is not None:
+            if recognition_at is not None and utc(recognition_at) != event.trace_at:
+                raise ValueError("Erkennungszeit widerspricht dem führenden Ereignis")
+            recognition_at = event.trace_at
         with self._delivery(event.detected_at):
             return self._process(
                 event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
@@ -972,7 +1000,9 @@ class Controller:
             self.door_request = transition.state
             if (transition.request and self.feedback is not True
                     and self._gang_temperature_blocked() is None
-                    and self._gang_temperature_blocked_at(event.effective_at) is None):
+                    and self._gang_temperature_blocked_at(
+                        event.confirmation_at,
+                    ) is None):
                 self._door_request_pending = True
         blocked = (
             self._gang_start_blocked(previous)
@@ -1118,7 +1148,7 @@ class Controller:
         elif previous.timeline.active is None:
             self._schedule(
                 "confirmation",
-                active.started_at
+                self._gang_control_start_at(timeline)
                 + timedelta(seconds=self.parameters.seconds("confirmation_minutes")),
                 active.gang_id,
             )
@@ -1182,7 +1212,7 @@ class Controller:
                 and effective_at < self._gang_entry_start_at(timeline))
         ):
             return "entry_context_changed"
-        if at > self._gang_entry_start_at(timeline) + timedelta(
+        if at > self._gang_control_start_at(timeline) + timedelta(
             seconds=self.parameters.seconds("confirmation_minutes")
         ):
             return "entry_context_expired"
@@ -1222,6 +1252,20 @@ class Controller:
         if not timeline.entry_cycle_available:
             return None
         return max(timeline.anchor.effective_at, self._gang_temperature_gates[-1][0])
+
+    def _gang_control_start_at(self, timeline):
+        """Derive control windows from the source's existing confirmation."""
+        if timeline.active is not None:
+            active = timeline.active
+            source = next((event for event in timeline.processed
+                           if event.event_id == active.start_source_event_id), None)
+            if source is None:
+                return active.started_at
+            return max(active.started_at, source.confirmation_at)
+        start_at = self._gang_entry_start_at(timeline)
+        if start_at is None:
+            return None
+        return max(start_at, timeline.anchor.confirmation_at)
 
     def _gang_start_blocked(self, session):
         return self._session_recognition_blocked(session) or self._gang_temperature_blocked()
@@ -1640,7 +1684,7 @@ class Controller:
         self._direct_presence_history.append(report)
         self._direct_presence_report_ids.add(report.report_id)
         if (self._presence_entry is not None
-                and report.effective_at >= self._presence_entry.closure.effective_at
+                and report.effective_at >= self._presence_entry.closure.confirmation_at
                 and (not report.available or report.occupancy != "present")):
             self._presence_entry = None
         if self._session is None:
@@ -1666,7 +1710,7 @@ class Controller:
         )
         report = (
             next((report for report in reversed(self._direct_presence_history)
-                  if report.effective_at <= closure.effective_at
+                  if report.effective_at <= closure.confirmation_at
                   and report.received_at <= self._received_at(at)), None)
             if closure is not None else self.direct_presence
         )
@@ -1686,7 +1730,7 @@ class Controller:
             # A still-open proxy episode can close after sensor recovery.
             # A closure completed before that recovery cannot revive an entry.
             if (closure is None or not self._presence_source_context_current(
-                "ha_presence", closure.effective_at,
+                "ha_presence", closure.confirmation_at,
             )):
                 return False
             # Presence and proxy door recognition can be processed in either
@@ -1701,11 +1745,11 @@ class Controller:
                     or self._gang_start_blocked(session)):
                 return False
             effective = self._gang_entry_start_at(t)
-            if effective > entry.closure.effective_at:
+            if effective > entry.closure.confirmation_at:
                 # The occupancy observed at entry must persist while waiting.
                 # A later ON cannot revive an entry interrupted by OFF/unknown.
                 if any(
-                    item.effective_at >= entry.closure.effective_at
+                    item.effective_at >= entry.closure.confirmation_at
                     and item.received_at <= self._received_at(at)
                     and (not item.available or item.occupancy != "present")
                     for item in self._direct_presence_history

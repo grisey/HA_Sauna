@@ -17,6 +17,34 @@ Aufgussbestätigungsfrist erscheinen nur beim indirekten Verfahren.
 Ihre gespeicherten Werte bleiben beim Verfahrenswechsel erhalten.
 Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
 
+## Kurvenbeginn und Bestätigung
+
+Für Türöffnung, Türschluss und Aufguss kann ein mathematischer
+Kurvenbeginn-Kandidat einen früheren Beginn vorschlagen. Der lokale
+Kurvenvergleich berücksichtigt das gemessene Rauschen, glatte Trends und den
+Einfluss einzelner Ausreißer. Sein Score ist keine Ereigniswahrscheinlichkeit
+und löst allein kein Ereignis aus. Die Vorgaben stammen aus dem internen
+Parameterkatalog und sind keine Einstellungen der Oberfläche.
+
+Die Auswertung verwendet Originalmesspunkte innerhalb zusammenhängender
+Quellenabschnitte mit einheitlicher Zeitbasis. Vorhandene gültige Messzeiten
+bleiben erhalten; ersatzweise verwendete Empfangszeiten bilden eine eigene
+Zeitbasis. Raster-Haltewerte liefern keine zusätzliche Evidenz. Ein Kandidat
+behält seinen Beginn und wird mit neuen Originalmessungen erneut geprüft.
+Gegenbelege verwerfen ihn; fehlende Evidenz ist kein Gegenbeleg und bestätigt
+ihn nicht. Quellenwechsel, ungültige oder veraltete Messungen und ein Wechsel
+des Ereigniskontexts beenden seine Gültigkeit.
+
+Erst die folgenden fachlichen Tür- und Aufgussregeln bestätigen ein Ereignis;
+Mindestverluste, Feuchtenachweise und Bestätigungsdauern bleiben unverändert.
+Dabei kann ein passender, weiterhin belegter Kandidatenbeginn zugeordnet werden.
+Fehlt er oder überschreitet er den zulässigen Kontext, bleibt die bisherige
+Zeitzuordnung bestehen. Die frühere Zuordnung zieht weder die fachliche
+Bestätigung noch die reale Erkennungszeit vor. Die Bedeutung der Zeitfelder
+ist unter [Zeitangaben](speicherung.md#daten-und-zeitangaben) und
+[nachträgliche Zuordnung im Verlauf](speicherung.md#nachträgliche-zuordnung-im-verlauf)
+beschrieben.
+
 ## Öffnen und Schließen der Tür
 
 Eine Öffnung benötigt entweder fallende Temperatur und Feuchte oder einen
