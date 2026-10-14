@@ -113,6 +113,18 @@ Bedien- und Dienstprotokoll, Archivnachweis und eine komprimierte Zustandsfolge.
 SQLite kann auf einem Linux-RAM-Dateisystem liegen; Erkennungs- und Regelzeiten
 werden dafür nicht verkürzt.
 
+Der optionale boolesche `workflow_dispatch`-Eingang `replay_profile` (Standard
+`false`) profiliert mit [`profile_replay.py`](profile_replay.py) den vorhandenen
+Sitzungslauf. Die Auswahl über `checks` und `session_cases` sowie die gebundenen
+Bewertungen bleiben erhalten. Im Sitzungsartefakt entsteht zusätzlich
+`replay-profile.json`.
+
+Das Profil enthält Aufrufzahlen sowie inklusive Wall- und Thread-CPU-Zeiten
+der gemessenen Funktionen. Untergeordnete Aufrufe sind enthalten; verschachtelte
+und überlappende Messbereiche dürfen nicht addiert werden. Der Gesamtlauf hat
+separate Wall- und Prozess-CPU-Zeiten. Die Messung verursacht zusätzliche Arbeit;
+profilierte Laufzeiten sind daher kein Beleg für unprofilierte Laufzeiten.
+
 Die [Zuständigkeitstabelle](../coverage_ownership.json) nennt die ersetzten
 Fachtests mit ihrer jeweils führenden Sitzungsbewertung. Der zugehörige Metatest
 prüft die Verweise und verhindert die Rückkehr bereits entfernter Duplikate.

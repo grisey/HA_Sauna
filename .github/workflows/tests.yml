@@ -17,6 +17,10 @@ on:
         description: 'Optional comma-separated manifest IDs for sessions, e.g. G02-proxy,R03'
         type: string
         default: ''
+      replay_profile:
+        description: 'Profile the existing session run'
+        type: boolean
+        default: false
       integration_tests:
         description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
         type: string
@@ -140,15 +144,21 @@ jobs:
           git rev-parse HEAD > "$SAUNA_SESSION_EVIDENCE/commit.txt"
           git rev-parse 'HEAD^{tree}' > "$SAUNA_SESSION_EVIDENCE/tree.txt"
           set +e
-          python -m unittest discover -s tests/sessions -v > "$SAUNA_SESSION_EVIDENCE/process.log" 2>&1
+          if [ "$SAUNA_REPLAY_PROFILE" = 'true' ]; then
+            python tests/sessions/profile_replay.py > "$SAUNA_SESSION_EVIDENCE/process.log" 2>&1
+          else
+            python -m unittest discover -s tests/sessions -v > "$SAUNA_SESSION_EVIDENCE/process.log" 2>&1
+          fi
           result=$?
           echo "$result" > "$SAUNA_SESSION_EVIDENCE/exit-code.txt"
+          echo completed > "$SAUNA_SESSION_EVIDENCE/process-completed.txt"
           cat "$SAUNA_SESSION_EVIDENCE/process.log"
           exit "$result"
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.sessions }}
         env:
           HA_TEST_REQUIRED: '1'
           TMPDIR: /dev/shm
+          SAUNA_REPLAY_PROFILE: ${{ inputs.replay_profile }}
           SAUNA_SESSION_CASE: ${{ matrix.case }}
           SAUNA_SESSION_EVIDENCE: ${{ runner.temp }}/ha-sauna-sessions
       - name: Gebundene Sitzungsbewertungen sichern
