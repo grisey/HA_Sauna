@@ -332,6 +332,133 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         for item in confirmations.values()
                     ))
 
+    def test_r04_fixed_onset_with_initial_support_and_later_originals(self):
+        """Compare M1 input support under the normal bounded point selection."""
+        origin = datetime.fromisoformat(fixture("session")["origin"])
+        parameters = detection_parameters()
+        policy = Detector(parameters, origin).curve_policy
+        window = timedelta(seconds=parameters.values["curve_window_seconds"])
+
+        def at(hour, minute, second, microsecond=0):
+            return origin.replace(
+                hour=hour, minute=minute, second=second, microsecond=microsecond,
+            )
+
+        # Completed run 38632239838, candidate-owner JSON (zero-based call
+        # indices): Long initial [2]/[15], first fixed rejection [34]/[31],
+        # recovery decision [172]/[173]; Short lower [145]/[151]/[161].
+        # Long bound_originals witnesses independently retain the same onsets,
+        # first_observed_at and first_newest_at. Their later bound input is not
+        # substituted for the earlier, first supporting input recorded here.
+        cases = (
+            {
+                "case": "after_ventilation_upper", "role": "upper_temperature",
+                "onset": at(14, 50, 9, 335295), "floor": at(14, 49, 46),
+                "first_supported_at": at(14, 50, 16),
+                "initial_input": (at(14, 49, 16, 785722), at(14, 50, 15, 642984), 57),
+                "checkpoints": (
+                    ("first_fixed_rejection", at(14, 50, 32),
+                     (at(14, 49, 32, 543689), at(14, 50, 31, 409519), 57)),
+                    ("full_recovery_decision", at(14, 51, 41),
+                     (at(14, 50, 41, 936279), at(14, 51, 40, 802049), 44)),
+                ),
+            },
+            {
+                "case": "after_ventilation_lower", "role": "lower_temperature",
+                "onset": at(14, 50, 11, 466928), "floor": at(14, 49, 46),
+                "first_supported_at": at(14, 50, 22),
+                "initial_input": (at(14, 49, 22, 59304), at(14, 50, 21, 988838), 58),
+                "checkpoints": (
+                    ("first_fixed_rejection", at(14, 50, 30),
+                     (at(14, 49, 30, 471468), at(14, 50, 29, 341223), 57)),
+                    ("full_recovery_decision", at(14, 51, 41),
+                     (at(14, 50, 41, 960407), at(14, 51, 40, 828073), 41)),
+                ),
+            },
+            {
+                "case": "short_under_heating_lower", "role": "lower_temperature",
+                "onset": at(15, 26, 20, 959569), "floor": at(15, 25, 54, 659854),
+                "first_supported_at": at(15, 26, 54),
+                "initial_input": (at(15, 25, 54, 681576), at(15, 26, 53, 545042), 46),
+                "checkpoints": (
+                    ("first_fixed_rejection", at(15, 26, 57),
+                     (at(15, 25, 57, 837592), at(15, 26, 56, 686627), 44)),
+                    ("full_recovery_decision", at(15, 27, 2),
+                     (at(15, 26, 2, 37787), at(15, 27, 1, 952649), 45)),
+                ),
+            },
+        )
+        first = min(case["initial_input"][0] for case in cases)
+        end = max(tick for case in cases for _, tick, _ in case["checkpoints"])
+        originals = {case["role"]: [] for case in cases}
+        path = Path(__file__).parent / "fixtures/replay/R04.samples.jsonl.gz"
+        with gzip.open(path, "rt", encoding="utf-8") as stream:
+            for line in stream:
+                row = json.loads(line)
+                stamp = origin + timedelta(seconds=row["t"])
+                if stamp > end:
+                    break
+                if stamp >= first and row["role"] in originals:
+                    originals[row["role"]].append((stamp, row["value"]))
+
+        def bounds(points):
+            return (points[0][0], points[-1][0], len(points))
+
+        for case in cases:
+            with self.subTest(case=case["case"]):
+                points = originals[case["role"]]
+                start, newest, _ = case["initial_input"]
+                initial = tuple(point for point in points if start <= point[0] <= newest)
+                self.assertEqual(bounds(initial), case["initial_input"])
+                self.assertIn(case["onset"], {stamp for stamp, _ in initial})
+                self.assertLessEqual(case["floor"], case["onset"])
+                self.assertLessEqual(newest, case["first_supported_at"])
+                for criterion, tick, recorded_window in case["checkpoints"]:
+                    added = tuple(point for point in points if newest < point[0] <= tick)
+                    retained = initial + added
+                    moving = tuple(
+                        point for point in points if tick - window <= point[0] <= tick
+                    )
+                    self.assertEqual(bounds(moving), recorded_window)
+                    self.assertTrue(added)
+                    self.assertEqual(retained[:len(initial)], initial)
+                    for basis, supplied in (
+                        ("moving_window", moving), ("initial_plus_new", retained),
+                    ):
+                        # Report the productive fit selection without changing
+                        # the supplied input or curve_change's own selection.
+                        selected = curves._bounded_samples(
+                            supplied, policy.max_points, case["onset"],
+                        )
+                        selected_initial_count = sum(
+                            point in initial for point in (selected or ())
+                        )
+                        result = curve_change(
+                            supplied, policy=policy, onset_at=case["onset"],
+                            onset_not_before=case["floor"], direction=1, hinge_order=1,
+                        )
+                        print("R04 fixed original support diagnosis: " + json.dumps({
+                            "case": case["case"], "criterion": criterion, "at": tick,
+                            "basis": basis, "sample_role": case["role"],
+                            "fixture": str(path),
+                            "fixed_onset": case["onset"], "floor": case["floor"],
+                            "first_supported_at": case["first_supported_at"],
+                            "initial_input": case["initial_input"],
+                            "added_input": bounds(added), "supplied_input": bounds(supplied),
+                            "supplied_initial_count": sum(
+                                point in initial for point in supplied
+                            ),
+                            "bounded_fit_input": bounds(selected) if selected else None,
+                            "bounded_initial_count": selected_initial_count,
+                            "bounded_initial_fraction": selected_initial_count / len(initial),
+                            "onset_present": any(
+                                stamp == case["onset"] for stamp, _ in supplied
+                            ),
+                            "policy": asdict(policy),
+                            "result": asdict(result) if result is not None else None,
+                            "scope": "M1 input support with normal selection; no owner decision",
+                        }, default=str, sort_keys=True), flush=True)
+
     def test_later_door_closures_recover_from_original_temperature_and_humidity(self):
         origin = datetime.fromisoformat(fixture("session")["origin"])
         parameters = detection_parameters()
