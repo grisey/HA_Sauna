@@ -32,6 +32,12 @@ Quellenabschnitte mit einheitlicher Zeitbasis. Vorhandene gültige Messzeiten
 bleiben erhalten; ersatzweise verwendete Empfangszeiten bilden eine eigene
 Zeitbasis. Raster-Haltewerte liefern keine zusätzliche Evidenz.
 
+Die Richtung nach einem Knick wird getrennt an den dort vorhandenen
+Originalmessungen geprüft. Eine Gerade wird mit einem konstanten Niveau
+verglichen; der Nachweis berücksichtigt das lokale Rauschen und muss auch
+nach Weglassen eines besonders einflussreichen Messpunkts bestehen bleiben.
+Die Ableitung der übergreifenden Kurvenanpassung genügt dafür nicht.
+
 Die Bestätigung benötigt für jede erforderliche Messgröße und Position einen
 erneut unterstützten Modellvergleich am selben Beginn mit später
 hinzugekommenen Originalmessungen. Die einzelnen Anfänge müssen innerhalb der
@@ -72,7 +78,10 @@ Heizunterbrechung verwirft diesen Nachweis.
 
 Eine Schließung setzt eine erkannte Öffnung voraus. Eine Änderung vom
 Temperaturabfall zu steigender Temperatur kann sie an allen noch auswertbaren
-beteiligten Positionen auch bei gestörter Feuchtemessung belegen. Alternativ
+beteiligten Positionen auch bei gestörter Feuchtemessung belegen. Der frühere
+Knick und die inzwischen eingetretene Erholung sind getrennte Nachweise:
+Die Erholung wird an den jüngsten Originaltemperaturen innerhalb der
+Türvergleichszeit geprüft. Alternativ
 kann ein Abbremsen des Temperaturabfalls zusammen mit einer passenden Erholung
 der Feuchte einen früheren Schluss vor dem Temperaturminimum belegen. Dabei
 darf die relative Feuchte bereits wieder steigen. Dieser gemischte Nachweis
@@ -91,10 +100,13 @@ einen gültigen Temperaturbezug und einen neuen Feuchteanstieg nach der Öffnung
 bestätigtes Durchlüften ist nicht erforderlich. Eine weitere Öffnung beginnt
 einen neuen Türbezug.
 
-Ein Aufguss wird bereits beim erneut durch neue Originalmessungen bestätigten
-Feuchteanstieg erfasst, sofern der absolute Wassergehalt an allen beteiligten
-Positionen zunimmt. Weitere Spitzen gehören bis zum belegten Abschluss zu
-diesem einen Aufguss.
+Ein durch neue Originalmessungen belegter Feuchteanstieg wird zunächst als
+Kandidat gebunden, sofern der absolute Wassergehalt an allen beteiligten
+Positionen zunimmt. Erst die folgende Feuchtespitze mit belegtem beginnendem
+Abfall bestätigt den Aufguss. Der Beginn bleibt dem ersten Anstieg zugeordnet;
+die Steuerung reagiert bei der Bestätigung. Ein fortgesetzter Anstieg allein
+bestätigt keinen Aufguss. Weitere Spitzen gehören bis zum belegten Abschluss
+zu diesem einen Aufguss.
 
 Bei ununterbrochenem Verlauf müssen zum Abschluss nach der Feuchtespitze ein
 Abfall und anschließend an allen beteiligten Positionen ein neues Niveau belegt
@@ -143,6 +155,9 @@ Personenhaltezähler beginnen nach einem Wechsel oder Ausfall der beteiligten
 vollständigen Messpositionen neu. Unbestätigte Kurvennachweise bleiben an ihre
 jeweiligen Quellenabschnitte gebunden. Für die Lüftungsreferenz gilt die
 beschriebene Pausenregel.
+
+Ein noch unbestätigter Aufgusskandidat wird bei einem Bruch seiner Quellen
+oder seines Tür- und Betriebskontexts verworfen.
 
 Bei einem bereits gezählten Aufguss pausieren Messlücken, Quellenwechsel und
 vorübergehend fehlende Auswertbarkeit den Abschluss. Die Zuordnung bleibt

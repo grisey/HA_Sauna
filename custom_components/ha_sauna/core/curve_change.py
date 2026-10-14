@@ -7,6 +7,8 @@ The score uses BIC parameter cost and a separate cost for the searched knots;
 it is local model evidence, not a calibrated event probability.
 A separate fixed-tail comparison assesses a freely fitted level against the
 same smooth trends. The detector owns tail selection and event completion.
+Direction after a chosen knot is assessed separately on its actual right-hand
+originals; a global hinge derivative cannot supply that observed direction.
 """
 
 from __future__ import annotations
@@ -42,6 +44,10 @@ class CurveFeatures:
     Positive slope_change means a more positive trend, even if both slopes
     remain negative. ``rejects`` is usable counterevidence at a fixed onset;
     None from curve_change means insufficient or degenerate observations.
+    The three slopes describe the global hinge fit. after_trend independently
+    describes the original observations strictly after its fixed onset. An
+    absent after_trend is insufficient direction, while direction zero is level
+    evidence; neither provides a direction from the global hinge derivative.
     """
 
     evidence: str
@@ -58,6 +64,27 @@ class CurveFeatures:
     change_score: float
     score_gain: float
     smooth_model: str
+    after_trend: CurveTrendFeatures | None = None
+
+
+@dataclass(frozen=True)
+class CurveTrendFeatures:
+    """Direction supported by one supplied original segment, without an event.
+
+    direction is -1 or +1 when a line is preferred to a level and its direction
+    survives an influential-point check; zero means a level is preferred.
+    Exact constant or machine-resolved collinear originals need no estimated
+    noise or normalized scores. None from curve_trend remains insufficient.
+    """
+
+    direction: int
+    slope: float
+    noise_scale: float
+    level_score: float | None
+    trend_score: float | None
+    score_gain: float | None
+    exact_constant: bool
+    exact_linear: bool
 
 
 @dataclass(frozen=True)
@@ -389,6 +416,149 @@ def curve_level(
         return None
 
 
+def _trend_models(samples, policy):
+    """Compare a level and line with noise from these originals alone."""
+    stamps = [sample[0] for sample in samples]
+    raw_values = [sample[1] for sample in samples]
+    span = (stamps[-1] - stamps[0]).total_seconds()
+    resolution = len(samples) * ulp(max(abs(value) for value in raw_values))
+    delta = raw_values[-1] - raw_values[0]
+    if all(value == raw_values[0] for value in raw_values):
+        return CurveTrendFeatures(
+            direction=0, slope=0.0, noise_scale=0.0,
+            level_score=None, trend_score=None, score_gain=None,
+            exact_constant=True, exact_linear=False,
+        ), None, None
+    # Check every original before downsampling. An omitted excursion must not
+    # turn quantized observations into an exact line or an exact constant.
+    collinear = isfinite(delta) and abs(delta) > resolution and all(
+        abs((value - raw_values[0]) - delta * (
+            (stamp - stamps[0]).total_seconds() / span
+        )) <= resolution for stamp, value in samples
+    )
+    # Removing either endpoint must still leave resolved change. Otherwise a
+    # lone value after a long reporting gap could supply the entire direction.
+    endpoint_change = min(
+        (raw_values[-1] - raw_values[1]) * (1 if delta > 0 else -1),
+        (raw_values[-2] - raw_values[0]) * (1 if delta > 0 else -1),
+    )
+    if collinear and endpoint_change > resolution:
+        slope = delta / span
+        if not isfinite(slope) or slope == 0:
+            return None
+        return CurveTrendFeatures(
+            direction=1 if delta > 0 else -1, slope=slope, noise_scale=0.0,
+            level_score=None, trend_score=None, score_gain=None,
+            exact_constant=False, exact_linear=True,
+        ), None, None
+    selected = _bounded_samples(samples, policy.max_points, None)
+    if len(selected) < policy.min_side_samples:
+        return None
+    values = [sample[1] for sample in selected]
+    center = median(values)
+    centered = [value - center for value in values]
+    if not all(isfinite(value) for value in centered):
+        return None
+    rows = [[1.0, (stamp - stamps[0]).total_seconds() / span]
+            for stamp, _ in selected]
+    preliminary = _least_squares(rows, centered, [1.0] * len(centered))
+    if preliminary is None:
+        return None
+    residuals = _residuals(rows, centered, preliminary)
+    residual_center = median(residuals)
+    noise = _MAD_NORMALIZATION * median(
+        abs(residual - residual_center) for residual in residuals
+    )
+    resolution = len(selected) * ulp(max(abs(value) for value in values))
+    if not isfinite(noise) or noise <= resolution:
+        return None
+    level = _fit([[1.0] for _ in selected], centered, noise, policy)
+    trend = _fit(rows, centered, noise, policy)
+    if level is None or trend is None:
+        return None
+    level_score = level[1] + log(len(selected))
+    trend_score = trend[1] + 2 * log(len(selected))
+    score_gain = level_score - trend_score
+    score_resolution = len(selected) * ulp(max(abs(level_score), abs(trend_score)))
+    slope = trend[0][1] / span
+    if not isfinite(slope) or abs(score_gain) <= score_resolution:
+        return None
+    if score_gain > 0 and abs(trend[0][1]) <= resolution:
+        return None
+    times = [row[1] for row in rows]
+    time_center = fsum(times) / len(times)
+    time_spread = fsum((time - time_center)**2 for time in times)
+    if not isfinite(time_spread) or time_spread <= 0:
+        return None
+    influences = []
+    for time, residual in zip(times, residuals, strict=True):
+        # A high-leverage endpoint can have a tiny fitted residual although
+        # removing it changes the entire direction. External deletion residuals
+        # r/(1-h) account for that influence without another fit per point.
+        remaining = fsum((
+            1.0, -1 / len(times), -(time - time_center)**2 / time_spread,
+        ))
+        unresolved = remaining <= len(times) * _FLOAT_EPSILON
+        influences.append((
+            unresolved, 0.0 if unresolved else abs(residual) / remaining,
+        ))
+    return CurveTrendFeatures(
+        direction=(1 if slope > 0 else -1) if score_gain > 0 else 0,
+        slope=slope, noise_scale=noise,
+        level_score=level_score, trend_score=trend_score, score_gain=score_gain,
+        exact_constant=False, exact_linear=False,
+    ), selected, influences
+
+
+def curve_trend(
+    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+) -> CurveTrendFeatures | None:
+    """Assess one fixed original segment, without selecting a favorable tail.
+
+    A common linear-residual MAD and Huber loss compare a level and a line.
+    The extra line coefficient pays its BIC cost. Directed evidence must survive
+    one influential-point removal with newly estimated common noise; exact
+    collinearity also retains resolved change after either endpoint is removed.
+    The omission uses leverage-corrected linear residuals. No older hinge
+    residuals, physical amplitude limits, or additional knots enter here.
+    """
+    try:
+        if not _policy_valid(policy) or len(samples) < policy.min_side_samples:
+            return None
+        stamps = [sample[0] for sample in samples]
+        if any(not isinstance(stamp, datetime) for stamp in stamps):
+            return None
+        if any(a >= b for a, b in zip(stamps, stamps[1:])):
+            return None
+        if any(isinstance(value, bool) or not isfinite(value) for _, value in samples):
+            return None
+        span = (stamps[-1] - stamps[0]).total_seconds()
+        if not isfinite(span) or span <= 0:
+            return None
+        result = _trend_models(samples, policy)
+        if result is None:
+            return None
+        features, selected, influences = result
+        if features.direction and not features.exact_linear:
+            removed = max(range(len(selected)), key=lambda point: (
+                influences[point], point,
+            ))
+            retained = [
+                sample for point, sample in enumerate(selected) if point != removed
+            ]
+            if len(retained) < policy.min_side_samples:
+                return None
+            rescue = _trend_models(retained, policy)
+            if rescue is None or rescue[0].direction != features.direction:
+                return None
+        return features
+    except (
+        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        ZeroDivisionError,
+    ):
+        return None
+
+
 def curve_change(
     samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
     onset_at: datetime | None = None,
@@ -406,6 +576,8 @@ def curve_change(
     onset_not_before restricts candidate knots before the search budget is
     applied; earlier original observations still support every fit and its noise
     scale. Fixed-onset and replacement comparisons use the same query limits.
+    A supported hinge remains usable when its separate right-hand direction is
+    insufficient; the caller must require after_trend for a directed route.
     """
     try:
         if direction is not None and (
@@ -534,6 +706,12 @@ def curve_change(
         )
         if not all(isfinite(value) for value in finite):
             return None
+        after_trend = None
+        if supported:
+            after_trend = curve_trend(
+                [sample for sample in samples if sample[0] > stamps[index]],
+                policy=policy,
+            )
         return CurveFeatures(
             evidence="supports" if supported else "rejects",
             onset_at=stamps[index], newest_at=stamps[-1],
@@ -542,7 +720,7 @@ def curve_change(
             slope_after=slope_after, slope_change=slope_change,
             signed_strength=strength, smooth_score=smooth_score,
             change_score=change_score, score_gain=score_gain,
-            smooth_model=smooth_model,
+            smooth_model=smooth_model, after_trend=after_trend,
         )
     except (
         AttributeError, IndexError, OverflowError, TypeError, ValueError,

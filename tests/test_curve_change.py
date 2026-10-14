@@ -20,6 +20,7 @@ from custom_components.ha_sauna.core.curve_change import (
     CurvePolicy,
     curve_change,
     curve_level,
+    curve_trend,
 )
 
 
@@ -170,6 +171,123 @@ class CurveLevelTests(unittest.TestCase):
         points[1] = (points[1][0], trace(69)[1])
         result = curve_level(points, policy=policy)
         self.assertTrue(result is None or result.evidence == "rejects", result)
+
+
+class CurveTrendTests(unittest.TestCase):
+    def test_old_turns_do_not_invent_falling_trend_after_a_plateau_onset(self):
+        # The independent input has turns at 30/50/70 and is exactly constant
+        # after 70. The old global fit reported a falling slope at 71 despite
+        # every actual right-hand observation being 80.
+        points = []
+        for second in range(23, 84):
+            fall = max(0, min(second - 30, 70 - second, 20))
+            points.append((T0 + timedelta(seconds=second), 80 - .04 * fall))
+        result = curve_change(
+            points, policy=curve_policy(), onset_at=T0 + timedelta(seconds=71),
+            direction=-1, onset_not_before=T0 + timedelta(seconds=57),
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "supports")
+        self.assertIsNotNone(result.after_trend)
+        self.assertEqual(result.after_trend.direction, 0)
+        self.assertTrue(result.after_trend.exact_constant)
+        self.assertAlmostEqual(
+            result.slope_after - result.slope_before, result.slope_change,
+        )
+
+    def test_actual_falling_flat_and_rising_flanks_have_their_own_direction(self):
+        variants = ((-1, range(70, 85)), (0, range(85, 100)), (1, range(150, 165)))
+        for direction, seconds in variants:
+            with self.subTest(direction=direction):
+                # Irregular original times stay on the existing trace's own
+                # linear pieces; no measurement is interpolated by the helper.
+                points = [
+                    (T0 + timedelta(seconds=second + (index % 3) / 4),
+                     trace(second + (index % 3) / 4)[0])
+                    for index, second in enumerate(seconds)
+                ]
+                result = curve_trend(points, policy=curve_policy())
+                self.assertIsNotNone(result)
+                self.assertEqual(result.direction, direction)
+                self.assertEqual(result.exact_constant, direction == 0)
+                self.assertEqual(result.exact_linear, direction != 0)
+                self.assertEqual(result.noise_scale, 0)
+                self.assertIsNone(result.level_score)
+                self.assertIsNone(result.trend_score)
+                if direction:
+                    self.assertGreater(result.slope * direction, 0)
+
+    def test_noisy_direction_competes_with_a_level_on_the_same_original_segment(self):
+        points = level_trace_points()
+        rate = trace(151)[1] - trace(150)[1]
+        for direction in (-1, 0, 1):
+            with self.subTest(direction=direction):
+                originals = [
+                    (at, value + direction * rate * (at - points[0][0]).total_seconds())
+                    for at, value in points
+                ]
+                result = curve_trend(originals, policy=curve_policy())
+                self.assertIsNotNone(result)
+                self.assertEqual(result.direction, direction)
+                self.assertGreater(result.noise_scale, 0)
+                self.assertFalse(result.exact_constant)
+                self.assertFalse(result.exact_linear)
+                if direction:
+                    self.assertGreater(result.slope * direction, 0)
+                    self.assertGreater(result.score_gain, 0)
+                else:
+                    self.assertLess(result.score_gain, 0)
+
+    def test_an_isolated_excursion_cannot_supply_direction_or_resolve_a_zero_mad(self):
+        original = level_trace_points(noisy=False)
+        for index in (0, len(original) // 2, len(original) - 1):
+            with self.subTest(index=index):
+                points = list(original)
+                points[index] = (points[index][0], trace(69)[1])
+                result = curve_trend(points, policy=curve_policy())
+                self.assertTrue(result is None or result.direction == 0, result)
+                if index == len(original) // 2:
+                    # The symmetric isolated excursion leaves an unresolved
+                    # median residual scale; it is no noiseless linear flank.
+                    self.assertIsNone(result)
+
+    def test_one_late_report_cannot_own_direction_after_a_dense_level_cluster(self):
+        policy = curve_policy()
+        late_at = T0 + timedelta(
+            seconds=parameters().values["infusion_window_seconds"],
+        )
+        for noisy in (False, True):
+            with self.subTest(noisy_cluster=noisy):
+                # Distinct but tightly clustered originals precede one changed
+                # report. Its long time lever cannot substitute for a second
+                # observation of the new direction, even with cluster noise.
+                cluster = level_trace_points(noisy=noisy)[:-1]
+                points = [
+                    (T0 + index * timedelta.resolution, value)
+                    for index, (_, value) in enumerate(cluster)
+                ]
+                points.append((late_at, trace(69)[1]))
+                self.assertLessEqual(len(points), policy.max_points)
+                result = curve_trend(points, policy=policy)
+                self.assertTrue(result is None or result.direction == 0, result)
+
+    def test_hidden_originals_cannot_become_exact_collinearity_after_downsampling(self):
+        policy = curve_policy()
+        count = 2 * policy.max_points + 1
+        points = [
+            (T0 + timedelta(seconds=index), trace(70 + 14 * index / (count - 1))[0])
+            for index in range(count)
+        ]
+        points[1] = (points[1][0], trace(69)[0])
+        result = curve_trend(points, policy=policy)
+        self.assertTrue(result is None or not result.exact_linear, result)
+        for value in (float("nan"), float("inf"), True):
+            with self.subTest(invalid_value=value):
+                invalid = list(points)
+                invalid[1] = (invalid[1][0], value)
+                self.assertIsNone(curve_trend(invalid, policy=policy))
+        duplicate = points[:1] + [(points[0][0], points[1][1])] + points[2:]
+        self.assertIsNone(curve_trend(duplicate, policy=policy))
 
 
 class CurveChangeTests(unittest.TestCase):

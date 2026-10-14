@@ -7,7 +7,7 @@ from hashlib import sha256
 from math import ceil, isclose, isfinite
 from statistics import median
 
-from .curve_change import CurveFeatures, CurvePolicy, curve_change, curve_level
+from .curve_change import CurveFeatures, CurvePolicy, curve_change, curve_level, curve_trend
 from .models import Measurement, Position, Quantity
 from .moisture import KELVIN_OFFSET_C, absolute_humidity
 from .parameters import BY_KEY
@@ -87,6 +87,8 @@ class Detector:
         self.capacity = int(
             max(
                 self.p["median_seconds"] / self.grid_seconds,
+                (self.p["infusion_window_seconds"] + self.p["median_seconds"])
+                / self.grid_seconds + 1,
                 (self.p["vent_baseline_seconds"]
                  + max(self.p["door_window_seconds"], self.p["door_humidity_seconds"]))
                 / self.grid_seconds + 1,
@@ -148,6 +150,7 @@ class Detector:
         self._curve_proposals = {}
         self._curve_proposal_status = {}
         self._curve_fit_cache = {}
+        self._curve_recovery_evidence = {}
         self._curve_door_context = 0
         self._curve_closed_since = self.origin
         self._curve_open_effective_at = None
@@ -164,7 +167,15 @@ class Detector:
         series["version"] += 1
         series["last_original_version"] = None
         series["epoch"] += 1
+        if quantity == Quantity.TEMPERATURE:
+            self._curve_recovery_evidence.pop(position, None)
         episode = self._infusion_episode
+        if (
+            episode is not None and episode["phase"] == "pending"
+            and position in episode["positions"]
+        ):
+            self._finish_infusion_context("pending_source_context")
+            episode = None
         if (
             episode is not None and episode["phase"] == "active"
             and position in episode["positions"]
@@ -200,6 +211,7 @@ class Detector:
         )
         point_at = measured if time_basis == "measured" else measurement.received_at
         if self._value(position, quantity, now) is None:
+            self._correct_curve_proposals(position, quantity, point_at, measurement.value)
             self._correct_infusion_tail(position, quantity, point_at, measurement.value)
             self._clear_curve_series(position, quantity)
             return
@@ -331,8 +343,13 @@ class Detector:
         }
         if features is not None:
             supported = self._curve_supports(route, features, floor, quantity)
+            direction_missing = (
+                features.evidence == "supports" and features.after_trend is None
+                and route != "door_close"
+            )
             status.update(
-                status="supported" if supported else "rejected",
+                status=("supported" if supported else
+                        "insufficient" if direction_missing else "rejected"),
                 onset_at=features.onset_at,
                 newest_at=features.newest_at,
                 before_count=features.before_count,
@@ -344,6 +361,16 @@ class Detector:
                 signed_strength=features.signed_strength,
                 score_gain=features.score_gain,
                 smooth_model=features.smooth_model,
+                after_trend=(
+                    {
+                        "direction": features.after_trend.direction,
+                        "slope": features.after_trend.slope,
+                        "noise_scale": features.after_trend.noise_scale,
+                        "score_gain": features.after_trend.score_gain,
+                        "exact_constant": features.after_trend.exact_constant,
+                        "exact_linear": features.after_trend.exact_linear,
+                    } if features.after_trend is not None else None
+                ),
             )
             if supported:
                 first_observed_at = (
@@ -381,7 +408,7 @@ class Detector:
                 status["first_newest_at"] = candidate.first_newest_at
                 status["fresh_newest_at"] = candidate.fresh_newest_at
                 status["fresh_observed_at"] = candidate.fresh_observed_at
-            else:
+            elif not direction_missing:
                 self._invalidate_curve_identity(candidate, "shape_counterevidence")
                 self._curve_candidates.pop(key, None)
         self._curve_status[key] = status
@@ -390,16 +417,19 @@ class Detector:
     def _curve_supports(route, features, floor, quantity=None):
         if features is None:
             return False
+        after_direction = (
+            features.after_trend.direction if features.after_trend is not None else None
+        )
         direction = (
             features.slope_change > 0
             and (quantity == Quantity.HUMIDITY or features.slope_before < 0)
             if route == "door_close"
             else features.slope_change < 0
-            and features.slope_before > 0 and features.slope_after < 0
+            and features.slope_before > 0 and after_direction == -1
             if route == "infusion_decay"
-            else features.slope_change < 0 and features.slope_after < 0
+            else features.slope_change < 0 and after_direction == -1
             if route in ("door_open", "door_open_heating")
-            else features.slope_change > 0 and features.slope_after > 0
+            else features.slope_change > 0 and after_direction == 1
         )
         return features.evidence == "supports" and direction and features.onset_at >= floor
 
@@ -408,6 +438,54 @@ class Detector:
             self.p["infusion_window_seconds"] if route.startswith("infusion")
             else max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
         )
+
+    def _temperature_recovery(self, position, candidate, now):
+        """Denselben aktuellen Originaltrend für beide Erholungsgates verwenden.
+
+        Der alte Knick bleibt am festen Beginn gebunden. Nur ein neuer Original-
+        oder Korrekturstand veranlasst die Auswertung des jüngsten festen Fensters;
+        Rasterzeit allein verschiebt keine Evidenz. Eine Korrektur darf einen
+        gerichteten Nachweis verwerfen, aber keinen neuen Originalbeleg erwerben.
+        """
+        series = self._curve_series[position, Quantity.TEMPERATURE]
+        evaluation = (candidate.candidate_id, series["version"])
+        previous = self._curve_recovery_evidence.get(position)
+        if previous is None or previous["evaluation"] != evaluation:
+            start = max(candidate.onset_at, now - timedelta(
+                seconds=self.p["door_window_seconds"]
+            ))
+            points = tuple(
+                point for point in series["points"] if start <= point[0] <= now
+            )
+            trend = curve_trend(points, policy=self.curve_policy)
+            same_candidate = (
+                previous is not None
+                and previous["evaluation"][0] == candidate.candidate_id
+            )
+            directed = trend is not None and trend.direction == 1
+            original_supported = directed and (
+                series["last_original_version"] == series["version"]
+                or (same_candidate and previous["original_supported"])
+            )
+            previous = {
+                "evaluation": evaluation, "trend": trend,
+                "original_supported": original_supported,
+                "start_at": points[0][0] if points else None,
+                "newest_at": points[-1][0] if points else None,
+            }
+            self._curve_recovery_evidence[position] = previous
+        trend = previous["trend"]
+        key = ("door_close", position, Quantity.TEMPERATURE)
+        self._curve_status[key] = {
+            **self._curve_status.get(key, {}),
+            "recovery_trend": {
+                "start_at": previous["start_at"], "newest_at": previous["newest_at"],
+                "direction": trend.direction if trend is not None else None,
+                "slope": trend.slope if trend is not None else None,
+                "original_supported": previous["original_supported"],
+            },
+        }
+        return previous["original_supported"]
 
     def _invalidate_curve_proposal(self, key, reason):
         self._curve_proposals.pop(key, None)
@@ -552,7 +630,9 @@ class Detector:
                 status.get("status") == "supported"
                 and candidate.fresh_newest_at is not None
                 and candidate.fresh_newest_at > original.first_newest_at
-                and (not recovery or candidate.features.slope_after > 0)
+                and (not recovery or self._temperature_recovery(
+                    candidate_key[1], candidate, now,
+                ))
             )
             confirmed.append({
                 "candidate_id": candidate.candidate_id,
@@ -571,8 +651,11 @@ class Detector:
         )
 
     def _pause_infusion_episode(self):
-        """Unbekannter Verlauf beendet keinen bereits gezählten Aufguss."""
+        """Ein unbekannter Verlauf bestätigt keinen noch unbelegten Puls."""
         episode = self._infusion_episode
+        if episode is not None and episode["phase"] == "pending":
+            self._finish_infusion_context("pending_admission_context")
+            return
         if episode is not None and episode["phase"] == "active":
             episode["interrupted"] = True
             episode["context"] = None
@@ -589,9 +672,9 @@ class Detector:
         self._clear_curve_route("infusion", reason=reason)
         self._clear_curve_route("infusion_decay", reason=reason)
 
-    def _start_infusion_episode(self, positions, beginning, now):
+    def _start_infusion_episode(self, positions, beginning, now, *, rise_key, water):
         self._infusion_episode = {
-            "phase": "active",
+            "phase": "pending",
             "positions": tuple(positions),
             "onset_at": beginning,
             "observed_at": now,
@@ -605,12 +688,134 @@ class Detector:
             "level_end_at": None,
             "interrupted": False,
             "end_basis": None,
+            "rise_key": rise_key,
+            "water": water,
+            "confirmed_at": None,
         }
 
+    def _infusion_water_change(self, witness):
+        """Den gebundenen AH-Vergleich aus genau seinen Medianstützen lesen."""
+        values = []
+        for endpoint in witness["endpoints"]:
+            if any(
+                cell[key] is None or not isfinite(cell[key])
+                for cell in endpoint for key in ("T", "H")
+            ):
+                return None
+            value = self._absolute_humidity({
+                "Tm": median(cell["T"] for cell in endpoint),
+                "Hm": median(cell["H"] for cell in endpoint),
+            })
+            if value is None:
+                return None
+            values.append(value)
+        change = values[-1] - values[0]
+        return (
+            0.0 if isclose(
+                change, 0.0, abs_tol=self.p["humidity_change_absolute_tolerance"],
+            ) else change
+        )
+
+    def _bind_pending_infusion(self, positions, floor, now):
+        """Anstieg und damaligen Wasserzuwachs vor der späteren Spitze binden."""
+        key = ("infusion", tuple(positions), (Quantity.HUMIDITY,))
+        proposal = self._curve_proposals[key]
+        water = {}
+        need = int(self.p["infusion_window_seconds"] / self.grid_seconds) + 1
+        median_samples = int(self.p["median_seconds"] / self.grid_seconds)
+        for position in positions:
+            frames = list(self.frames[position])
+            if len(frames) < need + median_samples - 1:
+                return False
+            endpoints = []
+            for end in (len(frames) - need, len(frames) - 1):
+                supports = frames[end - median_samples + 1:end + 1]
+                if any(cell.get(name) is None for cell in supports for name in ("To", "Ho")):
+                    return False
+                if any(
+                    cell[key + "e"] != self._curve_series[position, quantity]["epoch"]
+                    for cell in supports for key, quantity in (
+                        ("T", Quantity.TEMPERATURE), ("H", Quantity.HUMIDITY)
+                    )
+                ):
+                    return False
+                endpoints.append(tuple({
+                    name: cell[name]
+                    for name in ("T", "H", "To", "Ho", "Te", "He", "Ts", "Hs")
+                } for cell in supports))
+            witness = {"endpoints": tuple(endpoints)}
+            change = self._infusion_water_change(witness)
+            if change is None or change <= 0:
+                return False
+            water[position] = {**witness, "change": change}
+        # The later expected decline must not be fitted back into this historical
+        # rise. Bind its latest fresh fixed-onset support and leave it unchanged
+        # until a correction or a source/context boundary requires validation.
+        candidates = tuple(
+            (candidate_key, self._curve_candidates[candidate_key])
+            for candidate_key, _ in proposal.candidates
+        )
+        proposal = replace(proposal, candidates=candidates)
+        self._curve_proposals[key] = proposal
+        self._curve_proposal_status[key] = {
+            **self._curve_proposal_status[key],
+            **self._curve_proposal_diagnostic(key, proposal), "status": "pending_peak",
+        }
+        beginning = min(candidate.onset_at for _, candidate in candidates)
+        self._start_infusion_episode(positions, beginning, now, rise_key=key, water=water)
+        self._infusion_episode["context"] = self._infusion_context(positions, floor)
+        return True
+
+    def _infusion_context(self, positions, floor):
+        return (self._curve_door_context, floor, tuple(
+            (position, tuple(
+                self._curve_series[position, quantity]["epoch"]
+                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+            )) for position in positions
+        ))
+
     def _correct_infusion_tail(self, position, quantity, corrected_at, value):
-        """Historische Abfall- und Endzeugen an ihren Originalen nachprüfen."""
+        """Gebundene Wasser-, Abfall- und Endzeugen am Original nachprüfen."""
         episode = self._infusion_episode
-        if episode is None or quantity != Quantity.HUMIDITY:
+        if episode is None:
+            return
+        if (
+            episode["phase"] == "pending"
+            and episode["rise_key"] not in self._curve_proposals
+        ):
+            self._finish_infusion_context("rise_original_corrected")
+            return
+        water = episode["water"].get(position)
+        if water is not None:
+            key = "T" if quantity == Quantity.TEMPERATURE else "H"
+            epoch = self._curve_series[position, quantity]["epoch"]
+            changed = any(
+                cell[key + "o"] == corrected_at and cell[key + "e"] == epoch
+                for endpoint in water["endpoints"] for cell in endpoint
+            )
+            if changed:
+                water["endpoints"] = tuple(tuple(
+                    {**cell, key: value} if (
+                        cell[key + "o"] == corrected_at and cell[key + "e"] == epoch
+                    ) else cell
+                    for cell in endpoint
+                ) for endpoint in water["endpoints"])
+                change = self._infusion_water_change(water)
+                if change is None or change <= 0:
+                    if episode["phase"] == "pending":
+                        self._finish_infusion_context("water_original_corrected")
+                    else:
+                        episode["phase"] = "active"
+                        episode["interrupted"] = True
+                        episode["context"] = None
+                        episode["decays"].clear()
+                        episode["levels"].clear()
+                        episode["level_evaluated"].clear()
+                        episode["level_end_at"] = None
+                        episode["end_basis"] = None
+                    return
+                water["change"] = change
+        if quantity != Quantity.HUMIDITY:
             return
         invalid = False
         decay = episode["decays"].get(position)
@@ -648,6 +853,10 @@ class Detector:
             else:
                 invalid = True
         if invalid:
+            if episode["phase"] == "pending":
+                episode["decays"].clear()
+                self._clear_curve_route("infusion_decay", reason="decay_original_corrected")
+                return
             episode["phase"] = "active"
             episode["level_end_at"] = None
             episode["end_basis"] = None
@@ -664,15 +873,16 @@ class Detector:
         """
         episode = self._infusion_episode
         positions = episode["positions"]
-        if tuple(channels) != positions:
+        if not all(position in channels for position in positions):
             self._pause_infusion_episode()
-            return
-        context = (self._curve_door_context, floor, tuple(
-            (position, tuple(
-                self._curve_series[position, quantity]["epoch"]
-                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
-            )) for position in positions
-        ))
+            return False
+        context = self._infusion_context(positions, floor)
+        if episode["phase"] == "pending" and (
+            episode["rise_key"] not in self._curve_proposals
+            or episode["context"] != context
+        ):
+            self._finish_infusion_context("pending_owner_context")
+            return False
         if episode["context"] != context:
             if episode["context"] is not None:
                 episode["interrupted"] = True
@@ -682,7 +892,7 @@ class Detector:
             episode["level_evaluated"].clear()
             self._clear_curve_route("infusion_decay", reason="source_context")
         new_rises = []
-        for position in positions:
+        for position in positions if episode["phase"] == "active" else ():
             key = ("infusion", position, Quantity.HUMIDITY)
             candidate = self._curve_candidates.get(key)
             if (
@@ -715,6 +925,8 @@ class Detector:
                 and self._curve_status.get(key, {}).get("status") == "supported"
             ):
                 episode["decays"].setdefault(position, candidate)
+            if episode["phase"] == "pending":
+                continue
             if position not in episode["decays"] and not episode["interrupted"]:
                 continue
             series = self._curve_series[position, Quantity.HUMIDITY]
@@ -766,6 +978,26 @@ class Detector:
             episode["levels"][position] = {
                 **previous, "features": level, "original_points": tail,
             }
+        if episode["phase"] == "pending":
+            self._remember_curve_proposal(
+                "infusion_decay", positions, (Quantity.HUMIDITY,),
+                floor=decay_floor,
+                context=(context, episode["onset_at"], decay_floor),
+                observed_at=decision_at,
+            )
+            rise = self._curve_proposals[episode["rise_key"]]
+            after_rise = all(
+                (candidate := self._curve_candidates.get((
+                    "infusion_decay", candidate_key[1], Quantity.HUMIDITY,
+                ))) is not None
+                and candidate.features.newest_at > witness.features.newest_at
+                for candidate_key, witness in rise.candidates
+            )
+            ready = after_rise and self._curve_confirmation(
+                "infusion_decay", positions, (Quantity.HUMIDITY,), floor=decay_floor,
+            )
+            trace["conditions"]["infusion_decay"] = ready
+            return ready
         level_complete = all(
             position in episode["levels"]
             and episode["levels"][position]["fresh_newest_at"] is not None
@@ -790,6 +1022,7 @@ class Detector:
             }
             self._clear_curve_route("infusion", keep_status=True)
             self._clear_curve_route("infusion_decay", keep_status=True)
+        return False
 
     def _correct_curve_proposals(self, position, quantity, corrected_at, value):
         """Nur geänderte Zeugnisstützen am unverrückten Beginn neu prüfen."""
@@ -1350,6 +1583,15 @@ class Detector:
                 if raw["H"] is not None
                 else None
             )
+            for key, quantity in (
+                ("T", Quantity.TEMPERATURE), ("H", Quantity.HUMIDITY)
+            ):
+                series = self._curve_series[position, quantity]
+                frame[key + "o"] = (
+                    series["points"][-1][0]
+                    if raw[key] is not None and series["points"] else None
+                )
+                frame[key + "e"] = series["epoch"] if raw[key] is not None else None
             for key in ("T", "H"):
                 median_samples = int(p["median_seconds"] / self.grid_seconds)
                 last = (
@@ -1376,8 +1618,13 @@ class Detector:
                 self._update_moisture_state(None, now)
             self.counts.clear()
             self.levels.clear()
-            self._curve_infusion_since = None
-            self._clear_curve_route("infusion", reason="positions_changed")
+            episode = self._infusion_episode
+            if not (
+                episode is not None and episode["phase"] in ("pending", "active")
+                and all(position in channels for position in episode["positions"])
+            ):
+                self._curve_infusion_since = None
+                self._clear_curve_route("infusion", reason="positions_changed")
         self.active_positions, self.faults = channels, tuple(faults)
         trace = {
             "at": now,
@@ -1411,6 +1658,11 @@ class Detector:
                         "level_end_at": self._infusion_episode["level_end_at"],
                         "end_basis": self._infusion_episode["end_basis"],
                         "interrupted": self._infusion_episode["interrupted"],
+                        "confirmed_at": self._infusion_episode["confirmed_at"],
+                        "water_change": {
+                            position.value: witness["change"]
+                            for position, witness in self._infusion_episode["water"].items()
+                        },
                         "decays": {
                             position.value: candidate.onset_at for position, candidate
                             in self._infusion_episode["decays"].items()
@@ -1536,7 +1788,7 @@ class Detector:
             )
             temperature_recovery = bool(closing_positions) and all(
                 (candidate := supported_curve(position, Quantity.TEMPERATURE))
-                is not None and candidate.features.slope_after > 0
+                is not None and self._temperature_recovery(position, candidate, now)
                 for position in closing_positions
             )
             # Ein früher Schluss vor der Talsohle benötigt die RH-Abbremsung
@@ -1799,26 +2051,52 @@ class Detector:
         trace["conditions"]["infusion"] = False if infusion_check else None
         if infusion_check:
             context = (self._curve_door_context, infusion_floor)
-            for position in channels:
-                self._curve_candidate(
-                    "infusion", position, Quantity.HUMIDITY, now, decision_at, infusion_floor,
-                    context, points_not_before=self._infusion_segment_start.get(position),
-                )
             episode = self._infusion_episode
-            if episode is not None and episode["phase"] == "active":
-                self._advance_infusion_episode(
+            if episode is None or episode["phase"] != "pending":
+                for position in channels:
+                    self._curve_candidate(
+                        "infusion", position, Quantity.HUMIDITY,
+                        now, decision_at, infusion_floor, context,
+                        points_not_before=self._infusion_segment_start.get(position),
+                    )
+            if episode is not None and episode["phase"] in ("pending", "active"):
+                confirmed = self._advance_infusion_episode(
                     channels, now, decision_at, infusion_floor, trace,
                 )
+                if confirmed:
+                    infusion_effective = self._curve_beginning(
+                        "infusion", episode["positions"], (Quantity.HUMIDITY,), now,
+                        floor=infusion_floor, kind=Kind.INFUSION,
+                        now=now, decision_at=decision_at, onset_allowed=onset_allowed,
+                    )
+                    episode["phase"] = "active"
+                    episode["onset_at"] = infusion_effective
+                    episode["confirmed_at"] = decision_at
+                    episode["decays"] = {
+                        position: self._curve_candidates[
+                            "infusion_decay", position, Quantity.HUMIDITY
+                        ] for position in episode["positions"]
+                    }
+                    decay_key = (
+                        "infusion_decay", episode["positions"], (Quantity.HUMIDITY,),
+                    )
+                    self._curve_proposal_status[decay_key] = {
+                        **self._curve_proposal_status[decay_key],
+                        "status": "consumed", "confirmed_at": decision_at,
+                    }
+                    self._clear_curve_route("infusion", keep_status=True)
+                    trace["conditions"]["infusion"] = True
+                    emit(Kind.INFUSION, infusion_effective, episode["positions"])
             else:
                 self._remember_curve_proposal(
                     "infusion", channels, (Quantity.HUMIDITY,), floor=infusion_floor,
                     context=context, observed_at=decision_at,
                 )
-                infusion = water_rise and self._curve_confirmation(
+                rise = water_rise and self._curve_confirmation(
                     "infusion", channels, (Quantity.HUMIDITY,), floor=infusion_floor,
                 )
-                trace["conditions"]["infusion"] = infusion
-                if infusion:
+                trace["conditions"]["infusion_rise"] = rise
+                if rise:
                     proposal = self._curve_proposals[
                         "infusion", tuple(channels), (Quantity.HUMIDITY,)
                     ]
@@ -1845,15 +2123,7 @@ class Detector:
                             "continued_infusion", route="infusion",
                         )
                     else:
-                        infusion_effective = self._curve_beginning(
-                            "infusion", channels, (Quantity.HUMIDITY,), now,
-                            floor=infusion_floor,
-                            kind=Kind.INFUSION, now=now, decision_at=decision_at,
-                            onset_allowed=onset_allowed,
-                        )
-                        self._start_infusion_episode(channels, infusion_effective, now)
-                        self._clear_curve_route("infusion", keep_status=True)
-                        emit(Kind.INFUSION, infusion_effective)
+                        self._bind_pending_infusion(channels, infusion_floor, now)
         # In operation the controller owns entry and its admission window.
         # A cold entry may wait for the minimum temperature beyond the original
         # closure window. The standalone measurement replay has no controller.
