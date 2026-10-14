@@ -17,11 +17,19 @@ def at(second):
     return T0 + timedelta(seconds=second)
 
 
-def supported_opening(samples, *, policy, onset_at=None):
+def supported_opening(
+    samples, *, policy, onset_at=None, direction=None, onset_not_before=None,
+):
     """Controlled math evidence for provenance contracts, never event proof."""
-    if len(samples) < 2 * policy.min_side_samples:
+    if len(samples) < 2 * policy.min_side_samples or direction not in (None, -1):
         return None
-    onset_at = onset_at or samples[policy.min_side_samples - 1][0]
+    if onset_at is None:
+        onset_at = next((
+            stamp for stamp, _ in samples[policy.min_side_samples - 1:len(samples) - policy.min_side_samples]
+            if onset_not_before is None or stamp >= onset_not_before
+        ), None)
+    if onset_at is None or (onset_not_before is not None and onset_at < onset_not_before):
+        return None
     before = sum(stamp <= onset_at for stamp, _ in samples)
     return CurveFeatures(
         evidence="supports", onset_at=onset_at, newest_at=samples[-1][0],
@@ -136,6 +144,8 @@ class CurveCandidateTests(unittest.TestCase):
             self.assertEqual(len(points), len({stamp for stamp, _ in points}))
             self.assertEqual(points[-1], (at(last), corrected))
             self.assertEqual(fitted.call_args.kwargs["onset_at"], initial["onset_at"])
+            self.assertEqual(fitted.call_args.kwargs["direction"], -1)
+            self.assertEqual(fitted.call_args.kwargs["onset_not_before"], at(0))
 
     def test_source_time_basis_missing_value_and_gap_retire_the_previous_candidate(self):
         for boundary in ("source", "time_basis", "missing", "gap"):
@@ -201,7 +211,9 @@ class CurveCandidateTests(unittest.TestCase):
                 toggles.setdefault(detector.index, {})[name] = result
             return result
 
-        def temperature_only(points, *, policy, onset_at=None):
+        def temperature_only(
+            points, *, policy, onset_at=None, direction=None, onset_not_before=None,
+        ):
             # Reuse the supplied fixture channels in opposite input roles:
             # its large RH fall then precedes the shared minimum T loss.
             onset_at = onset_at or at(70)
@@ -211,7 +223,10 @@ class CurveCandidateTests(unittest.TestCase):
                 or sum(stamp > onset_at for stamp, _ in points) < policy.min_side_samples
             ):
                 return None
-            return supported_opening(points, policy=policy, onset_at=onset_at)
+            return supported_opening(
+                points, policy=policy, onset_at=onset_at,
+                direction=direction, onset_not_before=onset_not_before,
+            )
 
         events, baseline = [], []
         with (

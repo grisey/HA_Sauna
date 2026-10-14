@@ -6,6 +6,7 @@ import gzip
 import json
 from math import log
 from pathlib import Path
+from time import perf_counter
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -38,36 +39,73 @@ def trace_points(stop):
 
 class CurveChangeTests(unittest.TestCase):
     def test_r04_short_closure_is_visible_while_humidity_still_falls(self):
+        started = perf_counter()
         # Independent accepted reference: closure near 16:02:40 local time.
-        # The observation is causal at +5 s; the input window remains exactly
-        # the caller's configured lookback, including the preceding opening.
         reference = datetime(2000, 1, 1, 16, 2, 40, tzinfo=ZoneInfo("Europe/Berlin"))
-        observed_at = reference + timedelta(seconds=5)
-        window_start = observed_at - timedelta(seconds=parameters().values["curve_window_seconds"])
+        # Existing outputs in R04.json from GitHub run 38535278217 establish
+        # the owner floor and when it was known, then the latest confirmation.
+        # These are observed test references, not additional product deadlines.
+        opened_at = datetime(2000, 1, 1, 16, 2, 20, tzinfo=reference.tzinfo)
+        opening_confirmed_at = datetime(2000, 1, 1, 16, 2, 42, tzinfo=reference.tzinfo)
+        closed_at = datetime(2000, 1, 1, 16, 3, 19, tzinfo=reference.tzinfo)
+        values = parameters().values
+        policy = curve_policy()
+        lookback = timedelta(seconds=values["curve_window_seconds"])
+        grid = timedelta(seconds=values["grid_seconds"])
+        window_start = opening_confirmed_at - lookback
         origin = datetime.fromisoformat(fixture("session")["origin"])
         samples = {"upper_humidity": [], "lower_humidity": []}
         with gzip.open(ROOT / "fixtures/replay/R04.samples.jsonl.gz", "rt", encoding="utf-8") as stream:
             for line in stream:
                 row = json.loads(line)
                 at = origin + timedelta(seconds=row["t"])
-                if at > observed_at:
+                if at >= closed_at:
                     break
                 if at >= window_start and row["role"] in samples:
                     samples[row["role"]].append((at, row["value"]))
 
-        for role, points in samples.items():
+        evaluations = {}
+        curve_seconds = 0.0
+        models = curves._models
+        for role, originals in samples.items():
             with self.subTest(role=role):
+                evaluations[role] = 0
+                cursor = 0
+                observed_at = opening_confirmed_at
+                first_observed_at = None
+                result = None
+                points = []
                 full_window_fits = []
-                models = curves._models
+                while observed_at < closed_at:
+                    previous = cursor
+                    while cursor < len(originals) and originals[cursor][0] <= observed_at:
+                        cursor += 1
+                    if cursor == previous:
+                        observed_at += grid
+                        continue
+                    points = [point for point in originals[:cursor]
+                              if observed_at - lookback <= point[0] <= observed_at]
+                    full_window_fits = []
 
-                def observed_models(times, values, noise, knots, policy):
-                    fitted = models(times, values, noise, knots, policy)
-                    if not full_window_fits:
-                        full_window_fits.append((tuple(knots), fitted))
-                    return fitted
+                    def observed_models(times, values, noise, knots, policy):
+                        fitted = models(times, values, noise, knots, policy)
+                        if not full_window_fits:
+                            full_window_fits.append((tuple(knots), fitted))
+                        return fitted
 
-                with patch.object(curves, "_models", side_effect=observed_models):
-                    result = curve_change(points, policy=curve_policy())
+                    with patch.object(curves, "_models", side_effect=observed_models):
+                        evaluations[role] += 1
+                        evaluation_started = perf_counter()
+                        result = curve_change(
+                            points, policy=policy, direction=1,
+                            onset_not_before=opened_at,
+                        )
+                        curve_seconds += perf_counter() - evaluation_started
+                    if result is not None and result.evidence == "supports":
+                        first_observed_at = observed_at
+                        break
+                    observed_at += grid
+
                 knot_diagnostics = []
                 for knots, fitted in full_window_fits:
                     if fitted is None:
@@ -86,9 +124,14 @@ class CurveChangeTests(unittest.TestCase):
                         "slope_change_per_second": coefficients[3] / span,
                         "score_gain_after_search": smooth_score - score - search_cost,
                     } for score, index, coefficients in changes)
-                diagnostic = f"{role}: {result!r}; full_window_knots={knot_diagnostics!r}"
+                diagnostic = (
+                    f"{role}: {result!r}; first_observed_at={first_observed_at!r}; "
+                    f"evaluations={evaluations[role]}; full_window_knots={knot_diagnostics!r}"
+                )
                 self.assertIsNotNone(result, msg=diagnostic)
                 self.assertEqual(result.evidence, "supports", msg=diagnostic)
+                self.assertIsNotNone(first_observed_at, msg=diagnostic)
+                self.assertLess(first_observed_at, closed_at, msg=diagnostic)
                 self.assertLessEqual(
                     abs((result.onset_at - reference).total_seconds()), 10,
                     msg=diagnostic,
@@ -97,6 +140,38 @@ class CurveChangeTests(unittest.TestCase):
                 self.assertLess(result.slope_after, 0, msg=diagnostic)
                 self.assertIn(result.onset_at, {at for at, _ in points}, msg=diagnostic)
                 self.assertEqual(result.newest_at, points[-1][0], msg=diagnostic)
+                self.assertTrue(all(at <= first_observed_at for at, _ in points), msg=diagnostic)
+        print(
+            f"R04 candidate scan: evaluations={sum(evaluations.values())} "
+            f"per_role={evaluations!r} curve_change_seconds={curve_seconds:.6f} "
+            f"wall_seconds={perf_counter() - started:.6f}"
+        )
+
+    def test_direction_and_inclusive_owner_floor_keep_the_full_original_support(self):
+        policy = replace(curve_policy(), max_candidates=curve_policy().max_points)
+        points = trace_points(80)
+        onset = T0 + timedelta(seconds=70)
+        with patch.object(curves, "_models", wraps=curves._models) as fits:
+            result = curve_change(
+                points, policy=policy, onset_at=onset, direction=-1,
+                onset_not_before=onset,
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "supports")
+        self.assertEqual(result.onset_at, onset)
+        self.assertLess(result.slope_change, 0)
+        self.assertEqual(len(fits.call_args_list[0].args[0]), len(points))
+        self.assertEqual(result.before_count + result.after_count, len(points))
+        opposite = curve_change(
+            points, policy=policy, onset_at=onset, direction=1,
+            onset_not_before=onset,
+        )
+        self.assertIsNotNone(opposite)
+        self.assertEqual(opposite.evidence, "rejects")
+        self.assertIsNone(curve_change(
+            points, policy=policy, onset_at=onset, direction=-1,
+            onset_not_before=onset + timedelta.resolution,
+        ))
 
     def test_positive_change_can_leave_both_slopes_negative(self):
         policy = replace(curve_policy(), max_candidates=curve_policy().max_points)

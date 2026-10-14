@@ -245,6 +245,8 @@ def _supported_without_point(times, values, noise, index, residuals, penalty, po
 def curve_change(
     samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
     onset_at: datetime | None = None,
+    direction: int | None = None,
+    onset_not_before: datetime | None = None,
 ) -> CurveFeatures | None:
     """Compare local smooth and changed curves without retaining any state.
 
@@ -252,8 +254,20 @@ def curve_change(
     increasing time order. Downsampling keeps original observations and bounds
     the numerical work; it never creates interpolated evidence. A supplied onset
     is re-evaluated without moving it. None cannot reject a detector candidate.
+
+    direction restricts the sign of the slope change to -1 or +1. An inclusive
+    onset_not_before restricts candidate knots before the search budget is
+    applied; earlier original observations still support every fit and its noise
+    scale. Fixed-onset and replacement comparisons use the same query limits.
     """
     try:
+        if direction is not None and (
+            isinstance(direction, bool) or not isinstance(direction, int)
+            or direction not in (-1, 1)
+        ):
+            return None
+        if onset_not_before is not None and not isinstance(onset_not_before, datetime):
+            return None
         if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
             return None
         selected = _bounded_samples(samples, policy.max_points, onset_at)
@@ -289,9 +303,14 @@ def curve_change(
         resolution = len(values) * ulp(max(abs(value) for value in raw_values))
         if not isfinite(noise) or noise <= resolution:
             return None
-        eligible = list(range(
+        support_boundaries = (
+            policy.min_side_samples - 1, len(times) - policy.min_side_samples - 1,
+        )
+        eligible = [index for index in range(
             policy.min_side_samples - 1, len(times) - policy.min_side_samples
-        ))
+        ) if onset_not_before is None or stamps[index] >= onset_not_before]
+        if not eligible:
+            return None
         searched = [eligible[index] for index in _indices(
             len(eligible), policy.max_candidates
         )]
@@ -313,8 +332,16 @@ def curve_change(
         if result is None:
             return None
         smooth_score, smooth_model, residuals, changes = result
+        compatible = [
+            item for item in changes
+            if direction is None or item[2][3] * direction > 0
+        ]
         if onset_at is None:
-            change_score, index, coefficients = min(changes, key=lambda item: item[:2])
+            if not compatible:
+                return None
+            change_score, index, coefficients = min(
+                compatible, key=lambda item: item[:2],
+            )
         else:
             fitted = next((item for item in changes if item[1] == index), None)
             if fitted is None:
@@ -326,9 +353,11 @@ def curve_change(
         score_resolution = len(values) * ulp(max(abs(smooth_score), abs(change_score)))
         if abs(score_gain) <= score_resolution:
             return None
-        supported = score_gain > score_resolution
+        supported = score_gain > score_resolution and (
+            direction is None or coefficients[3] * direction > 0
+        )
         if supported and onset_at is not None:
-            best_score = min(item[0] for item in changes)
+            best_score = min(item[0] for item in compatible)
             # A newly optimized knot must repay its BIC time-parameter cost and
             # the same discrete-search cost before displacing a frozen onset.
             # Tiny movements of the optimum are not counterevidence, while a
@@ -338,9 +367,9 @@ def curve_change(
                 replacement_penalty + score_resolution
             ):
                 supported = False
-        # A best knot at the admissible search boundary is not temporally
+        # A best knot at an original support boundary is not temporally
         # bracketed; it cannot supply a precise earlier candidate beginning.
-        if supported and index in (eligible[0], eligible[-1]):
+        if supported and index in support_boundaries:
             return None
         if supported:
             rescue = _supported_without_point(

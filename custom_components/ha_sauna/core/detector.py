@@ -242,10 +242,12 @@ class Detector:
             return
         self._curve_evaluated[key] = evaluation
         onset_at = candidate.onset_at if candidate is not None else None
-        fit_key = (position, quantity, points, onset_at)
+        curve_direction = -1 if route == "door_open" else 1
+        fit_key = (position, quantity, points, onset_at, curve_direction, floor)
         if fit_key not in self._curve_fit_cache:
             self._curve_fit_cache[fit_key] = curve_change(
                 points, policy=self.curve_policy, onset_at=onset_at,
+                direction=curve_direction, onset_not_before=floor,
             )
         features = self._curve_fit_cache[fit_key]
         status = {
