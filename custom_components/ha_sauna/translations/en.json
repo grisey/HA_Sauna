@@ -346,29 +346,11 @@
         "title": "Türöffnung und Türschluss",
         "data": {
           "door_window_seconds": "Vergleichszeit für den Temperaturverlauf",
-          "door_humidity_seconds": "Vergleichszeit für den Feuchteabfall",
-          "door_open_slope": "Abkühlungsrate für eine Türöffnung",
-          "door_open_drop_c": "Mindestabkühlung für eine Türöffnung",
-          "door_open_humidity_upper": "Mindestabfall der Luftfeuchte oben",
-          "door_open_humidity_lower": "Mindestabfall der Luftfeuchte unten",
-          "door_open_hold_seconds": "Bestätigungszeit der Türöffnung",
-          "door_heating_slope": "Abkühlungsrate trotz Heizen",
-          "door_heating_hold_seconds": "Bestätigungszeit der Abkühlung trotz Heizen",
-          "door_close_slope": "Erwärmungsrate für den Türschluss",
-          "door_close_hold_seconds": "Bestätigungszeit des Türschlusses"
+          "door_humidity_seconds": "Vergleichszeit für den Feuchteabfall"
         },
         "data_description": {
-          "door_window_seconds": "Zeitraum zur Bewertung von Abkühlung bei Türöffnung und Erwärmung bei Türschluss.",
-          "door_humidity_seconds": "Über diesen Zeitraum wird der Feuchteabfall gemessen, der zusammen mit einer Abkühlung eine Türöffnung anzeigt.",
-          "door_open_slope": "Der Temperaturtrend muss unter diesem Wert liegen; negative Werte bedeuten Abkühlung.",
-          "door_open_drop_c": "An jeder beteiligten Messposition muss die Temperatur mindestens so weit unter ihren vorherigen Höchstwert fallen, bevor die Bestätigungszeit beginnt.",
-          "door_open_humidity_upper": "Erforderlicher Verlust in Prozentpunkten am oberen Messpunkt als Ergänzung zur Abkühlung.",
-          "door_open_humidity_lower": "Erforderlicher Verlust in Prozentpunkten am unteren Messpunkt als Ergänzung zur Abkühlung.",
-          "door_open_hold_seconds": "So lange muss der kombinierte Öffnungsnachweis aus Abkühlung und Feuchteverlust bestehen.",
-          "door_heating_slope": "Unterhalb dieser Rate ist bei durchgehend bestätigtem Heizen ein zusätzlicher Öffnungsnachweis ohne Feuchteverlust möglich.",
-          "door_heating_hold_seconds": "So lange muss der zusätzliche Öffnungsnachweis bestehen; eine Heizunterbrechung verwirft ihn.",
-          "door_close_slope": "Der Temperaturtrend aller noch auswertbaren beteiligten Messpositionen muss diesen Wert überschreiten.",
-          "door_close_hold_seconds": "So lange muss der Temperaturanstieg für einen Türschluss bestehen."
+          "door_window_seconds": "Zeitraum für den geglätteten Temperaturtrend in der Diagnose und den anfänglichen Temperaturbezug. Bestimmt zusammen mit der Feuchtevergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen und den Versatz der Lüftungsbasis.",
+          "door_humidity_seconds": "Zeitraum für die Änderung der relativen Luftfeuchte in der Diagnose. Bestimmt zusammen mit der Temperaturvergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen und den Versatz der Lüftungsbasis."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"
@@ -436,14 +418,10 @@
       "parameters_infusion": {
         "title": "Aufgusserkennung",
         "data": {
-          "infusion_window_seconds": "Vergleichszeit für einen Aufguss",
-          "infusion_humidity": "Mindestanstieg der Luftfeuchte beim Aufguss",
-          "infusion_hold_seconds": "Bestätigungszeit des Aufgusssignals"
+          "infusion_window_seconds": "Vergleichszeit für einen Aufguss"
         },
         "data_description": {
-          "infusion_window_seconds": "Zeitraum für den Anstieg der relativen Luftfeuchte und des Wassergehalts.",
-          "infusion_humidity": "Erforderlicher Anstieg in Prozentpunkten innerhalb der Vergleichszeit an allen verfügbaren Messpositionen.",
-          "infusion_hold_seconds": "So lange müssen Feuchteanstieg und zunehmender Wassergehalt nachgewiesen werden."
+          "infusion_window_seconds": "Zeitraum für den Anstiegsvergleich der relativen Luftfeuchte und des Wassergehalts sowie den jüngsten Niveauvergleich nach der Feuchtespitze. Bestimmt außerdem den zulässigen zeitlichen Abstand zusammengehöriger Aufgussänderungen."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"

@@ -16,7 +16,11 @@ from test_foundation import T0, parameters
 from test_settings import fixture
 
 from custom_components.ha_sauna.core import curve_change as curves
-from custom_components.ha_sauna.core.curve_change import CurvePolicy, curve_change
+from custom_components.ha_sauna.core.curve_change import (
+    CurvePolicy,
+    curve_change,
+    curve_level,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -35,6 +39,137 @@ def curve_policy():
 
 def trace_points(stop):
     return [(T0 + timedelta(seconds=second), trace(second)[0]) for second in range(stop)]
+
+
+def level_trace_points(*, noisy=True):
+    """Existing trace's post-decline plateau, optionally with balanced noise.
+
+    The perturbation is the existing trace's small humidity step. Its alternating
+    signs specify a test signal with no continuing decay, not a product limit.
+    """
+    noise = trace(151)[1] - trace(150)[1] if noisy else 0
+    pattern = (-2, -1, 1, 2, 1, -1)
+    return [
+        (T0 + timedelta(seconds=second),
+         trace(second)[1] + noise * pattern[index % len(pattern)])
+        for index, second in enumerate(range(85, 150))
+    ]
+
+
+class CurveLevelTests(unittest.TestCase):
+    def test_new_level_after_decline_does_not_require_the_old_baseline(self):
+        points = level_trace_points()
+        before_decline = trace(69)[1]
+        new_level = trace(100)[1]
+        noise = trace(151)[1] - trace(150)[1]
+        self.assertNotEqual(new_level, before_decline)
+        # Translation is an independent oracle: changing the plateau's absolute
+        # level cannot introduce or remove a trend in the supplied observations.
+        for offset in (0, before_decline - new_level):
+            with self.subTest(offset=offset):
+                shifted = [(at, value + offset) for at, value in points]
+                result = curve_level(shifted, policy=curve_policy())
+                self.assertIsNotNone(result)
+                self.assertEqual(result.evidence, "supports", result)
+                self.assertFalse(result.exact_constant)
+                self.assertAlmostEqual(result.level, new_level + offset, delta=noise)
+                self.assertGreater(result.noise_scale, 0)
+                self.assertGreater(result.score_gain, 0)
+                self.assertEqual(result.start_at, shifted[0][0])
+                self.assertEqual(result.newest_at, shifted[-1][0])
+
+    def test_continuing_weak_and_curved_declines_are_not_a_level(self):
+        points = level_trace_points()
+        small_step = trace(151)[1] - trace(150)[1]
+        span = (points[-1][0] - points[0][0]).total_seconds()
+        for degree in (1, 2):
+            with self.subTest(degree=degree):
+                # Test oracle: both tails still decline throughout the window.
+                # The small per-second change comes from the existing trace.
+                declining = [
+                    (at, value + small_step * span * (
+                        1 - (at - points[0][0]).total_seconds() / span
+                    ) ** degree)
+                    for at, value in points
+                ]
+                result = curve_level(declining, policy=curve_policy())
+                self.assertTrue(result is None or result.evidence == "rejects", result)
+
+    def test_r04_another_peak_inside_the_tail_does_not_complete_decay(self):
+        # Original R04 observations span the renewed peak at 15:57:56. These
+        # bounds select a test counterexample; they are no product timing rule.
+        zone = ZoneInfo("Europe/Berlin")
+        start = datetime(2000, 1, 1, 15, 57, 45, tzinfo=zone)
+        end = datetime(2000, 1, 1, 15, 58, 10, tzinfo=zone)
+        origin = datetime.fromisoformat(fixture("session")["origin"])
+        samples = {"upper_humidity": [], "lower_humidity": []}
+        with gzip.open(
+            ROOT / "fixtures/replay/R04.samples.jsonl.gz", "rt", encoding="utf-8",
+        ) as stream:
+            for line in stream:
+                row = json.loads(line)
+                at = origin + timedelta(seconds=row["t"])
+                if at > end:
+                    break
+                if start <= at and row["role"] in samples:
+                    samples[row["role"]].append((at, row["value"]))
+        for role, points in samples.items():
+            with self.subTest(role=role):
+                self.assertGreaterEqual(
+                    len(points), 2 * curve_policy().min_side_samples,
+                )
+                result = curve_level(points, policy=curve_policy())
+                self.assertTrue(result is None or result.evidence == "rejects", result)
+
+    def test_exact_constant_originals_supply_level_evidence_with_zero_mad(self):
+        points = level_trace_points(noisy=False)
+        result = curve_level(points, policy=curve_policy())
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "supports")
+        self.assertTrue(result.exact_constant)
+        self.assertEqual(result.noise_scale, 0)
+        self.assertEqual(result.level, points[0][1])
+        self.assertEqual(result.count, len(points))
+        self.assertIsNone(result.level_score)
+        self.assertIsNone(result.trend_score)
+        self.assertIsNone(result.score_gain)
+        self.assertIsNone(result.trend_model)
+
+    def test_irregular_original_times_remain_usable_but_invalid_originals_do_not(self):
+        points = [
+            (at + index % 3 * timedelta.resolution, value)
+            for index, (at, value) in enumerate(level_trace_points())
+        ]
+        result = curve_level(points, policy=curve_policy())
+        self.assertIsNotNone(result)
+        self.assertEqual(result.evidence, "supports", result)
+        self.assertEqual(result.newest_at, points[-1][0])
+        variants = {}
+        for name, replacement in (
+            ("duplicate original time", (points[2][0], points[3][1])),
+            ("reversed original time", (points[1][0], points[3][1])),
+            ("missing time", (None, points[3][1])),
+            ("nonfinite value", (points[3][0], float("nan"))),
+            ("infinite value", (points[3][0], float("inf"))),
+            ("boolean value", (points[3][0], True)),
+        ):
+            variants[name] = points[:3] + [replacement] + points[4:]
+        for name, originals in variants.items():
+            with self.subTest(name=name):
+                self.assertIsNone(curve_level(originals, policy=curve_policy()))
+
+    def test_downsampling_cannot_turn_a_hidden_excursion_into_exact_constancy(self):
+        policy = curve_policy()
+        count = 2 * policy.max_points + 1
+        points = [
+            (T0 + timedelta(seconds=index), trace(100)[1])
+            for index in range(count)
+        ]
+        # One interior original differs, even if bounded time sampling would
+        # omit it. Neither a level nor exact equality may be invented from that.
+        points[1] = (points[1][0], trace(69)[1])
+        result = curve_level(points, policy=policy)
+        self.assertTrue(result is None or result.evidence == "rejects", result)
 
 
 class CurveChangeTests(unittest.TestCase):

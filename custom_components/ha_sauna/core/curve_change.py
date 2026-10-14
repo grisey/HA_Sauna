@@ -5,6 +5,8 @@ Here a quadratic with a hinge competes with a line, a smooth quadratic, and a
 smooth cubic. All share one normal-consistent MAD noise scale and Huber loss.
 The score uses BIC parameter cost and a separate cost for the searched knots;
 it is local model evidence, not a calibrated event probability.
+A separate fixed-tail comparison assesses a freely fitted level against the
+same smooth trends. The detector owns tail selection and event completion.
 """
 
 from __future__ import annotations
@@ -56,6 +58,29 @@ class CurveFeatures:
     change_score: float
     score_gain: float
     smooth_model: str
+
+
+@dataclass(frozen=True)
+class CurveLevelFeatures:
+    """Observed level evidence on the supplied tail, without event semantics.
+
+    ``supports`` means a level is preferred to the smooth trend family, or all
+    original values are exactly equal. The latter has no normalized model
+    scores: its noise_scale is zero and exact_constant explicitly records why
+    it is usable. This is no claim that an unobserved physical trend is zero.
+    """
+
+    evidence: str
+    start_at: datetime
+    newest_at: datetime
+    count: int
+    noise_scale: float
+    level: float
+    level_score: float | None
+    trend_score: float | None
+    score_gain: float | None
+    trend_model: str | None
+    exact_constant: bool
 
 
 def _policy_valid(policy):
@@ -242,6 +267,126 @@ def _supported_without_point(times, values, noise, index, residuals, penalty, po
     score, _, coefficients = changes[0]
     resolution = len(values) * ulp(max(abs(smooth_score), abs(score + penalty)))
     return smooth_score - score - penalty > resolution, coefficients[3]
+
+
+def _level_models(times, raw_values, policy):
+    """Compare a level and smooth trends with one tail-local noise scale."""
+    center = median(raw_values)
+    values = [value - center for value in raw_values]
+    if not all(isfinite(value) for value in values):
+        return None
+    cubic = [[1.0, time, time * time, time**3] for time in times]
+    preliminary = _least_squares(cubic, values, [1.0] * len(values))
+    if preliminary is None:
+        return None
+    residuals = _residuals(cubic, values, preliminary)
+    residual_center = median(residuals)
+    noise = _MAD_NORMALIZATION * median(
+        abs(residual - residual_center) for residual in residuals
+    )
+    resolution = len(values) * ulp(max(abs(value) for value in raw_values))
+    if not isfinite(noise) or noise <= resolution:
+        return None
+    fitted_models = []
+    for name, degree in (
+        ("constant", 0), ("linear", 1), ("quadratic", 2), ("cubic", 3),
+    ):
+        rows = [row[:degree + 1] for row in cubic]
+        fitted = _fit(rows, values, noise, policy)
+        if fitted is None:
+            return None
+        fitted_models.append((
+            fitted[1] + (degree + 1) * log(len(values)), name, fitted[0],
+        ))
+    level_score, _, coefficients = fitted_models[0]
+    trend_score, trend_model, _ = min(
+        fitted_models[1:], key=lambda item: item[:2],
+    )
+    score_gain = trend_score - level_score
+    score_resolution = len(values) * ulp(max(abs(level_score), abs(trend_score)))
+    level = center + coefficients[0]
+    if not isfinite(level) or abs(score_gain) <= score_resolution:
+        return None
+    return (
+        noise, level, level_score, trend_score, score_gain, trend_model, residuals,
+    )
+
+
+def curve_level(
+    samples: Sequence[tuple[datetime, float]], *, policy: CurvePolicy,
+) -> CurveLevelFeatures | None:
+    """Assess one fixed recent tail without searching for a favorable plateau.
+
+    The caller supplies a coherent post-peak original source segment, chooses
+    its duration, and owns the preceding decline and later fresh confirmation.
+    All supplied originals are validated before bounded numerical sampling.
+    No earlier baseline level or event amplitude enters the comparison.
+
+    Nonconstant tails use a tail-local cubic-residual MAD, shared Huber loss and
+    BIC costs for a constant, line, quadratic and cubic. Support must survive
+    one influential-point removal with its own re-estimated common noise scale.
+    Unresolved nonconstant noise or fragile support returns None; ``rejects``
+    means a smooth trend is preferred. Exact equality is checked on every
+    supplied original, so downsampling cannot erase an excursion into a level.
+    """
+    try:
+        if not _policy_valid(policy) or len(samples) < 2 * policy.min_side_samples:
+            return None
+        stamps = [sample[0] for sample in samples]
+        raw_values = [sample[1] for sample in samples]
+        if any(not isinstance(stamp, datetime) for stamp in stamps):
+            return None
+        if any(a >= b for a, b in zip(stamps, stamps[1:])):
+            return None
+        if any(isinstance(value, bool) or not isfinite(value) for value in raw_values):
+            return None
+        span = (stamps[-1] - stamps[0]).total_seconds()
+        if not isfinite(span) or span <= 0:
+            return None
+        selected = _bounded_samples(samples, policy.max_points, None)
+        if len(selected) < 2 * policy.min_side_samples:
+            return None
+        if all(value == raw_values[0] for value in raw_values):
+            return CurveLevelFeatures(
+                evidence="supports", start_at=stamps[0], newest_at=stamps[-1],
+                count=len(selected), noise_scale=0.0, level=raw_values[0],
+                level_score=None, trend_score=None, score_gain=None,
+                trend_model=None, exact_constant=True,
+            )
+        times = [(sample[0] - stamps[0]).total_seconds() / span for sample in selected]
+        values = [sample[1] for sample in selected]
+        result = _level_models(times, values, policy)
+        if result is None:
+            return None
+        (
+            noise, level, level_score, trend_score, score_gain, trend_model, residuals,
+        ) = result
+        supported = score_gain > 0
+        if supported:
+            removed = max(range(len(values)), key=lambda point: (
+                abs(residuals[point]), point,
+            ))
+            retained = [point for point in range(len(values)) if point != removed]
+            if len(retained) < 2 * policy.min_side_samples:
+                return None
+            rescue = _level_models(
+                [times[point] for point in retained],
+                [values[point] for point in retained], policy,
+            )
+            if rescue is None or rescue[4] <= 0:
+                return None
+        return CurveLevelFeatures(
+            evidence="supports" if supported else "rejects",
+            start_at=stamps[0], newest_at=stamps[-1], count=len(selected),
+            noise_scale=noise, level=level, level_score=level_score,
+            trend_score=trend_score, score_gain=score_gain,
+            trend_model=trend_model, exact_constant=False,
+        )
+    except (
+        AttributeError, IndexError, OverflowError, TypeError, ValueError,
+        ZeroDivisionError,
+    ):
+        return None
 
 
 def curve_change(
