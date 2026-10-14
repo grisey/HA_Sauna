@@ -25,6 +25,10 @@ on:
         description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
         type: string
         default: ''
+      ha_tests:
+        description: 'Optional comma-separated HA adapter unittest names: test_module.Class.test_method'
+        type: string
+        default: ''
       curve_compare:
         description: 'Run only a paired comparison of the unchanged CurveChangeTests class'
         type: boolean
@@ -57,6 +61,7 @@ jobs:
       checks: ${{ steps.catalog.outputs.checks }}
       core_tests: ${{ steps.catalog.outputs.core_tests }}
       integration_tests: ${{ steps.catalog.outputs.integration_tests }}
+      ha_tests: ${{ steps.catalog.outputs.ha_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Dispatch-Auswahl prüfen
@@ -68,6 +73,7 @@ jobs:
           SAUNA_CORE_TESTS: ${{ inputs.core_tests }}
           SAUNA_SESSION_CASES: ${{ inputs.session_cases }}
           SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
+          SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
   core:
     needs: configuration
     if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
@@ -277,17 +283,39 @@ jobs:
           assert version.valid, f"Ungültige Version: {version}"
           print(f"Version: {version}; Format: {version.strategy.value}; Beta: {version.beta}")
           PY
-      - run: python -m unittest discover -s tests/ha -v
-        if: ${{ needs.configuration.outputs.integration_tests == '[]' }}
+      - name: HA-Adapter prüfen
+        id: ha_adapter
+        if: ${{ needs.configuration.outputs.ha_tests != '[]' || needs.configuration.outputs.integration_tests == '[]' }}
+        run: |
+          mkdir -p "$SAUNA_HA_EVIDENCE"
+          git rev-parse HEAD > "$SAUNA_HA_EVIDENCE/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$SAUNA_HA_EVIDENCE/tree.txt"
+          set +e
+          python tests/ci_settings.py ha > "$SAUNA_HA_EVIDENCE/process.log" 2>&1
+          result=$?
+          echo "$result" > "$SAUNA_HA_EVIDENCE/exit-code.txt"
+          echo completed > "$SAUNA_HA_EVIDENCE/process-completed.txt"
+          cat "$SAUNA_HA_EVIDENCE/process.log"
+          exit "$result"
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.ha_adapter }}
         env:
           HA_TEST_REQUIRED: '1'
+          SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
+          SAUNA_HA_EVIDENCE: ${{ runner.temp }}/ha-sauna-adapter
       - run: python tests/ci_settings.py integration
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (needs.configuration.outputs.integration_tests != '[]' || needs.configuration.outputs.ha_tests == '[]') }}
         timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).step_timeouts_minutes.integration }}
         env:
           HA_TEST_REQUIRED: '1'
           SAUNA_INTEGRATION_TESTS: ${{ inputs.integration_tests }}
+      - name: HA-Adapterprozess sichern
+        if: ${{ always() && (needs.configuration.outputs.ha_tests != '[]' || needs.configuration.outputs.integration_tests == '[]') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ha-adapter-tests
+          path: ${{ runner.temp }}/ha-sauna-adapter
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   sessions:
     needs: configuration
     if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
