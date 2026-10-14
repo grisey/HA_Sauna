@@ -579,3 +579,130 @@ class CurveChangeTests(unittest.TestCase):
             self.assertLessEqual(len(times), policy.max_points)
             self.assertEqual(len(times), len(values))
             self.assertLessEqual(len(knots), policy.max_candidates)
+
+    def test_integrated_hinge_has_continuous_slope_and_physical_curvature_units(self):
+        policy = curve_policy()
+        source = level_trace_points()
+        original_onset = source[len(source) // 2][0]
+        tail = (source[-1][0] - original_onset).total_seconds()
+        falling_step = trace(70)[0] - trace(71)[0]
+        slower_step = trace(280)[0] - trace(281)[0]
+        curvature = falling_step / tail
+        for direction in (-1, 1):
+            for time_scale in (1, 2):
+                with self.subTest(direction=direction, time_scale=time_scale):
+                    # Analytic input: y' is -falling_step on both sides of k;
+                    # y'' jumps by direction*curvature. The existing balanced
+                    # fixture perturbation supplies noise without defining k.
+                    points = [
+                        (source[0][0] + time_scale * (stamp - source[0][0]),
+                         trace(0)[0]
+                         - falling_step * (stamp - source[0][0]).total_seconds()
+                         + direction * curvature * max(
+                             0, (stamp - original_onset).total_seconds(),
+                         )**2 / 2
+                         + value - trace(100)[1])
+                        for stamp, value in source
+                    ]
+                    onset = points[len(points) // 2][0]
+                    with patch.object(curves, "_models", wraps=curves._models) as fits:
+                        result = curve_change(
+                            points[:-1], policy=policy, hinge_order=2,
+                            onset_at=onset, direction=direction,
+                            onset_not_before=points[0][0],
+                        )
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result.evidence, "supports", result)
+                    self.assertEqual(result.hinge_order, 2)
+                    self.assertEqual(result.onset_at, onset)
+                    self.assertEqual(result.slope_before, result.slope_after)
+                    self.assertEqual(result.slope_change, 0)
+                    self.assertAlmostEqual(
+                        result.slope_before, -falling_step / time_scale,
+                        delta=slower_step / time_scale,
+                    )
+                    self.assertAlmostEqual(
+                        result.curvature_change, direction * curvature / time_scale**2,
+                        delta=slower_step / (tail * time_scale**2),
+                    )
+                    self.assertGreater(result.signed_strength * direction, 0)
+                    self.assertLess(onset, min(points, key=lambda point: point[1])[0])
+                    self.assertGreaterEqual(fits.call_count, 2)
+                    self.assertTrue(all(
+                        call.kwargs.get("hinge_order") == 2 for call in fits.call_args_list
+                    ))
+                    normalized_onset = (onset - points[0][0]) / (
+                        points[-2][0] - points[0][0]
+                    )
+                    self.assertEqual(
+                        [knot for _, knot in fits.call_args_list[-1].args[3]],
+                        [normalized_onset],
+                    )
+                    fresh = curve_change(
+                        points, policy=policy, hinge_order=2,
+                        onset_at=result.onset_at, direction=direction,
+                        onset_not_before=points[0][0],
+                    )
+                    self.assertIsNotNone(fresh)
+                    self.assertEqual(fresh.evidence, "supports", fresh)
+                    self.assertEqual(fresh.hinge_order, 2)
+                    self.assertEqual(fresh.onset_at, result.onset_at)
+                    self.assertGreater(fresh.newest_at, result.newest_at)
+                    self.assertEqual(fresh.slope_change, 0)
+
+    def test_integrated_hinge_does_not_turn_smooth_cooling_or_a_trough_into_an_onset(self):
+        source = level_trace_points()
+        onset = source[len(source) // 2][0]
+        span = (source[-1][0] - source[0][0]).total_seconds()
+        falling_step = trace(70)[0] - trace(71)[0]
+        amplitude = trace(70)[0] - trace(85)[0]
+        variants = {}
+        for degree in (1, 2, 3):
+            # The analytic derivative stays negative throughout. Quadratic and
+            # cubic slowing is globally smooth, with no new curvature jump.
+            self.assertLess(degree * amplitude / span, falling_step)
+            variants[f"smooth falling degree {degree}"] = [
+                (stamp, trace(0)[0]
+                 - falling_step * (stamp - source[0][0]).total_seconds()
+                 + amplitude * ((stamp - source[0][0]).total_seconds() / span)**degree
+                 + value - trace(100)[1])
+                for stamp, value in source
+            ]
+        for degree in (2, 3):
+            # A pre-existing smooth minimum is not the beginning of a new
+            # curvature regime and cannot supply an earlier contact time.
+            variants[f"smooth trough degree {degree}"] = [
+                (stamp, trace(0)[0] + amplitude * (
+                    ((stamp - onset).total_seconds() / span)**2
+                    + (((stamp - onset).total_seconds() / span)**3 if degree == 3 else 0)
+                ) + value - trace(100)[1])
+                for stamp, value in source
+            ]
+        isolated = [(stamp, trace(0)[0] + value - trace(100)[1])
+                    for stamp, value in source]
+        isolated[len(isolated) // 2] = (onset, trace(85)[0])
+        variants["one isolated original"] = isolated
+        for name, points in variants.items():
+            with self.subTest(shape=name):
+                result = curve_change(
+                    points, policy=curve_policy(), hinge_order=2,
+                    onset_at=onset, direction=1, onset_not_before=points[0][0],
+                )
+                self.assertTrue(result is None or result.evidence == "rejects", result)
+
+    def test_hinge_order_is_explicit_and_invalid_orders_cannot_change_the_default(self):
+        points = trace_points(80)
+        policy = curve_policy()
+        default = curve_change(points, policy=policy)
+        self.assertIsNotNone(default)
+        self.assertEqual(default.evidence, "supports")
+        self.assertEqual(default.hinge_order, 1)
+        self.assertEqual(default.curvature_change, 0)
+        self.assertEqual(default, curve_change(points, policy=policy, hinge_order=1))
+        for invalid in (True, False, 0, 3, 1.0, "2", None):
+            with self.subTest(hinge_order=invalid):
+                self.assertIsNone(curve_change(points, policy=policy, hinge_order=invalid))
+        self.assertIsNone(curve_change(
+            points, policy=policy, hinge_order=2,
+            onset_at=points[len(points) // 2][0] + timedelta.resolution,
+        ))

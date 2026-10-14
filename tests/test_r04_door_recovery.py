@@ -219,21 +219,60 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 at(15, 28), at(15, 25, 21, 10284), (at(15, 26, 50), at(15, 27)),
             ),
         )
+        math_contexts = {
+            "after_ventilation": (
+                {
+                    "reference": "door remains open before accepted 14:50:05-20 closure",
+                    "ticks": (at(14, 49, 18), at(14, 49, 45)),
+                    "floor": at(14, 48, 41, 42470),
+                    "floor_source": "archived confirmed opening",
+                    "floor_context_end": at(14, 49, 46),
+                    "opening_confirmed_at": at(14, 48, 51),
+                    "opening_route": "door_open", "hinge_orders": (2,),
+                },
+                {
+                    "reference": "accepted 14:50:05-20 closure; mathematical shape only",
+                    "ticks": (at(14, 50, 24), at(14, 50, 45)),
+                    "floor": at(14, 49, 46),
+                    "floor_source": "archived ventilation confirmation",
+                    "opening_confirmed_at": at(14, 48, 51),
+                    "opening_route": "door_open", "hinge_orders": (2,),
+                },
+            ),
+            "short_under_heating": (
+                {
+                    "reference": "15:26 recovery; final opening floor known only retrospectively",
+                    "ticks": tuple(at(15, 26, second) for second in (25, 30, 35, 40, 45)),
+                    "floor": at(15, 25, 54, 659854),
+                    "floor_source": "final opening onset known retrospectively",
+                    "opening_confirmed_at": at(15, 26, 47),
+                    "opening_route": "door_open_heating", "hinge_orders": (1, 2),
+                    "native_onsets": {
+                        Position.UPPER: at(15, 26, 21, 977371),
+                        Position.LOWER: at(15, 26, 24, 104382),
+                    },
+                },
+                {
+                    "reference": "15:26-27 recovery after archived opening confirmation",
+                    "ticks": (at(15, 26, 50), at(15, 26, 55), at(15, 27), at(15, 27, 5)),
+                    "floor": at(15, 25, 54, 659854),
+                    "floor_source": "archived opening onset, confirmed before these queries",
+                    "opening_confirmed_at": at(15, 26, 47),
+                    "opening_route": "door_open_heating", "hinge_orders": (2,),
+                },
+            ),
+        }
 
-        def retrospective_math(snapshots, policy):
-            """Stateless failure diagnosis; the later opening owner was unknown."""
-            floor = at(15, 25, 54, 659854)
-            archived_confirmation = at(15, 26, 47)
-            native_onsets = {
-                Position.UPPER: at(15, 26, 21, 977371),
-                Position.LOWER: at(15, 26, 24, 104382),
-            }
+        def retrospective_math(snapshots, policy, *, hinge_order, context, native_onsets):
+            """One explicit family; shape support cannot grant event authority."""
+            floor = context["floor"]
+            archived_confirmation = context["opening_confirmed_at"]
             queries, overlap = [], []
 
             def assess(tick, role, points, mode, onset=None):
                 result = curve_change(
                     points, policy=policy, onset_at=onset, direction=1,
-                    onset_not_before=floor,
+                    onset_not_before=floor, hinge_order=hinge_order,
                 )
                 knot = onset if onset is not None else (
                     result.onset_at if result is not None else None
@@ -242,7 +281,8 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 after = len(points) - before if before is not None else None
                 record = {
                     "tick": tick, "role": f"{role[0].value}_{role[1].value}",
-                    "query": mode, "floor": floor, "fixed_onset": onset,
+                    "query": mode, "hinge_order": hinge_order,
+                    "floor": floor, "fixed_onset": onset,
                     "first_original": points[0][0] if points else None,
                     "newest_original": points[-1][0] if points else None,
                     "input_count": len(points), "before_count": before,
@@ -259,6 +299,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     **({key: getattr(result, key) for key in (
                         "onset_at", "smooth_model", "smooth_score", "change_score",
                         "score_gain", "slope_before", "slope_after", "slope_change",
+                        "curvature_change",
                     )} if result is not None else {}),
                     "after_direction": (
                         result.after_trend.direction
@@ -271,7 +312,7 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 supported, reconfirmed = {"free": [], "fixed": []}, {"free": [], "fixed": []}
                 for role, snapshot in roles.items():
                     modes = [("free", None)]
-                    if role[1] == Quantity.TEMPERATURE:
+                    if role[0] in native_onsets and role[1] == Quantity.TEMPERATURE:
                         modes.append(("fixed", native_onsets[role[0]]))
                     for mode, onset in modes:
                         record, result = assess(tick, role, snapshot["points"], mode, onset)
@@ -289,6 +330,10 @@ class R04DoorRecoveryTests(unittest.TestCase):
                                     "before" if fresh_tick < archived_confirmation
                                     else "same_tick" if fresh_tick == archived_confirmation
                                     else "after"
+                                )
+                                checked["crosses_known_floor_context_end"] = (
+                                    fresh_tick >= context["floor_context_end"]
+                                    if context.get("floor_context_end") is not None else False
                                 )
                                 record["first_fresh_recheck"] = checked
                                 if confirmation is not None and confirmation.evidence == "supports":
@@ -309,9 +354,12 @@ class R04DoorRecoveryTests(unittest.TestCase):
                     "four_role_free_shape_overlap": len(supported["free"]) == len(roles),
                 })
             return {
-                "scope": "retrospective stateless math only; no detector event or owner authority",
-                "retrospective_opening_floor": floor,
-                "archived_opening_route": "door_open_heating",
+                "scope": "one explicit family; no model winner, detector event or contact time",
+                "hinge_order": hinge_order,
+                "reference": context["reference"],
+                "onset_not_before": floor, "floor_source": context["floor_source"],
+                "floor_context_end": context.get("floor_context_end"),
+                "archived_opening_route": context["opening_route"],
                 "archived_opening_confirmed_at": archived_confirmation,
                 "queries": queries, "shape_overlap": overlap,
             }
@@ -348,10 +396,9 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         ))
 
                 events = []
-                retrospective_ticks = (
-                    {at(15, 26, second) for second in (25, 30, 35, 40, 45)}
-                    if name == "short_under_heating" else set()
-                )
+                retrospective_ticks = {
+                    tick for context in math_contexts[name] for tick in context["ticks"]
+                }
                 retrospective_inputs = {}
                 cursor = heating_cursor = 0
                 now = begin
@@ -449,10 +496,21 @@ class R04DoorRecoveryTests(unittest.TestCase):
                 if retrospective_inputs and [event.kind for event in doors] != [
                     Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
                 ]:
-                    print("R04 retrospective stateless diagnosis: " + json.dumps(
-                        retrospective_math(retrospective_inputs, detector.curve_policy),
-                        default=str, sort_keys=True,
-                    ))
+                    for context in math_contexts[name]:
+                        snapshots = {
+                            tick: retrospective_inputs[tick] for tick in context["ticks"]
+                            if tick in retrospective_inputs
+                        }
+                        for hinge_order in context["hinge_orders"]:
+                            print("R04 retrospective stateless diagnosis: " + json.dumps(
+                                retrospective_math(
+                                    snapshots, detector.curve_policy, hinge_order=hinge_order,
+                                    context=context,
+                                    native_onsets=(context.get("native_onsets", {})
+                                                   if hinge_order == 1 else {}),
+                                ),
+                                default=str, sort_keys=True,
+                            ))
                 if name == "after_ventilation" and [event.kind for event in doors] != [
                     Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
                 ]:

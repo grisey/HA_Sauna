@@ -1,15 +1,17 @@
 """Stateless local curve evidence from distinct, causal original measurements.
 
 The detector owns source continuity, candidate identity, and every event decision.
-Here a quadratic with a hinge competes with a line, a smooth quadratic, and a
-smooth cubic. All share one normal-consistent MAD noise scale and Huber loss.
+Here a quadratic with an explicitly selected first- or second-order hinge
+competes with a line, a smooth quadratic, and a smooth cubic. All share one
+normal-consistent MAD noise scale and Huber loss.
 The score uses BIC parameter cost and a separate cost for the searched knots;
 it is local model evidence, not a calibrated event probability.
 A separate fixed-tail comparison assesses a freely fitted level against the
 same smooth trends. The detector owns tail selection and event completion.
 Direction after a chosen knot is assessed separately on its actual right-hand
 originals; a global hinge derivative cannot supply that observed direction.
-Original sides can supply separate counterevidence when both prefer lines:
+For the first-order hinge, original sides can supply separate counterevidence
+when both prefer lines:
 a shared slope or a resolved contrary change can oppose the global hinge.
 Curved or unresolved sides cannot supply that additional counterevidence.
 """
@@ -47,10 +49,14 @@ class CurveFeatures:
     Positive slope_change means a more positive trend, even if both slopes
     remain negative. ``rejects`` is usable counterevidence at a fixed onset;
     None from curve_change means insufficient or degenerate observations.
-    The three slopes describe the global hinge fit. after_trend independently
-    describes the original observations strictly after its fixed onset. An
-    absent after_trend is insufficient direction, while direction zero is level
-    evidence; neither provides a direction from the global hinge derivative.
+    The three slopes describe the global hinge fit. hinge_order=2 keeps slope
+    continuous at the knot, so slope_change is zero and curvature_change is the
+    jump of the second derivative in input units per second squared. Its sign
+    is also the queried direction; neither form makes an event decision.
+    after_trend independently describes the original observations strictly
+    after its fixed onset. An absent after_trend is insufficient direction, while
+    direction zero is level evidence; neither provides a direction from the
+    global hinge derivative.
     """
 
     evidence: str
@@ -68,6 +74,8 @@ class CurveFeatures:
     score_gain: float
     smooth_model: str
     after_trend: CurveTrendFeatures | None = None
+    hinge_order: int = 1
+    curvature_change: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -246,7 +254,7 @@ def _fit(rows, values, noise, policy):
     return (coefficients, loss) if isfinite(loss) else None
 
 
-def _models(times, values, noise, knots, policy):
+def _models(times, values, noise, knots, policy, *, hinge_order=1):
     linear = [[1.0, time] for time in times]
     quadratic = [[1.0, time, time * time] for time in times]
     cubic = [[1.0, time, time * time, time**3] for time in times]
@@ -264,7 +272,10 @@ def _models(times, values, noise, knots, policy):
     smooth_score, smooth_model, residuals = min(smooth, key=lambda item: item[:2])
     changes = []
     for index, knot in knots:
-        rows = [row + [max(0.0, time - knot)] for row, time in zip(
+        rows = [row + [
+            max(0.0, time - knot) if hinge_order == 1
+            else max(0.0, time - knot)**2,
+        ] for row, time in zip(
             quadratic, times, strict=True
         )]
         fitted = _fit(rows, values, noise, policy)
@@ -361,7 +372,7 @@ def _side_change_rejects(
 
 def _supported_without_point(
     times, values, noise, index, residuals, penalty, policy,
-    *, shape_start, value_resolution,
+    *, shape_start, value_resolution, hinge_order=1,
 ):
     """One bounded refit rejects evidence that rests on one influential value."""
     removed = max(range(len(values)), key=lambda point: (abs(residuals[point]), point))
@@ -372,7 +383,11 @@ def _supported_without_point(
         return None
     retained_times = [times[point] for point in retained]
     retained_values = [values[point] for point in retained]
-    result = _models(retained_times, retained_values, noise, [(index, knot)], policy)
+    model_options = {"hinge_order": hinge_order} if hinge_order != 1 else {}
+    result = _models(
+        retained_times, retained_values, noise, [(index, knot)], policy,
+        **model_options,
+    )
     if result is None:
         return None
     smooth_score, _, _, changes = result
@@ -380,9 +395,11 @@ def _supported_without_point(
     resolution = len(values) * ulp(max(abs(smooth_score), abs(score + penalty)))
     if smooth_score - score - penalty <= resolution:
         return False, coefficients[3]
-    side_rejects = _side_change_rejects(
-        retained_times, retained_values, noise, knot, shape_start, coefficients[3],
-        value_resolution, policy,
+    side_rejects = (
+        _side_change_rejects(
+            retained_times, retained_values, noise, knot, shape_start, coefficients[3],
+            value_resolution, policy,
+        ) if hinge_order == 1 else None
     )
     return (
         smooth_score - score - penalty > resolution
@@ -659,6 +676,7 @@ def curve_change(
     onset_at: datetime | None = None,
     direction: int | None = None,
     onset_not_before: datetime | None = None,
+    hinge_order: int = 1,
 ) -> CurveFeatures | None:
     """Compare local smooth and changed curves without retaining any state.
 
@@ -667,7 +685,10 @@ def curve_change(
     the numerical work; it never creates interpolated evidence. A supplied onset
     is re-evaluated without moving it. None cannot reject a detector candidate.
 
-    direction restricts the sign of the slope change to -1 or +1. An inclusive
+    hinge_order explicitly chooses a slope jump (1) or a curvature jump with
+    continuous slope (2). This is part of the fixed hypothesis and must be
+    supplied unchanged for later onset rechecks; no automatic form search occurs.
+    direction restricts the sign of that selected change to -1 or +1. An inclusive
     onset_not_before restricts candidate knots before the search budget is
     applied; earlier original observations still support every fit and its noise
     scale. Fixed-onset and replacement comparisons use the same query limits.
@@ -675,11 +696,18 @@ def curve_change(
     insufficient; the caller must require after_trend for a directed route.
     Independent lines on the original sides use onset_not_before, retaining
     nearest earlier originals only when needed for the existing side minimum.
-    When both sides prefer lines, a shared slope or a resolved contrary change
-    supplies additional counterevidence, including after point removal. Curved
-    or unresolved sides leave the primary global comparison unchanged.
+    For order 1, when both sides prefer lines, a shared slope or a resolved
+    contrary change supplies additional counterevidence, including after point
+    removal. This slope comparison does not assess a curvature change and is
+    unused for order 2. Curved or unresolved sides leave the primary comparison
+    unchanged.
     """
     try:
+        if (
+            isinstance(hinge_order, bool) or not isinstance(hinge_order, int)
+            or hinge_order not in (1, 2)
+        ):
+            return None
         if direction is not None and (
             isinstance(direction, bool) or not isinstance(direction, int)
             or direction not in (-1, 1)
@@ -747,7 +775,8 @@ def curve_change(
                     searched.append(index)
                 searched.sort()
         knots = [(index, times[index]) for index in searched]
-        result = _models(times, values, noise, knots, policy)
+        model_options = {"hinge_order": hinge_order} if hinge_order != 1 else {}
+        result = _models(times, values, noise, knots, policy, **model_options)
         if result is None:
             return None
         smooth_score, smooth_model, residuals, changes = result
@@ -794,7 +823,7 @@ def curve_change(
             (onset_not_before - stamps[0]).total_seconds() / span
             if onset_not_before is not None else times[0]
         )
-        if supported:
+        if supported and hinge_order == 1:
             side_rejects = _side_change_rejects(
                 times, values, noise, times[index], shape_start, coefficients[3],
                 resolution, policy,
@@ -804,16 +833,22 @@ def curve_change(
             rescue = _supported_without_point(
                 times, values, noise, index, residuals, search_penalty, policy,
                 shape_start=shape_start, value_resolution=resolution,
+                hinge_order=hinge_order,
             )
             if rescue is None or not rescue[0] or rescue[1] * coefficients[3] <= 0:
                 return None
         slope_before = (coefficients[1] + 2 * coefficients[2] * times[index]) / span
-        slope_change = coefficients[3] / span
-        slope_after = slope_before + slope_change
-        strength = coefficients[3] * (times[-1] - times[index]) / noise
+        slope_change = coefficients[3] / span if hinge_order == 1 else 0.0
+        slope_after = slope_before + slope_change if hinge_order == 1 else slope_before
+        curvature_change = 2 * coefficients[3] / span**2 if hinge_order == 2 else 0.0
+        strength = (
+            coefficients[3] * (times[-1] - times[index]) / noise
+            if hinge_order == 1 else
+            coefficients[3] * (times[-1] - times[index])**2 / noise
+        )
         finite = (
             slope_before, slope_after, slope_change, strength,
-            smooth_score, change_score,
+            smooth_score, change_score, curvature_change,
         )
         if not all(isfinite(value) for value in finite):
             return None
@@ -832,6 +867,7 @@ def curve_change(
             signed_strength=strength, smooth_score=smooth_score,
             change_score=change_score, score_gain=score_gain,
             smooth_model=smooth_model, after_trend=after_trend,
+            hinge_order=hinge_order, curvature_change=curvature_change,
         )
     except (
         AttributeError, IndexError, OverflowError, TypeError, ValueError,
