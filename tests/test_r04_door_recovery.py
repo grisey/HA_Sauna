@@ -4,17 +4,20 @@ Der Heizkontext stammt aus dem ausgeführten R04. Die Ausschnitte prüfen den
 Detektor mit diesem Kontext, nicht die Folgen einer geänderten Heizsteuerung.
 """
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 import gzip
 import json
 from pathlib import Path
 from time import perf_counter
 import unittest
+from unittest.mock import patch
 
 from test_detector import detection_parameters, measurement
 from test_settings import fixture
 
+from custom_components.ha_sauna.core import curve_change as curves
+from custom_components.ha_sauna.core import detector as detector_module
 from custom_components.ha_sauna.core.curve_change import curve_change
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Position, Quantity
@@ -110,6 +113,9 @@ class R04DoorRecoveryTests(unittest.TestCase):
             self.assertLessEqual(anchor["fresh_observed_at"], package["evidence_bound_at"])
             self.assertLessEqual(anchor["newest_at"], package["evidence_bound_at"])
             self.assertGreaterEqual(witness["onset_at"], floor)
+            current = confirmations[witness["position"]]
+            self.assertGreaterEqual(witness["onset_at"], current["decline_start_at"])
+            self.assertLessEqual(witness["onset_at"], current["decline_newest_at"])
             for stamp in (witness["onset_at"], anchor["fresh_newest_at"]):
                 self.assertTrue(any(
                     item.position.value == witness["position"]
@@ -507,6 +513,104 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         ))
 
                 events = []
+                recovery_window = (
+                    (at(14, 51), at(14, 52)) if name == "after_ventilation"
+                    else (at(15, 26, 55), at(15, 27, 15))
+                )
+                recovery_calls, owner_rows = [], []
+                active_recovery = None
+                original_positions = {
+                    (item.received_at, item.value): item.position.value
+                    for item in inputs if item.quantity == Quantity.TEMPERATURE
+                }
+                real_recovery = detector_module.curve_recovery
+                real_assessment = curves._recovery_assessment
+                real_models = curves._smooth_models
+                real_valley = curves._smooth_valley
+                real_trend = curves.curve_trend
+
+                def endpoints(points):
+                    return {
+                        "count": len(points),
+                        "first": points[0][0] if points else None,
+                        "newest": points[-1][0] if points else None,
+                    }
+
+                def observe_recovery(points, *, policy, current_not_before=None):
+                    nonlocal active_recovery
+                    positions = sorted({
+                        original_positions[point] for point in points
+                        if point in original_positions
+                    })
+                    call = {
+                        "now": now, "positions": positions,
+                        "current_not_before": current_not_before,
+                        "originals": [stamp for stamp, _ in points],
+                        "input": endpoints(points), "stages": [],
+                    }
+                    recovery_calls.append(call)
+                    active_recovery = call
+                    try:
+                        result = real_recovery(
+                            points, policy=policy, current_not_before=current_not_before,
+                        )
+                        call["return"] = asdict(result) if result is not None else None
+                        return result
+                    finally:
+                        active_recovery = None
+
+                def observe_assessment(points, selected, noise, cutoff, policy):
+                    if active_recovery is None:
+                        return real_assessment(points, selected, noise, cutoff, policy)
+                    stage = {
+                        "stage": "assessment", "input": endpoints(points),
+                        "selected": endpoints(selected), "noise": noise,
+                        "selected_originals": [stamp for stamp, _ in selected],
+                        "current_not_before": cutoff,
+                        "omitted_originals": sorted(
+                            set(active_recovery["originals"]) - {stamp for stamp, _ in points}
+                        ),
+                    }
+                    active_recovery["stages"].append(stage)
+                    result = real_assessment(points, selected, noise, cutoff, policy)
+                    stage["return"] = (
+                        {"features": asdict(result[0]), "residuals": result[1]}
+                        if result is not None else None
+                    )
+                    return result
+
+                def observe_models(times, numbers, noise, policy):
+                    result = real_models(times, numbers, noise, policy)
+                    if active_recovery is not None:
+                        active_recovery["stages"].append({
+                            "stage": "smooth_models", "count": len(times), "noise": noise,
+                            "return": [
+                                {"score": score, "model": model,
+                                 "coefficients": coefficients}
+                                for score, model, _, coefficients in result[1]
+                            ] if result is not None else None,
+                        })
+                    return result
+
+                def observe_valley(coefficients, value_resolution, count):
+                    result = real_valley(coefficients, value_resolution, count)
+                    if active_recovery is not None:
+                        active_recovery["stages"].append({
+                            "stage": "smooth_valley", "coefficients": coefficients,
+                            "value_resolution": value_resolution, "count": count,
+                            "return": result,
+                        })
+                    return result
+
+                def observe_trend(points, *, policy):
+                    result = real_trend(points, policy=policy)
+                    if active_recovery is not None:
+                        active_recovery["stages"].append({
+                            "stage": "curve_trend", "input": endpoints(points),
+                            "return": asdict(result) if result is not None else None,
+                        })
+                    return result
+
                 retrospective_ticks = {
                     tick for context in math_contexts[name] for tick in context["ticks"]
                 }
@@ -524,7 +628,65 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         reported_at, heating = heating_reports[heating_cursor]
                         detector.report_heating(heating, reported_at)
                         heating_cursor += 1
-                    events.extend(detector.advance(now, enabled=True))
+                    if recovery_window[0] <= now <= recovery_window[1]:
+                        # Forward each real call once. Missing later stages
+                        # remain unknown, rather than being fitted a second time.
+                        call_start = len(recovery_calls)
+                        with (
+                            patch.object(detector_module, "curve_recovery", observe_recovery),
+                            patch.object(curves, "_recovery_assessment", observe_assessment),
+                            patch.object(curves, "_smooth_models", observe_models),
+                            patch.object(curves, "_smooth_valley", observe_valley),
+                            patch.object(curves, "curve_trend", observe_trend),
+                        ):
+                            events.extend(detector.advance(now, enabled=True))
+                        positions = {}
+                        for position in detector.positions:
+                            key = (position, Quantity.TEMPERATURE)
+                            series = detector._curve_series[key]
+                            cache = detector._curve_recovery_evidence.get(key, {}).get(
+                                "smooth_form", {},
+                            )
+                            features = cache.get("features")
+                            positions[position.value] = {
+                                **{key: series[key] for key in (
+                                    "source", "time_basis", "epoch", "version",
+                                    "last_original_version", "last_original_received_at",
+                                    "started_at",
+                                )},
+                                "cache": {key: cache.get(key) for key in (
+                                    "evaluation", "original_supported", "first_newest_at",
+                                    "fresh_newest_at", "fresh_observed_at",
+                                )},
+                                "cached_return": {
+                                    key: getattr(features, key) for key in (
+                                        "evidence", "model", "start_at", "newest_at", "valley_at",
+                                        "decline_start_at", "decline_newest_at",
+                                        "recovery_start_at", "recovery_newest_at",
+                                    )
+                                } if features is not None else None,
+                                "current_status": detector._curve_status.get(
+                                    ("door_close", *key), {},
+                                ).get("smooth_recovery"),
+                            }
+                        owner_rows.append({
+                            "now": now, "open": detector.open,
+                            "door_context": detector._curve_door_context,
+                            "episode_started_at": (
+                                detector.door_episode["started_at"]
+                                if detector.door_episode is not None else None
+                            ),
+                            "window_start": now - timedelta(
+                                seconds=values["curve_window_seconds"],
+                            ),
+                            "current_window_start": now - timedelta(
+                                seconds=values["door_window_seconds"],
+                            ),
+                            "recovery_call_indices": list(range(call_start, len(recovery_calls))),
+                            "positions": positions,
+                        })
+                    else:
+                        events.extend(detector.advance(now, enabled=True))
                     # Snapshot the normal unfiltered close inputs only. Fits
                     # run separately after the feed, and only on a failed case.
                     if now in retrospective_ticks:
@@ -628,6 +790,14 @@ class R04DoorRecoveryTests(unittest.TestCase):
                         ), msg=diagnostic)
                 doors = [event for event in events
                          if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE)]
+                if ([event.kind for event in doors] != [Kind.DOOR_OPEN, Kind.DOOR_CLOSE]
+                        or any(not earliest <= event.effective_at <= latest
+                               for event in doors if event.kind == Kind.DOOR_CLOSE)):
+                    print("R04 executed smooth recovery diagnosis: " + json.dumps({
+                        "case": name, "window": recovery_window,
+                        "scope": "actual calls only; an unexecuted stage remains unknown",
+                        "owner_rows": owner_rows, "recovery_calls": recovery_calls,
+                    }, default=str, sort_keys=True), flush=True)
                 if retrospective_inputs and [event.kind for event in doors] != [
                     Kind.DOOR_OPEN, Kind.DOOR_CLOSE,
                 ]:
