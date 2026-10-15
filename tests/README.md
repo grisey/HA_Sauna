@@ -245,3 +245,26 @@ gehören dann nicht zum ausgewählten Umfang. Ohne Filter bleiben vollständige
 Python- und Panelprüfung erhalten. Leere Testsuiten, Fehler und übersprungene
 Python-Tests führen zu einem fehlgeschlagenen Core-Prozess. Das Artefakt
 `core-tests` enthält Commit, Tree, Prozessprotokoll, Exitcode und Abschlussstatus.
+
+Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
+`proxy_calibration_analysis=true` führt ausschließlich die Proxy-Kalibration
+aus. Diese Auswahl hat Vorrang vor allen anderen Analyseflags und Prüfbereichen.
+[`analysis/proxy_calibration.py`](analysis/proxy_calibration.py) konsumiert die
+gebundenen Originalmessungen und die separat geführten
+[Kalibrationsvorgaben](analysis/proxy_calibration_policy.json) und
+[Referenzen](analysis/proxy_calibration_references.json).
+
+R01–R03 bilden die Trainingsgrundlage. R02 und R03 teilen die im
+[`replay_manifest.json`](replay_manifest.json) festgelegte Zeitgruppe einschließlich
+der tatsächlichen Lücke; lokale Messzeiten und Meldungsalter bleiben erhalten.
+R04 wird erst mit eingefrorenen Profilen, Methoden und Fehlerbändern bewertet und
+geht nicht in den Parameterfit ein. Die Aufzeichnung war bereits gesichtet und
+ist deshalb keine unberührte unabhängige Validierungsmenge.
+
+Das Artefakt `proxy-calibration` enthält `output/profile.json`,
+`output/calibration.json`, `output/quality.json` und
+`output/ambiguous-cases.json` sowie die zugehörigen Originalkurven unter
+`output/curves/`. Commit, Tree, Produkt-Tree, stdout/stderr, eigener Exitcode und
+Prozessabschluss liegen daneben. Die Auswertung prüft mathematische Kernelprofile
+und Hypothesen; sie ist noch kein produktiver Controller-Replay mit Regelung,
+Aktorausgaben und Archivierung.

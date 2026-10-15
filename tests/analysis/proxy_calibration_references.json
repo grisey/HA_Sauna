@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "purpose": "Predeclared calibration witnesses and event-reference scope. Broad R01/R02 state checks never become exact door labels. Every selected onset remains a mathematical hypothesis.",
+  "evidence": [
+    {"path": "arbeit/2026-10-15/proxy-formanalyse/zuordnungsbasis.json", "use": "Source relationships, coarse R01/R02 user references, and explicit complete R03 inventory; old detector outputs are excluded."},
+    {"path": "tests/fixtures/replay/R01.json", "use": "P02-P05 coarse stay/exit context; no exact entry or door-contact labels."},
+    {"path": "tests/fixtures/replay/R02.json", "use": "A04-A08 coarse stay/exit context and a short outside door operation; no exact entry labels."},
+    {"path": "tests/fixtures/replay/R03.json", "use": "Original recording binding only. Historical detector times are not target labels."},
+    {"path": "arbeit/2026-10-15/proxy-formanalyse/bestaetigung-ergebnis.json", "use": "Existing evidence-scope restrictions only; no old detections or successful tests are imported as truth."}
+  ],
+  "profiles": [
+    {"kind": "door_open", "reference_channel": "upper_temperature", "reference_sign": -1},
+    {"kind": "door_close", "reference_channel": "upper_temperature", "reference_sign": 1},
+    {"kind": "infusion", "reference_channel": "upper_humidity", "reference_sign": 1}
+  ],
+  "form_witnesses": [
+    {"id": "R01-first-context-open-form", "recording": "R01", "kind": "door_open", "allowed_onset_s": [60.0, 5344.284567], "label_status": "derived_form_witness_only", "basis": "A first stay and exit are user confirmed by the later state check. Separated four-channel-consistent form clusters may supply derived calibration witnesses. Contrary channels exclude a local witness; no labelled entry or fixed event identity is asserted."},
+    {"id": "R01-first-context-close-form", "recording": "R01", "kind": "door_close", "allowed_onset_s": [60.0, 5344.284567], "label_status": "derived_form_witness_only", "basis": "Same broad first stay/exit context; a rising hinge is a mathematical form witness, not a physical door-contact time."},
+    {"id": "R01-second-context-open-form", "recording": "R01", "kind": "door_open", "allowed_onset_s": [5344.284567, 9844.284567], "label_status": "derived_form_witness_only", "basis": "A second stay and exit are confirmed by the coarse later check; short fluctuations during closed-door occupation are not automatically positive door labels."},
+    {"id": "R01-second-context-close-form", "recording": "R01", "kind": "door_close", "allowed_onset_s": [5344.284567, 9844.284567], "label_status": "derived_form_witness_only", "basis": "Broad second context only; no exact closure reference is asserted."},
+    {"id": "R02-first-context-open-form", "recording": "R02", "kind": "door_open", "allowed_onset_s": [60.0, 8535.802149], "label_status": "derived_form_witness_only", "basis": "First stay/exit is user confirmed by state checks at 7504.802149 and 8535.802149. Neither check establishes when entry began."},
+    {"id": "R02-first-context-close-form", "recording": "R02", "kind": "door_close", "allowed_onset_s": [60.0, 8535.802149], "label_status": "derived_form_witness_only", "basis": "Same broad first context; direct presence and previous detector outputs are not climate-training targets."},
+    {"id": "R02-second-context-open-form", "recording": "R02", "kind": "door_open", "allowed_onset_s": [8535.802149, 13204.802149], "label_status": "derived_form_witness_only", "basis": "This context contains a short outside door operation and a later second stay/exit. No fixed event count or identity is assigned to the selected shape witness."},
+    {"id": "R02-second-context-close-form", "recording": "R02", "kind": "door_close", "allowed_onset_s": [8535.802149, 13204.802149], "label_status": "derived_form_witness_only", "basis": "Same broad context; a selected recovery is not automatically the second person's exit or a labelled door close."}
+  ],
+  "event_references": [
+    {"id": "R03-cycle-1-open", "recording": "R03", "kind": "door_open", "cycle_id": "R03-cycle-1", "approximate_cycle_s": 570.0, "allowed_onset_s": [510.0, 600.0], "label_status": "user_confirmed_cycle_with_mathematical_flank", "basis": "The user confirmed a complete inventory of two door cycles near 570 and 900 s. Opening and closing times were not independently measured."},
+    {"id": "R03-cycle-1-close", "recording": "R03", "kind": "door_close", "cycle_id": "R03-cycle-1", "approximate_cycle_s": 570.0, "allowed_onset_s": [570.0, 690.0], "label_status": "user_confirmed_cycle_with_mathematical_flank", "basis": "Broad recovery search after the first approximate door cycle; exact mechanical closure remains unlabelled."},
+    {"id": "R03-infusion-1", "recording": "R03", "kind": "infusion", "approximate_cycle_s": 730.0, "allowed_onset_s": [690.0, 770.0], "label_status": "user_confirmed_event_with_approximate_time", "basis": "The user confirmed one infusion near 730 s and that the entire door/infusion inventory is complete."},
+    {"id": "R03-cycle-2-open", "recording": "R03", "kind": "door_open", "cycle_id": "R03-cycle-2", "approximate_cycle_s": 900.0, "allowed_onset_s": [840.0, 930.0], "label_status": "user_confirmed_cycle_with_mathematical_flank", "basis": "Second and final door cycle in the explicitly complete inventory; no exact contact time."},
+    {"id": "R03-cycle-2-close", "recording": "R03", "kind": "door_close", "cycle_id": "R03-cycle-2", "approximate_cycle_s": 900.0, "allowed_onset_s": [900.0, 1040.0], "label_status": "user_confirmed_cycle_with_mathematical_flank", "basis": "Broad recovery search for the final door cycle, including the gradual thermal return."}
+  ],
+  "complete_inventories": [
+    {"recording": "R03", "scope": "Entire replay session", "door_cycles": 2, "infusions": 1, "source": "Explicit user confirmation in the current chat on 2026-10-15", "boundary_limit": "The broad windows above are declared analyst search/assignment windows around approximate user times. They are not precise ground-truth boundaries."}
+  ],
+  "evaluation_references": [
+    {"id": "R04-door-cycle-1", "recording": "R04", "kind": "door_cycle", "allowed_onset_s": [10120.0, 10210.0], "time_uncertainty_s": 15.0, "label_status": "previously_inspected_user_confirmed_curve_window", "use": "Evaluation only; exclude from all coefficient, noise, method and threshold selection."},
+    {"id": "R04-infusion-1", "recording": "R04", "kind": "infusion", "allowed_onset_s": [10625.0, 10650.0], "time_uncertainty_s": 3.0, "label_status": "previously_inspected_user_confirmed_curve_window", "use": "Evaluation only; separate from infusion 2."},
+    {"id": "R04-infusion-2", "recording": "R04", "kind": "infusion", "allowed_onset_s": [10676.0, 10700.0], "time_uncertainty_s": 3.0, "label_status": "previously_inspected_user_confirmed_curve_window", "use": "Evaluation only; exclude from all fitting/selection."},
+    {"id": "R04-door-cycle-2", "recording": "R04", "kind": "door_cycle", "allowed_onset_s": [10935.0, 10960.0], "time_uncertainty_s": 15.0, "label_status": "previously_inspected_user_confirmed_curve_window", "use": "Evaluation only; no surrounding complete negative inventory."},
+    {"id": "R04-door-cycle-3", "recording": "R04", "kind": "door_cycle", "allowed_onset_s": [11015.0, 11090.0], "time_uncertainty_s": 15.0, "label_status": "previously_inspected_user_confirmed_curve_window", "use": "Evaluation only; the extra impulse near the end is not itself a closing label."}
+  ],
+  "diagnostic_hypotheses": [
+    {"id": "R01-early-second-entry-hypothesis", "recording": "R01", "kind": "door_open", "onset_s": 8441.0, "status": "mathematical_hypothesis_only", "use": "Report frozen-profile evidence separately; never a label, coefficient-training witness or false-negative criterion."},
+    {"id": "R02-early-second-entry-hypothesis", "recording": "R02", "kind": "door_open", "onset_s": 11953.0, "status": "mathematical_hypothesis_only", "use": "Report frozen-profile evidence separately; never a label, coefficient-training witness or false-negative criterion."},
+    {"id": "R04-previous-false-opening", "recording": "R04", "kind": "door_open", "onset_s": 10865.0, "status": "previously_inspected_failure_hypothesis", "use": "Final frozen-profile diagnostic only. Never a training counterexample or parameter-selection input."}
+  ],
+  "known_non_targets": [
+    {"recording": "R01", "context": "User-confirmed closed-door fluctuations during the second stay", "restriction": "No exact fluctuation timestamps exist. Do not label the entire coarse stay interval door-negative."},
+    {"recording": "R02", "context": "Short outside door operation without a new stay; brief presence toggle after the second exit", "restriction": "These are negative stay examples, not negative door labels. Presence is excluded from the calibration features."}
+  ]
+}

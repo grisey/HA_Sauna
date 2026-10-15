@@ -16,6 +16,20 @@ Zeitangaben sind Sekunden seit Aufzeichnungsbeginn. Rollen ersetzen Geräte-
 und Entitätskennungen. Messwerte und Meldungsabstände sind unverändert; es gibt
 keine Glättung, Interpolation oder erfundene Präsenzmeldungen. `initial_state`
 enthält den zuvor vorliegenden Zustand samt tatsächlichem Meldungsalter.
+
+`time_groups` in `tests/replay_manifest.json` führt den belegten Zeitbezug zwischen
+den Aufzeichnungen. R02 und R03 gehören zu einer gemeinsamen Folge mit R02 als
+Ursprung; R01 und R04 besitzen eigene Zeitgruppen. Der gleiche Quellhash von R01
+und R02 bleibt Herkunftsmetadatum und belegt keinen Zeitanschluss.
+`origin_offset_s` verschiebt lokale Zeiten auf die jeweilige Gruppenachse;
+`gap_from_previous_end_s` erhält die tatsächliche unbeobachtete Lücke zwischen
+dem Ende von R02 und dem Ursprung von R03. Sie ist keine lückenlose Messreihe und
+wird nicht interpoliert. Die zentrale reine Transformation
+`tests/analysis/replay_time_axis.py` stellt diese Zuordnung für Analysen und die
+private Vorschau bereit. Lokale Fixturezeiten, Meldungsalter und Messdateien
+bleiben unverändert. Ursprüngliche Kalenderzeitpunkte bleiben privat; das
+Manifest enthält ausschließlich relative Abstände und Quellhashes.
+
 R02 beginnt mit eingeschaltetem Licht; dessen nicht gespeicherte Helligkeit
 bleibt unbekannt und wird nicht als ausgeschaltetes Licht interpretiert.
 `samples` enthalten ausschließlich Klima- und direkte Präsenzmeldungen.

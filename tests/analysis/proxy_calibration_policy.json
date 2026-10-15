@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "session_ids": ["R01", "R02", "R03", "R04"],
+  "training_session_ids": ["R01", "R02", "R03"],
+  "holdout_session_ids": ["R04"],
+  "source_group": "R01-R03 share a calibration source group: R01/R02 share a source and R02/R03 form a sequence. No independent validation fold exists in the training corpus.",
+  "holdout_status": "R04 is withheld from coefficient, method and threshold selection, but was previously inspected; it is not an untouched independent validation set.",
+  "numerical_owner": {
+    "file": "custom_components/ha_sauna/defaults.json",
+    "parameters": {
+      "min_side_samples": "curve_min_side_samples",
+      "max_points": "curve_max_points",
+      "max_candidates": "curve_max_candidates",
+      "robust_iterations": "curve_robust_iterations",
+      "huber_delta": "curve_huber_delta"
+    }
+  },
+  "calibration": {
+    "channels": ["upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity"],
+    "noise_floor_model": "Smallest positive difference between distinct Decimal(str(original_value)) values per channel in R01-R03, divided by sqrt(12). This quantization model assumes uniform rounding error; it is not measured sensor accuracy or empirical noise sigma. Actual noise is max(this numerical floor, pre-onset detrended residual MAD). R04 is excluded.",
+    "min_examples": 1,
+    "min_continuation_samples": 4,
+    "residual_quantile": 1.0,
+    "residual_limit_multiplier": 1.0,
+    "residual_loss_floor_model": "ulp(1.0), a floating-point guard rather than an additional empirical acceptance allowance",
+    "minimum_gain": 0.0,
+    "max_phase_x": 1.0,
+    "interpretation": "Empirical continuation-error envelope in mean twice-Huber loss, normalized by fixed pre-onset noise floors/scales. Neither coverage confidence nor P(event). A single example permits a raw profile, not independent validation."
+  },
+  "method_search": {
+    "durations_s": [30.0, 60.0],
+    "bases": ["P2", "P3", "M1", "M2"],
+    "hinge_knot_x": 0.5,
+    "binding_fraction": 0.4,
+    "selection_order": ["fewest_known_counterexample_supports", "fewest_unmatched_R03_references", "lowest_positive_continuation_loss", "declared_method_order"],
+    "maximum_methods_per_profile": 8
+  },
+  "sampling": {
+    "before_window_s": 60.0,
+    "maximum_latest_age_s": 15.0,
+    "maximum_continuity_gap_s": 15.0,
+    "maximum_reported_age_s": 15.0,
+    "minimum_span_fraction": 0.5,
+    "scan_step_s": 5.0,
+    "confirmation_step_s": 5.0,
+    "minimum_confirmation_delay_s": 5.0
+  },
+  "localization": {
+    "before_window_s": 60.0,
+    "after_window_s": 20.0,
+    "candidate_step_s": 5.0,
+    "refinement_step_s": 1.0,
+    "minimum_consistent_channels": 3,
+    "maximum_resolved_contrary_channels": 0,
+    "minimum_bic_gain": 0.0,
+    "interpretation": "Retrospective mathematical hinge landmarks on all four original channels at a fixed 5-second cadence. R01/R02 require temperature and RH evidence across both positions, at least three concordant channels, and no resolved contrary channel. Multiple separated consistent form clusters may supply separate derived witnesses without assigning physical event identity. Contradictory forms at the same place are excluded."
+  },
+  "counterexamples": {
+    "session_id": "R03",
+    "anchor_step_s": 20.0,
+    "reference_guard_s": 60.0,
+    "interpretation": "The user's complete R03 inventory permits additional same-kind event claims outside the broad target windows to be checked. Guarded edges are ambiguous; no R01/R02 quiet interval is invented."
+  },
+  "event_merging": {
+    "door_open": 20.0,
+    "door_close": 20.0,
+    "infusion": 20.0,
+    "rule": "Keep the first actual confirmation; nearby same-kind onset hypotheses refer to that event. Never replace its frozen binding with a later, better fit."
+  },
+  "event_geometry": {
+    "door_open": "Template support confirms an opening only when the existing curve_trend owner supports an observed falling reference-temperature segment in [onset,decision]. A negative deviation during continuing warming is insufficient.",
+    "infusion": "The learned reference humidity shape must have an interior rise-to-fall peak. A template support can confirm an infusion only when curve_form(form=peak) supports an already observed upper-humidity peak and its declining original flank at that actual decision time.",
+    "door_close": "A positive change from a prior falling temperature can be braking even while the later slope remains negative. Localization requires a falling temperature before the positive change. At confirmation, the existing curve_trend owner must support the prior fall, and the observed later slope must exceed the prior slope; absolute warming is unnecessary."
+  },
+  "limits": {
+    "maximum_total_least_squares_calls": 500000,
+    "maximum_owner_calls": 250000,
+    "maximum_localization_candidates_per_reference": 2000,
+    "maximum_anchors_per_session": 10000,
+    "maximum_training_witnesses_per_profile": 128,
+    "maximum_counterexample_anchors_per_profile": 150,
+    "maximum_cache_entries": 8192,
+    "maximum_curve_value_calls": 3000000,
+    "maximum_curve_points_per_case_channel": 512,
+    "maximum_ambiguous_cases": 10000,
+    "maximum_runtime_s": 1800.0
+  },
+  "runtime_owner": {"file": "tests/settings.json", "path": ["runner", "timeouts_s", "sessions"], "completion_reserve_s": 600.0},
+  "release": {
+    "require_all_R03_references_supported": true,
+    "maximum_known_counterexample_supports": 0,
+    "minimum_positive_score_gain": 0.0,
+    "require_all_channels_within_error_band": true,
+    "interpretation": "Failure leaves a raw numerical profile and an explicit non-separating result. Bounds are never relaxed after inspecting R04. Product integration is a separate decision."
+  },
+  "reporting": {
+    "decimal_places": 9,
+    "progress_interval_s": 30.0,
+    "curve_padding_s": 30.0,
+    "write_all_anchor_scores": true
+  }
+}
