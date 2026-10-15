@@ -67,7 +67,16 @@ gekennzeichnet.
 
 Tests verwenden vorhandene Fixtures.
 
-Tests laufen ausschließlich auf dem Linux-Zielsystem oder in Linux-CI.
+Tests laufen ausschließlich unter Linux in GitHub Actions auf GitHub-gehosteten
+Runnern. Maßgeblich ist `.github/workflows/tests.yml`. Lokale Testläufe,
+selbst gehostete Runner und andere Linux-Zielsysteme sind nicht vorgesehen.
+SSH-Verbindungen, SCP/SFTP-Übertragungen und Remote-Shells zu anderen Hosts
+sind für Projektarbeiten nicht zulässig; sie werden auch bei fehlender oder
+fehlgeschlagener CI nicht als Ersatz verwendet. Der Zugriff auf das
+GitHub-Repository und seine Actions erfolgt über HTTPS oder den GitHub-Connector.
+Ein Implementierungs- oder Prüfauftrag und historische Hostverweise begründen
+keine zusätzliche Zugriffsberechtigung.
+
 Für jeden Prozess werden der tatsächlich geprüfte Stand, sein eigener Exitcode
 und der vollständige Prozessabschluss erfasst. Der Prüfumfang richtet sich
 nach der konkreten Änderung. PR-Head, tatsächlich ausgecheckter Commit und
