@@ -98,6 +98,24 @@ class ReplyDisposition(StrEnum):
     DUPLICATE = "duplicate"
 
 
+def _correlation_key(
+    envelope: NotificationEnvelope | ReplyEnvelope,
+) -> tuple[str, str | None, str, TargetIdentity]:
+    target = (
+        envelope.target
+        if isinstance(envelope, NotificationEnvelope)
+        else envelope.source
+    )
+    return envelope.entry_id, envelope.session_id, envelope.correlation_id, target
+
+
+def _matches(notification: NotificationEnvelope, reply: ReplyEnvelope) -> bool:
+    return (
+        _correlation_key(notification) == _correlation_key(reply)
+        and notification.message_id == reply.message_id
+    )
+
+
 @dataclass(frozen=True)
 class ReplyAssociation:
     disposition: ReplyDisposition
@@ -109,6 +127,14 @@ class ReplyAssociation:
         _instance(self.reply, ReplyEnvelope)
         if self.notification is not None:
             _instance(self.notification, NotificationEnvelope)
+        associated = self.disposition in (
+            ReplyDisposition.ACCEPTED, ReplyDisposition.DUPLICATE,
+        )
+        if associated:
+            if self.notification is None or not _matches(self.notification, self.reply):
+                raise ValueError("Associated reply requires a matching notification")
+        elif self.notification is not None:
+            raise ValueError("Unassociated reply cannot carry a notification")
 
 
 @dataclass
@@ -131,20 +157,9 @@ class ReplyCorrelator:
             tuple[str, str | None, str, TargetIdentity], _Registration
         ] = {}
 
-    @staticmethod
-    def _key(
-        envelope: NotificationEnvelope | ReplyEnvelope,
-    ) -> tuple[str, str | None, str, TargetIdentity]:
-        target = (
-            envelope.target
-            if isinstance(envelope, NotificationEnvelope)
-            else envelope.source
-        )
-        return envelope.entry_id, envelope.session_id, envelope.correlation_id, target
-
     def register(self, notification: NotificationEnvelope) -> None:
         _instance(notification, NotificationEnvelope)
-        key = self._key(notification)
+        key = _correlation_key(notification)
         if key in self._registrations:
             raise ValueError(
                 "Correlation and target are already registered in this scope"
@@ -153,11 +168,11 @@ class ReplyCorrelator:
 
     def receive(self, reply: ReplyEnvelope) -> ReplyAssociation:
         _instance(reply, ReplyEnvelope)
-        registration = self._registrations.get(self._key(reply))
+        registration = self._registrations.get(_correlation_key(reply))
         if registration is None:
             return ReplyAssociation(ReplyDisposition.UNKNOWN, reply)
         notification = registration.notification
-        if reply.message_id != notification.message_id:
+        if not _matches(notification, reply):
             return ReplyAssociation(ReplyDisposition.MESSAGE_MISMATCH, reply)
         if reply.reply_id in registration.reply_ids:
             disposition = ReplyDisposition.DUPLICATE
@@ -169,7 +184,7 @@ class ReplyCorrelator:
     def forget(self, notification: NotificationEnvelope) -> bool:
         """Explicitly release a registration and its duplicate knowledge."""
         _instance(notification, NotificationEnvelope)
-        key = self._key(notification)
+        key = _correlation_key(notification)
         registration = self._registrations.get(key)
         if registration is None:
             return False

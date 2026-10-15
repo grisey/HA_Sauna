@@ -39,6 +39,15 @@ Eingaben prüfen Identität, gemeinsame Eignungsvalidierung, Mengenbildung und
 Nachrichtenzuordnung. Diese Prüfungen enthalten keinen HA-Adapter und belegen
 weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
 
+Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
+`test_model_handoff.py`, `test_control_handoff.py` und
+`test_observation_handoff.py` sowie `test_thermal_handoff.py` mit vorhandenen
+Kernfixtures geprüft. Die Fälle verwenden tatsächliche Modellrückgaben und prüfen vollständige Belege,
+Identitätsbindung, Feldtypen und Ablösung veränderlicher Quelldaten. Die
+explizite Übergabe an einen Testverbraucher belegt den Datenvertrag; eine
+automatische Ereignissammlung oder ein Benachrichtigungsablauf ist nicht
+Bestandteil dieser Prüfungen.
+
 Szenarien und die gebundenen realen Replay-Aufzeichnungen sind im Checkout enthalten.
 Die Manifeste binden Daten und Bewertungen durch Prüfsummen. Fehlende oder
 veränderte Dateien führen zu einem Fehler; private Pfade und Umgebungsvariablen

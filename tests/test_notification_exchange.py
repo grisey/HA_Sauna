@@ -178,3 +178,47 @@ class NotificationExchangeTests(unittest.TestCase):
         self.assertEqual(
             self.correlator.receive(self.reply).disposition, ReplyDisposition.ACCEPTED
         )
+
+    def test_successful_association_requires_complete_matching_notification(self):
+        changes = (
+            {"message_id": "other"}, {"correlation_id": "other"},
+            {"entry_id": "other"}, {"session_id": "other"},
+            {"session_id": None},
+            {"target": TargetIdentity("synthetic", "other")},
+            {"target": TargetIdentity("other", "endpoint")},
+        )
+        for disposition in (ReplyDisposition.ACCEPTED, ReplyDisposition.DUPLICATE):
+            with self.subTest(disposition=disposition):
+                association = ReplyAssociation(
+                    disposition, self.reply, self.notification
+                )
+                with self.assertRaises(ValueError):
+                    replace(association, notification=None)
+                for change in changes:
+                    with self.subTest(change=change), self.assertRaises(ValueError):
+                        replace(
+                            association,
+                            notification=replace(self.notification, **change),
+                        )
+                unscoped_notification = replace(self.notification, session_id=None)
+                unscoped_reply = replace(self.reply, session_id=None)
+                self.assertIs(
+                    ReplyAssociation(disposition, unscoped_reply,
+                                     unscoped_notification).notification,
+                    unscoped_notification,
+                )
+
+    def test_unsuccessful_association_cannot_claim_a_notification(self):
+        for disposition in (
+            ReplyDisposition.UNKNOWN, ReplyDisposition.MESSAGE_MISMATCH,
+        ):
+            association = ReplyAssociation(disposition, self.reply)
+            self.assertIsNone(association.notification)
+            for notification in (
+                self.notification, replace(self.notification, message_id="other"),
+            ):
+                with (
+                    self.subTest(disposition=disposition),
+                    self.assertRaises(ValueError),
+                ):
+                    replace(association, notification=notification)
