@@ -2,12 +2,13 @@
 import asyncio
 import unittest
 from collections import Counter
-from dataclasses import replace
+from copy import deepcopy
+from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
 from math import ceil
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import DEFAULT, patch
 
 from test_foundation import T0, event, parameters
 
@@ -1241,7 +1242,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         )
 
     def _send(self, detector, second, humidity, events, *, temperature=None,
-              measured_second=None, humidity_source=None, controller=None):
+              measured_second=None, humidity_source=None, controller=None,
+              detected_at=None):
         temperature = self.temperature if temperature is None else temperature
         measured_at = self._at(second if measured_second is None else measured_second)
         now = self._at(second)
@@ -1258,6 +1260,11 @@ class InfusionLifecycleTests(unittest.TestCase):
                 )))
 
         def received(detection):
+            if detection.kind == Kind.INFUSION:
+                episode = detector.infusion_episode
+                self.assertIsNotNone(episode)
+                self.assertIs(episode.confirmed_detection, detection)
+                self.assertEqual(episode.confirmed_at, detection.detected_at)
             controller.process(Event(
                 f"detected:{detection.kind}:{detection.trace_at}", "s", detection.kind,
                 detection.effective_at, detection.detected_at,
@@ -1275,6 +1282,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                 controller.detection_onset_allowed if controller is not None else None
             ),
             on_detection=received if controller is not None else None,
+            detected_at=detected_at,
         ))
 
     def _feed(self, detector, through, points, events, *, humidity_source=None,
@@ -1477,12 +1485,42 @@ class InfusionLifecycleTests(unittest.TestCase):
         points, shapes, rise_two, fall_two = self._scenario(merged=True)
         detector = Detector(self.parameters, T0)
         events = []
+        self.assertIsNone(detector.infusion_episode)
         with self._patch_math(shapes), patch(
             "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
         ):
+            self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
+            pending = detector.infusion_episode
+            self.assertEqual(pending.phase, "pending")
+            self.assertEqual(pending.positions, detector.positions)
+            self.assertEqual(pending.onset_at, self._at(self.begin))
+            self.assertIsNone(pending.confirmed_detection)
+            self.assertIsNone(pending.confirmed_at)
+            self.assertIsNone(pending.level_end_at)
+            self.assertIsNone(pending.end_basis)
             self._feed(detector, rise_two, points, events)
             self.assertEqual(len(self._infusions(events)), 1)
             self.assertEqual(detector._infusion_episode["phase"], "active")
+            original = self._infusions(events)[0]
+            before_read = deepcopy(detector.__dict__)
+            with patch.multiple(
+                "custom_components.ha_sauna.core.detector",
+                **dict.fromkeys(("curve_change", "curve_form", "curve_level",
+                                 "curve_recovery", "curve_trend"), DEFAULT),
+            ) as calculations:
+                active = detector.infusion_episode
+                self.assertEqual(active, detector.infusion_episode)
+                with self.assertRaises(FrozenInstanceError):
+                    active.phase = "ended"
+            for calculation in calculations.values():
+                calculation.assert_not_called()
+            self.assertEqual(detector.__dict__, before_read)
+            self.assertEqual(active.phase, "active")
+            self.assertEqual(active.bound_at, pending.bound_at)
+            self.assertIs(active.confirmed_detection, original)
+            self.assertEqual(active.onset_at, original.effective_at)
+            self.assertEqual(active.confirmed_at, original.detected_at)
+            self.assertIsNone(active.level_end_at)
             self._feed(
                 detector, fall_two + self.p["infusion_window_seconds"] + 2 * self.step,
                 points, events,
@@ -1490,6 +1528,23 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(len(self._infusions(events)), 1)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
         self.assertEqual(detector._infusion_episode["end_basis"], "decay_and_level")
+        ended = detector.infusion_episode
+        self.assertEqual(ended.phase, "ended")
+        self.assertEqual(ended.bound_at, pending.bound_at)
+        self.assertIs(ended.confirmed_detection, original)
+        self.assertEqual(ended.level_end_at,
+                         self._at(fall_two + self.p["infusion_window_seconds"] + self.step))
+        self.assertEqual(ended.end_basis, "decay_and_level")
+        self.assertEqual(ended.last_rise_at,
+                         tuple((position, self._at(rise_two)) for position in detector.positions))
+        for snapshot, phase in ((pending, "pending"), (active, "active")):
+            self.assertEqual(snapshot.phase, phase)
+            self.assertIsNone(snapshot.level_end_at)
+            self.assertEqual(snapshot.last_rise_at,
+                             tuple((position, self._at(self.begin))
+                                   for position in detector.positions))
+        self.assertIsNone(pending.confirmed_detection)
+        self.assertIsNone(pending.confirmed_at)
 
     def test_upper_peak_preserves_lower_tail_until_shared_level_and_next_infusion(self):
         first_peak = self.begin + self.width
@@ -1551,6 +1606,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                                controller=controller)
                     self.assertEqual(len(self._infusions(events)), 1)
                     self.assertEqual(detector._infusion_episode["phase"], "active")
+                    first_episode = detector.infusion_episode
                     lower_decay = detector._infusion_episode["decays"][Position.LOWER]
                     self.assertEqual(lower_decay.onset_at, self._at(first_peak))
                     first_gang = controller.session.timeline.active
@@ -1560,6 +1616,10 @@ class InfusionLifecycleTests(unittest.TestCase):
                         # A global gap removes both decays. Afterwards the lower
                         # position can recover a fresh level without a new peak.
                         self._send(detector, first_fall, None, events, controller=controller)
+                        interrupted = detector.infusion_episode
+                        self.assertEqual(interrupted.interrupted_positions, detector.positions)
+                        self.assertEqual(interrupted.bound_at, first_episode.bound_at)
+                        self.assertEqual(first_episode.interrupted_positions, ())
                     self._feed(detector, upper_peak, points, events, controller=controller)
                     episode = detector._infusion_episode
                     self.assertEqual(episode["phase"], "active")
@@ -1587,6 +1647,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                         level = episode["levels"][position]
                         self.assertGreater(level["fresh_newest_at"], level["first_newest_at"])
                     self.assertEqual(len(self._infusions(events)), 1)
+                    ended_episode = detector.infusion_episode
                     self._feed(detector, next_fall, points, events, controller=controller)
                 infusions = self._infusions(events)
                 self.assertEqual(len(infusions), 2)
@@ -1594,6 +1655,16 @@ class InfusionLifecycleTests(unittest.TestCase):
                                  [self._at(self.begin), self._at(next_rise)])
                 self.assertTrue(all(item.channels == ("upper", "lower") for item in infusions))
                 self.assertTrue(all(item.effective_at < item.trace_at for item in infusions))
+                next_episode = detector.infusion_episode
+                self.assertNotEqual(next_episode.bound_at, ended_episode.bound_at)
+                self.assertIs(next_episode.confirmed_detection, infusions[1])
+                self.assertEqual(ended_episode.bound_at, first_episode.bound_at)
+                self.assertIs(ended_episode.confirmed_detection, infusions[0])
+                self.assertEqual(ended_episode.phase, "ended")
+                self.assertEqual(first_episode.phase, "active")
+                self.assertEqual(first_episode.interrupted_positions, ())
+                if paused:
+                    self.assertEqual(interrupted.interrupted_positions, detector.positions)
                 gang = controller.session.timeline.active
                 self.assertIsNotNone(gang)
                 self.assertEqual(gang.gang_id, first_gang.gang_id)
@@ -1647,6 +1718,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         ):
             self._feed(detector, first, points, events)
             self.assertEqual(self._infusions(events), [])
+            self.assertIsNone(detector.infusion_episode)
             status = detector.diagnostic["curve_candidates"]["infusion"]["upper"]["humidity"]
             self.assertEqual(status["first_newest_at"], self._at(first))
             self.assertIsNone(status["fresh_newest_at"])
@@ -1660,6 +1732,9 @@ class InfusionLifecycleTests(unittest.TestCase):
                        self._value(points, first + 4 * self.step), events)
             self.assertEqual(detector._infusion_episode["phase"], "pending")
             self.assertEqual(self._infusions(events), [])
+            pending = detector.infusion_episode
+            self.assertEqual(pending.bound_at, self._at(first + 4 * self.step))
+            self.assertIsNone(pending.confirmed_detection)
             self._feed(detector, first_decay, points, events)
             decay = detector.diagnostic["curve_candidates"]["infusion_decay"]["upper"]["humidity"]
             self.assertEqual(decay["first_newest_at"], self._at(first_decay))
@@ -1672,6 +1747,10 @@ class InfusionLifecycleTests(unittest.TestCase):
                        measured_second=first_decay)
             self.assertEqual(detector._infusion_episode["phase"], "pending")
             self.assertEqual(self._infusions(events), [])
+            unconfirmed = detector.infusion_episode
+            self.assertEqual(unconfirmed.bound_at, pending.bound_at)
+            self.assertIsNone(unconfirmed.confirmed_detection)
+            self.assertIsNone(unconfirmed.confirmed_at)
             events.extend(detector.advance(self._at(confirmed - self.step), enabled=True))
             self.assertEqual(self._infusions(events), [])
             self._send(detector, confirmed, self._value(points, confirmed), events)
@@ -1681,6 +1760,12 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(infusion.trace_at, self._at(confirmed))
         self.assertEqual(infusion.detected_at, infusion.trace_at)
         self.assertEqual(detector._infusion_episode["phase"], "active")
+        active = detector.infusion_episode
+        self.assertEqual(active.bound_at, pending.bound_at)
+        self.assertIs(active.confirmed_detection, infusion)
+        self.assertEqual(active.confirmed_at, self._at(confirmed))
+        self.assertEqual(pending.phase, "pending")
+        self.assertIsNone(pending.confirmed_detection)
         self.assertLessEqual(
             detector.diagnostic["metrics"]["upper"]["infusion_absolute_humidity_delta"], 0,
         )
@@ -1796,9 +1881,19 @@ class InfusionLifecycleTests(unittest.TestCase):
                        temperatures=temperatures, controller=controller)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertEqual(len(controller.session.timeline.active.infusion_events), 1)
+            first_episode = detector.infusion_episode
+            self._feed(detector, next_rise - self.step, points, events,
+                       temperatures=temperatures, controller=controller)
+            self.assertIsNone(detector.infusion_episode)
+            self.assertEqual(first_episode.phase, "active")
+            self.assertIsNone(first_episode.level_end_at)
             self._feed(detector, next_fall, points, events,
                        temperatures=temperatures, controller=controller)
         self.assertEqual(len(self._infusions(events)), 2)
+        next_episode = detector.infusion_episode
+        self.assertNotEqual(next_episode.bound_at, first_episode.bound_at)
+        self.assertIs(first_episode.confirmed_detection, self._infusions(events)[0])
+        self.assertIs(next_episode.confirmed_detection, self._infusions(events)[1])
         self.assertEqual([item.kind for item in events if item.kind in (
             Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE,
         )], [Kind.DOOR_OPEN, Kind.VENTILATION, Kind.DOOR_CLOSE])
@@ -1822,12 +1917,75 @@ class InfusionLifecycleTests(unittest.TestCase):
         ):
             self._feed(detector, ended, points, events)
             self.assertEqual(detector._infusion_episode["phase"], "ended")
+            ended_episode = detector.infusion_episode
+            self.assertEqual(ended_episode.level_end_at, self._at(ended))
+            original = self._infusions(events)[0]
+            self.assertIs(ended_episode.confirmed_detection, original)
             self._send(detector, ended + self.step, self.level - .1, events,
                        measured_second=ended)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertIsNone(detector._infusion_episode["level_end_at"])
+            reopened = detector.infusion_episode
+            self.assertEqual(reopened.bound_at, ended_episode.bound_at)
+            self.assertIs(reopened.confirmed_detection, original)
+            self.assertIsNone(reopened.level_end_at)
+            self.assertIsNone(reopened.end_basis)
             continued = [(0, self.level - .1), (next_rise, self.level - .1),
                          (next_peak, self.peak)]
             self._feed(detector, next_peak, continued, events)
         self.assertEqual(len(self._infusions(events)), 1)
         self.assertEqual(detector._infusion_episode["phase"], "active")
+        self.assertEqual(detector.infusion_episode.bound_at, ended_episode.bound_at)
+        self.assertIs(detector.infusion_episode.confirmed_detection, original)
+        self.assertEqual(ended_episode.phase, "ended")
+        self.assertEqual(ended_episode.level_end_at, self._at(ended))
+        self.assertEqual(ended_episode.end_basis, "decay_and_level")
+
+    def test_late_rise_before_level_end_reopens_the_original_infusion(self):
+        points, shapes, _, _ = self._scenario(merged=False)
+        first_peak = self.begin + self.width
+        confirmed = first_peak + (self.side + 1) * self.step
+        received_at = self._at(confirmed + self.step)
+        ended = self.begin + 2 * self.width + self.p["infusion_window_seconds"] + self.step
+        late_onset = ended - self.step
+        second_peak = shapes[2]["until"]
+        shapes = shapes[:2]
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        with self._patch_math(shapes), patch(
+            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
+        ):
+            self._feed(detector, confirmed - self.step, points, events)
+            self.assertEqual(self._infusions(events), [])
+            self._send(detector, confirmed, self._value(points, confirmed), events,
+                       detected_at=received_at)
+            original = self._infusions(events)[0]
+            self.assertEqual(original.trace_at, self._at(confirmed))
+            self.assertEqual(original.detected_at, received_at)
+            self._feed(detector, ended, points, events)
+            ended_episode = detector.infusion_episode
+            self.assertEqual(ended_episode.phase, "ended")
+            self.assertEqual(ended_episode.level_end_at, self._at(ended))
+            self.assertEqual(ended_episode.confirmed_at, received_at)
+            self.assertIs(ended_episode.confirmed_detection, original)
+            self.assertLess(self._at(late_onset), ended_episode.level_end_at)
+            self.assertIn(self._at(late_onset), {
+                stamp for stamp, _ in
+                detector._curve_series[Position.UPPER, Quantity.HUMIDITY]["points"]
+            })
+            # Only the declared math witness arrives late. All further inputs
+            # are new originals; no correction invalidates the former level.
+            shapes.append(self._shape("rise", late_onset, second_peak))
+            self._feed(detector, second_peak, points, events)
+        continued = detector.infusion_episode
+        self.assertEqual(continued.phase, "active")
+        self.assertEqual(continued.bound_at, ended_episode.bound_at)
+        self.assertIs(continued.confirmed_detection, original)
+        self.assertEqual(continued.confirmed_at, received_at)
+        self.assertEqual(continued.last_rise_at, ((Position.UPPER, self._at(late_onset)),))
+        self.assertIsNone(continued.level_end_at)
+        self.assertIsNone(continued.end_basis)
+        self.assertEqual(self._infusions(events), [original])
+        self.assertEqual(ended_episode.phase, "ended")
+        self.assertEqual(ended_episode.level_end_at, self._at(ended))
+        self.assertEqual(ended_episode.end_basis, "decay_and_level")

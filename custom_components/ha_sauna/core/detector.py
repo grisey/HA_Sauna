@@ -34,6 +34,35 @@ class Detection:
 
 
 @dataclass(frozen=True)
+class InfusionEpisodeSnapshot:
+    """Unveränderlicher Fachstand der aktuell geführten Aufgussepisode.
+
+    ``bound_at`` ist die Rasterzeit der ersten Pending-Bindung. Sie bleibt bei
+    Fortsetzungen und Korrekturen erhalten und bezeichnet die Episode nur
+    innerhalb derselben Detector-Instanz mit fortschreitendem Raster; sie ist
+    weder eine globale Ereignis-ID noch eine reale Empfangszeit.
+    ``onset_at`` enthält zunächst den gebundenen Anstiegsbeginn und nach der
+    Bestätigung die zulässige wirksame Zuordnung. ``confirmed_at`` übernimmt
+    die Erkennungsuhr der Bestätigung, ``confirmed_detection`` genau deren
+    ausgegebenes Objekt. ``level_end_at`` ist die Rasterzeit des Endbelegs,
+    kein rückdatierter physischer Endzeitpunkt. ``last_rise_at`` enthält die
+    zuletzt gebundenen Anstiegsbeginne je Position; ``interrupted_positions``
+    nennt Positionen mit unterbrochenem Nachlaufbeleg.
+    """
+
+    phase: str
+    positions: tuple[Position, ...]
+    onset_at: object
+    bound_at: object
+    confirmed_at: object | None
+    confirmed_detection: Detection | None
+    level_end_at: object | None
+    end_basis: str | None
+    last_rise_at: tuple[tuple[Position, object], ...]
+    interrupted_positions: tuple[Position, ...]
+
+
+@dataclass(frozen=True)
 class _CurveCandidate:
     """Vorläufiger Kurvenbeginn bis zur bestehenden Ereignisbestätigung."""
 
@@ -208,6 +237,35 @@ class Detector:
         self._curve_infusion_since = None
         self._infusion_episode = None
         self._infusion_segment_start = {}
+
+    @property
+    def infusion_episode(self) -> InfusionEpisodeSnapshot | None:
+        """Den Ownerstand ohne Auswertung kopieren; None ist kein Endbeleg.
+
+        Ein verworfener oder zurückgesetzter Kontext führt keine Episode mehr.
+        Alle Positionsfolgen behalten die Reihenfolge der gebundenen Episode.
+        """
+        episode = self._infusion_episode
+        if episode is None:
+            return None
+        return InfusionEpisodeSnapshot(
+            phase=episode["phase"],
+            positions=tuple(episode["positions"]),
+            onset_at=episode["onset_at"],
+            bound_at=episode["observed_at"],
+            confirmed_at=episode["confirmed_at"],
+            confirmed_detection=episode["confirmed_detection"],
+            level_end_at=episode["level_end_at"],
+            end_basis=episode["end_basis"],
+            last_rise_at=tuple(
+                (position, episode["last_rise_at"][position])
+                for position in episode["positions"]
+            ),
+            interrupted_positions=tuple(
+                position for position in episode["positions"]
+                if position in episode["interrupted"]
+            ),
+        )
 
     def _clear_curve_series(self, position, quantity):
         series = self._curve_series[position, quantity]
@@ -1522,6 +1580,7 @@ class Detector:
             "rise_key": rise_key,
             "water": water,
             "confirmed_at": None,
+            "confirmed_detection": None,
         }
 
     def _infusion_water_change(self, witness):
@@ -2837,6 +2896,8 @@ class Detector:
                 now,
             )
             output.append(detection)
+            if kind == Kind.INFUSION:
+                self._infusion_episode["confirmed_detection"] = detection
             if on_detection:
                 on_detection(detection)
 
