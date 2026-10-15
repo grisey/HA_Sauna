@@ -569,7 +569,7 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             result, current=equal_level,
         ).normalized_level_deviation(), 0)
 
-    def test_water_level_deviation_rejects_alternating_k7_zero_slope_form(self):
+    def test_water_level_deviation_distinguishes_alternating_k7_zero_slope_sequence(self):
         values = Parameters({}).values
         count = values["curve_original_samples"]
         self.assertEqual(count, 7)  # The declared cancellation criterion is K=7.
@@ -753,11 +753,9 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
                             water.v - water.b, ">",
                             significance * (water.e + water.e_minus),
                         ),
-                        "water_level_deviation": (deviation, "<=", significance),
                         "temperature_still_falling": (
                             -temperature.v, ">", significance * temperature.e,
                         ),
-                        "all_k_constant_compatible_diagnostic": (lower, "<=", upper),
                     }
                     gates = {
                         name: {
@@ -788,7 +786,19 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
                         "v": water.v, "b": water.b, "e": water.e, "e_minus": water.e_minus,
                         "temperature_v": temperature.v,
                         "temperature_e": temperature.e,
-                        "D": deviation, "all_k_bounds": (lower, upper), "gates": gates,
+                        "form_gates": gates,
+                        "level_diagnostics": {
+                            "D": deviation,
+                            "water_level_deviation": {
+                                "value": deviation, "operator": "<=",
+                                "threshold": significance,
+                                "result": deviation <= significance,
+                            },
+                            "all_k_constant_compatible": {
+                                "value": lower, "operator": "<=", "threshold": upper,
+                                "result": lower <= upper,
+                            },
+                        },
                         "pairs": [{
                             "rh": pair.humidity_sample,
                             "temperature_before": pair.temperature_before,

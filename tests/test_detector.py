@@ -976,26 +976,60 @@ class DetectorTests(unittest.TestCase):
                     self.assertIn(Kind.DOOR_CLOSE, [item.kind for item in found])
 
 
-    def test_oscillating_water_cannot_supply_a_constant_plateau(self):
+    def test_new_water_fall_cancels_pending_flattening_before_confirmation(self):
         detector = self._ventilation_detector(positions=(Position.UPPER,))
-        begin, plateau, end, values = self._ventilation_curve(detector)
-        events = self._feed_ventilation(detector, plateau, values)
-        initial_water = absolute_humidity(*values(begin))
-        settled_water = absolute_humidity(*values(plateau))
-        count = detector.p["curve_original_samples"]
+        _, plateau, _, values = self._ventilation_curve(detector)
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        pending_at = plateau + (count - 1) * step
+        events = self._feed_ventilation(detector, pending_at, values)
+        self.assertTrue(detector.open)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        opening = detector.door_episode
+        self.assertIn("original_ventilation", opening)
+        candidate = opening["original_ventilation"]
+        self.assertEqual(opening["positions"], (Position.UPPER,))
+        self.assertTrue(detector.diagnostic["original_ventilation"]["initial_form"])
+        epochs = detector._original_context()
+        _, _, _, falling = self._ventilation_curve(detector, water_tail="fall")
 
-        def oscillating(second):
+        def renewed_fall(second):
+            # Restart the fixture's water fall continuously at the bound
+            # plateau while its original temperature fall continues.
             temperature, _ = values(second)
-            offset = ((second - plateau) // detector.grid_seconds - 1) % count
-            # A symmetric U-shaped window has zero fitted slope while its
-            # measured water values cannot share a constant uncertainty band.
-            water = settled_water + (initial_water - settled_water) * (
-                offset - (count - 1) / 2
-            ) ** 2 / count
+            water = absolute_humidity(*falling(plateau + second - pending_at))
             return temperature, self._humidity_for_water(temperature, water)
 
-        events += self._feed_ventilation(detector, end, oscillating)
+        for resumed, previous in zip(renewed_fall(pending_at), values(pending_at), strict=True):
+            self.assertAlmostEqual(resumed, previous)
+        counter_at = pending_at + step
+        events += self._feed_ventilation(detector, counter_at, renewed_fall)
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+        self.assertIs(detector.door_episode, opening)
+        self.assertTrue(detector.open)
+        self.assertFalse(detector.ventilated)
+        self.assertEqual(detector._original_context(), epochs)
+        self.assertNotIn("original_ventilation", opening)
+        self.assertEqual(opening["original_ventilation_reset_reason"],
+                         "water_or_temperature_counterform")
+        record = detector.diagnostic["original_ventilation"]
+        self.assertEqual(record["water_status"], "ready")
+        self.assertFalse(record["close_same_prefix"])
+        self.assertFalse(record["maintained_form"])
+        self.assertFalse(record["confirmable"])
+        support = record["support"]["upper"]
+        self.assertEqual(support["paired_count"], 2 * count)
+        self.assertEqual(support["pending_count"], 0)
+        self.assertTrue(support["paired_counterform_seen"])
+        for _, temperature, humidity in candidate["newest"]:
+            self.assertGreater(support["temperature_newest_at"], temperature)
+            self.assertGreater(support["rh_newest_at"], humidity)
+        gates = detector.diagnostic["decisions"]["ventilation"]["gates"]
+        self.assertTrue(gates["opening_sources_coherent"]["result"])
+        self.assertTrue(gates["same_prefix_close_has_priority"]["result"])
+        self.assertTrue(gates["upper:temperature_still_falling"]["result"])
+        self.assertFalse(gates["upper:current_water_flat"]["result"])
+        self.assertLess(detector.diagnostic["metrics"]["upper"]["ventilation_water_slope"], 0)
 
 
     def test_runtime_positions_confirm_one_position_available_when_the_door_opens(self):

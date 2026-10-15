@@ -42,9 +42,9 @@ on:
         type: string
         default: ''
       proxy_calibration_diagnosis_mode:
-        description: 'Cause comparison using the supplied calibration baseline'
+        description: 'Cause comparison using a calibration baseline, or ventilation form features without recalibration'
         type: choice
-        options: [causes, gain_boundary]
+        options: [causes, gain_boundary, ventilation_forms]
         default: causes
       proxy_expectation_cases:
         description: 'Explicit schema-version-1 JSON string with cases for proxy_expectation_analysis'
@@ -170,7 +170,15 @@ jobs:
           git rev-parse 'HEAD^{tree}' > "$evidence/tree.txt"
           git rev-parse HEAD:custom_components/ha_sauna > "$evidence/product-tree.txt"
           set +e
-          if [ -n "$SAUNA_CALIBRATION_BASELINE_RUN" ]; then
+          if [ "$SAUNA_CALIBRATION_DIAGNOSIS_MODE" = 'ventilation_forms' ]; then
+            if [ -n "$SAUNA_CALIBRATION_BASELINE_RUN" ]; then
+              echo 'Ventilation features use bound replay originals, not a calibration baseline run' > "$evidence/stderr.log"
+              result=2
+            else
+              python -u tests/analysis/ventilation_forms.py --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+              result=$?
+            fi
+          elif [ -n "$SAUNA_CALIBRATION_BASELINE_RUN" ]; then
             if [[ ! "$SAUNA_CALIBRATION_BASELINE_RUN" =~ ^[0-9]+$ ]]; then
               echo 'Expected a numeric calibration baseline run ID' > "$evidence/stderr.log"
               result=2

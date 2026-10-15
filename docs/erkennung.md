@@ -274,15 +274,6 @@ Für die Hüllmitte `m_i = (ρ⁻_i + ρ⁺_i)/2` und Halbbreite
 E_ρ = Σ|t_i − t̄| · a_i / S_tt
 ```
 
-Für das aktuelle Fenster beschreibt `D_ρ` die gesamte normierte Streuung um
-ein frei angepasstes Niveau `c`. Bei positiven Halbbreiten ist dessen
-Gewichtung `1/a_i²`:
-
-```text
-c   = Σ(m_i/a_i²) / Σ(1/a_i²)
-D_ρ = √(Σ((m_i − c)/a_i)² / K)
-```
-
 Mit der entsprechenden Steigungsgrenze `E⁻_ρ` des Vorgängerfensters gelten je
 Position `p` die folgenden Bedingungen:
 
@@ -290,22 +281,32 @@ Position `p` die folgenden Bedingungen:
 −b_ρp                 > s E⁻_ρp
 v_ρp − b_ρp           > s (E_ρp + E⁻_ρp)
 |v_ρp|                ≤ s E_ρp
-D_ρp                 ≤ s
 −v_Tp                 > s E_Tp
 ```
 
 Die ersten beiden Bedingungen belegen Fall und Abflachung beim Binden des
-Lüftungskandidaten. Die letzten drei müssen bis zur Bestätigung erhalten
-bleiben: aktuelle Wassersteigung innerhalb der normierten Auflösung,
-begrenzte Gesamtstreuung um das Niveau und weiter fallende Temperatur. Die
-quadratischen Abweichungen verwenden sämtliche Werte; entgegengesetzte
-Ausschläge heben sich dabei nicht auf. Eine flache relative Feuchte oder eine
-bloß kleine OLS-Steigung des Wassergehalts genügt nicht. Die gemeinsame
-Formeinheit `s` und die aus den vorhandenen empirischen Skalen abgeleiteten
-Hüllen beschreiben die akzeptierte beobachtete Form. Sie sind weder garantierte
-Einzelmessfehler noch eine Ereigniswahrscheinlichkeit. Eine Halbbreite null
-bindet das Niveau an diesen Wert; widersprüchliche Bindungen oder nicht
-auswertbare Rechnungen liefern keinen Formnachweis.
+Lüftungskandidaten. Die letzten beiden müssen bis zur Bestätigung erhalten
+bleiben: aktuelle Wassersteigung innerhalb der normierten Auflösung und
+weiter fallende Temperatur. Schwankungen um einen abgeflachten Verlauf sind
+keine zusätzliche Ablehnungsbedingung. Eine flache relative Feuchte oder eine
+einzelne kleine Wassersteigung ohne vorherigen Fall und belegte Abflachung
+genügt nicht. Die gemeinsame Formeinheit `s` und die aus den vorhandenen
+empirischen Skalen abgeleiteten Hüllen sind weder garantierte Einzelmessfehler
+noch eine Ereigniswahrscheinlichkeit.
+
+Als Diagnose beschreibt `D_ρ` die gesamte normierte Streuung des aktuellen
+Fensters um ein frei angepasstes Niveau `c`. Bei positiven Halbbreiten ist
+dessen Gewichtung `1/a_i²`:
+
+```text
+c   = Σ(m_i/a_i²) / Σ(1/a_i²)
+D_ρ = √(Σ((m_i − c)/a_i)² / K)
+```
+
+Die Streuung und die Schnittmenge der Einzelwerthüllen entscheiden nicht über
+die Bestätigung. Eine Halbbreite null bindet das Diagnoseniveau an diesen Wert;
+widersprüchliche Bindungen oder nicht auswertbare Rechnungen lassen den
+Diagnosewert offen.
 
 Die Bestätigung benötigt an sämtlichen anfangs gebundenen Positionen spätere
 Temperatur- und Feuchteoriginale mit vollständiger Wasserpaarung. Für eine

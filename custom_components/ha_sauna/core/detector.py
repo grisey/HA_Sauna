@@ -600,9 +600,7 @@ class Detector:
                     return "invalid", {}, {"reason": window.reason, "position": position.value}
                 if window.features is not None:
                     significance = self.p["curve_original_significance"]
-                    deviation = window.features.normalized_level_deviation()
-                    if (abs(window.features.v) > significance * window.features.e
-                            or deviation is None or deviation > significance):
+                    if abs(window.features.v) > significance * window.features.e:
                         # Ein neuer T-Partner kann mehrere wartende RH-Paare
                         # zugleich liefern. Keine innere Gegenform überspringen.
                         paired_counterform = True
@@ -731,10 +729,6 @@ class Detector:
                     value=water.v - water.b, operator=">",
                     threshold=significance * (water.e + water.e_minus), unit="g/m³/s",
                 ),
-                "water_level_deviation": _gate(
-                    deviation <= significance if deviation is not None else None,
-                    value=deviation, operator="<=", threshold=significance, unit="normalized",
-                ),
                 "temperature_still_falling": _gate(
                     -temperature.v > significance * temperature.e, value=-temperature.v,
                     operator=">", threshold=significance * temperature.e, unit="°C/s",
@@ -742,7 +736,7 @@ class Detector:
             }
             gates.update({f"{position.value}:{name}": gate for name, gate in comparisons.items()})
             hold = all(comparisons[key]["result"] for key in (
-                "current_water_flat", "water_level_deviation", "temperature_still_falling",
+                "current_water_flat", "temperature_still_falling",
             ))
             maintained &= hold
             initial &= hold and comparisons["previous_water_fall"]["result"] and comparisons["water_fall_braking"]["result"]
