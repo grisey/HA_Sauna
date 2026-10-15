@@ -125,6 +125,33 @@ Ist-Abweichung, Bedienfolge und ausgegebenen Diensten. Die CI führt jede gebund
 Grund-ID einschließlich sämtlicher Varianten aus. Für die Fehlersuche in GitHub Actions kann
 `SAUNA_SESSION_CASE` einzelne IDs auswählen.
 
+Die vorhandenen synthetischen Fälle `G01` und `G01-proxy` enthalten zusätzlich
+`producer_controller_trace`. Transparente Wrapper beobachten ausschließlich
+tatsächliche `consume_*_input`-Aufrufe des Controllers; Rückgaben und FIFO bleiben
+erhalten. Die Auswahl behält die erste Wert-/Unknown-Kategorie je Consumer und
+Änderungen diskreter Steuerzustände. Fortlaufende Temperatur-, Zeit- und
+Energieänderungen allein erzeugen keine weitere Zeile. Gesamt-, gespeicherte und
+ausgelassene Aufrufzahlen sind getrennt ausgewiesen; dies ist kein vollständiges
+Aufrufprotokoll. Jede gespeicherte Zeile zeigt den tatsächlichen Producer,
+normalisierten Input einschließlich `null` und Originalzeiten sowie die
+unmittelbar beobachtete kleine Controllerfolge. Der referenzierte abgeschlossene
+Verarbeitungsschritt zeigt anschließend Heat/Grund, Phase, Gang, letztes
+Heizintervall, Energieaggregat, Kühlbeginn und Bedienzustand. Bestehende
+Originalereignisse bleiben in `detections` und `consumer_events` des Fallartefakts.
+IDs werden nur im Trace durch stabile lokale Aliase in Reihenfolge ihres ersten
+Auftretens ersetzt; Produktwerte bleiben unverändert. Der Trace verwendet die
+gebundene virtuelle Uhr und deterministische JSON-Serialisierung.
+
+`run-metadata.json` trennt PR-Head und dessen Tree vom tatsächlich ausgecheckten
+Commit und Tree und nennt deren Vergleich, Ref, Run, Versuch, Job und Fall.
+`process.log`, `exit-code.txt` und `process-completion.json` belegen den eigenen
+Testprozess und seine Rückkehr; bei Abbruch vor Prozessende fehlt der
+Abschlussbeleg. Der endgültige Jobstatus steht zusätzlich in GitHub Actions.
+Die Sitzungsartefakte belegen synthetische Fixtures mit ersetztem HA-Transport,
+keine Hardware- oder Companionausführung. `runtime_consumer_connected` ist nur
+bei tatsächlich beobachteten Eingangsaufrufen wahr. Der getrennte
+Systemformnachweis bleibt ein Formnachweis ohne diese Laufzeitaussage.
+
 [`coverage_ownership.json`](coverage_ownership.json) bindet entfernte
 Fachduplikate an ihre Sitzungsbewertungen. Ein Metatest prüft, dass die genannten
 Bewertungen vorhanden sind und die ersetzten Methoden nicht erneut parallel

@@ -2,7 +2,7 @@
 import unittest
 
 from test_cooling import at, controller
-from test_foundation import event
+from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.archive import plain, session_has_gangs
 from custom_components.ha_sauna.core.presence import binary_presence
@@ -12,17 +12,21 @@ from custom_components.ha_sauna.core.timeline import Confirmation, Door, Event, 
 class DirectPresenceControlTests(unittest.TestCase):
     def setUp(self):
         self.c = controller()
-        self.c.presence_source = "ha_presence"
-        self.c.presence_entity = "binary_sensor.presence"
+        self.c.occupancy_required_for_gang_heat = True
+        self.c.provisional_door_heat_allowed = False
+        self.c.person_evidence_limits_cooling = False
+        self.c.gang_start_interrupts_cooling = True
 
     def report(self, state, second, *, effective=None, source=None):
-        return self.c.observe_direct_presence(binary_presence(
+        return self.c.consume_occupancy_input(selected_occupancy(binary_presence(
             source or "binary_sensor.presence", state,
             at(second if effective is None else effective), at(second),
-        ), at(second))
+        ), at(second)))
 
     def door(self, kind, second):
-        return self.c.process(event(f"{kind}:{second}", kind, second))
+        return self.c.process(
+            event(f"{kind}:{second}", kind, second), person_evidence_qualified=False,
+        )
 
     def start(self):
         self.door(Kind.DOOR_OPEN, 1)
@@ -269,9 +273,9 @@ class DirectPresenceControlTests(unittest.TestCase):
                 self.door(Kind.DOOR_OPEN, 1)
                 self.door(Kind.DOOR_CLOSE, 3)
                 self.assertIsNone(self.c.session.timeline.active)
-                self.c.observe_direct_presence(binary_presence(
+                self.c.consume_occupancy_input(selected_occupancy(binary_presence(
                     "binary_sensor.presence", "on", at(2), at(received),
-                ), at(20))
+                ), at(20)))
                 gang = self.c.session.timeline.active
                 self.assertIsNotNone(gang)
                 self.assertEqual(gang.started_at, at(3))
@@ -392,9 +396,8 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.door(Kind.DOOR_CLOSE, 9)
         self.assertIsNotNone(self.c.session.timeline.active)
 
-    def test_wrong_entity_and_old_report_do_not_replace_current(self):
+    def test_old_selected_report_does_not_replace_current(self):
         self.start()
-        self.assertFalse(self.report("off", 4, source="binary_sensor.other"))
         self.assertFalse(self.report("off", 5, effective=1))
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
 

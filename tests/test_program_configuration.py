@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.archive import Archive, plain
@@ -674,10 +675,20 @@ class ProgramConfigurationTests(unittest.TestCase):
     def test_entering_manual_uses_standard_without_replacing_later_choice(self):
         runtime = SaunaRuntime(Configuration.from_options(options({
             "standard_temperature_c": 87, "target_temperature_c": 74,
-        })))
+        })), clock=lambda: T0)
+        consume = Mock(wraps=runtime.controller.consume_control_mode_input)
+        runtime.controller.consume_control_mode_input = consume
         runtime._set_control_mode("manual")
         self.assertEqual(runtime.controller.target_temperature, 87)
         self.assertEqual(runtime.configuration.parameters.values["target_temperature_c"], 87)
+        self.assertFalse(runtime.controller.heater_override)
+        self.assertIsNone(runtime.session)
+        value = consume.call_args.args[0]
+        self.assertEqual(value.mode, "manual")
+        self.assertIsNone(value.timing.effective_at)
+        self.assertIsNone(value.timing.received_at)
+        self.assertIsNone(value.timing.first_usable_at)
+        self.assertEqual(value.timing.evaluated_at, T0)
         changed = Parameters({
             **runtime.configuration.parameters.as_dict(), "target_temperature_c": 82,
         })
@@ -714,6 +725,74 @@ class ProgramConfigurationTests(unittest.TestCase):
             reloaded = Configuration.from_options(entry.options)
             self.assertEqual(reloaded.parameters.as_dict(), original)
             self.assertEqual(reloaded.selected_program_id, program.id)
+
+        asyncio.run(exercise())
+
+    def test_waiting_mode_commands_preserve_receipt_program_and_recording(self):
+        async def exercise():
+            now = T0
+            runtime = SaunaRuntime(Configuration.from_options(options({
+                "standard_temperature_c": 89,
+            })), clock=lambda: now)
+            entry = SimpleNamespace(
+                runtime_data=runtime, options=runtime.configuration.as_options(),
+            )
+            hass = _FakeHass()
+            program = runtime.configuration.temperature_programs[0]
+            await async_set_program(hass, entry, program.id)
+            original_parameters = runtime.configuration.parameters.as_dict()
+            runtime.controller.set_temperature(60, now)
+            consume = Mock(wraps=runtime.controller.consume_control_mode_input)
+            runtime.controller.consume_control_mode_input = consume
+
+            async def change_mode(mode):
+                nonlocal now
+                received_at = now
+                await runtime._lock.acquire()
+                pending = asyncio.create_task(async_set_control_mode(hass, entry, mode))
+                await asyncio.sleep(0)
+                now += timedelta(seconds=5)
+                runtime._lock.release()
+                configuration = await pending
+                self.assertEqual(configuration.control_mode, mode)
+                return received_at, now
+
+            received_manual, manual_at = await change_mode("manual")
+            self.assertEqual(runtime.controller.target_temperature, 89)
+            self.assertFalse(runtime.controller.last_decision.heat)
+            self.assertFalse(runtime.controller.heater_override)
+            self.assertIsNone(runtime.session)
+            now += timedelta(seconds=1)
+            await runtime.set_heater_override(True)
+            identity = runtime.session.session_id
+            started_at = runtime.session.timeline.session_started_at
+            self.assertTrue(runtime.controller.last_decision.heat)
+            now += timedelta(seconds=1)
+            await runtime.set_heater_override(False)
+            stopped_at = now
+            deadline = next(d for d in runtime.session.deadlines if d.purpose == "session_gap")
+            now += timedelta(seconds=1)
+            received_automatic, automatic_at = await change_mode("automatic")
+            self.assertEqual(runtime.configuration.parameters.as_dict(), original_parameters)
+            self.assertEqual(entry.options["parameters"], original_parameters)
+            self.assertEqual(runtime.configuration.selected_program_id, program.id)
+            self.assertEqual(runtime.session.session_id, identity)
+            self.assertEqual(runtime.session.timeline.session_started_at, started_at)
+            self.assertEqual(runtime.session.operation_off_at, stopped_at)
+            self.assertIn(deadline, runtime.session.deadlines)
+            self.assertIsNone(runtime.controller.heater_override)
+            self.assertFalse(runtime.controller.last_decision.heat)
+            self.assertEqual(runtime.controller.completed_sessions, ())
+            for call, mode, received_at, evaluated_at in zip(
+                consume.call_args_list, ("manual", "automatic"),
+                (received_manual, received_automatic), (manual_at, automatic_at), strict=True,
+            ):
+                value = call.args[0]
+                self.assertEqual(value.mode, mode)
+                self.assertEqual(value.timing.effective_at, received_at)
+                self.assertEqual(value.timing.received_at, received_at)
+                self.assertIsNone(value.timing.first_usable_at)
+                self.assertEqual(value.timing.evaluated_at, evaluated_at)
 
         asyncio.run(exercise())
 

@@ -19,16 +19,16 @@ from .timeline import Door, Event, Kind
 class InputTiming:
     """Keep factual beginning, receipt, first usability, and evaluation separate.
 
-    All times come from the producer. First usability records when the required
-    evidence actually admitted this assertion, including an unknown assertion.
-    It is not inferred from the factual beginning or Event.confirmation_at.
+    All times come from the producer. Missing evidence remains unknown. First
+    usability is supplied only when its owner already recorded that admission;
+    neither a first call nor Event.confirmation_at establishes it.
     A historical beginning does not backdate a controller or actuator effect.
     The containing ModelHandoff's observation time replaces none of these times.
     """
 
-    effective_at: datetime
-    received_at: datetime
-    first_usable_at: datetime
+    effective_at: datetime | None
+    received_at: datetime | None
+    first_usable_at: datetime | None
     evaluated_at: datetime
 
 
@@ -125,15 +125,13 @@ class DoorInput:
 class OccupancyInput:
     """Occupancy admitted by its owner, independently of evidence provenance.
 
-    person_evidence is an already admitted person finding, including the existing
-    cooling-minimum evidence use. qualified_presence says that the occupancy
+    qualified_presence says that the occupancy
     assertion itself is qualified, including a qualified absent assertion. It
     does not decide gang confirmation, entry, exit, or the relevant door context.
     The gang/controller owner retains those decisions.
 
-    The ordered events batch at this evaluation boundary preserves identities,
-    times, and recognition kinds, and is not a replayable history;
-    no PERSON_STRONG/WEAK event is required or reconstructed from these flags.
+    Original person events reach the controller separately and are neither
+    copied nor reconstructed from this assertion.
     report_id retains an existing state-report identity when one is present;
     None means no report, never a generated observation or presence-event ID.
     Unknown/unavailable is not absence. Evidence loss may remove qualifications
@@ -143,10 +141,8 @@ class OccupancyInput:
 
     occupancy: Literal["present", "absent", "unknown"]
     available: bool
-    person_evidence: bool
     qualified_presence: bool
     report_id: str | None
-    events: tuple[Event, ...]
     timing: InputTiming
 
 

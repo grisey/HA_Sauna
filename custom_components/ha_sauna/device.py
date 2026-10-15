@@ -20,6 +20,13 @@ from homeassistant.helpers.event import (
 from .archive import plain
 from .bindings import ROLE_BY_KEY
 from .core import power
+from .core.input_handoff import (
+    ContactorFeedbackInput,
+    HeatingFeedbackInput,
+    InputTiming,
+    PowerFeedbackInput,
+    TemperatureInput,
+)
 from .core.light import normal_brightness
 from .core.light_control import (
     light_phase,
@@ -395,16 +402,44 @@ class HADevice:
         observation = self.heating_observation = self.observe_heating(at)
         if self.contactor_feedback() is not True:
             self._reset_heating_progress()
-        controller.report_contactor(self.contactor_feedback(), at)
+        contactor_received_at = self.source_received_at.get("heater")
+        controller.consume_contactor_feedback_input(ContactorFeedbackInput(
+            contactor=self.contactor_feedback(),
+            timing=InputTiming(
+                effective_at=contactor_received_at,
+                received_at=contactor_received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
         controller.report_fallback_heating(self.observe_fallback_heating()[1], at)
-        controller.report_power(
-            observation["power_w"],
-            self.source_received_at["heater_power"] + timedelta(seconds=timeout)
-            if self.source_received_at.get("heater_power") and timeout
-            else None,
-            at,
-        )
-        controller.report_heating(observation["heating"], at)
+        power_received_at = self.source_received_at.get("heater_power")
+        controller.consume_power_feedback_input(PowerFeedbackInput(
+            power_w=observation["power_w"],
+            valid_until=power_received_at + timedelta(seconds=timeout)
+            if power_received_at and timeout else None,
+            timing=InputTiming(
+                effective_at=power_received_at,
+                received_at=power_received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
+        heating_role = {
+            "power": "heater_power",
+            "independent_feedback": "heater_feedback",
+            "contactor": "heater",
+        }.get(observation["source"])
+        heating_received_at = self.source_received_at.get(heating_role)
+        controller.consume_heating_feedback_input(HeatingFeedbackInput(
+            heating=observation["heating"],
+            timing=InputTiming(
+                effective_at=heating_received_at,
+                received_at=heating_received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
         observation_key = (
             controller.session.session_id if controller.session else None,
             observation["source"],
@@ -827,9 +862,17 @@ class HADevice:
         # Ein kurz fehlendes Paket verwirft einen noch gültigen Messwert nicht.
         # Wenn die obere Höhe ausfällt, führt die frische untere Messung dieselbe
         # Regelung ohne Mittelung oder erfundenen Höhenoffset fort.
-        controller.set_temperature(
-            temperature, now, valid_until=self.regulation_valid_until(regulation),
-        )
+        controller.consume_temperature_input(TemperatureInput(
+            value=temperature,
+            valid_until=self.regulation_valid_until(regulation),
+            timing=InputTiming(
+                effective_at=(regulation.measured_at or regulation.received_at
+                              if regulation is not None else None),
+                received_at=regulation.received_at if regulation is not None else None,
+                first_usable_at=None,
+                evaluated_at=now,
+            ),
+        ))
         self.report_received_feedback(now)
         contactor = self.contactor_feedback()
         problems = set()

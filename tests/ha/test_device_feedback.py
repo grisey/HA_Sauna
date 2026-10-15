@@ -9,7 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
@@ -72,6 +72,307 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertTrue(handoff.after.heating)
         self.assertTrue(handoff.after.estimated)
         self.assertIsNone(handoff.after.power_w)
+
+    def test_selected_heating_input_books_intervals_with_its_own_receipt(self):
+        from custom_components.ha_sauna.core.input_handoff import HeatingFeedbackInput
+
+        for source in ("power", "independent_feedback", "contactor", "unknown"):
+            with self.subTest(source=source):
+                bindings = Bindings({**BINDINGS.values, "heater_power": "sensor.power"})
+                runtime, adapter, _ = self.device(bindings=bindings)
+                controller = runtime.controller
+                controller.begin_session("selected-heating", T0)
+                received = T0 + timedelta(seconds={
+                    "power": 2, "independent_feedback": 1, "contactor": 0, "unknown": 0,
+                }[source])
+                adapter.ingest("heater", state("unavailable" if source == "unknown" else "on"),
+                               T0)
+                adapter.ingest("heater_feedback", state(
+                    "on" if source == "independent_feedback" else "unavailable"),
+                    T0 + timedelta(seconds=1))
+                measured = state("6000" if source == "power" else "unavailable", unit="W")
+                measured.attributes["device_class"] = "power"
+                adapter.ingest("heater_power", measured, T0 + timedelta(seconds=2))
+                adapter.ingest("upper_humidity", state("30", unit="%"),
+                               T0 + timedelta(seconds=3))
+                controller.consume_heating_feedback_input = Mock(
+                    wraps=controller.consume_heating_feedback_input)
+                adapter.observe_heating = Mock(wraps=adapter.observe_heating)
+
+                adapter.report_received_feedback(T0 + timedelta(seconds=4))
+                controller.advance(T0 + timedelta(seconds=6))
+                # A callback received before the preceding cycle cannot backdate heat.
+                adapter.report_received_feedback(T0 + timedelta(seconds=5))
+
+                self.assertEqual(adapter.observe_heating.call_count, 2)
+                inputs = controller.consume_heating_feedback_input.call_args_list
+                self.assertEqual(len(inputs), 2)
+                selected = inputs[-1].args[0]
+                self.assertIsInstance(selected, HeatingFeedbackInput)
+                self.assertEqual(selected.timing.evaluated_at, T0 + timedelta(seconds=6))
+                self.assertIsNone(selected.timing.first_usable_at)
+                if source == "unknown":
+                    self.assertIsNone(selected.heating)
+                    self.assertIsNone(selected.timing.received_at)
+                    self.assertIsNone(selected.timing.effective_at)
+                    self.assertIsNone(controller.session.heating.reported_heating)
+                    self.assertIsNone(controller.session.heating.off_since)
+                    self.assertEqual(controller.session.heating.intervals, ())
+                    self.assertEqual(controller.session.energy.unknown_seconds, 6)
+                else:
+                    self.assertIs(selected.heating, True)
+                    self.assertEqual(selected.timing.received_at, received)
+                    self.assertEqual(selected.timing.effective_at, received)
+                    self.assertEqual(controller.session.heating.intervals[0].started_at,
+                                     T0 + timedelta(seconds=4))
+                    self.assertEqual(controller.session.heating.elapsed_seconds, 2)
+
+    def test_heating_input_power_expiry_keeps_existing_fallback_energy_boundary(self):
+        bindings = Bindings({**BINDINGS.values, "heater_power": "sensor.power"})
+        runtime, adapter, _ = self.device(bindings=bindings)
+        controller = runtime.controller
+        controller.begin_session("power-expiry", T0)
+        adapter.ingest("heater", state("on"), T0)
+        adapter.ingest("heater_feedback", state("off"), T0)
+        measured = state("6000", unit="W")
+        measured.attributes["device_class"] = "power"
+        adapter.ingest("heater_power", measured, T0)
+        adapter.report_received_feedback(T0)
+        timeout = adapter.values["sensor_timeout_seconds"]
+        expiry = T0 + timedelta(seconds=timeout)
+
+        # The already supplied fallback closes heat exactly at power expiry,
+        # even before the next adapter refresh selects it again.
+        controller.advance(expiry + timedelta(seconds=2))
+        self.assertIs(controller.feedback, False)
+        self.assertEqual(controller.session.heating.intervals[0].ended_at, expiry)
+        self.assertEqual(controller.session.heating.elapsed_seconds, timeout)
+        self.assertEqual(controller.session.energy.measured_seconds, timeout)
+        self.assertAlmostEqual(controller.session.energy.measured_kwh, 6000 * timeout / 3600000)
+        self.assertEqual(controller.session.energy.estimated_seconds, 2)
+        self.assertEqual(controller.session.energy.estimated_kwh, 0)
+        controller.consume_heating_feedback_input = Mock(
+            wraps=controller.consume_heating_feedback_input)
+        adapter.refresh(expiry + timedelta(seconds=3))
+        selected = controller.consume_heating_feedback_input.call_args.args[0]
+        self.assertIs(selected.heating, False)
+        self.assertEqual(selected.timing.received_at, T0)
+        self.assertEqual(selected.timing.effective_at, T0)
+        self.assertIsNone(selected.timing.first_usable_at)
+        self.assertEqual(selected.timing.evaluated_at, expiry + timedelta(seconds=3))
+        self.assertEqual(controller.session.energy.measured_seconds, timeout)
+        self.assertEqual(controller.session.energy.estimated_seconds, 3)
+
+    def test_heating_input_keeps_door_heat_and_cooling_separate_from_contactor(self):
+        runtime, adapter, _ = self.device(target_temperature_c=80)
+        controller = runtime.controller
+        controller.set_temperature(90, T0)
+        adapter.ingest("heater", state("on"), T0)
+        adapter.ingest("heater_feedback", state("off"), T0)
+        adapter.report_received_feedback(T0)
+        controller.begin_session("door-heat", T0)
+        for kind, seconds in ((Kind.DOOR_OPEN, 1), (Kind.DOOR_CLOSE, 2)):
+            at = T0 + timedelta(seconds=seconds)
+            controller.process(Event(kind.value, "door-heat", kind, at, at))
+        adapter.ingest("heater", state("on"), T0 + timedelta(seconds=3))
+        adapter.report_received_feedback(T0 + timedelta(seconds=3))
+        self.assertTrue(controller.regulation_inputs.temporary_door_heat)
+        self.assertEqual(controller.session.heating.intervals, ())
+
+        adapter.ingest("heater_feedback", state("on"), T0 + timedelta(seconds=4))
+        adapter.report_received_feedback(T0 + timedelta(seconds=4))
+        self.assertFalse(controller.regulation_inputs.temporary_door_heat)
+        self.assertEqual(controller.session.heating.intervals[0].started_at,
+                         T0 + timedelta(seconds=4))
+        controller._begin_after_run("g", T0 + timedelta(seconds=5))
+        adapter.ingest("heater_feedback", state("off"), T0 + timedelta(seconds=6))
+        adapter.report_received_feedback(T0 + timedelta(seconds=6))
+        self.assertEqual(controller.session.heating.intervals[0].ended_at,
+                         T0 + timedelta(seconds=6))
+        self.assertTrue(controller.session.after_run.pending_start)
+        adapter.ingest("heater", state("off"), T0 + timedelta(seconds=7))
+        adapter.report_received_feedback(T0 + timedelta(seconds=7))
+        self.assertFalse(controller.session.after_run.pending_start)
+        self.assertEqual(controller.session.after_run.started_at,
+                         T0 + timedelta(seconds=7))
+
+    def test_contactor_input_preserves_unknown_and_its_own_receipt(self):
+        from custom_components.ha_sauna.core.input_handoff import ContactorFeedbackInput
+
+        runtime, adapter, _ = self.device()
+        controller = runtime.controller
+        controller.set_temperature(90, T0)
+        controller.begin_session("contactor-input", T0)
+        adapter.ingest("heater_feedback", state("off"), T0)
+        controller.consume_contactor_feedback_input = Mock(
+            wraps=controller.consume_contactor_feedback_input)
+        adapter.report_received_feedback(T0)
+        missing = controller.consume_contactor_feedback_input.call_args.args[0]
+        self.assertIsInstance(missing, ContactorFeedbackInput)
+        self.assertIsNone(missing.contactor)
+        self.assertIsNone(missing.timing.received_at)
+        self.assertIsNone(missing.timing.effective_at)
+        controller._begin_after_run("g", T0)
+
+        adapter.ingest("heater", state("on"), T0 + timedelta(seconds=1))
+        adapter.ingest("upper_humidity", state("30", unit="%"),
+                       T0 + timedelta(seconds=2))
+        adapter.report_received_feedback(T0 + timedelta(seconds=2))
+        active = controller.consume_contactor_feedback_input.call_args.args[0]
+        self.assertIs(active.contactor, True)
+        self.assertEqual(active.timing.received_at, T0 + timedelta(seconds=1))
+        self.assertEqual(active.timing.effective_at, T0 + timedelta(seconds=1))
+        # Contactor ON cannot replace the independent physical heating report.
+        self.assertIs(controller.feedback, False)
+        self.assertEqual(controller.session.heating.intervals, ())
+
+        adapter.ingest("heater", state("unavailable"), T0 + timedelta(seconds=3))
+        adapter.report_received_feedback(T0 + timedelta(seconds=3))
+        controller.advance(T0 + timedelta(seconds=5))
+        adapter.report_received_feedback(T0 + timedelta(seconds=4))
+        delayed = controller.consume_contactor_feedback_input.call_args.args[0]
+        self.assertIsNone(delayed.contactor)
+        self.assertEqual(delayed.timing.evaluated_at, T0 + timedelta(seconds=5))
+        adapter.refresh(T0 + timedelta(seconds=6))
+        refreshed = controller.consume_contactor_feedback_input.call_args.args[0]
+        self.assertIsNone(refreshed.contactor)
+        self.assertEqual(refreshed.timing.received_at, T0 + timedelta(seconds=3))
+        self.assertEqual(refreshed.timing.effective_at, T0 + timedelta(seconds=3))
+        self.assertIsNone(refreshed.timing.first_usable_at)
+        self.assertEqual(refreshed.timing.evaluated_at, T0 + timedelta(seconds=6))
+        self.assertIsNone(controller.contactor)
+        self.assertTrue(controller.session.after_run.pending_start)
+        self.assertEqual(
+            [(mark.at, mark.state) for mark in controller.session.contactor_history],
+            [(T0, None), (T0 + timedelta(seconds=2), True),
+             (T0 + timedelta(seconds=3), None)],
+        )
+
+    def test_power_input_keeps_normalized_value_receipt_and_energy(self):
+        from custom_components.ha_sauna.core.input_handoff import PowerFeedbackInput
+
+        cases = (
+            ("6000", "W", "power", 6000),
+            ("6", "kW", "power", 6000),
+            ("0", "W", "power", 0),
+            ("unavailable", "W", "power", None),
+            ("6000", "kWh", "power", None),
+            ("6000", "W", "energy", None),
+        )
+        for value, unit, device_class, expected in cases:
+            with self.subTest(value=value, unit=unit, device_class=device_class):
+                bindings = Bindings({**BINDINGS.values, "heater_power": "sensor.power"})
+                runtime, adapter, _ = self.device(bindings=bindings)
+                controller = runtime.controller
+                controller.begin_session("power-input", T0)
+                adapter.ingest("heater", state("on"), T0)
+                adapter.ingest("heater_feedback", state("off"), T0)
+                controller.consume_power_feedback_input = Mock(
+                    wraps=controller.consume_power_feedback_input)
+                adapter.power_value = Mock(wraps=adapter.power_value)
+                adapter.report_received_feedback(T0)
+                missing = controller.consume_power_feedback_input.call_args.args[0]
+                self.assertIsInstance(missing, PowerFeedbackInput)
+                self.assertIsNone(missing.power_w)
+                self.assertIsNone(missing.valid_until)
+                self.assertIsNone(missing.timing.received_at)
+                self.assertIsNone(missing.timing.effective_at)
+
+                receipt = T0 + timedelta(seconds=1)
+                measured = state(value, unit=unit)
+                measured.attributes["device_class"] = device_class
+                adapter.ingest("heater_power", measured, receipt)
+                adapter.ingest("upper_humidity", state("30", unit="%"),
+                               T0 + timedelta(seconds=2))
+                adapter.report_received_feedback(T0 + timedelta(seconds=2))
+                controller.advance(T0 + timedelta(seconds=4))
+                # A delayed callback reuses the selected measurement without
+                # moving its receipt or backdating the energy accounting.
+                adapter.report_received_feedback(T0 + timedelta(seconds=3))
+                selected = controller.consume_power_feedback_input.call_args.args[0]
+                self.assertEqual(adapter.power_value.call_count, 3)
+                self.assertEqual(selected.power_w, expected)
+                self.assertEqual(controller.power_w, expected)
+                self.assertEqual(selected.valid_until, receipt + timedelta(
+                    seconds=adapter.values["sensor_timeout_seconds"]))
+                self.assertEqual(selected.timing.received_at, receipt)
+                self.assertEqual(selected.timing.effective_at, receipt)
+                self.assertIsNone(selected.timing.first_usable_at)
+                self.assertEqual(selected.timing.evaluated_at, T0 + timedelta(seconds=4))
+                energy = controller.session.energy
+                self.assertEqual(energy.unknown_seconds, 0)
+                if expected is None:
+                    self.assertEqual(energy.measured_seconds, 0)
+                    self.assertEqual(energy.estimated_seconds, 4)
+                    self.assertEqual(energy.measured_kwh, 0)
+                    self.assertEqual(energy.estimated_kwh, 0)
+                else:
+                    self.assertEqual(energy.measured_seconds, 2)
+                    self.assertEqual(energy.estimated_seconds, 2)
+                    self.assertAlmostEqual(energy.measured_kwh, expected * 2 / 3600000)
+                    self.assertEqual(energy.estimated_kwh, 0)
+
+    def test_power_input_expiry_preserves_measured_estimated_and_unknown_energy(self):
+        for fallback in (True, False, None):
+            with self.subTest(fallback=fallback):
+                bindings = Bindings({**BINDINGS.values, "heater_power": "sensor.power"})
+                runtime, adapter, _ = self.device(bindings=bindings)
+                controller = runtime.controller
+                controller.begin_session("power-expiry-input", T0)
+                adapter.ingest("heater", state("unavailable" if fallback is None else "on"), T0)
+                adapter.ingest("heater_feedback", state(
+                    "unavailable" if fallback is None else "on" if fallback else "off"), T0)
+                measured = state("6", unit="kW")
+                measured.attributes["device_class"] = "power"
+                adapter.ingest("heater_power", measured, T0)
+                controller.consume_power_feedback_input = Mock(
+                    wraps=controller.consume_power_feedback_input)
+                adapter.report_received_feedback(T0)
+                timeout = adapter.values["sensor_timeout_seconds"]
+                expiry = T0 + timedelta(seconds=timeout)
+                selected = controller.consume_power_feedback_input.call_args.args[0]
+                self.assertEqual(selected.power_w, 6000)
+                self.assertEqual(selected.valid_until, expiry)
+                controller.advance(expiry - timedelta(seconds=1))
+                self.assertEqual(controller.session.energy.measured_seconds, timeout - 1)
+                controller.advance(expiry)
+                self.assertEqual(controller.session.energy.measured_seconds, timeout)
+                self.assertEqual(controller.session.energy.estimated_seconds, 0)
+                self.assertEqual(controller.session.energy.unknown_seconds, 0)
+                self.assertIs(controller.feedback, fallback)
+                adapter.report_received_feedback(expiry)
+                expired = controller.consume_power_feedback_input.call_args.args[0]
+                self.assertIsNone(expired.power_w)
+                self.assertEqual(expired.valid_until, expiry)
+                self.assertEqual(expired.timing.received_at, T0)
+                self.assertEqual(expired.timing.effective_at, T0)
+                self.assertIsNone(expired.timing.first_usable_at)
+                self.assertEqual(expired.timing.evaluated_at, expiry)
+                controller.advance(expiry + timedelta(seconds=2))
+                energy = controller.session.energy
+                self.assertEqual(energy.measured_seconds, timeout)
+                self.assertAlmostEqual(energy.measured_kwh, 6000 * timeout / 3600000)
+                self.assertEqual(energy.estimated_seconds, 0 if fallback is None else 2)
+                self.assertEqual(energy.unknown_seconds, 2 if fallback is None else 0)
+                nominal_kw = controller.parameters.values["nominal_power_kw"]
+                self.assertAlmostEqual(energy.estimated_kwh,
+                                       nominal_kw * 2 / 3600 if fallback else 0)
+
+                adapter.refresh(expiry + timedelta(seconds=3))
+                expired = controller.consume_power_feedback_input.call_args.args[0]
+                self.assertIsNone(expired.power_w)
+                self.assertIsNone(controller.power_w)
+                self.assertEqual(expired.valid_until, expiry)
+                self.assertEqual(expired.timing.received_at, T0)
+                self.assertEqual(expired.timing.effective_at, T0)
+                self.assertIsNone(expired.timing.first_usable_at)
+                self.assertEqual(expired.timing.evaluated_at, expiry + timedelta(seconds=3))
+                energy = controller.session.energy
+                self.assertEqual(energy.measured_seconds, timeout)
+                self.assertEqual(energy.estimated_seconds, 0 if fallback is None else 3)
+                self.assertEqual(energy.unknown_seconds, 3 if fallback is None else 0)
+                self.assertAlmostEqual(energy.estimated_kwh,
+                                       nominal_kw * 3 / 3600 if fallback else 0)
 
     def test_readonly_light_observation_distinguishes_unknown_from_off(self):
         from custom_components.ha_sauna.api import manual_controls
@@ -292,6 +593,14 @@ class DeviceFeedbackTests(unittest.TestCase):
             below, above = target - .01, target + .01
             adapter.ingest("upper_temperature", state(str(below), unit="°C"), T0, initial=True)
             adapter.refresh(T0)
+            inputs = []
+            consume = runtime.controller.consume_temperature_input
+
+            def temperature_input(value):
+                inputs.append(value)
+                return consume(value)
+
+            runtime.controller.consume_temperature_input = temperature_input
             await runtime._lock.acquire()
             clock[0] = T0 + timedelta(seconds=1)
             pending = []
@@ -312,13 +621,96 @@ class DeviceFeedbackTests(unittest.TestCase):
             runtime.controller.set_operation = operation
             runtime._lock.release()
             await asyncio.gather(*pending)
-            return runtime, at_start
+            return runtime, at_start, inputs
 
-        runtime, at_start = asyncio.run(exercise())
+        runtime, at_start, inputs = asyncio.run(exercise())
         below = runtime.controller.target_temperature - .01
         self.assertEqual(at_start, [(below, None)])
         self.assertEqual(runtime.session.ready_at, T0 + timedelta(seconds=1))
         self.assertEqual(runtime.controller.temperature, below)
+        received_at = T0 + timedelta(seconds=1)
+        self.assertEqual([value.value for value in inputs[:4]],
+                         [below, below, runtime.controller.target_temperature + .01, below])
+        for value in inputs:
+            self.assertEqual(value.timing.effective_at, received_at)
+            self.assertEqual(value.timing.received_at, received_at)
+            self.assertIsNone(value.timing.first_usable_at)
+            self.assertEqual(value.timing.evaluated_at, received_at)
+            self.assertEqual(value.valid_until, received_at + timedelta(
+                seconds=runtime.configuration.parameters.values["sensor_timeout_seconds"]))
+
+    def test_temperature_refresh_keeps_selected_old_measurement_times_and_readiness(self):
+        runtime, adapter, _ = self.device(target_temperature_c=100, standard_temperature_c=100)
+        controller = runtime.controller
+        adapter.ingest("heater", state("off"), T0, initial=True)
+        adapter.ingest("heater_feedback", state("off"), T0, initial=True)
+        adapter.ingest("upper_temperature", state("70", unit="°C"), T0, initial=True)
+        adapter.refresh(T0)
+        controller.begin_session("temperature-refresh", T0)
+        target = controller.target_temperature
+        adapter.ingest("upper_temperature", state(str(target), unit="°C"), T0, initial=True)
+        measured_at = T0 - timedelta(seconds=2)
+        selected = replace(adapter.last_valid_temperature, measured_at=measured_at)
+        adapter.last_valid_temperature = selected
+        inputs = []
+        consume = controller.consume_temperature_input
+
+        def temperature_input(value):
+            inputs.append(value)
+            return consume(value)
+
+        controller.consume_temperature_input = temperature_input
+        evaluated_at = T0 + timedelta(seconds=5)
+        adapter.refresh(evaluated_at)
+        self.assertEqual(len(inputs), 1)
+        value = inputs[0]
+        self.assertEqual(value.value, target)
+        self.assertEqual(value.timing.effective_at, measured_at)
+        self.assertEqual(value.timing.received_at, T0)
+        self.assertIsNone(value.timing.first_usable_at)
+        self.assertEqual(value.timing.evaluated_at, evaluated_at)
+        self.assertEqual(value.valid_until, T0 + timedelta(
+            seconds=adapter.values["sensor_timeout_seconds"]))
+        self.assertEqual(controller.temperature, target)
+        self.assertEqual(controller._temperature_valid_until, value.valid_until)
+        self.assertEqual(runtime.session.ready_at, evaluated_at)
+        self.assertFalse(controller.last_decision.heat)
+
+    def test_missing_and_stale_temperature_inputs_keep_unknown_and_no_receipt(self):
+        runtime, adapter, _ = self.device()
+        controller = runtime.controller
+        adapter.ingest("heater", state("off"), T0, initial=True)
+        adapter.ingest("heater_feedback", state("off"), T0, initial=True)
+        inputs = []
+        consume = controller.consume_temperature_input
+
+        def temperature_input(value):
+            inputs.append(value)
+            return consume(value)
+
+        controller.consume_temperature_input = temperature_input
+        adapter.refresh(T0)
+        self.assertIsNone(controller.temperature)
+        self.assertFalse(controller.last_decision.heat)
+        adapter.ingest("upper_temperature", state("70", unit="°C"), T0, initial=True)
+        adapter.refresh(T0)
+        self.assertEqual(controller.temperature, 70)
+        controller.begin_session("temperature-expiry", T0)
+        self.assertTrue(controller.last_decision.heat)
+        stale_at = T0 + timedelta(seconds=adapter.values["sensor_timeout_seconds"] + 1)
+        adapter.refresh(stale_at)
+        self.assertIsNone(controller.temperature)
+        self.assertIsNone(controller._temperature_valid_until)
+        self.assertFalse(controller.last_decision.heat)
+        for index, evaluated_at in ((0, T0), (2, stale_at)):
+            with self.subTest(evaluated_at=evaluated_at):
+                value = inputs[index]
+                self.assertIsNone(value.value)
+                self.assertIsNone(value.valid_until)
+                self.assertIsNone(value.timing.effective_at)
+                self.assertIsNone(value.timing.received_at)
+                self.assertIsNone(value.timing.first_usable_at)
+                self.assertEqual(value.timing.evaluated_at, evaluated_at)
 
     def test_blocked_humidity_rise_cannot_be_revived_after_waiting_off_service(self):
         async def exercise(queued, resumes_at, off_at=2, fresh_after_resume=False):
@@ -1130,6 +1522,14 @@ class DeviceFeedbackTests(unittest.TestCase):
             clock = [T0]
             runtime._clock = lambda: clock[0]
             runtime.controller.begin_session("operation-gate", T0)
+            operation_inputs = []
+            consume_operation = runtime.controller.consume_operation_input
+
+            def operation_input(value):
+                operation_inputs.append(value)
+                return consume_operation(value)
+
+            runtime.controller.consume_operation_input = operation_input
             adapter.ingest("heater", state("on"), T0)
             adapter.ingest("heater_feedback", state("on"), T0)
             adapter.command, adapter.command_at = True, T0
@@ -1165,14 +1565,23 @@ class DeviceFeedbackTests(unittest.TestCase):
                         await runtime.device_input(event)
                 if not queued or second not in (28, 29):
                     await runtime.tick()
-            return runtime, adapter
+            return runtime, adapter, operation_inputs
 
         for queued in (False, True):
             with self.subTest(queued=queued):
-                runtime, adapter = asyncio.run(exercise(queued))
+                runtime, adapter, operation_inputs = asyncio.run(exercise(queued))
                 self.assertEqual(adapter.start_errors(), [])
                 self.assertNotIn("start_rejected", adapter.faults)
                 self.assertTrue(runtime.session.operation_enabled)
+                self.assertEqual(runtime.session.session_id, "operation-gate")
+                self.assertEqual([value.enabled for value in operation_inputs], [False, True])
+                for value, second in zip(operation_inputs, (28, 29), strict=True):
+                    received_at = T0 + timedelta(seconds=second)
+                    self.assertIsNone(value.session_id)
+                    self.assertEqual(value.timing.effective_at, received_at)
+                    self.assertEqual(value.timing.received_at, received_at)
+                    self.assertIsNone(value.timing.first_usable_at)
+                    self.assertEqual(value.timing.evaluated_at, received_at)
                 self.assertEqual(runtime.detector.heating_since, T0 + timedelta(seconds=29))
                 self.assertEqual(
                     [(i.started_at, i.ended_at) for i in runtime.session.heating.intervals],
@@ -1393,6 +1802,8 @@ class DeviceFeedbackTests(unittest.TestCase):
             controller.begin_session("delayed", T0)
             controller._begin_after_run("g", T0)
             self.assertTrue(controller.session.after_run.pending_start)
+            controller.consume_contactor_feedback_input = Mock(
+                wraps=controller.consume_contactor_feedback_input)
             adapter.apply = AsyncMock()
             event = SimpleNamespace(
                 event_type="state_changed",
@@ -1407,11 +1818,29 @@ class DeviceFeedbackTests(unittest.TestCase):
             queued = asyncio.create_task(runtime.device_input(event))
             await asyncio.sleep(0)
             clock[0] = T0 + timedelta(seconds=11)
+            self.assertTrue(controller.session.after_run.pending_start)
+            self.assertIs(controller.contactor, True)
             runtime._lock.release()
             await queued
-            return controller.session.after_run.started_at
+            return controller, controller.consume_contactor_feedback_input.call_args_list
 
-        self.assertEqual(asyncio.run(exercise()), T0 + timedelta(seconds=1))
+        controller, calls = asyncio.run(exercise())
+        off = calls[0].args[0]
+        self.assertIs(off.contactor, False)
+        self.assertEqual(off.timing.received_at, T0 + timedelta(seconds=1))
+        self.assertEqual(off.timing.effective_at, T0 + timedelta(seconds=1))
+        self.assertIsNone(off.timing.first_usable_at)
+        self.assertEqual(off.timing.evaluated_at, T0 + timedelta(seconds=1))
+        self.assertIs(controller.contactor, False)
+        self.assertEqual(controller.session.after_run.started_at, T0 + timedelta(seconds=1))
+        self.assertFalse(controller.session.after_run.pending_start)
+        self.assertEqual(
+            [(mark.at, mark.state) for mark in controller.session.contactor_history],
+            [(T0, True), (T0 + timedelta(seconds=1), False)],
+        )
+        # The later cycle reuses the same physical receipt rather than inventing one.
+        self.assertTrue(all(call.args[0].timing.received_at == T0 + timedelta(seconds=1)
+                            for call in calls))
 
     def test_configured_native_light_scale_matches_only_its_exact_echo(self):
         _, adapter, _ = self.device(light_brightness_scale=10)

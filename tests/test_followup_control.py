@@ -8,7 +8,7 @@ import unittest
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.models import Position, Quantity
 from custom_components.ha_sauna.core.parameters import Parameters
-from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
+from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 from test_foundation import T0, bindings
@@ -66,7 +66,7 @@ class FollowupControlTests(unittest.TestCase):
         c.report_heating(True, at(1))
         self.assertFalse(c.regulation_inputs.temporary_door_heat)
         person = ev(Kind.PERSON_STRONG, 2)
-        c.process_presence(ProxyPresenceSource.present(person), person)
+        c.process(person)
         self.assertTrue(c.last_decision.heat)
         self.assertEqual(c.last_decision.reason, "gang_heat_demand")
         expiry = 1 + c.parameters.seconds("confirmation_minutes")
@@ -77,7 +77,7 @@ class FollowupControlTests(unittest.TestCase):
         c.process(ev(Kind.DOOR_OPEN, expiry + 1))
         c.process(ev(Kind.DOOR_CLOSE, expiry + 2))
         protected_person = ev(Kind.PERSON_STRONG, expiry + 3)
-        c.process_presence(ProxyPresenceSource.present(protected_person), protected_person)
+        c.process(protected_person)
         self.assertFalse(c.last_decision.heat)
 
     def test_manual_heating_hands_off_to_live_gang_demand(self):

@@ -13,6 +13,7 @@ from typing import Literal
 from .contracts import ConsumerEvent, ControlInputs, PresenceReport
 from .configuration_model import ConfigurationModel
 from .controller import Controller, PresenceEntry
+from .input_handoff import OccupancyInput
 from .model_handoff import FrozenMap, require_immutable
 from .models import LightAfterRun, Session, ThermostatState
 from .presence import PresenceObservation, PresenceProjection
@@ -45,9 +46,7 @@ class ControllerOutput:
     program_mode: str
     control_mode: str
     temperature_steps: tuple[float, ...] | None
-    presence_source: str
-    presence_entity: str | None
-    direct_presence: PresenceReport | None
+    direct_presence: OccupancyInput | None
     presence_entry: PresenceEntry | None
     last_at: datetime | None
     temperature: float | None
@@ -96,8 +95,6 @@ class ControllerOutput:
             control_mode=owner.control_mode,
             temperature_steps=(tuple(owner.temperature_steps)
                                if owner.temperature_steps is not None else None),
-            presence_source=owner.presence_source,
-            presence_entity=owner.presence_entity,
             direct_presence=owner.direct_presence,
             presence_entry=owner._presence_entry,
             last_at=owner._last_at,

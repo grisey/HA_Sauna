@@ -198,6 +198,28 @@ class ConfigurationModel:
     def cooling_presence_policy(self):
         return cooling_presence_policy(self.control_mode, self.presence_source)
 
+    @property
+    def occupancy_required_for_gang_heat(self):
+        return self.direct_presence
+
+    @property
+    def provisional_door_heat_allowed(self):
+        # Permissions describe automatic operation even while manual mode is
+        # selected. The controller applies its current mode at evaluation.
+        return "provisional_door_heat" in regulation_causes(
+            "automatic", self.presence_source,
+        )
+
+    @property
+    def person_evidence_limits_cooling(self):
+        return cooling_presence_policy(
+            "automatic", self.presence_source,
+        ) == "proxy_person_minimum"
+
+    @property
+    def gang_start_can_interrupt_cooling(self):
+        return gang_start_interrupts_cooling("automatic", self.presence_source)
+
     def parameter_applicable(self, definition):
         if isinstance(definition, str):
             definition = BY_KEY.get(definition)

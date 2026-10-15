@@ -3,7 +3,7 @@
 import unittest
 from datetime import timedelta
 
-from test_foundation import T0, event, parameters
+from test_foundation import T0, event, parameters, selected_occupancy
 
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.display import phase_timer, start_availability
@@ -144,14 +144,16 @@ class ManualModeTests(unittest.TestCase):
 
     def test_manual_entry_waits_for_minimum_and_exit_remains_possible_below_it(self):
         controller = self.controller()
-        controller.presence_source = "ha_presence"
-        controller.presence_entity = "binary_sensor.presence"
+        controller.occupancy_required_for_gang_heat = True
+        controller.provisional_door_heat_allowed = False
+        controller.person_evidence_limits_cooling = False
+        controller.gang_start_interrupts_cooling = True
         minimum = controller.parameters.values["sauna_min_temperature_c"]
         controller.set_temperature(minimum - 1, at(0))
         controller.set_heater_override(True, at(1))
-        controller.observe_direct_presence(binary_presence(
-            controller.presence_entity, "on", at(2), at(2),
-        ), at(2))
+        controller.consume_occupancy_input(selected_occupancy(binary_presence(
+            "binary_sensor.presence", "on", at(2), at(2),
+        ), at(2)))
         self.observe(controller, "entry-open", Kind.DOOR_OPEN, 3)
         self.observe(controller, "entry-close", Kind.DOOR_CLOSE, 4)
         self.assertIsNone(controller.session.timeline.active)
@@ -159,9 +161,9 @@ class ManualModeTests(unittest.TestCase):
         self.assertEqual(controller.session.timeline.active.started_at, at(5))
         controller.set_temperature(minimum - 1, at(6))
         self.observe(controller, "exit", Kind.DOOR_OPEN, 7)
-        controller.observe_direct_presence(binary_presence(
-            controller.presence_entity, "off", at(8), at(8),
-        ), at(8))
+        controller.consume_occupancy_input(selected_occupancy(binary_presence(
+            "binary_sensor.presence", "off", at(8), at(8),
+        ), at(8)))
         self.observe(controller, "ventilation", Kind.VENTILATION, 9)
         self.assertEqual(controller.session.timeline.gang_count, 1)
         self.assertTrue(controller.last_decision.heat)

@@ -60,7 +60,7 @@ class InputHandoffTests(unittest.TestCase):
         contactor = ContactorFeedbackInput(None, self.timing)
         power = PowerFeedbackInput(None, None, self.timing)
         occupancy = OccupancyInput(
-            "unknown", False, False, False, None, (), self.timing
+            "unknown", False, False, None, self.timing
         )
         door = DoorInput(Door.UNKNOWN, (), (), self.timing)
 
@@ -93,50 +93,35 @@ class InputHandoffTests(unittest.TestCase):
         self.assertNotEqual(power, PowerFeedbackInput(0.0, None, self.timing))
         self.assertNotEqual(
             occupancy,
-            OccupancyInput("absent", True, False, True, "report", (), self.timing),
+            OccupancyInput("absent", True, True, "report", self.timing),
         )
 
-    def test_presence_qualification_preserves_person_evidence_without_a_gang_decision(self) -> None:
-        event = Event(
-            "person-1", "session", Kind.PERSON_WEAK, T0,
-            T0 + timedelta(seconds=5),
-        )
-        person = OccupancyInput(
-            "present", True, True, False, None, (event,), self.timing
-        )
+    def test_presence_qualification_does_not_contain_person_events(self) -> None:
         qualified = OccupancyInput(
-            "present", True, True, True, "report-on", (), self.timing
+            "present", True, True, "report-on", self.timing
         )
         absent = OccupancyInput(
-            "absent", True, False, True, "report-off", (), self.timing
+            "absent", True, True, "report-off", self.timing
         )
-
-        for value in (person, qualified, absent):
+        for value in (qualified, absent):
             with self.subTest(value=value):
                 self.assertIs(ModelHandoff(self.context, None, value).after, value)
-        self.assertTrue(person.person_evidence)
-        self.assertFalse(person.qualified_presence)
-        self.assertIs(person.events[0], event)
-        self.assertEqual(person.events[0].kind, Kind.PERSON_WEAK)
         self.assertTrue(qualified.qualified_presence)
-        self.assertEqual(qualified.events, ())
         self.assertEqual(qualified.report_id, "report-on")
         self.assertTrue(absent.qualified_presence)
         self.assertEqual(absent.occupancy, "absent")
-        self.assertEqual(absent.events, ())
 
     def test_evidence_loss_is_unknown_and_can_leave_an_unchanged_admitted_state(self) -> None:
         admitted = OccupancyInput(
-            "present", True, True, True, "report-on", (), self.timing
+            "present", True, True, "report-on", self.timing
         )
         lost = OccupancyInput(
-            "unknown", False, False, False, "report-unknown", (), self.timing
+            "unknown", False, False, "report-unknown", self.timing
         )
 
         handoff = ModelHandoff(self.context, admitted, lost)
         self.assertEqual(handoff.after.occupancy, "unknown")
         self.assertFalse(handoff.after.qualified_presence)
-        self.assertEqual(handoff.after.events, ())
         unchanged = ModelHandoff(self.context, admitted, admitted)
         self.assertIs(unchanged.before, unchanged.after)
 

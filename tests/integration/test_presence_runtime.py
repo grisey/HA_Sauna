@@ -190,7 +190,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gang.started_at, closed_at)
         self.assertEqual(gang.confirmation, Confirmation.CONFIRMED)
         self.assertTrue(runtime.controller.regulation_inputs.gang_heat_demand)
-        self.assertEqual(runtime.controller.direct_presence.effective_at, state.last_changed)
+        self.assertEqual(runtime.controller.direct_presence.timing.effective_at, state.last_changed)
         await runtime.tick()
         self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
         self.assertEqual(sum(e.kind == "gang_confirmed" for e in runtime.consumer_events), 1)
@@ -198,7 +198,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # The binary absence can precede a slow thermal exit indication.
         self.hass.states.async_set(source, "off")
         await self.hass.async_block_till_done()
-        absent_at = runtime.controller.direct_presence.effective_at
+        absent_at = runtime.controller.direct_presence.timing.effective_at
         self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
         opened_at = await self.semantic_door(runtime, "slow-exit-open", Kind.DOOR_OPEN)
         self.assertLess(absent_at, opened_at)
@@ -213,7 +213,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         closed_at = await self.semantic_door(runtime, "empty-close", Kind.DOOR_CLOSE)
         self.hass.states.async_set(source, "on")
         await self.hass.async_block_till_done()
-        self.assertGreater(runtime.controller.direct_presence.effective_at, closed_at)
+        self.assertGreater(runtime.controller.direct_presence.timing.effective_at, closed_at)
         self.assertIsNone(runtime.session.timeline.active)
         self.assertFalse(any(e.kind == "gang_confirmed" for e in runtime.consumer_events))
 

@@ -7,7 +7,7 @@ Abgeleitete Gangereignisse werden nicht als Testeingang vorgegeben.
 import unittest
 
 from test_cooling import at, controller
-from test_foundation import event
+from test_foundation import event, selected_occupancy
 
 from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import Kind
@@ -16,14 +16,16 @@ from custom_components.ha_sauna.core.timeline import Kind
 class GangPhaseRulesTests(unittest.TestCase):
     def setUp(self):
         self.c = controller()
-        self.c.presence_source = "ha_presence"
-        self.c.presence_entity = "binary_sensor.presence"
+        self.c.occupancy_required_for_gang_heat = True
+        self.c.provisional_door_heat_allowed = False
+        self.c.person_evidence_limits_cooling = False
+        self.c.gang_start_interrupts_cooling = True
         self.minimum = self.c.parameters.values["sauna_min_temperature_c"]
 
     def presence(self, state, second):
-        self.c.observe_direct_presence(binary_presence(
+        self.c.consume_occupancy_input(selected_occupancy(binary_presence(
             "binary_sensor.presence", state, at(second), at(second),
-        ), at(second))
+        ), at(second)))
 
     def door(self, kind, second):
         return self.c.process(event(f"{kind.value}:{second}", kind, second))
@@ -89,7 +91,10 @@ class GangPhaseRulesTests(unittest.TestCase):
                 self.assertIsNone(self.c.session.timeline.active)
 
     def test_cold_door_cycle_is_observed_without_extra_door_heating(self):
-        self.c.presence_source = "proxy"
+        self.c.occupancy_required_for_gang_heat = False
+        self.c.provisional_door_heat_allowed = True
+        self.c.person_evidence_limits_cooling = True
+        self.c.gang_start_interrupts_cooling = False
         self.c.set_temperature(self.minimum - 1, at(0))
         self.door(Kind.DOOR_OPEN, 1)
         self.door(Kind.DOOR_CLOSE, 2)
@@ -99,7 +104,10 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertIsNone(self.c.session.timeline.active)
 
     def test_temperature_at_closure_controls_door_heating_not_door_observation(self):
-        self.c.presence_source = "proxy"
+        self.c.occupancy_required_for_gang_heat = False
+        self.c.provisional_door_heat_allowed = True
+        self.c.person_evidence_limits_cooling = True
+        self.c.gang_start_interrupts_cooling = False
         self.c.set_temperature(self.minimum - 1, at(0))
         self.door(Kind.DOOR_OPEN, 1)
         self.c.set_temperature(self.minimum, at(2))
@@ -119,7 +127,10 @@ class GangPhaseRulesTests(unittest.TestCase):
         self.assertIn("heater_service_unavailable", self.c.protection)
 
     def test_proxy_return_preserves_cooling_identity_and_elapsed_off_time(self):
-        self.c.presence_source = "proxy"
+        self.c.occupancy_required_for_gang_heat = False
+        self.c.provisional_door_heat_allowed = True
+        self.c.person_evidence_limits_cooling = True
+        self.c.gang_start_interrupts_cooling = False
         self.door(Kind.DOOR_OPEN, 1)
         self.door(Kind.DOOR_CLOSE, 2)
         self.c.process(event("first-infusion", Kind.INFUSION, 3))

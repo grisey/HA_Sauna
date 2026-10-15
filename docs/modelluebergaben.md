@@ -1,242 +1,273 @@
 # Modellübergaben
 
-Die vorbereitete Schnittstelle übergibt vollständige Beobachtungen eines
-Systemmodells. Der konkrete Datentyp bezeichnet das Modell; dessen vorhandene
-Felder und Fachwerte bleiben erhalten. Es gibt keinen zusätzlichen Katalog
-von Benachrichtigungsanlässen oder eine parallel gepflegte Liste möglicher
-Zustandswechsel.
+Die Steuerung erhält ausgewählte fachliche Eingaben und ursprüngliche
+Fachereignisse. Quellenwahl und Quellenzulassung liegen beim Geräte-, Runtime-
+oder Konfigurationsowner. Gangaufnahme, Türzuordnung, Temperaturfreigabe,
+Heiz- und Energiebuchung, Kühlung und Fristen bleiben beim jeweiligen
+Fachowner.
 
-`ModelHandoff[T]` enthält einen `HandoffContext` sowie den vollständigen Wert
-vor und nach einer ausdrücklich gewählten Auswertungsgrenze. Beide Werte
-gehören zu demselben konkreten Modelltyp. `None` bezeichnet fehlenden Bestand;
-mindestens ein Modellwert ist vorhanden. Gleiche Werte sind zulässig: Eine
-ausgewertete Eingabe kann einen unveränderten Zustand ergeben.
+Es bestehen drei Arten von Übergaben:
 
-Der Kontext enthält Übergabeidentität, Beobachtungszeit sowie optional eine
-gemeinsame Anlagenreferenz, den bereits bekannten Bedienenden und eine
-vorhandene Sitzungsreferenz.
-Die ursprünglichen Ereignis-, Erkennungs- und Buchungszeiten bleiben in den
-Fachwerten erhalten. Eine Sitzungsreferenz im Kontext gilt für alle enthaltenen
-sitzungsgebundenen Werte. Eine Übergabe über mehrere Sitzungen hat dort `None`
-und bewahrt die einzelnen Sitzungsidentitäten in ihren Modellwerten.
-Anlagenübergreifende Aggregate verwenden entsprechend `entry_id=None` und
-bewahren die tatsächlichen Anlagenidentitäten in ihren enthaltenen Modellen.
-Widersprechende Anlagen- oder Sitzungsidentitäten werden abgewiesen.
+- Bereits geschlossene Fachwerte wie `Session`, `Decision`, `ControlInputs`,
+  `ConfigurationModel`, `PhaseProjection` und `LightPlan` werden direkt von
+  vorhandenen Verbrauchern verwendet.
+- Normalisierte Eingänge aus `core/input_handoff.py` verbinden ausgewählte
+  Temperatur, Heizrückmeldung, Schütz, Leistung, Anwesenheit, Betrieb,
+  Regelmodus und Heizoverride mit den bestehenden Controllerfunktionen.
+- Zusätzliche Beobachtungsformen beschreiben vollständig übergebbare Werte.
+  Ohne einen tatsächlichen Verbraucher werden sie nicht zur Laufzeit erzeugt.
+  Dazu gehören insbesondere die vollständigen Controller-, Türvorgangs-,
+  Aufguss- und Benachrichtigungsbeobachtungen.
 
-## Vollständigkeit und Eigentum
-
-Bereits vollständige unveränderliche Fachwerte können unmittelbar übergeben
-werden. Verschachtelte Modelle werden als vorhandene typisierte Werte
-übernommen. Die Konstruktion prüft ihre deklarierten Feldtypen und rekursiv
-die Unveränderlichkeit; sie führt keine Fachregeln erneut aus.
-
-Die zusätzlichen Ausgänge in `core/control_handoff.py` und
-`core/observation_handoff.py` sowie `core/thermal_handoff.py` schließen die
-Stellen, an denen ein Ergebnis bislang über mehrere Eigentümerfelder verteilt
-war. Ihre Konstruktoren sind
-der führende Feldvertrag. Rein lesende Fabriken übernehmen vorhandenen Zustand;
-explizite Ergebnisformen erhalten die bereits berechneten Rückgaben.
-Kein solcher Aufruf schreitet die Modellzeit fort oder löst einen Dienst aus.
-
-Die Controllerausgabe erhält aktuelle und abgeschlossene Sitzungen, äußere
-Steuerdaten und die getrennten automatischen und ausgegebenen Entscheidungen.
-Sie ist eine Beobachtungsausgabe, kein Wiederherstellungsformat für interne
-Caches. `ConsumerEventOutput` verbindet das ursprüngliche referenzgebundene
-Fachereignis mit seinem tatsächlichen vollständigen Sitzungs- beziehungsweise
-Präsenzbeleg. Der zugehörige Gang ist aus dem enthaltenen Modell verfügbar;
-eine Suche in der inzwischen weitergelaufenen Runtime ist nicht nötig.
-Ein nacktes `ConsumerEvent` genügt dieser Übergabegrenze nicht.
-
-`DetectionEvaluation` gehört zu genau einem vorhandenen Detektorraster.
-Rasterzeit und vollständige Signalfolge müssen mit den übergebenen
-Erkennungen übereinstimmen. `Detector.advance()` kann mehrere Raster
-auswerten: Seine gesamte Rückgabe darf nicht mit der Diagnose des letzten
-Rasters gepaart werden. Beim späteren Anschluss werden die bereits vorhandenen
-Originaldiagnosen und ihre zugehörigen Erkennungen gemeinsam übergeben.
-
-`MethodEvaluation` übernimmt für andere Verfahren den vollständigen tatsächlichen
-Diagnosebestand als `FrozenMap`, den Auswertungszeitpunkt und die zugehörige
-Erkennungsfolge. Alte Heuristikfelder wie `holds` oder `checks` sind darin keine
-Pflicht. Bereits vollständige unveränderliche Fachausgaben eines neuen
-Erkennungsowners werden unmittelbar als `ModelHandoff[T]` verwendet.
-
-Bestehende offene Diagnose- und Quellattribute werden vollständig als
-`FrozenMap` kopiert. Weitere Schlüssel bleiben erhalten; veränderliche
-Sammlungen werden abgelöst. Lebende HA-Objekte, zyklische Daten und nicht
-endliche Zahlen sind kein Bestandteil dieser Form. Dienstresultate und
-physische Geräterückmeldungen bleiben getrennte Beobachtungen.
-
-Die Konfigurationsübergabe übernimmt den vollständigen vorhandenen
-`Configuration.as_options()`-Wert zusammen mit dem bestehenden
-`ConfigurationModel`. Sie definiert keine eigene Auswahl zulässiger Optionen.
-Die thermischen Beobachtungsformen erhalten die vorhandenen Heizfortschritts-
-und Aufheizschätzungen einschließlich ihrer Belege. Der bestehende HA-Hinweis
-bei fehlendem Temperaturanstieg bleibt beim Geräteadapter; eine zweite
-Hinweisentscheidung wird durch die Übergabe nicht eingeführt.
-
-## Expliziter Verbrauch
-
-Ein Verbraucher erhält eine vollständige Übergabe, beispielsweise über
-`ModelConsumer.consume`. Die Form selbst besitzt keine Warteschlange,
-Abonnenten, Wiederholungserkennung oder Zustellbestätigung. Die Herkunft des
-Bedienenden wird über `ActorRef` getragen; sie wird weder aus Anwesenheit noch
-aus einem Empfänger abgeleitet.
-
-Die Auswahl der tatsächlichen Übergabegrenzen liegt bei einem späteren
-Anschluss an die führenden Modelle. Ein einziger Vergleich am Ende von
-`notify()` könnte Zwischenzustände mehrerer Eingänge verlieren. Auch ein
-unveränderter Endzustand ersetzt keine zuvor ausgewerteten Eingaben.
-
-Die Formen sind derzeit ausdrücklich konstruierbar und konsumierbar. Sie
-werden noch nicht automatisch von der Runtime erzeugt, gesammelt oder an
-einen Companion-Transport übergeben. Die Grenze und die zugehörigen
-Vertragsprüfungen sind in der [Prüfanleitung](../tests/README.md) beschrieben.
+Ein neuer Name oder eine zusätzliche Form begründet keine weitere Auswertung,
+Historie oder Zustellung. Bereits verwendete Fachwerte benötigen keine
+parallelen Wrapper. Eine fertige API-Ausgabe wird nicht allein zur Formbildung
+in eine zweite Darstellung und zurück umgewandelt.
 
 ## Normalisierter Steuerungseingang
 
-Die Steuerung erhält einen normalisierten fachlichen Zustand. Auswahl und
-Auswertung der Quelle liegen vor dieser Grenze. Gerätekennung, Sensor- oder
-Proxybetrieb, Rohereignisse und mathematische Erkennungsverfahren gehören zu
-getrennten Beobachtungen. Eine neue Erkennung muss keine alten Proxyheuristiken
-nachbilden, um diesen Vertrag zu bedienen.
+Der normalisierte Eingang enthält das bereits ausgewählte fachliche Ergebnis.
+Gerätekennung, Sensor- oder Proxybetrieb, Entity und mathematisches
+Erkennungsverfahren gehören zur vorgelagerten Quellenverarbeitung und ihren
+Beobachtungen. Eine neue Erkennung muss keine alten Proxyheuristiken
+nachbilden, um denselben fachlichen Eingang zu liefern.
 
 Gleicher Ausgangszustand, gleiche fachliche Konfiguration und gleiche Folge
-normalisierter Zustände einschließlich relevanter Zeiten ergeben dieselben
-Steuerungsübergänge und Ausgänge. Die Herkunft beeinflusst diese Entscheidung
-nicht. Fachliche Unterschiede bleiben erhalten: unbekannte Heizrückmeldung
-ist nicht AUS, unbekannte Anwesenheit ist nicht Abwesenheit, und zwei Aufgüsse
-bleiben zwei unterscheidbare Vorkommnisse.
+normalisierter Eingaben einschließlich relevanter Zeiten ergeben dieselben
+Steuerungsübergänge und Ausgänge. Fachliche Unterschiede bleiben erhalten:
+unbekannte Heizrückmeldung ist nicht AUS, unbekannte Anwesenheit ist nicht
+Abwesenheit, und zwei Aufgüsse bleiben zwei unterscheidbare Vorkommnisse.
 
-Die Formen in `core/input_handoff.py` beschreiben diesen Eingang. Sie treffen
-keine Auswahlentscheidung und führen keine Erkennung aus. Insbesondere gibt
-es keinen Konverter, der eine vorläufige Proxybehauptung ungeprüft zur
-bestätigten Anwesenheit erklärt. Der zuständige Eigentümer liefert das bereits
-ausgewertete fachliche Ergebnis. Bestehende Quellen- und Belegprüfungen bleiben
-vor der Steuerungsgrenze erhalten; die Gangzulassung verbleibt beim bisherigen
-Owner. Keine dieser Regeln wird durch die Form ein zweites Mal ausgeführt.
+Die konkreten `consume_*_input`-Methoden delegieren an die bisherigen
+Controllerfunktionen. Sie verwenden den normalisierten Wert und
+`timing.evaluated_at` als deren bisherigen Zeitparameter; Temperatur und
+Leistung erhalten zusätzlich ihre bestehende Gültigkeitsfrist. Die bisherigen
+Fachfunktionen bleiben die maßgebliche Implementierung. Es gibt keinen
+zentralen Dispatcher, keine neue Queue und keinen generischen
+`ModelHandoff` vor jedem Controlleraufruf.
+
+Beim Heizoverride bleiben `True`, `False` und `None` unterschiedliche
+Bedienhandlungen; `None` gibt an die Automatik zurück. Die vorhandenen internen
+Aufhebungen durch Betriebs- oder Moduswechsel bleiben beim jeweiligen Fachowner
+und erzeugen keinen zusätzlichen Overridebefehl. Rückgaben der bestehenden
+Fachfunktionen werden unverändert weitergegeben.
+
+| Eingang | Tatsächlicher Verbraucher | Bestehender Fachowner |
+| --- | --- | --- |
+| `TemperatureInput` | `consume_temperature_input` | `set_temperature` |
+| `HeatingFeedbackInput` | `consume_heating_feedback_input` | `report_heating` |
+| `ContactorFeedbackInput` | `consume_contactor_feedback_input` | `report_contactor` |
+| `PowerFeedbackInput` | `consume_power_feedback_input` | `report_power` |
+| `OccupancyInput` | `consume_occupancy_input` | bestehende direkte Anwesenheitsabstimmung im Controller |
+| `OperationInput` | `consume_operation_input` | `set_operation` |
+| `ControlModeInput` | `consume_control_mode_input` | `set_control_mode` |
+| `HeaterOverrideInput` | `consume_heater_override_input` | `set_heater_override` |
+
+Der Heizfallback ist bereits ein quellenfreier `bool | None` aus dem
+Geräteadapter. `report_fallback_heating` liefert ihn weiterhin an
+`_account_heat`; eine zusätzliche Form ist dafür nicht erforderlich. An der
+Leistungsfrist bucht der bestehende Owner zunächst gemessene Energie und
+anschließend die vorhandene Fallbackaussage als Schätzung oder unbekannten
+Anteil. Schütz-EIN ist kein Beleg für physisches Heizen. Kühlung beginnt
+weiterhin erst mit tatsächlicher Schütz-AUS-Bestätigung.
+
+### Zeitbezüge
 
 `InputTiming` trennt fachlichen Beginn (`effective_at`), tatsächlichen Eingang
-(`received_at`), erstmalige fachliche Nutzbarkeit (`first_usable_at`) und kausale
-Auswertung (`evaluated_at`). Alle vier Werte sind explizite Zeitpunkte. Die
-Nutzbarkeit bezeichnet das tatsächliche Vorliegen des erforderlichen
-Beleggehalts; sie wird weder aus dem früheren Beginn noch aus einer
-Komfortproperty eines Ereignisses abgeleitet. Auch ein fachlich ausgewerteter
-unbekannter Zustand besitzt eine Nutzbarkeitszeit. Die Beobachtungszeit der
-Hülle ersetzt keine dieser Zeiten.
-Vorhandene Ereignisse behalten zusätzlich ihre Erkennungs- und Buchungszeiten.
-Ein später bestätigter früherer Beginn erlaubt keine rückwirkende Aktorwirkung.
-Kandidatenzeiten und mathematische Belegzeiten bleiben in der Diagnose.
+(`received_at`), erstmalige fachliche Nutzbarkeit (`first_usable_at`) und
+kausale Auswertung (`evaluated_at`). Die ersten drei Werte sind optional;
+fehlender Beleg bleibt `None`. `evaluated_at` ist der konkrete Zeitpunkt des
+bestehenden monotonen Steuerungsschritts.
 
-Die heutigen Methoden für Temperatur, Heiz- und Schützrückmeldung, Leistung,
-Betrieb und Override besitzen überwiegend nur einen Zeitparameter `at`.
-Beim Anschluss müssen ihre Verträge die vier Zeitbezüge getrennt erhalten;
-eine bloße Umbenennung von `at` in Eingangszeit genügt nicht. `evaluated_at`
-bezeichnet die kausale Auswertungsgrenze. Insbesondere ist bei Heizrückmeldungen
-der tatsächliche Intervallbeginn separat zu bewahren, ohne die Controlleruhr
-darauf zurückzustellen. Diese Anpassung wird durch die Formen vorbereitet und
-ist noch nicht in den Methoden umgesetzt.
+`effective_at` erhält eine vorhandene fachliche Zeit, sonst einen belegten
+Empfang. `received_at` gehört genau zum ausgewählten Eingang. Ein Refresh,
+ein fremder Callback, ein Timer oder ein Ablauf erzeugt keinen neuen
+Quellempfang. Ein vorhandener Empfang darf auch einen unbekannten Wert
+belegen; unbekannter Wert und fehlender Empfang sind verschiedene Aussagen.
+Bei fehlender oder abgelaufener Temperaturauswahl fehlen dagegen sowohl Wert
+und Frist als auch die Zeiten einer ausgewählten Messung. Beim Leistungseingang
+bleiben ein vorhandener ursprünglicher Empfang und seine Frist auch bei einem
+inzwischen unbekannten Messwert erhalten.
 
-Ein `ControllerOutput` ist eine Beobachtung nach der Steuerungsverarbeitung.
-Seine enthaltenen Quellenbelege machen ihn nicht zu einem normalisierten
-Steuerungseingang. Ereignisidentität und Übergabeidentität bleiben verschieden;
-es wird kein zusätzlicher globaler Revisionsmechanismus eingeführt.
+`first_usable_at` wird nur bei einem bereits vorhandenen eigenständigen
+vorgelagerten Ownerdatum gesetzt. Die angeschlossenen Producer liefern dafür
+`None`; der Controllerannahmezeitpunkt wird nicht als frühere Nutzbarkeit
+vorgegeben. Bei UI-Befehlen bleibt der tatsächliche Eintritt vor dem Warten auf
+den Runtime-Lock erhalten. Timerabgeleitete Handlungen ohne Empfangsbeleg
+behalten unbekannte Herkunftszeiten.
 
-### Anwesenheit, Türvorgang und Aufguss
+Auswertung, Heiz- und Aktorwirkung folgen der bestehenden kausalen
+Buchungsgrenze. Ein später bestätigter früherer Beginn stellt die Controlleruhr
+nicht zurück. Originalereignisse bewahren zusätzlich ihre Fach-, Erkennungs-
+und Buchungszeiten. Kandidatenzeiten und mathematische Belegzeiten bleiben in
+der Diagnose; eine Beobachtungszeit ersetzt keinen dieser Bezüge.
 
-`OccupancyInput` erhält neben Belegung und Verfügbarkeit zwei getrennte
-Fachaussagen: `person_evidence` bezeichnet einen bereits zugelassenen
-Personenbeleg; `qualified_presence` bezeichnet den qualifizierten Beleg für den
-übergebenen Belegungszustand, auch für Abwesenheit. Keine dieser Aussagen ist
-bereits eine Gangentscheidung. Türfolge, Temperaturzulassung, Gangbestätigung
-und Gangende verbleiben beim bisherigen Gangowner. Ein zugelassener
-Personenbeleg kann dort die Kühlung auf ihre Mindestdauer begrenzen, ohne einen
-Gang zu bestätigen. Der Verbraucher benötigt dafür keine Quellenkennung.
+### Anwesenheit und ursprüngliche Ereignisse
 
-Die vorhandene Berichtsidentität bleibt in `report_id` erhalten; `None`
-bedeutet, dass kein Bericht zugrunde liegt. `events` enthält die tatsächlich
-vorhandenen vollständigen Ereignisse in Originalreihenfolge. Dadurch bleiben
-auch starke und schwache Personenbelege für den vorhandenen
-`Gang.recognition_kind` unterscheidbar. Bestätigungs- oder Endeereignisse werden
-nicht vorweg erzeugt. Unbekannt oder unverfügbar bedeutet keine gemessene
-Abwesenheit. Veralteter Belegverlust kann nach vorgelagerter Auswertung einen
-unveränderten Normalzustand ergeben; eine neue Rücknahme-ID ist nicht nötig.
+`OccupancyInput` enthält ausschließlich `occupancy`, `available`,
+`qualified_presence`, `report_id` und `timing`. `qualified_presence` bezeichnet
+den qualifizierten Beleg für den übergebenen Belegungszustand, auch für
+Abwesenheit. Die Form enthält weder Ereignisse noch Quellenkennung, Entity
+oder eine vorweggenommene Gangentscheidung.
 
-`DoorInput` führt Öffnung, Lüftungsbefund und Schluss in einer gemeinsamen
-Ereignisfolge. Ihre Reihenfolge bleibt auch bei gleichen Buchungszeiten
-erhalten. `DoorOperation` übernimmt die bereits zugeordnete Öffnung, den
-optionalen Schluss und den optionalen Lüftungsbefund. Die Öffnungs-ID
-identifiziert den Vorgang. `ventilation_known=False` bezeichnet fehlendes
-Wissen; `True` mit fehlendem Lüftungsbefund bezeichnet einen tatsächlich
-ausgewerteten, nicht bestätigten Befund. Ein leerer Ereignisbestand erzeugt
-diesen Wert nicht automatisch. Lage und Ereignisfolge bleiben auch ohne
-gespeicherte Öffnung übergebbar. Die Timeline bleibt der einzige
-Zuordnungsowner; die Form rekonstruiert keine Türvorgänge.
+Die Runtime prüft die vorhandene direkte Quellenwahl, gebundene Entity und
+Assertion vor dieser Grenze. Abgelehnte Meldungen erzeugen keine Abwesenheit.
+Verfügbare direkte EIN-/AUS-Belege sind qualifiziert; unknown und unavailable
+bleiben unbekannt beziehungsweise unverfügbar. Der Consumer lehnt doppelte
+Berichtsidentitäten und ältere effektive Meldungen weiterhin ab. Der
+angenommene ursprüngliche `PresenceReport` bleibt bei der Runtime für Anzeige
+und Archiv; der Controller hält den normalisierten Eingang.
 
-`InfusionInput` bewahrt alle bestätigten Aufgussereignisse mit ihren bestehenden
-Identitäten. `InfusionEpisodeDiagnostics` übernimmt getrennt davon den vorhandenen
-veröffentlichten Episodendiagnosebestand: Phase, Beginn, Bestätigungszeit, Ende,
-Endbeleg, Unterbrechungsstatus sowie Wasser-, Abfall- und Niveauwerte. Ein
-fehlendes Ende ist kein belegter Abschluss. Fortsetzung oder Ende erzeugen
-keinen zusätzlichen Aufguss. Der Episodenoutput wird beim Erkennungsowner
-gelesen und nicht aus bestätigten Ereignissen zurückgerechnet. Er ist kein
-Restoreformat der privaten mathematischen Arbeitsdaten. Der bisherige Owner
-besitzt keine stabile Episoden-ID; eine Zuordnung seiner späteren Beobachtungen
-zu einem bestätigten Ereignis muss beim Anschluss ausdrücklich erhalten werden
-und darf nicht aus Kandidaten-ID oder Beginn geraten werden.
+Vier konkrete Freigaben werden beim Konfigurationsowner aus den vorhandenen
+Policies gebildet und an den Controller übergeben:
 
-Lage, Belegung und Vorgangszuordnungen sind Zustandswerte. Die enthaltenen
-`events` beziehungsweise `occurrences` sind der geordnete Eingangsbestand der
-konkreten Auswertungsgrenze, keine erneut abzuspielende Gesamthistorie.
-`ModelHandoff.before/after` beobachtet diese vollständigen Übergabewerte.
-Die Hülle übernimmt weder Wiedergabesteuerung noch Wiederholungserkennung.
+| Freigabe | Fachliche Wirkung |
+| --- | --- |
+| `occupancy_required_for_gang_heat` | Gangheizbedarf verlangt aktuell verfügbaren qualifizierten Beleg. |
+| `provisional_door_heat_allowed` | Vorläufige Türwärme darf angefordert werden. |
+| `person_evidence_limits_cooling` | Zugelassener Personenbeleg darf Kühlung auf ihre Mindestdauer begrenzen. |
+| `gang_start_interrupts_cooling` | Tatsächlicher Gangbeginn darf Kühlung abbrechen. |
 
-## Modelle und Anpassung der Verbraucher
+Der Controller wertet dazu seinen aktuellen Regelmodus aus. Die Freigaben
+enthalten keine Quellart. Türfolge, Temperaturzulassung, Gangbestätigung und
+Gangende bleiben zentral beim bestehenden Gangowner.
 
-Die Zuordnung umfasst fachliche Modelle und eigenständig konsumierte
-Systemausgaben. Der vollständige Feldvertrag steht im jeweiligen Datentyp.
-Vorhandene unveränderliche Fachtypen werden direkt mit `ModelHandoff[T]`
-verwendet; Untermodelle erhalten keine parallelen Wrapper.
+Proxy-Personenbelege, Tür, Lüftung und Aufguss erreichen `Controller.process`
+weiterhin als originale `Event`-Objekte. Ihre Identitäten, Zeiten und
+FIFO-Reihenfolge bleiben erhalten, auch bei gleichen Zeiten und quer über
+Modelle. Die vorgelagerte Zulassung wird pro Event als
+`person_evidence_qualified` an `process`, `recognition_allowed` und
+`recognition_allowed_at` übergeben. Sie wird nicht als Quellart im Controller
+geführt. Unqualifizierte PERSON-Ereignisse bleiben gebucht und blockiert;
+unqualifiziertes INFUSION ohne aktiven Gang bleibt ebenfalls blockiert. Ein
+Aufguss darf einen bestehenden Gang weiterhin als Originalereignis annotieren.
+Eine vorgelagerte harte Filterung ersetzt diese fachliche Verarbeitung nicht.
 
-| Nr. | Modell und Form | Erzeuger | Nötige Verbraucheränderung beim Anschluss |
+### Vorbereitete Tür- und Aufgussbeobachtungen
+
+`DoorInput`, `DoorOperation` und `InfusionInput` bleiben vorbereitete
+Zustandsformen ohne Laufzeitproduktion. Die bereits verbundenen
+Originalereignisse werden vor `Controller.process` und `timeline.apply` nicht
+zu einem zweiten Tür- oder Aufgusszustand rekonstruiert.
+
+`DoorInput` kann Öffnung, Lüftungsbefund und Schluss als gemeinsame geordnete
+Folge bewahren. `DoorOperation` übernimmt eine bereits zugeordnete Öffnung mit
+optionalem Schluss und Lüftungsbefund. Die Öffnungs-ID identifiziert den
+Vorgang. `ventilation_known=False` bezeichnet fehlendes Wissen; `True` ohne
+Lüftungsbefund bezeichnet einen tatsächlich ausgewerteten, nicht bestätigten
+Befund. Ein leerer Ereignisbestand begründet diesen Wert nicht. Die Timeline
+bleibt der einzige Zuordnungsowner.
+
+`InfusionInput` kann bestätigte Aufgussereignisse mit ihren bestehenden
+Identitäten bewahren. `InfusionEpisodeDiagnostics` übernimmt getrennt davon
+den veröffentlichten Episodendiagnosebestand: Phase, Beginn,
+Bestätigungszeit, Ende, Endbeleg, Unterbrechungsstatus sowie Wasser-, Abfall-
+und Niveauwerte. Ein fehlendes Ende ist kein belegter Abschluss. Fortsetzung
+oder Ende erzeugen keinen zusätzlichen Aufguss. Der Episodenoutput wird beim
+Erkennungsowner gelesen und nicht aus bestätigten Ereignissen zurückgerechnet.
+Der bisherige Owner besitzt keine stabile Episoden-ID; eine spätere
+Ereignisbindung darf nicht aus Kandidaten-ID oder Beginn geraten werden.
+
+## Explizite Beobachtungsformen
+
+`ModelHandoff[T]` ist eine vorbereitete vollständige Beobachtung eines
+konkreten unveränderlichen Modelltyps. Sie enthält `HandoffContext` und den
+Wert vor und nach einer ausdrücklich gewählten Auswertungsgrenze. `None`
+bezeichnet fehlenden Bestand; mindestens ein Wert ist vorhanden. Gleiche Werte
+sind zulässig. Eine ausgewertete Eingabe kann einen unveränderten Zustand
+ergeben.
+
+Der Kontext enthält Übergabeidentität, Beobachtungszeit sowie optional eine
+gemeinsame Anlagenreferenz, den bereits bekannten Bedienenden und eine
+Sitzungsreferenz. Sitzungs- und anlagenübergreifende Beobachtungen behalten die
+jeweiligen Identitäten in ihren Fachwerten und verwenden im Kontext `None`.
+Widersprechende Identitäten werden abgewiesen. Die Herkunft des Bedienenden
+wird über `ActorRef` getragen und nicht aus Anwesenheit oder Empfänger abgeleitet.
+
+Bereits vollständige unveränderliche Fachwerte sind direkt verwendbar;
+verschachtelte Modelle bleiben typisierte Werte. Konstruktion prüft Feldtypen
+und rekursiv die Unveränderlichkeit, führt aber keine Fachregel erneut aus.
+Offene Diagnose- und Quellattribute können vollständig als `FrozenMap`
+übernommen werden. Lebende HA-Objekte, Zyklen und nicht endliche Zahlen gehören
+nicht zu dieser Form.
+
+`ConfigurationOutput` kann den vollständigen `Configuration.as_options()`-Wert
+mit dem bestehenden `ConfigurationModel` verbinden. Dazu gehören auch die aus
+Geräteeigenschaften ergänzten Fähigkeiten; die Form legt keine eigene Auswahl
+zulässiger Optionen fest. Thermische Beobachtungen übernehmen bereits
+berechnete Fortschritts- und Schätzergebnisse samt Belegen und lösen keine
+erneute Auswertung aus.
+
+`ControllerOutput.capture` kann aktuelle und abgeschlossene Sitzungen, äußere
+Steuerdaten sowie automatische und ausgegebene Entscheidungen als explizite
+Beobachtung schließen. Es ist kein Wiederherstellungsformat interner Caches
+und wird nicht produktiv als Vollcapture angeschlossen. Die State-API liest
+bereits unter dem Runtime-Lock konsistent aus den vorhandenen Ownerwerten.
+`ConsumerEventOutput` kann ein referenzgebundenes Fachereignis mit seiner
+damaligen vollständigen Sitzung beziehungsweise Präsenzmeldung verbinden.
+Der bestehende Archivverbrauch des Originalereignisses benötigt keine solche
+Sitzungsvollkopie pro Event.
+
+`DetectionEvaluation` gehört zu genau einem Detektorraster; Rasterzeit,
+Signalfolge und Erkennungen müssen zusammengehören. Die gesamte Rückgabe eines
+mehrere Raster verarbeitenden `Detector.advance()` ist nicht die Diagnose des
+letzten Rasters. `MethodEvaluation` kann den tatsächlichen Diagnosebestand
+anderer Verfahren als `FrozenMap` samt Auswertungszeit und Erkennungen
+übernehmen, ohne Alt-Heuristikfelder vorauszusetzen.
+
+Ein expliziter Verbraucher kann eine solche Beobachtung über
+`ModelConsumer.consume` erhalten. Die Form besitzt keine Warteschlange,
+Abonnenten, Wiederholungserkennung oder Zustellbestätigung. Ein pauschaler
+Capture am Ende von `notify()` ersetzt keine benötigten Zwischenzustände.
+Die vorbereiteten Formen führen weder Dienstaufrufe noch Benachrichtigungen
+oder Companion-Transport aus. Ihre Vertragsprüfungen sind in der
+[Prüfanleitung](../tests/README.md) beschrieben.
+
+## Modelle und tatsächliche Verbraucher
+
+Die Tabelle trennt den direkten Bestand, normalisierte Laufzeiteingänge und
+vorbereitete Beobachtungen. Der vollständige Feldvertrag steht im jeweiligen
+Datentyp. Eine vorbereitete Form verlangt ohne konkreten Verbraucher keine
+Umschreibung des vorhandenen Anschlusses.
+
+| Nr. | Modell und Form | Erzeuger | Tatsächlicher Verbrauch und Status |
 | --- | --- | --- | --- |
-| 1 | Konfiguration: `ConfigurationOutput`, `ConfigurationModel`, `ButtonCapabilities` | `Configuration.as_options()`, bereits berechnetes `Runtime.configuration_model` | Setup, Optionslistener, Settings, API und Entitäten übernehmen denselben Konfigurationswert. Die wirksame Quelle darf nicht durch erneutes Ableiten nur aus gespeicherten Optionen verloren gehen. |
-| 2 | Messung: `Measurement`, `ObservedSource`, `DeviceObservation` | `HADevice.ingest` | Archiv und Diagnose erhalten Originalwert, Zeiten und Herkunft; die Steuerung erhält daraus bereits ausgewählte fachliche Eingänge. |
-| 3 | Regeltemperatur: `TemperatureInput` | Geräteadapter nach Messwertauswahl | `Controller.set_temperature` erhält Wert und Gültigkeitsende; sein bisheriger einzelner Zeitparameter wird gemäß der getrennten Zeitbezüge angepasst. Keine Entitäts- oder Messhöhenauswahl im Controller. |
-| 4 | Heizrückmeldung: `HeatingFeedbackInput`; Beleg: `HeatingObservation` | Geräteadapter nach Rückmeldungsauswahl | `report_heating` verbraucht den normalisierten Dreifachwert. Der alte `report_fallback_heating`-Pfad wird in die vorgelagerte Auswahl/Berechnung eingeordnet. Der berechnete Energieverbrauch und seine Mess-/Berechnungsgrundlagen bleiben erhalten. |
-| 5 | Schütz und Leistung: `ContactorFeedbackInput`, `PowerFeedbackInput`, `ContactorMark` | Geräteadapter | `report_contactor` und `report_power` übernehmen getrennte Zustände und Zeiten. Fehlende Leistung wird nicht durch null Watt ersetzt. |
-| 6 | Anwesenheit: `OccupancyInput`; Belege: `PresenceReport`, `PresenceObservation`, `PresenceOutput`, `PresenceSourceSelectionSnapshot` | Präsenznormalisierung vor der Steuerung | `process_presence`, `observe_direct_presence` und Präsenzabstimmung konsumieren Belegung und qualifizierten Beleggehalt einschließlich Bericht-/Ereignisidentitäten. Quellenprüfung und Wechselentscheidung liegen davor; Gangzulassung bleibt beim Gangowner. Der Quellenwahlsnapshot übernimmt sechs vorhandene Zustandswerte und trifft keine Wechselentscheidung. |
-| 7 | Türvorgang: `DoorInput`, `DoorOperation`, `Door` | Ausgewertete Erkennung oder direkte Zustandsübernahme; vorhandene Timeline-Zuordnung | `Controller.process` und `timeline.apply` übernehmen die gemeinsame geordnete Folge einschließlich Lüftung. Der letzte Zustand allein darf Öffnen und Schließen nicht verschlucken; gleiche Buchungszeiten dürfen nicht umsortiert werden. |
-| 8 | Aufguss: `InfusionInput`; Diagnose: `InfusionEpisodeDiagnostics`; vollständiger Fachoutput direkt als `ModelHandoff[T]` | Bestätigende Erkennung und lesender Episodenoutput | Controller und Timeline übernehmen bestätigte Vorkommnisse samt Identitäten und Zeiten. Verlauf/Statistik konsumieren Fortsetzung und Ende separat aus dem führenden Episodenoutput; beim Anschluss wird die tatsächliche Ereignisbindung erhalten, keine Episode aus Events rekonstruiert. Die Diagnoseform ersetzt diesen Fachoutput nicht. |
-| 9 | Lüftungsstadium innerhalb des Türvorgangs: `DoorOperation.ventilation`, `ventilation_known` | Bestehender Tür-/Timelineowner | Controller, Timeline und Türwärmemodell übernehmen Befund und Gültigkeit desselben Vorgangs. Es gibt keinen unabhängigen Lüftungszustand oder zweiten Zuordnungsowner. |
-| 10 | Bedienzustand: `OperationInput`, `ControlModeInput`, `HeaterOverrideInput` | Bestehende Bedienverarbeitung | `set_operation`, `set_control_mode`, `set_heater_override` erhalten getrennte Zustände. Betrieb, Betriebsart und Rückgabe an Automatik bleiben verschieden. |
-| 11 | Taster: `ButtonGestureSnapshot`, `ButtonEvaluation` | `ButtonGestures`, `Runtime._handle_button_event` | Runtime verwendet das bereits berechnete Gestenergebnis. Beobachter erhalten fortbestehenden Gestenzustand getrennt von Eingabe und Ergebnis; keine erneute Gestenauswertung. |
-| 12 | Erkennung: `DetectionEvaluation`, `MethodEvaluation`, `Detection` | Erkennungsowner je Auswertungsgrenze | Runtime und Archiv paaren Originaldiagnose und genau ihre Erkennungen. Andere Verfahren benötigen keine künstlichen Alt-Heuristikfelder. Diagnose bleibt vom normalisierten Steuerungszustand getrennt. |
-| 13 | Sitzung, Gang, Verlauf: `Session`, `Gang`, `Timeline`, `Event` | Controller und `timeline.apply` | Archiv, Ereignisverbraucher und Darstellung übernehmen vollständige Eigentümerwerte. Fachereignisse werden mit ihrer damaligen Sitzung verbunden. |
-| 14 | Steuerungsausgabe: `ControllerOutput` | `ControllerOutput.capture` | API und Beobachter konsumieren denselben Snapshot statt einzeln veränderliche Controllerfelder zu lesen. Capture löst keine Auswertung aus. |
-| 15 | Thermostat: `ControlInputs`, `ThermostatState`, `Decision` | Bedarfsbildung, `thermostat.evaluate` | Thermostat übernimmt quellenfreie Bedarfspegel. Zustand und Entscheidung bleiben getrennt; Quellenabhängigkeiten werden vor der Bedarfsübergabe aufgelöst. |
-| 16 | Temperaturprogramm: `TemperatureProgram`, `TemperatureControl` | Temperaturprogramm und `temperature_control` | API, Climate- und Number-Entitäten übernehmen berechnete Ziele und Bedienprojektion; keine zweite Sollwertberechnung. |
-| 17 | Heizzeit und Energie: `HeatingTime`, `Energy` | `heating.report/advance`, `energy.advance` | Controller, Sensoren und Archiv übernehmen vollständige Folgezustände einschließlich des berechneten Energieverbrauchs, seiner Mess-/Berechnungsgrundlagen und unbekannter Anteile. |
-| 18 | Kühlung und zeitgebundene Phasen: `OvenCoolingResult`, `TimedPhase`, `Deadline` | Kühlungsberechnung und Controller | Phasenverarbeitung und Darstellung konsumieren den vorhandenen Berechnungsbeleg. Deadline-Token behalten ihre bestehende Eigentums- und Ersetzungswirkung. |
-| 19 | Temporäre Türwärme: `TemporaryDoorHeatState`, `DoorHeatTransition` | Bestehende Türwärmeauswertung | Controller übernimmt Zustand und Anforderung; keine zweite Türwärmeentscheidung im Verbraucher. |
-| 20 | Heizfortschritt: Trend-, Fortschritts- und Episodenformen in `thermal_handoff.py` | Fortschrittsauswertung im Geräteadapter | Hinweisverarbeitung und Darstellung konsumieren Ergebnis samt Belegen. Die Entscheidung über fehlenden Temperaturanstieg verbleibt beim bestehenden Eigentümer. |
-| 21 | Aufheizschätzung: `WarmupEstimateSnapshot`, `WarmupSourceContext`, `WarmupEstimateObservation` | Aufheizschätzung im Geräteadapter | Startverfügbarkeit und Darstellung konsumieren die bereits unter Quellen- und Gültigkeitsprüfung gelesene Schätzung. |
-| 22 | Licht: `LightPlan`, `LightOutputSnapshot`, `LightQuantizerSnapshot`, `LightQuantization`, `LightAfterRun` | Lichtregelung, Planer und Quantisierung | Geräteadapter übernimmt den Plan; Beobachter erhalten Zustand und tatsächliches Ausgabeergebnis getrennt von physischer Rückmeldung. Der Quantizersnapshot erhält auch einen Reset ohne anschließende Planauswertung. |
-| 23 | Geräteausgabe und Diagnose: `HeaterServiceResult`, `LightServiceResult`, `DeviceDiagnostics` | Bestehende Geräteaufrufe und Rückmeldungen | Runtime, Archiv und Diagnose erhalten vorhandene Aufrufresultate. Ein erfolgreicher Dienstaufruf beweist keine physische Heizwirkung. |
-| 24 | Phasen und Messfenster: `PhaseProjection`, `PhaseInterval`, `ReadinessPause`, `MeasurementWindow` | `project_session/project_archive`, `measurement_window` | Archiv und Darstellung übernehmen vorhandene Projektion samt Korrekturen und Vollständigkeit; keine zweite Rekonstruktion. |
-| 25 | Umgebung: `EnvironmentSnapshot` mit Unterformen | `environment_snapshot` | State-API übernimmt die vollständige Anzeige. Diese Umgebungsdaten sind keine zusätzlichen Saunasteuerungseingänge. |
-| 26 | Archiv: Record-, Sitzungslisten- und Sitzungsergebnisformen in `system_handoff.py` | Ergebnisse von `Archive.read` | Archiv-API und Export konsumieren geschlossene Ergebnisse. Leere Liste und nicht gefundene Sitzung bleiben verschieden; bestehende offene Payloads bleiben vollständig erhalten. |
-| 27 | Darstellung: `PanelSnapshot`, öffentliche Form in `presentation_handoff.py` | Vollständiger bereits berechneter State-API-Wert | API serialisiert die Form. Öffentliche Projektion verwendet ausschließlich `public_state`; entfernte Adminfelder werden nicht als `None` wieder eingeführt. Das Panel behält seinen Wirevertrag. |
-| 28 | Empfänger: `RecipientAssignment`, `RecipientResolution`, `ResolvedRecipient`, `SessionRecipients` | Auflösung, Zuordnung und Akkumulation | Späterer Benachrichtigungsverbraucher übernimmt die aufgelöste Menge. Fähigkeiten und Bedienidentität werden nicht aus Anwesenheit abgeleitet. |
-| 29 | Austausch: Envelope- und Korrelationssnapshots in `interaction_handoff.py` | Vorhandene Transportresultate und `ReplyCorrelator` | Beobachter erhalten vollständige Registrierungen und Antwortidentitäten. Opaquer Transport bleibt unverändert; nur beobachtbare unveränderliche Daten gehören in den Snapshot. |
-| 30 | Fachereignisverbrauch: `ConsumerEventOutput` | Ereignis mit damaliger vollständiger Sitzung beziehungsweise Präsenzmeldung | `_publish_consumer`, Archiv und spätere Benachrichtigungsverbraucher erhalten die geschlossene Eigentümerbeobachtung statt eines nackten Gangverweises. |
+| 1 | Konfiguration: `ConfigurationModel`, `ButtonCapabilities`; Beobachtung: `ConfigurationOutput` | `Configuration.from_options/as_options`, `Runtime.configuration_model` | Bereits direkt: Setup, Optionslistener, Settings, ConfigFlow, API und Entitäten verwenden die wirksame Konfiguration und Fähigkeiten. `ConfigurationOutput` bleibt vorbereitet; keine zweite Optionsauswahl. |
+| 2 | Messung: `Measurement`; Beobachtungen: `ObservedSource`, `DeviceObservation` | `HADevice.ingest` | Bereits direkt: Messwertauswahl, Erkennung und Archiv verwenden ursprüngliche Messwerte und Zeiten. Die Steuerung erhält ausgewählte Eingänge; zusätzliche Quellenbeobachtungsformen bleiben vorbereitet. |
+| 3 | Regeltemperatur: `TemperatureInput` | `HADevice.refresh`, `SaunaRuntime._drain_device_inputs` nach einmaliger `regulation_measurement`-Auswahl | Neu normalisiert: `consume_temperature_input` übergibt Wert, Frist und kausale Zeit an `set_temperature`. Keine Entitäts- oder Messhöhenauswahl im Controller. |
+| 4 | Heizrückmeldung: `HeatingFeedbackInput`; Beobachtung: `HeatingObservation` | `HADevice.report_received_feedback` nach einmaliger `observe_heating`-Auswahl | Neu normalisiert: `consume_heating_feedback_input` erreicht `report_heating`. Der quellenfreie Fallback bleibt direkt an `report_fallback_heating` und `_account_heat` verbunden. Ausgewählte Quellenbelege bleiben beim Adapter und Archiv; die zusätzliche Beobachtungsform bleibt vorbereitet. |
+| 5 | Schütz und Leistung: `ContactorFeedbackInput`, `PowerFeedbackInput`, `ContactorMark` | `HADevice.report_received_feedback` | Neu normalisiert: `consume_contactor_feedback_input` und `consume_power_feedback_input` erreichen `report_contactor` und `report_power`. Marken, Kühlbeginn und Energie werden weiterhin dort geführt. Fehlende Leistung ist nicht null Watt. |
+| 6 | Anwesenheit: `OccupancyInput`; Belege: `PresenceReport`, `PresenceObservation`, `PresenceOutput`, `PresenceSourceSelectionSnapshot` | `Runtime.accept_presence` nach Quellen-, Entity- und Assertionzulassung | Neu normalisiert: `consume_occupancy_input` verarbeitet Belegung, Verfügbarkeit, Qualifikation, Berichtsidentität und Zeiten. Originalreports bleiben für API/Archiv bei Runtime; Originalevents mit einzelner Belegqualifikation bleiben direkt verbunden. Zusätzliche Beobachtungs- und Quellenwahlsnapshots bleiben vorbereitet. |
+| 7 | Türvorgang: `Door`, Originalevents; Beobachtungen: `DoorInput`, `DoorOperation` | Erkennung und vorhandene Timeline-Zuordnung | Bereits direkt: `Controller.process` und `timeline.apply` konsumieren originale Öffnungs-/Schlussereignisse in Reihenfolge. `DoorInput` und `DoorOperation` bleiben vorbereitet; keine Zustandsrekonstruktion vor der Timeline. |
+| 8 | Aufguss: Originalevents; Beobachtungen: `InfusionInput`, `InfusionEpisodeDiagnostics` | Bestätigende Erkennung und Episodenowner | Bereits direkt: Controller und Timeline konsumieren bestätigte Originalvorkommnisse samt Identitäten und Zeiten. Input- und Diagnoseformen bleiben vorbereitet; Fortsetzung und Ende werden nicht als neue Bestätigung ausgegeben. |
+| 9 | Lüftung: Originalevent; Beobachtung: `DoorOperation.ventilation`, `ventilation_known` | Bestehender Tür-/Timelineowner | Bereits direkt: Controller, Timeline und Türwärmeverarbeitung verwenden das ursprüngliche Lüftungsereignis. Die vorbereitete Vorgangsbeobachtung schafft keinen unabhängigen Lüftungszustand oder zweiten Zuordnungsowner. |
+| 10 | Bedienzustand: `OperationInput`, `ControlModeInput`, `HeaterOverrideInput` | Bestehende Runtime-Bedienverarbeitung | Neu normalisiert: `consume_operation_input`, `consume_control_mode_input` und `consume_heater_override_input` delegieren an die bestehenden Betriebs-, Modus- und Overrideowner. Initiale Controllerkonfiguration bleibt direkt; sie ist kein nachträglicher Modusbefehl. |
+| 11 | Taster: Ergebnis von `ButtonGestures`; Beobachtungen: `ButtonGestureSnapshot`, `ButtonEvaluation` | `ButtonGestures`, `Runtime._handle_button_event` | Bereits direkt: `_apply_button_action` verwendet das berechnete Gestenergebnis. Die zusätzlichen Beobachtungen bleiben vorbereitet; keine erneute Gestenauswertung. |
+| 12 | Erkennung: `Detection`; Beobachtungen: `DetectionEvaluation`, `MethodEvaluation` | Erkennungsowner je Raster und Auswertungsgrenze | Bereits direkt: Runtime und Archiv verwenden Erkennungen und Originaldiagnosen. Zusätzliche Auswertungsformen bleiben vorbereitet; sie müssen beim expliziten Gebrauch genau zugehörige Raster und Erkennungen verbinden. |
+| 13 | Sitzung, Gang, Verlauf: `Session`, `Gang`, `Timeline`, `Event` | Controller und `timeline.apply` | Bereits direkt: Archiv, API und Darstellung verwenden die vollständigen Ownerwerte. Originalereignisse bleiben mit Identität und Zeitbezügen erhalten; keine parallelen Sitzungs- oder Gangmodelle. |
+| 14 | Steuerungsausgabe: `ControllerOutput` | Explizites `ControllerOutput.capture` | Vorbereitete Beobachtung ohne Laufzeitproduktion. Die State-API liest die vorhandenen Controller-, Sitzungs- und Gerätewerte bereits unter Runtime-Lock konsistent. Kein pauschaler Vollcapture. |
+| 15 | Thermostat: `ControlInputs`, `ThermostatState`, `Decision` | Bedarfsbildung, `thermostat.evaluate`, abschließende Controllerauswertung | Bereits direkt: Controller konsumiert quellenfreie Bedarfspegel, `HADevice.send` die endgültige Entscheidung; Sensoren und API lesen Zustand und Entscheidung. Keine zusätzliche Thermostat-Ausgabeform. |
+| 16 | Temperaturprogramm: `TemperatureProgram`, `TemperatureControl` | Temperaturprogramm und `temperature_control` | Bereits direkt: Thermostat, API, Climate- und Number-Entitäten verwenden berechnete Ziele und Bedienprojektion. Kein zweites Programmobjekt oder erneute Sollwertberechnung für eine Übergabe. |
+| 17 | Heizzeit und Energie: `HeatingTime`, `Energy` | `heating.report/advance`, `energy.advance` | Bereits direkt: `Session.heating` und `Session.energy` gehen an Sensoren, API und Archiv. Mess-, Schätz- und unbekannte Anteile bleiben erhalten; kein zusätzlicher Einzelbeleg oder paralleler Intervallbestand ohne Verbraucher. |
+| 18 | Kühlung und zeitgebundene Phasen: `OvenCoolingResult`, `TimedPhase`, `Deadline` | Kühlungsberechnung und Controller | Bereits direkt: Phasenverarbeitung, Session, API und Darstellung verwenden Berechnungsbeleg, Pausen und Fristen. Deadline-Token behalten ihre bestehende Eigentums- und Ersetzungswirkung. |
+| 19 | Temporäre Türwärme: `TemporaryDoorHeatState`, `DoorHeatTransition` | Bestehende Türwärmeauswertung | Bereits direkt: Controller übernimmt den einmal berechneten Zustand und die Anforderung. Für den flüchtigen Übergang wird kein zusätzlicher Snapshotbestand geführt. |
+| 20 | Heizfortschritt: vorhandene Evidence und Episode; Beobachtungen in `thermal_handoff.py` | `HADevice._refresh_heating_progress` | Bereits direkt: Der Geräteadapter verwendet das Ergebnis für bestehenden HA-Hinweis, dessen Aufhebung und Archiv. Zusätzliche Fortschritts-/Episodenformen bleiben vorbereitet; keine zweite Trend- oder Hinweisentscheidung. |
+| 21 | Aufheizschätzung: ETA; Beobachtungen: `WarmupEstimateSnapshot`, `WarmupSourceContext`, `WarmupEstimateObservation` | `HADevice._refresh_warmup`, `estimated_ready_seconds` | Bereits direkt: API und Anzeige verwenden die unter Quellen- und Gültigkeitsprüfung gelesene ETA. Zusätzliche Beobachtungen bleiben vorbereitet; keine zweite Schätzung oder historische Abfrage. |
+| 22 | Licht: `LightPlan`, `LightAfterRun`; Beobachtungen: `LightOutputSnapshot`, `LightQuantizerSnapshot`, `LightQuantization` | Lichtregelung, Planer und Quantisierung | Bereits direkt: `HADevice.apply_light` konsumiert Plan und quantisierten Befehl; Session und API verwenden denselben Nachlauf. Zusätzliche Planner-/Quantizerbeobachtungen bleiben vorbereitet; kein zweites Update oder Quantisieren. |
+| 23 | Geräteausgabe und Diagnose: `HeaterServiceResult`, `LightServiceResult`, `DeviceDiagnostics` | Bestehende Geräteaufrufe und Fehlerverarbeitung | Bereits direkt: Faults, Logs und Archiv erhalten bestehende Fehler-/Dienstinformationen. Die zusätzlichen Ergebnisformen bleiben vorbereitet. Dienstabschluss, Caller-Timeout und physische Rückmeldung sind getrennte Beobachtungen. |
+| 24 | Phasen und Messfenster: `PhaseProjection`, `PhaseInterval`, `ReadinessPause`; Beobachtung: `MeasurementWindow` | `project_session/project_archive`, `measurement_window` | Bereits direkt: Controller, `Archive.read`, API und Darstellung verwenden berechnete Projektionen und Messfenster samt Korrekturen und Vollständigkeit. `MeasurementWindow` bleibt vorbereitete Form; keine erneute Rekonstruktion. |
+| 25 | Umgebung: `EnvironmentSnapshot` mit Unterformen | `environment_snapshot` | Bereits direkt: State-API und Panel konsumieren die vollständige Anzeigeprojektion. `EnvironmentSnapshot` bleibt vorbereitet; die Umgebungsdaten sind keine zusätzlichen Saunasteuerungseingänge. |
+| 26 | Archiv: Record-, Sitzungslisten- und Sitzungsergebnisformen in `system_handoff.py` | `Archive.read` | Bereits direkt: Archiv-API und Export verwenden die bestehenden geschlossenen Ergebnisse. Zusätzliche Formen bleiben vorbereitet. Leere Liste, fehlende Sitzung, Pagination und offene Payloads bleiben verschieden beziehungsweise vollständig erhalten. |
+| 27 | Darstellung: `PanelSnapshot`, öffentliche Form in `presentation_handoff.py` | State-API und `public_state` | Bereits direkt: Panel konsumiert den bestehenden JSON-Wirevertrag; öffentliche Redaktion liegt bei `public_state`. Zusätzliche Panelbeobachtungen bleiben vorbereitet; entfernte Adminfelder werden nicht als `None` wieder eingeführt. |
+| 28 | Empfänger: `RecipientAssignment`, `RecipientResolution`, `ResolvedRecipient`, `SessionRecipients` | Explizite Auflösung, Zuordnung und Akkumulation | Vorbereitete Formen ohne produktiven Benachrichtigungsverbraucher. Fähigkeiten und Bedienidentität werden nicht aus Anwesenheit abgeleitet. Keine Aktionen oder Zustellung. |
+| 29 | Austausch: Envelope- und Korrelationssnapshots in `interaction_handoff.py` | Explizite Transportresultate und `ReplyCorrelator` | Vorbereitete Formen ohne Runtime-Transport, eingehenden Reply-Producer oder Companion-Verbraucher. Transportannahme, Geräteempfang und Antwort bleiben getrennte Aussagen. |
+| 30 | Fachereignisverbrauch: Originalereignis; Beobachtung: `ConsumerEventOutput` | Bestehender Ereignisproducer; explizite Bindung an damalige Sitzung beziehungsweise Präsenzmeldung | Bereits direkt: `_publish_consumer` und Archiv konsumieren das ursprüngliche Fachereignis mit bestehender Wiederholungserkennung. `ConsumerEventOutput` bleibt vorbereitet; keine Sitzungsvollkopie je Archiv-Event. |
 
 Backupbarrieren, Workerqueues, HTTP-Anfragen, Registryobjekte, Setup/Unload und
 Abonnentenverwaltung sind Infrastrukturmechanismen. Handles und Locks sind
 keine zusätzlichen Fachmodelle. Ihre fachlich sichtbaren Ergebnisse liegen in
-den genannten Konfigurations-, Archiv-, Diagnose- und Darstellungsformen.
+den genannten Konfigurations-, Archiv-, Diagnose- und Darstellungswerten.
 
-Die Tabelle beschreibt erforderliche Anschlussänderungen, keine bereits
-erfolgte Umstellung der Runtime. Ein Formnachweis zeigt tatsächlich übernommene
-Werte, erhaltene Zeit- und Identitätsbezüge und Unabhängigkeit von späterer
-Mutation. Ein bestandener Test belegt keine angeschlossene Steuerungsfunktion,
-Companion-Zustellung oder reale Gerätewirkung.
+Ein Formnachweis belegt übernommene Werte, Zeit- und Identitätsbezüge sowie
+Unabhängigkeit von späterer Mutation. Er belegt für sich keine angeschlossene
+Steuerungsfunktion, Companion-Zustellung oder reale Gerätewirkung.
