@@ -1899,7 +1899,14 @@ class InfusionLifecycleTests(unittest.TestCase):
         events = []
         first = self.begin + self.side * self.step
         first_decay = self.begin + self.width + self.side * self.step
-        confirmed = self.begin + 2 * self.width
+        # The first new original follows the same-stamp corrections and one pure tick;
+        # their elapsed time must not introduce a separate source-gap failure.
+        confirmed = first_decay + 5 * self.step
+        for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+            self.assertLessEqual(
+                confirmed - first_decay,
+                self.p[f"curve_original_gap_{quantity.value}_upper_seconds"],
+            )
         with self._patch_math(shapes):
             self._feed(detector, first, points, events)
             self.assertEqual(self._infusions(events), [])
