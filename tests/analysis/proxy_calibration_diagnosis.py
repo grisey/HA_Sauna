@@ -29,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 KINDS = ("door_open", "door_close", "infusion")
 VARIANTS = ("baseline", "without_temperature_bands", "without_all_bands",
             "r03_shape_original_bands", "r03_shape_r03_bands")
+GAIN_VARIANTS = ("baseline", "gain_from_calibration_counters")
 
 
 def sha(payload):
@@ -100,6 +101,10 @@ def validate_policy(policy):
     expected_modes = ("none", "temperature_channels_only", "all_residual_bands", "none", "none")
     if tuple(item["band_ablation"] for item in policy["variants"]) != expected_modes:
         raise ValueError("Only the declared two veto ablations are permitted")
+    if tuple(item["id"] for item in policy["gain_boundary"]["variants"]) != GAIN_VARIANTS:
+        raise ValueError("Gain diagnosis requires exactly baseline plus the declared counter-derived hypothesis")
+    if any(item["band_ablation"] != "none" for item in policy["gain_boundary"]["variants"]):
+        raise ValueError("Gain diagnosis cannot remove residual vetoes")
     if policy["scope"]["full_recording"] != "R03" or policy["scope"]["window_recording"] != "R04":
         raise ValueError("Diagnosis must remain R03 full-grid plus R04 reference windows")
     for key, value in policy["limits"].items():
@@ -486,6 +491,67 @@ def method_overlap(calibration, policy):
             "limitation": policy["method_overlap"]["limitation"], "R04_used_for_selection": False}
 
 
+def gain_boundary_profiles(originals, overlap, calibration_identity):
+    """One fixed training-endpoint hypothesis; never inspect R04 to choose it."""
+    changed, sources = {}, []
+    for kind in KINDS:
+        original = originals[kind]
+        method = next(item for item in overlap["methods"]
+                      if item["kind"] == kind and item.get("selected"))
+        positives = [item for item in method["positive_endpoints"] if item["frontier_eligible"]]
+        counters = [item for item in method["counter_endpoints"] if item["frontier_eligible"]]
+        source = {"kind": kind, "selected_method": method["id"],
+                  "calibration_source": calibration_identity,
+                  "previous_minimum_gain": original.policy.minimum_gain,
+                  "eligible_positive_endpoints": positives,
+                  "eligible_counter_endpoints": counters,
+                  "threshold_operator": ">", "R04_used_for_selection": False,
+                  "full_horizon_reassessment_required": True}
+        if kind == "infusion":
+            if counters:
+                raise ValueError("Declared unchanged infusion has eligible counter endpoints")
+            changed[kind] = original
+            source.update(status="exact_original_profile_reused_no_counter_level_learned",
+                          selected_minimum_gain=original.policy.minimum_gain)
+        else:
+            if (not counters or not positives
+                    or len(positives) != len(method["positive_endpoints"])):
+                raise ValueError(f"No complete eligible endpoint basis for fixed door gain hypothesis: {kind}")
+            threshold = max(item["score_gain"] for item in counters)
+            positive_minimum = min(item["score_gain"] for item in positives)
+            if (not math.isfinite(threshold) or not math.isfinite(positive_minimum)
+                    or threshold < original.policy.minimum_gain or not threshold < positive_minimum):
+                raise ValueError(f"Counter maximum does not leave the predeclared positive gain interval: {kind}")
+            changed[kind] = replace(original, policy=replace(original.policy, minimum_gain=threshold))
+            source.update(status="single_counter_maximum_hypothesis",
+                          selected_minimum_gain=threshold,
+                          maximum_counter_gain=threshold, minimum_positive_gain=positive_minimum,
+                          maximum_counter_source_endpoints=[item for item in counters if item["score_gain"] == threshold],
+                          minimum_positive_source_endpoints=[item for item in positives if item["score_gain"] == positive_minimum],
+                          interval={"lower_inclusive": threshold, "upper_exclusive": positive_minimum},
+                          equality_effect="A counter at exactly the maximum fails strict gain > minimum_gain; no epsilon is added.")
+        sources.append(source)
+    return {"baseline": originals, "gain_from_calibration_counters": changed}, sources
+
+
+def gain_invariant_binding(binding):
+    """Ignore exactly the authorized policy field, retaining every other value."""
+    if binding is None:
+        return None
+    value = deepcopy(binding)
+    del value["profile"]["policy"]["minimum_gain"]
+    return value
+
+
+def gain_invariant_score(score):
+    """Gain changes raw support status; all numerical losses/bands stay exact."""
+    if score is None:
+        return None
+    value = deepcopy(score)
+    del value["status"]
+    return value
+
+
 def decision_schedule(profile, onset, owner_policy):
     binding = onset + profile.duration_seconds * owner_policy["method_search"]["binding_fraction"]
     end = onset + profile.duration_seconds
@@ -503,7 +569,6 @@ def evaluate_variant(cal, work, variant, profiles, specs, sessions, indices,
     for spec in specs:
         recording, onset = spec["recording"], spec["onset_s"]
         for kind in KINDS:
-            profile = profiles[kind]
             horizon = work.baseline_profiles[kind].duration_seconds
             if onset + horizon > sessions[recording]["analysis_window"]["end_s"]:
                 continue
@@ -602,7 +667,17 @@ def factor_changes(baseline, records, baseline_report, report, variant):
         transitions[f"{prior['assessment']['status']} -> {row['assessment']['status']}"] += 1
         old_binding = prior["assessment"].get("frozen_binding")
         binding = row["assessment"].get("frozen_binding")
-        if variant["band_ablation"] != "none":
+        if variant.get("gain_change"):
+            same_binding = encode(gain_invariant_binding(old_binding)) == encode(gain_invariant_binding(binding))
+            old_calls = [gain_invariant_score(item["raw_score"]) for item in prior["raw_score_calls"]]
+            calls = [gain_invariant_score(item["raw_score"]) for item in row["raw_score_calls"]]
+            count = min(len(old_calls), len(calls))
+            same_scores = encode(old_calls[:count]) == encode(calls[:count])
+            if not same_binding or not same_scores:
+                failures.append({"anchor": record_key(row),
+                                 "binding_except_minimum_gain_equal": same_binding,
+                                 "common_raw_loss_gain_band_values_equal": same_scores})
+        elif variant["band_ablation"] != "none":
             same_binding = prior["binding_sha256"] == row["binding_sha256"]
             old_calls = [item["raw_score"] for item in prior["raw_score_calls"]]
             calls = [item["raw_score"] for item in row["raw_score_calls"]]
@@ -632,7 +707,7 @@ def factor_changes(baseline, records, baseline_report, report, variant):
             "added_event_keys": sorted(events - old_events), "removed_event_keys": sorted(old_events - events),
             "reference_status_changes": references, "binding_invariant_failures": failures,
             "amplitude_consequences": amplitudes,
-            "cluster_count_limit": "Earlier confirmations can change cluster representatives and claim counts. A claim-count change alone is not an improvement or a monotone veto effect."}
+            "cluster_count_limit": "Changed confirmation timing can change cluster representatives and claim counts. A claim-count change alone is not an improvement or a monotone criterion effect."}
 
 
 def trace_specs(specs, calibration, policy):
@@ -674,10 +749,19 @@ def full_traces(cal, work, variants, profiles, cases, indices, owner_policy, out
                         row["unchanged_model_duration_seconds"] = profile.duration_seconds
                         key = (case["recording"], case["kind"], case["onset_s"], decision)
                         factual = {"binding_sha256": row["binding_sha256"], "raw_score": row["raw_score"]}
+                        gain_factual = {"binding_except_minimum_gain": gain_invariant_binding(row["assessment"].get("frozen_binding")),
+                                        "raw_loss_gain_band_values": gain_invariant_score(row["raw_score"])}
                         if variant["id"] == "baseline":
-                            raw_baseline[key] = factual
+                            raw_baseline[key] = {"factual": factual, "gain_factual": gain_factual}
+                        elif variant.get("gain_change"):
+                            exact = encode(gain_factual) == encode(raw_baseline[key]["gain_factual"])
+                            row["binding_except_minimum_gain_and_raw_loss_gain_equal_to_baseline"] = exact
+                            if not exact:
+                                invariant_failures.append({"variant": variant["id"], "recording": key[0],
+                                                           "kind": key[1], "onset_s": key[2], "decision_at_s": decision,
+                                                           "scope": "Only minimum_gain and raw score.status excluded"})
                         elif variant["band_ablation"] != "none":
-                            exact = encode(factual) == encode(raw_baseline[key])
+                            exact = encode(factual) == encode(raw_baseline[key]["factual"])
                             row["factual_binding_and_raw_score_equal_to_baseline"] = exact
                             if not exact:
                                 invariant_failures.append({"variant": variant["id"], "recording": key[0],
@@ -695,10 +779,12 @@ def full_traces(cal, work, variants, profiles, cases, indices, owner_policy, out
 def run(args, policy):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    base, saved, calibration, quality, manifest, fixtures, verification = verify_baseline(args.baseline.resolve(), policy)
+    base, saved, calibration, _quality, manifest, fixtures, verification = verify_baseline(args.baseline.resolve(), policy)
     cal = load_calibration_owner()
     reader, axis_owner, core = cal.load_owners()
     originals = {kind: decode_profile(core, saved["profiles"][kind]) for kind in KINDS}
+    active_variants = (policy["gain_boundary"]["variants"] if args.mode == "gain_boundary"
+                       else policy["variants"])
     for kind, profile in originals.items():
         if encode(cal.serializable(profile)) != encode(saved["profiles"][kind]):
             raise ValueError(f"Lossless typed profile round trip failed: {kind}")
@@ -744,7 +830,7 @@ def run(args, policy):
     with anchor_path.open("wb") as raw:
         with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as stream:
             baseline_rows, baseline_report = evaluate_variant(
-                cal, work, policy["variants"][0], originals, specs, sessions, indices,
+                cal, work, active_variants[0], originals, specs, sessions, indices,
                 axes, axis_owner, owner_policy, stream)
             reproduction = reproduction_check(cal, baseline_rows, expected, policy, owner_policy)
             write_json(output / "baseline-reproduction.json", reproduction)
@@ -752,21 +838,35 @@ def run(args, policy):
                 raise ValueError("Baseline reproduction is not delta0; factor variants were not executed")
             rows["baseline"] = baseline_rows
             reports.append(baseline_report)
-            profile_variants, refits = refit_r03(cal, work, originals, calibration, indices,
-                                                owner_policy, policy)
-            profile_output = {"schema_version": 1, "baseline": verification,
+            overlap = method_overlap(calibration, policy)
+            if args.mode == "gain_boundary":
+                profile_variants, gain_sources = gain_boundary_profiles(
+                    originals, overlap, identity(base / "calibration.json"))
+                refits = []
+                work.counts["diagnosis_profile_refits"] = 0
+                write_json(output / "gain-boundary-sources.json", {
+                    "schema_version": 1, "sources": gain_sources,
+                    "selection": policy["gain_boundary"]["selection"],
+                    "R04_used_for_selection": False, "profile_refits": 0,
+                    "product_activation": False})
+            else:
+                profile_variants, refits = refit_r03(cal, work, originals, calibration, indices,
+                                                    owner_policy, policy)
+                gain_sources = []
+            profile_output = {"schema_version": 1, "mode": args.mode, "baseline": verification,
                               "refit_reports": refits,
+                              "gain_boundary_sources": gain_sources,
                               "variants": [{**variant,
                                             "profiles": {kind: cal.serializable(profile)
                                                          for kind, profile in profile_variants[variant["id"]].items()},
                                             "profile_sha256": {kind: sha(encode(cal.serializable(profile)))
                                                                for kind, profile in profile_variants[variant["id"]].items()}}
-                                           for variant in policy["variants"]],
+                                           for variant in active_variants],
                               "infusion_exactly_reused": all(profiles["infusion"] is originals["infusion"]
                                                             for profiles in profile_variants.values()),
                               "product_activation": False}
             write_json(output / "profiles.json", profile_output)
-            for variant in policy["variants"][1:]:
+            for variant in active_variants[1:]:
                 variant_rows, report = evaluate_variant(
                     cal, work, variant, profile_variants[variant["id"]], specs, sessions,
                     indices, axes, axis_owner, owner_policy, stream)
@@ -780,39 +880,48 @@ def run(args, policy):
     supported_sets = {variant: {key for key, row in records.items() if row["assessment"]["status"] == "supports"}
                       for variant, records in rows.items()}
     inclusion = []
-    for left, right in (("baseline", "without_temperature_bands"),
-                        ("without_temperature_bands", "without_all_bands")):
+    inclusion_pairs = (("gain_from_calibration_counters", "baseline"),) if args.mode == "gain_boundary" else (
+        ("baseline", "without_temperature_bands"), ("without_temperature_bands", "without_all_bands"))
+    for left, right in inclusion_pairs:
         lost = sorted(supported_sets[left] - supported_sets[right])
         inclusion.append({"subset": left, "superset": right, "holds": not lost,
                           "lost_supported_anchor_count": len(lost), "lost_anchor_keys": lost})
     cases = trace_specs(specs, calibration, policy)
-    trace = full_traces(cal, work, policy["variants"], profile_variants, cases, indices,
+    trace = full_traces(cal, work, active_variants, profile_variants, cases, indices,
                         owner_policy, output, policy)
     write_json(output / "trace-summary.json", trace)
-    overlap = method_overlap(calibration, policy)
     write_json(output / "method-overlap.json", overlap)
     failures = [item for report in reports for item in report.get("changes_vs_baseline", {}).get("binding_invariant_failures", [])]
-    invariants = {"band_ablation_supported_anchor_inclusion": inclusion,
+    invariants = {"supported_anchor_inclusion": inclusion,
+                  "inclusion_scope": "higher minimum_gain supporters are a subset of baseline" if args.mode == "gain_boundary"
+                  else "baseline supporters are a subset after relaxing the named band vetoes",
                   "binding_or_raw_score_failures": failures,
                   "trace_binding_or_raw_score_failures": trace["binding_or_raw_score_invariant_failures"],
                   "infusion_exactly_reused": profile_output["infusion_exactly_reused"]}
+    invariants["gain_supported_anchor_inclusion" if args.mode == "gain_boundary"
+               else "band_ablation_supported_anchor_inclusion"] = inclusion
     valid = (all(item["holds"] for item in inclusion) and not failures
              and not trace["binding_or_raw_score_invariant_failures"] and profile_output["infusion_exactly_reused"])
-    diagnosis = {"schema_version": 1, "completion": "completed" if valid else "factor_invariant_failure",
+    diagnosis = {"schema_version": 1, "mode": args.mode,
+                 "completion": "completed" if valid else "factor_invariant_failure",
                  "baseline": verification, "baseline_reproduction": reproduction,
                  "variants": [{key: value for key, value in report.items()
                                if key in ("id", "source", "counts", "r03_inventory", "changes_vs_baseline")}
                               for report in reports],
                  "factor_invariants": invariants, "refit_reports": refits,
+                 "gain_boundary_sources": gain_sources,
                  "method_overlap_summary": overlap["summary"],
                  "trace": trace, "policy": policy,
                  "actual_owner_work_limits": owner_policy["limits"],
                  "work": dict(work.counts), "elapsed_s": time.monotonic() - work.base.started,
                  "interpretation": policy["interpretation"], "product_activation": False,
-                 "limitations": ["R03-only fitting retains the same approximate target attribution and uses the evaluation session for resubstitution.",
-                                 "Band-veto removal is a diagnostic intervention; additional supports are not an improvement claim.",
-                                 "Method frontiers concern retained early-stopped endpoints. They do not prove that no later gain threshold could work.",
-                                 "R04 scope is limited to predeclared reference/uncertainty windows and diagnostic onset; it is not another complete replay or an untouched holdout."]}
+                 "limitations": ["Method frontiers concern retained early-stopped endpoints. They do not prove that no later gain threshold could work.",
+                                 "R04 scope is limited to predeclared reference/uncertainty windows and diagnostic onset; it is not another complete replay or an untouched holdout."] + (
+                                     ["Gain-boundary mode performs no profile refit and tests exactly one training-counter maximum per door type through the full horizon; no R04 threshold search or method reselection is performed.",
+                                      "This one threshold hypothesis is derived on the same R03 training inventory and is not independent validation or a release decision."]
+                                     if args.mode == "gain_boundary" else
+                                     ["R03-only fitting retains the same approximate target attribution and uses the evaluation session for resubstitution.",
+                                      "Band-veto removal is a diagnostic intervention; additional supports are not an improvement claim."])}
     write_json(output / "diagnosis.json", diagnosis)
     outputs = [identity(path) for path in sorted(output.rglob("*"))
                if path.is_file() and path.name not in ("artifact-hashes.json", "failure.json")]
@@ -825,7 +934,7 @@ def run(args, policy):
     if not valid:
         raise ValueError("A required factor-isolation invariant failed; diagnosis artifacts retain the evidence")
     print(json.dumps({"completion": "completed", "baseline_delta0": True,
-                      "variant_count": len(reports), "trace_rows": trace["rows"],
+                      "mode": args.mode, "variant_count": len(reports), "trace_rows": trace["rows"],
                       "output": str(output), "work": dict(work.counts)}), flush=True)
 
 
@@ -834,6 +943,7 @@ def main(argv=None):
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--policy", type=Path, default=HERE / "proxy_calibration_diagnosis_policy.json")
+    parser.add_argument("--mode", choices=("causes", "gain_boundary"), default="causes")
     args = parser.parse_args(argv)
     if sys.platform != "linux":
         parser.error("Diagnosis fits and original replay analysis run exclusively on Linux")

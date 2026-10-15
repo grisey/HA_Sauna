@@ -278,3 +278,7 @@ ein Diagnoseeingriff und keine Freigabe eines neuen Erkennungsverfahrens.
 Produktiver Detector, Regelung und Aktorausgaben sind nicht Bestandteil dieses
 Vergleichs. Eingangsprüfsummen, Varianten und Prozessabschluss werden im
 Artefakt `proxy-calibration` mitgeführt.
+`proxy_calibration_diagnosis_mode=gain_boundary` vergleicht ausschließlich die
+Ausgangsprofile mit einer aus den Kalibrationsgegenbeispielen abgeleiteten
+Mindestverbesserung gegenüber dem Verlauf ohne Ereignis. Formen und Fehlerbänder
+bleiben dabei erhalten; R04 wird nicht zur Grenzwahl verwendet.

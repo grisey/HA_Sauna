@@ -14,6 +14,17 @@
     {"id": "r03_shape_original_bands", "shape_source": "R03_selected_method_refit", "band_source": "baseline", "band_ablation": "none"},
     {"id": "r03_shape_r03_bands", "shape_source": "R03_selected_method_refit", "band_source": "R03_selected_method_refit", "band_ablation": "none"}
   ],
+  "gain_boundary": {
+    "variants": [
+      {"id": "baseline", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "none"},
+      {"id": "gain_from_calibration_counters", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "none", "gain_change": "maximum_frontier_eligible_selected_method_counter_endpoint"}
+    ],
+    "selection": "For each selected door model, minimum_gain is exactly the maximum stored score_gain among its numerically evaluable, original-band-admissible and geometry-supported calibration counter endpoints. Apply only when every R03 positive endpoint is frontier-eligible and this maximum is strictly below their minimum gain. No epsilon, iterative search or R04 choice.",
+    "infusion": "No eligible calibration counter exists; retain the exact original profile and minimum_gain. This is not a learned infusion separation level.",
+    "invariants": "Only policy.minimum_gain and the consequent raw score.status may differ. Forms, bands, D, B/V/noise/A, raw template/null losses, gain, original support and geometry owners remain unchanged. Higher gain thresholds must yield a subset of baseline-supported onsets; clustered claim counts need not be monotone.",
+    "scope": "Only baseline plus this one fixed gain hypothesis. Re-run earliest confirmation through the unchanged horizon on the existing R03/R04 scope and all existing decision traces. Do not repeat the five cause variants or any profile refit.",
+    "activation": false
+  },
   "scope": {
     "full_recording": "R03",
     "window_recording": "R04",

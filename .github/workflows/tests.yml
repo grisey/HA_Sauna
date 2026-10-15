@@ -41,6 +41,11 @@ on:
         description: 'Optional completed calibration run ID for isolated cause comparisons instead of a new full calibration'
         type: string
         default: ''
+      proxy_calibration_diagnosis_mode:
+        description: 'Cause comparison using the supplied calibration baseline'
+        type: choice
+        options: [causes, gain_boundary]
+        default: causes
       proxy_expectation_cases:
         description: 'Explicit schema-version-1 JSON string with cases for proxy_expectation_analysis'
         type: string
@@ -154,6 +159,7 @@ jobs:
         env:
           SAUNA_CALIBRATION_EVIDENCE: ${{ runner.temp }}/ha-sauna-proxy-calibration
           SAUNA_CALIBRATION_BASELINE_RUN: ${{ inputs.proxy_calibration_baseline_run }}
+          SAUNA_CALIBRATION_DIAGNOSIS_MODE: ${{ inputs.proxy_calibration_diagnosis_mode || 'causes' }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PYTHONDONTWRITEBYTECODE: '1'
@@ -173,7 +179,7 @@ jobs:
               gh run download "$SAUNA_CALIBRATION_BASELINE_RUN" --name proxy-calibration --dir "$baseline" > "$evidence/baseline-download.log" 2>&1
               result=$?
               if [ "$result" -eq 0 ]; then
-                python -u tests/analysis/proxy_calibration_diagnosis.py --baseline "$baseline" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
+                python -u tests/analysis/proxy_calibration_diagnosis.py --baseline "$baseline" --mode "$SAUNA_CALIBRATION_DIAGNOSIS_MODE" --output "$evidence/output" > "$evidence/stdout.log" 2> "$evidence/stderr.log"
                 result=$?
               fi
             fi
