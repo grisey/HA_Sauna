@@ -29,9 +29,10 @@ remain separate comparisons with their own fixed branch identity; no OR/min
 selects an opening. Original pre/post-onset trends and the strictly new segment
 are separate assessments with their own noise scales and are never score-added.
 
-This prepares a future calibrated expectation profile. A fixed onset still
-refits coefficients, so these results are not frozen value predictions, event
-probabilities, event decisions or product validation.
+Prefix comparisons still refit coefficients. A separate diagnostic freezes the
+binding M1/M2 fits and evaluates their unchanged values only on genuinely new
+own originals after binding. Raw residuals and normalization by the initial
+noise stay separate; neither is an event probability or product validation.
 """
 
 from __future__ import annotations
@@ -285,6 +286,7 @@ class BoundChannel:
         self.first_newest = points[-1][0] if points else None
         self.initial_points = points
         self.used_points = dict(points)
+        self.frozen_fits = {}
         self.reason = None
         if not points:
             self.reason = "no_original_support_at_binding"
@@ -341,12 +343,16 @@ class BoundChannel:
             "reason": reason,
         }
         if reason is None:
-            row["M1"] = assessment(cache.change(
-                points, self.onset, self.floor, self.direction, 1, self.context,
-            ))
-            row["M2"] = assessment(cache.change(
-                points, self.onset, self.floor, self.direction, 2, self.context,
-            ))
+            for name, order in (("M1", 1), ("M2", 2)):
+                features = cache.change(
+                    points, self.onset, self.floor, self.direction, order, self.context,
+                )
+                row[name] = assessment(features)
+                if update is None:
+                    # Keep counterevidence too; an initial None stays unbound.
+                    self.frozen_fits.setdefault(name, (
+                        row[name]["status"], features.fit if features is not None else None,
+                    ))
             # Trends never inherit the model fit's sign or model noise scale.
             before = tuple(point for point in points
                            if self.floor <= point[0] < self.onset)
@@ -354,18 +360,66 @@ class BoundChannel:
             row["before_trend"] = trend_assessment(cache, before, self.context)
             row["after_trend"] = trend_assessment(cache, after, self.context)
             row["new_original_trend"] = trend_assessment(cache, fresh, self.context)
-            self.used_points.update(points)
         else:
             unresolved = {"status": "unresolved", "reason": reason, "features": None}
             for name in ("M1", "M2", "before_trend", "after_trend",
                          "new_original_trend"):
                 row[name] = dict(unresolved)
+        if update is None:
+            for name in ("M1", "M2"):
+                self.frozen_fits.setdefault(name, (row[name]["status"], None))
+        row["frozen_value_prediction"] = self.frozen_value_prediction(
+            cache, at, points, reason, update,
+        )
+        if reason is None:
+            self.used_points.update(points)
         row["work"] = {
             "wall_seconds": time.perf_counter() - started_wall,
             "cpu_seconds": time.process_time() - started_cpu,
             "calls": dict(cache.counts - counts),
         }
         return row
+
+    def frozen_value_prediction(self, cache, at, points, reason, update):
+        original = next((point for point in points if update is not None
+                         and point[0] == update["original_at"]), None)
+        if update is not None and reason is None and not (
+            update["kind"] == "new_original" and at > self.binding["bound_at"]
+            and update["source_role"] == f"{self.position.value}_{self.quantity.value}"
+            and original is not None and original[0] > self.binding["bound_at"]
+            and original[0] not in self.used_points
+        ):
+            reason = "not_a_new_own_original_after_binding"
+        result = {
+            "bound_at": self.binding["bound_at"],
+            "original_at": original[0] if original is not None else None,
+            "measurement_unit": ("°C" if self.quantity.value == "temperature"
+                                 else "RH percentage points"),
+            "normalization": "residual / binding noise_scale; null if unavailable or zero",
+            "models": {},
+        }
+        for name, (evidence, snapshot) in self.frozen_fits.items():
+            deviation = (cache.module.curve_deviation(snapshot.profile, original, snapshot=snapshot)
+                         if update is not None and reason is None and snapshot is not None else None)
+            status = "unresolved"
+            model_reason = reason
+            if reason is None:
+                if snapshot is None:
+                    model_reason = "no_fit_snapshot_at_binding"
+                elif update is None:
+                    status = "bound"
+                elif deviation is None:
+                    model_reason = "frozen_profile_not_evaluable"
+                else:
+                    status = "observed_deviation"
+            model = {
+                "binding_evidence": evidence, "status": status, "reason": model_reason,
+                "deviation": deviation,
+            }
+            if update is None:
+                model["snapshot"] = serializable(snapshot)
+            result["models"][name] = model
+        return result
 
 
 def received_events(session):
@@ -465,9 +519,10 @@ def analyze_recording(cases, session, fixture, modules, origin, output):
                     "curve_policy": asdict(detector.curve_policy),
                     "binding": [], "rows": [], "input_audit": [],
                     "status": "running", "event_probability": None,
-                    "value_prediction": None,
+                    "value_prediction": "rows/frozen_value_prediction",
                     "prediction_limitation": (
-                        "fixed onset refits coefficients; no frozen forecast"
+                        "binding fits only; raw deviations and initial-noise normalization "
+                        "are not calibrated prediction intervals or event probabilities"
                     ),
                 }
                 channels = {}
@@ -626,8 +681,9 @@ def run_analysis(document, output):
                 "not calibrated event probabilities"
             ),
             "forecast": (
-                "not available; coefficients refit on new prefixes, "
-                "no calibrated frozen profile"
+                "separate binding M1/M2 fit snapshots, including counterevidence; "
+                "unchanged coefficients evaluated only on new own originals after binding; "
+                "prefix refits never replace the frozen profile"
             ),
             "source_independence": (
                 "not established; shared source hashes do not provide "

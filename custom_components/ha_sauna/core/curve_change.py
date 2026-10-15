@@ -45,6 +45,144 @@ class CurvePolicy:
     huber_delta: float
 
 
+def _profile_number(value):
+    try:
+        return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and isfinite(value))
+    except OverflowError:
+        return False
+
+
+@dataclass(frozen=True)
+class CurveProfile:
+    """A mathematical profile in dimensionless x, without event calibration.
+
+    Polynomial coefficients multiply 1, x, x², x³ up to the named degree.
+    hinge1/hinge2 use 1, x, x², (x-knot_x)+ or (x-knot_x)+². All
+    coefficients have the input value unit. Editing this immutable description
+    creates a new profile; no later observation refits it in the evaluator.
+    """
+
+    model: str
+    coefficients: tuple[float, ...]
+    knot_x: float | None = None
+
+    def __post_init__(self):
+        counts = {"constant": 1, "linear": 2, "quadratic": 3, "cubic": 4,
+                  "hinge1": 4, "hinge2": 4}
+        if (not isinstance(self.model, str) or self.model not in counts
+                or not isinstance(self.coefficients, tuple)
+                or len(self.coefficients) != counts[self.model]
+                or not all(_profile_number(value) for value in self.coefficients)):
+            raise ValueError(
+                "A profile needs a known basis and finite tuple coefficients",
+            )
+        if self.model.startswith("hinge"):
+            if not _profile_number(self.knot_x):
+                raise ValueError("A hinge profile needs a finite normalized knot")
+        elif self.knot_x is not None:
+            raise ValueError("A polynomial profile has no hinge knot")
+
+
+@dataclass(frozen=True)
+class CurveFitSnapshot:
+    """One actual fit, with immutable profile and normalization, never a forecast.
+
+    x=(t-time_origin)/time_scale_seconds; value_center is the original input
+    unit. The time scale is a numerical fit coordinate, not an event duration.
+    noise_scale retains the initial fit's value-unit MAD; None and zero both
+    preclude a normalized error, without precluding a raw curve value/error.
+    Sources, binding before new originals and a finite prediction horizon stay
+    with the existing consumer. A later fit must not replace a bound snapshot.
+    """
+
+    profile: CurveProfile
+    time_origin: datetime
+    time_scale_seconds: float
+    value_center: float
+    newest_at: datetime
+    noise_scale: float | None
+
+    def __post_init__(self):
+        if (not isinstance(self.profile, CurveProfile)
+                or not isinstance(self.time_origin, datetime)
+                or not isinstance(self.newest_at, datetime)
+                or not _profile_number(self.time_scale_seconds)
+                or self.time_scale_seconds <= 0
+                or not _profile_number(self.value_center)
+                or self.noise_scale is not None and (
+                    not _profile_number(self.noise_scale) or self.noise_scale < 0)):
+            raise ValueError(
+                "A snapshot needs finite normalization and nonnegative noise",
+            )
+        try:
+            valid_span = (self.newest_at - self.time_origin).total_seconds() > 0
+        except (TypeError, OverflowError):
+            valid_span = False
+        if not valid_span:
+            raise ValueError("A snapshot needs a positive coherent fitted time span")
+
+
+def curve_value(
+    profile: CurveProfile, at: datetime, *, snapshot: CurveFitSnapshot,
+) -> float | None:
+    """Evaluate an explicit, possibly manually edited profile without any fit.
+
+    The snapshot's time/value mapping stays fixed. Evaluating outside its fitted
+    span is mathematical extrapolation, not evidence of a valid event profile.
+    This function neither chooses a profile nor checks source freshness/horizon.
+    """
+    try:
+        if (not isinstance(profile, CurveProfile)
+                or not isinstance(snapshot, CurveFitSnapshot)
+                or not isinstance(at, datetime)):
+            return None
+        x = (at - snapshot.time_origin).total_seconds() / snapshot.time_scale_seconds
+        if not isfinite(x):
+            return None
+        if profile.model.startswith("hinge"):
+            order = 1 if profile.model == "hinge1" else 2
+            row = (1.0, x, x * x, max(0.0, x - profile.knot_x)**order)
+        else:
+            row = tuple(x**power for power in range(len(profile.coefficients)))
+        value = snapshot.value_center + fsum(starmap(
+            mul, zip(row, profile.coefficients, strict=True),
+        ))
+        return value if isfinite(value) else None
+    except (AttributeError, OverflowError, TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def curve_deviation(
+    profile: CurveProfile, sample: tuple[datetime, float], *,
+    snapshot: CurveFitSnapshot,
+) -> dict | None:
+    """Return observed-minus-expected error in the input unit, without refits.
+
+    normalized_residual uses only the snapshot's unchanged initial noise scale;
+    it is not a confidence interval or event probability. In particular, zero
+    error stays zero, while missing/zero noise leaves normalization unresolved.
+    """
+    try:
+        at, observed = sample
+        if not _profile_number(observed):
+            return None
+        expected = curve_value(profile, at, snapshot=snapshot)
+        if expected is None:
+            return None
+        residual = observed - expected
+        if not isfinite(residual):
+            return None
+        noise = snapshot.noise_scale
+        normalized = residual / noise if noise is not None and noise > 0 else None
+        if normalized is not None and not isfinite(normalized):
+            normalized = None
+        return {"expected": expected, "observed": observed, "residual": residual,
+                "noise_scale": noise, "normalized_residual": normalized}
+    except (AttributeError, OverflowError, TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
 @dataclass(frozen=True)
 class CurveFeatures:
     """Local evidence; slope units are input units per second.
@@ -79,6 +217,7 @@ class CurveFeatures:
     after_trend: CurveTrendFeatures | None = None
     hinge_order: int = 1
     curvature_change: float = 0.0
+    fit: CurveFitSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +386,7 @@ class CurveFormFeatures:
     replacement_parameter_count: int = 0
     hinge_fits_attempted: int = 0
     hinge_fits_failed: int = 0
+    fit: CurveFitSnapshot | None = None
 
 
 def _policy_valid(policy):
@@ -1221,6 +1361,13 @@ def curve_change(
             change_score=change_score, score_gain=score_gain,
             smooth_model=smooth_model, after_trend=after_trend,
             hinge_order=hinge_order, curvature_change=curvature_change,
+            fit=CurveFitSnapshot(
+                profile=CurveProfile(
+                    f"hinge{hinge_order}", tuple(coefficients), times[index],
+                ),
+                time_origin=stamps[0], time_scale_seconds=span, value_center=center,
+                newest_at=stamps[-1], noise_scale=noise,
+            ),
         )
     except (
         AttributeError, IndexError, OverflowError, TypeError, ValueError,
@@ -1610,7 +1757,7 @@ def curve_form(
         common = _common_noise(times, [value for _, value in selected])
         if common is None:
             return None
-        noise, _, _, _ = common
+        noise, center, _, _ = common
         fitted = _form_models(selected, noise, policy, form, include_knot=knot_at)
         if fitted is None:
             return None
@@ -1749,6 +1896,16 @@ def curve_form(
             replacement_parameter_count=replacement_parameters,
             hinge_fits_attempted=search_count,
             hinge_fits_failed=search_count - sum(record[0].hinge_order != 0 for record in records),
+            fit=CurveFitSnapshot(
+                profile=CurveProfile(
+                    fixed[0].model, tuple(fixed[1]),
+                    ((fixed[0].knot_at - selected[0][0]).total_seconds() / span
+                     if fixed[0].knot_at is not None else None),
+                ),
+                time_origin=selected[0][0], time_scale_seconds=span,
+                value_center=center,
+                newest_at=selected[-1][0], noise_scale=noise,
+            ) if fixed is not None else None,
         )
     except (
         AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError,
