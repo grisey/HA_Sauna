@@ -1152,6 +1152,106 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(len(ventilation), 1)
         self.assertEqual(ventilation[0].trace_at, T0 + timedelta(seconds=pending_at + 6 * step))
 
+    def test_complete_paired_ventilation_windows_bind_and_confirm_with_trailing_pending_rh(self):
+        detector = self._ventilation_detector()
+        _, plateau, _, values = self._ventilation_curve(detector)
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        found = self._feed_ventilation(detector, plateau, values)
+        self.assertTrue(detector.open)
+        self.assertEqual(detector.door_episode["positions"], detector.positions)
+        self.assertNotIn("original_ventilation", detector.door_episode)
+        interval = step / 4
+        schedule = (
+            (Position.UPPER, Quantity.TEMPERATURE, 1),
+            (Position.UPPER, Quantity.HUMIDITY, 2),
+            (Position.LOWER, Quantity.TEMPERATURE, 3),
+            (Position.LOWER, Quantity.HUMIDITY, 4),
+        )
+        for position in detector.positions:
+            for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
+                self.assertLessEqual(
+                    2 * step,
+                    detector.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"],
+                )
+
+        def report(target, second, position, quantity):
+            temperature, humidity = values(second)
+            self.assertTrue(target.accept(measurement(
+                position, quantity, temperature if quantity == Quantity.TEMPERATURE else humidity,
+                second, measured=T0 + timedelta(seconds=second),
+            )))
+
+        # Alternating U-T/U-RH/L-T/L-RH receipts leave the other position's
+        # later RH pending whenever a T completes the preceding RH pair.
+        for index in range(1, count + 1):
+            second = plateau + index * step
+            for position, quantity, offset in schedule:
+                report(detector, second - step + offset * interval, position, quantity)
+            found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+            if "original_ventilation" in detector.door_episode:
+                break
+        self.assertIn("original_ventilation", detector.door_episode)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        candidate = detector.door_episode["original_ventilation"]
+        self.assertGreater(candidate["received_at"], T0 + timedelta(seconds=plateau + interval))
+        bound = detector.diagnostic["original_ventilation"]
+        self.assertEqual(bound["water_status"], "pending")
+        self.assertTrue(bound["initial_form"])
+        self.assertEqual(len(candidate["water_windows"]), len(detector.positions))
+        for _, water in candidate["water_windows"]:
+            self.assertEqual(len(water.previous), count)
+            self.assertEqual(len(water.current), count)
+        for support in bound["support"].values():
+            self.assertEqual(support["paired_count"], 2 * count)
+            self.assertGreater(support["pending_count"], 0)
+            self.assertGreater(support["pending_rh_at"], support["rh_newest_at"])
+
+        next_second = second + step
+        humidity_only = deepcopy(detector, {id(detector.p): detector.p})
+        unchanged = humidity_only.door_episode["original_ventilation"]
+        for position, quantity, offset in schedule:
+            if quantity == Quantity.HUMIDITY:
+                report(humidity_only, second + offset * interval, position, quantity)
+        output = humidity_only.advance(T0 + timedelta(seconds=next_second), enabled=True)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in output])
+        self.assertIs(humidity_only.door_episode["original_ventilation"], unchanged)
+        unpaired = humidity_only.diagnostic["original_ventilation"]
+        self.assertFalse(unpaired["confirmable"])
+        for name, support in unpaired["support"].items():
+            self.assertEqual(support["rh_newest_at"], bound["support"][name]["rh_newest_at"])
+            self.assertEqual(support["temperature_newest_at"],
+                             bound["support"][name]["temperature_newest_at"])
+
+        for positions in ((Position.UPPER,), detector.positions):
+            with self.subTest(new_pairs=positions):
+                continued = deepcopy(detector, {id(detector.p): detector.p})
+                for position, quantity, offset in schedule:
+                    if position in positions:
+                        report(continued, second + offset * interval, position, quantity)
+                output = continued.advance(T0 + timedelta(seconds=next_second), enabled=True)
+                record = continued.diagnostic["original_ventilation"]
+                self.assertEqual(record["water_status"], "pending")
+                if positions == (Position.UPPER,):
+                    self.assertNotIn(Kind.VENTILATION, [item.kind for item in output])
+                    self.assertFalse(record["confirmable"])
+                    self.assertEqual(record["support"]["lower"]["rh_newest_at"],
+                                     bound["support"]["lower"]["rh_newest_at"])
+                    continue
+                ventilation = [item for item in output if item.kind == Kind.VENTILATION]
+                self.assertEqual(len(ventilation), 1)
+                self.assertEqual(ventilation[0].channels,
+                                 tuple(position.value for position in detector.positions))
+                self.assertEqual(ventilation[0].trace_at, T0 + timedelta(seconds=next_second))
+                self.assertTrue(record["confirmable"])
+                for name, temperature, humidity in candidate["newest"]:
+                    support = record["support"][name]
+                    self.assertEqual(support["paired_count"], 2 * count)
+                    self.assertGreater(support["temperature_newest_at"], temperature)
+                    self.assertGreater(support["rh_newest_at"], humidity)
+                upper = record["support"]["upper"]
+                self.assertGreater(upper["pending_count"], 0)
+                self.assertGreater(upper["pending_rh_at"], upper["rh_newest_at"])
+
     def test_original_gap_discards_the_pending_water_plateau(self):
         detector = self._ventilation_detector()
         _, plateau, _, values = self._ventilation_curve(detector)
@@ -1310,22 +1410,31 @@ class DetectorTests(unittest.TestCase):
         ])
 
     def test_catchup_keeps_earlier_heat_when_last_feedback_is_off(self):
+        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
+        baseline = self._settling_time(detector)
+        off_second = baseline + 80
+        off_at = T0 + timedelta(seconds=off_second)
         controller = Controller(detection_parameters())
         controller.begin_session("heating", T0)
         controller.report_heating(True, T0)
-        controller.report_heating(False, T0 + timedelta(seconds=40))
-        detector = Detector(detection_parameters(), T0, (Position.UPPER,))
-        for second in range(61):
+        controller.report_heating(False, off_at)
+        # Queue the same warm baseline and falling hinge as the continuous
+        # heating fixture, then catch up while the latest feedback is OFF.
+        for second in range(off_second + 21):
+            fall = max(0, second - baseline + 1)
             detector.accept(measurement(
-                Position.UPPER, Quantity.TEMPERATURE, 50 - .06 * second, second
+                Position.UPPER, Quantity.TEMPERATURE, 50 - .03 * fall, second
             ))
             detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, 30, second))
         events = detector.advance(
-            T0 + timedelta(seconds=60), enabled=True,
+            T0 + timedelta(seconds=off_second + 20), enabled=True,
             heating_intervals=controller.session.heating.intervals,
-            heating_gates=((T0, True), (T0 + timedelta(seconds=40), False)),
+            heating_gates=((T0, True), (off_at, False)),
         )
-        self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
+        openings = [event for event in events if event.kind == Kind.DOOR_OPEN]
+        self.assertEqual(len(openings), 1)
+        self.assertLess(openings[0].trace_at, off_at)
+        self.assertIs(controller.feedback, False)
         self.assertIsNone(detector.heating_since)
 
     def test_logical_off_on_restarts_thermal_proof_during_physical_on(self):
@@ -1384,11 +1493,14 @@ class DetectorTests(unittest.TestCase):
         for name, configured, reporting, falling, opens in cases:
             with self.subTest(name=name):
                 detector = Detector(detection_parameters(), T0, configured)
-                events = []
-                for second in range(80):
+                events = self._segment(detector, self._settling_time(detector),
+                                       (50, 30), positions=reporting, heating=True)
+                self.assertNotIn(Kind.DOOR_OPEN, [event.kind for event in events])
+                for index in range(80):
+                    second = detector.index + 1
                     detector.report_heating(True, T0 + timedelta(seconds=second))
                     for position in reporting:
-                        temperature = 50 - .03 * second if position in falling else 50
+                        temperature = 50 - .03 * (index + 1) if position in falling else 50
                         detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
                         detector.accept(measurement(position, Quantity.HUMIDITY, 30, second))
                     events += detector.advance(T0 + timedelta(seconds=second), enabled=True)

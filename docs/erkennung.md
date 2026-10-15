@@ -259,7 +259,7 @@ unterscheidet sie die kurze Öffnung vom Durchlüften als Nachweis für das
 Gangende; außerhalb eines Gangs wird sie statistisch erfasst.
 
 Der Nachweis benötigt nach der Öffnung einen vorherigen Fall des absoluten
-Wassergehalts und dessen aufgelösten Übergang in ein konstantes Niveau, während
+Wassergehalts und dessen aufgelösten Übergang in einen abgeflachten Verlauf, während
 die Temperatur weiter signifikant fällt. Dazu werden an jeder anfangs
 gebundenen Messposition die letzten genau `2K` aufeinanderfolgenden
 Feuchteoriginale mit ihren kausalen Temperaturpartnern verwendet. Die Paarung
@@ -274,25 +274,38 @@ Für die Hüllmitte `m_i = (ρ⁻_i + ρ⁺_i)/2` und Halbbreite
 E_ρ = Σ|t_i − t̄| · a_i / S_tt
 ```
 
-Mit der entsprechenden Grenze `E⁻_ρ` des Vorgängerfensters gelten je Position
-`p` die folgenden Bedingungen. Die Hüllenschnittmenge bezieht sich auf das
-aktuelle Fenster:
+Für das aktuelle Fenster beschreibt `D_ρ` die gesamte normierte Streuung um
+ein frei angepasstes Niveau `c`. Bei positiven Halbbreiten ist dessen
+Gewichtung `1/a_i²`:
+
+```text
+c   = Σ(m_i/a_i²) / Σ(1/a_i²)
+D_ρ = √(Σ((m_i − c)/a_i)² / K)
+```
+
+Mit der entsprechenden Steigungsgrenze `E⁻_ρ` des Vorgängerfensters gelten je
+Position `p` die folgenden Bedingungen:
 
 ```text
 −b_ρp                 > s E⁻_ρp
 v_ρp − b_ρp           > s (E_ρp + E⁻_ρp)
 |v_ρp|                ≤ s E_ρp
-max_i(m_pi − s a_pi)  ≤ min_i(m_pi + s a_pi)
+D_ρp                 ≤ s
 −v_Tp                 > s E_Tp
 ```
 
 Die ersten beiden Bedingungen belegen Fall und Abflachung beim Binden des
 Lüftungskandidaten. Die letzten drei müssen bis zur Bestätigung erhalten
-bleiben: aktuelle Wassersteigung im Fehlerband, Verträglichkeit aller
-aktuellen Hüllen mit einem gemeinsamen konstanten Niveau und weiter fallende
-Temperatur. Eine flache relative Feuchte oder eine bloß kleine OLS-Steigung
-des Wassergehalts genügt nicht. Die Hüllen und ihre Steigungsgrenzen beruhen
-auf den angenommenen Wertstörungen; sie sind keine Ereigniswahrscheinlichkeit.
+bleiben: aktuelle Wassersteigung innerhalb der normierten Auflösung,
+begrenzte Gesamtstreuung um das Niveau und weiter fallende Temperatur. Die
+quadratischen Abweichungen verwenden sämtliche Werte; entgegengesetzte
+Ausschläge heben sich dabei nicht auf. Eine flache relative Feuchte oder eine
+bloß kleine OLS-Steigung des Wassergehalts genügt nicht. Die gemeinsame
+Formeinheit `s` und die aus den vorhandenen empirischen Skalen abgeleiteten
+Hüllen beschreiben die akzeptierte beobachtete Form. Sie sind weder garantierte
+Einzelmessfehler noch eine Ereigniswahrscheinlichkeit. Eine Halbbreite null
+bindet das Niveau an diesen Wert; widersprüchliche Bindungen oder nicht
+auswertbare Rechnungen liefern keinen Formnachweis.
 
 Die Bestätigung benötigt an sämtlichen anfangs gebundenen Positionen spätere
 Temperatur- und Feuchteoriginale mit vollständiger Wasserpaarung. Für eine
@@ -321,7 +334,9 @@ vollständigen Messpositionen neu. Unbestätigte Kurvennachweise bleiben an ihre
 jeweiligen Quellenabschnitte gebunden.
 
 Bei der Lüftungsform bleibt das reguläre Warten auf einen rechten
-Temperaturpartner offen und liefert keine Bestätigung. Eine Messlücke, ein
+Temperaturpartner offen. Noch ungepaarte Feuchteoriginale liefern keine
+Bestätigungsfrische; bereits vollständige, aufeinanderfolgende Paarfenster
+bleiben auswertbar. Eine Messlücke, ein
 Quellenwechsel oder eine Korrektur tragender Originale verwirft die davon
 abhängigen Stützen und den unbestätigten Kandidaten. Mit denselben Quellen
 können im noch offenen Türvorgang Fall und Abflachung aus zusammenhängenden

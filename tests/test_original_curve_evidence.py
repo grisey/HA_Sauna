@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 import gzip
 import hashlib
 import json
+from math import isfinite, sqrt
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import call, patch
@@ -510,6 +512,303 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             with self.subTest(significance=invalid):
                 with self.assertRaises(ValueError):
                     constant.constant_bounds(invalid)
+
+    def test_water_level_deviation_matches_weighted_rational_golden(self):
+        values = Parameters({}).values
+        pairs, _ = water_envelope_originals(
+            values, ((8, 10),) * 3 + ((9, 11), (10, 14), (12, 20)),
+        )
+        result = original_water_window(
+            pairs, count=3, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertIsNotNone(result)
+        # m=(10,12,16), a=(1,2,4): inverse-square weights give c=32/3.
+        # The normalized residuals are (-2/3,2/3,4/3), hence D²=8/9.
+        self.assertAlmostEqual(result.normalized_level_deviation(), sqrt(8 / 9))
+        self.assertEqual(result.current, pairs[3:])
+        # A normalized RMS and an all-point intersection are different norms.
+        # These are mathematical criteria, not new operating thresholds.
+        self.assertFalse(result.constant_compatible(1))
+        self.assertLess(result.normalized_level_deviation(), 1)
+        self.assertAlmostEqual(replace(
+            result, current=tuple(reversed(result.current)),
+        ).normalized_level_deviation(), sqrt(8 / 9))
+        self.assertAlmostEqual(replace(
+            result, previous=tuple(reversed(result.previous)),
+        ).normalized_level_deviation(), sqrt(8 / 9))
+
+    def test_water_level_deviation_counts_every_current_pair_and_equal_level(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        pairs, _ = water_envelope_originals(values, ((8, 10),) * (2 * count))
+        result = original_water_window(
+            pairs, count=count, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertIsNotNone(result)
+        self.assertEqual(result.normalized_level_deviation(), 0)
+        for index in range(count):
+            with self.subTest(changed_current_index=index):
+                current = tuple(
+                    replace(pair, lower_density=8 + count, upper_density=10 + count)
+                    if offset == index else pair
+                    for offset, pair in enumerate(result.current)
+                )
+                # One displacement K among K equal-radius originals has
+                # center displacement 1 and D²=K-1, wherever it occurs.
+                self.assertAlmostEqual(replace(
+                    result, current=current,
+                ).normalized_level_deviation(), sqrt(count - 1))
+        center = count + 1
+        equal_level = tuple(
+            replace(pair, lower_density=center - radius, upper_density=center + radius)
+            for radius, pair in enumerate(result.current, start=1)
+        )
+        self.assertEqual(replace(
+            result, current=equal_level,
+        ).normalized_level_deviation(), 0)
+
+    def test_water_level_deviation_rejects_alternating_k7_zero_slope_form(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        self.assertEqual(count, 7)  # The declared cancellation criterion is K=7.
+        significance = values["curve_original_significance"]
+        amplitude = 2 * significance
+        center = 10 + 2 * amplitude
+        current = tuple(
+            (center + sign * amplitude - 1, center + sign * amplitude + 1)
+            for sign in (1, -1, 1, -1, 1, -1, 1)
+        )
+        pairs, _ = water_envelope_originals(
+            values, ((center - 1, center + 1),) * count + current,
+        )
+        result = original_water_window(
+            pairs, count=count, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertIsNotNone(result)
+        # Reflection symmetry cancels OLS slope. Four +A and three -A
+        # observations still have D²=48*A²/49 around their free mean A/7.
+        self.assertAlmostEqual(result.v, 0)
+        self.assertLessEqual(abs(result.v), significance * result.e)
+        self.assertAlmostEqual(result.normalized_level_deviation(),
+                               amplitude * sqrt(48) / 7)
+        self.assertGreater(result.normalized_level_deviation(), significance)
+
+    def test_water_level_deviation_zero_radii_extremes_and_unknown_inputs(self):
+        values = Parameters({}).values
+        pairs, _ = water_envelope_originals(values, ((8, 10),) * 6)
+        result = original_water_window(
+            pairs, count=3, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertIsNotNone(result)
+
+        def score(envelopes):
+            return replace(result, current=tuple(
+                replace(pair, lower_density=lower, upper_density=upper)
+                for pair, (lower, upper) in zip(result.current, envelopes, strict=True)
+            )).normalized_level_deviation()
+
+        self.assertEqual(score(((10, 10),) * 3), 0)
+        # Two exact originals fix c=10; the third contributes (12-10)/2=1.
+        self.assertAlmostEqual(score(((10, 10), (10, 10), (10, 14))), 1 / sqrt(3))
+        self.assertIsNone(score(((10, 10), (11, 11), (10, 14))))
+        # Finite endpoints may have overflowing sums or reciprocal squares.
+        # Their midpoints/radii remain usable without an artificial floor.
+        self.assertAlmostEqual(score((
+            (7e307, 9e307), (8e307, 1e308), (9e307, 1.1e308),
+        )), sqrt(2 / 3))
+        self.assertAlmostEqual(score((
+            (0, 2e-150), (1e-150, 3e-150), (2e-150, 4e-150),
+        )), sqrt(2 / 3))
+        self.assertAlmostEqual(score((
+            (0, 2e-300), (0, 2e300), (0, 2e300),
+        )), sqrt(2 / 3))
+        self.assertIsNone(score(((10, 10), (0, 2e-310), (10, 14))))
+        for bounds in ((float("nan"), 10), (8, float("inf")), (10, 8), (-1, 1)):
+            with self.subTest(bounds=bounds):
+                self.assertIsNone(score((bounds, (8, 10), (8, 10))))
+        self.assertIsNone(replace(result, current=()).normalized_level_deviation())
+
+    def test_r03_door2_prefixes_export_level_deviation_and_all_form_gates(self):
+        """Extract the two declared prefixes; do not assume either qualifies.
+
+        The reference is R03_trailing_pending_identity_review in the local
+        vent-owner-review.json. Climate row numbers belong to the existing
+        checksum-bound fixture; archive record IDs 3940/3945 are a different
+        index. Source names below are the replay runner's functional BINDINGS,
+        not a reconstruction of physical sensor IDs or source epochs.
+        """
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        significance = values["curve_original_significance"]
+        floor = ORIGIN + timedelta(seconds=899)
+        references = (
+            (2954, 3940, 949.789675, (711, 762, 716, 761), {
+                "upper": (948.723650, 948.709000, 949.759458, (949.773302,)),
+                "lower": (948.748448, 948.738673, 949.789675, ()),
+            }),
+            (2958, 3945, 950.838898, (712, 763, 717, 762), {
+                "upper": (949.773302, 949.759458, 950.811703, (950.825598,)),
+                "lower": (949.798450, 949.789675, 950.838898, ()),
+            }),
+        )
+        case = json.loads((ROOT / "fixtures/replay/R03.json").read_text(
+            encoding="utf-8",
+        ))
+        evidence = {
+            "recording": "R03", "samples_sha256": case["samples_sha256"],
+            "definition": "D=min_c sqrt(mean(((m_i-c)/a_i)^2))",
+            "count": count, "significance": significance, "support_floor": floor,
+            "source_binding": (
+                "tests/sessions/runner.py:BINDINGS; functional fixture roles"
+            ),
+            "owner_scope": (
+                "No controller replay, candidate admission or close-priority claim"
+            ),
+            "prefixes": [],
+        }
+        previous_newest = {}
+        for source_row, record_id, second, indices, expected in references:
+            originals, at = original_prefix("R03", source_row)
+            self.assertEqual(at, ORIGIN + timedelta(seconds=second))
+            self.assertEqual(sum(map(len, originals.values())), source_row)
+            for role, index in zip(CLIMATE, indices, strict=True):
+                self.assertEqual(len(originals[role]) - 1, index, role)
+            windows = position_windows(originals, at, values)
+            prefix = {"source_row": source_row, "archive_record_id": record_id,
+                      "at": at, "positions": {}}
+            for position, identities in expected.items():
+                with self.subTest(source_row=source_row, position=position):
+                    temperature_role, humidity_role = (
+                        f"{position}_temperature", f"{position}_humidity",
+                    )
+                    temperatures, humidities = (
+                        originals[temperature_role], originals[humidity_role],
+                    )
+                    temperature_arguments = channel_arguments(
+                        values, position, "temperature",
+                    )
+                    humidity_arguments = channel_arguments(values, position, "humidity")
+                    arguments = {
+                        "temperature_scale": temperature_arguments["scale"],
+                        "humidity_scale": humidity_arguments["scale"],
+                        "max_gap_seconds": temperature_arguments["max_gap_seconds"],
+                    }
+                    pairs, pending = [], []
+                    for point in humidities[-(2 * count + 1):]:
+                        support = original_water_pair_support(
+                            point, temperatures, at=at, **arguments,
+                        )
+                        self.assertIn(support.status, ("ready", "pending"))
+                        if support.status == "pending":
+                            pending.append(point[0])
+                        else:
+                            self.assertFalse(pending,
+                                             "an inner pending original was skipped")
+                            pairs.append(support.pair)
+                    rh_gap = humidity_arguments["max_gap_seconds"]
+                    support = original_water_window(
+                        tuple(pairs), count=count, at=at, max_gap_seconds=rh_gap,
+                    )
+                    self.assertEqual(support.status, "ready")
+                    water = support.features
+                    self.assertEqual(water.previous, tuple(pairs[-2 * count:-count]))
+                    self.assertEqual(water.current, tuple(pairs[-count:]))
+                    self.assertEqual(len(water.previous + water.current), 2 * count)
+                    (expected_rh, expected_left,
+                     expected_right, expected_pending) = identities
+                    last = water.current[-1]
+                    self.assertEqual(tuple(
+                        (stamp - ORIGIN).total_seconds() for stamp in (
+                            last.humidity_sample[0], last.temperature_before[0],
+                            last.temperature_after[0],
+                        )
+                    ), (expected_rh, expected_left, expected_right))
+                    self.assertEqual(tuple(
+                        (stamp - ORIGIN).total_seconds() for stamp in pending
+                    ), expected_pending)
+                    self.assertEqual(last.humidity_sample,
+                                     humidities[-1 - len(pending)])
+                    self.assertTrue(all(pair.temperature_before[0] >= floor
+                                        for pair in water.previous + water.current))
+                    temperature = windows[position].temperature
+                    self.assertIsNotNone(temperature)
+                    self.assertEqual(temperature.newest_at, temperatures[-1][0])
+                    self.assertGreaterEqual(temperature.current[0][0], floor)
+                    deviation = water.normalized_level_deviation()
+                    self.assertIsNotNone(deviation)
+                    self.assertTrue(isfinite(deviation))
+                    lower, upper = water.constant_bounds(significance)
+                    comparisons = {
+                        "previous_water_fall": (
+                            -water.b, ">", significance * water.e_minus,
+                        ),
+                        "current_water_flat": (
+                            abs(water.v), "<=", significance * water.e,
+                        ),
+                        "water_fall_braking": (
+                            water.v - water.b, ">",
+                            significance * (water.e + water.e_minus),
+                        ),
+                        "water_level_deviation": (deviation, "<=", significance),
+                        "temperature_still_falling": (
+                            -temperature.v, ">", significance * temperature.e,
+                        ),
+                        "all_k_constant_compatible_diagnostic": (lower, "<=", upper),
+                    }
+                    gates = {
+                        name: {
+                            "value": value, "operator": operator,
+                            "threshold": threshold,
+                            "result": (value > threshold if operator == ">"
+                                       else value <= threshold),
+                        }
+                        for name, (value, operator, threshold) in comparisons.items()
+                    }
+                    newest = (temperature.newest_at, water.newest_at)
+                    fresh = (all(now > before for now, before in zip(
+                        newest, previous_newest[position], strict=True,
+                    )) if position in previous_newest else None)
+                    if position in previous_newest:
+                        self.assertTrue(fresh)
+                    previous_newest[position] = newest
+                    prefix["positions"][position] = {
+                        "sources": {
+                            "temperature": f"sensor.fixture_{temperature_role}",
+                            "humidity": f"sensor.fixture_{humidity_role}",
+                        },
+                        "scales_and_temperature_gap": arguments, "humidity_gap_seconds": rh_gap,
+                        "temperature_newest_at": temperature.newest_at,
+                        "water_newest_at": water.newest_at,
+                        "pending_rh_at": pending,
+                        "later_temperature_and_paired_rh": fresh,
+                        "v": water.v, "b": water.b, "e": water.e, "e_minus": water.e_minus,
+                        "temperature_v": temperature.v,
+                        "temperature_e": temperature.e,
+                        "D": deviation, "all_k_bounds": (lower, upper), "gates": gates,
+                        "pairs": [{
+                            "rh": pair.humidity_sample,
+                            "temperature_before": pair.temperature_before,
+                            "temperature_after": pair.temperature_after,
+                            "available_at": pair.available_at,
+                            "middle": (pair.lower_density
+                                       + (pair.upper_density - pair.lower_density) / 2),
+                            "radius": (pair.upper_density - pair.lower_density) / 2,
+                            "lower_density": pair.lower_density,
+                            "upper_density": pair.upper_density,
+                        } for pair in water.previous + water.current],
+                    }
+            evidence["prefixes"].append(prefix)
+        serialized = json.dumps(evidence, default=lambda value: value.isoformat(),
+                                allow_nan=False, sort_keys=True, indent=2) + "\n"
+        if folder := os.environ.get("SAUNA_CORE_EVIDENCE"):
+            path = Path(folder) / "r03-door2-level-deviation.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(serialized, encoding="utf-8")
+        print(serialized)
 
     def test_water_window_keeps_exact_tail_and_never_skips_unknown_support(self):
         values = Parameters({}).values

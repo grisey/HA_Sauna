@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import starmap
-from math import ceil, fsum, isfinite, log, sqrt, ulp
+from math import ceil, fsum, hypot, isfinite, log, sqrt, ulp
 from operator import mul
 from statistics import NormalDist, median
 
@@ -178,6 +178,8 @@ class OriginalWaterWindowFeatures:
     Pair identities retain the RH originals, both T partners and availability.
     The slope envelopes are algebraic consequences of those input envelopes,
     never statistical confidence intervals or independent water measurements.
+    Current level deviation uses their empirical widths as normalizers, not
+    guaranteed individual measurement errors.
     """
 
     previous: tuple[OriginalWaterPair, ...]
@@ -202,11 +204,66 @@ class OriginalWaterWindowFeatures:
         """Latest right T partner on the accepted input measurement axis."""
         return max(pair.available_at for pair in self.previous + self.current)
 
+    def normalized_level_deviation(self) -> float | None:
+        """RMS distance of every current middle to one freely fitted level.
+
+        For positive envelope half-widths a_i, the level minimizes the mean
+        squared residual (m_i-level)/a_i, so its weights are 1/a_i**2. Relative
+        weights avoid squaring reciprocal small widths. A zero width fixes
+        the level exactly; conflicting fixed levels or nonfinite arithmetic
+        leave the normalized shape unknown. No numerical noise floor is added.
+        The result describes observed dispersion, not physical constancy or a
+        statistical confidence bound.
+        """
+        try:
+            if not self.current or any(
+                not _original_water_pair_valid(pair) for pair in self.current
+            ):
+                return None
+            radii = tuple(
+                (pair.upper_density - pair.lower_density) / 2
+                for pair in self.current
+            )
+            middles = tuple(
+                pair.lower_density + radius
+                for pair, radius in zip(self.current, radii, strict=True)
+            )
+            fixed = tuple(
+                middle for middle, radius in zip(middles, radii, strict=True)
+                if radius == 0
+            )
+            if fixed:
+                level = fixed[0]
+                if any(middle != level for middle in fixed):
+                    return None
+            else:
+                smallest = min(radii)
+                weights = tuple((smallest / radius)**2 for radius in radii)
+                total = fsum(weights)
+                anchor = middles[radii.index(smallest)]
+                level = anchor + fsum(
+                    (weight / total) * (middle - anchor)
+                    for weight, middle in zip(weights, middles, strict=True)
+                )
+            if not _profile_number(level):
+                return None
+            root_count = sqrt(len(middles))
+            normalized = tuple(
+                0.0 if radius == 0 else ((middle - level) / root_count) / radius
+                for middle, radius in zip(middles, radii, strict=True)
+            )
+            if not all(_profile_number(value) for value in normalized):
+                return None
+            deviation = hypot(*normalized)
+            return deviation if _profile_number(deviation) else None
+        except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+            return None
+
     def constant_bounds(self, significance: float) -> tuple[float, float]:
-        """Intersect current point envelopes scaled by the caller's unit.
+        """Diagnose the intersection of scaled current point envelopes.
 
         A nonempty intersection is compatibility with one constant water
-        level. A zero OLS slope alone does not provide this shape evidence.
+        level under individual point bounds, rather than an RMS form score.
         """
         if not _original_positive(significance):
             raise ValueError("significance must be finite and positive")
@@ -227,7 +284,7 @@ class OriginalWaterWindowFeatures:
         return lower, upper
 
     def constant_compatible(self, significance: float) -> bool:
-        """Whether every current water envelope can share one level."""
+        """Diagnose whether every current envelope can share one level."""
         lower, upper = self.constant_bounds(significance)
         return lower <= upper
 

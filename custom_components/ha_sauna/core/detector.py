@@ -600,8 +600,9 @@ class Detector:
                     return "invalid", {}, {"reason": window.reason, "position": position.value}
                 if window.features is not None:
                     significance = self.p["curve_original_significance"]
+                    deviation = window.features.normalized_level_deviation()
                     if (abs(window.features.v) > significance * window.features.e
-                            or not window.features.constant_compatible(significance)):
+                            or deviation is None or deviation > significance):
                         # Ein neuer T-Partner kann mehrere wartende RH-Paare
                         # zugleich liefern. Keine innere Gegenform überspringen.
                         paired_counterform = True
@@ -698,6 +699,8 @@ class Detector:
             _decision(trace, "ventilation", None, {}, evaluated=False,
                       reason="pending_water_pair" if status == "pending" else "insufficient_water_originals")
             return
+        # Nachlaufende RH-Originale dürfen auf ihren rechten T-Partner warten.
+        # Die vollständigen gepaarten Fenster liefern allein die RH-Frische.
         if any(windows[position.value].temperature.current[0][0]
                < episode["original_ventilation_floor"] for position in positions):
             self._reset_original_ventilation(episode, "temperature_support_before_opening_segment", water=False)
@@ -713,6 +716,7 @@ class Detector:
             water = water_windows[position]
             temperature = windows[position.value].temperature
             lower, upper = water.constant_bounds(significance)
+            deviation = water.normalized_level_deviation()
             comparisons = {
                 "previous_water_fall": _gate(
                     -water.b > significance * water.e_minus, value=-water.b, operator=">",
@@ -727,8 +731,9 @@ class Detector:
                     value=water.v - water.b, operator=">",
                     threshold=significance * (water.e + water.e_minus), unit="g/m³/s",
                 ),
-                "constant_water_level_compatible": _gate(
-                    lower <= upper, value=lower, operator="<=", threshold=upper, unit="g/m³",
+                "water_level_deviation": _gate(
+                    deviation <= significance if deviation is not None else None,
+                    value=deviation, operator="<=", threshold=significance, unit="normalized",
                 ),
                 "temperature_still_falling": _gate(
                     -temperature.v > significance * temperature.e, value=-temperature.v,
@@ -737,7 +742,7 @@ class Detector:
             }
             gates.update({f"{position.value}:{name}": gate for name, gate in comparisons.items()})
             hold = all(comparisons[key]["result"] for key in (
-                "current_water_flat", "constant_water_level_compatible", "temperature_still_falling",
+                "current_water_flat", "water_level_deviation", "temperature_still_falling",
             ))
             maintained &= hold
             initial &= hold and comparisons["previous_water_fall"]["result"] and comparisons["water_fall_braking"]["result"]
@@ -747,6 +752,7 @@ class Detector:
                 ventilation_water_slope=water.v, ventilation_previous_water_slope=water.b,
                 ventilation_water_slope_error=water.e,
                 ventilation_previous_water_slope_error=water.e_minus,
+                ventilation_water_level_deviation=deviation,
                 ventilation_water_constant_lower=lower, ventilation_water_constant_upper=upper,
                 ventilation_temperature_slope=temperature.v,
                 ventilation_temperature_slope_error=temperature.e,
@@ -756,7 +762,7 @@ class Detector:
         candidate = episode.get("original_ventilation")
         confirmed = False
         if candidate is None:
-            if initial and status == "ready":
+            if initial:
                 candidate = {
                     "received_at": prefix.received_at, "newest": tuple(newest),
                     "context": episode["original_ventilation_context"],
@@ -767,7 +773,7 @@ class Detector:
             previous = {name: (temperature, humidity) for name, temperature, humidity in candidate["newest"]}
             fresh = all(temperature > previous[name][0] and humidity > previous[name][1]
                         for name, temperature, humidity in newest)
-            confirmed = maintained and status == "ready" and fresh
+            confirmed = maintained and fresh
             gates["later_paired_originals_for_all_roles"] = _gate(fresh)
         record.update(
             initial_form=initial, maintained_form=maintained,
@@ -778,7 +784,7 @@ class Detector:
                             and (initial or confirmed)),
         )
         gates.update(
-            paired_suffix_complete=_gate(status == "ready"),
+            paired_windows_complete=_gate(len(water_windows) == len(positions)),
             same_prefix_close_has_priority=_gate(not closing),
             bound_initial_water_transition=_gate(candidate is not None),
             current_close_contrast=_gate(

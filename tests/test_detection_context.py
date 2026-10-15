@@ -234,32 +234,99 @@ class DetectionContextTests(unittest.TestCase):
                 self.assertEqual(end.received_at, at(last_receipt))
 
     def test_direct_infusion_suppresses_later_person_signals_even_in_one_catchup_batch(self):
-        p = detection_parameters()
-        c = Controller(p)
-        c.set_temperature(70, T0)
-        c.begin_session("s",T0)
+        from math import ceil
+
+        from test_detector import InfusionLifecycleTests
+
+        fixture = InfusionLifecycleTests()
+        fixture.setUp()
+        parameters, p = fixture.parameters, fixture.p
+        points, _, rise_two, fall_two = fixture._scenario(merged=False)
+        # Leave fresh background and a complete person window after both pulses.
+        person_start = (
+            fall_two + fixture.width + p["strong_window_seconds"] + p["median_seconds"]
+        )
+        person_step = p["person_step_seconds"]
+        end_second = ceil((
+            person_start + p["strong_window_seconds"] + p["strong_hold_seconds"]
+            + p["median_seconds"] + 2 * person_step
+        ) / person_step) * person_step
+        rate = 2 * max(p["strong_humidity_upper"], p["strong_humidity_lower"]) / 60
+        points.extend((
+            (person_start, fixture.level),
+            (end_second, fixture.level + rate * (end_second - person_start)),
+        ))
+
+        c = Controller(parameters)
+        c.set_temperature(fixture.temperature, T0)
+        c.begin_session("s", T0)
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
-        c.process(event("close",Kind.DOOR_CLOSE,0))
-        controlled, raw = Detector(p,T0), Detector(p,T0)
-        for second in range(181):
-            temperature = 70 + second*.01
-            humidity = 20 + second*.001 + max(0,second-70)*.02 + (2 if second>=70 else 0) + (2 if second>=140 else 0)
-            for position in (Position.UPPER,Position.LOWER):
-                for quantity,value in ((Quantity.TEMPERATURE,temperature),(Quantity.HUMIDITY,humidity)):
-                    m=measurement(position,quantity,value,second)
-                    controlled.accept(m)
-                    raw.accept(m)
-        def received(d):
-            c.process(Event(f"signal:{d.kind}:{d.effective_at}","s",d.kind,d.effective_at,d.detected_at))
-        end=T0+timedelta(seconds=180)
-        expected=raw.advance(end,enabled=True)
-        actual=controlled.advance(end,enabled=True,allowed=c.recognition_allowed,on_detection=received)
-        self.assertIn(Kind.PERSON_STRONG,[d.kind for d in expected])
-        self.assertEqual([d.kind for d in actual],[Kind.INFUSION,Kind.INFUSION])
-        self.assertEqual(len(c.session.timeline.active.infusion_events),2)
-        self.assertFalse(controlled.diagnostic["checks"]["strong"])
-        self.assertTrue(controlled.diagnostic["checks"]["infusion"])
-        self.assertNotIn("strong_temperature_slope",controlled.diagnostic["metrics"]["upper"])
+        c.process(event("close", Kind.DOOR_CLOSE, 0))
+        confirmed, blocked_person_checks = [], []
+
+        def observed(row):
+            if confirmed and "strong" in row["checks"]:
+                self.assertFalse(row["checks"]["strong"])
+                self.assertFalse(row["checks"]["weak"])
+                self.assertTrue(row["checks"]["infusion"])
+                for metrics in row["metrics"].values():
+                    self.assertNotIn("strong_temperature_slope", metrics)
+                blocked_person_checks.append(row["at"])
+
+        controlled = Detector(parameters, T0, observer=observed)
+        raw = Detector(parameters, T0)
+        for second in range(0, end_second + fixture.step, fixture.step):
+            humidity = fixture._value(points, second)
+            for position in controlled.positions:
+                for quantity, value in (
+                    (Quantity.TEMPERATURE, fixture.temperature), (Quantity.HUMIDITY, humidity),
+                ):
+                    item = measurement(position, quantity, value, second)
+                    self.assertTrue(controlled.accept(item))
+                    self.assertTrue(raw.accept(item))
+
+        def received(detection):
+            result = c.process(Event(
+                f"signal:{detection.kind}:{detection.trace_at}", "s", detection.kind,
+                detection.effective_at, detection.detected_at,
+                booking_at=detection.trace_at, trace_at=detection.trace_at,
+            ))
+            if detection.kind == Kind.INFUSION:
+                episode = controlled.infusion_episode
+                self.assertIsNotNone(episode)
+                self.assertIs(episode.confirmed_detection, detection)
+                self.assertEqual(episode.confirmed_at, detection.detected_at)
+                self.assertTrue(result.changed)
+                confirmed.append(detection)
+
+        end = fixture._at(end_second)
+        expected = raw.advance(end, enabled=True)
+        actual = controlled.advance(
+            end, enabled=True, allowed=c.recognition_allowed, on_detection=received,
+        )
+        raw_infusions = [item for item in expected if item.kind == Kind.INFUSION]
+        self.assertEqual([item.kind for item in actual], [Kind.INFUSION, Kind.INFUSION])
+        self.assertEqual(actual, confirmed)
+        self.assertEqual(actual, raw_infusions)
+        self.assertLess(actual[0].trace_at, fixture._at(rise_two))
+        self.assertLess(actual[0].trace_at, actual[1].effective_at)
+        self.assertLess(fixture._at(rise_two), actual[1].trace_at)
+        self.assertLess(actual[1].trace_at, fixture._at(person_start))
+        self.assertTrue(any(
+            item.kind == Kind.PERSON_STRONG and item.trace_at >= fixture._at(person_start)
+            for item in expected
+        ))
+        self.assertTrue(any(stamp >= fixture._at(person_start) for stamp in blocked_person_checks))
+        for detection in expected + actual:
+            self.assertLessEqual(detection.effective_at, detection.trace_at)
+            self.assertLessEqual(detection.trace_at, detection.detected_at)
+            self.assertEqual(detection.detected_at, end)
+        stored = c.session.timeline.active.infusion_events
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(
+            [(item.effective_at, item.booking_at, item.trace_at, item.detected_at) for item in stored],
+            [(item.effective_at, item.trace_at, item.trace_at, end) for item in actual],
+        )
 
     def test_skipped_person_checks_do_not_accumulate_hold_time(self):
         d=Detector(detection_parameters(),T0)
