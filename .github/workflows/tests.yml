@@ -21,6 +21,10 @@ on:
         description: 'Profile the existing session run'
         type: boolean
         default: false
+      proxy_form_analysis:
+        description: 'Analyze all original replay climate curves without running the controller'
+        type: boolean
+        default: false
       integration_tests:
         description: 'Optional comma-separated integration unittest names: test_module.Class.test_method'
         type: string
@@ -76,7 +80,7 @@ jobs:
           SAUNA_HA_TESTS: ${{ inputs.ha_tests }}
   core:
     needs: configuration
-    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -111,9 +115,50 @@ jobs:
           path: ${{ runner.temp }}/ha-sauna-core
           if-no-files-found: error
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
+  proxy_form_analysis:
+    needs: configuration
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_form_analysis }}
+    runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
+    timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ fromJSON(needs.configuration.outputs.settings).python_core }}
+      - name: Alle Replay-Klimakurven auswerten und offene Zuordnungen sammeln
+        env:
+          SAUNA_FORM_EVIDENCE: ${{ runner.temp }}/ha-sauna-proxy-forms
+        run: |
+          mkdir -p "$SAUNA_FORM_EVIDENCE"
+          git rev-parse HEAD > "$SAUNA_FORM_EVIDENCE/commit.txt"
+          git rev-parse 'HEAD^{tree}' > "$SAUNA_FORM_EVIDENCE/tree.txt"
+          git rev-parse HEAD:custom_components/ha_sauna > "$SAUNA_FORM_EVIDENCE/product-tree.txt"
+          set +e
+          python tests/analysis/proxy_forms.py --output "$SAUNA_FORM_EVIDENCE" > "$SAUNA_FORM_EVIDENCE/analysis.log" 2>&1
+          result=$?
+          echo "$result" > "$SAUNA_FORM_EVIDENCE/analysis-exit-code.txt"
+          echo completed > "$SAUNA_FORM_EVIDENCE/analysis-process-completed.txt"
+          if [ "$result" -eq 0 ]; then
+            python tests/analysis/render_proxy_forms.py --input "$SAUNA_FORM_EVIDENCE" --output "$SAUNA_FORM_EVIDENCE/offene-zuordnungen.html" > "$SAUNA_FORM_EVIDENCE/render.log" 2>&1
+            result=$?
+            echo "$result" > "$SAUNA_FORM_EVIDENCE/render-exit-code.txt"
+            echo completed > "$SAUNA_FORM_EVIDENCE/render-process-completed.txt"
+          fi
+          echo "$result" > "$SAUNA_FORM_EVIDENCE/exit-code.txt"
+          echo completed > "$SAUNA_FORM_EVIDENCE/process-completed.txt"
+          cat "$SAUNA_FORM_EVIDENCE/analysis.log"
+          exit "$result"
+      - name: Kurven und Zuordnungsdatei sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: proxy-form-analysis
+          path: ${{ runner.temp }}/ha-sauna-proxy-forms
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   curve_compare:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare && !inputs.proxy_form_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -262,7 +307,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   ha:
     needs: configuration
-    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
@@ -318,7 +363,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   sessions:
     needs: configuration
-    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
@@ -364,7 +409,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   browser:
     needs: configuration
-    if: ${{ !inputs.curve_compare && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
+    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
