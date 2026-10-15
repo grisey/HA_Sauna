@@ -1215,6 +1215,7 @@ class Detector:
                     or self._curve_status.get(candidate_key, {}).get("status") != "supported"
                 ):
                     self._curve_proposal_status[key] = {
+                        "status": "incomplete",
                         **self._curve_proposal_status.get(key, {}),
                         "positions": tuple(position.value for position in positions),
                         "quantities": tuple(quantity.value for quantity in quantities),
@@ -1231,6 +1232,7 @@ class Detector:
         )
         if spread > window:
             self._curve_proposal_status[key] = {
+                "status": "incomplete",
                 **self._curve_proposal_status.get(key, {}),
                 "positions": tuple(position.value for position in positions),
                 "quantities": tuple(quantity.value for quantity in quantities),
@@ -1314,6 +1316,11 @@ class Detector:
 
         def finish(result, reason=None):
             self._curve_proposal_status[key] = {
+                "status": (
+                    "incomplete" if proposal is None else
+                    "ambiguous" if proposal.ambiguous else
+                    "bound" if proposal.evidence_bound_at is not None else "available"
+                ),
                 **self._curve_proposal_status.get(key, {}),
                 "positions": tuple(position.value for position in positions),
                 "quantities": tuple(quantity.value for quantity in quantities),
