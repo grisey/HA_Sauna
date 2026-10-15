@@ -20,18 +20,22 @@ from enum import Enum
 from math import isfinite
 from pathlib import Path
 
-from .core.defaults import section
 from .core.history import HISTORY_CONTEXT_SECONDS, measurement_window
-from .core.models import TimedPhase
+from .core.models import Energy, TimedPhase
+from .core.parameters import BY_KEY, Parameters
 from .core.phases import project_archive, project_session
+from .history_humidity import project_absolute_humidity
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def plain(value):
     if is_dataclass(value):
+        # Energieintervalle reisen separat als Delta; Skalare kopieren keine Vollreihe.
         result = {
-            field.name: plain(getattr(value, field.name)) for field in fields(value)
+            field.name: plain(getattr(value, field.name))
+            for field in fields(value)
+            if not (isinstance(value, Energy) and field.name == "intervals")
         }
         if isinstance(value, TimedPhase):
             result.update(
@@ -59,6 +63,91 @@ def encoded_plain(value):
     return json.dumps(
         value, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
+
+
+def _energy_value(value, key, default=None):
+    return (
+        value.get(key, default)
+        if isinstance(value, Mapping)
+        else getattr(value, key, default)
+    )
+
+
+def _energy_time(value):
+    at = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if not isinstance(at, datetime) or at.utcoffset() is None:
+        raise ValueError("Energiecursor benötigt einen Zeitpunkt mit Zeitzone")
+    return at.astimezone(UTC)
+
+
+def energy_interval_delta(energy, after=None):
+    """Transport original contributions, clipping only their time boundaries.
+
+    A missing interval field is legacy evidence, not a zero contribution. An
+    invalid/outside cursor requests a complete bootstrap (``from=None``).
+    The owner tuple is searched by end time without walking its saved prefix.
+    """
+    intervals = _energy_value(energy, "intervals")
+    if not isinstance(intervals, (tuple, list)):
+        return None
+    try:
+        end = _energy_time(_energy_value(energy, "accounted_at"))
+        start = (
+            _energy_time(_energy_value(intervals[0], "started_at"))
+            if intervals else end
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if start > end or (
+        not intervals and any(
+            _energy_value(energy, key, 0) != 0
+            for key in ("measured_seconds", "estimated_seconds", "unknown_seconds")
+        )
+    ):
+        return None
+    try:
+        cursor = _energy_time(after)
+    except (TypeError, ValueError, OverflowError):
+        cursor = None
+    if cursor is not None and not start <= cursor <= end:
+        cursor = None
+    lower = cursor if cursor is not None else start
+    first, last = 0, len(intervals)
+    try:
+        while first < last:
+            middle = (first + last) // 2
+            if _energy_time(_energy_value(intervals[middle], "ended_at")) <= lower:
+                first = middle + 1
+            else:
+                last = middle
+        originals = []
+        covered = lower
+        for index in range(first, len(intervals)):
+            interval = intervals[index]
+            original_start = _energy_time(_energy_value(interval, "started_at"))
+            original_end = _energy_time(_energy_value(interval, "ended_at"))
+            if original_start >= end:
+                break
+            clipped_start = max(original_start, lower)
+            clipped_end = min(original_end, end)
+            if clipped_start != covered or clipped_end <= clipped_start:
+                return None
+            original = plain(interval)
+            original["started_at"] = clipped_start.isoformat()
+            original["ended_at"] = clipped_end.isoformat()
+            originals.append(original)
+            covered = clipped_end
+            if covered == end:
+                break
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if covered != end:
+        return None
+    return {
+        "from": cursor.isoformat() if cursor is not None else None,
+        "to": end.isoformat(),
+        "intervals": originals,
+    }
 
 
 def session_has_gangs(session):
@@ -105,7 +194,7 @@ class _ExportWork:
 
 
 class Archive:
-    def __init__(self, path, entry_id, *, sessions_only=False):
+    def __init__(self, path, entry_id, *, sessions_only=False, parameters=None):
         self.path = Path(path)
         self.entry_id = entry_id
         self.queue = asyncio.Queue()
@@ -117,11 +206,13 @@ class Archive:
         self.closed = False
         self._close_task = None
         self.sessions_only = sessions_only
+        self.parameters = parameters if parameters is not None else Parameters({})
         self._discarded_sessions = set()
+        self._energy_enqueued = {}
         self._projection_cache = OrderedDict()
         self._projection_lock = threading.Lock()
         self._projection_generation = 0
-        self._projection_cache_entries = section("runtime")["archive_projection_cache_entries"]
+        self._projection_cache_entries = self.parameters.values["archive_projection_cache_entries"]
         self.revision = 0
         self._context_pruned_before = None
 
@@ -146,8 +237,17 @@ class Archive:
                 DROP INDEX IF EXISTS records_measurement_clock;
                 CREATE INDEX IF NOT EXISTS records_measurement_context ON records(entry_id, julianday(received_at))
                     WHERE kind='measurement';
+                CREATE INDEX IF NOT EXISTS records_source_snapshot_context
+                    ON records(entry_id, session_id, julianday(json_extract(payload,'$.received_at')), id)
+                    WHERE kind='source_snapshot';
                 CREATE INDEX IF NOT EXISTS records_consumer_events ON records(entry_id)
                     WHERE kind='consumer_event';
+                CREATE INDEX IF NOT EXISTS records_energy_delta
+                    ON records(entry_id, session_id, json_extract(payload,'$.energy.interval_delta.to'), id)
+                    WHERE kind='session';
+                CREATE INDEX IF NOT EXISTS records_energy_bootstrap
+                    ON records(entry_id, session_id, id)
+                    WHERE kind='session' AND json_type(payload,'$.energy.interval_delta.from')='null';
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL,
                     started_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -214,9 +314,24 @@ class Archive:
         )
 
     def save_session(self, session, at, configuration):
+        if self.closed:
+            raise RuntimeError("Archiv ist geschlossen")
+        if session.session_id in self._discarded_sessions:
+            return
         payload = plain(session)
         payload["configuration"] = plain(configuration)
+        previous = self._energy_enqueued.get(session.session_id)
+        delta = energy_interval_delta(session.energy, after=previous)
+        if delta is not None:
+            accounted_at = _energy_time(delta["to"])
+            if previous is not None and accounted_at < previous:
+                raise ValueError("Archivierte Energiezeit darf nicht rückwärts laufen")
+            payload["energy"]["interval_delta"] = delta
         self._append_plain("session", at, payload, session.session_id)
+        # The frozen queue item, including retries, owns this contribution now.
+        # Encoding/enqueue failure must leave the preceding watermark intact.
+        if delta is not None:
+            self._energy_enqueued[session.session_id] = accounted_at
 
     async def _run(self):
         while True:
@@ -325,6 +440,22 @@ class Archive:
             )
             if kind == "session":
                 data = json.loads(payload)
+                energy = data.get("energy")
+                session_payload = payload
+                if isinstance(energy, dict):
+                    has_transport = any(key in energy for key in (
+                        "intervals", "interval_delta", "intervals_available",
+                    ))
+                    delta = energy.pop("interval_delta", None)
+                    energy.pop("intervals", None)
+                    if delta is not None:
+                        energy["intervals_available"] = True
+                    else:
+                        energy.pop("intervals_available", None)
+                    if has_transport:
+                        session_payload = encoded_plain(data)
+                # This scalar snapshot and the original delta above commit
+                # together; repeated snapshots never copy the interval prefix.
                 db.execute(
                     """INSERT INTO sessions VALUES(?,?,?,?,?,?)
                     ON CONFLICT(session_id) DO UPDATE SET updated_at=excluded.updated_at,
@@ -335,7 +466,7 @@ class Archive:
                         data["timeline"]["session_started_at"],
                         at,
                         data["ended_at"],
-                        payload,
+                        session_payload,
                     ),
                 )
             if self.sessions_only and kind in {"measurement", "session"}:
@@ -361,10 +492,11 @@ class Archive:
                    (self.entry_id, session_id))
         db.execute("DELETE FROM sessions WHERE entry_id=? AND session_id=?",
                    (self.entry_id, session_id))
+        self._energy_enqueued.pop(session_id, None)
 
     def _prune_context(self, db, now, *, incremental=False):
         """Revisit newly expired buffer points; full scans only at lifecycle changes."""
-        cutoff = now - timedelta(seconds=HISTORY_CONTEXT_SECONDS)
+        cutoff = now - timedelta(seconds=self.parameters.values["history_context_seconds"])
         previous = self._context_pruned_before if incremental else None
         if previous is not None and cutoff <= previous:
             return
@@ -375,8 +507,10 @@ class Archive:
             + lower_bound + """
             AND NOT EXISTS (
                 SELECT 1 FROM sessions s WHERE s.entry_id=records.entry_id
-                AND julianday(records.received_at)>=julianday(s.started_at)-?/86400.0
-                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+?/86400.0
+                AND julianday(records.received_at)>=julianday(s.started_at)-
+                    COALESCE(json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
+                AND julianday(records.received_at)<=julianday(COALESCE(s.ended_at, s.updated_at))+
+                    COALESCE(json_extract(s.payload,'$.configuration.parameters.history_context_seconds'),?)/86400.0
                 AND (julianday(records.received_at)<=julianday(s.started_at)
                     OR julianday(records.received_at)>=julianday(COALESCE(s.ended_at, s.updated_at)))
                 AND json_extract(records.payload,'$.position') IN ('upper','lower')
@@ -407,6 +541,7 @@ class Archive:
                 db.execute("DELETE FROM records WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM sessions WHERE entry_id=?", (self.entry_id,))
                 db.execute("DELETE FROM consumer_receipts WHERE entry_id=?", (self.entry_id,))
+                self._energy_enqueued.clear()
                 self._context_pruned_before = None
             else:
                 row = db.execute(
@@ -489,7 +624,12 @@ class Archive:
             self.queue.put_nowait(("stop", None))
             await self.worker
 
-    def read(self, session_id=None, *, after=0, limit=1000, kinds=None, now=None):
+    def read(
+        self, session_id=None, *, after=0, limit=None, kinds=None, now=None,
+        humidity_display=False, energy_after=None,
+    ):
+        if limit is None:
+            limit = self.parameters.values["archive_read_page_records"]
         # Capture before establishing the SQLite snapshot. An in-flight reader
         # may finish after invalidation, but must not restore its old cache data.
         with self._projection_lock:
@@ -514,10 +654,18 @@ class Archive:
                 if kinds is not None else ""
             )
             session = json.loads(row["payload"])
+            energy_delta = self._read_energy_delta(db, session_id, session, energy_after)
+            if energy_delta is not None:
+                session["energy"]["interval_delta"] = energy_delta
             current = now or datetime.now(UTC)
             started = datetime.fromisoformat(session["timeline"]["session_started_at"])
             ended = datetime.fromisoformat(session["ended_at"]) if session.get("ended_at") else None
-            window = measurement_window(started, ended, current)
+            context_definition = BY_KEY["history_context_seconds"]
+            context = session.get("configuration", {}).get("parameters", {}).get(
+                context_definition.key, context_definition.default
+            )
+            context = context_definition.validate(context)
+            window = measurement_window(started, ended, current, context_seconds=context)
             bindings = session.get("configuration", {}).get("bindings", {})
             sources = tuple(
                 (bindings[key], *key.split("_", 1)) for key in (
@@ -562,6 +710,14 @@ class Archive:
                 + " UNION ".join(streams) + " ORDER BY id LIMIT ?) ORDER BY id",
                 (*stream_args, limit),
             ).fetchall()
+            page_records = [
+                {**dict(record), "payload": json.loads(record["payload"])}
+                for record in records
+            ]
+            if humidity_display:
+                page_records = self._humidity_display(
+                    db, session, page_records, sources
+                )
             if session.get("base_phases"):
                 projection = project_session(session, row["updated_at"])
             else:
@@ -572,11 +728,195 @@ class Archive:
                 "session": session,
                 "measurement_window": window,
                 "phase_projection": plain(projection),
-                "records": [
-                    {**dict(r), "payload": json.loads(r["payload"])} for r in records
-                ],
+                "records": page_records,
                 "next_after": records[-1]["id"] if len(records) == limit else None,
             }
+
+    def _read_energy_delta(self, db, session_id, session, after=None):
+        """Read only contributing deltas in the scalar row's SQLite snapshot."""
+        energy = session.get("energy", {})
+        if energy.get("intervals_available") is not True:
+            return None
+        try:
+            end = _energy_time(energy.get("accounted_at"))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        try:
+            cursor = _energy_time(after)
+        except (TypeError, ValueError, OverflowError):
+            cursor = None
+        # Common status/paging request: the scalar horizon has not advanced.
+        # No prefix, original record, or bootstrap needs to be read in this case.
+        if cursor == end:
+            return {"from": end.isoformat(), "to": end.isoformat(), "intervals": []}
+        snapshot_id = db.execute(
+            "SELECT MAX(id) FROM records INDEXED BY records_energy_delta "
+            "WHERE entry_id=? AND session_id=? AND kind='session' "
+            "AND json_extract(payload,'$.energy.interval_delta.to')=?",
+            (self.entry_id, session_id, end.isoformat()),
+        ).fetchone()[0]
+        if snapshot_id is None:
+            return None
+        bootstrap = db.execute(
+            "SELECT id, COALESCE(json_extract(payload,'$.energy.interval_delta.intervals[0].started_at'), "
+            "json_extract(payload,'$.energy.interval_delta.to')) AS started_at "
+            "FROM records INDEXED BY records_energy_bootstrap "
+            "WHERE entry_id=? AND session_id=? AND kind='session' AND id<=? "
+            "AND json_type(payload,'$.energy.interval_delta.from')='null' "
+            "ORDER BY id DESC LIMIT 1",
+            (self.entry_id, session_id, snapshot_id),
+        ).fetchone()
+        if bootstrap is None:
+            return None
+        try:
+            start = _energy_time(bootstrap["started_at"])
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if cursor is not None and not start <= cursor <= end:
+            cursor = None
+        cutoff = (
+            " AND json_extract(payload,'$.energy.interval_delta.to')>?"
+            if cursor is not None else ""
+        )
+        rows = db.execute(
+            "SELECT json_extract(payload,'$.energy.interval_delta') FROM records "
+            "INDEXED BY records_energy_delta WHERE entry_id=? AND session_id=? "
+            "AND kind='session' AND id>=? AND id<=?" + cutoff + " ORDER BY id",
+            (self.entry_id, session_id, bootstrap["id"], snapshot_id,
+             *((cursor.isoformat(),) if cursor is not None else ())),
+        )
+        originals = []
+        covered = cursor if cursor is not None else start
+        for (raw,) in rows:
+            if raw is None:
+                continue
+            delta = json.loads(raw)
+            for interval in delta["intervals"]:
+                first = _energy_time(interval["started_at"])
+                last = min(_energy_time(interval["ended_at"]), end)
+                if last <= covered:
+                    continue
+                first = max(first, covered)
+                if first != covered or last <= first:
+                    return None
+                original = {
+                    **interval, "started_at": first.isoformat(), "ended_at": last.isoformat(),
+                }
+                if (
+                    originals and originals[-1]["ended_at"] == original["started_at"]
+                    and originals[-1].get("source") == original.get("source")
+                    and originals[-1].get("power_kw") == original.get("power_kw")
+                ):
+                    originals[-1]["ended_at"] = original["ended_at"]
+                else:
+                    originals.append(original)
+                covered = last
+        if covered != end:
+            return None
+        return {
+            "from": cursor.isoformat() if cursor is not None else None,
+            "to": end.isoformat(),
+            "intervals": originals,
+        }
+
+    def _humidity_display(self, db, session, records, sources):
+        """Read only this page's fresh source context in its SQLite snapshot."""
+        configuration = session.get("configuration", {})
+        bindings = configuration.get("bindings", {})
+        timeout = configuration.get("parameters", {}).get(
+            "sensor_timeout_seconds", self.parameters.values["sensor_timeout_seconds"]
+        )
+        context = {}
+        valid_timeout = (
+            not isinstance(timeout, bool)
+            and isinstance(timeout, (int, float))
+            and isfinite(timeout)
+            and timeout >= 0
+        )
+        received = []
+        if valid_timeout and sources:
+            source_roles = set(sources)
+            for record in records:
+                if record["kind"] not in {"measurement", "source_snapshot"}:
+                    continue
+                payload = record["payload"]
+                if not isinstance(payload, Mapping):
+                    continue
+                source_role = (
+                    payload.get("source"), payload.get("position"),
+                    payload.get("quantity"),
+                )
+                if (
+                    not all(isinstance(value, str) for value in source_role)
+                    or source_role not in source_roles
+                ):
+                    continue
+                try:
+                    at = datetime.fromisoformat(payload["received_at"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if at.utcoffset() is not None:
+                    received.append(at.astimezone(UTC))
+        windows = []
+        if received:
+            try:
+                ttl = timedelta(seconds=timeout)
+                for at in sorted(received):
+                    first = at - ttl
+                    if windows and first <= windows[-1][1]:
+                        windows[-1] = (windows[-1][0], at)
+                    else:
+                        windows.append((first, at))
+            except OverflowError:
+                windows = []
+        if windows:
+            page_ids = {record["id"] for record in records}
+            last_id = max(page_ids)
+            source_filter = (
+                " AND ("
+                + " OR ".join(
+                    "(json_extract(payload,'$.source')=? "
+                    "AND json_extract(payload,'$.position')=? "
+                    "AND json_extract(payload,'$.quantity')=?)" for _ in sources
+                ) + ")"
+            )
+            source_values = tuple(value for source in sources for value in source)
+            # Merge only overlapping freshness windows. An old copied source
+            # must not load the retained history between it and newer inputs.
+            for first, last in windows:
+                # Measurements use their actual received clock. Snapshots keep
+                # their original payload clock instead of refreshing a source.
+                queries = (
+                    (
+                        "SELECT * FROM records INDEXED BY records_measurement_context "
+                        "WHERE entry_id=? AND kind='measurement' AND id<=? "
+                        "AND julianday(received_at) BETWEEN julianday(?) AND julianday(?)"
+                        + source_filter,
+                        (self.entry_id, last_id, first.isoformat(), last.isoformat(),
+                         *source_values),
+                    ),
+                    (
+                        # The partial payload-clock index bounds snapshot context
+                        # without walking all prior diagnostic IDs on every page.
+                        "SELECT * FROM records INDEXED BY records_source_snapshot_context "
+                        "WHERE entry_id=? AND session_id=? AND kind='source_snapshot' "
+                        "AND id<=? AND julianday(json_extract(payload,'$.received_at')) "
+                        "BETWEEN julianday(?) AND julianday(?)" + source_filter,
+                        (self.entry_id, session["timeline"]["session_id"], last_id,
+                         first.isoformat(), last.isoformat(), *source_values),
+                    ),
+                )
+                for query, arguments in queries:
+                    for record in db.execute(query, arguments):
+                        if record["id"] not in page_ids and record["id"] not in context:
+                            context[record["id"]] = {
+                                **dict(record),
+                                "payload": json.loads(record["payload"]),
+                            }
+        return project_absolute_humidity(
+            records, context=context.values(), bindings=bindings,
+            timeout_seconds=timeout,
+        )
 
     def _legacy_projection(self, db, session_id, session, row, *, generation):
         # Read cache identity and evidence in the caller's SQLite snapshot. In
@@ -918,10 +1258,14 @@ class Archive:
                     )
                     with archive.open("sessions.jsonl", "w") as out:
                         for row in db.execute(
-                            "SELECT payload FROM sessions WHERE entry_id=? ORDER BY started_at",
+                            "SELECT session_id,payload FROM sessions WHERE entry_id=? ORDER BY started_at",
                             (self.entry_id,),
                         ):
-                            out.write((row[0] + "\n").encode())
+                            session = json.loads(row["payload"])
+                            delta = self._read_energy_delta(db, row["session_id"], session)
+                            if delta is not None:
+                                session["energy"]["intervals"] = delta["intervals"]
+                            out.write((encoded_plain(session) + "\n").encode())
                     with archive.open("records.jsonl", "w") as out:
                         for row in db.execute(
                             "SELECT * FROM records WHERE entry_id=? ORDER BY id",

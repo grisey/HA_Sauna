@@ -439,6 +439,28 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.assertIsNone(self.c.session.timeline.active)
 
 
+    def test_first_usability_preserves_same_time_input_order_across_later_ticks(self):
+        for before_close in (False, True):
+            with self.subTest(before_close=before_close):
+                self.setUp()
+                self.door(Kind.DOOR_OPEN, 1)
+                value = selected_occupancy(binary_presence(
+                    "binary_sensor.presence", "on", at(2), at(2),
+                ), at(3))
+                value = replace(value, timing=replace(value.timing, first_usable_at=at(3)))
+                if before_close:
+                    self.c.consume_occupancy_input(value)
+                self.door(Kind.DOOR_CLOSE, 3)
+                if not before_close:
+                    self.c.consume_occupancy_input(value)
+                self.c.advance(at(4))
+                self.assertEqual(self.c.session.timeline.active is not None, before_close)
+                if not before_close:
+                    self.door(Kind.DOOR_OPEN, 5)
+                    self.door(Kind.DOOR_CLOSE, 6)
+                    self.assertEqual(self.c.session.timeline.active.started_at, at(6))
+
+
 class ProxyDoorControlTests(unittest.TestCase):
     def test_every_proxy_start_needs_a_complete_unused_cycle(self):
         for kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):

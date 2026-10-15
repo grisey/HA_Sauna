@@ -29,7 +29,8 @@ class RequiredSessionFixtureTests(unittest.TestCase):
             if "configuration_file" in manifest:
                 self.assertTrue(bound_parameters())
             for file_key, hash_key in (("source_curves", "source_curves_sha256"),
-                                       ("configuration_file", "configuration_sha256")):
+                                       ("configuration_file", "configuration_sha256"),
+                               ("construction_file", "construction_sha256")):
                 if file_key in manifest:
                     source = ROOT / manifest[file_key]
                     self.assertTrue(source.resolve().is_relative_to(ROOT.resolve()))

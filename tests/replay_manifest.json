@@ -3,6 +3,50 @@
   "required": true,
   "missing_data_policy": "fail",
   "privacy": "Relative Zeit, Rollen statt Geräte-/Entitätskennungen; keine Rohkonfiguration, Kalenderdaten, Kontexte oder Nutzungsidentitäten.",
+  "time_groups": [
+    {
+      "id": "R01",
+      "origin_recording": "R01",
+      "basis": "Eigene Zeitgruppe; gleicher Quellhash wie R02 belegt keinen Zeitanschluss.",
+      "source_sha256": [
+        "a9e9093108b066cd4274373fe748dabedb9889d5c8ad0ded780a9e95d96cd8b2"
+      ],
+      "recordings": [
+        {"id": "R01", "origin_offset_s": 0.0}
+      ]
+    },
+    {
+      "id": "R02-R03",
+      "origin_recording": "R02",
+      "basis": "Vom Nutzer zugeordnete Folge; relative Ursprünge aus ursprünglichen Recorder- und Archivankern. Die unbeobachtete Lücke bleibt erhalten.",
+      "source_sha256": [
+        "a9e9093108b066cd4274373fe748dabedb9889d5c8ad0ded780a9e95d96cd8b2",
+        "0e065cfbc8cd75da17bf8b47f6f1b99768445b86028461a5a5fc273ac08a97ba",
+        "206964e4b79e30f7b060f85ef07be804f537a42e511cbd354e2eb88e2cc19469"
+      ],
+      "recordings": [
+        {"id": "R02", "origin_offset_s": 0.0},
+        {
+          "id": "R03",
+          "origin_offset_s": 19606.282715,
+          "previous_recording": "R02",
+          "gap_from_previous_end_s": 641.480566
+        }
+      ]
+    },
+    {
+      "id": "R04",
+      "origin_recording": "R04",
+      "basis": "Eigene Zeitgruppe; kein belegter relativer Zeitanschluss an R01–R03.",
+      "source_sha256": [
+        "ae9de179767aa6ade1bccbc6e18a0b9be631796e82edede7e1ba7e333c0044d4",
+        "66c5b53ab9c15d2a56c212c3742f023ee31d2cc346481bf7d2d16f64d959ae43"
+      ],
+      "recordings": [
+        {"id": "R04", "origin_offset_s": 0.0}
+      ]
+    }
+  ],
   "sessions": [
     {
       "id": "R01",

@@ -9,8 +9,15 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from math import isfinite
+from types import MappingProxyType
 
-from .appearance import default_appearance, validate_appearance
+from .appearance import (
+    APPEARANCE_CATALOG,
+    appearance_options,
+    default_appearance,
+    validate_appearance,
+)
 from .archive import encoded, encoded_plain, plain
 from .bindings import Bindings
 from .const import CONF_BINDINGS, CONF_PARAMETERS
@@ -27,7 +34,7 @@ from .core.button import (
 from .core.configuration_model import ConfigurationModel
 from .core.contracts import ConsumerEvent, PresenceReport
 from .core.controller import Controller, Result
-from .core.defaults import instance_default
+from .core.defaults import instance_default, preference_values
 from .core.detector import Detector
 from .core.input_handoff import (
     ControlModeInput,
@@ -38,13 +45,19 @@ from .core.input_handoff import (
     TemperatureInput,
 )
 from .core.models import Position, Session
-from .core.parameters import BY_KEY, Parameters
-from .core.presence import PresenceProjection, ProxyPresenceSource
+from .core.parameters import (
+    BY_KEY,
+    CATALOG_PARAMETER_KEYS,
+    EDITABLE_DEFINITIONS,
+    Parameters,
+)
+from .core.presence import PresenceProjection, PresenceSourceSelection, ProxyPresenceSource
 from .core.program_catalog import (
     DEFAULT_PROGRAMS,
     NamedTemperatureProgram,
     load_programs,
     migrate_legacy_programs,
+    validate_programs,
 )
 from .core.temperature_program import temperature_steps as validate_temperature_steps
 from .core.timeline import Event, Kind
@@ -79,6 +92,7 @@ class Configuration:
     temperature_steps: tuple[float, ...] | None = None
     appearance: dict = field(default_factory=default_appearance)
     button_session_gesture: str = instance_default("button_session_gesture")
+    field_standards: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Keep a direct legacy-button construction serializable as options."""
@@ -91,6 +105,16 @@ class Configuration:
         if self.presence_source not in {"proxy", "ha_presence"}:
             raise ValueError("Ungültige Präsenzquelle")
         object.__setattr__(self, "appearance", validate_appearance(self.appearance))
+        standards = {}
+        if isinstance(self.field_standards, Mapping):
+            for name, value in self.field_standards.items():
+                try:
+                    standards[name] = self._validated_field_standard(name, value)
+                except ValueError:
+                    # An obsolete or newly invalid standard must not replace a
+                    # valid active setting. Its standard fallback remains W.
+                    continue
+        object.__setattr__(self, "field_standards", MappingProxyType(standards))
         minimum = self.parameters.minimum_for("target_temperature_c")
         maximum = BY_KEY["target_temperature_c"].maximum
         if self.temperature_steps is not None:
@@ -128,7 +152,182 @@ class Configuration:
         return ConfigurationModel.from_configuration(self).button.session_gestures
 
     @classmethod
-    def from_options(cls, options: Mapping) -> Configuration:
+    def standard_field_groups(cls) -> dict[str, str]:
+        """Derive the permanent field scope from the existing catalog metadata."""
+        return {
+            f"parameters.{definition.key}": definition.settings_group
+            for definition in EDITABLE_DEFINITIONS
+            if definition.configuration_surface != "catalog"
+            and definition.settings_group != "programs"
+        } | {
+            f"appearance.colors.{definition['id']}": "appearance"
+            for definition in APPEARANCE_CATALOG["colors"]
+        } | {
+            f"appearance.scales.{name}.{bound}": "appearance"
+            for name, spec in APPEARANCE_CATALOG["scales"].items()
+            for bound in spec["default"]
+        } | {
+            f"appearance.instruments.{name}": "appearance"
+            for name in APPEARANCE_CATALOG["instruments"]
+        } | {
+            f"appearance.preferences.{name}": "appearance"
+            for name, definition in APPEARANCE_CATALOG["preferences"].items()
+            if definition["configuration_surface"] == "panel"
+        }
+
+    @classmethod
+    def standard_fields(cls, *, field=None, group=None) -> tuple[str, ...]:
+        """Resolve a field, settings group or global scope, including hidden fields."""
+        groups = cls.standard_field_groups()
+        if field is not None:
+            if group is not None or not isinstance(field, str) or field not in groups:
+                raise ValueError("Ungültiges Standardfeld")
+            return (field,)
+        if group is not None:
+            if not isinstance(group, str) or group not in groups.values():
+                raise ValueError("Ungültiger Standardbereich")
+            return tuple(name for name, owner in groups.items() if owner == group)
+        return tuple(groups)
+
+    def standard_field_metadata(self) -> dict[str, dict]:
+        """Project existing labels and applicability without shrinking reset scopes."""
+        model = ConfigurationModel.from_configuration(self)
+        result = {}
+        for name, group in self.standard_field_groups().items():
+            parts = name.split(".")
+            if parts[0] == "parameters":
+                definition = BY_KEY[parts[1]]
+                label, unit = definition.label, definition.unit
+                applicable = model.parameter_applicable(definition)
+            else:
+                category, key = parts[1:3]
+                if category == "colors":
+                    definition = next(
+                        spec for spec in APPEARANCE_CATALOG[category]
+                        if spec["id"] == key
+                    )
+                else:
+                    definition = APPEARANCE_CATALOG[category][key]
+                label, unit = definition.get("label", key), definition.get("unit", "")
+                applicable = True
+            result[name] = {
+                "group": group,
+                "label": label,
+                "unit": unit,
+                "applicable": applicable,
+            }
+            if parts[0] == "appearance" and parts[1] == "scales":
+                result[name]["bound"] = parts[3]
+        return result
+
+    @classmethod
+    def _validated_field_standard(cls, name, value):
+        """Check one stored scalar independently of the current active configuration."""
+        cls.standard_fields(field=name)
+        parts = name.split(".")
+        if parts[0] == "parameters":
+            return BY_KEY[parts[1]].validate(value)
+        category, key = parts[1:3]
+        if category in {"colors", "instruments"}:
+            return validate_appearance({category: {key: value}})[category][key]
+        if category == "preferences":
+            return preference_values(
+                {key: value}, reject_catalog_overrides=True
+            )[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("Ungültiger numerischer Feldstandard")
+        try:
+            number = float(value)
+        except OverflowError:
+            raise ValueError("Ungültiger numerischer Feldstandard") from None
+        if not isfinite(number):
+            raise ValueError("Ungültiger numerischer Feldstandard")
+        definition = APPEARANCE_CATALOG[category][key]
+        if (
+            number < definition.get("minimum", number)
+            or number > definition.get("maximum", number)
+        ):
+            raise ValueError("Feldstandard liegt außerhalb des zulässigen Bereichs")
+        return value
+
+    def field_value(self, name, *, source="active"):
+        """Read A, catalog W or independent S with its W fallback for one field."""
+        self.standard_fields(field=name)
+        if not isinstance(source, str) or source not in {
+            "active", "factory", "standard"
+        }:
+            raise ValueError("Ungültige Feldwertquelle")
+        if source == "standard" and name in self.field_standards:
+            return self.field_standards[name]
+        parts = name.split(".")
+        if parts[0] == "parameters":
+            return (
+                self.parameters.values[parts[1]] if source == "active"
+                else BY_KEY[parts[1]].default
+            )
+        category, key = parts[1:3]
+        if category == "colors":
+            factory = next(
+                spec["default"] for spec in APPEARANCE_CATALOG[category]
+                if spec["id"] == key
+            )
+        else:
+            factory = APPEARANCE_CATALOG[category][key]["default"]
+        if category == "scales":
+            return (
+                self.appearance[category][key][parts[3]] if source == "active"
+                else factory[parts[3]]
+            )
+        return (
+            self.appearance[category].get(key, factory) if source == "active"
+            else factory
+        )
+
+    def with_field_values(self, values: Mapping[str, object]) -> Configuration:
+        """Validate a complete A candidate while retaining all excluded owners."""
+        if not isinstance(values, Mapping):
+            raise ValueError("Ungültige Feldwerte")
+        parameters = self.parameters.as_dict()
+        appearance = validate_appearance(self.appearance)
+        for name, value in values.items():
+            self.standard_fields(field=name)
+            parts = name.split(".")
+            if parts[0] == "parameters":
+                parameters[parts[1]] = value
+            elif parts[1] == "scales":
+                appearance[parts[1]][parts[2]][parts[3]] = value
+            else:
+                appearance[parts[1]][parts[2]] = value
+        parameters = Parameters(parameters)
+        validate_programs(
+            self.temperature_programs,
+            minimum_c=parameters.minimum_for("target_temperature_c"),
+            maximum_c=BY_KEY["target_temperature_c"].maximum,
+            maximum_gangs=BY_KEY["temperature_gangs"].maximum,
+        )
+        return replace(self, parameters=parameters, appearance=appearance)
+
+    def with_field_standard(self, name, value) -> Configuration:
+        """Copy one validated draft value to S without changing active settings."""
+        value = self._validated_field_standard(name, value)
+        return replace(self, field_standards={**self.field_standards, name: value})
+
+    def without_field_standards(self, fields) -> Configuration:
+        """Remove S only in an explicitly resolved permanent field scope."""
+        names = set()
+        for name in fields:
+            self.standard_fields(field=name)
+            names.add(name)
+        return replace(
+            self,
+            field_standards={
+                name: value for name, value in self.field_standards.items()
+                if name not in names
+            },
+        )
+
+    @classmethod
+    def from_options(cls, options: Mapping, *, historical=False) -> Configuration:
         if (
             not isinstance(options, Mapping)
             or not {CONF_BINDINGS, CONF_PARAMETERS} <= set(options)
@@ -149,6 +348,7 @@ class Configuration:
                 "temperature_steps",
                 "button_temperature_c",  # Obsolete saved option; ignored on load.
                 "appearance",
+                "field_standards",
             }
         ):
             raise ValueError(
@@ -204,6 +404,11 @@ class Configuration:
                 if key in values:
                     minimum_c = min(minimum_c, BY_KEY[key].validate(values[key]))
             values["sauna_min_temperature_c"] = minimum_c
+        if not historical:
+            values = {
+                key: value for key, value in values.items()
+                if key not in CATALOG_PARAMETER_KEYS
+            }
         parameters = Parameters(values)
         minimum_c = parameters.minimum_for("target_temperature_c")
         maximum_c = BY_KEY["target_temperature_c"].maximum
@@ -258,12 +463,13 @@ class Configuration:
             steps,
             options.get("appearance", default_appearance()),
             options.get("button_session_gesture", instance_default("button_session_gesture")),
+            options.get("field_standards", {}),
         )
 
-    def as_options(self) -> dict:
+    def as_options(self, *, snapshot=False) -> dict:
         return {
             CONF_BINDINGS: self.bindings.as_dict(),
-            CONF_PARAMETERS: self.parameters.as_dict(),
+            CONF_PARAMETERS: self.parameters.as_dict() if snapshot else self.parameters.as_options(),
             "log_level": self.log_level,
             "control_input_mode": self.control_input_mode,
             "button_event_type": self.button_event_type,
@@ -277,8 +483,16 @@ class Configuration:
             "control_mode": self.control_mode,
             "presence_source": self.presence_source,
             "temperature_steps": self.temperature_steps,
-            "appearance": validate_appearance(self.appearance),
+            "appearance": (
+                validate_appearance(self.appearance) if snapshot
+                else appearance_options(self.appearance)
+            ),
+            "field_standards": dict(self.field_standards),
         }
+
+    def as_snapshot(self) -> dict:
+        """Copy effective values and field standards for a historical snapshot."""
+        return self.as_options(snapshot=True)
 
 
 class SaunaRuntime:
@@ -300,6 +514,7 @@ class SaunaRuntime:
             temperature_steps=configuration.temperature_steps,
             decision_clock=lambda: self._clock(),
         )
+        self._presence_source_selection = PresenceSourceSelection(configuration.presence_source)
         self._lock = asyncio.Lock()
         self._tick_pending = False
         self._pending_device_inputs = deque()
@@ -357,7 +572,7 @@ class SaunaRuntime:
                 self.device.archive_illuminance_snapshot(self._clock())
             self.archive.append("presence_source", self._clock(), {
                 "configured_source": self.configuration.presence_source,
-                "effective_source": self.configuration.presence_source,
+                "effective_source": self._presence_source_selection.effective_source,
                 "entity_id": self.configuration.bindings.values.get("presence"),
                 "external_snapshot": self.presence.external,
             }, session_id)
@@ -423,15 +638,52 @@ class SaunaRuntime:
 
     async def _run_cycle(self):
         await self._drain_device_inputs()
-        now = self._clock()
-        self._deliver_detection(now)
+        self._deliver_detection(self._clock())
         self._report_detector_availability()
+        # Finish the previously admitted detector window before booking a
+        # source boundary at its actual current processing time.
+        now = self._clock()
+        self._advance_presence_source(now)
         self.controller.advance(now, finish_confirmation_batch=True)
         if self.device:
             self.device.refresh(now)
         if self.device:
             await self.device.apply(now)
         self.notify()
+
+    def _advance_presence_source(self, at):
+        """Qualify the central source owner only at a current input boundary."""
+        previous_source = self._presence_source_selection.effective_source
+        changed = self._presence_source_selection.advance(
+            at,
+            fallback_delay_seconds=self.configuration.parameters.values["presence_fallback_delay_seconds"],
+            recovery_delay_seconds=self.configuration.parameters.values["presence_recovery_delay_seconds"],
+        )
+        session_id = self.session.session_id if self.session else None
+        if changed and self.archive:
+            self.archive.append("presence_source", at, {
+                "configured_source": self.configuration.presence_source,
+                "effective_source": self._presence_source_selection.effective_source,
+                "previous_source": previous_source,
+                "entity_id": self.configuration.bindings.values.get("presence"),
+                "reason": "availability_qualified",
+            }, session_id)
+        if changed and self._presence_source_selection.effective_source == "proxy":
+            # A new source section has no person evidence from an earlier one.
+            # Archive its unknown report after the same-time source boundary.
+            reference = f"{session_id or 'no_session'}:{at.isoformat()}"
+            self._record_presence(PresenceReport(
+                f"presence:proxy:source:{reference}",
+                "unknown", "provisional_proxy", "proxy", f"presence_source:proxy:{reference}",
+                at, at, self._detector_presence_available(), "no_proxy_evidence",
+            ), session_id=session_id)
+        elif changed:
+            report = self.presence.external.get(self.configuration.bindings.values.get("presence"))
+            if report is not None:
+                self._consume_presence_report(
+                    report, qualified=True, defer_evaluation=True, first_usable_at=at,
+                )
+        return changed
 
     def _deliver_detection(self, through, *, include_current=True):
         """Book received recognition chronologically, without actuator I/O."""
@@ -455,6 +707,7 @@ class SaunaRuntime:
                     detection.effective_at,
                     detection.detected_at,
                     booking_at=booking_at,
+                    trace_at=detection.trace_at,
                 )
                 self._process_event(
                     event, defer_confirmation=True, recognition_at=detection.trace_at,
@@ -490,7 +743,7 @@ class SaunaRuntime:
                 if self.controller._last_at is None or at >= self.controller._last_at:
                     self.controller.advance(at, finish_confirmation_batch=True)
 
-            person_evidence_qualified = self.configuration.presence_source != "ha_presence"
+            person_evidence_qualified = self._presence_source_selection.effective_source == "proxy"
             detector.advance(
                 through,
                 enabled=self.session.operation_enabled,
@@ -504,12 +757,13 @@ class SaunaRuntime:
                 allowed_at=lambda kind, at: self.controller.recognition_allowed_at(
                     kind, at, person_evidence_qualified=person_evidence_qualified,
                 ),
+                onset_allowed=self.controller.detection_onset_allowed,
                 before_sample=before_sample,
                 after_sample=after_sample,
                 include_current=include_current,
                 detected_at=self._clock,
             )
-            sampled_at = detector.origin + timedelta(seconds=detector.index)
+            sampled_at = detector.origin + timedelta(seconds=detector.index * detector.grid_seconds)
             past = [i for i, (gate_at, _) in enumerate(self._detector_heating_gates)
                     if gate_at <= sampled_at]
             if past:
@@ -517,10 +771,17 @@ class SaunaRuntime:
             self.controller.discard_recognition_context_before(sampled_at)
             self._sync_detector()
 
+    def _detector_presence_available(self):
+        return bool(
+            self.detector is not None
+            and self.session is not None
+            and self.detector.active_positions
+        )
+
     def _report_detector_availability(self):
         if self.detector is None or self.session is None:
             return
-        available = bool(self.detector.active_positions)
+        available = self._detector_presence_available()
         current = self.presence.current
         now = self._clock()
         if current is None or current.available != available:
@@ -671,8 +932,10 @@ class SaunaRuntime:
                     # Booking facts has no actuator I/O. A waiting command must
                     # enter before output awaits can admit an endless input stream.
                     await self._drain_device_inputs()
+                source_changed = False
                 if not self.closed and not semantic_event:
                     self._deliver_detection(self._clock())
+                    source_changed = self._advance_presence_source(self._clock())
                 command_error = None
                 try:
                     yield
@@ -681,9 +944,9 @@ class SaunaRuntime:
                     raise
                 finally:
                     # Configuration-only and rejected commands must also deliver
-                    # consumed inputs. One current cycle is sufficient; new inputs
-                    # remain the responsibility of their waiting handlers.
-                    if drained and not self.closed:
+                    # consumed inputs and source changes. New inputs remain the
+                    # responsibility of their waiting handlers.
+                    if (drained or source_changed) and not self.closed:
                         try:
                             await self._cycle()
                         except BaseException as error:
@@ -711,12 +974,14 @@ class SaunaRuntime:
     async def start_archive(self, path, entry_id):
         from .archive import Archive
 
-        self.archive = Archive(path, entry_id, sessions_only=True)
+        self.archive = Archive(
+            path, entry_id, sessions_only=True, parameters=self.configuration.parameters
+        )
         await self.archive.start()
         self._consumer_ids = await asyncio.to_thread(self.archive.consumer_event_ids)
         self.archive.append("presence_source", self._clock(), {
             "configured_source": self.configuration.presence_source,
-            "effective_source": self.configuration.presence_source,
+            "effective_source": self._presence_source_selection.effective_source,
             "entity_id": self.configuration.bindings.values.get("presence"),
             "reason": "configuration_loaded",
         })
@@ -733,10 +998,10 @@ class SaunaRuntime:
     def _record_presence(self, report, *, session_id=None):
         if not self.presence.accept(report):
             return
-        if self.configuration.presence_source == "proxy" and report.source == "proxy":
+        if self._presence_source_selection.effective_source == "proxy" and report.source == "proxy":
             # Projection of an original event is not durable occupancy evidence.
             # In particular unknown/retraction never asserts absence.
-            self._consume_presence_report(report, qualified=False)
+            self._consume_presence_report(report, qualified=False, defer_evaluation=True)
         if session_id is None and self.session is not None:
             session_id = self.session.session_id
         event = ConsumerEvent(
@@ -746,7 +1011,9 @@ class SaunaRuntime:
         if self._publish_consumer(event) and self.archive:
             self.archive.append("presence", report.received_at, report, event.session_id)
 
-    def _consume_presence_report(self, report, *, qualified, defer_evaluation=False):
+    def _consume_presence_report(
+        self, report, *, qualified, defer_evaluation=False, first_usable_at=None,
+    ):
         accepted = self.controller.consume_occupancy_input(
             OccupancyInput(
                 occupancy=report.occupancy,
@@ -756,7 +1023,7 @@ class SaunaRuntime:
                 timing=InputTiming(
                     effective_at=report.effective_at,
                     received_at=report.received_at,
-                    first_usable_at=None,
+                    first_usable_at=first_usable_at,
                     evaluated_at=self._clock(),
                 ),
             ),
@@ -770,18 +1037,32 @@ class SaunaRuntime:
         async with self._lock:
             if self.closed:
                 return
-            self._record_presence(report)
-            direct = self.configuration_model.direct_presence
             selected = (
-                direct
-                and report.source == self.configuration.bindings.values.get("presence")
+                report.source == self.configuration.bindings.values.get("presence")
                 and report.assertion == "direct_presence"
             )
+            previous = self.presence.external.get(report.source)
+            if report.report_id in self.presence.reports:
+                # Preserve the projection's identity/content validation without
+                # restarting an already observed source-health interval.
+                self._record_presence(report)
+                return
+            if ((selected and previous is not None and (
+                    report.effective_at < previous.effective_at
+                    or report.received_at < previous.received_at
+                ))
+                    or (report.source == self.configuration.bindings.values.get("presence")
+                        and not selected)):
+                return
+            self._record_presence(report)
+            direct = self.configuration_model.direct_presence
             if selected:
-                self._consume_presence_report(
-                    report, qualified=True, defer_evaluation=direct,
-                )
-            if direct:
+                self._presence_source_selection.observe(report.available, self._clock())
+                if direct:
+                    self._consume_presence_report(
+                        report, qualified=True, defer_evaluation=True,
+                    )
+            if direct or selected:
                 # Catch-up recognition must use the report already received by
                 # this callback, without advancing past queued device inputs.
                 with self.controller.confirmation_batch(self._clock):
@@ -794,9 +1075,17 @@ class SaunaRuntime:
     def _process_event(self, event, *, defer_confirmation=False, recognition_at=None):
         report = (ProxyPresenceSource.present(event)
                   if event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) else None)
+        selected = self.presence_source == "proxy"
+        admitted_at = self._presence_source_selection.last_changed_at
+        if (event.kind == Kind.INFUSION and admitted_at is not None
+                and event.effective_at < admitted_at):
+            # Keep the detector's original onset. An earlier episode may still
+            # annotate an existing gang, but is not new admitted entry/cooling
+            # evidence. Rejecting onset_allowed would instead retime it to now.
+            selected = False
         result = self.controller.process(
             event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
-            person_evidence_qualified=self.configuration.presence_source != "ha_presence",
+            person_evidence_qualified=selected,
         )
         if result.changed:
             self._report_detector_heating(event.booking_at)
@@ -856,24 +1145,24 @@ class SaunaRuntime:
         self._saved_consumer_events = len(self.controller.consumer_events)
 
     @property
+    def presence_source(self):
+        return self._presence_source_selection.effective_source
+
+    @property
     def configuration_model(self):
         device = getattr(self, "device", None)
         return ConfigurationModel.from_configuration(
             self.configuration,
             button_event_types=device.button_event_types if device else None,
+            effective_presence_source=self._presence_source_selection.effective_source,
         )
 
     @property
     def presence_status(self):
-        model = self.configuration_model
         return {
             "current": (self._selected_presence_report
-                        if model.direct_presence
+                        if self._presence_source_selection.effective_source == "ha_presence"
                         else self.presence.current),
-            "external": (
-                self.presence.external
-                if model.presence_sensor_configured and not model.direct_presence else {}
-            ),
         }
 
     def persist_completed_sessions(self):
@@ -882,7 +1171,7 @@ class SaunaRuntime:
         completed = self.controller.completed_sessions[self._archived_completed :]
         for session in completed:
             self.archive.save_session(
-                session, self._clock(), self.configuration.as_options()
+                session, self._clock(), self.configuration.as_snapshot()
             )
         self._archived_completed = len(self.controller.completed_sessions)
         if completed and self.device:
@@ -948,7 +1237,7 @@ class SaunaRuntime:
             signature = encoded_plain(signature)
             if signature != self._archive_signature:
                 self.archive.save_session(
-                    self.session, now, self.configuration.as_options()
+                    self.session, now, self.configuration.as_snapshot()
                 )
                 self._archive_signature = signature
         self._persist_decisions()
@@ -1024,6 +1313,10 @@ class SaunaRuntime:
             self.log.info("fault_cleared", "%s", fault_resolved(key))
         self._logged_faults = faults
         self.persist()
+        self.notify_entities()
+
+    def notify_entities(self):
+        """Publish changed display values without advancing or persisting the controller."""
         for callback in tuple(self._subscribers):
             callback()
 
@@ -1258,7 +1551,7 @@ class SaunaRuntime:
                 self._button_start_hold_session_id = self.session.session_id
                 if self.device:
                     self.device.begin_button_hold_light(
-                        self.session.session_id, starting=True
+                        self.session.session_id, starting=True, at=now
                     )
         elif action == START_RELEASE:
             session_id = self._button_start_hold_session_id
@@ -1283,7 +1576,7 @@ class SaunaRuntime:
             ))
             self._button_hold_session_id = session_id
             if self.device:
-                self.device.begin_button_hold_light(session_id)
+                self.device.begin_button_hold_light(session_id, at=now)
         elif action == END_RELEASE:
             session_id = self._button_hold_session_id
             if session_id is not None:
@@ -1338,7 +1631,7 @@ class SaunaRuntime:
             # Keep the manual/current configuration as its own revision before
             # the same recording continues under the newly selected mode.
             self.archive.save_session(
-                previous_session, at, self.configuration.as_options()
+                previous_session, at, self.configuration.as_snapshot()
             )
         # A due gap may complete at this boundary. Save it with its former
         # configuration before applying a mode to a subsequent recording.
@@ -1423,12 +1716,33 @@ class SaunaRuntime:
         """Record a UI or physical light selection within the current lock."""
         self.device.set_light_override(value, at=now)
         self.log.info("light_override", "Manuelle Lichtwahl: %s.", value)
-        if self.archive:
+
+    def record_manual_light_changes(self, changes, *, selection=None):
+        """Archive original light-owner changes before asynchronous output."""
+        if self.archive is None:
+            return
+        for change in changes:
+            if not isinstance(change.at, datetime):
+                continue
+            payload = {
+                "value": (selection["value"]
+                          if selection is not None else change.value),
+                "change": plain(change),
+            }
+            if (
+                change.reason == "selection"
+                and change.previous_value is not None
+                and change.previous_session_id != change.session_id
+            ):
+                self.archive.append(
+                    "manual_light", change.at,
+                    {**payload, "ends_previous_only": True},
+                    change.previous_session_id,
+                )
             self.archive.append(
-                "manual_light",
-                now,
-                {"value": value},
-                self.session.session_id if self.session else None,
+                "manual_light", change.at, payload,
+                change.session_id if change.reason in {"selection", "keep"}
+                else change.previous_session_id,
             )
 
     def _validate_heater_override(self, value):
@@ -1549,7 +1863,7 @@ class SaunaRuntime:
                 # A manual brightness must not be restored after the required
                 # session-light OFF.  The due LightAfterRun object keeps the
                 # adapter's normal OFF/retry path responsible for the output.
-                self.device.set_light_override(None)
+                self.device.set_light_override(None, at=now)
                 self.device.light_output.finish_automatic()
             self.log.info(
                 "session_light_finished_manually",
@@ -1716,7 +2030,7 @@ class SaunaRuntime:
                         self.archive.save_session(
                             replace(self.session, ended_at=now),
                             now,
-                            self.configuration.as_options(),
+                            self.configuration.as_snapshot(),
                         )
                 except Exception as error:
                     failures.append(error)

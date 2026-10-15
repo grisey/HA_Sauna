@@ -125,13 +125,14 @@ class ParameterTests(unittest.TestCase):
 
     def test_zero_policy_is_explicit(self):
         for d in DEFINITIONS:
-            data = {**parameters().as_dict(), d.key: 0}
             with self.subTest(key=d.key):
-                if d.allow_zero:
-                    self.assertEqual(Parameters(data).values[d.key], 0)
+                if (d.minimum is not None and d.minimum <= 0) or (
+                    d.minimum is None and d.allow_zero
+                ):
+                    self.assertEqual(d.validate(0), 0)
                 else:
                     with self.assertRaises(ParameterError):
-                        Parameters(data)
+                        d.validate(0)
 
     def test_seconds_are_derived_from_the_only_value(self):
         self.assertEqual(parameters().seconds("session_gap_minutes"),
@@ -482,6 +483,7 @@ class PackagingTests(unittest.TestCase):
         subgroups = {
             definition["settings_subgroup"] for definition in section("parameters")
             if definition["settings_group"] in areas
+            and definition["configuration_surface"] == "integration"
             and definition["minimum"] != definition["maximum"]
         }
         self.assertEqual(

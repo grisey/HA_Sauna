@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser.  Each assertion renders the
 // overview from an availability DTO, so it covers the guest-facing result.
 const assert = require("node:assert/strict");
@@ -8,9 +9,7 @@ const {
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const defaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-);
+const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
 
 let Panel;
 const sandbox = {
@@ -86,7 +85,7 @@ const baseState = () => ({
 });
 const render = (state, target = "#current") => {
   const nodes = {};
-  const panel = Object.assign(Object.create(Panel.prototype), {
+  const panel = Object.assign(fixturePanel(Panel), {
     state,
     hass: { user: { name: "Test" } },
     $: (selector) => {

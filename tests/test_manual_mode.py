@@ -19,7 +19,7 @@ def at(seconds):
 class ManualModeTests(unittest.TestCase):
     def controller(self, **values):
         return Controller(
-            Parameters({**parameters().as_dict(), **values}), control_mode="manual"
+            Parameters({**parameters().as_dict(), **values}), control_mode="manual",
         )
 
     def start(self, controller):

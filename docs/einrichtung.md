@@ -2,12 +2,12 @@
 
 ## Installation vorbereiten
 
-Voraussetzung ist Home Assistant ab **2026.9.0**. Das HACS-Repository
-`https://github.com/grisey/HA_Sauna` wird als Typ **Integration** eingebunden.
-Installation und Updates erfordern einen Home-Assistant-Neustart.
+Die [Voraussetzungen](../README.md#voraussetzungen) und die
+[Installation über HACS](../README.md#installation-über-hacs) sind in der README
+beschrieben.
 
-HA Sauna übernimmt Ofen und Licht; parallele Steuerungsautomationen müssen
-deaktiviert sein. Externe Lichttaster werden als manuelle Eingriffe ausgewertet.
+HA Sauna steuert Ofen und Licht. Externe Lichttaster werden als manuelle
+Eingriffe ausgewertet.
 
 ## Sensoren und Geräte zuordnen
 

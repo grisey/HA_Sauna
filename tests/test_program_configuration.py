@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from model_input_evidence import emit_model_input_evidence
+from test_settings import async_timeout
 
 from custom_components.ha_sauna import async_options_updated
 from custom_components.ha_sauna.archive import Archive, plain
@@ -119,10 +120,10 @@ class ProgramConfigurationTests(unittest.TestCase):
                 self.assertEqual(runtime.controller.target_temperature, 89)
                 self.assertEqual(runtime.controller.next_gang_temperature, 89)
                 self.assertEqual(runtime.session.timeline.gang_count, 0)
-                await asyncio.wait_for(archive.flush(), timeout=10)
+                await asyncio.wait_for(archive.flush(), timeout=async_timeout("reload"))
                 stored = archive.read(runtime.session.session_id)["session"]
                 self.assertEqual(stored["next_gang_temperature_c"], 89)
-                self.assertEqual(stored["configuration"], plain(configuration.as_options()))
+                self.assertEqual(stored["configuration"], plain(configuration.as_snapshot()))
                 for value in (True, float("nan"),
                               configuration.parameters.minimum_for("target_temperature_c") - .1,
                               BY_KEY["target_temperature_c"].maximum + .1):
@@ -732,7 +733,10 @@ class ProgramConfigurationTests(unittest.TestCase):
             self.assertEqual(runtime.controller.target_temperature, original_target)
             self.assertEqual(runtime.configuration.selected_program_id, program.id)
             self.assertEqual(entry.options["selected_program_id"], program.id)
-            self.assertEqual(entry.options["parameters"], original)
+            self.assertEqual(
+                entry.options["parameters"],
+                runtime.configuration.parameters.as_options(),
+            )
             reloaded = Configuration.from_options(entry.options)
             self.assertEqual(reloaded.parameters.as_dict(), original)
             self.assertEqual(reloaded.selected_program_id, program.id)

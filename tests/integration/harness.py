@@ -11,10 +11,16 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.ha_sauna.bindings import ROLES
 from custom_components.ha_sauna.config_flow import pack_binding_input
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.settings import async_set_parameters
 
 ROOT = Path(__file__).resolve().parents[2]
+import sys
+# Keep the active discovery directory ahead of shared test helpers.
+sys.path.append(str(ROOT / "tests"))
+from test_settings import setting, fixture
+
+HA_INPUTS = fixture("ha")
 
 
 async def start_hass(directory=None, *, with_recorder=False):
@@ -25,20 +31,20 @@ async def start_hass(directory=None, *, with_recorder=False):
     shutil.copytree(ROOT / "custom_components/ha_sauna", path / "custom_components/ha_sauna", dirs_exist_ok=True)
     hass = HomeAssistant(str(path))
     hass.config.skip_pip = True
-    hass.config.latitude = 0
-    hass.config.longitude = 0
-    hass.config.elevation = 0
-    await hass.config.async_set_time_zone("UTC")
+    hass.config.latitude = HA_INPUTS["latitude"]
+    hass.config.longitude = HA_INPUTS["longitude"]
+    hass.config.elevation = HA_INPUTS["elevation"]
+    await hass.config.async_set_time_zone(HA_INPUTS["timezone"])
     loader.async_setup(hass)
     hass.config_entries = config_entries.ConfigEntries(hass, {})
     assert await bootstrap.async_load_base_functionality(hass)
     from homeassistant.auth import auth_manager_from_config
     hass.auth = await auth_manager_from_config(hass, [], [])
     with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
+        listener.bind((HA_INPUTS["host"], 0))
         port = listener.getsockname()[1]
     assert await async_setup_component(hass, "http", {"http": {
-        "server_host": "127.0.0.1", "server_port": port}})
+        "server_host": HA_INPUTS["host"], "server_port": port}})
     assert await async_setup_component(hass, "homeassistant", {})
     assert await async_setup_component(hass, "persistent_notification", {})
     if with_recorder:
@@ -50,7 +56,7 @@ async def start_hass(directory=None, *, with_recorder=False):
     await hass.async_start()
     if with_recorder:
         import asyncio
-        await asyncio.wait_for(recorder_helper.get_instance(hass).async_recorder_ready.wait(), 30)
+        await asyncio.wait_for(recorder_helper.get_instance(hass).async_recorder_ready.wait(), setting("browser.timeouts_ms.loading") / 1000)
     return hass, temp
 
 
@@ -72,7 +78,7 @@ def seed_sources(hass):
         if role.key not in bindings:
             continue
         event_input = role.key == "control_input" and bindings[role.key].startswith("event.")
-        hass.states.async_set(bindings[role.key], "off" if role.unit is None else "25", {
+        hass.states.async_set(bindings[role.key], "off" if role.unit is None else str(HA_INPUTS["seed_measurement"]), {
             "device_class": "button" if event_input else role.device_class,
             "unit_of_measurement": role.unit,
             "supported_color_modes": ["brightness"],
@@ -118,9 +124,10 @@ async def create_sauna(hass, *, parameter_overrides=None, binding_overrides=None
     assert result["type"] == "create_entry", result
     await hass.async_block_till_done()
     entry = result["result"]
-    values = {d.key: d.default for d in EDITABLE_DEFINITIONS if d.key != "final_temperature_c"}
+    editable = Parameters({}).as_options()
+    values = {key: value for key, value in editable.items() if key != "final_temperature_c"}
     values.update({key: value for key, value in (parameter_overrides or {}).items()
-                   if key in {d.key for d in EDITABLE_DEFINITIONS}})
+                   if key in editable})
     # Fixture parameters use the same writer as panel settings after basic setup.
     # Supplying fixture targets must not change the setup's temperature mode.
     await async_set_parameters(hass, entry, values, explicit_target=False)

@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 // Runs without Home Assistant or a browser: the temperature arc keeps its
 // geometry and uses only the parameter definition for its limits.
 const assert = require("node:assert/strict");
@@ -8,8 +9,8 @@ const {
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const frontendDefaults = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const frontendDefaults = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).frontend;
 
 let Panel;
@@ -34,8 +35,8 @@ const sandbox = {
   clearTimeout,
 };
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
-const appearanceCatalog = JSON.parse(
-  fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
+const appearanceCatalog = structuredClone(
+  require("./catalog_fixture.cjs").catalog,
 ).appearance;
 vm.runInNewContext(source, sandbox);
 
@@ -63,7 +64,7 @@ const state = {
   ],
 };
 const calls = [];
-const panel = Object.assign(Object.create(Panel.prototype), {
+const panel = Object.assign(fixturePanel(Panel), {
   entry: "entry-1",
   state,
   api: async (...args) => {
@@ -119,9 +120,19 @@ assert.equal(
   "the dial exposes only whole degrees inside its bounds",
 );
 assert.equal(panel.clampArcTemperature(80.6, { minimum: 60, maximum: 100 }), 81);
-assert.match(
-  source,
-  /\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*0\.35/s,
+const focusedTrack = panel
+  .appearanceStyles()
+  .match(
+    /\.target-temperature-track:focus(?:\s*,[^{}]+)?\s*\{[^}]*opacity:\s*([\d.]+)/s,
+  );
+assert.ok(focusedTrack, "the rendered focus rule sets the arc opacity");
+assert.equal(
+  Number(focusedTrack[1]),
+  appearanceCatalog.preferences.opacity_0_35_ratio.default,
+  "focus consumes the catalog's dimmed arc opacity",
+);
+assert.ok(
+  Number(focusedTrack[1]) < 1,
   "keyboard focus no longer turns the complete target arc opaque",
 );
 
@@ -137,7 +148,7 @@ assert.match(
       value: String(fixtureDefinition("temperature_gangs").maximum),
     },
   };
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     state,
     $: (selector) => inputs[selector],
   });
@@ -199,7 +210,7 @@ assert.match(
     temperature_steps: [75, 80],
     parameters: { target_temperature_c: 80 },
   };
-  const manualPanel = Object.assign(Object.create(Panel.prototype), {
+  const manualPanel = Object.assign(fixturePanel(Panel), {
     entry: "manual-entry",
     state: { ...state, configuration: manualConfiguration },
     api: async (...args) => {
@@ -290,7 +301,7 @@ assert.match(
     const steps = [77, 84, 92];
     const save = { name: "Entwurf" };
     const requests = [];
-    const progressivePanel = Object.assign(Object.create(Panel.prototype), {
+    const progressivePanel = Object.assign(fixturePanel(Panel), {
       entry: "progressive-entry",
       state: {
         ...state,

@@ -1,7 +1,7 @@
 """Gemeinsame Fähigkeiten und Bedienrollen einer konfigurierten Anlage.
 
-Die Projektion beschreibt vorhandene Zuordnungen, keine aktuelle Sensorqualität.
-Sie enthält weder Schaltentscheidungen noch eigene Grenzwerte oder Zeitgeber.
+Die Projektion beschreibt vorhandene Zuordnungen und eine übergebene wirksame
+Präsenzquelle. Sie enthält weder Quellenwahl noch eigene Grenzwerte oder Zeitgeber.
 """
 
 from __future__ import annotations
@@ -141,10 +141,11 @@ class ButtonCapabilities:
 
 @dataclass(frozen=True)
 class ConfigurationModel:
-    """Anwendbarkeit aus gespeichertem Anlagenaufbau und Gerätefähigkeiten."""
+    """Anwendbarkeit aus Anlagenaufbau, Gerätefähigkeiten und wirksamer Quelle."""
 
     measurement_positions: tuple[str, ...]
     presence_source: str
+    configured_presence_source: str
     presence_sensor_configured: bool
     illuminance_configured: bool
     power_sensor_configured: bool
@@ -152,7 +153,10 @@ class ConfigurationModel:
     button: ButtonCapabilities
 
     @classmethod
-    def from_configuration(cls, configuration, button_event_types=None):
+    def from_configuration(
+        cls, configuration, button_event_types=None, *, effective_presence_source=None
+    ):
+        """Use the supplied runtime selection or the static configuration."""
         bindings = configuration.bindings.values
         return cls(
             measurement_positions=tuple(
@@ -160,7 +164,11 @@ class ConfigurationModel:
                 if f"{position}_temperature" in bindings
                 and f"{position}_humidity" in bindings
             ),
-            presence_source=configuration.presence_source,
+            presence_source=(
+                configuration.presence_source if effective_presence_source is None
+                else effective_presence_source
+            ),
+            configured_presence_source=configuration.presence_source,
             presence_sensor_configured="presence" in bindings,
             illuminance_configured="presence_illuminance" in bindings,
             power_sensor_configured="heater_power" in bindings,
@@ -188,7 +196,12 @@ class ConfigurationModel:
             definition = BY_KEY.get(definition)
         if definition is None or definition.key not in _EDITABLE_KEYS:
             return False
-        if self.presence_source not in _SUBGROUP_SOURCES.get(
+        source = (
+            self.configured_presence_source
+            if definition.settings_subgroup == "presence_direct"
+            else self.presence_source
+        )
+        if source not in _SUBGROUP_SOURCES.get(
             definition.settings_subgroup, ("proxy", "ha_presence")
         ):
             return False
@@ -206,8 +219,9 @@ class ConfigurationModel:
             "measurement_positions": self.measurement_positions,
             "presence": {
                 "source": self.presence_source,
+                "configured_source": self.configured_presence_source,
                 "direct": self.direct_presence,
-                "observer": self.presence_sensor_configured and not self.direct_presence,
+                "observer": False,
                 "sensor_configured": self.presence_sensor_configured,
                 "illuminance_configured": self.illuminance_configured,
             },

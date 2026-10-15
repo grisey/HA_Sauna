@@ -3,8 +3,8 @@
   "source_curves": "fixtures/scenarios/source_curves.json",
   "source_curves_sha256": "a3a98cc4f2a0f526bc40f5e45c86f3d6820390f250679c9fcaeb6f9e69a0c7e6",
   "configuration_file": "fixtures/scenarios/configuration.json",
-  "configuration_sha256": "a462b544447f46066a986f8b0b8440d2c70c0a0455253a9a0c2fb72002aea9bf",
-  "configuration_policy": "The canonical defaults catalog is consumed once through its bound source reference; derived curves must be rematerialized after catalog changes. Explicit user programme selections and historical replay configurations are independent data.",
+  "configuration_sha256": "12d30a464457426e4a39e58f78321c26ac08bb3357de6f22f71e8c1796364c0a",
+  "configuration_policy": "Resolved parameters and programme values are bound separately from UI metadata. Declared construction inputs and measurements stay byte-bound; changed effective inputs require review before rebinding.",
   "scenarios": [
     {
       "id": "G01",
@@ -247,5 +247,7 @@
         "proxy"
       ]
     }
-  ]
+  ],
+  "construction_file": "fixtures/scenarios/construction.json",
+  "construction_sha256": "23462fe0c2991e4b635c63db50b554b3a4cd898b992e1cb704d93da82daf4f87"
 }

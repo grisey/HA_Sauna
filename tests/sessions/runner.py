@@ -13,6 +13,8 @@ import gzip
 import hashlib
 import json
 import math
+import os
+import shutil
 import sqlite3
 import sys
 from bisect import bisect_right
@@ -23,7 +25,7 @@ from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -46,9 +48,14 @@ from homeassistant.components.light import LightEntityFeature
 from homeassistant.core import Context
 
 from fixture_configuration import bound_parameters
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from test_settings import fixture
+
+SESSION_INPUTS = fixture("session")
 
 ROOT = Path(__file__).resolve().parents[1]
-ORIGIN = datetime(2000, 1, 1, 12, tzinfo=UTC)
+ORIGIN = datetime.fromisoformat(SESSION_INPUTS["origin"])
 CLIMATE = ("upper_temperature", "upper_humidity", "lower_temperature", "lower_humidity")
 BINDINGS = {
     **{role: f"sensor.fixture_{role}" for role in CLIMATE},
@@ -82,9 +89,11 @@ def substitute(value, values):
 def load_manifest(name):
     path = ROOT / name
     manifest = read_json(path)
+    defaults = SESSION_INPUTS["configuration_defaults"]
     parameters = bound_parameters() if "configuration_file" in manifest else None
     for file_key, hash_key in (("source_curves", "source_curves_sha256"),
-                               ("configuration_file", "configuration_sha256")):
+                               ("configuration_file", "configuration_sha256"),
+                               ("construction_file", "construction_sha256")):
         if file_key in manifest:
             source = ROOT / manifest[file_key]
             if hashlib.sha256(source.read_bytes()).hexdigest() != manifest[hash_key]:
@@ -102,7 +111,10 @@ def load_manifest(name):
         if case["id"] != entry["id"]:
             raise ValueError(f"Fixture identity mismatch: {fixture}")
         case["_path"] = fixture
-        for source in entry.get("presence_sources", [case.get("configuration", {}).get("presence_source", "ha_presence")]):
+        sources = entry.get("presence_sources", [
+            case.get("configuration", {}).get("presence_source", defaults["presence_source"])
+        ])
+        for source in sources:
             for choice in entry.get("variants", [{}]):
                 variant = deepcopy(case)
                 variant["base_id"] = case["id"]
@@ -116,7 +128,9 @@ def load_manifest(name):
                         raise ValueError(f"Derived fixture duplicates or lacks the canonical parameter binding: {fixture}")
                     config["parameters"] = dict(parameters)
                 config.update(choice.get("configuration", {}), presence_source=source)
-                gesture = config.get("button_session_gesture", "long")
+                gesture = config.get(
+                    "button_session_gesture", defaults["button_session_gesture"]
+                )
                 variant["actions"] = substitute([
                     action for action in variant["actions"]
                     if gesture in action.get("gestures", [gesture])
@@ -205,7 +219,7 @@ class SessionRun:
         self.notifications = []
         self.observed_outputs = (bound_jsonl(case, "observed_outputs")
                                  if case.get("kind") == "real_session" else [])
-        self.feedback_mode = case.get("feedback_mode", "simulated_acknowledgement")
+        self.feedback_mode = case.get("feedback_mode", SESSION_INPUTS["feedback_mode"])
         self.pending_feedback = []
         self.first_session_id = None
         self.first_session_started_at = None
@@ -219,10 +233,11 @@ class SessionRun:
         ]
         self.input_transitions = {check["id"]: [] for check in self.transition_checks}
         spec = case.get("configuration", {})
+        defaults = SESSION_INPUTS["configuration_defaults"]
         bindings = dict(BINDINGS)
-        if spec.get("button_input_kind") == "binary":
+        if spec.get("button_input_kind", defaults["button_input_kind"]) == "binary":
             bindings["control_input"] = "binary_sensor.fixture_button"
-        if spec.get("presence_source", "ha_presence") == "proxy":
+        if spec.get("presence_source", defaults["presence_source"]) == "proxy":
             bindings.pop("presence")
         program = spec.get("program", {})
         parameters = dict(spec.get("parameters", {}))
@@ -239,14 +254,18 @@ class SessionRun:
                               temperature_gangs=len(program["steps"]))
         configuration = Configuration(
             Bindings(bindings), Parameters(parameters),
-            control_input_mode=spec.get("control_input_mode", "button"),
-            control_mode=spec.get("control_mode", "automatic"),
-            presence_source=spec.get("presence_source", "ha_presence"),
-            program_mode=program.get("mode", "constant"),
+            control_input_mode=spec.get(
+                "control_input_mode", defaults["control_input_mode"]
+            ),
+            control_mode=spec.get("control_mode", defaults["control_mode"]),
+            presence_source=spec.get("presence_source", defaults["presence_source"]),
+            program_mode=program.get("mode", defaults["program_mode"]),
             temperature_steps=tuple(program["steps"]) if program.get("steps") else None,
             selected_program_id=program.get("profile"),
-            button_program=spec.get("button_program", "constant"),
-            button_session_gesture=spec.get("button_session_gesture", "long"),
+            button_program=spec.get("button_program", defaults["button_program"]),
+            button_session_gesture=spec.get(
+                "button_session_gesture", defaults["button_session_gesture"]
+            ),
         )
         self.runtime = SaunaRuntime(configuration, lambda: self.now)
         self.producer_controller_trace = None
@@ -263,15 +282,15 @@ class SessionRun:
         self.device = HADevice(self.hass, self.runtime)
         self.runtime.device = self.device
         self.device.ingest("control_input", self.state("control_input", "idle", {
-            "event_types": spec.get("button_event_types", [
-                "btn_down", "btn_up", "single_push", "long_push", "double_push", "triple_push",
-            ]),
+            "event_types": spec.get(
+                "button_event_types", list(defaults["button_event_types"])
+            ),
         }), self.now, initial=True)
         self.runtime._reset_button_gestures()
-        self.state("light", spec.get("initial_light_percent", 0))
+        self.state("light", spec.get("initial_light_percent", SESSION_INPUTS["initial_light_percent"]))
         self.state("heater", False)
         self.states["sun.sun"] = SimpleNamespace(attributes={
-            "elevation": spec.get("sun_elevation", 10 if spec.get("daylight") else -10),
+            "elevation": spec.get("sun_elevation", SESSION_INPUTS["sun_day_elevation"] if spec.get("daylight") else SESSION_INPUTS["sun_night_elevation"]),
         })
         self._temporary = TemporaryDirectory(prefix="sauna-session-")
 
@@ -690,6 +709,7 @@ class SessionRun:
                                if isinstance(value, dict) and "since_s" in value)
         events += [(t, 2, 0, "tick", None) for t in checkpoints if 0 <= t <= duration]
         events.sort(key=lambda row: row[:3])
+        archive_ready = False
         try:
             initial = self.case.get("initial_state", {})
             for role, spec in initial.items():
@@ -700,6 +720,7 @@ class SessionRun:
             self.device.refresh(self.now)
             self._complete_trace_step("initial_refresh")
             await self.runtime.start_archive(Path(self._temporary.name) / "sessions.sqlite", "fixture")
+            archive_ready = True
             for t, _, _, kind, payload in events:
                 if t < 0:
                     raise ValueError("Use initial_state for pre-session received values")
@@ -759,6 +780,7 @@ class SessionRun:
             if preservation_before is not None:
                 self._verify_preserved_measurements(samples, stored, preservation_before)
         finally:
+            failure = sys.exception()
             self._complete_trace_step("fixture_end_before_teardown")
             self._trace_active = False
             # Preserve the state at failure/end before adapter teardown can
@@ -769,10 +791,42 @@ class SessionRun:
                         *((self.runtime.session,) if self.runtime.session else ()))
             self.detections = [plain(e) for s in sessions for e in s.timeline.processed]
             try:
-                await self.runtime.close()
+                evidence = os.environ.get("SAUNA_SESSION_EVIDENCE")
+                if evidence:
+                    try:
+                        if not archive_ready:
+                            raise RuntimeError("Archive startup did not complete; evidence is unavailable")
+                        await self._export_archive(Path(evidence))
+                    except Exception as error:
+                        message = (f"Session evidence export failed for {self.case['id']}: "
+                                   f"{type(error).__name__}: {error}")
+                        if failure is None:
+                            raise RuntimeError(message) from error
+                        failure.add_note(message)
+                        print(message, file=sys.stderr, flush=True)
             finally:
-                self._temporary.cleanup()
+                try:
+                    await self.runtime.close()
+                finally:
+                    self._temporary.cleanup()
         return self
+
+    async def _export_archive(self, folder):
+        """Keep the original run archive before teardown can finalize a session."""
+        folder.mkdir(parents=True, exist_ok=True)
+        exported, staged = None, None
+        try:
+            exported = Path(await self.runtime.archive.export())
+            with NamedTemporaryFile(dir=folder, prefix=".sauna-session-", suffix=".zip",
+                                    delete=False) as handle:
+                staged = Path(handle.name)
+            shutil.move(exported, staged)
+            staged.replace(folder / f"{self.case['id']}.archive.zip")
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+            if exported is not None:
+                exported.unlink(missing_ok=True)
 
     def _observe_recording_history(self, sessions):
         """Preserve accumulated evidence; do not prescribe a switching schedule."""
@@ -820,6 +874,8 @@ class SessionRun:
                 archived = {"heating": payload["heating"]["intervals"],
                             "contactor": payload["contactor_history"],
                             "energy": payload["energy"]}
+                # SQLite transport metadata is not an Energy scalar.
+                archived["energy"].pop("intervals_available", None)
                 if archived != self.recording_history.get(identity):
                     self.recording_history_errors.append({
                         "t": self.seconds, "session_id": identity,

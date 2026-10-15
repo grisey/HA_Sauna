@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const {
   parameterValues: fixtureValues,
   parameterDefinition: fixtureDefinition,
@@ -139,6 +140,7 @@ const makeEnvironment = () => {
   };
 };
 
+let Panel;
 const source = fs.readFileSync("custom_components/ha_sauna/panel.js", "utf8");
 const load = () => {
   const context = {
@@ -151,7 +153,12 @@ const load = () => {
     Set,
     Intl,
     HTMLElement: class {},
-    customElements: { get: () => null, define() {} },
+    customElements: {
+      get: () => null,
+      define: (_, value) => {
+        Panel = value;
+      },
+    },
   };
   vm.runInNewContext(
     `${source}\nglobalThis.HistoryInteraction = HistoryInteraction;`,
@@ -160,31 +167,32 @@ const load = () => {
   return context.HistoryInteraction;
 };
 
-const panel = (calls) => ({
-  window: [0, 1000],
-  positions: new Set(["upper", "lower"]),
-  historyDetail: true,
-  shown: {
-    session: { measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds },
-  },
-  state: {
-    measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
-    configuration: { parameters: fixtureValues() },
-  },
-  scheduleHistoryRender: (reason) => calls.push(reason),
-  nearestMeasurement: (position, quantity) =>
-    position === "upper" && quantity === "temperature"
-      ? {
-          time: 500,
-          value: 0,
-          source: {
-            raw_value: 0,
-            received_at: "2032-01-01T08:00:00.987654Z",
-            measured_at: "2032-01-01T08:00:00.123456Z",
-          },
-        }
-      : null,
-});
+const panel = (calls) =>
+  Object.assign(fixturePanel(Panel), {
+    window: [0, 1000],
+    positions: new Set(["upper", "lower"]),
+    historyDetail: true,
+    shown: {
+      session: { measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds },
+    },
+    state: {
+      measurement_ttl_seconds: fixtureValues().sensor_timeout_seconds,
+      configuration: { parameters: fixtureValues() },
+    },
+    scheduleHistoryRender: (reason) => calls.push(reason),
+    nearestMeasurement: (position, quantity) =>
+      position === "upper" && quantity === "temperature"
+        ? {
+            time: 500,
+            value: 0,
+            source: {
+              raw_value: 0,
+              received_at: "2032-01-01T08:00:00.987654Z",
+              measured_at: "2032-01-01T08:00:00.123456Z",
+            },
+          }
+        : null,
+  });
 
 test("coordinates use the cached rectangles and logical chart sizes", () => {
   const environment = makeEnvironment();

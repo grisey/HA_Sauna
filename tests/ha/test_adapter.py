@@ -11,7 +11,7 @@ import unittest
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.defaults import instance_default
 from custom_components.ha_sauna.core.program_catalog import DEFAULT_PROGRAMS
 from custom_components.ha_sauna.bindings import ROLES
@@ -43,7 +43,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             for r in ROLES
             if not r.optional or r.device_class in {"temperature", "humidity"}
         }
-        self.values = {d.key: d.default for d in EDITABLE_DEFINITIONS}
+        self.values = Parameters({}).as_options()
         self.states = {
             self.inputs[r.key]: State(self.inputs[r.key], "unavailable", {
                 "device_class": "button" if r.key == "control_input" else r.device_class,
@@ -471,7 +471,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(form["menu_options"], result["menu_options"])
                         continue
                     self.assertEqual(form["type"], "form")
-                    self.assertTrue(flat_fields(form["data_schema"]))
+                    fields = {str(key) for key in flat_fields(form["data_schema"])}
+                    self.assertTrue(fields)
+                    self.assertTrue(all(
+                        self.module.BY_KEY[key].configuration_surface == "integration"
+                        for key in fields
+                    ))
 
     async def test_related_installation_fields_share_forms_and_return_to_area(self):
         flow = self.module.SaunaOptionsFlow()
@@ -500,6 +505,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             update.assert_not_called()
 
     async def test_installation_save_preserves_concurrent_panel_options(self):
+        from custom_components.ha_sauna.runtime import Configuration
+
         flow = self.module.SaunaOptionsFlow()
         flow.hass = self.hass
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
@@ -512,6 +519,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 "parameters": {**self.entry.options["parameters"], "target_temperature_c": 81},
             }
             before = self.entry.options
+            expected = Configuration.from_options(before).as_options()
+            expected["parameters"]["after_run_minutes"] = 1
             submitted["after_run_minutes"] = 1
             result = await flow.async_step_parameters_oven_cooling(submitted)
         self.assertEqual(form["type"], "form")
@@ -520,10 +529,96 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.entry.options["log_level"], "DEBUG")
         self.assertEqual(self.entry.options["parameters"]["target_temperature_c"], 81)
         self.assertEqual(self.entry.options["parameters"]["after_run_minutes"], 1)
-        self.assertEqual(
-            {key: value for key, value in self.entry.options.items() if key != "parameters"},
-            {key: value for key, value in before.items() if key != "parameters"},
-        )
+        self.assertEqual(self.entry.options, expected)
+
+    async def test_electricity_price_form_clears_and_preserves_concurrent_zero(self):
+        key = "electricity_price_eur_per_kwh"
+        definition = self.module.BY_KEY[key]
+        flow = self.module.SaunaOptionsFlow()
+        flow.hass = self.hass
+        with patch.object(
+            type(flow), "config_entry", new_callable=PropertyMock,
+            return_value=self.entry,
+        ):
+            occurrences = []
+            for area in self.module.integration_groups():
+                menu = await getattr(flow, f"async_step_{area}")()
+                for step_id in menu["menu_options"]:
+                    if step_id == "init":
+                        continue
+                    form = await getattr(flow, f"async_step_{step_id}")()
+                    occurrences.extend(
+                        (area, step_id, marker, selector)
+                        for marker, selector in flat_fields(form["data_schema"]).items()
+                        if str(marker) == key
+                    )
+            self.assertEqual(
+                [(area, step_id) for area, step_id, _, _ in occurrences],
+                [("operation", "parameters_heater_accounting")],
+            )
+            _, _, marker, selector = occurrences[0]
+            self.assertIsInstance(marker, self.module.vol.Optional)
+            self.assertIsInstance(selector, self.module.selector.NumberSelector)
+            self.assertTrue(definition.optional)
+            self.assertIsNone(definition.default)
+            self.assertEqual(definition.unit, "€/kWh")
+            self.assertEqual(
+                tuple(selector.config[name] for name in (
+                    "min", "max", "step", "unit_of_measurement",
+                )),
+                (
+                    definition.lower_bound, definition.maximum,
+                    definition.step, definition.unit,
+                ),
+            )
+            step = flow.async_step_parameters_heater_accounting
+            for value in (0, definition.number_step):
+                with self.subTest(value=value):
+                    form = await step()
+                    submitted = {
+                        str(marker): self.entry.options["parameters"][str(marker)]
+                        for marker in flat_fields(form["data_schema"])
+                        if str(marker) != key
+                    }
+                    self.assertNotIn(key, form["data_schema"](submitted))
+                    submitted[key] = value
+                    result = await step(form["data_schema"](submitted))
+                    self.assertEqual(
+                        (result["type"], result["step_id"]), ("menu", "operation"),
+                    )
+                    self.assertEqual(self.entry.options["parameters"][key], value)
+                    form = await step()
+                    marker = next(
+                        marker for marker in flat_fields(form["data_schema"])
+                        if str(marker) == key
+                    )
+                    self.assertEqual(marker.description["suggested_value"], value)
+                    submitted.pop(key)
+                    result = await step(form["data_schema"](submitted))
+                    self.assertEqual(
+                        (result["type"], result["step_id"]), ("menu", "operation"),
+                    )
+                    self.assertIn(key, self.entry.options["parameters"])
+                    self.assertIsNone(self.entry.options["parameters"][key])
+            form = await step()
+            submitted = form["data_schema"]({
+                str(marker): self.entry.options["parameters"][str(marker)]
+                for marker in flat_fields(form["data_schema"])
+                if str(marker) != key
+            })
+            self.entry.options = {
+                **self.entry.options,
+                "parameters": {**self.entry.options["parameters"], key: 0},
+            }
+            before = self.entry.options
+            with patch.object(self.hass.config_entries, "async_update_entry") as update:
+                result = await step(submitted)
+                self.assertEqual(
+                    (result["type"], result["step_id"]), ("menu", "operation"),
+                )
+                update.assert_not_called()
+            self.assertIs(self.entry.options, before)
+            self.assertEqual(self.entry.options["parameters"][key], 0)
 
     async def test_installation_forms_use_saved_values_and_preserve_unchanged_fields(self):
         flow = self.module.SaunaOptionsFlow()
@@ -531,6 +626,11 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.entry.options["parameters"]["after_run_minutes"] = 2
         with patch.object(type(flow), "config_entry", new_callable=PropertyMock, return_value=self.entry):
             form = await flow.async_step_parameters_oven_cooling()
+            selectors = {str(key): value for key, value in flat_fields(form["data_schema"]).items()}
+            self.assertEqual(
+                selectors["oven_cooling_max_minutes"].config["min"],
+                self.entry.options["parameters"]["after_run_minutes"],
+            )
             marker = next(key for key in flat_fields(form["data_schema"]) if key.schema == "after_run_minutes")
             self.assertEqual(marker.description["suggested_value"], 2)
             submitted = {d.key: self.entry.options["parameters"][d.key] for d in flow._definitions("oven_cooling")}

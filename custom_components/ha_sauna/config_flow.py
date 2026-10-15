@@ -457,6 +457,7 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         return tuple(
             definition for definition in EDITABLE_DEFINITIONS
             if definition.settings_group in areas
+            and definition.configuration_surface == "integration"
             and (area is None or definition.settings_group == area)
             and definition.settings_subgroup == subgroup
             and definition.key not in LIVE_TEMPERATURE_KEYS
@@ -499,13 +500,15 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
             try:
                 if set(user_input) - keys:
                     raise ParameterError("base", "unknown_parameter")
+                submitted = dict(user_input)
                 for definition in definitions:
-                    if not definition.optional and definition.key not in user_input:
+                    if definition.optional:
+                        submitted.setdefault(definition.key, None)
+                    elif definition.key not in submitted:
                         raise ParameterError(definition.key, "required")
-                    if definition.key in user_input:
-                        definition.validate(user_input[definition.key])
+                    definition.validate(submitted[definition.key])
                 edits = {
-                    key: value for key, value in user_input.items()
+                    key: value for key, value in submitted.items()
                     if value != baseline.get(key)
                 }
                 change = parameter_change(
@@ -514,11 +517,11 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
                 candidate = {
                     **self.config_entry.options,
                     "parameters": {
-                        **current.parameters.as_dict(),
+                        **current.parameters.as_options(),
                         **{key: change.configuration.parameters.values[key] for key in edits},
                     },
                 }
-                Configuration.from_options(candidate)
+                candidate = Configuration.from_options(candidate).as_options()
             except ParameterError as error:
                 if error.key in keys:
                     errors[error.key] = error.code
@@ -540,7 +543,7 @@ class SaunaOptionsFlow(MaintenanceOptionsMixin, OptionsFlow):
         for definition in definitions:
             marker = vol.Optional if definition.optional else vol.Required
             fields[marker(definition.key)] = selector.NumberSelector({
-                "min": definition.minimum if definition.minimum is not None else 0,
+                "min": current.parameters.minimum_for(definition.key),
                 "max": definition.maximum,
                 "step": definition.step,
                 "unit_of_measurement": definition.unit,

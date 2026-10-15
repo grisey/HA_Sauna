@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import os
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,9 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from test_settings import async_timeout
 
 from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.button import END_HOLD
@@ -457,45 +461,145 @@ class DeviceFeedbackTests(unittest.TestCase):
         controller.set_heater_override(False, at)
         controller.set_heater_override(None, at)
 
-    async def prepare_infusion_packet(self, runtime, adapter, clock, at, *, temperature=90):
-        """Supply a healthy baseline and an ordinary four-point RH increase.
+    async def prepare_infusion_packet(
+        self, runtime, adapter, clock, at, *, temperature=90,
+    ):
+        """Prepare a pending RH pulse using genuine HA original reports.
 
-        This prepares the last sample of the configured median/hold interval;
-        callers retain the final same-time packet whose HA ordering they test.
-        No detector parameter is shortened and no detection result is copied.
+        Original reports rise from 20 to a peak above the caller's final 24,
+        then decline until the first supported, unconfirmed decay candidate.
+        Subsequent ticks add no originals; the final 24 report remains reserved
+        for the caller's same-time packet. No completed detection or
+        confirmation time supplies fixture values.
+
+        Minimum lead is (5 * curve_min_side_samples + 6) * grid_seconds.
+        Callers also provide the ordinary RH/AH comparison and median warmup.
         """
-        from math import ceil
-
         values = runtime.configuration.parameters.values
-        delay = (int(values["median_seconds"]) - 1) // 2 + ceil(values["infusion_hold_seconds"])
-        rising_at = at - timedelta(seconds=delay)
+        side = values["curve_min_side_samples"]
+        step = timedelta(seconds=values["grid_seconds"])
+        flank_steps = 2 * side + 2
+        peak_at = at - flank_steps * step
+        rising_at = peak_at - flank_steps * step
+        baseline_start = rising_at - (side + 1) * step
+        baseline_end = baseline_start - step
+        self.assertLessEqual(
+            clock[0], baseline_end, "Insufficient original-report prefix",
+        )
         interval = timedelta(seconds=values["sensor_timeout_seconds"] / 2)
-        positions = tuple(position for position in ("upper", "lower")
-                          if f"{position}_temperature" in runtime.configuration.bindings.values)
+        positions = tuple(
+            position for position in ("upper", "lower")
+            if f"{position}_temperature" in runtime.configuration.bindings.values
+        )
+        self.assertTrue(positions)
+        prior_infusions = tuple(
+            event.event_id for event in runtime.session.timeline.processed
+            if event.kind == Kind.INFUSION
+        )
+        baseline_humidity, final_humidity = 20, 24
+        peak_humidity = final_humidity + (final_humidity - baseline_humidity)
+
+        async def originals(humidity):
+            await asyncio.gather(*(
+                runtime.device_input(self.detection_edge(
+                    runtime, f"{position}_{quantity}", value,
+                ))
+                for position in positions
+                for quantity, value in (
+                    ("temperature", temperature), ("humidity", humidity),
+                )
+            ))
+
+        def no_early_confirmation():
+            self.assertEqual(tuple(
+                event.event_id for event in runtime.session.timeline.processed
+                if event.kind == Kind.INFUSION
+            ), prior_infusions, "Prefix consumed the caller's reserved confirmation")
+
+        def pending_pulse():
+            episode = runtime.detector.diagnostic["infusion_episode"]
+            self.assertIsNotNone(episode, runtime.detector.diagnostic)
+            self.assertEqual(episode["phase"], "pending")
+            self.assertIsNone(episode["confirmed_at"])
+            self.assertEqual(set(episode["water_change"]), set(positions))
+            self.assertTrue(all(
+                change > 0 for change in episode["water_change"].values()
+            ))
+            return episode
+
         # The lightweight adapter fixture acknowledges ordinary relay commands
         # here; this long healthy baseline must not create a separate fault.
         def acknowledge():
-            adapter.ingest("heater", state("on" if adapter.command else "off"), clock[0])
+            adapter.ingest(
+                "heater", state("on" if adapter.command else "off"), clock[0],
+            )
             adapter.refresh(clock[0])
 
         acknowledge()
-        baseline_end = rising_at - timedelta(seconds=1)
         while clock[0] < baseline_end:
             clock[0] = min(baseline_end, clock[0] + interval)
-            await asyncio.gather(*(
-                runtime.device_input(self.detection_edge(runtime, f"{position}_{quantity}", value))
-                for position in positions
-                for quantity, value in (("temperature", temperature), ("humidity", 20))
-            ))
+            await originals(baseline_humidity)
             acknowledge()
-        clock[0] = rising_at
-        await asyncio.gather(*(
-            runtime.device_input(self.detection_edge(runtime, f"{position}_humidity", 24))
-            for position in positions
-        ))
-        while clock[0] + timedelta(seconds=1) < at:
-            clock[0] += timedelta(seconds=1)
+        for index in range(side + 2):
+            clock[0] = baseline_start + index * step
+            await originals(baseline_humidity)
+            acknowledge()
+
+        for index in range(1, flank_steps + 1):
+            clock[0] = rising_at + index * step
+            await originals(
+                baseline_humidity
+                + (peak_humidity - baseline_humidity) * index / flank_steps,
+            )
+            acknowledge()
+            no_early_confirmation()
+        onset_at = pending_pulse()["onset_at"]
+
+        prepared = None
+        for index in range(1, flank_steps):
+            clock[0] = peak_at + index * step
+            await originals(
+                peak_humidity + (final_humidity - peak_humidity) * index / flank_steps,
+            )
+            acknowledge()
+            no_early_confirmation()
+            self.assertEqual(pending_pulse()["onset_at"], onset_at)
+            statuses = runtime.detector.diagnostic["curve_candidates"].get(
+                "infusion_decay", {},
+            )
+            candidates = [statuses.get(position, {}).get("humidity", {})
+                          for position in positions]
+            if all(candidate.get("status") == "supported" for candidate in candidates):
+                self.assertTrue(all(candidate["fresh_newest_at"] is None
+                                    for candidate in candidates))
+                prepared = tuple(candidate["candidate_id"] for candidate in candidates)
+                break
+        self.assertIsNotNone(
+            prepared,
+            "Declared pulse prefix supplied no first decay candidate: "
+            f"{runtime.detector.diagnostic!r}",
+        )
+        while clock[0] + step < at:
+            clock[0] += step
             await runtime.tick()
+            acknowledge()
+        no_early_confirmation()
+        self.assertEqual(pending_pulse()["onset_at"], onset_at)
+        statuses = runtime.detector.diagnostic["curve_candidates"]["infusion_decay"]
+        candidates = [statuses[position]["humidity"] for position in positions]
+        self.assertEqual(
+            tuple(candidate["candidate_id"] for candidate in candidates), prepared,
+        )
+        self.assertTrue(all(candidate["status"] == "supported"
+                            and candidate["fresh_newest_at"] is None
+                            for candidate in candidates))
+        self.assertTrue(all(
+            (at - candidate["onset_at"]).total_seconds()
+            <= values["curve_window_seconds"]
+            and (at - candidate["newest_at"]).total_seconds()
+            <= values["sensor_timeout_seconds"]
+            for candidate in candidates
+        ))
         clock[0] = at
 
     def test_received_readiness_releases_override_before_current_output(self):
@@ -1012,6 +1116,8 @@ class DeviceFeedbackTests(unittest.TestCase):
             old = runtime.session.timeline.active
             await self.prepare_infusion_packet(runtime, adapter, clock,
                                                T0 + timedelta(seconds=confirmation_at))
+            self.assertEqual(clock[0], T0 + timedelta(seconds=confirmation_at))
+            self.assertFalse(old.infusion_events)
             if tick_first in ("control_split", "control_last"):
                 upper = runtime.device_input(self.detection_edge(runtime, "upper_humidity", 24))
                 lower = runtime.device_input(self.detection_edge(runtime, "lower_humidity", 24))
@@ -1223,7 +1329,7 @@ class DeviceFeedbackTests(unittest.TestCase):
             self.assertEqual(calls, ["turn_off"])
             release.set()
             await adapter._light_service_task
-            await asyncio.wait_for(restored.wait(), timeout=1)
+            await asyncio.wait_for(restored.wait(), timeout=async_timeout("short"))
             await adapter._light_service_task
             self.assertEqual(calls, ["turn_off", "turn_on"])
             self.assertEqual(light[0].state, "on")
@@ -1699,11 +1805,11 @@ class DeviceFeedbackTests(unittest.TestCase):
             runtime._lock.release()
             enabled_during_outputs = []
             for _ in range(3):
-                enabled_during_outputs.append(await asyncio.wait_for(entered.get(), 1))
+                enabled_during_outputs.append(await asyncio.wait_for(entered.get(), async_timeout("short")))
                 await receive_temperature()
                 release.put_nowait(None)
             adapter.apply = AsyncMock()
-            await asyncio.wait_for(asyncio.gather(stop, *pending), 1)
+            await asyncio.wait_for(asyncio.gather(stop, *pending), async_timeout("short"))
             return enabled_during_outputs
 
         self.assertEqual(asyncio.run(exercise()), [False, False, False])

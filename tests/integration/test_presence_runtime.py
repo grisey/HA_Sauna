@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from harness import create_sauna, start_hass
+from test_settings import async_timeout
 
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
@@ -13,6 +14,33 @@ from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
 class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_selection_recovers_original_report_at_real_first_usability(self):
+        configured = (await self.configure()).configuration
+        now = datetime(2030, 1, 1, tzinfo=UTC)
+        runtime = SaunaRuntime(configured, clock=lambda: now)
+        entity = configured.bindings.values["presence"]
+        await runtime.accept_presence(binary_presence(entity, "unknown", now, now))
+        now += timedelta(seconds=configured.parameters.values["presence_fallback_delay_seconds"])
+        await runtime.tick()
+        self.assertEqual(runtime.configuration_model.presence_source, "proxy")
+        self.assertFalse(runtime.controller.direct_presence.qualified_presence)
+        now += timedelta(seconds=1)
+        report = binary_presence(entity, "on", now, now)
+        await runtime.accept_presence(report)
+        self.assertEqual(runtime.configuration_model.presence_source, "proxy")
+        self.assertFalse(runtime.controller.direct_presence.qualified_presence)
+        now += timedelta(seconds=configured.parameters.values["presence_recovery_delay_seconds"])
+        await runtime.tick()
+        self.assertEqual(runtime.configuration_model.presence_source, "ha_presence")
+        selected = runtime.controller.direct_presence
+        self.assertTrue(selected.qualified_presence)
+        self.assertEqual(selected.report_id, report.report_id)
+        self.assertEqual(selected.timing.effective_at, report.effective_at)
+        self.assertEqual(selected.timing.received_at, report.received_at)
+        self.assertEqual(selected.timing.first_usable_at, now)
+        self.assertIsNone(runtime.session)
+        await runtime.close()
+
     async def test_selected_proxy_reports_preserve_identity_without_durable_history(self):
         runtime = self.entry.runtime_data
         self.assertEqual(runtime.configuration.presence_source, "proxy")
@@ -21,6 +49,8 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "original-person", "projection-only", Kind.PERSON_STRONG, now, now,
         ))
         history = tuple(runtime.controller._direct_presence_history)
+        controller_at = runtime.controller._last_at
+        decisions = tuple(runtime.controller.decisions)
         runtime._record_presence(report)
         occupancy = runtime.controller.direct_presence
         self.assertEqual((occupancy.occupancy, occupancy.available, occupancy.qualified_presence),
@@ -29,6 +59,8 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(occupancy.timing.effective_at, report.effective_at)
         self.assertEqual(occupancy.timing.received_at, report.received_at)
         self.assertEqual(tuple(runtime.controller._direct_presence_history), history)
+        self.assertEqual(runtime.controller._last_at, controller_at)
+        self.assertEqual(tuple(runtime.controller.decisions), decisions)
         self.assertIsNone(runtime.session)
         runtime._record_presence(report)
         self.assertIs(runtime.controller.direct_presence, occupancy)
@@ -250,7 +282,7 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with runtime._lock:
                 self.hass.states.async_set(source, "on")
                 state = self.hass.states.get(source)
-                await asyncio.wait_for(entered.wait(), 3)
+                await asyncio.wait_for(entered.wait(), async_timeout("service"))
                 self.assertEqual(runtime.controller.direct_presence.occupancy, "absent")
                 closed_at = runtime._clock()
                 self.assertLess(state.last_changed, closed_at)

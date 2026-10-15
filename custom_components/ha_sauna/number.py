@@ -1,25 +1,35 @@
-"""Parameterentitäten schreiben ausschließlich ConfigEntry.options."""
+"""Live temperature choices; permanent settings have one owning HA-Sauna form."""
 
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.const import EntityCategory
-from homeassistant.exceptions import Unauthorized
+from homeassistant.helpers import entity_registry as er
 
+from .const import DOMAIN
 from .core.configuration_model import temperature_control
-from .core.parameters import EDITABLE_DEFINITIONS, LIVE_TEMPERATURE_KEYS
+from .core.parameters import BY_KEY, LIVE_TEMPERATURE_KEYS
 from .entity import SaunaEntity
 from .settings import async_set_entity_parameter
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    """Remove former permanent-setting numbers and preserve live operating choices."""
+    registry = er.async_get(hass)
+    live_ids = {f"{entry.entry_id}_{key}" for key in LIVE_TEMPERATURE_KEYS}
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            entity.platform == DOMAIN and entity.entity_id.startswith("number.")
+            and entity.unique_id not in live_ids
+        ):
+            registry.async_remove(entity.entity_id)
     async_add_entities(entities_for_entry(entry))
 
 
 def entities_for_entry(entry):
-    return [SaunaNumber(entry, definition) for definition in EDITABLE_DEFINITIONS]
+    return [SaunaNumber(entry, BY_KEY[key]) for key in sorted(LIVE_TEMPERATURE_KEYS)]
 
 
 class SaunaNumber(SaunaEntity, NumberEntity):
-    _attr_entity_category = EntityCategory.CONFIG
+    """Operate the current temperature program without a second standard editor."""
+
     _attr_mode = NumberMode.BOX
 
     def __init__(self, entry, definition):
@@ -36,8 +46,6 @@ class SaunaNumber(SaunaEntity, NumberEntity):
 
     @property
     def available(self):
-        # Retain the entity's identity when a binding changes. An inapplicable
-        # setting must not remain an operable input on a different HA surface.
         return super().available and self.runtime.configuration_model.parameter_applicable(
             self.definition
         )
@@ -48,7 +56,7 @@ class SaunaNumber(SaunaEntity, NumberEntity):
             return None
         if self.definition.key == "target_temperature_c":
             return temperature_control(self.runtime.controller).value
-        return self.runtime.configuration.parameters.values.get(self.definition.key)
+        return self.runtime.configuration.parameters.values[self.definition.key]
 
     @property
     def extra_state_attributes(self):
@@ -62,11 +70,4 @@ class SaunaNumber(SaunaEntity, NumberEntity):
         }
 
     async def async_set_native_value(self, value):
-        context = self._context
-        if self.definition.key not in LIVE_TEMPERATURE_KEYS and context and context.user_id:
-            user = await self.hass.auth.async_get_user(context.user_id)
-            if user is None or not user.is_admin:
-                raise Unauthorized(context=context, entity_id=self.entity_id)
-        await async_set_entity_parameter(
-            self.hass, self.entry, self.definition.key, value
-        )
+        await async_set_entity_parameter(self.hass, self.entry, self.definition.key, value)

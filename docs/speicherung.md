@@ -52,6 +52,33 @@ bleiben erhalten.
 Der Normalverlauf verwendet die führende Messposition der Regelung.
 Diagnoseansichten sind Administratoren vorbehalten und verwenden die zur Sitzung
 gespeicherten Einstellungen.
+Verfügbare Messpositionen, Präsenzquelle und Rückmeldequellen folgen dem gemeinsamen
+Anlagenmodell. Die Liveansicht verwendet die aktuelle Zuordnung, eine archivierte
+Sitzung ihren gespeicherten Aufbau. Fehlt dieser in älteren Daten, bleibt die
+Konfiguration unbekannt; vorhandene Messungen werden trotzdem angezeigt.
+
+Die Auswahl bezeichnet Aufzeichnungen mit Datum und Zeitspanne. Der Betriebsverlauf
+ordnet Messungen, Regelentscheidungen, Bedienhandlungen und Geräteausgaben nach
+ihrer Herkunft. Heizanforderung, Schützrückmeldung und beobachtete Heizung bleiben
+unterscheidbar; fehlende Rückmeldungen gelten nicht als ausgeschalteter Zustand.
+
+Erfolgreiche Lichtstellfolgen erscheinen zusammengefasst mit Beginn und letztem
+belegtem Wert. Phasenwechsel, Bedienhandlungen, Ausschalten und Fehler begrenzen
+die Abschnitte. Ein letzter Stellbefehl belegt allein kein abgeschlossenes
+Lichtprogramm. Einzelbefehle bleiben zugänglich; Fehler werden einzeln angezeigt.
+Der Fehlerzähler zählt aufgetretene Störungen, keine fehlerfreien Anfangszustände
+oder Entwarnungen.
+
+Laufende Aufzeichnungen werden im Hintergrund in größeren Abständen ergänzt.
+Zeitfenster, Zoom, Markierungen und offene Abschnitte bleiben dabei erhalten.
+**Gesamte Saunasitzung** übernimmt den inzwischen erweiterten Zeitraum.
+**Wird geladen** kennzeichnet den ersten Datenabruf. Bei einer fehlgeschlagenen
+Aktualisierung bleibt der vorhandene Stand mit einem Fehlerhinweis sichtbar.
+
+Die Details zeigen gespeicherte Werte mit ihrer Herkunft. Nicht aufgezeichnete
+Messverläufe lassen sich rückwirkend nicht ergänzen; fehlende Angaben erscheinen
+entsprechend gekennzeichnet. Eine Heizbeobachtung bei einem Zustandswechsel ist
+keine fortlaufende Leistungsmessung.
 
 ### Daten und Zeitangaben
 
@@ -63,8 +90,12 @@ zeigt die lokale Browserzeit.
 | Zeitfeld bei Erkennungen | Bedeutung |
 | --- | --- |
 | `effective_at` | Zugeordneter Ereignisbeginn, gegebenenfalls rückblickend. |
+| `trace_at` (optional) | Ursprünglicher Diagnose-/Bestätigungszeitpunkt im Auswertungsraster. |
 | `booking_at` | Zeitpunkt der Einordnung in den Betriebsablauf. |
 | `detected_at` | Zeitpunkt, an dem die Erkennung das Ereignis feststellt. |
+
+Bei Ereignissen ohne `trace_at` bleibt `effective_at` der Bezug für die
+bisherigen Zulassungen und Fristen.
 
 Nachträgliche Gangbestätigungen und Korrekturen ergänzen den Verlauf.
 Frühere Zustände und die tatsächlichen Schalterrückmeldungen bleiben erhalten.

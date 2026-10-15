@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const {
   parameterValues: fixtureValues,
@@ -51,7 +52,7 @@ const annotationModel = () => {
 };
 
 function panel(projection) {
-  const value = Object.create(Panel.prototype);
+  const value = fixturePanel(Panel);
   value.state = { now: end, configuration: session.configuration };
   value.shown = { records: [], phase_projection: projection };
   value.historyRecords = () => [];
@@ -136,9 +137,7 @@ test("projection supplies the gang rectangle without a duplicate fallback gang",
 
 test("details render includes the reachable presence and rule card", () => {
   const nodes = {};
-  const defaults = JSON.parse(
-    fs.readFileSync("custom_components/ha_sauna/defaults.json", "utf8"),
-  );
+  const defaults = structuredClone(require("./catalog_fixture.cjs").catalog);
   const state = {
     frontend_defaults: defaults.frontend,
     appearance_catalog: defaults.appearance,
@@ -199,7 +198,7 @@ test("details render includes the reachable presence and rule card", () => {
       measurement_positions: ["upper", "lower"],
     },
   };
-  const value = Object.assign(Object.create(Panel.prototype), {
+  const value = Object.assign(fixturePanel(Panel), {
     state,
     hass: { user: { is_admin: true } },
     $: (selector) => (nodes[selector] ||= {}),

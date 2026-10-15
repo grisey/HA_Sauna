@@ -1,4 +1,5 @@
 "use strict";
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -43,7 +44,7 @@ function fullscreenPanel({ homeAssistant = true, kioskMode = false } = {}) {
         });
       return nodes.get(selector);
     },
-    panel = Object.assign(new Panel(), {
+    panel = Object.assign(fixturePanel(new Panel()), {
       state: { permissions: { admin: true } },
       _hass: { kioskMode },
       start() {},

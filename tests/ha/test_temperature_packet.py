@@ -22,10 +22,13 @@ class TemperaturePacketTests(unittest.TestCase):
         fixture.complete_proxy_entry(runtime, fixtures.T0)
         await runtime.tick()
         values = runtime.configuration.parameters.values
-        packet_at = fixtures.T0 + timedelta(seconds=(
+        admission_lead = (
             values["infusion_window_seconds"] + values["median_seconds"]
-            + values["infusion_hold_seconds"] + 1
-        ))
+            + values["grid_seconds"]
+        )
+        # The helper's original-report prefix follows comparison admission.
+        prefix_lead = (5 * values["curve_min_side_samples"] + 6) * values["grid_seconds"]
+        packet_at = fixtures.T0 + timedelta(seconds=admission_lead + prefix_lead)
         await fixture.prepare_infusion_packet(
             runtime, adapter, clock, packet_at, temperature=initial,
         )

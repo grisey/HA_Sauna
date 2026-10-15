@@ -155,13 +155,14 @@ class PresentationTests(unittest.TestCase):
         catalog = section("parameters")
         expected_steps = set()
         for area in frontend["settings_groups"]:
-            if area.get("surface", "panel") != "integration":
-                continue
             members = [
                 item for item in catalog
                 if item["settings_group"] == area["id"]
+                and item["configuration_surface"] == "integration"
                 and item["minimum"] != item["maximum"]
             ]
+            if not members:
+                continue
             with self.subTest(area=area["id"]):
                 self.assertEqual(steps[area["id"]]["title"], area["label"])
                 self.assertEqual(

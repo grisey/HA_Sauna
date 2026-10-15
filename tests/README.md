@@ -3,11 +3,13 @@
 [Arbeitsregeln zur Prüfung](../AGENTS.md#prüfung)
 
 Tests laufen ausschließlich unter Linux in GitHub Actions auf GitHub-gehosteten
-Runnern. Die maßgeblichen Versionen,
-Abhängigkeiten und Zeitgrenzen stehen in der
-[CI-Konfiguration](../.github/workflows/tests.yml). Alle folgenden Befehle werden
-in diesen GitHub-Jobs vom Repository-Hauptverzeichnis aus und jeweils als eigener
-Prozess ausgeführt. Lokale oder per Remote-Shell gestartete Tests sind nicht vorgesehen.
+Runnern. Versionen, Prozessgrenzen, Browsergeometrien und synthetische Lastdaten
+stehen in [`settings.json`](settings.json), die Python-Abhängigkeiten in
+[`browser/requirements.txt`](browser/requirements.txt). Die
+[CI-Konfiguration](../.github/workflows/tests.yml) konsumiert diese Quellen.
+Alle folgenden Befehle werden in diesen GitHub-Jobs vom Repository-Hauptverzeichnis
+aus und jeweils als eigener Prozess ausgeführt. Lokale oder per Remote-Shell
+gestartete Tests sind nicht vorgesehen.
 Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 ## Prüfebenen
@@ -86,11 +88,31 @@ Prüfungen an einer Grenze leiten ihre Zeitpunkte oder Eingaben aus diesem Wert 
 statt den Werkseinstellungswert zu wiederholen. Lange Fristen werden über die
 virtuelle Uhr abgebildet; dafür werden keine kürzeren Regelparameter eingesetzt.
 
-Fest vorgegebene Messdaten, bewusste Bedienwerte sowie Werte zur Prüfung von
-Rundung und ungültigen Eingaben bleiben Testdaten. Historische Replays behalten
-ihre aufgezeichnete Konfiguration. Konstruierte Sitzungen binden den zentralen
-Katalog bei der Materialisierung; eine spätere Katalogänderung verlangt eine
-erneute Materialisierung und Prüfung der gebundenen Kurven und Bewertungen.
+Synthetische Lastdaten, Browserabmessungen und Messabläufe werden über
+`test_settings.py` beziehungsweise `settings_fixture.cjs` aus `settings.json`
+gelesen. Die Entwicklungsvorschau konsumiert ihren eigenen
+[`tools/preview/defaults.json`](../tools/preview/defaults.json). Konstruierte
+Sitzungen verwenden die benannten Eingaben in
+[`fixtures/scenarios/construction.json`](fixtures/scenarios/construction.json).
+Diese Eingaben beschreiben Bedienfolgen und Messumgebung; die unabhängigen
+Bewertungen bleiben in den gebundenen Szenarien. Einzelne Zahlen zur Prüfung
+mathematischer Eigenschaften, ungültiger Eingaben oder einer konkreten
+Bedienhandlung definieren das jeweilige Prüfziel.
+
+`catalog_fixture.cjs` löst Parameter- und Darstellungsreferenzen des
+Produktkatalogs auf und stellt den gleichen Panel-Bootstrap wie Home Assistant
+bereit. Die Klassifikation `configuration_surface` bestimmt auch in Tests,
+welche Werte aus dem Katalog und welche aus gespeicherten Einstellungen kommen.
+Gezielte Metatests prüfen Defaultkonsum, abweichende gültige Werte, die
+Schreibgrenzen sowie die Unveränderlichkeit des Katalogs beim Speichern.
+
+Die Szenariobindung erfasst die effektiven Parameter- und Programmwerte.
+Änderungen an Beschriftungen oder UI-Standards verändern diese Eingaben nicht.
+Veränderte effektive Werte erfordern eine Prüfung der Bindung und betroffenen
+Kurven; Materialisierung ist nur erforderlich, wenn Eingaben tatsächlich anders
+werden sollen. Die Kurven, Bedienfolgen, Bewertungen und Konstruktionsdaten
+bleiben separat durch SHA-256 gebunden. Historische Replays behalten ihre
+aufgezeichnete Konfiguration.
 
 ## Home Assistant
 
@@ -98,7 +120,7 @@ Die HA-Prüfungen verwenden eine eigene Python-Umgebung gemäß Workflow.
 Installation wie im HA-Job:
 
 ```sh
-python -m pip install 'homeassistant==2026.10.0' 'securetar==2026.4.1' 'cronsim==2.7'
+python tests/ci_settings.py install-ha
 ```
 
 Danach werden Adapter und Integration getrennt ausgeführt. `HA_TEST_REQUIRED=1`
@@ -114,10 +136,11 @@ HA_TEST_REQUIRED=1 python -m unittest discover -s tests/integration -v
 
 Die vollständigen Sitzungsprüfungen laufen mit derselben HA-Version. Sie verwenden
 den echten Geräteadapter, die Laufzeit, Erkennung, Regelung und Archivierung;
-nur der Diensttransport zu den Aktoren wird ersetzt.
+nur der Diensttransport zu den Aktoren wird ersetzt. Im GitHub-gehosteten
+Sitzungsjob wird das Artefaktverzeichnis vom Workflow gesetzt:
 
 ```sh
-SAUNA_SESSION_EVIDENCE=/tmp/ha-sauna-sessions python -m unittest discover -s tests/sessions -v
+python -m unittest discover -s tests/sessions -v
 ```
 
 `SAUNA_SESSION_EVIDENCE` speichert pro Lauf jede gebundene Bewertung mit Sollwert,
@@ -146,7 +169,15 @@ gebundene virtuelle Uhr und deterministische JSON-Serialisierung.
 Commit und Tree und nennt deren Vergleich, Ref, Run, Versuch, Job und Fall.
 `process.log`, `exit-code.txt` und `process-completion.json` belegen den eigenen
 Testprozess und seine Rückkehr; bei Abbruch vor Prozessende fehlt der
-Abschlussbeleg. Der endgültige Jobstatus steht zusätzlich in GitHub Actions.
+Abschlussbeleg. Der endgültige Jobstatus steht zusätzlich in GitHub Actions. Ein Fehler beim
+Schreiben der Nachweise lässt den Schritt scheitern; `exit-code.txt` enthält
+weiter den zuvor gesicherten tatsächlichen Testprozess-Exitcode.
+Derselbe Prozessvertrag gilt für `core-tests`, `ha-adapter-tests` und
+`ha-integration-tests`: eigener Log, Exitcode und JSON-Abschluss sowie
+Commit-/Tree-Nachweis mit getrenntem PR-Head. Bei Dispatch oder Push steht
+`pr_head` auf `null`, der Treevergleich auf `no_pr_head`. Profilierte Sitzungen
+nennen den tatsächlich gestarteten Profilierungsbefehl. Die selektiven
+HA-Adapter- und Integrationsprozesse werden jeweils höchstens einmal gestartet.
 Die Sitzungsartefakte belegen synthetische Fixtures mit ersetztem HA-Transport,
 keine Hardware- oder Companionausführung. `runtime_consumer_connected` ist nur
 bei tatsächlich beobachteten Eingangsaufrufen wahr. Der getrennte
@@ -210,6 +241,7 @@ Repositoryverzeichnis.
 node tests/browser/live_history/accept.cjs
 node tests/browser/live_history/profile.cjs
 node tests/browser/live_history/interaction.cjs
+node tests/browser/live_history/details.cjs
 ```
 
 | Skript | Gegenstand und Ausgabe |
@@ -217,6 +249,7 @@ node tests/browser/live_history/interaction.cjs
 | `accept.cjs` | Prüft Datenübernahme, dauerhafte Knoten und Browserinteraktionen anhand fester Erwartungen. |
 | `profile.cjs` | Erfasst Kaltstart, Aktualisierung, Geometriezugriffe und `requestAnimationFrame`-Abstände. |
 | `interaction.cjs` | Erfasst Zeigerbewegung, Zoom und Verschieben während eingehender Nachträge; trennt die Zeit bis zum Rendercallback-Ende von dessen synchroner Rechenzeit. |
+| `details.cjs` | Prüft stabile Erkennungsansichten, Fokus, Textauswahl, Markerverknüpfung und Nachträge sowie schmale Container und Fehler bei Archivabrufen. |
 
 Die Fixture liefert synthetische Status- und Archivantworten an das
 Originalpanel. Die Browserläufe verwenden dessen tatsächliche Zeichen- und
@@ -228,10 +261,12 @@ zusätzlich dessen Eingabeweg und sichtbare Bildschirmausgabe.
 
 `HISTORY_EVIDENCE` legt das Ausgabeverzeichnis von `accept.cjs` und
 `profile.cjs` fest. `INTERACTION_EVIDENCE` benennt die Ergebnisdatei der
-Interaktionsprobe. Standardbrowser ist WebKit; `ENGINE=chromium` und
-`CHROMIUM_EXECUTABLE` wählen eine vorhandene Chromium-Laufzeit.
+Interaktionsprobe. Der Standardbrowser wird in `settings.json` festgelegt; `ENGINE` und
+`CHROMIUM_EXECUTABLE` wählen bei Bedarf eine vorhandene Browserlaufzeit.
+`details.cjs` speichert Ergebnisse und
+Ansichten im Verzeichnis `DETAILS_EVIDENCE`.
 
-Alle drei Skripte prüfen den aktuellen Arbeitsstand von `panel.js`. Die vier
+Alle vier Skripte prüfen den aktuellen Arbeitsstand von `panel.js`. Die vier
 synthetischen Messreihen bleiben im Archiv erhalten; die aktuelle Verlaufsansicht
 zeigt die führende Messposition. Eine frühere Messhöhenumschaltung und fest
 codierte Gitvergleichsstände sind kein Bestandteil dieser Prüfungen.
@@ -242,3 +277,83 @@ Einheiten; `interaction.cjs` prüft zusätzlich deren Werte gegen die unabhängi
 festgelegten Bereiche der synthetischen Daten. Interne Aufrufzähler dienen nur
 der Beobachtung von Zeichenarbeit und Knotenerhalt. Archivfehler und
 Sitzungswechsel werden über das synthetische Transportfixture vorgegeben.
+
+Der GitHub-Workflow `HA Sauna UI` prüft Zweige unter `codex/ui-*` auf Ubuntu.
+`tests/browser/run_ui.py` führt die Panelmethoden, Panel-API-Tests, vier
+Verlaufsproben und die Home-Assistant-Browsertests aus. Jeder Prozess erhält einen
+eigenen Exitcode und Abschlussnachweis; übersprungene Tests lassen die Prüfung
+fehlschlagen. Die Artefakte enthalten den geprüften Commit, Tree, Dateiprüfsummen,
+Protokolle und Browserbilder.
+
+Der getrennte Formatjob vergleicht mit der über `UI_BASE_REF` festgelegten
+Entwicklungsbasis. Er formatiert geänderte JavaScript-Dateien mit Prettier
+und neue Python-Dateien mit Ruff in den Versionen aus `settings.json` und liefert notwendige Änderungen als Patch.
+Der Testjob prüft den unveränderten ausgecheckten Commit.
+
+Gezielte Korrekturläufe können im manuellen Workflow über `checks` ausgewählt
+werden: `panel`, `panel-api`, `details`, `accept`, `profile`, `interaction` und
+`ha-browser`, durch Kommas getrennt. `browser_tests` begrenzt den HA-Browserlauf
+auf durch Leerzeichen getrennte vollständige unittest-Namen. Leere Felder führen
+den vollständigen UI-Prüfumfang aus; unbekannte Namen führen zu einem Fehler.
+Die Prozessnachweise nennen die tatsächliche Auswahl. Bestandene Prüfungen
+bleiben nur bei belegbar unveränderten Abhängigkeiten gültig. Reine Testkorrekturen
+erfordern keine erneute Ausführung unveränderter Szenarien und Replays.
+`format_only` führt ausschließlich den Formatjob aus, wenn lediglich dessen Patch
+übernommen wurde; die vorhandenen Testnachweise werden dem Stand zugeordnet.
+
+Der Workflow `HA Sauna` bietet für gezielte Wiederholungen `checks` mit den
+Bereichen `core`, `ha`, `browser` und `sessions`. `session_cases` begrenzt den
+Sitzungsbereich auf durch Kommas getrennte IDs aus den Szenario- und
+Replaymanifesten. Ohne Auswahl laufen alle Bereiche und Fälle; unbekannte oder
+doppelte IDs werden abgewiesen. Eine Szenario-ID umfasst ihre gebundenen
+Varianten. Die Auswahl verändert weder Eingaben noch Bewertungskriterien.
+`integration_tests` begrenzt innerhalb von `ha` die Integration auf durch Kommas
+getrennte vollständige Namen der Form `test_module.Class.test_method`.
+Unbekannte oder doppelte Namen sowie leere Einträge innerhalb einer Auswahl
+werden abgewiesen. Bei gesetztem Filter laufen ausschließlich diese
+Integrationstests. Ohne Auswahl laufen Adapterprüfung und vollständige Integration.
+
+`core_tests` begrenzt `core` auf vollständige Python-Testnamen derselben Form.
+Die Auswahl wird aus dem Testquelltext geprüft, ohne Testmodule zu importieren.
+Bei gesetztem Filter laufen ausschließlich diese Python-Tests; die Paneltests
+gehören dann nicht zum ausgewählten Umfang. Ohne Filter bleiben vollständige
+Python- und Panelprüfung erhalten. Leere Testsuiten, Fehler und übersprungene
+Python-Tests führen zu einem fehlgeschlagenen Core-Prozess. Das Artefakt
+`core-tests` enthält Commit, Tree, Prozessprotokoll, Exitcode und Abschlussstatus.
+
+Die manuelle Auslösung (`workflow_dispatch`) des Workflows `HA Sauna` mit
+`proxy_calibration_analysis=true` führt ausschließlich die Proxy-Kalibration
+aus. Diese Auswahl hat Vorrang vor allen anderen Analyseflags und Prüfbereichen.
+[`analysis/proxy_calibration.py`](analysis/proxy_calibration.py) konsumiert die
+gebundenen Originalmessungen und die separat geführten
+[Kalibrationsvorgaben](analysis/proxy_calibration_policy.json) und
+[Referenzen](analysis/proxy_calibration_references.json).
+
+R01–R03 bilden die Trainingsgrundlage. R02 und R03 teilen die im
+[`replay_manifest.json`](replay_manifest.json) festgelegte Zeitgruppe einschließlich
+der tatsächlichen Lücke; lokale Messzeiten und Meldungsalter bleiben erhalten.
+R04 wird erst mit eingefrorenen Profilen, Methoden und Fehlerbändern bewertet und
+geht nicht in den Parameterfit ein. Die Aufzeichnung war bereits gesichtet und
+ist deshalb keine unberührte unabhängige Validierungsmenge.
+
+Das Artefakt `proxy-calibration` enthält `output/profile.json`,
+`output/calibration.json`, `output/quality.json` und
+`output/ambiguous-cases.json` sowie die zugehörigen Originalkurven unter
+`output/curves/`. Commit, Tree, Produkt-Tree, stdout/stderr, eigener Exitcode und
+Prozessabschluss liegen daneben. Die Auswertung prüft mathematische Kernelprofile
+und Hypothesen; sie ist noch kein produktiver Controller-Replay mit Regelung,
+Aktorausgaben und Archivierung.
+
+Mit zusätzlichem `proxy_calibration_baseline_run` verwendet derselbe Auftrag das
+Artefakt eines abgeschlossenen Kalibrationslaufs für begrenzte Ursachenvergleiche.
+[`analysis/proxy_calibration_diagnosis.py`](analysis/proxy_calibration_diagnosis.py)
+prüft zunächst die Reproduktion der Ausgangsergebnisse. Danach werden einzeln
+festgelegte Einflussgrößen verändert. Das Entfernen einer Prüfschranke ist dabei
+ein Diagnoseeingriff und keine Freigabe eines neuen Erkennungsverfahrens.
+Produktiver Detector, Regelung und Aktorausgaben sind nicht Bestandteil dieses
+Vergleichs. Eingangsprüfsummen, Varianten und Prozessabschluss werden im
+Artefakt `proxy-calibration` mitgeführt.
+`proxy_calibration_diagnosis_mode=gain_boundary` vergleicht ausschließlich die
+Ausgangsprofile mit einer aus den Kalibrationsgegenbeispielen abgeleiteten
+Mindestverbesserung gegenüber dem Verlauf ohne Ereignis. Formen und Fehlerbänder
+bleiben dabei erhalten; R04 wird nicht zur Grenzwahl verwendet.

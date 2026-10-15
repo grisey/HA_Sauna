@@ -6,12 +6,21 @@ Ein fehlender Bestandteil ist ein Fehler. Die Prüfung benötigt keine private
 Arbeitsablage, keinen HA-Host und keine Zugangsdaten.
 
 Konstruierte Szenarien beziehen Anlagenparameter und gespeicherte Programme
-direkt aus dem zentralen `defaults.json`. `configuration.json` enthält dafür
-nur den gebundenen Quellenverweis, keinen zweiten Wertekatalog. Ändert sich
-diese Quelle, scheitert der Lauf vor Beginn mit dem Hinweis auf veraltete
-Messkurven. Die Materialisierung mit `build_fixtures.py` und die fachliche
-Prüfung der daraus entstandenen Kurven erfolgen ausdrücklich vor dem nächsten
-Produktlauf. Historische Replays behalten ihre damalige Anlagenkonfiguration.
+direkt aus dem zentralen `defaults.json`. `configuration.json` enthält einen
+Quellenverweis mit der ursprünglichen Dateiprüfsumme und eine gesonderte
+Prüfsumme aller aufgelösten Parameterdefaults sowie der Start-, End- und
+Verteilungswerte der Programme. UI-Standards und Beschriftungen beeinflussen
+diese Projektion nicht. Ein geänderter effektiver Wert lässt den Lauf vor
+Beginn scheitern, bis die Bindung und ihre Auswirkungen auf die Eingaben
+geprüft wurden. Unveränderte Messkurven werden dabei nicht neu erzeugt.
+
+[`construction.json`](../fixtures/scenarios/construction.json) enthält benannte
+Eingaben für Bedienfolgen, Klimaübergänge, Lichtwerte und die einzelnen
+Sitzungsvarianten. `build_fixtures.py` konsumiert diese Daten bei einer ausdrücklich
+erforderlichen Materialisierung. Das Manifest bindet Konstruktion, Kurven,
+Bedienungen und Bewertungen getrennt. Die Bewertung wird nicht aus dem aktuellen
+Produktergebnis erzeugt. Historische Replays behalten ihre damalige
+Anlagenkonfiguration.
 
 ## Sitzungen und Iterationen
 
@@ -103,6 +112,18 @@ einschließlich sämtlicher gebundener Varianten. Pro Lauf entstehen Bewertungen
 Bedien- und Dienstprotokoll, Archivnachweis und eine komprimierte Zustandsfolge.
 SQLite kann auf einem Linux-RAM-Dateisystem liegen; Erkennungs- und Regelzeiten
 werden dafür nicht verkürzt.
+
+Der optionale boolesche `workflow_dispatch`-Eingang `replay_profile` (Standard
+`false`) profiliert mit [`profile_replay.py`](profile_replay.py) den vorhandenen
+Sitzungslauf. Die Auswahl über `checks` und `session_cases` sowie die gebundenen
+Bewertungen bleiben erhalten. Im Sitzungsartefakt entsteht zusätzlich
+`replay-profile.json`.
+
+Das Profil enthält Aufrufzahlen sowie inklusive Wall- und Thread-CPU-Zeiten
+der gemessenen Funktionen. Untergeordnete Aufrufe sind enthalten; verschachtelte
+und überlappende Messbereiche dürfen nicht addiert werden. Der Gesamtlauf hat
+separate Wall- und Prozess-CPU-Zeiten. Die Messung verursacht zusätzliche Arbeit;
+profilierte Laufzeiten sind daher kein Beleg für unprofilierte Laufzeiten.
 
 Die [Zuständigkeitstabelle](../coverage_ownership.json) nennt die ersetzten
 Fachtests mit ihrer jeweils führenden Sitzungsbewertung. Der zugehörige Metatest

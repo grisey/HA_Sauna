@@ -5,10 +5,11 @@ from unittest.mock import patch
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import entity_registry as er
 from custom_components.ha_sauna.config_flow import pack_binding_input
-from custom_components.ha_sauna.core.parameters import EDITABLE_DEFINITIONS, ParameterError
+from custom_components.ha_sauna.core.parameters import LIVE_TEMPERATURE_KEYS, ParameterError
 from custom_components.ha_sauna.settings import async_set_parameters
 
 from harness import create_sauna, start_hass
+from test_settings import async_timeout
 
 
 def displayed_parameter_values(form, parameters):
@@ -31,7 +32,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         entry = await create_sauna(self.hass)
         self.assertEqual(entry.state, ConfigEntryState.LOADED)
         entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
-        self.assertEqual(len(entities), len(EDITABLE_DEFINITIONS) + 7)
+        self.assertEqual(len(entities), len(LIVE_TEMPERATURE_KEYS) + 7)
         self.assertTrue(all(self.hass.states.get(e.entity_id) is not None for e in entities))
         self.assertEqual(entry.data, {})
         self.assertIsNone(entry.runtime_data.session)
@@ -41,7 +42,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(old.closed)
             self.assertTrue(await self.hass.config_entries.async_setup(entry.entry_id))
             await self.hass.async_block_till_done()
-            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(EDITABLE_DEFINITIONS) + 7)
+            self.assertEqual(len(er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)), len(LIVE_TEMPERATURE_KEYS) + 7)
         from custom_components.ha_sauna.settings import async_set_temperature_steps
         await async_set_temperature_steps(self.hass, entry, [78, 83, 92])
         await self.hass.async_block_till_done()
@@ -85,12 +86,30 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(entry.runtime_data, unchanged_runtime)
         result = await self.hass.config_entries.options.async_configure(flow_id, {"next_step_id": "init"})
         self.assertEqual((result["step_id"], result["flow_id"]), ("init", flow_id))
-        number = next(e.entity_id for e in entities if e.unique_id.endswith("_session_gap_minutes"))
-        await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
+
+    async def test_reload_removes_only_this_instances_parameter_numbers(self):
+        entry = await create_sauna(self.hass)
+        registry = er.async_get(self.hass)
+        previous = registry.async_get_or_create(
+            "number", "ha_sauna", f"{entry.entry_id}_session_gap_minutes",
+            config_entry=entry,
+        )
+        separate = registry.async_get_or_create(
+            "number", "ha_sauna", "separate_instance_parameter",
+        )
+        options = entry.options
+        old_runtime = entry.runtime_data
+        self.assertTrue(await self.hass.config_entries.async_reload(entry.entry_id))
         await self.hass.async_block_till_done()
-        self.assertEqual(entry.options["parameters"]["session_gap_minutes"], 9)
-        self.assertEqual(entry.runtime_data.configuration.parameters.values["session_gap_minutes"], 9)
-        self.assertEqual(float(self.hass.states.get(number).state), 9)
+        self.assertTrue(old_runtime.closed)
+        self.assertIsNone(registry.async_get(previous.entity_id))
+        self.assertIsNotNone(registry.async_get(separate.entity_id))
+        self.assertEqual(entry.options, options)
+        self.assertEqual({
+            entity.unique_id.removeprefix(f"{entry.entry_id}_")
+            for entity in er.async_entries_for_config_entry(registry, entry.entry_id)
+            if entity.entity_id.startswith("number.")
+        }, LIVE_TEMPERATURE_KEYS)
 
     async def test_options_navigation_survives_pending_reload(self):
         entry = await create_sauna(self.hass)
@@ -115,7 +134,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
                 result = await self.hass.config_entries.options.async_configure(
                     flow_id, {**values, "session_gap_minutes": 7})
                 self.assertEqual((result["type"], result["step_id"]), ("menu", "operation"))
-                await asyncio.wait_for(started.wait(), timeout=10)
+                await asyncio.wait_for(started.wait(), timeout=async_timeout("reload"))
                 self.assertTrue(runtime.reconfiguring)
                 saved = dict(entry.options)
                 for step in ("init", "sensors", "init", "operation"):
@@ -154,7 +173,6 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         runtime._clock = lambda: now
         entities = er.async_entries_for_config_entry(er.async_get(self.hass), entry.entry_id)
         switch = next(e.entity_id for e in entities if e.unique_id.endswith("_operation"))
-        number = next(e.entity_id for e in entities if e.unique_id.endswith("_session_gap_minutes"))
         pending = await self.hass.config_entries.options.async_init(entry.entry_id)
         pending = await self.hass.config_entries.options.async_configure(
             pending["flow_id"], {"next_step_id": "operation"})
@@ -176,8 +194,6 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.session.session_id, session_id)
         with self.assertRaises(ValueError):
             await async_set_parameters(self.hass, entry, {"session_gap_minutes": 9}, partial=True)
-        with self.assertRaises(ValueError):
-            await self.hass.services.async_call("number", "set_value", {"entity_id": number, "value": 9}, blocking=True)
         self.assertEqual(entry.options["parameters"]["session_gap_minutes"],
                          runtime.configuration.parameters.values["session_gap_minutes"])
         await self.hass.services.async_call("switch", "turn_off", {"entity_id": switch}, blocking=True)
@@ -315,7 +331,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.hass.services.async_register("light", "turn_on", light_service)
         selecting = asyncio.create_task(runtime.set_light_override(80))
         try:
-            await asyncio.wait_for(entered.wait(), 3)
+            await asyncio.wait_for(entered.wait(), async_timeout("service"))
             selecting.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await selecting

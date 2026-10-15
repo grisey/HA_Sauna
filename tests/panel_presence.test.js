@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const {
   parameterValues: fixtureValues,
@@ -43,7 +44,7 @@ const annotationModel = () => {
     x: (time) => left + ((time - start) / (finish - start)) * (right - left),
   };
 };
-const panel = Object.assign(Object.create(Panel.prototype), {
+const panel = Object.assign(fixturePanel(Panel), {
   state: {
     now: end,
     configuration: { parameters: fixtureValues() },
@@ -170,7 +171,7 @@ console.log("presence and phase projection panel tests passed");
     "#history": { hidden: false },
     "#session": { innerHTML: "", value: "" },
   };
-  const refreshing = Object.assign(Object.create(Panel.prototype), panel, {
+  const refreshing = Object.assign(fixturePanel(Panel), panel, {
     isConnected: true,
     entry: "entry",
     generation: 0,
@@ -190,7 +191,7 @@ console.log("presence and phase projection panel tests passed");
       rendered = this.historyAnnotations(annotationModel(), this.shown.session, gangs);
     },
     api: async (request) => {
-      if (request === "/entry/state") return apiState;
+      if (request === "/entry/state?include_catalog=false") return apiState;
       if (request === "/entry/archive")
         return [{ session_id: "s", started_at: t, ended_at: end }];
       archiveCalls++;
@@ -253,7 +254,7 @@ console.log("presence and phase projection panel tests passed");
 });
 
 // The operational history separates observed occupancy, demand and real feedback.
-const operational = Object.assign(Object.create(Panel.prototype), {
+const operational = Object.assign(fixturePanel(Panel), {
   state: { now: end, configuration: { bindings: { presence: "binary_sensor.demo" } } },
   shown: {
     session: {
@@ -363,5 +364,8 @@ for (const [reason, label] of [
     operational.html.includes(`>${label}</td>`),
     `${reason} has its German label in the decision history`,
   );
-  assert.ok(!operational.html.includes(reason), `${reason} is not shown as an ID`);
+  assert.ok(
+    !operational.html.split('id="detail-records"')[0].includes(reason),
+    `${reason} is not shown as an ID outside explicit archive fields`,
+  );
 }

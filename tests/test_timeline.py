@@ -1,9 +1,19 @@
 """Vorläufige Erkennung, Aufgussbestätigung und Zeitzuordnung ohne Home Assistant."""
+import asyncio
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+import tempfile
 import unittest
-from datetime import UTC, datetime
 
+from test_cooling import at, controller
+from test_foundation import bindings, event, selected_occupancy
+
+from custom_components.ha_sauna.archive import Archive, plain
+from custom_components.ha_sauna.core.presence import binary_presence
 from custom_components.ha_sauna.core.timeline import (
     Confirmation, Door, Event, Kind, Timeline, UnresolvedTransition, apply,
+    project_door_cycles,
 )
 
 
@@ -451,6 +461,238 @@ class TimelineTests(unittest.TestCase):
             apply(self.closed, e("v", Kind.VENTILATION, "21:18:00"))
         with self.assertRaises(UnresolvedTransition):
             apply(Timeline("s", t("18:55:42"), door=Door.OPEN), self.vent)
+
+
+class DoorCycleProjectionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def cycle(opening, closing, started, ended, *, links=(), role=None, gang_id=None):
+        return {
+            "id": opening,
+            "event_ids": [opening, closing] if closing is not None else [opening],
+            "started_at": at(started).isoformat(),
+            "ended_at": at(ended).isoformat() if ended is not None else None,
+            "open": ended is None,
+            "role": role,
+            "gang_id": gang_id,
+            "gang_links": list(links),
+        }
+
+    def assert_fresh_projection(self, timeline, expected):
+        source = deepcopy(plain(timeline))
+        first = project_door_cycles(timeline)
+        second = project_door_cycles(timeline)
+        self.assertEqual(first, expected)
+        self.assertEqual(second, expected)
+        self.assertIsNot(first, second)
+        for left, right in zip(first, second, strict=True):
+            self.assertIsNot(left, right)
+            self.assertIsNot(left["event_ids"], right["event_ids"])
+            self.assertIsNot(left["gang_links"], right["gang_links"])
+            for left_link, right_link in zip(
+                left["gang_links"], right["gang_links"], strict=True,
+            ):
+                self.assertIsNot(left_link, right_link)
+        first[0]["started_at"] = "changed copy"
+        first[0]["event_ids"].append("copy-only")
+        if first[0]["gang_links"]:
+            first[0]["gang_links"][0]["role"] = "changed copy"
+        first[0]["gang_links"].append({"gang_id": "copy-only", "role": "exit"})
+        self.assertEqual(second, expected)
+        self.assertEqual(project_door_cycles(timeline), expected)
+        self.assertEqual(plain(timeline), source)
+
+    def assert_object_and_plain(self, session, expected):
+        original = deepcopy(session)
+        payload = plain(session)
+        before = deepcopy(payload)
+        self.assert_fresh_projection(session.timeline, expected)
+        self.assert_fresh_projection(payload["timeline"], expected)
+        self.assertEqual(session, original)
+        self.assertEqual(payload, before)
+
+    async def test_proxy_cycle_keeps_exit_and_next_entry_with_original_times(self):
+        c = controller()
+        o1, c1, w1 = (
+            event("o1", Kind.DOOR_OPEN, 1),
+            event("c1", Kind.DOOR_CLOSE, 2),
+            event("w1", Kind.INFUSION, 3),
+        )
+        for source in (o1, c1, w1):
+            c.process(source)
+        g1 = c.session.timeline.active
+        self.assertEqual(g1.started_at, at(2))
+        self.assertEqual(g1.start_source_event_id, "c1")
+        self.assertEqual(g1.recognition_kind, Kind.INFUSION)
+        self.assertEqual(g1.confirmation, Confirmation.CONFIRMED)
+        self.assertEqual(g1.infusion_events, (w1,))
+        entry = self.cycle(
+            "o1", "c1", 1, 2, role="entry", gang_id=g1.gang_id,
+            links=({"gang_id": g1.gang_id, "role": "entry"},),
+        )
+        self.assert_object_and_plain(c.session, [entry])
+
+        o2 = event("o2", Kind.DOOR_OPEN, 4)
+        v2 = event("v2", Kind.VENTILATION, 5)
+        c.process(o2)
+        c.process(v2)
+        self.assertEqual(c.session.timeline.gang_count, 1)
+        self.assertEqual(c.session.timeline.completed[0].ended_at, v2.booking_at)
+        self.assertEqual(c.session.after_run.requested_at, at(5))
+        self.assert_object_and_plain(c.session, [entry, self.cycle(
+            "o2", None, 4, None, role="exit", gang_id=g1.gang_id,
+            links=({"gang_id": g1.gang_id, "role": "exit"},),
+        )])
+
+        c2 = event("c2", Kind.DOOR_CLOSE, 6)
+        w2 = event("w2", Kind.INFUSION, 7)
+        c.process(c2)
+        c.process(w2)
+        timeline = c.session.timeline
+        g2 = timeline.active
+        self.assertNotEqual(g1.gang_id, g2.gang_id)
+        self.assertEqual(g2.started_at, at(6))
+        self.assertEqual(g2.start_source_event_id, "c2")
+        self.assertEqual(g2.infusion_events, (w2,))
+        self.assertEqual(timeline.completed[0].infusion_events, (w1,))
+        self.assertEqual(timeline.completed[0].ended_at, at(5))
+        self.assertEqual(timeline.completed[0].end_event_id, "v2")
+        self.assertEqual(timeline.gang_count, 1)
+        self.assertEqual(timeline.processed, (o1, c1, w1, o2, v2, c2, w2))
+        expected = [entry, self.cycle(
+            "o2", "c2", 4, 6, links=(
+                {"gang_id": g1.gang_id, "role": "exit"},
+                {"gang_id": g2.gang_id, "role": "entry"},
+            ),
+        )]
+        self.assert_object_and_plain(c.session, expected)
+
+        # One queued archive roundtrip covers the same dual-role source sequence.
+        original = deepcopy(c.session)
+        configuration = {
+            "bindings": bindings().as_dict(), "parameters": c.parameters.as_dict(),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Archive(Path(directory) / "cycles.sqlite", "entry")
+            await archive.start()
+            try:
+                archive.save_session(c.session, at(7), configuration)
+                await archive.flush()
+                stored = await asyncio.to_thread(archive.read, "s", now=at(7))
+                before = deepcopy(stored)
+                self.assertEqual(stored["session"], {
+                    **plain(original), "configuration": configuration,
+                })
+                self.assertEqual(stored["records"][0]["payload"], stored["session"])
+                self.assert_fresh_projection(stored["session"]["timeline"], expected)
+                self.assertEqual(stored, before)
+                self.assertEqual(
+                    await asyncio.to_thread(archive.read, "s", now=at(7)), before,
+                )
+                self.assertEqual(c.session, original)
+            finally:
+                await archive.close()
+
+    async def test_delayed_direct_absence_links_exit_at_booking_after_door_close(self):
+        c = controller()
+        c.process(event("o1", Kind.DOOR_OPEN, 1))
+        c.consume_occupancy_input(selected_occupancy(
+            binary_presence("binary_sensor.presence", "on", at(2), at(2)), at(2),
+        ))
+        c.process(event("c1", Kind.DOOR_CLOSE, 2))
+        g1 = c.session.timeline.active
+        self.assertEqual(g1.started_at, at(2))
+        self.assertEqual(g1.recognition_kind, Kind.PRESENCE_CONFIRMED)
+        self.assertEqual(g1.confirmation, Confirmation.CONFIRMED)
+        for source in (
+            event("o2", Kind.DOOR_OPEN, 4),
+            event("v2", Kind.VENTILATION, 5),
+            event("c2", Kind.DOOR_CLOSE, 6),
+        ):
+            c.process(source)
+        self.assertEqual(c.session.timeline.active.gang_id, g1.gang_id)
+        self.assertEqual(c.session.timeline.completed, ())
+        self.assertIsNone(c.session.after_run)
+
+        absence = binary_presence("binary_sensor.presence", "off", at(5.5), at(8))
+        self.assertTrue(c.consume_occupancy_input(selected_occupancy(absence, at(8))))
+        timeline = c.session.timeline
+        self.assertIsNone(timeline.active)
+        self.assertEqual(len(timeline.completed), 1)
+        ended = timeline.completed[0]
+        end_events = [e for e in timeline.processed if e.kind == Kind.PRESENCE_ENDED]
+        self.assertEqual(len(end_events), 1)
+        end = end_events[0]
+        self.assertEqual(end.effective_at, absence.effective_at)
+        self.assertEqual(end.detected_at, absence.received_at)
+        self.assertEqual(end.booking_at, at(8))
+        self.assertEqual(ended.gang_id, g1.gang_id)
+        self.assertEqual(ended.end_event_id, end.event_id)
+        self.assertEqual(ended.end_reason, "presence_exit")
+        self.assertEqual(ended.ended_at, at(8))
+        self.assertEqual(timeline.gang_count, 1)
+        self.assertEqual(c.session.after_run.requested_at, at(8))
+        expected = [self.cycle(
+            "o1", "c1", 1, 2, role="entry", gang_id=g1.gang_id,
+            links=({"gang_id": g1.gang_id, "role": "entry"},),
+        ), self.cycle(
+            "o2", "c2", 4, 6, role="exit", gang_id=g1.gang_id,
+            links=({"gang_id": g1.gang_id, "role": "exit"},),
+        )]
+        self.assert_object_and_plain(c.session, expected)
+        self.assertFalse(c.consume_occupancy_input(selected_occupancy(absence, at(8))))
+        self.assertEqual(c.session.timeline, timeline)
+        self.assert_object_and_plain(c.session, expected)
+
+    async def test_retracted_provisional_cycle_has_no_gang_roles(self):
+        c = controller()
+        for source in (
+            event("o1", Kind.DOOR_OPEN, 1),
+            event("c1", Kind.DOOR_CLOSE, 2),
+            event("person", Kind.PERSON_STRONG, 3),
+        ):
+            c.process(source)
+        provisional = c.session.timeline.active
+        self.assertEqual(provisional.confirmation, Confirmation.PROVISIONAL)
+        deadline = provisional.started_at + timedelta(
+            seconds=c.parameters.seconds("confirmation_minutes"),
+        )
+        c.advance(deadline)
+        timeline = c.session.timeline
+        self.assertIsNone(timeline.active)
+        self.assertEqual(timeline.retracted, (provisional,))
+        self.assertEqual(timeline.completed, ())
+        self.assertEqual(timeline.gang_count, 0)
+        self.assertIsNone(c.session.after_run)
+        self.assert_object_and_plain(c.session, [self.cycle("o1", "c1", 1, 2)])
+
+    async def test_operation_off_preserves_entry_without_an_exit_role(self):
+        c = controller()
+        for source in (
+            event("o1", Kind.DOOR_OPEN, 1),
+            event("c1", Kind.DOOR_CLOSE, 2),
+            event("w1", Kind.INFUSION, 3),
+        ):
+            c.process(source)
+        g1 = c.session.timeline.active
+        c.set_operation(False, at(4))
+        timeline = c.session.timeline
+        self.assertIsNone(timeline.active)
+        self.assertEqual(len(timeline.completed), 1)
+        self.assertEqual(timeline.gang_count, 1)
+        ended = timeline.completed[0]
+        off = timeline.processed[-1]
+        self.assertEqual(off.kind, Kind.OPERATION_OFF)
+        self.assertEqual(ended.gang_id, g1.gang_id)
+        self.assertEqual(ended.ended_at, off.booking_at)
+        self.assertEqual(ended.ended_at, at(4))
+        self.assertEqual(ended.end_event_id, off.event_id)
+        self.assertEqual(ended.end_reason, "ausgeschaltet")
+        self.assertEqual(timeline.door, Door.CLOSED)
+        self.assertFalse(c.session.operation_enabled)
+        self.assert_object_and_plain(c.session, [self.cycle(
+            "o1", "c1", 1, 2, role="entry", gang_id=g1.gang_id,
+            links=({"gang_id": g1.gang_id, "role": "entry"},),
+        )])
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+const { panelFixture: fixturePanel } = require("./catalog_fixture.cjs");
 const assert = require("node:assert/strict");
 const {
   parameterValues: fixtureValues,
@@ -51,7 +52,7 @@ function panel(
       : {},
 ) {
   const calls = [];
-  const p = Object.assign(Object.create(Panel.prototype), {
+  const p = Object.assign(fixturePanel(Panel), {
     entry: "entry",
     generation: 0,
     isConnected: true,
@@ -192,7 +193,7 @@ test("temperature choice returns to direct selection after finally ending a sess
   };
   let reportedState;
   const { p, calls } = panel(configuration(), session, async (path, method, body) => {
-    if (path === "/entry/state") return reportedState;
+    if (path === "/entry/state?include_catalog=false") return reportedState;
     if (path === "/entry/control") {
       reportedState = {
         ...reportedState,
@@ -293,7 +294,7 @@ test("a session draft keeps its cancel and apply actions after the session ends"
         configuration(choice === "constant" ? "progressive" : "constant"),
         session,
         async (path, _method, body) => {
-          if (path === "/entry/state") return reportedState;
+          if (path === "/entry/state?include_catalog=false") return reportedState;
           if (path === "/entry/control") {
             reportedState = {
               ...reportedState,
@@ -1315,7 +1316,8 @@ test("a pre-save poll is discarded; the next poll may report an external change"
   p.syncNavigation = () => {};
   p.drawSettings = () => {};
   p.api = async (path) => {
-    if (path.endsWith("/state")) return ++polls === 1 ? oldPoll : external;
+    if (path.split("?")[0].endsWith("/state"))
+      return ++polls === 1 ? oldPoll : external;
     return {
       parameters: {
         target_temperature_c: 75,

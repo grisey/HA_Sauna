@@ -28,6 +28,10 @@ class ImmediateResult(unittest.TextTestResult):
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    suite = unittest.defaultTestLoader.discover(str(Path(__file__).parent))
+    suite = (
+        unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])
+        if len(sys.argv) > 1
+        else unittest.defaultTestLoader.discover(str(Path(__file__).parent))
+    )
     result = unittest.TextTestRunner(verbosity=2, resultclass=ImmediateResult).run(suite)
     raise SystemExit(0 if result.wasSuccessful() else 1)

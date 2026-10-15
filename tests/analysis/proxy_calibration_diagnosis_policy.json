@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "github_run_id": "38733644968",
+    "commit": "fafab1623abf1715a5699ca7007d61fe8f737e5f",
+    "artifact_hashes_sha256": "6dd1375e1659d27348a6ab6962261084bdc9df7af4ff53e30fd5ff2c1c0177e4",
+    "required_outputs": ["profile.json", "calibration.json", "quality.json", "anchor-scores.jsonl.gz"],
+    "runner_compatibility": "Only the additive optional decision_at_s keyword is authorized. Default assessment, numerical kernel, original reader, reference policy and manifest must remain bound to the stored baseline."
+  },
+  "variants": [
+    {"id": "baseline", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "none"},
+    {"id": "without_temperature_bands", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "temperature_channels_only"},
+    {"id": "without_all_bands", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "all_residual_bands"},
+    {"id": "r03_shape_original_bands", "shape_source": "R03_selected_method_refit", "band_source": "baseline", "band_ablation": "none"},
+    {"id": "r03_shape_r03_bands", "shape_source": "R03_selected_method_refit", "band_source": "R03_selected_method_refit", "band_ablation": "none"}
+  ],
+  "gain_boundary": {
+    "variants": [
+      {"id": "baseline", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "none"},
+      {"id": "gain_from_calibration_counters", "shape_source": "baseline", "band_source": "baseline", "band_ablation": "none", "gain_change": "maximum_frontier_eligible_selected_method_counter_endpoint"}
+    ],
+    "selection": "For each selected door model, minimum_gain is exactly the maximum stored score_gain among its numerically evaluable, original-band-admissible and geometry-supported calibration counter endpoints. Apply only when every R03 positive endpoint is frontier-eligible and this maximum is strictly below their minimum gain. No epsilon, iterative search or R04 choice.",
+    "infusion": "No eligible calibration counter exists; retain the exact original profile and minimum_gain. This is not a learned infusion separation level.",
+    "invariants": "Only policy.minimum_gain and the consequent raw score.status may differ. Forms, bands, D, B/V/noise/A, raw template/null losses, gain, original support and geometry owners remain unchanged. Higher gain thresholds must yield a subset of baseline-supported onsets; clustered claim counts need not be monotone.",
+    "scope": "Only baseline plus this one fixed gain hypothesis. Re-run earliest confirmation through the unchanged horizon on the existing R03/R04 scope and all existing decision traces. Do not repeat the five cause variants or any profile refit.",
+    "activation": false
+  },
+  "scope": {
+    "full_recording": "R03",
+    "window_recording": "R04",
+    "windows_from": "baseline calibration.references.evaluation_references including each time_uncertainty_s",
+    "scan_grid_from": "baseline calibration.policy.sampling, preserving its 5-second alignment",
+    "include_reference_boundaries": true,
+    "include_uncertainty_boundaries": true,
+    "diagnostic_onsets": [{"recording": "R04", "onset_s": 10865.0}],
+    "complete_trace_cases": [
+      {"recording": "R03", "kind": "door_open", "onset_s": 1730.0},
+      {"recording": "R03", "kind": "door_close", "onset_s": 1765.0}
+    ],
+    "trace_every_R04_window_onset": true,
+    "trace_R03_training_landmarks_from_selected_methods": true,
+    "trace_schedule": "Every original confirmation-grid decision through the unchanged profile horizon, even after an earlier support; actual decision_at_s is explicit.",
+    "R01_R02": "Only manifest/fixture hashes and stored method records are consumed; no original re-fit or replay scan."
+  },
+  "baseline_comparison_keys": ["onset_at_s", "candidate_at_s", "confirmation_at_s", "status", "support", "score", "amplitude", "frozen_binding", "evaluated_at_s", "threshold_margins", "template_status", "event_geometry"],
+  "factor_invariants": {
+    "band_ablations": "Exactly identical full frozen binding and raw numerical continuation score at common decision times. Only declared residual-band booleans and derived support status may differ; all geometry gates execute through the existing assessment owner.",
+    "form_refit": "R03 user-confirmed door flank examples only; original selected basis, knot, D, onsets, numerical policy, noise floors and prefix unchanged. B/V/noise and original support remain equal. A is re-estimated once on that same prefix as a necessary consequence of the changed shape.",
+    "infusion": "Reuse the exact baseline profile in every variant, except the two explicitly declared band-veto ablations. No infusion refit.",
+    "no_activation": true
+  },
+  "method_overlap": {
+    "expected_method_entries": 24,
+    "source": "Stored calibration.json positive_assessments and known_counterexample_assessments only",
+    "positive_recording": "R03",
+    "counter_grid_s": 20.0,
+    "frontier": "For retained numerically evaluable, band-admissible and geometry-supported endpoints, gain > threshold retains positives and rejects counters when max(counter_gain) <= threshold < min(positive_gain). Unknown geometry is never negative evidence.",
+    "limitation": "Stored assessments stop at their first support. These endpoint intervals do not simulate later confirmations under a changed threshold and do not establish a new recognition rate. R04 is excluded from all threshold/method selection."
+  },
+  "limits": {
+    "maximum_total_least_squares_calls": 2000000,
+    "maximum_owner_calls": 500000,
+    "maximum_cache_entries": 8192,
+    "maximum_curve_value_calls": 3000000,
+    "maximum_runtime_s": 1800.0,
+    "maximum_assessments": 30000,
+    "maximum_trace_rows": 30000,
+    "maximum_baseline_stream_rows": 40000,
+    "maximum_selected_anchors": 3000,
+    "maximum_profile_refits": 2,
+    "maximum_reported_mismatches": 50
+  },
+  "reporting": {"progress_interval_s": 30.0, "json_float_precision": "lossless", "write_all_variant_anchors": true},
+  "interpretation": "A fixed factor diagnosis, not threshold tuning, detector integration, product activation, independent validation or P(event). R03-only training is resubstitution on the same R03 inventory. R04 was previously inspected."
+}

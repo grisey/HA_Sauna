@@ -36,6 +36,7 @@ from .core.light_control import (
 )
 from .core.light_output import LightOutput, LightQuantizer
 from .core.models import Measurement, Position, Quantity
+from .core.moisture import KELVIN_OFFSET_C
 from .core.timeline import Door, Kind
 from .core.warmup import (
     HeatingProgressEpisode,
@@ -71,7 +72,10 @@ class HADevice:
         self.measurements = {}
         self.last_valid_temperature = None
         self.last_valid_lower_temperature = None
-        self.warmup = WarmupEstimate(self.values["warmup_estimation_minutes"] * 60)
+        self.warmup = WarmupEstimate(
+            self.values["warmup_estimation_minutes"] * 60,
+            parameters=runtime.configuration.parameters,
+        )
         self._warmup_key = None
         self._warmup_target = None
         self._warmup_started_at = None
@@ -189,7 +193,7 @@ class HADevice:
                         value = None
                     elif quantity == "humidity" and not 0 <= value <= 100:
                         value = None
-                    elif quantity == "temperature" and value <= -273.15:
+                    elif quantity == "temperature" and value <= -KELVIN_OFFSET_C:
                         value = None
                 except (ValueError, TypeError):
                     value = None
@@ -511,7 +515,9 @@ class HADevice:
             self._reset_heating_progress()
             self._heating_progress_key = key
             self._heating_progress_started_at = now
-            self._heating_progress = HeatingProgressEpisode(window, now)
+            self._heating_progress = HeatingProgressEpisode(
+                window, now, parameters=self.runtime.configuration.parameters
+            )
         self._load_heating_response(key)
         self._heating_progress.startup_delay_seconds = self._heating_response_delay
         if measurement.received_at < self._heating_progress_started_at or (
@@ -577,7 +583,10 @@ class HADevice:
                     archive.heating_response_history,
                     source, position.value, heater_source, timeout,
                 )
-                delay = await asyncio.to_thread(historical_heating_delay, episodes, window)
+                delay = await asyncio.to_thread(
+                    historical_heating_delay, episodes, window,
+                    parameters=self.runtime.configuration.parameters,
+                )
                 if self.runtime.closed or key != self._heating_response_key:
                     return
                 self._heating_response_delay = delay
@@ -742,6 +751,7 @@ class HADevice:
                         historical_warmup_rate,
                         history["measurements"],
                         minimum_observation_seconds=minimum_observation,
+                        parameters=self.runtime.configuration.parameters,
                     )
                     result = history["session_id"], rate
                 else:
@@ -1157,11 +1167,17 @@ class HADevice:
         # Planer dabei seinen laufenden Übergang oder Override verliert.
         self.light_output.parameters = self.runtime.configuration.parameters
         if self.runtime.controller.control_mode == "manual":
-            self.light_output.keep_manual()
+            self.light_output.keep_manual(at=now)
+            self.runtime.record_manual_light_changes(
+                self.light_output.drain_manual_changes(),
+            )
         if (
             self.runtime.controller.control_mode == "automatic"
             and self.light_output.expire_manual(now)
         ):
+            self.runtime.record_manual_light_changes(
+                self.light_output.drain_manual_changes(),
+            )
             self.runtime.log.info(
                 "light_override_expired",
                 "Manuelle Lichtwahl abgelaufen; Licht folgt wieder der Automatik.",
@@ -1189,6 +1205,9 @@ class HADevice:
         plan = light_plan(
             self.light_output, self.runtime.controller, now, actual,
             self.normal_light_brightness(),
+        )
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(),
         )
         # Kurve und Istwert behalten ihre Genauigkeit. Nur die gemeinsame
         # Befehlsgrundlage für Dienst, Echo und Archiv wird quantisiert.
@@ -1866,6 +1885,9 @@ class HADevice:
             self.light_output, self.runtime.controller, value, now,
             self.normal_light_brightness(),
         )
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(), selection={"value": value},
+        )
         self._light_override_dirty = True
 
     @property
@@ -1916,12 +1938,16 @@ class HADevice:
         ):
             self._button_press_light = None
 
-    def begin_button_hold_light(self, session_id, *, starting=False):
+    def begin_button_hold_light(self, session_id, *, starting=False, at=None):
         """Mark acknowledgement for regular output after the heater command."""
         self._button_press_light = None
         self._button_hold_session_id = session_id
         self._button_hold_starting = starting
-        self.light_output.return_to_automatic()
+        now = self.runtime._clock() if at is None else at
+        self.light_output.return_to_automatic(at=now)
+        self.runtime.record_manual_light_changes(
+            self.light_output.drain_manual_changes(),
+        )
 
     async def show_button_hold_light(self, now, session_id):
         """Keep the long-press acknowledgement above all normal phases."""

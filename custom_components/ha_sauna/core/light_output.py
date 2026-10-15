@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import timedelta
 from math import isfinite
@@ -38,6 +39,22 @@ class LightPlan:
     brightness_percent: float
     automatic: bool
     manual_override: bool
+
+
+@dataclass(frozen=True)
+class ManualLightChange:
+    """Beleg eines manuellen Wechsels mit übergebenem wirksamem Zeitpunkt."""
+
+    at: object
+    reason: str
+    previous_value: float | None
+    value: float | None
+    previous_ends_at: object
+    ends_at: object
+    previous_phase_key: object
+    phase_key: object
+    previous_session_id: str | None = None
+    session_id: str | None = None
 
 
 class LightQuantizer:
@@ -103,6 +120,8 @@ class LightOutput:
         self._manual: float | None = None
         self._manual_phase_key = None
         self._manual_ends_at = None
+        self._manual_session_id: str | None = None
+        self._manual_changes: deque[ManualLightChange] = deque()
         self._last_automatic: float = 0.0
         self._resume_pending = False
         self._return_transition: _ReturnTransition | None = None
@@ -111,25 +130,47 @@ class LightOutput:
         self._phase_ends_at = None
 
     def set_manual(
-        self, brightness_percent: float, *, phase_key=None, ends_at=None
+        self,
+        brightness_percent: float,
+        *,
+        phase_key=None,
+        ends_at=None,
+        at=None,
+        session_id=None,
     ) -> None:
         """Hält den Wert bis zum Phasenwechsel oder einer gesetzten Rückkehrfrist."""
+        previous = (
+            self._manual,
+            self._manual_ends_at,
+            self._manual_phase_key,
+            self._manual_session_id,
+        )
         self._manual = _percent(brightness_percent)
         # Der Adapter kennt beim API-Aufruf den aktuellen Controllerzustand,
         # während der Planner noch den letzten Tick enthalten kann. Fehlt der
         # Schlüssel, bleibt das direkte Planer-API rückwärtskompatibel.
         self._manual_phase_key = self._phase_key if phase_key is None else phase_key
         self._manual_ends_at = ends_at
+        self._manual_session_id = session_id
         self._resume_pending = False
         self._return_transition = None
+        self._record_manual_change(at, "selection", previous)
 
-    def return_to_automatic(self) -> None:
+    def return_to_automatic(self, *, at=None, reason="explicit") -> None:
         """Beendet den Override; die nächste Planung beginnt beim beobachteten Ist."""
         if self._manual is not None:
+            previous = (
+                self._manual,
+                self._manual_ends_at,
+                self._manual_phase_key,
+                self._manual_session_id,
+            )
             self._manual = None
             self._manual_phase_key = None
             self._manual_ends_at = None
+            self._manual_session_id = None
             self._resume_pending = True
+            self._record_manual_change(at, reason, previous)
 
     def expire_manual(self, now) -> bool:
         """Return an automatic plan after an explicitly scheduled override ends."""
@@ -139,13 +180,26 @@ class LightOutput:
             or now < self._manual_ends_at
         ):
             return False
-        self.return_to_automatic()
+        self.return_to_automatic(at=now, reason="timeout")
         return True
 
-    def keep_manual(self) -> None:
+    def keep_manual(self, *, at=None) -> None:
         """Make an existing choice indefinite for genuine manual operation."""
-        if self._manual is not None:
+        if self._manual is not None and self._manual_ends_at is not None:
+            previous = (
+                self._manual,
+                self._manual_ends_at,
+                self._manual_phase_key,
+                self._manual_session_id,
+            )
             self._manual_ends_at = None
+            self._record_manual_change(at, "keep", previous)
+
+    def drain_manual_changes(self) -> tuple[ManualLightChange, ...]:
+        """Entnimmt alle Wechsel in ihrer ursprünglichen Reihenfolge genau einmal."""
+        changes = tuple(self._manual_changes)
+        self._manual_changes.clear()
+        return changes
 
     def finish_automatic(self) -> None:
         """Merkt das fachliche Ende der automatischen Ausgabe als AUS vor.
@@ -196,9 +250,17 @@ class LightOutput:
             # The incoming Controller phase owns the choice's lifetime, even
             # when HOLD prevented the planner from observing an intermediate
             # phase. Its previous output phase is not that lifetime's owner.
+            previous = (
+                self._manual,
+                self._manual_ends_at,
+                self._manual_phase_key,
+                self._manual_session_id,
+            )
             self._manual = None
             self._manual_phase_key = None
             self._manual_ends_at = None
+            self._manual_session_id = None
+            self._record_manual_change(now, "phase_change", previous)
         changed = phase_key != self._phase_key
         if changed:
             had_phase = self._phase_key is not None
@@ -261,6 +323,25 @@ class LightOutput:
         self._last_automatic = automatic
         return LightPlan(automatic, True, False)
 
+    def _record_manual_change(
+        self, at, reason: str, previous: tuple[float | None, object, object, str | None]
+    ) -> None:
+        previous_value, previous_ends_at, previous_phase_key, previous_session_id = previous
+        self._manual_changes.append(
+            ManualLightChange(
+                at=at,
+                reason=reason,
+                previous_value=previous_value,
+                value=self._manual,
+                previous_ends_at=previous_ends_at,
+                ends_at=self._manual_ends_at,
+                previous_phase_key=previous_phase_key,
+                phase_key=self._manual_phase_key,
+                previous_session_id=previous_session_id,
+                session_id=self._manual_session_id,
+            )
+        )
+
     def _return_from_manual(self, now, automatic, actual, ends_at) -> float:
         """Blendet zum laufenden Phasenplan, ohne dessen Bewegung neu zu starten."""
         if self._resume_pending:
@@ -296,7 +377,10 @@ class LightOutput:
         remaining = _remaining(now, ends_at)
         if phase in self._DIM_PHASES:
             low = self.parameters.values["after_run_brightness_percent"]
-            fade = min(duration, remaining / 2) if remaining is not None else duration
+            fade = (
+                min(duration, remaining * self.parameters.values["light_cooling_fade_share"])
+                if remaining is not None else duration
+            )
             return _Motion("dim", now, actual, low, fade)
         if phase in self._SESSION_PHASES:
             fade = min(duration, remaining) if remaining is not None else duration

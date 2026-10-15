@@ -203,7 +203,8 @@ class PresenceRegressionTests(unittest.TestCase):
             ))
         status = runtime.presence_status
         self.assertNotIn("observations", status)
-        self.assertEqual(status["external"]["binary_sensor.occupancy"].occupancy, "present")
+        self.assertNotIn("external", status)
+        self.assertEqual(runtime.presence.external["binary_sensor.occupancy"].occupancy, "present")
         self.assertEqual(len(runtime.presence.observations), 500)
 
     def test_stopped_recording_retracts_evidence_and_completes_at_deadline(self):

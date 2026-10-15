@@ -28,6 +28,7 @@ from .models import (
     Energy,
     LightAfterRun,
     Session,
+    TemperatureTargetMark,
     ThermostatState,
     TimedPhase,
 )
@@ -36,7 +37,9 @@ from .parameters import LIVE_TEMPERATURE_KEYS, Parameters
 from .temperature_program import TemperatureProgram
 from .temporary_door_heat import TemporaryDoorHeatState
 from .temporary_door_heat import advance as advance_door_heat
-from .timeline import Confirmation, Door, Event, Kind, apply, utc
+from .timeline import (
+    Confirmation, Door, Event, Kind, apply, utc,
+)
 
 GANG_SIGNALS = (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION, Kind.PRESENCE_CONFIRMED)
 PROGRAM_MODES = frozenset(("constant", "progressive"))
@@ -255,6 +258,26 @@ class Controller:
                 kind, person_evidence_qualified=person_evidence_qualified,
             )
         )
+
+    def detection_onset_allowed(self, kind, proposed_at, recognition_at):
+        """Attribute an earlier onset only without crossing existing control gates."""
+        session = self._session
+        proposed_at, recognition_at = utc(proposed_at), utc(recognition_at)
+        if (session is None or proposed_at < session.started_at
+                or proposed_at > recognition_at
+                or self.recognition_context_at(proposed_at)
+                != self.recognition_context_at(recognition_at)):
+            return False
+        if kind == Kind.INFUSION:
+            return self.recognition_allowed_at(kind, proposed_at)
+        active = session.timeline.active
+        if kind == Kind.DOOR_OPEN:
+            # An earlier opening must remain a new exit for the same stay.
+            return active is None or (
+                (proposed_at > active.started_at)
+                == (recognition_at > active.started_at)
+            )
+        return kind == Kind.DOOR_CLOSE
 
     @property
     def control_mode_change_allowed(self) -> bool:
@@ -871,6 +894,10 @@ class Controller:
         self, event: Event, *, defer_confirmation=False, recognition_at=None,
         person_evidence_qualified=True,
     ) -> Result:
+        if event.trace_at is not None:
+            if recognition_at is not None and utc(recognition_at) != event.trace_at:
+                raise ValueError("Erkennungszeit widerspricht dem führenden Ereignis")
+            recognition_at = event.trace_at
         with self._delivery(event.detected_at):
             return self._process(
                 event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
@@ -901,7 +928,7 @@ class Controller:
         if event.effective_at < previous.started_at:
             raise ValueError("Ereignis liegt vor dem Sessionbeginn")
         if event.kind in (Kind.DOOR_OPEN, Kind.DOOR_CLOSE):
-            apply(previous.timeline, event)  # Validieren vor Fortschreiben der Uhr.
+            apply(previous.timeline, event)
         self.advance(event.booking_at, evaluate=False, inclusive_confirmation=False)
         previous = self._session
         if previous is None:
@@ -928,7 +955,9 @@ class Controller:
             self.door_request = transition.state
             if (transition.request and self.feedback is not True
                     and self._gang_temperature_blocked() is None
-                    and self._gang_temperature_blocked_at(event.effective_at) is None):
+                    and self._gang_temperature_blocked_at(
+                        event.confirmation_at,
+                    ) is None):
                 self._door_request_pending = True
         blocked = (
             self._gang_start_blocked(previous)
@@ -988,9 +1017,38 @@ class Controller:
         ):
             # A door cycle across operation-OFF cannot start a resumed session.
             timeline = replace(timeline, anchor=None, preparation=None)
-        self._session = replace(previous, timeline=timeline)
         if event.kind == Kind.DOOR_OPEN:
             self._presence_entry = None
+        self._apply_timeline_transition(
+            previous, timeline, event.booking_at,
+            operation_off=event.kind == Kind.OPERATION_OFF,
+        )
+        if event.kind == Kind.OPERATION_OFF:
+            self._abort_after_run(event.booking_at)
+            self._session = replace(
+                self._session,
+                operation_enabled=False,
+                operation_off_at=event.booking_at,
+            )
+            ends_at = event.booking_at + timedelta(
+                seconds=self.parameters.seconds("session_gap_minutes")
+            )
+            self._schedule(
+                "session_gap",
+                ends_at,
+            )
+            if self.control_mode == "automatic":
+                self._create_session_light(
+                    self._session.session_id, event.booking_at, ends_at
+                )
+        if event.kind == Kind.DOOR_CLOSE:
+            self._reconcile_direct_presence(event.booking_at, entry_event=event)
+        self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
+        return Result(self._session, True, "gang_model_updated", event.event_id)
+
+    def _apply_timeline_transition(self, previous, timeline, at, *, operation_off=False):
+        """Apply gang effects from the leading timeline transition."""
+        self._session = replace(previous, timeline=timeline)
         if previous.timeline.active is None and timeline.active is not None:
             self._presence_entry = None
             if (self.control_mode == "automatic"
@@ -999,7 +1057,7 @@ class Controller:
                     and self.direct_presence.available
                     and self.direct_presence.qualified_presence
                     and self.direct_presence.occupancy == "present"):
-                self._abort_after_run(event.booking_at)
+                self._abort_after_run(at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None
                      or timeline.active.gang_id != previous.active_gang_temperature_id)):
@@ -1040,7 +1098,7 @@ class Controller:
         elif previous.timeline.active is None:
             self._schedule(
                 "confirmation",
-                active.started_at
+                self._gang_control_start_at(timeline)
                 + timedelta(seconds=self.parameters.seconds("confirmation_minutes")),
                 active.gang_id,
             )
@@ -1048,31 +1106,9 @@ class Controller:
             len(timeline.completed) > len(previous.timeline.completed)
             and timeline.completed[-1].confirmation == Confirmation.CONFIRMED
             and "cooling" in self.regulation_causes
-            and event.kind != Kind.OPERATION_OFF
+            and not operation_off
         ):
-            self._begin_after_run(timeline.completed[-1].gang_id, event.booking_at)
-        if event.kind == Kind.OPERATION_OFF:
-            self._abort_after_run(event.booking_at)
-            self._session = replace(
-                self._session,
-                operation_enabled=False,
-                operation_off_at=event.booking_at,
-            )
-            ends_at = event.booking_at + timedelta(
-                seconds=self.parameters.seconds("session_gap_minutes")
-            )
-            self._schedule(
-                "session_gap",
-                ends_at,
-            )
-            if self.control_mode == "automatic":
-                self._create_session_light(
-                    self._session.session_id, event.booking_at, ends_at
-                )
-        if event.kind == Kind.DOOR_CLOSE:
-            self._reconcile_direct_presence(event.booking_at, entry_event=event)
-        self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
-        return Result(self._session, True, "gang_model_updated", event.event_id)
+            self._begin_after_run(timeline.completed[-1].gang_id, at)
 
     def recognition_allowed(self, kind: Kind, *, person_evidence_qualified=True) -> bool:
         """Freigabe für Gangzuordnung oder die laufende Proxykühlung."""
@@ -1123,7 +1159,7 @@ class Controller:
                 and effective_at < self._gang_entry_start_at(timeline))
         ):
             return "entry_context_changed"
-        if at > self._gang_entry_start_at(timeline) + timedelta(
+        if at > self._gang_control_start_at(timeline) + timedelta(
             seconds=self.parameters.seconds("confirmation_minutes")
         ):
             return "entry_context_expired"
@@ -1163,6 +1199,20 @@ class Controller:
         if not timeline.entry_cycle_available:
             return None
         return max(timeline.anchor.effective_at, self._gang_temperature_gates[-1][0])
+
+    def _gang_control_start_at(self, timeline):
+        """Derive control windows from the source's existing confirmation."""
+        if timeline.active is not None:
+            active = timeline.active
+            source = next((event for event in timeline.processed
+                           if event.event_id == active.start_source_event_id), None)
+            if source is None:
+                return active.started_at
+            return max(active.started_at, source.confirmation_at)
+        start_at = self._gang_entry_start_at(timeline)
+        if start_at is None:
+            return None
+        return max(start_at, timeline.anchor.confirmation_at)
 
     def _gang_start_blocked(self, session):
         return self._session_recognition_blocked(session) or self._gang_temperature_blocked()
@@ -1568,20 +1618,36 @@ class Controller:
         if previous is not None and (
             (value.report_id is not None and value.report_id == previous.report_id)
             or (effective_at is not None and previous.timing.effective_at is not None
-                and effective_at < previous.timing.effective_at)
+                and effective_at < previous.timing.effective_at
+                and (value.timing.first_usable_at is None
+                     or value.timing.first_usable_at < previous.timing.evaluated_at))
         ):
             return False
         at = value.timing.evaluated_at
         if not defer_evaluation:
             self.advance(at, evaluate=False)
         self.direct_presence = value
+        session = self._session
+        if (value.qualified_presence and value.timing.first_usable_at is not None
+                and session is not None and session.timeline.active is None
+                and session.timeline.entry_cycle_available
+                and value.timing.first_usable_at >= session.timeline.anchor.confirmation_at):
+            # This closure was already booked before the assertion became usable.
+            # Retire its existing eligibility so a later tick cannot revive it.
+            timeline = session.timeline
+            self._session = replace(session, timeline=replace(
+                timeline, rejected_start_sources=(
+                    *timeline.rejected_start_sources, timeline.anchor.event_id,
+                ),
+            ))
+            self._presence_entry = None
         # Only state assertions own entry/exit history. One-time projections
         # can describe the current input but cannot rewrite that history.
         if value.qualified_presence:
             self._direct_presence_history.append(value)
         if (value.qualified_presence and self._presence_entry is not None
                 and effective_at is not None
-                and effective_at >= self._presence_entry.closure.effective_at
+                and effective_at >= self._presence_entry.closure.confirmation_at
                 and (not value.available or value.occupancy != "present")):
             self._presence_entry = None
         if self._session is None:
@@ -1608,7 +1674,7 @@ class Controller:
         report = (
             next((report for report in reversed(self._direct_presence_history)
                   if report.timing.effective_at is not None
-                  and report.timing.effective_at <= closure.effective_at
+                  and report.timing.effective_at <= closure.confirmation_at
                   and report.timing.received_at is not None
                   and report.timing.received_at <= self._received_at(at)), None)
             if closure is not None else (
@@ -1618,7 +1684,9 @@ class Controller:
         if (session is None or not session.operation_enabled or report is None
                 or not report.available or not report.qualified_presence
                 or report.timing.effective_at is None or report.timing.received_at is None
-                or report.timing.received_at > self._received_at(at)):
+                or report.timing.received_at > self._received_at(at)
+                or (closure is not None and report.timing.first_usable_at is not None
+                    and report.timing.first_usable_at > closure.confirmation_at)):
             if session is None or not session.operation_enabled:
                 self._presence_entry = None
             return False
@@ -1641,12 +1709,14 @@ class Controller:
                     or self._gang_start_blocked(session)):
                 return False
             effective = self._gang_entry_start_at(t)
-            if effective > entry.closure.effective_at:
+            if effective > entry.closure.confirmation_at:
                 # The occupancy observed at entry must persist while waiting.
                 # A later ON cannot revive an entry interrupted by OFF/unknown.
                 if any(
                     item.timing.effective_at is not None
-                    and item.timing.effective_at >= entry.closure.effective_at
+                    and max(item.timing.effective_at,
+                            item.timing.first_usable_at or item.timing.effective_at)
+                    >= entry.closure.confirmation_at
                     and item.timing.received_at is not None
                     and item.timing.received_at <= self._received_at(at)
                     and (not item.available or not item.qualified_presence
@@ -1658,7 +1728,10 @@ class Controller:
             kind = Kind.PRESENCE_CONFIRMED
             source, report = entry.closure, entry.presence
         else:
-            effective = t.presence_exit_at(report.timing.effective_at)
+            effective = t.presence_exit_at(max(
+                report.timing.effective_at,
+                report.timing.first_usable_at or report.timing.effective_at,
+            ))
             if (self._direct_presence_catchup
                     or report.occupancy != "absent"
                     or effective is None):
@@ -1759,6 +1832,7 @@ class Controller:
                 self.door_request = replace(
                     self.door_request, eligible_open=False, invalidated=True
                 )
+        self._record_temperature_target(at)
         self.consumer_events.extend(gang_changes(
             self._consumer_snapshot, self._session, self._received_at(at),
         ))
@@ -1768,6 +1842,22 @@ class Controller:
         if phase_key != self._phase_key:
             self._phase_key, self.phase_since = phase_key, at
         return decision
+
+    def _record_temperature_target(self, at):
+        """Keep only targets booked by this controller at their actual use time."""
+        session = self._session
+        if session is None:
+            return
+        at = utc(at)
+        target = self._temperature_target()
+        history = session.target_history
+        if history and history[-1].target_c == target:
+            return
+        if history and history[-1].at == at:
+            history = history[:-1]
+        if not history or history[-1].target_c != target:
+            history += (TemperatureTargetMark(at, target),)
+        self._session = replace(session, target_history=history)
 
     def _record_base_phase(self, at):
         session = self._session
@@ -1792,6 +1882,7 @@ class Controller:
 
     def _complete_session(self, at, *, light_after_run):
         """Archive the current session and complete its active state."""
+        self._record_temperature_target(at)
         session = self._session
         if session is None:
             return None
@@ -1940,14 +2031,17 @@ class Controller:
                 )
                 self._session = replace(
                     self._session,
-                    timeline=apply(session.timeline, event),
+                    timeline=apply(
+                        session.timeline, event,
+                    ),
                     active_gang_temperature_c=None,
                     active_gang_temperature_id=None,
                 )
+                self._record_temperature_target(now)
         elif deadline.purpose == "after_run":
             phase = session.after_run
             if phase is not None:
-                if phase.remaining_seconds <= 1e-6:
+                if phase.remaining_seconds <= self.parameters.values["phase_completion_tolerance_seconds"]:
                     phase = replace(
                         phase,
                         elapsed_seconds=max(phase.elapsed_seconds, phase.required_seconds),
