@@ -24,12 +24,14 @@
       "core": 120,
       "ha_adapter": 120,
       "integration": 1500,
-      "sessions": 2400
+      "sessions": 2400,
+      "detector_replay": 5400
     },
     "job_timeouts_minutes": {
       "core": 3,
       "ha": 30,
       "sessions": 45,
+      "detector_replay": 95,
       "browser": 25,
       "ui": 60,
       "format": 15
