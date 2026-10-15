@@ -1172,9 +1172,11 @@ class InfusionLifecycleTests(unittest.TestCase):
         return {"kind": kind, "onset": onset, "until": until, "quantity": quantity}
 
     def _math_curve(self, shapes, samples, *, policy, onset_at=None,
-                    direction=None, onset_not_before=None):
+                    direction=None, onset_not_before=None, hinge_order=1):
         """Return declared local witnesses, retaining the real original support."""
-        if not samples:
+        # The declared shapes describe first-order hinges only; they do not
+        # supply evidence for the detector's optional curvature comparison.
+        if hinge_order != 1 or not samples:
             return None
         midpoint = (self.temperature + self.baseline) / 2
         quantity = (Quantity.TEMPERATURE if samples[0][1] > midpoint
@@ -1502,7 +1504,12 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertEqual(len(self._infusions(events)), 1)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             original = self._infusions(events)[0]
-            before_read = deepcopy(detector.__dict__)
+            parameter_values = detector.p
+            # Copy the immutable parameter view as values, retaining the full
+            # deep copy for every mutable part of the detector's owner state.
+            before_read = deepcopy(
+                detector.__dict__, {id(parameter_values): dict(parameter_values)},
+            )
             with patch.multiple(
                 "custom_components.ha_sauna.core.detector",
                 **dict.fromkeys(("curve_change", "curve_form", "curve_level",
@@ -1514,6 +1521,7 @@ class InfusionLifecycleTests(unittest.TestCase):
                     active.phase = "ended"
             for calculation in calculations.values():
                 calculation.assert_not_called()
+            self.assertIs(detector.p, parameter_values)
             self.assertEqual(detector.__dict__, before_read)
             self.assertEqual(active.phase, "active")
             self.assertEqual(active.bound_at, pending.bound_at)
@@ -1867,7 +1875,13 @@ class InfusionLifecycleTests(unittest.TestCase):
         for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY):
             shapes.extend((self._shape("open", door_start, door_bottom, quantity),
                            self._shape("close", close_start, close_end, quantity)))
-        detector = Detector(self.parameters, T0)
+        episodes_at_opening = []
+
+        def observe(row):
+            if Kind.DOOR_OPEN in row["signals"]:
+                episodes_at_opening.append(detector.infusion_episode)
+
+        detector = Detector(self.parameters, T0, observer=observe)
         controller = Controller(self.parameters)
         controller.set_temperature(self.temperature, T0)
         controller.begin_session("s", T0)
@@ -1882,14 +1896,12 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertEqual(len(controller.session.timeline.active.infusion_events), 1)
             first_episode = detector.infusion_episode
-            self._feed(detector, next_rise - self.step, points, events,
-                       temperatures=temperatures, controller=controller)
-            self.assertIsNone(detector.infusion_episode)
-            self.assertEqual(first_episode.phase, "active")
-            self.assertIsNone(first_episode.level_end_at)
             self._feed(detector, next_fall, points, events,
                        temperatures=temperatures, controller=controller)
         self.assertEqual(len(self._infusions(events)), 2)
+        self.assertEqual(episodes_at_opening, [None])
+        self.assertEqual(first_episode.phase, "active")
+        self.assertIsNone(first_episode.level_end_at)
         next_episode = detector.infusion_episode
         self.assertNotEqual(next_episode.bound_at, first_episode.bound_at)
         self.assertIs(first_episode.confirmed_detection, self._infusions(events)[0])
