@@ -1734,6 +1734,86 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIsNone(pending.confirmed_detection)
         self.assertIsNone(pending.confirmed_at)
 
+    def test_qualified_continuation_keeps_delayed_fall_beyond_historical_onset_window(self):
+        points, shapes, rise_two, _ = self._scenario(merged=True)
+        historical_onset = rise_two
+        second_peak = (
+            historical_onset + self.p["curve_window_seconds"]
+            - (self.side - 2) * self.step
+        )
+        second_fall = second_peak + self.width
+        points[-2:] = [(second_peak, self.peak), (second_fall, self.level)]
+        shapes[2:] = [self._shape("decay", second_peak, second_fall)]
+        reveal_at = rise_two + (self.side + 2) * self.step
+        expired_at = historical_onset + self.p["curve_window_seconds"] + self.step
+        fall_at = second_peak + self.side * self.step
+        self.assertLess(reveal_at + self.step, expired_at)
+        self.assertLess(expired_at, fall_at)
+        detector = Detector(self.parameters, T0)
+        events = []
+        # Only the optional historical onset is declared. All original forms,
+        # water pairs and fresh fall/background witnesses use production math.
+        with self._patch_math(shapes, forms=original_contrasts):
+            self._feed(detector, rise_two, points, events)
+            self.assertEqual(len(self._infusions(events)), 1)
+            original = self._infusions(events)[0]
+            active = detector.infusion_episode
+            self.assertEqual(active.phase, "active")
+            first_component = detector._infusion_episode["original_component"]
+            self._feed(detector, reveal_at, points, events)
+            component = detector._original_infusion_candidate
+            self.assertIsNot(component, first_component)
+            self.assertIs(detector._infusion_episode["original_component"], component)
+            self.assertTrue(component["qualified"])
+            self.assertTrue(component["continuing"])
+            self.assertFalse(component["fall_confirmed"])
+            self.assertTrue(all(witness["change"] > 0
+                                for witness in component["water"].values()))
+            native_at = component["received_at"]
+            self.assertGreater(native_at, self._at(historical_onset))
+            self.assertEqual(set(component["onsets"].values()), {native_at})
+            # The second rise qualifies without an optional historical model.
+            # Only a later original exposes that earlier, existing onset.
+            shapes.insert(2, self._shape("rise", historical_onset, second_peak))
+            self._feed(detector, reveal_at + self.step, points, events)
+            self.assertIs(detector._original_infusion_candidate, component)
+            self.assertEqual(component["received_at"], native_at)
+            self.assertEqual(set(component["onsets"].values()),
+                             {self._at(historical_onset)})
+            for position in detector.positions:
+                self.assertIn(self._at(historical_onset), {
+                    stamp for stamp, _ in
+                    detector._curve_series[position, Quantity.HUMIDITY]["points"]
+                })
+            self.assertLess(self._at(fall_at), native_at + timedelta(
+                seconds=self.p["curve_window_seconds"],
+            ))
+            self._feed(detector, expired_at, points, events)
+            self.assertIs(detector._original_infusion_candidate, component)
+            self.assertEqual(set(component["onsets"].values()),
+                             {self._at(historical_onset)})
+            self.assertTrue(component["qualified"])
+            self.assertFalse(component["fall_confirmed"])
+            self.assertEqual(detector.infusion_episode.phase, "active")
+            self.assertEqual(detector.infusion_episode.bound_at, active.bound_at)
+            self.assertIs(detector.infusion_episode.confirmed_detection, original)
+            self.assertEqual(self._infusions(events), [original])
+            self._feed(detector, fall_at, points, events)
+            self.assertIs(detector._original_infusion_candidate, component)
+            self.assertTrue(component["fall_confirmed"])
+            for _, pair in component["fall_windows"]:
+                self.assertGreater(pair.humidity.current[0][0], self._at(second_peak))
+            self._feed(detector, second_fall + (self.side + 1) * self.step, points, events)
+        ended = detector.infusion_episode
+        self.assertEqual(ended.phase, "ended")
+        self.assertEqual(ended.end_basis, "original_background")
+        self.assertGreater(ended.level_end_at, self._at(fall_at))
+        self.assertEqual(ended.bound_at, active.bound_at)
+        self.assertIs(ended.confirmed_detection, original)
+        self.assertEqual(self._infusions(events), [original])
+        self.assertEqual(active.phase, "active")
+        self.assertIsNone(active.level_end_at)
+
     def test_upper_peak_preserves_lower_tail_until_shared_level_and_next_infusion(self):
         first_peak = self.begin + self.width
         first_fall = first_peak + self.width
