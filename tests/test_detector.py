@@ -21,6 +21,7 @@ from custom_components.ha_sauna.core.curve_change import (
     OriginalPositionWindows,
     original_contrasts,
     original_water_pair,
+    original_window,
 )
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
@@ -1720,6 +1721,8 @@ class InfusionLifecycleTests(unittest.TestCase):
         The production helper still combines the required positions. A missing
         window remains unknown; varying tails without a declared form cannot
         supply background evidence. No water pair or event state is fabricated.
+        Declared RH rises qualify R only: equal old/current slopes leave Q
+        neutral, so these controlled lifecycle cases exercise the fall fallback.
         """
         strength = 2 * max(
             self.p[key] for key in (
@@ -1755,9 +1758,13 @@ class InfusionLifecycleTests(unittest.TestCase):
                         "rise": (0, 1), "decay": (1, -1),
                         "open": (0, -1), "close": (-1, 1),
                     }[shape["kind"]]
+                    slope = after * strength * window.e
+                    previous_slope = (
+                        slope if quantity == Quantity.HUMIDITY and shape["kind"] == "rise"
+                        else before * strength * window.e_minus
+                    )
                     features.append(replace(
-                        window, v=after * strength * window.e,
-                        b=before * strength * window.e_minus, r=0.0,
+                        window, v=slope, b=previous_slope, r=0.0,
                     ))
                 else:
                     features.append(replace(
@@ -1891,18 +1898,21 @@ class InfusionLifecycleTests(unittest.TestCase):
         ) / 60
         points = [(0, self.baseline), (self.begin, self.baseline),
                   (end, self.baseline + rate * (end - self.begin))]
-        shapes = [self._shape("rise", self.begin, end)]
-        detector = Detector(self.parameters, T0)
+        traces = []
+        detector = Detector(self.parameters, T0, observer=traces.append)
         events = []
-        with self._patch_math(shapes):
-            self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
-            self.assertEqual(detector._infusion_episode["phase"], "pending")
-            self.assertIsNone(detector._infusion_episode["confirmed_at"])
-            self.assertTrue(all(
-                witness["change"] > 0 for witness in detector._infusion_episode["water"].values()
-            ))
-            self._feed(detector, end, points, events)
+        # This slow person-like ramp uses the real original mathematics and
+        # native water pairs; no declared strong R or Q is injected.
+        self._feed(detector, end, points, events)
+        native = [item["original_infusion"] for item in traces
+                  if "original_infusion" in item]
+        self.assertTrue(native)
+        self.assertTrue(all(
+            item["rise"] <= self.p["curve_original_new_infusion_contrast"]
+            for item in native
+        ))
         self.assertEqual(self._infusions(events), [])
+        self.assertIsNone(detector.infusion_episode)
         self.assertIn(Kind.PERSON_STRONG, [item.kind for item in events])
 
     def test_expired_pending_rise_cannot_own_a_later_decay_or_new_pulse(self):
@@ -2112,6 +2122,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(infusion.effective_at, self._at(self.begin))
         self.assertGreater(infusion.trace_at, self._at(peak))
         self.assertEqual(infusion.detected_at, infusion.trace_at)
+        self.assertEqual(detector._infusion_episode["confirmation_basis"], "after_fall")
         self.assertEqual(detector._infusion_episode["confirmed_at"], infusion.trace_at)
         gang = controller.session.timeline.active
         self.assertIsNotNone(gang)
@@ -2126,6 +2137,138 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertEqual(consumed[0].effective_at, infusion.effective_at)
         self.assertEqual(consumed[0].received_at, infusion.detected_at)
         self.assertTrue(controller.regulation_inputs.gang_heat_demand)
+
+    def test_native_fresh_rise_confirms_once_before_both_position_peaks(self):
+        points, _, _, _ = self._scenario(merged=False)
+        # Both positions deliberately use the same existing fixture curve.
+        # This is a causal lifecycle case, not an R07 sensor-specific replay.
+        peaks = {position: self._at(self.begin + self.width)
+                 for position in (Position.UPPER, Position.LOWER)}
+        detector = Detector(self.parameters, T0)
+        controller = Controller(self.parameters)
+        controller.set_temperature(self.temperature, T0)
+        controller.begin_session("s", T0)
+        controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
+        controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
+        events = []
+        self._feed(detector, self.begin, points, events, controller=controller)
+        self.assertEqual(self._infusions(events), [])
+        second = self.begin + self.step
+        while second <= self.begin + self.width:
+            self._send(detector, second, self._value(points, second), events,
+                       controller=controller)
+            if self._infusions(events):
+                break
+            second += self.step
+        self.assertEqual(len(self._infusions(events)), 1)
+        infusion = self._infusions(events)[0]
+        self.assertEqual(infusion.detected_at, self._at(second))
+        self.assertEqual(infusion.trace_at, infusion.detected_at)
+        for position, peak in peaks.items():
+            with self.subTest(position=position):
+                self.assertLess(infusion.detected_at, peak)
+        self.assertLessEqual(infusion.effective_at, infusion.trace_at)
+        episode = detector._infusion_episode
+        self.assertEqual(episode["confirmation_basis"], "early_rise")
+        component = episode["original_component"]
+        self.assertFalse(component["fall_ready"])
+        self.assertFalse(component["fall_confirmed"])
+        native = original_contrasts(
+            dict(component["early_confirmation_windows"]),
+            expected_positions=tuple(position.value for position in detector.positions),
+        )
+        self.assertIsNotNone(native)
+        self.assertGreater(native.rise, self.p["curve_original_new_infusion_contrast"])
+        self.assertGreater(native.humidity_rise_change,
+                           self.p["curve_original_significance"])
+        bound = {name: (temperature, humidity)
+                 for name, temperature, humidity in component["newest"]}
+        for name, pair in native.positions:
+            self.assertGreater(pair.temperature.newest_at, bound[name][0])
+            self.assertGreater(pair.humidity.newest_at, bound[name][1])
+            for quantity in (pair.temperature, pair.humidity):
+                self.assertLessEqual(quantity.newest_at, infusion.trace_at)
+            state = component["water_state"][Position(name)]
+            self.assertGreater(state["maximum"].lower_density, state["base"].upper_density)
+            for witness in (state["base"], state["maximum"]):
+                self.assertLessEqual(witness.available_at, infusion.trace_at)
+        self._feed(detector, self.begin + 2 * self.width + (self.side + 1) * self.step,
+                   points, events, controller=controller)
+        self.assertEqual(self._infusions(events), [infusion])
+        self.assertIs(detector.infusion_episode.confirmed_detection, infusion)
+        gang = controller.session.timeline.active
+        self.assertIsNotNone(gang)
+        self.assertEqual(len(gang.infusion_events), 1)
+        self.assertEqual(gang.infusion_events[0].booking_at, infusion.trace_at)
+        consumed = [item for item in controller.consumer_events if item.kind == "infusion"]
+        self.assertEqual(len(consumed), 1)
+        self.assertEqual(consumed[0].received_at, infusion.detected_at)
+
+    def test_early_confirmation_q_correction_is_an_existing_interface_special_case(self):
+        """Historical correction contract; no observed HA sensor path is claimed."""
+        points, _, _, _ = self._scenario(merged=False)
+        detector = Detector(self.parameters, T0)
+        events = []
+        # Optional onset models are absent. R, Q and every water pair remain
+        # native; this isolates the stored original-evidence correction API.
+        with self._patch_math([], forms=original_contrasts):
+            self._feed(detector, self.begin + self.side * self.step, points, events)
+            self.assertEqual(len(self._infusions(events)), 1)
+            infusion = self._infusions(events)[0]
+            episode = detector._infusion_episode
+            self.assertEqual(episode["confirmation_basis"], "early_rise")
+            component = episode["original_component"]
+            confirming = dict(component["early_confirmation_windows"])
+            expected = tuple(position.value for position in detector.positions)
+            old = original_contrasts(confirming, expected_positions=expected)
+            self.assertIsNotNone(old)
+            self.assertGreater(old.humidity_rise_change,
+                               self.p["curve_original_significance"])
+            humidity = confirming["upper"].humidity
+            corrected_at = humidity.previous[0][0]
+            correction = 2 * self.baseline - self.peak
+            self.assertNotIn(corrected_at, {
+                stamp for _, pair in component["rise_windows"]
+                for stamp, _ in pair.humidity.previous + pair.humidity.current
+            })
+            water = {position: (state["base"], state["maximum"])
+                     for position, state in component["water_state"].items()}
+            self.assertTrue(all(
+                corrected_at != witness.humidity_sample[0]
+                for witnesses in water.values() for witness in witnesses
+            ))
+            held_rise = component["rise_score"]
+            self.assertGreater(held_rise, component["threshold"])
+            corrected = original_window(
+                tuple((stamp, correction if stamp == corrected_at else value)
+                      for stamp, value in humidity.previous + humidity.current),
+                count=self.side, scale=humidity.scale, at=humidity.newest_at,
+                max_gap_seconds=self.p["curve_original_gap_humidity_upper_seconds"],
+            )
+            self.assertIsNotNone(corrected)
+            proof = original_contrasts({
+                **confirming, "upper": replace(confirming["upper"], humidity=corrected),
+            }, expected_positions=expected)
+            self.assertIsNotNone(proof)
+            self.assertEqual(proof.rise, old.rise)
+            self.assertGreater(proof.rise, self.p["curve_original_new_infusion_contrast"])
+            self.assertLessEqual(proof.humidity_rise_change,
+                                 self.p["curve_original_significance"])
+            detector._correct_original_infusion(
+                Position.UPPER, Quantity.HUMIDITY, corrected_at, correction,
+            )
+            self.assertEqual(component["rise_score"], held_rise)
+            self.assertEqual(water, {
+                position: (state["base"], state["maximum"])
+                for position, state in component["water_state"].items()
+            })
+            self.assertTrue(all(witness["change"] > 0
+                                for witness in episode["water"].values()))
+            self.assertIsNone(detector._original_infusion_candidate)
+            self.assertIsNone(episode["original_component"])
+            self.assertIn(Position.UPPER, episode["interrupted"])
+            self.assertIs(detector.infusion_episode.confirmed_detection, infusion)
+            self.assertEqual(self._infusions(events), [infusion])
 
     def test_multiple_peaks_before_level_end_remain_one_infusion(self):
         points, shapes, rise_two, fall_two = self._scenario(merged=True)

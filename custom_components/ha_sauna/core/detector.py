@@ -1104,6 +1104,7 @@ class Detector:
     ):
         """Originalformen im einzigen Aufgussbestand fortschreiben."""
         significance = self.p["curve_original_significance"]
+        early_threshold = self.p["curve_original_new_infusion_contrast"]
         for prefix in prefixes:
             episode = self._infusion_episode
             component = self._original_infusion_candidate
@@ -1128,7 +1129,11 @@ class Detector:
                 "received_at": prefix.received_at,
                 "positions": expected,
                 "rise": contrasts.rise,
+                "humidity_rise_change": contrasts.humidity_rise_change,
                 "fall": contrasts.fall,
+                "confirmation_basis": (
+                    episode.get("confirmation_basis") if episode is not None else None
+                ),
                 "background_slope": contrasts.background_slope,
                 "background_residual": contrasts.background_residual,
                 "rise_candidate": _gate(
@@ -1219,7 +1224,10 @@ class Detector:
                         "curve_original_new_infusion_contrast" if component["assignment"] == "new"
                         else "curve_original_continuation_contrast"
                     ]
-                    if prefix.original and self._original_newer(contrasts, component["newest"]):
+                    later_original = bool(
+                        prefix.original and self._original_newer(contrasts, component["newest"])
+                    )
+                    if later_original:
                         if component["rise_score"] is None or contrasts.rise > component["rise_score"]:
                             component["rise_score"] = contrasts.rise
                             component["rise_windows"] = contrasts.positions
@@ -1272,6 +1280,7 @@ class Detector:
                     )
                     trace["original_infusion"].update(
                         strong=component["strong"], threshold=threshold,
+                        early_rise_threshold=early_threshold,
                         assignment=component["assignment"],
                         water_positive=positive, water_complete=all(
                             witness["complete"] for witness in water.values()
@@ -1286,9 +1295,16 @@ class Detector:
                             reference="bound_maximum_fresh_original_rise",
                         ),
                         "current_original_rise": _gate(
-                            contrasts.rise > threshold, value=contrasts.rise,
-                            operator=">", threshold=threshold, unit="contrast",
+                            contrasts.rise > early_threshold, value=contrasts.rise,
+                            operator=">", threshold=early_threshold, unit="contrast",
+                            reference="current_original_first_confirmation_rise",
                         ),
+                        "current_original_rise_change": _gate(
+                            contrasts.humidity_rise_change > significance,
+                            value=contrasts.humidity_rise_change,
+                            operator=">", threshold=significance, unit="contrast",
+                        ),
+                        "later_original_confirmation": _gate(later_original),
                         "episode_assignment_known": _gate(component["assignment"] != "unknown"),
                         "positive_available_water": _gate(positive),
                         "water": {position.value: _gate(
@@ -1337,12 +1353,42 @@ class Detector:
                         episode["last_rise_at"] = dict(component["onsets"])
                         episode["original_component"] = component
                         episode["original_background"] = None
-                    if (component is not None and component["qualified"]
-                            and component["fall_ready"]):
-                        component["fall_confirmed"] = True
-                        if episode["phase"] == "pending":
+                    if component is not None and component["qualified"]:
+                        if component["fall_ready"]:
+                            component["fall_confirmed"] = True
+                        early_rise = bool(
+                            later_original and contrasts.rise > early_threshold
+                            and contrasts.humidity_rise_change > significance and positive
+                        )
+                        pending_confirmation = bool(
+                            episode["phase"] == "pending"
+                            and episode["original_component"] is component
+                            and episode["confirmed_at"] is None
+                            and episode["confirmed_detection"] is None
+                        )
+                        trace["original_infusion"]["early_rise_confirmation"] = _gate(
+                            pending_confirmation and early_rise,
+                        )
+                        if pending_confirmation and (early_rise or component["fall_ready"]):
+                            # Der frische Anstiegswechsel darf vor dem Peak
+                            # bestätigen. Fallbelege führen die Episode danach
+                            # unverändert weiter und bleiben ein später Fallback.
+                            episode["confirmation_basis"] = (
+                                "early_rise" if early_rise else "after_fall"
+                            )
+                            if early_rise:
+                                component["early_confirmation_windows"] = contrasts.positions
                             self._original_confirm_infusion(
                                 episode, now, decision_at, floor, onset_allowed, emit,
+                            )
+                            trace["original_infusion"].update(
+                                confirmation_basis=episode["confirmation_basis"],
+                            )
+                            trace["decisions"]["infusion"]["gates"].update(
+                                early_rise_confirmation=_gate(early_rise),
+                                after_fall_confirmation=_gate(
+                                    not early_rise and component["fall_ready"],
+                                ),
                             )
                             trace["conditions"]["infusion"] = True
                             trace["decisions"]["infusion"]["result"] = True
@@ -2602,6 +2648,7 @@ class Detector:
             "water": water,
             "confirmed_at": None,
             "confirmed_detection": None,
+            "confirmation_basis": None,
             "original": onsets is not None,
             "original_component": None,
             "original_background": None,
@@ -2900,6 +2947,18 @@ class Detector:
                     else:
                         component["strong"] = False
                         component["rise_score"] = None
+            if "early_confirmation_windows" in component:
+                windows, changed = self._correct_original_windows(
+                    component["early_confirmation_windows"],
+                    position, quantity, corrected_at, value,
+                )
+                if changed:
+                    component["early_confirmation_windows"] = windows
+                    contrasts = original_contrasts(dict(windows), expected_positions=expected)
+                    component_invalid |= contrasts is None or not (
+                        contrasts.rise > self.p["curve_original_new_infusion_contrast"]
+                        and contrasts.humidity_rise_change > self.p["curve_original_significance"]
+                    )
             state = component["water_state"].get(position)
             witness = component.get("onset_witnesses", {}).get(position)
             if (quantity == Quantity.HUMIDITY and witness is not None
@@ -3962,6 +4021,7 @@ class Detector:
                         "end_basis": self._infusion_episode["end_basis"],
                         "interrupted": bool(self._infusion_episode["interrupted"]),
                         "confirmed_at": self._infusion_episode["confirmed_at"],
+                        "confirmation_basis": self._infusion_episode["confirmation_basis"],
                         "water_change": {
                             position.value: witness["change"]
                             for position, witness in self._infusion_episode["water"].items()

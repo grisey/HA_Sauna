@@ -164,6 +164,7 @@ Positionen:
 ```text
 R = min_p v_Hp/E_Hp
 F = min_p −v_Hp/E_Hp
+Q = min_p (v_Hp − b_Hp)/(E_Hp + E⁻_Hp)
 ```
 
 Ein neues Original mit `R > s` bindet eine Anstiegskomponente. Ihre Basis ist
@@ -201,14 +202,24 @@ physische Grenze des Temperaturverlaufs zwischen den Originalen ist damit
 nicht belegt. Der berechnete Wassergehalt ist kein unabhängiger Sensor und
 beweist für sich allein keine Wasserzugabe.
 
-Die Aufgussbestätigung benötigt außerdem den beobachteten Abfall `F > s`.
-An jeder beteiligten Position müssen sämtliche Feuchteoriginale des aktuellen
-Fensters nach ihrer geführten Spitze liegen. Der Fallbeleg kann gespeichert
-werden, während die Wasserpaarung noch eintrifft. Ein höherer Peak vor der
-abschließenden Beurteilung benötigt einen neuen nachfolgenden Fallbeleg.
-Ein fortgesetzter Anstieg allein bestätigt keinen Aufguss. Die Steuerung
-reagiert bei der Bestätigung; ein gesondert belegter früherer Beginn bleibt
-der historischen Zuordnung vorbehalten.
+Eine qualifizierte neue Episode kann bereits im Anstieg bestätigt werden:
+Der aktuelle Kontrast muss `R > γN` und zugleich `Q > s` erfüllen. Seit der
+Komponentenbindung müssen an allen beteiligten Positionen spätere Temperatur-
+und Feuchteoriginale vorliegen; der verfügbare Wasserbeleg muss weiterhin
+positiv sein. `Q` verlangt eine Zunahme der Feuchtesteigung gegenüber dem
+Vorgängerfenster. Eine gleichmäßig steigende Gerade erfüllt diesen zusätzlichen
+Formbeleg nicht. Die tatsächlich bestätigenden Fenster werden gebunden und
+bei Originalkorrekturen erneut geprüft.
+
+Fehlt dieser frühe Nachweis, bleibt die Bestätigung über den beobachteten
+Abfall `F > s` möglich. Dabei müssen an jeder beteiligten Position sämtliche
+Feuchteoriginale des aktuellen Fensters nach ihrer geführten Spitze liegen.
+Der Fallbeleg kann gespeichert werden, während die Wasserpaarung noch eintrifft.
+Ein höherer Peak vor der abschließenden Beurteilung benötigt einen neuen
+nachfolgenden Fallbeleg. Die Bestätigung erfolgt pro Episode einmal;
+der spätere Abfall erzeugt nach einer frühen Bestätigung kein zweites Ereignis.
+Die Steuerung reagiert bei der tatsächlichen Bestätigung. Ein gesondert
+belegter früherer Beginn bleibt der historischen Zuordnung vorbehalten.
 
 Weitere qualifizierte Komponenten vor dem bestätigten Abschluss gehören zu
 derselben Episode und erzeugen keine weitere Zählung. Der Abschluss benötigt
@@ -239,8 +250,9 @@ Ein später erkannter Anstieg setzt denselben Aufguss fort, sobald an einer
 Position ein gültiger Beginnbeleg spätestens beim Abschluss liegt. Eine neue
 Episode benötigt Beginnbelege aller beteiligten Positionen nach dem Abschluss.
 Fehlt diese eindeutige Zuordnung, bleibt sie offen. Jeder weitere Aufguss
-benötigt erneut starken Anstieg, Wasserqualifikation und den belegten Abfall
-nach seiner Spitze.
+benötigt erneut starken Anstieg und Wasserqualifikation sowie einen der
+beschriebenen Bestätigungswege. Im ununterbrochenen Nachlauf bleibt der
+nachfolgende Abfall Voraussetzung für den Abschluss der Episode.
 
 Personen- und Aufgusssignale eröffnen bei Erkennung aus Temperatur und Feuchte
 nur nach erkannter Türöffnung und anschließender Schließung einen Gang;

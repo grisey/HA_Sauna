@@ -1701,7 +1701,7 @@
       "default": 7.400558593477964,
       "minimum": null,
       "integer": false,
-      "description": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Ein strikt größerer Kontrast liefert den starken Anstiegsbeleg für ein neues Vorkommnis; Wasserbeleg, Originalneuheit und nachfolgender Abfall bleiben erforderlich. Der Wert ist keine Wahrscheinlichkeit.",
+      "description": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Ein strikt größerer Kontrast liefert den starken Anstiegsbeleg; Wasserbeleg und Originalneuheit bleiben erforderlich. Die Bestätigung benötigt zusätzlich den aktuellen positiven Steigungswechsel oder den späteren Abfall. Der Wert ist keine Wahrscheinlichkeit.",
       "group": "detection",
       "expert": true,
       "step": "any",

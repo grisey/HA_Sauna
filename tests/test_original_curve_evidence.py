@@ -154,6 +154,23 @@ def linear_originals(values):
     return originals, step
 
 
+def humidity_step_originals(values, previous_step, current_step):
+    """Piecewise RH lines on the existing linear fixture's original times."""
+    originals, step = linear_originals(values)
+    count = values["curve_original_samples"]
+    for position in ("upper", "lower"):
+        role = f"{position}_humidity"
+        baseline = originals[role][0][1]
+        originals[role] = tuple(
+            (stamp, baseline + (
+                index * previous_step if index < count
+                else (count - 1) * previous_step + (index - count + 1) * current_step
+            ))
+            for index, (stamp, _) in enumerate(originals[role])
+        )
+    return originals, step
+
+
 def water_arguments(values):
     """Use the existing upper-position water support and error scales."""
     return {
@@ -228,6 +245,116 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
         self.assertAlmostEqual(contrast.braking, 0)
         self.assertAlmostEqual(contrast.opening, 0)
         self.assertLess(contrast.opening, values["curve_original_open_contrast"])
+
+    def test_constant_positive_rh_ramp_has_no_rise_change(self):
+        values = Parameters({}).values
+        originals, _ = humidity_step_originals(values, 1, 1)
+        at = originals["upper_humidity"][-1][0]
+        result = original_contrasts(
+            position_windows(originals, at, values),
+            expected_positions=("upper", "lower"),
+        )
+        self.assertIsNotNone(result)
+        self.assertGreater(result.rise, values["curve_original_new_infusion_contrast"])
+        self.assertAlmostEqual(result.humidity_rise_change, 0)
+
+    def test_braked_rh_fall_has_positive_change_without_a_rise(self):
+        values = Parameters({}).values
+        originals, _ = humidity_step_originals(values, -1, -0.25)
+        at = originals["upper_humidity"][-1][0]
+        result = original_contrasts(
+            position_windows(originals, at, values),
+            expected_positions=("upper", "lower"),
+        )
+        self.assertIsNotNone(result)
+        self.assertGreater(result.humidity_rise_change, 0)
+        self.assertLess(result.rise, 0)
+
+    def test_rh_rise_change_requires_a_kink_at_every_required_position(self):
+        values = Parameters({}).values
+        originals, _ = humidity_step_originals(values, 0, 1)
+        at = originals["upper_humidity"][-1][0]
+        windows = position_windows(originals, at, values)
+        result = original_contrasts(windows, expected_positions=("upper", "lower"))
+        self.assertIsNotNone(result)
+        self.assertGreater(result.humidity_rise_change, 0)
+        self.assertGreater(result.rise, 0)
+        linear, _ = humidity_step_originals(values, 1, 1)
+        linear_windows = position_windows(linear, at, values)
+        for unchanged in ("upper", "lower"):
+            with self.subTest(unchanged_position=unchanged):
+                mixed = {**windows, unchanged: replace(
+                    windows[unchanged], humidity=linear_windows[unchanged].humidity,
+                )}
+                joint = original_contrasts(mixed, expected_positions=("upper", "lower"))
+                self.assertIsNotNone(joint)
+                # Current rises are identical; the absent change at either
+                # required position prevents a joint positive change.
+                self.assertAlmostEqual(joint.rise, result.rise)
+                self.assertAlmostEqual(joint.humidity_rise_change, 0)
+                changed = "lower" if unchanged == "upper" else "upper"
+                selected = original_contrasts(mixed, expected_positions=(changed,))
+                self.assertIsNotNone(selected)
+                self.assertGreater(selected.humidity_rise_change, 0)
+
+    def test_rh_rise_change_preserves_value_units_and_time_origin(self):
+        values = Parameters({}).values
+        originals, _ = humidity_step_originals(values, 0, 1)
+        at = originals["upper_humidity"][-1][0]
+        baseline = original_contrasts(
+            position_windows(originals, at, values),
+            expected_positions=("upper", "lower"),
+        )
+        self.assertIsNotNone(baseline)
+        self.assertGreater(baseline.humidity_rise_change, 0)
+        variants = (
+            (1, 0, timedelta(days=1)),
+            (2, -10, timedelta()),
+            (2, -10, timedelta(days=1)),
+        )
+        for factor, offset, shift in variants:
+            with self.subTest(factor=factor, offset=offset, shift=shift):
+                transformed = {
+                    role: tuple(
+                        (stamp + shift, factor * value + offset
+                         if role.endswith("_humidity") else value)
+                        for stamp, value in points
+                    )
+                    for role, points in originals.items()
+                }
+                scales = dict(values)
+                for position in ("upper", "lower"):
+                    scales[f"curve_original_noise_humidity_{position}"] *= factor
+                result = original_contrasts(
+                    position_windows(transformed, at + shift, scales),
+                    expected_positions=("upper", "lower"),
+                )
+                self.assertIsNotNone(result)
+                self.assertAlmostEqual(result.humidity_rise_change,
+                                       baseline.humidity_rise_change)
+                self.assertAlmostEqual(result.rise, baseline.rise)
+
+    def test_rh_change_overflow_cannot_be_hidden_by_another_position(self):
+        values = Parameters({}).values
+        originals, _ = linear_originals(values)
+        at = originals["upper_humidity"][-1][0]
+        windows = position_windows(originals, at, values)
+        self.assertIsNotNone(original_contrasts(
+            windows, expected_positions=("upper", "lower"),
+        ))
+        # Robustness criterion: finite, positive bounds and a finite slope
+        # change can still yield an overflowing normalized change. The other
+        # position's zero change must not hide that unknown in the minimum.
+        extreme = replace(
+            windows["upper"].humidity,
+            v=0, b=-1e308, e=1e-308, e_minus=1e-308,
+        )
+        self.assertTrue(all(isfinite(getattr(extreme, name))
+                            for name in ("v", "b", "e", "e_minus")))
+        windows["upper"] = replace(windows["upper"], humidity=extreme)
+        self.assertIsNone(original_contrasts(
+            windows, expected_positions=("upper", "lower"),
+        ))
 
     def test_pro_r03_r04_prefixes_match_independent_rational_contrasts(self):
         values = Parameters({}).values

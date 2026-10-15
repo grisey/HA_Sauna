@@ -123,11 +123,14 @@ class OriginalThermalContrasts:
 class OriginalContrasts:
     """Raw min/max contrasts over exactly the caller's required positions.
 
-    The names correspond to O, B, W_min, W_max, R, F, Z, Z_r, U and C.
+    The names correspond to O, B, W_min, W_max, R, F, Z, Z_r, U, C and Q.
     U and C exist only when the caller supplies every group-relative RH
     minimum. A single position uses the same formulas over a smaller set;
     this does not transfer a four-channel physical or empirical proof.
     Retained position windows expose every original anchor to the caller.
+    humidity_rise_change (Q) is the minimum normalized RH slope change between
+    the previous and current disjoint OLS windows, not a second derivative or
+    a probability.
     """
 
     positions: tuple[tuple[str, OriginalPositionWindows], ...]
@@ -141,6 +144,7 @@ class OriginalContrasts:
     background_residual: float
     humidity_recovery: float | None
     closing: float | None
+    humidity_rise_change: float
 
 
 @dataclass(frozen=True)
@@ -478,15 +482,25 @@ def original_contrasts(
             return None
         opening_terms = []
         humidity_terms = []
+        humidity_change_terms = []
         residual_terms = []
         recovery_terms = []
         for position, pair in positions:
             humidity = pair.humidity
             if not _original_window_valid(humidity):
                 return None
+            slope_difference = humidity.v - humidity.b
+            difference_error = humidity.e + humidity.e_minus
+            if (not _profile_number(slope_difference)
+                    or not _original_positive(difference_error)):
+                return None
+            humidity_change = slope_difference / difference_error
+            if not _profile_number(humidity_change):
+                return None
             humidity_rise = humidity.v / humidity.e
             opening_terms.append(-humidity_rise)
             humidity_terms.append(humidity_rise)
+            humidity_change_terms.append(humidity_change)
             residual_terms.extend((humidity.r, humidity.r_minus))
             if humidity_minima is not None:
                 minimum = humidity_minima[position]
@@ -502,13 +516,14 @@ def original_contrasts(
         braking = thermal.braking
         warming_min, warming_max = thermal.warming_min, thermal.warming_max
         rise, fall = min(humidity_terms), min(-value for value in humidity_terms)
+        humidity_rise_change = min(humidity_change_terms)
         background_slope = max(abs(value) for value in humidity_terms)
         background_residual = max(residual_terms)
         recovery = min(recovery_terms) if humidity_minima is not None else None
         closing = (max(min(braking, recovery), thermal.closing)
                    if recovery is not None else None)
         numbers = (opening, braking, warming_min, warming_max, rise, fall,
-                   background_slope, background_residual)
+                   background_slope, background_residual, humidity_rise_change)
         if not all(_profile_number(value) for value in numbers):
             return None
         if recovery is not None and (
@@ -520,6 +535,7 @@ def original_contrasts(
             warming_min=warming_min, warming_max=warming_max, rise=rise, fall=fall,
             background_slope=background_slope, background_residual=background_residual,
             humidity_recovery=recovery, closing=closing,
+            humidity_rise_change=humidity_rise_change,
         )
     except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
         return None
