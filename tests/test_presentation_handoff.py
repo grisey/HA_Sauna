@@ -50,19 +50,29 @@ class PanelSnapshotTests(unittest.TestCase):
         preview, result = panel_result()
         expected = deepcopy(result)
         with (
-            patch.object(preview, "state", side_effect=AssertionError("No new state read")),
-            patch.object(preview.c, "phase_projection",
-                         side_effect=AssertionError("No new phase projection")),
-            patch("tools.local_preview.phase_timer",
-                  side_effect=AssertionError("No new display calculation")),
+            patch.object(
+                preview, "state", side_effect=AssertionError("No new state read")
+            ),
+            patch.object(
+                preview.c,
+                "phase_projection",
+                side_effect=AssertionError("No new phase projection"),
+            ),
+            patch(
+                "tools.local_preview.phase_timer",
+                side_effect=AssertionError("No new display calculation"),
+            ),
         ):
             snapshot = PanelSnapshot.from_result(result)
             self.assertEqual(snapshot.to_wire(), expected)
         self.assertEqual(snapshot.instances[0].entry_id, "entry")
-        self.assertEqual(snapshot.start_availability.message,
-                         expected["start_availability"]["message"])
-        self.assertEqual(snapshot.environment.forecast_time,
-                         expected["environment"]["forecast_time"])
+        self.assertEqual(
+            snapshot.start_availability.message,
+            expected["start_availability"]["message"],
+        )
+        self.assertEqual(
+            snapshot.environment.forecast_time, expected["environment"]["forecast_time"]
+        )
         ModelHandoff(HandoffContext("entry", "panel", T0), None, snapshot)
         result["configuration"]["bindings"].clear()
         result["manual_controls"]["light"]["observation"]["available"] = False
@@ -101,7 +111,9 @@ class PanelSnapshotTests(unittest.TestCase):
         snapshot = PanelSnapshot.from_result(result)
         self.assertEqual(snapshot.to_wire(), result)
         result["detector_trace"]["future_metric"]["values"].append(4)
-        self.assertEqual(snapshot.detector_trace["future_metric"]["values"], (1, None, 3))
+        self.assertEqual(
+            snapshot.detector_trace["future_metric"]["values"], (1, None, 3)
+        )
 
     def test_existing_frozen_models_remain_the_supplied_models(self):
         preview, result = panel_result()
@@ -117,7 +129,27 @@ class PanelSnapshotTests(unittest.TestCase):
         )
         self.assertIs(model_snapshot.session, preview.c.session)
         self.assertIs(model_snapshot.phase_projection, projection)
-        self.assertEqual(model_snapshot.to_wire(), snapshot.to_wire())
+        self.assertIs(model_snapshot.rule_inputs, preview.c.regulation_inputs)
+        self.assertIs(model_snapshot.decision, preview.c.last_decision)
+        expected = snapshot.to_wire()
+        # The supplied domain Session uses plain's scalar contract; Preview's
+        # session map additionally carries projected door cycles and energy deltas.
+        expected["session"] = plain(preview.c.session)
+        actual = model_snapshot.to_wire()
+        self.assertEqual(
+            actual["session"]["energy"], expected["session"]["energy"],
+            "session.energy",
+        )
+        for field in fields(projection):
+            self.assertEqual(
+                actual["phase_projection"][field.name],
+                expected["phase_projection"][field.name],
+                f"phase_projection.{field.name}",
+            )
+        self.assertEqual(set(actual), set(expected))
+        for key in expected:
+            with self.subTest(path=key):
+                self.assertEqual(actual[key], expected[key])
         ModelHandoff(HandoffContext("entry", "typed-panel", T0), None, model_snapshot)
 
     def test_existing_phase_serialization_retains_derived_wire_fields(self):
@@ -130,7 +162,9 @@ class PanelSnapshotTests(unittest.TestCase):
         self.assertIn("required_seconds", to_wire(phase))
         self.assertIn("remaining_seconds", to_wire(phase))
 
-    def test_public_projection_uses_the_existing_policy_once_and_preserves_absence(self):
+    def test_public_projection_uses_the_existing_policy_once_and_preserves_absence(
+        self,
+    ):
         _preview, result = panel_result()
         result["permissions"]["admin"] = False
         snapshot = PanelSnapshot.from_result(result)
@@ -178,7 +212,9 @@ class PanelSnapshotTests(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaises(TypeError):
                 PublicPanelSnapshot.from_result({**projected, **extra})
 
-    def test_public_snapshot_keeps_original_reference_projection_without_private_sources(self):
+    def test_public_snapshot_keeps_original_reference_projection_without_private_sources(
+        self,
+    ):
         _preview, result = panel_result("gang")
         result["measurements"][0]["source"] = "sensor.private_handoff_source"
         snapshot = PanelSnapshot.from_result(result)

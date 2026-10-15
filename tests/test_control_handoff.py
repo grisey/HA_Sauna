@@ -13,7 +13,9 @@ from custom_components.ha_sauna.core.control_handoff import (
 from custom_components.ha_sauna.core.consumer_events import gang_changes
 from custom_components.ha_sauna.core.configuration_model import ConfigurationModel
 from custom_components.ha_sauna.core.model_handoff import (
-    HandoffContext, ModelHandoff, freeze_data,
+    HandoffContext,
+    ModelHandoff,
+    freeze_data,
 )
 from custom_components.ha_sauna.core.contracts import ConsumerEvent
 from custom_components.ha_sauna.core.notification_recipients import ActorRef
@@ -31,12 +33,24 @@ from test_foundation import bindings, event, parameters
 class ControlHandoffTests(unittest.TestCase):
     def test_source_selection_observation_does_not_choose_or_backdate_a_source(self):
         initial = PresenceSourceSelectionSnapshot(
-            "ha_presence", "ha_presence", None, None, None, None,
+            "ha_presence",
+            "ha_presence",
+            None,
+            None,
+            None,
+            None,
         )
         selected = PresenceSourceSelectionSnapshot(
-            "ha_presence", "proxy", False, at(1), at(3), at(4),
+            "ha_presence",
+            "proxy",
+            False,
+            at(1),
+            at(3),
+            at(4),
         )
-        handoff = ModelHandoff(HandoffContext("entry", "selection", at(5)), initial, selected)
+        handoff = ModelHandoff(
+            HandoffContext("entry", "selection", at(5)), initial, selected
+        )
         self.assertIsNone(handoff.before.available)
         self.assertEqual(handoff.after.configured_source, "ha_presence")
         self.assertEqual(handoff.after.effective_source, "proxy")
@@ -80,10 +94,15 @@ class ControlHandoffTests(unittest.TestCase):
             snapshot.parameters, tuple(sorted(owner.parameters.as_dict().items()))
         )
         for name in (
-            "phase", "target_temperature", "next_gang_temperature",
-            "thermostat_target", "thermostat_restart_temperature",
-            "regulation_inputs", "regulation_causes",
-            "heater_override_ends_at", "control_mode_change_allowed",
+            "phase",
+            "target_temperature",
+            "next_gang_temperature",
+            "thermostat_target",
+            "thermostat_restart_temperature",
+            "regulation_inputs",
+            "regulation_causes",
+            "heater_override_ends_at",
+            "control_mode_change_allowed",
         ):
             with self.subTest(name=name):
                 self.assertEqual(getattr(snapshot, name), getattr(owner, name))
@@ -212,7 +231,8 @@ class ControlHandoffTests(unittest.TestCase):
         self.assertIs(output.session, after)
         self.assertEqual(output.gang.recognition_event_id, "person")
         for event_change, session in (
-            ({}, None), ({"session_id": "other"}, after),
+            ({}, None),
+            ({"session_id": "other"}, after),
             ({"gang_id": "missing"}, after),
         ):
             with self.subTest(event_change=event_change), self.assertRaises(ValueError):
@@ -221,18 +241,27 @@ class ControlHandoffTests(unittest.TestCase):
     def test_presence_event_has_complete_matching_source_with_optional_session(self):
         report = binary_presence("binary_sensor.synthetic", "on", at(1), at(1))
         value = ConsumerEvent(
-            report.report_id, "occupancy", None, report.effective_at,
-            report.received_at, report.source_ref, presence=report,
+            report.report_id,
+            "occupancy",
+            None,
+            report.effective_at,
+            report.received_at,
+            report.source_ref,
+            presence=report,
         )
         output = ConsumerEventOutput(value)
         self.assertIs(output.event.presence, report)
         self.assertIsNone(output.gang)
         session = controller().session
-        scoped = ConsumerEventOutput(replace(value, session_id=session.session_id), session)
+        scoped = ConsumerEventOutput(
+            replace(value, session_id=session.session_id), session
+        )
         self.assertIs(scoped.session, session)
         for change in (
-            {"presence": None}, {"source_ref": "different"},
-            {"event_id": "different"}, {"received_at": at(2)},
+            {"presence": None},
+            {"source_ref": "different"},
+            {"event_id": "different"},
+            {"received_at": at(2)},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 ConsumerEventOutput(replace(value, **change))

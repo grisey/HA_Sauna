@@ -34,8 +34,10 @@ class WarmupTrendSnapshot:
     def capture(cls, trend: WarmupTrend):
         _owner(trend, WarmupTrend)
         return cls(
-            trend.window_seconds, trend.observations,
-            trend._accepted_rate, trend._accepted_at,
+            trend.window_seconds,
+            trend.observations,
+            trend._accepted_rate,
+            trend._accepted_at,
         )
 
 
@@ -73,7 +75,9 @@ class HeatingProgressEvidence:
         _owner(evidence, Mapping)
         names = {definition.name for definition in fields(cls)}
         if set(evidence) != names:
-            raise ValueError("Heating-progress evidence fields differ from its contract")
+            raise ValueError(
+                "Heating-progress evidence fields differ from its contract"
+            )
         return cls(**evidence)
 
 
@@ -86,7 +90,9 @@ def _bind_evidence(trend, received_at, temperature_c, evidence):
         or points[-1] != (evidence.ended_at, evidence.end_temperature_c)
         or points[-1] != (received_at, temperature_c)
     ):
-        raise ValueError("Progress evidence does not describe the supplied observation window")
+        raise ValueError(
+            "Progress evidence does not describe the supplied observation window"
+        )
 
 
 @dataclass(frozen=True)
@@ -109,7 +115,9 @@ class HeatingProgressEvaluation:
     def capture(cls, progress: HeatingProgress, received_at, temperature_c, evidence):
         _owner(progress, HeatingProgress)
         return cls(
-            WarmupTrendSnapshot.capture(progress.trend), received_at, temperature_c,
+            WarmupTrendSnapshot.capture(progress.trend),
+            received_at,
+            temperature_c,
             HeatingProgressEvidence.from_result(evidence),
         )
 
@@ -132,8 +140,11 @@ class HeatingProgressEpisodeSnapshot:
     def capture(cls, episode: HeatingProgressEpisode):
         _owner(episode, HeatingProgressEpisode)
         return cls(
-            episode.window_seconds, episode.started_at, episode.startup_delay_seconds,
-            episode.response_at, episode._analysis_started_at,
+            episode.window_seconds,
+            episode.started_at,
+            episode.startup_delay_seconds,
+            episode.response_at,
+            episode._analysis_started_at,
             WarmupTrendSnapshot.capture(episode.progress.trend),
         )
 
@@ -149,12 +160,16 @@ class HeatingProgressEpisodeEvaluation:
 
     def __post_init__(self):
         require_immutable(self)
-        _bind_evidence(self.state.trend, self.received_at, self.temperature_c, self.evidence)
+        _bind_evidence(
+            self.state.trend, self.received_at, self.temperature_c, self.evidence
+        )
 
     @classmethod
     def capture(cls, episode, received_at, temperature_c, evidence):
         return cls(
-            HeatingProgressEpisodeSnapshot.capture(episode), received_at, temperature_c,
+            HeatingProgressEpisodeSnapshot.capture(episode),
+            received_at,
+            temperature_c,
             HeatingProgressEvidence.from_result(evidence),
         )
 
@@ -186,13 +201,21 @@ class WarmupEstimateSnapshot:
     def capture(cls, estimate: WarmupEstimate):
         _owner(estimate, WarmupEstimate)
         return cls(
-            estimate.window_seconds, WarmupTrendSnapshot.capture(estimate.trend),
-            estimate._accepted_at, estimate._estimate_started_at,
-            estimate._temperature_c, estimate._target_c, estimate._remaining_seconds,
-            estimate._fit_started_at, estimate._last_fit_at,
-            estimate._stable_fit_seconds, estimate._fit_was_continuous,
-            estimate._slower_since, estimate._reference_live_rate,
-            estimate._last_live_rate, estimate._source_invalid,
+            estimate.window_seconds,
+            WarmupTrendSnapshot.capture(estimate.trend),
+            estimate._accepted_at,
+            estimate._estimate_started_at,
+            estimate._temperature_c,
+            estimate._target_c,
+            estimate._remaining_seconds,
+            estimate._fit_started_at,
+            estimate._last_fit_at,
+            estimate._stable_fit_seconds,
+            estimate._fit_was_continuous,
+            estimate._slower_since,
+            estimate._reference_live_rate,
+            estimate._last_live_rate,
+            estimate._source_invalid,
         )
 
 
@@ -232,8 +255,13 @@ class WarmupSourceContext:
 
     def __post_init__(self):
         require_immutable(self)
-        if self.measurement is not None and self.measurement.quantity != Quantity.TEMPERATURE:
-            raise ValueError("Warm-up source evidence must be a temperature measurement")
+        if (
+            self.measurement is not None
+            and self.measurement.quantity != Quantity.TEMPERATURE
+        ):
+            raise ValueError(
+                "Warm-up source evidence must be a temperature measurement"
+            )
         if self.owner_key is not None and self.measurement is not None:
             if (
                 self.measurement.position != self.owner_key.position

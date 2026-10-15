@@ -128,7 +128,8 @@ class ReplyAssociation:
         if self.notification is not None:
             _instance(self.notification, NotificationEnvelope)
         associated = self.disposition in (
-            ReplyDisposition.ACCEPTED, ReplyDisposition.DUPLICATE,
+            ReplyDisposition.ACCEPTED,
+            ReplyDisposition.DUPLICATE,
         )
         if associated:
             if self.notification is None or not _matches(self.notification, self.reply):

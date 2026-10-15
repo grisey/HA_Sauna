@@ -44,8 +44,11 @@ class ObservationHandoffTests(unittest.TestCase):
 
     def test_heating_observation_preserves_complete_supplied_feedback(self):
         source = {
-            "source": "power", "heating": False, "power_w": 0,
-            "contactor": True, "estimated": False,
+            "source": "power",
+            "heating": False,
+            "power_w": 0,
+            "contactor": True,
+            "estimated": False,
         }
         observed = HeatingObservation.from_result(source)
         self.handoff(observed)
@@ -53,39 +56,62 @@ class ObservationHandoffTests(unittest.TestCase):
         self.assertIs(observed.heating, False)
         self.assertIs(observed.estimated, False)
         self.assertEqual(observed.power_w, 0)
-        unknown = HeatingObservation.from_result({
-            "source": "unknown", "heating": None, "power_w": None,
-            "contactor": None, "estimated": False,
-        })
+        unknown = HeatingObservation.from_result(
+            {
+                "source": "unknown",
+                "heating": None,
+                "power_w": None,
+                "contactor": None,
+                "estimated": False,
+            }
+        )
         self.handoff(unknown, observed)
         self.assertIsNone(unknown.heating)
         self.assertIsNone(unknown.contactor)
-        fallback = HeatingObservation.from_result({
-            "source": "contactor", "heating": False, "power_w": None,
-            "contactor": False, "estimated": True,
-        })
+        fallback = HeatingObservation.from_result(
+            {
+                "source": "contactor",
+                "heating": False,
+                "power_w": None,
+                "contactor": False,
+                "estimated": True,
+            }
+        )
         self.handoff(fallback, unknown)
         self.assertIs(fallback.contactor, False)
         self.assertTrue(fallback.estimated)
 
     def test_heating_observation_rejects_placeholder_and_wrong_field_types(self):
         complete = {
-            "source": "power", "heating": False, "power_w": 0,
-            "contactor": False, "estimated": False,
+            "source": "power",
+            "heating": False,
+            "power_w": 0,
+            "contactor": False,
+            "estimated": False,
         }
         with self.assertRaises(ValueError):
-            HeatingObservation.from_result({
-                "source": "unknown", "heating": None, "power_w": None,
-            })
+            HeatingObservation.from_result(
+                {
+                    "source": "unknown",
+                    "heating": None,
+                    "power_w": None,
+                }
+            )
         for name in complete:
             incomplete = {key: value for key, value in complete.items() if key != name}
             with self.subTest(missing=name), self.assertRaises(ValueError):
                 HeatingObservation.from_result(incomplete)
         for change in (
-            {"source": None}, {"heating": 0}, {"power_w": False},
-            {"contactor": "off"}, {"estimated": None},
+            {"source": None},
+            {"heating": 0},
+            {"power_w": False},
+            {"contactor": "off"},
+            {"estimated": None},
         ):
-            with self.subTest(change=change), self.assertRaises((TypeError, ValueError)):
+            with (
+                self.subTest(change=change),
+                self.assertRaises((TypeError, ValueError)),
+            ):
                 HeatingObservation.from_result({**complete, **change})
         with self.assertRaises(ValueError):
             HeatingObservation.from_result({**complete, "extra": True})
@@ -118,7 +144,9 @@ class ObservationHandoffTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DetectionEvaluation({}, ())
         for key in diagnostic:
-            incomplete = {name: value for name, value in diagnostic.items() if name != key}
+            incomplete = {
+                name: value for name, value in diagnostic.items() if name != key
+            }
             with self.subTest(missing=key), self.assertRaises(ValueError):
                 DetectionEvaluation(incomplete, (detection,))
         later = replace(detection, trace_at=T0 + timedelta(seconds=1))
@@ -127,7 +155,9 @@ class ObservationHandoffTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DetectionEvaluation(diagnostic, ())
 
-    def test_detection_evaluation_preserves_open_raster_output_and_optional_episode(self):
+    def test_detection_evaluation_preserves_open_raster_output_and_optional_episode(
+        self,
+    ):
         detector = Detector(parameters(), T0)
         detections = detector.advance(T0, enabled=True)
         diagnostic = dict(detector.diagnostic)
@@ -144,7 +174,8 @@ class ObservationHandoffTests(unittest.TestCase):
         episode["future_episode_detail"].append("changed")
         self.assertEqual(result.diagnostic["future_output"]["values"], ("original",))
         self.assertEqual(
-            result.diagnostic["infusion_episode"]["future_episode_detail"], ("original",)
+            result.diagnostic["infusion_episode"]["future_episode_detail"],
+            ("original",),
         )
         for name, value in (
             ("original_prefix_overflow", 0),
@@ -156,7 +187,9 @@ class ObservationHandoffTests(unittest.TestCase):
             with self.subTest(field=name), self.assertRaises(TypeError):
                 DetectionEvaluation({**diagnostic, name: value}, detections)
 
-    def test_method_evaluation_keeps_its_full_diagnostic_without_legacy_placeholders(self):
+    def test_method_evaluation_keeps_its_full_diagnostic_without_legacy_placeholders(
+        self,
+    ):
         diagnostic = {
             "fit": {"coefficients": [1.0, 2.0], "uncertainty": None},
             "complete_extra_output": {"retained": ["original"]},
@@ -187,7 +220,9 @@ class ObservationHandoffTests(unittest.TestCase):
         self.handoff(no_episode)
         self.assertIsNone(no_episode.diagnostic["infusion_episode"])
 
-    def test_episode_projection_retains_unknown_end_interruption_and_late_continuation(self):
+    def test_episode_projection_retains_unknown_end_interruption_and_late_continuation(
+        self,
+    ):
         projection = {
             "phase": "active",
             "onset_at": T0,
@@ -207,15 +242,20 @@ class ObservationHandoffTests(unittest.TestCase):
             },
         }
         active = InfusionEpisodeDiagnostics.from_result(projection)
-        interrupted = InfusionEpisodeDiagnostics.from_result({
-            **projection, "interrupted": True,
-        })
-        ended = InfusionEpisodeDiagnostics.from_result({
-            **projection,
-            "phase": "ended",
-            "level_end_at": T0 + timedelta(seconds=10),
-            "end_basis": "decay_and_level",
-        })
+        interrupted = InfusionEpisodeDiagnostics.from_result(
+            {
+                **projection,
+                "interrupted": True,
+            }
+        )
+        ended = InfusionEpisodeDiagnostics.from_result(
+            {
+                **projection,
+                "phase": "ended",
+                "level_end_at": T0 + timedelta(seconds=10),
+                "end_basis": "decay_and_level",
+            }
+        )
         continued = InfusionEpisodeDiagnostics.from_result(projection)
         self.handoff(active)
         self.handoff(interrupted, active)
@@ -233,9 +273,7 @@ class ObservationHandoffTests(unittest.TestCase):
         projection["water_change"]["upper"] = 99.0
         projection["levels"]["upper"]["start_at"] = T0
         self.assertEqual(active.water_change["upper"], 1.5)
-        self.assertEqual(
-            active.levels["upper"]["start_at"], T0 + timedelta(seconds=5)
-        )
+        self.assertEqual(active.levels["upper"]["start_at"], T0 + timedelta(seconds=5))
         with self.assertRaises(ValueError):
             InfusionEpisodeDiagnostics.from_result({"phase": "active"})
         for change in (
@@ -335,9 +373,13 @@ class ObservationHandoffTests(unittest.TestCase):
     def test_quantization_checks_its_own_public_boundary(self):
         value = LightQuantization(LightPlan(30, True, False), None, 30, 1, 30)
         for change in (
-            {"plan": None}, {"plan": LightPlan("30", True, False)},
-            {"previous_value": True}, {"next_value": 30.5},
-            {"result": None}, {"result": False}, {"hysteresis_percent": []},
+            {"plan": None},
+            {"plan": LightPlan("30", True, False)},
+            {"previous_value": True},
+            {"next_value": 30.5},
+            {"result": None},
+            {"result": False},
+            {"hysteresis_percent": []},
         ):
             with self.subTest(change=change), self.assertRaises(TypeError):
                 replace(value, **change)
@@ -382,13 +424,24 @@ class ObservationHandoffTests(unittest.TestCase):
         self.assertIs(heater.decision, decision)
         self.assertFalse(heater.feedback_proves_heating)
         light = LightServiceResult(
-            "light.synthetic", T0, "synthetic", "synthetic-phase", "turn_on", 30, 0, None,
-            T0, T0 + timedelta(seconds=1), "SyntheticError",
+            "light.synthetic",
+            T0,
+            "synthetic",
+            "synthetic-phase",
+            "turn_on",
+            30,
+            0,
+            None,
+            T0,
+            T0 + timedelta(seconds=1),
+            "SyntheticError",
         )
         self.handoff(light)
         self.assertEqual(light.service_error, "SyntheticError")
         self.assertEqual(light.completed_at, T0 + timedelta(seconds=1))
-        off = replace(light, service="turn_off", brightness_pct=None, service_error=None)
+        off = replace(
+            light, service="turn_off", brightness_pct=None, service_error=None
+        )
         self.handoff(off, light)
         self.assertIsNone(off.brightness_pct)
         self.assertEqual(off.service, "turn_off")
@@ -411,4 +464,6 @@ class ObservationHandoffTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             HeaterServiceResult("switch.synthetic", True, object(), None, T0, T0)
         with self.assertRaises(TypeError):
-            LightServiceResult("light.synthetic", T0, "p", "p", "turn_on", [], None, None, T0, T0, None)
+            LightServiceResult(
+                "light.synthetic", T0, "p", "p", "turn_on", [], None, None, T0, T0, None
+            )

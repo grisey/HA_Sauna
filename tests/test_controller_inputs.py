@@ -31,9 +31,13 @@ class ControllerInputTests(unittest.TestCase):
         owner.consume_temperature_input(TemperatureInput(80, at(30), timing(10)))
         self.assertEqual(owner.session.ready_at, at(10))
         self.assertEqual(owner.last_decision.at, at(10))
-        owner.consume_temperature_input(TemperatureInput(
-            None, None, InputTiming(None, None, None, at(11)),
-        ))
+        owner.consume_temperature_input(
+            TemperatureInput(
+                None,
+                None,
+                InputTiming(None, None, None, at(11)),
+            )
+        )
         self.assertFalse(owner.last_decision.heat)
         self.assertEqual(owner.last_decision.reason, "upper_temperature_unavailable")
 
@@ -54,24 +58,34 @@ class ControllerInputTests(unittest.TestCase):
         self.assertEqual(owner.session.heating.elapsed_seconds, 10)
 
     def test_cooling_waits_for_actual_off_at_evaluation_boundary(self):
-        owner = test_cooling.CoolingTests().cooling_after_confirmed_heat(off_feedback=False)
+        owner = test_cooling.CoolingTests().cooling_after_confirmed_heat(
+            off_feedback=False
+        )
         self.assertTrue(owner.session.after_run.pending_start)
         owner.consume_contactor_feedback_input(ContactorFeedbackInput(None, timing(72)))
         self.assertTrue(owner.session.after_run.pending_start)
-        owner.consume_contactor_feedback_input(ContactorFeedbackInput(False, timing(80)))
+        owner.consume_contactor_feedback_input(
+            ContactorFeedbackInput(False, timing(80))
+        )
         self.assertFalse(owner.session.after_run.pending_start)
         self.assertEqual(owner.session.after_run.started_at, at(80))
 
     def test_operation_mode_and_override_share_recording_and_return_owner_results(self):
         owner = Controller(controller().parameters)
         owner.consume_temperature_input(TemperatureInput(70, None, timing(1)))
-        session = owner.consume_operation_input(OperationInput(True, "selected", timing(2)))
+        session = owner.consume_operation_input(
+            OperationInput(True, "selected", timing(2))
+        )
         self.assertIs(session, owner.session)
         self.assertEqual(session.session_id, "selected")
         owner.consume_operation_input(OperationInput(False, None, timing(3)))
         self.assertFalse(owner.session.operation_enabled)
-        self.assertIsNone(owner.consume_control_mode_input(ControlModeInput("manual", timing(4))))
-        decision = owner.consume_heater_override_input(HeaterOverrideInput(True, timing(5)))
+        self.assertIsNone(
+            owner.consume_control_mode_input(ControlModeInput("manual", timing(4)))
+        )
+        decision = owner.consume_heater_override_input(
+            HeaterOverrideInput(True, timing(5))
+        )
         self.assertIs(decision, owner.last_decision)
         self.assertTrue(decision.heat)
         self.assertEqual(owner.session.session_id, "selected")
@@ -86,20 +100,36 @@ class ControllerInputTests(unittest.TestCase):
         owner.process(event("close", Kind.DOOR_CLOSE, 2))
         for second, kind in ((3, Kind.PERSON_STRONG), (4, Kind.INFUSION)):
             original = event(f"unqualified-{second}", kind, second)
-            self.assertFalse(owner.recognition_allowed(kind, person_evidence_qualified=False))
-            self.assertFalse(owner.recognition_allowed_at(
-                kind, at(second), person_evidence_qualified=False,
-            ))
+            self.assertFalse(
+                owner.recognition_allowed(kind, person_evidence_qualified=False)
+            )
+            self.assertFalse(
+                owner.recognition_allowed_at(
+                    kind,
+                    at(second),
+                    person_evidence_qualified=False,
+                )
+            )
             result = owner.process(original, person_evidence_qualified=False)
             self.assertEqual(result.reason, "person_evidence_unqualified")
             self.assertIs(owner.session.timeline.processed[-1], original)
             self.assertIsNone(owner.session.timeline.active)
             self.assertEqual(owner._last_at, at(second))
-        owner.consume_occupancy_input(selected_occupancy(binary_presence(
-            "binary_sensor.selected", "on", at(1), at(5),
-        ), at(5)))
+        owner.consume_occupancy_input(
+            selected_occupancy(
+                binary_presence(
+                    "binary_sensor.selected",
+                    "on",
+                    at(1),
+                    at(5),
+                ),
+                at(5),
+            )
+        )
         self.assertIsNotNone(owner.session.timeline.active)
-        self.assertTrue(owner.recognition_allowed(Kind.INFUSION, person_evidence_qualified=False))
+        self.assertTrue(
+            owner.recognition_allowed(Kind.INFUSION, person_evidence_qualified=False)
+        )
         original = event("infusion", Kind.INFUSION, 6)
         owner.process(original, person_evidence_qualified=False)
         self.assertIs(owner.session.timeline.active.infusion_events[-1], original)

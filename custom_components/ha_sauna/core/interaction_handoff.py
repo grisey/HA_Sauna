@@ -82,9 +82,7 @@ class NotificationEnvelopeSnapshot:
     session_id: str | None
 
     @classmethod
-    def capture(
-        cls, envelope: NotificationEnvelope
-    ) -> NotificationEnvelopeSnapshot:
+    def capture(cls, envelope: NotificationEnvelope) -> NotificationEnvelopeSnapshot:
         """Copy every envelope field without changing the transport envelope."""
         return cls(
             message_id=envelope.message_id,

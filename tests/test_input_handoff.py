@@ -39,7 +39,9 @@ class InputHandoffTests(unittest.TestCase):
             observed_at=T0 + timedelta(seconds=30),
         )
 
-    def test_different_separate_evidence_yields_the_same_selected_heating_input(self) -> None:
+    def test_different_separate_evidence_yields_the_same_selected_heating_input(
+        self,
+    ) -> None:
         relay = HeatingObservation("relay", True, None, True, False)
         power = HeatingObservation("power", True, 4500.0, None, False)
         selected_from_relay = HeatingFeedbackInput(True, self.timing)
@@ -59,9 +61,7 @@ class InputHandoffTests(unittest.TestCase):
         heating = HeatingFeedbackInput(None, self.timing)
         contactor = ContactorFeedbackInput(None, self.timing)
         power = PowerFeedbackInput(None, None, self.timing)
-        occupancy = OccupancyInput(
-            "unknown", False, False, None, self.timing
-        )
+        occupancy = OccupancyInput("unknown", False, False, None, self.timing)
         door = DoorInput(Door.UNKNOWN, (), (), self.timing)
 
         for value in (temperature, heating, contactor, power, occupancy, door):
@@ -69,18 +69,12 @@ class InputHandoffTests(unittest.TestCase):
                 handoff = ModelHandoff(self.context, None, value)
                 self.assertIs(handoff.after, value)
                 self.assertEqual(value.timing.effective_at, T0)
-                self.assertEqual(
-                    value.timing.received_at, T0 + timedelta(seconds=20)
-                )
+                self.assertEqual(value.timing.received_at, T0 + timedelta(seconds=20))
                 self.assertEqual(
                     value.timing.first_usable_at, T0 + timedelta(seconds=23)
                 )
-                self.assertEqual(
-                    value.timing.evaluated_at, T0 + timedelta(seconds=25)
-                )
-                self.assertNotEqual(
-                    value.timing.evaluated_at, self.context.observed_at
-                )
+                self.assertEqual(value.timing.evaluated_at, T0 + timedelta(seconds=25))
+                self.assertNotEqual(value.timing.evaluated_at, self.context.observed_at)
 
         self.assertIsNone(temperature.value)
         self.assertIsNone(temperature.valid_until)
@@ -97,12 +91,8 @@ class InputHandoffTests(unittest.TestCase):
         )
 
     def test_presence_qualification_does_not_contain_person_events(self) -> None:
-        qualified = OccupancyInput(
-            "present", True, True, "report-on", self.timing
-        )
-        absent = OccupancyInput(
-            "absent", True, True, "report-off", self.timing
-        )
+        qualified = OccupancyInput("present", True, True, "report-on", self.timing)
+        absent = OccupancyInput("absent", True, True, "report-off", self.timing)
         for value in (qualified, absent):
             with self.subTest(value=value):
                 self.assertIs(ModelHandoff(self.context, None, value).after, value)
@@ -111,13 +101,11 @@ class InputHandoffTests(unittest.TestCase):
         self.assertTrue(absent.qualified_presence)
         self.assertEqual(absent.occupancy, "absent")
 
-    def test_evidence_loss_is_unknown_and_can_leave_an_unchanged_admitted_state(self) -> None:
-        admitted = OccupancyInput(
-            "present", True, True, "report-on", self.timing
-        )
-        lost = OccupancyInput(
-            "unknown", False, False, "report-unknown", self.timing
-        )
+    def test_evidence_loss_is_unknown_and_can_leave_an_unchanged_admitted_state(
+        self,
+    ) -> None:
+        admitted = OccupancyInput("present", True, True, "report-on", self.timing)
+        lost = OccupancyInput("unknown", False, False, "report-unknown", self.timing)
 
         handoff = ModelHandoff(self.context, admitted, lost)
         self.assertEqual(handoff.after.occupancy, "unknown")
@@ -158,23 +146,21 @@ class InputHandoffTests(unittest.TestCase):
         self.assertEqual(value.occurrences, (first, second))
         self.assertIs(value.occurrences[0], first)
         self.assertEqual(value.occurrences[0].effective_at, T0)
-        self.assertEqual(
-            value.occurrences[0].detected_at, T0 + timedelta(seconds=5)
-        )
-        self.assertEqual(
-            value.occurrences[0].booking_at, T0 + timedelta(seconds=3)
-        )
+        self.assertEqual(value.occurrences[0].detected_at, T0 + timedelta(seconds=5))
+        self.assertEqual(value.occurrences[0].booking_at, T0 + timedelta(seconds=3))
         self.assertEqual(value.occurrences[1].booking_at, second.detected_at)
         self.assertNotEqual(first.event_id, second.event_id)
-        self.assertEqual(
-            value.timing.first_usable_at, T0 + timedelta(seconds=23)
-        )
+        self.assertEqual(value.timing.first_usable_at, T0 + timedelta(seconds=23))
         self.assertNotEqual(value.timing.first_usable_at, first.detected_at)
         self.assertNotEqual(value.timing.first_usable_at, self.context.observed_at)
 
     def test_ventilation_stays_bound_to_the_existing_opening(self) -> None:
         opened = Event(
-            "door-open-1", "session", Kind.DOOR_OPEN, T0, T0,
+            "door-open-1",
+            "session",
+            Kind.DOOR_OPEN,
+            T0,
+            T0,
         )
         event = Event(
             event_id="ventilation-1",
@@ -185,9 +171,7 @@ class InputHandoffTests(unittest.TestCase):
             booking_at=None,
         )
         operation = DoorOperation(opened, None, event, True)
-        value = DoorInput(
-            Door.OPEN, (opened, event), (operation,), self.timing
-        )
+        value = DoorInput(Door.OPEN, (opened, event), (operation,), self.timing)
 
         self.assertIs(ModelHandoff(self.context, None, value).after, value)
         self.assertEqual(value.events, (opened, event))
@@ -242,15 +226,15 @@ class InputHandoffTests(unittest.TestCase):
         )
         second = replace(first, events=(opened, closed, ventilation))
 
-        self.assertEqual(
-            first.events[1].booking_at, first.events[2].booking_at
-        )
+        self.assertEqual(first.events[1].booking_at, first.events[2].booking_at)
         self.assertEqual(first.events, (opened, ventilation, closed))
         self.assertEqual(second.events, (opened, closed, ventilation))
         self.assertNotEqual(first, second)
         self.assertIs(ModelHandoff(self.context, first, second).after, second)
 
-    def test_unmatched_closing_and_unknown_state_need_no_fabricated_opening(self) -> None:
+    def test_unmatched_closing_and_unknown_state_need_no_fabricated_opening(
+        self,
+    ) -> None:
         closed = Event("close", "session", Kind.DOOR_CLOSE, T0, T0)
         value = DoorInput(Door.CLOSED, (closed,), (), self.timing)
 
@@ -259,7 +243,9 @@ class InputHandoffTests(unittest.TestCase):
         self.assertEqual(value.events, (closed,))
         self.assertEqual(DoorInput(Door.UNKNOWN, (), (), self.timing).events, ())
 
-    def test_presence_evidence_cannot_be_relabelled_as_a_domain_occurrence(self) -> None:
+    def test_presence_evidence_cannot_be_relabelled_as_a_domain_occurrence(
+        self,
+    ) -> None:
         evidence = Event(
             event_id="person-evidence",
             session_id="session",

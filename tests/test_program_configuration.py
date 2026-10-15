@@ -796,7 +796,10 @@ class ProgramConfigurationTests(unittest.TestCase):
             now += timedelta(seconds=1)
             received_automatic, automatic_at = await change_mode("automatic")
             self.assertEqual(runtime.configuration.parameters.as_dict(), original_parameters)
-            self.assertEqual(entry.options["parameters"], original_parameters)
+            self.assertEqual(
+                entry.options["parameters"],
+                runtime.configuration.parameters.as_options(),
+            )
             self.assertEqual(runtime.configuration.selected_program_id, program.id)
             self.assertEqual(runtime.session.session_id, identity)
             self.assertEqual(runtime.session.timeline.session_started_at, started_at)

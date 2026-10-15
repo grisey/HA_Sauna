@@ -192,10 +192,14 @@ class CommonPanelFields(WireValue):
             if isinstance(value, Mapping):
                 object.__setattr__(self, definition.name, frozen_map(value))
             elif isinstance(value, (list, tuple)):
-                object.__setattr__(self, definition.name, tuple(
-                    frozen_map(item) if isinstance(item, Mapping) else item
-                    for item in value
-                ))
+                object.__setattr__(
+                    self,
+                    definition.name,
+                    tuple(
+                        frozen_map(item) if isinstance(item, Mapping) else item
+                        for item in value
+                    ),
+                )
 
     @classmethod
     def _result_values(cls, result: Mapping):
@@ -208,7 +212,9 @@ class CommonPanelFields(WireValue):
             **values["temperature_control"]
         )
         values["phase_timer"] = (
-            None if values["phase_timer"] is None else PhaseTimer(**values["phase_timer"])
+            None
+            if values["phase_timer"] is None
+            else PhaseTimer(**values["phase_timer"])
         )
         values["start_availability"] = StartAvailability(**values["start_availability"])
         values["issues"] = tuple(PanelIssue(**item) for item in values["issues"])

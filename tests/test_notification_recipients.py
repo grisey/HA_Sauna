@@ -46,42 +46,56 @@ class NotificationRecipientsTests(unittest.TestCase):
         initial = SessionRecipients("instance", "session")
         first = initial.accumulate(
             ActorRef("starter", "authenticated input"),
-            self.assignments, self.resolutions,
+            self.assignments,
+            self.resolutions,
         )
         self.assertEqual(first.targets, {self.target})
         second = first.accumulate(
             ActorRef("participant", "another input"),
-            self.assignments, self.resolutions,
+            self.assignments,
+            self.resolutions,
         )
         self.assertEqual(second.targets, {self.target, self.other_target})
-        self.assertEqual(second.accumulate(
-            ActorRef("participant", "input"), self.assignments, self.resolutions,
-        ), second)
+        self.assertEqual(
+            second.accumulate(
+                ActorRef("participant", "input"),
+                self.assignments,
+                self.resolutions,
+            ),
+            second,
+        )
         self.assertEqual(initial.targets, frozenset())
 
     def test_unknown_or_unassigned_actor_has_no_inferred_recipients(self):
         state = SessionRecipients("instance", "session")
         for user_id in (None, "unassigned"):
             with self.subTest(user_id=user_id):
-                self.assertEqual(state.accumulate(
-                    ActorRef(user_id, "physical input"),
-                    self.assignments, self.resolutions,
-                ), state)
+                self.assertEqual(
+                    state.accumulate(
+                        ActorRef(user_id, "physical input"),
+                        self.assignments,
+                        self.resolutions,
+                    ),
+                    state,
+                )
 
     def test_both_capabilities_require_evidence_and_resolution(self):
         assignment = (RecipientAssignment("user", {self.entity}),)
         for capability in (
-            RecipientCapability(), RecipientCapability(send=self.evidence),
+            RecipientCapability(),
+            RecipientCapability(send=self.evidence),
             RecipientCapability(reply=self.evidence),
         ):
             with self.subTest(capability=capability):
                 result = SessionRecipients("instance", "session").accumulate(
-                    ActorRef("user", "input"), assignment,
+                    ActorRef("user", "input"),
+                    assignment,
                     (self.resolve(self.entity, self.target, capability),),
                 )
                 self.assertFalse(result.targets)
         result = SessionRecipients("instance", "session").accumulate(
-            ActorRef("user", "input"), assignment,
+            ActorRef("user", "input"),
+            assignment,
             (RecipientResolution(self.entity),),
         )
         self.assertFalse(result.targets)
@@ -96,7 +110,9 @@ class NotificationRecipientsTests(unittest.TestCase):
         state = SessionRecipients("instance", "session", {self.target})
         changed = (RecipientAssignment("starter", {self.other}),)
         result = state.accumulate(
-            ActorRef("starter", "input"), changed, self.resolutions,
+            ActorRef("starter", "input"),
+            changed,
+            self.resolutions,
         )
         self.assertEqual(result.targets, {self.target, self.other_target})
         self.assertEqual(state.targets, {self.target})
@@ -109,11 +125,14 @@ class NotificationRecipientsTests(unittest.TestCase):
             )
         with self.assertRaises(ValueError):
             ResolvedRecipient(
-                self.entity, TargetIdentity("other", "endpoint"), self.capability,
+                self.entity,
+                TargetIdentity("other", "endpoint"),
+                self.capability,
             )
         with self.assertRaises(ValueError):
             SessionRecipients("instance", "session").accumulate(
-                ActorRef("starter", "input"), self.assignments,
+                ActorRef("starter", "input"),
+                self.assignments,
                 (self.resolutions[0], RecipientResolution(self.entity)),
             )
 
@@ -133,21 +152,42 @@ class NotificationRecipientsTests(unittest.TestCase):
 
     def test_selection_and_storage_share_capability_validation(self):
         valid = RecipientAssignment("user", {self.entity})
-        self.assertEqual(eligible_recipients(self.resolutions), {
-            self.entity, self.device, self.other,
-        })
+        self.assertEqual(
+            eligible_recipients(self.resolutions),
+            {
+                self.entity,
+                self.device,
+                self.other,
+            },
+        )
         self.assertIs(validate_assignment(valid, self.resolutions), valid)
         for resolutions, reason in (
             ((), "No resolution supplied"),
             ((RecipientResolution(self.entity),), "unresolved"),
-            ((self.resolve(self.entity, self.target, RecipientCapability()),),
-             "Send and reply capability evidence required"),
-            ((self.resolve(self.entity, self.target,
-                           RecipientCapability(send=self.evidence)),),
-             "Send and reply capability evidence required"),
-            ((self.resolve(self.entity, self.target,
-                           RecipientCapability(reply=self.evidence)),),
-             "Send and reply capability evidence required"),
+            (
+                (self.resolve(self.entity, self.target, RecipientCapability()),),
+                "Send and reply capability evidence required",
+            ),
+            (
+                (
+                    self.resolve(
+                        self.entity,
+                        self.target,
+                        RecipientCapability(send=self.evidence),
+                    ),
+                ),
+                "Send and reply capability evidence required",
+            ),
+            (
+                (
+                    self.resolve(
+                        self.entity,
+                        self.target,
+                        RecipientCapability(reply=self.evidence),
+                    ),
+                ),
+                "Send and reply capability evidence required",
+            ),
         ):
             with self.subTest(reason=reason):
                 self.assertNotIn(self.entity, eligible_recipients(resolutions))

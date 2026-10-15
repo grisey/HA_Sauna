@@ -290,17 +290,26 @@ class LightOutputSnapshot:
             plan=plan,
             phase_key=output._phase_key,
             phase_ends_at=output._phase_ends_at,
-            motion=None if motion is None else LightMotionSnapshot(
-                motion.kind, motion.started_at, motion.start_percent,
-                motion.low_percent, motion.fade_seconds, motion.fixed_percent,
+            motion=None
+            if motion is None
+            else LightMotionSnapshot(
+                motion.kind,
+                motion.started_at,
+                motion.start_percent,
+                motion.low_percent,
+                motion.fade_seconds,
+                motion.fixed_percent,
             ),
             manual_brightness=output._manual,
             manual_phase_key=output._manual_phase_key,
             manual_ends_at=output._manual_ends_at,
             last_automatic=output._last_automatic,
             resume_pending=output._resume_pending,
-            return_transition=None if transition is None else LightReturnSnapshot(
-                transition.started_at, transition.start_percent,
+            return_transition=None
+            if transition is None
+            else LightReturnSnapshot(
+                transition.started_at,
+                transition.start_percent,
                 transition.duration_seconds,
             ),
             phase_paused=output._phase_paused,
@@ -372,7 +381,9 @@ class DeviceObservation:
 
     def __post_init__(self):
         object.__setattr__(self, "sources", _tuple_of(self.sources, ObservedSource))
-        object.__setattr__(self, "measurements", _tuple_of(self.measurements, Measurement))
+        object.__setattr__(
+            self, "measurements", _tuple_of(self.measurements, Measurement)
+        )
         require_immutable(self)
 
 

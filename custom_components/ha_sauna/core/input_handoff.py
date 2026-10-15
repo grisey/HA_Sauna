@@ -87,7 +87,10 @@ class DoorOperation:
             raise ValueError("door operation requires a DOOR_OPEN event")
         if self.closing is not None and self.closing.kind is not Kind.DOOR_CLOSE:
             raise ValueError("door operation closing requires a DOOR_CLOSE event")
-        if self.ventilation is not None and self.ventilation.kind is not Kind.VENTILATION:
+        if (
+            self.ventilation is not None
+            and self.ventilation.kind is not Kind.VENTILATION
+        ):
             raise ValueError("door operation ventilation requires a VENTILATION event")
         if any(
             event is not None and event.session_id != self.opening.session_id

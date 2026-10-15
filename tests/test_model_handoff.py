@@ -13,7 +13,10 @@ from custom_components.ha_sauna.core.model_handoff import (
     freeze_data,
 )
 from custom_components.ha_sauna.core.models import Session
-from custom_components.ha_sauna.core.notification_recipients import ActorRef, SessionRecipients
+from custom_components.ha_sauna.core.notification_recipients import (
+    ActorRef,
+    SessionRecipients,
+)
 from test_cooling import at, controller
 from test_foundation import T0
 
@@ -45,12 +48,14 @@ class ModelHandoffTests(unittest.TestCase):
 
         class Consumer:
             def consume(self, observation: ModelHandoff[ControllerOutput]) -> None:
-                received.append((
-                    observation.context.entry_id,
-                    observation.before.session.session_id,
-                    observation.after.session,
-                    observation.after.completed_sessions[-1].ended_at,
-                ))
+                received.append(
+                    (
+                        observation.context.entry_id,
+                        observation.before.session.session_id,
+                        observation.after.session,
+                        observation.after.completed_sessions[-1].ended_at,
+                    )
+                )
 
         Consumer().consume(handoff)
         self.assertEqual(received, [("entry", "s", None, at(1))])
@@ -101,8 +106,11 @@ class ModelHandoffTests(unittest.TestCase):
     def test_context_preserves_unknown_actor_and_original_model_times(self):
         state = Session.create("s", T0)
         context = HandoffContext(
-            "entry", "delivery", T0 + timedelta(seconds=10),
-            ActorRef(None, "explicit-source"), "s",
+            "entry",
+            "delivery",
+            T0 + timedelta(seconds=10),
+            ActorRef(None, "explicit-source"),
+            "s",
         )
         result = ModelHandoff(context, None, state)
         self.assertIsNone(result.context.actor.user_id)
@@ -123,14 +131,17 @@ class ModelHandoffTests(unittest.TestCase):
                 ModelHandoff(context, None, replace(state, entry_id="other"))
 
     def test_global_aggregate_preserves_entry_identities_without_a_common_claim(self):
-        state = RecipientAggregate((
-            SessionRecipients("entry", "first"),
-            SessionRecipients("other", "second"),
-        ))
+        state = RecipientAggregate(
+            (
+                SessionRecipients("entry", "first"),
+                SessionRecipients("other", "second"),
+            )
+        )
         context = HandoffContext(None, "global", T0)
         handoff = ModelHandoff(context, state, state)
-        self.assertEqual(tuple(item.entry_id for item in handoff.after.sessions),
-                         ("entry", "other"))
+        self.assertEqual(
+            tuple(item.entry_id for item in handoff.after.sessions), ("entry", "other")
+        )
         with self.assertRaises(ValueError):
             ModelHandoff(replace(context, entry_id="entry"), None, state)
         with self.assertRaises(ValueError):

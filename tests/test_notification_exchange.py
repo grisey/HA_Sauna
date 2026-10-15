@@ -25,8 +25,14 @@ class NotificationExchangeTests(unittest.TestCase):
             "message", "correlation", "entry", self.target, {"opaque": 1}, "session"
         )
         self.reply = ReplyEnvelope(
-            "reply", "message", "correlation", "entry", self.target,
-            ActorRef("reply-user", "authenticated-adapter"), {"opaque": 2}, "session"
+            "reply",
+            "message",
+            "correlation",
+            "entry",
+            self.target,
+            ActorRef("reply-user", "authenticated-adapter"),
+            {"opaque": 2},
+            "session",
         )
         self.correlator = ReplyCorrelator()
         self.correlator.register(self.notification)
@@ -40,8 +46,10 @@ class NotificationExchangeTests(unittest.TestCase):
 
     def test_unknown_scopes_do_not_consume_reply_identity(self):
         changes = (
-            {"correlation_id": "unknown"}, {"entry_id": "other"},
-            {"session_id": "other"}, {"session_id": None},
+            {"correlation_id": "unknown"},
+            {"entry_id": "other"},
+            {"session_id": "other"},
+            {"session_id": None},
             {"source": TargetIdentity("synthetic", "other")},
             {"source": TargetIdentity("other", "endpoint")},
         )
@@ -69,7 +77,9 @@ class NotificationExchangeTests(unittest.TestCase):
             self.correlator.receive(duplicate).disposition, ReplyDisposition.DUPLICATE
         )
         self.assertEqual(
-            self.correlator.receive(replace(self.reply, reply_id="another")).disposition,
+            self.correlator.receive(
+                replace(self.reply, reply_id="another")
+            ).disposition,
             ReplyDisposition.ACCEPTED,
         )
 
@@ -155,8 +165,10 @@ class NotificationExchangeTests(unittest.TestCase):
             ReplyDisposition.ACCEPTED, self.reply, self.notification
         )
         for change in (
-            {"disposition": "accepted"}, {"reply": None},
-            {"reply": self.notification}, {"notification": self.reply},
+            {"disposition": "accepted"},
+            {"reply": None},
+            {"reply": self.notification},
+            {"notification": self.reply},
         ):
             with self.subTest(change=change), self.assertRaises(TypeError):
                 replace(association, **change)
@@ -181,8 +193,10 @@ class NotificationExchangeTests(unittest.TestCase):
 
     def test_successful_association_requires_complete_matching_notification(self):
         changes = (
-            {"message_id": "other"}, {"correlation_id": "other"},
-            {"entry_id": "other"}, {"session_id": "other"},
+            {"message_id": "other"},
+            {"correlation_id": "other"},
+            {"entry_id": "other"},
+            {"session_id": "other"},
             {"session_id": None},
             {"target": TargetIdentity("synthetic", "other")},
             {"target": TargetIdentity("other", "endpoint")},
@@ -203,19 +217,22 @@ class NotificationExchangeTests(unittest.TestCase):
                 unscoped_notification = replace(self.notification, session_id=None)
                 unscoped_reply = replace(self.reply, session_id=None)
                 self.assertIs(
-                    ReplyAssociation(disposition, unscoped_reply,
-                                     unscoped_notification).notification,
+                    ReplyAssociation(
+                        disposition, unscoped_reply, unscoped_notification
+                    ).notification,
                     unscoped_notification,
                 )
 
     def test_unsuccessful_association_cannot_claim_a_notification(self):
         for disposition in (
-            ReplyDisposition.UNKNOWN, ReplyDisposition.MESSAGE_MISMATCH,
+            ReplyDisposition.UNKNOWN,
+            ReplyDisposition.MESSAGE_MISMATCH,
         ):
             association = ReplyAssociation(disposition, self.reply)
             self.assertIsNone(association.notification)
             for notification in (
-                self.notification, replace(self.notification, message_id="other"),
+                self.notification,
+                replace(self.notification, message_id="other"),
             ):
                 with (
                     self.subTest(disposition=disposition),

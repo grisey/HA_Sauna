@@ -34,7 +34,9 @@ import test_notification_exchange as exchange_fixtures
 
 
 class ButtonGestureSnapshotTests(unittest.TestCase):
-    def test_capture_is_complete_and_does_not_consume_the_next_gesture_action(self) -> None:
+    def test_capture_is_complete_and_does_not_consume_the_next_gesture_action(
+        self,
+    ) -> None:
         owner = ButtonGestures(None, "long")
         reference = ButtonGestures(None, "long")
         for button in (owner, reference):
@@ -67,7 +69,9 @@ class ButtonGestureSnapshotTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             before.pressed_at = None
 
-    def test_binary_hold_configuration_and_unknown_native_context_are_preserved(self) -> None:
+    def test_binary_hold_configuration_and_unknown_native_context_are_preserved(
+        self,
+    ) -> None:
         owner = ButtonGestures(THRESHOLD, "double")
         initial = ButtonGestureSnapshot.capture(owner)
         self.assertEqual(initial.hold_threshold, THRESHOLD)
@@ -94,7 +98,9 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
         exchange_fixtures.NotificationExchangeTests.setUp(self)
         self.context = HandoffContext("entry", "reply-observation", T0)
 
-    def test_complete_exchange_observations_keep_both_payloads_without_aliases(self) -> None:
+    def test_complete_exchange_observations_keep_both_payloads_without_aliases(
+        self,
+    ) -> None:
         notification_payload = {"opaque": [{"notification": 1}]}
         reply_payload = {"opaque": [{"reply": 2}]}
         notification = replace(self.notification, payload=notification_payload)
@@ -121,7 +127,9 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
                     {definition.name for definition in fields(snapshot)},
                     {definition.name for definition in fields(original)},
                 )
-                self.assertIs(ModelHandoff(self.context, None, snapshot).after, snapshot)
+                self.assertIs(
+                    ModelHandoff(self.context, None, snapshot).after, snapshot
+                )
 
         self.assertEqual(reply_snapshot.reply_id, reply.reply_id)
         self.assertEqual(reply_snapshot.message_id, reply.message_id)
@@ -179,14 +187,20 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
                         snapshot.notification,
                         NotificationEnvelopeSnapshot.capture(association.notification),
                     )
-                self.assertIs(ModelHandoff(self.context, None, snapshot).after, snapshot)
+                self.assertIs(
+                    ModelHandoff(self.context, None, snapshot).after, snapshot
+                )
 
         self.assertEqual(
-            self.correlator.receive(replace(self.reply, reply_id="next-reply")).disposition,
+            self.correlator.receive(
+                replace(self.reply, reply_id="next-reply")
+            ).disposition,
             ReplyDisposition.ACCEPTED,
         )
 
-    def test_snapshot_preserves_every_registration_payload_and_reply_identity(self) -> None:
+    def test_snapshot_preserves_every_registration_payload_and_reply_identity(
+        self,
+    ) -> None:
         self.assertEqual(
             self.correlator.receive(self.reply).disposition,
             ReplyDisposition.ACCEPTED,
@@ -248,7 +262,9 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
             ReplyDisposition.DUPLICATE,
         )
         self.assertEqual(
-            self.correlator.receive(replace(self.reply, reply_id="new-reply")).disposition,
+            self.correlator.receive(
+                replace(self.reply, reply_id="new-reply")
+            ).disposition,
             ReplyDisposition.ACCEPTED,
         )
         self.assertEqual(original.reply_ids, frozenset({self.reply.reply_id}))
@@ -274,7 +290,9 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
             ReplyCorrelatorSnapshot.capture(second),
         )
 
-    def test_global_correlator_snapshot_keeps_all_entry_and_session_scopes(self) -> None:
+    def test_global_correlator_snapshot_keeps_all_entry_and_session_scopes(
+        self,
+    ) -> None:
         other_entry = replace(
             self.notification,
             entry_id="other-entry",
@@ -297,7 +315,9 @@ class ReplyCorrelatorSnapshotTests(unittest.TestCase):
             {("entry", "session"), ("other-entry", None)},
         )
 
-    def test_live_opaque_objects_keep_the_transport_contract_but_are_not_snapshots(self) -> None:
+    def test_live_opaque_objects_keep_the_transport_contract_but_are_not_snapshots(
+        self,
+    ) -> None:
         opaque = object()
         notification = replace(self.notification, payload=opaque)
         owner = ReplyCorrelator()

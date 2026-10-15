@@ -148,8 +148,7 @@ def _resolution_index(resolutions: Iterable[RecipientResolution]):
 
 def _eligible(resolution: RecipientResolution) -> bool:
     return (
-        resolution.recipient is not None
-        and resolution.recipient.capability.interactive
+        resolution.recipient is not None and resolution.recipient.capability.interactive
     )
 
 
@@ -158,7 +157,8 @@ def eligible_recipients(
 ) -> frozenset[RecipientRef]:
     """Candidates supported by the explicit resolver snapshot."""
     return frozenset(
-        ref for ref, result in _resolution_index(resolutions).items()
+        ref
+        for ref, result in _resolution_index(resolutions).items()
         if _eligible(result)
     )
 
@@ -231,7 +231,6 @@ class SessionRecipients:
         targets = {
             item.recipient.target
             for reference, item in resolved.items()
-            if reference in references
-            and _eligible(item)
+            if reference in references and _eligible(item)
         }
         return SessionRecipients(self.entry_id, self.session_id, self.targets | targets)

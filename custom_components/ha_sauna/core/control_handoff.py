@@ -93,8 +93,11 @@ class ControllerOutput:
             parameters=tuple(sorted(owner.parameters.as_dict().items())),
             program_mode=owner.program_mode,
             control_mode=owner.control_mode,
-            temperature_steps=(tuple(owner.temperature_steps)
-                               if owner.temperature_steps is not None else None),
+            temperature_steps=(
+                tuple(owner.temperature_steps)
+                if owner.temperature_steps is not None
+                else None
+            ),
             direct_presence=owner.direct_presence,
             presence_entry=owner._presence_entry,
             last_at=owner._last_at,

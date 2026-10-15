@@ -29,7 +29,9 @@ from custom_components.ha_sauna.core.warmup import (
 
 class ThermalHandoffTests(unittest.TestCase):
     def handoff(self, value, before=None):
-        context = HandoffContext("entry", "thermal-observation", T0, session_id="session")
+        context = HandoffContext(
+            "entry", "thermal-observation", T0, session_id="session"
+        )
         result = ModelHandoff(context, before, value)
         self.assertIs(result.after, value)
         return result
@@ -63,10 +65,14 @@ class ThermalHandoffTests(unittest.TestCase):
         episode.startup_delay_seconds = 330
         for second in range(0, 631, 30):
             evidence = episode.accept(at(second), 40)
-        observed = HeatingProgressEpisodeEvaluation.capture(episode, at(630), 40, evidence)
+        observed = HeatingProgressEpisodeEvaluation.capture(
+            episode, at(630), 40, evidence
+        )
         self.handoff(observed)
         self.assertEqual(observed.state.startup_delay_seconds, 330)
-        self.assertEqual(observed.state.analysis_started_at, episode._analysis_started_at)
+        self.assertEqual(
+            observed.state.analysis_started_at, episode._analysis_started_at
+        )
         self.assertEqual(observed.state.response_at, episode.response_at)
         self.assertTrue(observed.evidence.no_rise)
         snapshot = HeatingProgressEpisodeSnapshot.capture(episode)
@@ -103,7 +109,10 @@ class ThermalHandoffTests(unittest.TestCase):
             WarmupOwnerKey.from_key(
                 ("session", "synthetic-feedback", Position.UPPER, measurement.source)
             ),
-            measurement, 180, "historical-session", 0.1,
+            measurement,
+            180,
+            "historical-session",
+            0.1,
         )
         result = estimate.remaining_seconds(at(150), maximum_age_seconds=180)
         before = dict(vars(estimate))
@@ -142,7 +151,8 @@ class ThermalHandoffTests(unittest.TestCase):
         source = WarmupSourceContext(key, measurement, 180, "different-history", 0.1)
         self.handoff(source)
         for change in (
-            {"position": Position.LOWER}, {"source": "sensor.other"},
+            {"position": Position.LOWER},
+            {"source": "sensor.other"},
             {"quantity": Quantity.HUMIDITY},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
@@ -155,7 +165,9 @@ class ThermalHandoffTests(unittest.TestCase):
     def test_unknown_startup_and_invalid_eta_remain_explicit(self):
         episode = HeatingProgressEpisode(300, at(0))
         evidence = episode.accept(at(0), 40)
-        observed = HeatingProgressEpisodeEvaluation.capture(episode, at(0), 40, evidence)
+        observed = HeatingProgressEpisodeEvaluation.capture(
+            episode, at(0), 40, evidence
+        )
         self.handoff(observed)
         self.assertIsNone(observed.evidence)
         self.assertIsNone(observed.state.startup_delay_seconds)
@@ -164,7 +176,9 @@ class ThermalHandoffTests(unittest.TestCase):
         state = WarmupEstimateSnapshot.capture(estimate)
         self.assertTrue(state.source_invalid)
         value = WarmupEstimateObservation(
-            state, WarmupSourceContext(None, None, None, None, None), at(0),
+            state,
+            WarmupSourceContext(None, None, None, None, None),
+            at(0),
             estimate.remaining_seconds(at(0)),
         )
         self.handoff(value)
@@ -180,7 +194,9 @@ class ThermalHandoffTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             HeatingProgressEvidence(at(0), at(150), 40, 40, "true", False)
         with self.assertRaises(TypeError):
-            WarmupSourceContext(("session", "source", "upper", "sensor"), None, 180, None, None)
+            WarmupSourceContext(
+                ("session", "source", "upper", "sensor"), None, 180, None, None
+            )
         state = WarmupEstimateSnapshot.capture(WarmupEstimate(300))
         with self.assertRaises(TypeError):
             replace(state, source_invalid="true")

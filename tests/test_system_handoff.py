@@ -43,9 +43,14 @@ class EnvironmentSnapshotTests(unittest.TestCase):
 
     def test_unconfigured_result_keeps_all_nulls_and_the_empty_values_list(self):
         result = {
-            "configured": False, "station": None, "condition": None, "values": [],
-            "measurement_time": None, "forecast_time": None,
-            "source": {"mode": None, "interpolated": None}, "updated_at": None,
+            "configured": False,
+            "station": None,
+            "condition": None,
+            "values": [],
+            "measurement_time": None,
+            "forecast_time": None,
+            "source": {"mode": None, "interpolated": None},
+            "updated_at": None,
         }
         self.assertEqual(EnvironmentSnapshot.from_result(result).to_wire(), result)
         result.pop("source")
@@ -58,7 +63,9 @@ class EnvironmentSnapshotTests(unittest.TestCase):
                 result = measurement_window(T0, end, now)
                 with patch(
                     "custom_components.ha_sauna.core.history.measurement_window",
-                    side_effect=AssertionError("The supplied result is already calculated"),
+                    side_effect=AssertionError(
+                        "The supplied result is already calculated"
+                    ),
                 ):
                     output = MeasurementWindow.from_result(result)
                     self.assertEqual(output.to_wire(), result)
@@ -70,12 +77,21 @@ class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
         self.archive = Archive(Path(self.temp.name) / "handoff.sqlite", "entry")
         await self.archive.start()
         self.owner = controller()
-        config = {"bindings": bindings().as_dict(), "parameters": parameters().as_dict()}
+        config = {
+            "bindings": bindings().as_dict(),
+            "parameters": parameters().as_dict(),
+        }
         self.archive.save_session(self.owner.session, T0, config)
         # Open record payloads must not depend on a second record-kind catalogue.
-        self.archive.append("future_diagnostic", at(1), {
-            "new": {"values": [1, None, "retained"]}, "explicit_null": None,
-        }, "s")
+        self.archive.append(
+            "future_diagnostic",
+            at(1),
+            {
+                "new": {"values": [1, None, "retained"]},
+                "explicit_null": None,
+            },
+            "s",
+        )
         self.archive.append("future_sequence", at(2), [1, {"detail": True}], "s")
         await self.archive.flush()
 
@@ -87,7 +103,9 @@ class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
         result = self.archive.read("s", now=at(3))
         expected = self.archive.read("s", now=at(3))
         with (
-            patch.object(self.archive, "read", side_effect=AssertionError("No new read")),
+            patch.object(
+                self.archive, "read", side_effect=AssertionError("No new read")
+            ),
             patch(
                 "custom_components.ha_sauna.archive.project_archive",
                 side_effect=AssertionError("No new projection"),
@@ -95,11 +113,14 @@ class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
         ):
             output = ArchiveSessionOutput.from_result(result)
             self.assertEqual(output.to_wire(), expected)
-        self.assertEqual(output.measurement_window.started_at,
-                         expected["measurement_window"]["started_at"])
+        self.assertEqual(
+            output.measurement_window.started_at,
+            expected["measurement_window"]["started_at"],
+        )
         result["session"]["configuration"]["bindings"].clear()
-        diagnostic = next(item for item in result["records"]
-                          if item["kind"] == "future_diagnostic")
+        diagnostic = next(
+            item for item in result["records"] if item["kind"] == "future_diagnostic"
+        )
         diagnostic["payload"]["new"]["values"].append("changed")
         self.assertEqual(output.to_wire(), expected)
         self.assertIsNone(output.next_after)
@@ -116,7 +137,9 @@ class ArchiveOutputTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(missing.session_id, "missing")
         self.assertIsNone(missing.to_wire())
         self.assertIsNone(to_wire(missing))
-        empty = archive_read_output("s", self.archive.read("s", after=2**63 - 1, now=T0))
+        empty = archive_read_output(
+            "s", self.archive.read("s", after=2**63 - 1, now=T0)
+        )
         self.assertIsInstance(empty, ArchiveSessionOutput)
         self.assertEqual(empty.records, ())
         self.assertEqual(empty.to_wire()["records"], [])

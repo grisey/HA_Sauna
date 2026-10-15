@@ -20,7 +20,8 @@ def emit_model_input_evidence(probe, runtime, values, *, previous_session_id):
             "has_session_id": decision.session_id is not None,
             "same_previous_session": (
                 decision.session_id == previous_session_id
-                if previous_session_id is not None else None
+                if previous_session_id is not None
+                else None
             ),
         }
 
@@ -54,7 +55,8 @@ def emit_model_input_evidence(probe, runtime, values, *, previous_session_id):
                 "had_previous_session": previous_session_id is not None,
                 "same_previous_session": (
                     session.session_id == previous_session_id
-                    if session is not None and previous_session_id is not None else None
+                    if session is not None and previous_session_id is not None
+                    else None
                 ),
                 "started_at": session.timeline.session_started_at if session else None,
                 "operation_enabled": session.operation_enabled if session else None,
@@ -63,8 +65,12 @@ def emit_model_input_evidence(probe, runtime, values, *, previous_session_id):
                     [asdict(mark) for mark in session.base_phases] if session else []
                 ),
                 "deadlines": (
-                    [{"purpose": item.purpose, "due_at": item.due_at}
-                     for item in session.deadlines] if session else []
+                    [
+                        {"purpose": item.purpose, "due_at": item.due_at}
+                        for item in session.deadlines
+                    ]
+                    if session
+                    else []
                 ),
             },
             "completed_session_count": len(runtime.controller.completed_sessions),
@@ -72,6 +78,12 @@ def emit_model_input_evidence(probe, runtime, values, *, previous_session_id):
             "automatic_decision": decision_value(runtime.controller.automatic_decision),
         },
     }
-    print("MODEL_INPUT_EVIDENCE " + json.dumps(
-        evidence, sort_keys=True, allow_nan=False, default=iso_datetime,
-    ))
+    print(
+        "MODEL_INPUT_EVIDENCE "
+        + json.dumps(
+            evidence,
+            sort_keys=True,
+            allow_nan=False,
+            default=iso_datetime,
+        )
+    )

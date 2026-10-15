@@ -179,24 +179,30 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_historical_model_uses_saved_configuration_not_current_hardware(self):
         at = self.runtime._clock()
         current = self.runtime.configuration.as_options()
-        for source in ("proxy", "ha_presence"):
+        cases = tuple(
+            (mode, source)
+            for mode in ("automatic", "manual")
+            for source in ("proxy", "ha_presence")
+        )
+        for mode, source in cases:
             options = copy.deepcopy(current)
             options["presence_source"] = source
+            options["control_mode"] = mode
             options["bindings"].pop("lower_temperature", None)
             options["bindings"].pop("lower_humidity", None)
             options["bindings"]["presence"] = "binary_sensor.saved_presence"
-            identity = "historical-" + source
+            identity = f"historical-{mode}-{source}"
             self.runtime.archive.save_session(Session.create(identity, at), at, options)
         self.runtime.archive.save_session(
             Session.create("legacy-missing-config", at), at, {}
         )
         await self.runtime.archive.flush()
         async with ClientSession(headers=self.headers) as client:
-            for source in ("proxy", "ha_presence"):
+            for mode, source in cases:
                 async with client.get(
                     self.base + "/archive",
                     params={
-                        "session_id": "historical-" + source,
+                        "session_id": f"historical-{mode}-{source}",
                         "projection": "history",
                     },
                 ) as response:
@@ -208,8 +214,9 @@ class PanelDetailProjectionTests(unittest.IsolatedAsyncioTestCase):
                         model["presence"]["direct"], source == "ha_presence"
                     )
                     self.assertEqual(
-                        "provisional_door_heat" in model["regulation_causes"],
-                        source == "proxy",
+                        model["regulation_causes"],
+                        ["gang_heat", "provisional_door_heat", "cooling"]
+                        if mode == "automatic" else [],
                     )
             async with client.get(
                 self.base + "/archive",

@@ -96,9 +96,7 @@ class EnvironmentSnapshot(WireValue):
     def from_result(cls, result: Mapping):
         values = dict(result)
         station = values["station"]
-        values["station"] = (
-            None if station is None else EnvironmentStation(**station)
-        )
+        values["station"] = None if station is None else EnvironmentStation(**station)
         values["source"] = EnvironmentSource(**values["source"])
         values["values"] = tuple(EnvironmentValue(**item) for item in values["values"])
         return cls(**values)
@@ -203,7 +201,8 @@ class ArchiveSessionOutput(WireValue):
 
 
 def archive_read_output(
-    session_id: str | None, result,
+    session_id: str | None,
+    result,
 ) -> ArchiveSessionList | ArchiveSessionNotFound | ArchiveSessionOutput:
     """Close one supplied read result without looking up missing information."""
     if session_id is None:

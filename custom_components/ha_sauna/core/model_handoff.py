@@ -14,7 +14,17 @@ from enum import Enum
 from functools import cache
 from math import isfinite
 from types import UnionType
-from typing import Any, Generic, Literal, Protocol, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from .contracts import ConsumerEvent
 from .notification_recipients import ActorRef
@@ -47,8 +57,10 @@ def _has_type(value: object, annotation: object) -> bool:
     if origin in (Union, UnionType):
         return any(_has_type(value, candidate) for candidate in arguments)
     if origin is Literal:
-        return any(type(value) is type(candidate) and value == candidate
-                   for candidate in arguments)
+        return any(
+            type(value) is type(candidate) and value == candidate
+            for candidate in arguments
+        )
     if origin is tuple:
         if not isinstance(value, tuple):
             return False
@@ -78,9 +90,9 @@ def _has_type(value: object, annotation: object) -> bool:
 def require_immutable(value: object, *, context: HandoffContext | None = None) -> None:
     """Reject live objects and mutable nested data, including inside dataclasses.
 
-This checks the handoff's structural boundary. The owning model remains
-responsible for its domain invariants; no business rules are reimplemented.
-"""
+    This checks the handoff's structural boundary. The owning model remains
+    responsible for its domain invariants; no business rules are reimplemented.
+    """
     checked = set()
 
     def check(item, ancestors):
@@ -103,17 +115,27 @@ responsible for its domain invariants; no business rules are reimplemented.
                 for definition in fields(item):
                     child = getattr(item, definition.name)
                     if not _has_type(child, annotations[definition.name]):
-                        raise TypeError(f"Invalid model field: {type(item).__name__}.{definition.name}")
+                        raise TypeError(
+                            f"Invalid model field: {type(item).__name__}.{definition.name}"
+                        )
                     if context is not None and child is not None:
-                        if (definition.name == "entry_id" and context.entry_id is not None
-                                and child != context.entry_id):
+                        if (
+                            definition.name == "entry_id"
+                            and context.entry_id is not None
+                            and child != context.entry_id
+                        ):
                             raise ValueError("Handoff context and model entry differ")
-                        if (definition.name == "session_id" and context.session_id is not None
-                                and child != context.session_id):
+                        if (
+                            definition.name == "session_id"
+                            and context.session_id is not None
+                            and child != context.session_id
+                        ):
                             raise ValueError("Handoff context and model session differ")
                     check(child, ancestors)
             else:
-                raise TypeError(f"Mutable or unsupported model value: {type(item).__name__}")
+                raise TypeError(
+                    f"Mutable or unsupported model value: {type(item).__name__}"
+                )
         finally:
             ancestors.remove(identity)
         checked.add(identity)
@@ -169,6 +191,7 @@ class FrozenMap(Mapping[str, object]):
 
 def freeze_data(value: object) -> object:
     """Copy existing observation data without retaining mutable source aliases."""
+
     def freeze(item, ancestors):
         if _scalar(item):
             return item
@@ -256,16 +279,24 @@ class ModelHandoff(Generic[Model]):
     def __post_init__(self) -> None:
         if not isinstance(self.context, HandoffContext):
             raise TypeError("A handoff context is required")
-        states = tuple(state for state in (self.before, self.after) if state is not None)
+        states = tuple(
+            state for state in (self.before, self.after) if state is not None
+        )
         if not states:
             raise ValueError("A handoff must contain at least one complete model value")
         if any(type(state) is not type(states[0]) for state in states):
             raise TypeError("A handoff cannot mix different model contracts")
         for state in states:
-            if not is_dataclass(state) or isinstance(state, type) or isinstance(state, FrozenMap):
+            if (
+                not is_dataclass(state)
+                or isinstance(state, type)
+                or isinstance(state, FrozenMap)
+            ):
                 raise TypeError("A handoff requires a concrete model dataclass")
             if isinstance(state, ConsumerEvent):
-                raise TypeError("A ConsumerEvent requires its complete ConsumerEventOutput")
+                raise TypeError(
+                    "A ConsumerEvent requires its complete ConsumerEventOutput"
+                )
         # Shared immutable submodels (including identical before/after values)
         # are checked once, together with their owner scope.
         require_immutable(states, context=self.context)
@@ -278,5 +309,4 @@ class ModelHandoff(Generic[Model]):
 class ModelConsumer(Protocol[Model]):
     """A future consumer receives the complete form, without owner lookups."""
 
-    def consume(self, handoff: ModelHandoff[Model]) -> None:
-        ...
+    def consume(self, handoff: ModelHandoff[Model]) -> None: ...
