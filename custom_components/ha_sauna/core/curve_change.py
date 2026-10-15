@@ -162,6 +162,95 @@ class OriginalWaterPair:
     available_at: datetime
 
 
+@dataclass(frozen=True)
+class OriginalWaterPairSupport:
+    """Separate an ordinary missing right T original from invalid support."""
+
+    status: str
+    pair: OriginalWaterPair | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class OriginalWaterWindowFeatures:
+    """Two consecutive water windows with propagated pointwise envelopes.
+
+    Pair identities retain the RH originals, both T partners and availability.
+    The slope envelopes are algebraic consequences of those input envelopes,
+    never statistical confidence intervals or independent water measurements.
+    """
+
+    previous: tuple[OriginalWaterPair, ...]
+    current: tuple[OriginalWaterPair, ...]
+    v: float
+    b: float
+    e: float
+    e_minus: float
+
+    @property
+    def start_at(self) -> datetime:
+        """First RH original in the complete two-window support."""
+        return self.previous[0].humidity_sample[0]
+
+    @property
+    def newest_at(self) -> datetime:
+        """Last RH original in the current window."""
+        return self.current[-1].humidity_sample[0]
+
+    @property
+    def available_at(self) -> datetime:
+        """Latest right T partner on the accepted input measurement axis."""
+        return max(pair.available_at for pair in self.previous + self.current)
+
+    def constant_bounds(self, significance: float) -> tuple[float, float]:
+        """Intersect current point envelopes scaled by the caller's unit.
+
+        A nonempty intersection is compatibility with one constant water
+        level. A zero OLS slope alone does not provide this shape evidence.
+        """
+        if not _original_positive(significance):
+            raise ValueError("significance must be finite and positive")
+        bounds = []
+        for pair in self.current:
+            if significance == 1:
+                bounds.append((pair.lower_density, pair.upper_density))
+                continue
+            middle = (pair.lower_density + pair.upper_density) / 2
+            radius = (pair.upper_density - pair.lower_density) / 2
+            bounds.append((
+                middle - significance * radius, middle + significance * radius,
+            ))
+        lower = max(bound[0] for bound in bounds)
+        upper = min(bound[1] for bound in bounds)
+        if not all(_profile_number(value) for value in (lower, upper)):
+            raise ValueError("scaled water envelopes must remain finite")
+        return lower, upper
+
+    def constant_compatible(self, significance: float) -> bool:
+        """Whether every current water envelope can share one level."""
+        lower, upper = self.constant_bounds(significance)
+        return lower <= upper
+
+    @property
+    def constant_lower(self) -> float:
+        """Lower end of the unscaled current constant-level intersection."""
+        return max(pair.lower_density for pair in self.current)
+
+    @property
+    def constant_upper(self) -> float:
+        """Upper end of the unscaled current constant-level intersection."""
+        return min(pair.upper_density for pair in self.current)
+
+
+@dataclass(frozen=True)
+class OriginalWaterWindowSupport:
+    """Water-window result without silently removing unavailable originals."""
+
+    status: str
+    features: OriginalWaterWindowFeatures | None = None
+    reason: str | None = None
+
+
 def _original_positive(value: object) -> bool:
     return _profile_number(value) and value > 0
 
@@ -379,41 +468,48 @@ def original_contrasts(
         return None
 
 
-def original_water_pair(
+def original_water_pair_support(
     humidity_sample: tuple[datetime, float],
     temperatures: Sequence[tuple[datetime, float]], *,
     temperature_scale: float, humidity_scale: float,
     max_gap_seconds: float, at: datetime,
-) -> OriginalWaterPair | None:
-    """Pair one RH original only with immediately neighboring T originals.
+) -> OriginalWaterPairSupport:
+    """Assess one RH original with its immediate causal T neighbors.
 
     A bracket is usable only after its right original is available at at and
     within the caller's support gap. Historical base pairs do not expire merely
     because at advances; source/candidate continuity belongs to the detector.
     The existing moisture function supplies both density bounds. Invalid error
     envelopes are unknown, never clipped into an invented water observation.
+    A valid left neighbor with its right neighbor not yet available is pending,
+    not an invalid gap. Receipt-time freshness remains with the caller.
     """
     try:
         humidity_at, humidity = humidity_sample
         if (not isinstance(at, datetime) or not isinstance(humidity_at, datetime)
                 or humidity_at > at or not _profile_number(humidity)
+                or not 0 <= humidity <= 100
                 or not _original_positive(temperature_scale)
                 or not _original_positive(humidity_scale)
                 or not _original_positive(max_gap_seconds)):
-            return None
+            return OriginalWaterPairSupport("invalid", reason="invalid_input")
         before = None
         after = None
         previous_at = None
         for stamp, value in temperatures:
             if not isinstance(stamp, datetime):
-                return None
+                return OriginalWaterPairSupport(
+                    "invalid", reason="invalid_temperature_time",
+                )
             if previous_at is not None and stamp <= previous_at:
-                return None
+                return OriginalWaterPairSupport("invalid", reason="temperature_order")
             previous_at = stamp
             if stamp > at:
                 break
             if not _profile_number(value):
-                return None
+                return OriginalWaterPairSupport(
+                    "invalid", reason="invalid_temperature_value",
+                )
             point = (stamp, float(value))
             if stamp == humidity_at:
                 before = after = point
@@ -423,11 +519,15 @@ def original_water_pair(
             else:
                 after = point
                 break
-        if before is None or after is None:
-            return None
+        if before is None:
+            return OriginalWaterPairSupport("invalid", reason="left_temperature_missing")
+        if after is None:
+            if (humidity_at - before[0]).total_seconds() > max_gap_seconds:
+                return OriginalWaterPairSupport("invalid", reason="temperature_support_gap")
+            return OriginalWaterPairSupport("pending", reason="right_temperature_pending")
         gap = (after[0] - before[0]).total_seconds()
         if not 0 <= gap <= max_gap_seconds:
-            return None
+            return OriginalWaterPairSupport("invalid", reason="temperature_support_gap")
         temperature = before[1]
         if gap:
             fraction = (humidity_at - before[0]).total_seconds() / gap
@@ -439,15 +539,135 @@ def original_water_pair(
             temperature + temperature_scale, humidity + humidity_scale,
         )
         if not all(_profile_number(value) for value in (temperature, lower, upper)):
-            return None
-        return OriginalWaterPair(
+            return OriginalWaterPairSupport("invalid", reason="invalid_water_envelope")
+        pair = OriginalWaterPair(
             humidity_sample=(humidity_at, float(humidity)),
             temperature_before=before, temperature_after=after,
             temperature=temperature, lower_density=lower, upper_density=upper,
             available_at=after[0],
         )
+        return OriginalWaterPairSupport("ready", pair=pair)
     except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return OriginalWaterPairSupport("invalid", reason="invalid_support")
+
+
+def original_water_pair(
+    humidity_sample: tuple[datetime, float],
+    temperatures: Sequence[tuple[datetime, float]], *,
+    temperature_scale: float, humidity_scale: float,
+    max_gap_seconds: float, at: datetime,
+) -> OriginalWaterPair | None:
+    """Compatibility view of the causal water-pair support assessment."""
+    return original_water_pair_support(
+        humidity_sample, temperatures, temperature_scale=temperature_scale,
+        humidity_scale=humidity_scale, max_gap_seconds=max_gap_seconds, at=at,
+    ).pair
+
+
+def _original_water_pair_valid(pair: object) -> bool:
+    if not isinstance(pair, OriginalWaterPair):
+        return False
+    humidity_at, humidity = pair.humidity_sample
+    before_at, before = pair.temperature_before
+    after_at, after = pair.temperature_after
+    return (
+        all(isinstance(stamp, datetime) for stamp in (
+            humidity_at, before_at, after_at, pair.available_at,
+        ))
+        and before_at <= humidity_at <= after_at
+        and pair.available_at == after_at
+        and all(_profile_number(value) for value in (
+            humidity, before, after, pair.temperature,
+            pair.lower_density, pair.upper_density,
+        ))
+        and 0 <= humidity <= 100
+        and 0 <= pair.lower_density <= pair.upper_density
+    )
+
+
+def _original_water_line(
+    pairs: tuple[OriginalWaterPair, ...],
+) -> tuple[float, float] | None:
+    """OLS slope and its exact point-envelope bound, in g/m³ per second."""
+    origin = pairs[0].humidity_sample[0]
+    times = tuple(
+        (pair.humidity_sample[0] - origin).total_seconds() for pair in pairs
+    )
+    mean_time = fsum(times) / len(times)
+    centered_times = tuple(time - mean_time for time in times)
+    s_tt = fsum(time * time for time in centered_times)
+    if not _original_positive(s_tt):
         return None
+    middles = tuple(
+        (pair.lower_density + pair.upper_density) / 2 for pair in pairs
+    )
+    radii = tuple((pair.upper_density - pair.lower_density) / 2 for pair in pairs)
+    mean_value = fsum(middles) / len(middles)
+    slope = fsum(
+        time * (value - mean_value)
+        for time, value in zip(centered_times, middles, strict=True)
+    ) / s_tt
+    error = fsum(
+        abs(time) * radius
+        for time, radius in zip(centered_times, radii, strict=True)
+    ) / s_tt
+    if not all(_profile_number(value) for value in (slope, error)) or error < 0:
+        return None
+    return slope, error
+
+
+def original_water_window(
+    pairs: Sequence[OriginalWaterPair], *, count: int,
+    max_gap_seconds: float, at: datetime,
+) -> OriginalWaterWindowSupport:
+    """Use the last exactly 2K consecutive supplied RH-pair identities.
+
+    No future or invalid entry is skipped to obtain an older usable window.
+    The caller supplies every successive RH original, retains pending unpaired
+    originals and owns source continuity and raw-channel receipt freshness.
+    Adjacent RH-original gaps are checked here; each supplied pair retains
+    the T bracket checked with its separate bound by original_water_pair.
+    An old complete window is not made invalid merely by ordinary causal
+    waiting for a newer pair's right T partner.
+    """
+    try:
+        if (not isinstance(count, int) or isinstance(count, bool) or count < 2
+                or not _original_positive(max_gap_seconds)
+                or not isinstance(at, datetime)):
+            return OriginalWaterWindowSupport("invalid", reason="invalid_input")
+        selected = tuple(pairs[-2 * count:])
+        if not selected:
+            return OriginalWaterWindowSupport("insufficient", reason="insufficient_pairs")
+        previous_at = None
+        pending = False
+        for pair in selected:
+            if not _original_water_pair_valid(pair):
+                return OriginalWaterWindowSupport("invalid", reason="invalid_water_pair")
+            stamp = pair.humidity_sample[0]
+            if previous_at is not None:
+                gap = (stamp - previous_at).total_seconds()
+                if not 0 < gap <= max_gap_seconds:
+                    return OriginalWaterWindowSupport(
+                        "invalid", reason="humidity_order_or_gap",
+                    )
+            previous_at = stamp
+            pending |= pair.available_at > at or stamp > at
+        if pending:
+            return OriginalWaterWindowSupport("pending", reason="pair_not_yet_available")
+        if len(selected) != 2 * count:
+            return OriginalWaterWindowSupport("insufficient", reason="insufficient_pairs")
+        previous, current = selected[:count], selected[count:]
+        old, new = _original_water_line(previous), _original_water_line(current)
+        if old is None or new is None:
+            return OriginalWaterWindowSupport("invalid", reason="invalid_window_geometry")
+        return OriginalWaterWindowSupport(
+            "ready", features=OriginalWaterWindowFeatures(
+                previous=previous, current=current,
+                v=new[0], b=old[0], e=new[1], e_minus=old[1],
+            ),
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return OriginalWaterWindowSupport("invalid", reason="invalid_support")
 
 
 @dataclass(frozen=True)

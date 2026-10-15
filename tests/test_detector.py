@@ -136,7 +136,7 @@ class DetectorTests(unittest.TestCase):
             + "\n".join(repr(row) for row in rows)
         )
 
-    def test_complete_additive_ventilation_lookback_ends_confirmed_gang(self):
+    def test_water_plateau_ventilation_ends_confirmed_gang_and_blocks_gang_heat(self):
         defaults = parameters().values
         p = detection_parameters(door_humidity_seconds=defaults["strong_window_seconds"],
                                  vent_baseline_seconds=defaults["weak_window_seconds"])
@@ -147,20 +147,32 @@ class DetectorTests(unittest.TestCase):
         c.process(event("entry-open", Kind.DOOR_OPEN, 0))
         c.process(event("close", Kind.DOOR_CLOSE, 0))
         c.process(event("water", Kind.INFUSION, 0))
+        statistics = Controller(p)
+        statistics.set_temperature(80, T0)
+        statistics.begin_session("statistics", T0)
         d.report_heating(True, T0)
         found = []
+        statistics_heat = []
 
         def received(detection):
             found.append(detection)
             c.process(Event(f"detected:{detection.kind}:{detection.trace_at}", "s",
                             detection.kind, detection.effective_at,
                             detection.detected_at, detection.trace_at))
+            before_heat = statistics.last_decision.heat
+            statistics.process(Event(
+                f"statistics:{detection.kind}:{detection.trace_at}", "statistics",
+                detection.kind, detection.effective_at, detection.detected_at, detection.trace_at,
+            ))
+            if detection.kind == Kind.VENTILATION:
+                statistics_heat.append((before_heat, statistics.last_decision.heat))
 
-        for second in range(320):
+        _, plateau, end, values = self._ventilation_curve(d)
+        for second in range(0, end + 1, d.grid_seconds):
             now = T0 + timedelta(seconds=second)
-            humidity = 40 if second <= 40 else None if second <= 180 else 20
-            temperature = 80 - min(10, max(0, second - 200) * .2)
+            temperature, humidity = values(second)
             c.set_temperature(temperature, now)
+            statistics.set_temperature(temperature, now)
             for position in d.positions:
                 d.accept(measurement(position, Quantity.TEMPERATURE, temperature, second))
                 d.accept(measurement(position, Quantity.HUMIDITY, humidity, second))
@@ -170,12 +182,28 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(d.capacity, p.values["door_humidity_seconds"] + p.values["vent_baseline_seconds"] + 1)
         ventilation = [e for e in found if e.kind == Kind.VENTILATION]
         self.assertEqual(len(ventilation), 1)
-        self.assertGreaterEqual(ventilation[0].trace_at, T0 + timedelta(seconds=200))
+        self.assertGreater(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
         self.assertNotIn(Kind.DOOR_CLOSE, [e.kind for e in found])
         self.assertIsNone(c.session.timeline.active)
         self.assertEqual(c.session.timeline.gang_count, 1)
         self.assertFalse(c.regulation_inputs.gang_heat_demand)
-        self.assertIn("gang_ended", [e.kind for e in c.consumer_events])
+        self.assertEqual(sum(e.kind == "gang_ended" for e in c.consumer_events), 1)
+        self.assertEqual(c.session.timeline.completed[0].end_reason, "ventilation")
+        self.assertEqual(c.session.timeline.completed[0].ended_at, ventilation[0].trace_at)
+        self.assertIsNotNone(c.session.after_run)
+        self.assertEqual(c.session.after_run.requested_at, ventilation[0].trace_at)
+        self.assertFalse(c.last_decision.heat)
+        self.assertEqual(sum(item.kind == Kind.VENTILATION
+                             for item in statistics.session.timeline.processed), 1)
+        self.assertIsNone(statistics.session.timeline.active)
+        self.assertEqual(statistics.session.timeline.gang_count, 0)
+        self.assertEqual(statistics.session.timeline.completed, ())
+        self.assertIsNone(statistics.session.after_run)
+        self.assertEqual(statistics.session.after_run_history, ())
+        self.assertEqual(len(statistics_heat), 1)
+        self.assertEqual(statistics_heat[0][0], statistics_heat[0][1])
+        self.assertFalse(any(item.kind in ("gang_started", "gang_ended")
+                             for item in statistics.consumer_events))
 
     def test_same_route_features_are_calculated_once_per_sample(self):
         d = Detector(detection_parameters(), T0)
@@ -451,6 +479,49 @@ class DetectorTests(unittest.TestCase):
         return water * WATER_VAPOR_GAS_CONSTANT * (temperature + 273.15) * 100 / (
             saturation_vapor_pressure(temperature) * 1000)
 
+    def _ventilation_curve(self, detector, *, water_tail="plateau", temperature_tail="fall"):
+        """Existing opening endpoints, followed by water rather than RH forms."""
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        begin, width = (2 * count + 1) * step, (2 * count + 2) * step
+        plateau, end = begin + width, begin + 2 * width
+        initial_t, initial_h = 80, 40
+        fallen_t, fallen_h = 78, 38
+        initial_water = absolute_humidity(initial_t, initial_h)
+        fallen_water = absolute_humidity(fallen_t, fallen_h)
+
+        def values(second):
+            elapsed = max(0, second - begin)
+            temperature = initial_t + (fallen_t - initial_t) * elapsed / width
+            if elapsed > width and temperature_tail != "fall":
+                temperature = (fallen_t if temperature_tail == "plateau" else
+                               fallen_t + (initial_t - fallen_t) * (elapsed - width) / width)
+            if elapsed > width and water_tail == "rh_plateau":
+                return temperature, fallen_h
+            water_elapsed = elapsed if water_tail == "fall" else min(elapsed, width)
+            water = initial_water + (fallen_water - initial_water) * water_elapsed / width
+            return temperature, self._humidity_for_water(temperature, water)
+
+        return int(begin), int(plateau), int(end), values
+
+    def _feed_ventilation(self, detector, through, values, *, positions=None,
+                          missing=(), source=None):
+        positions = detector.positions if positions is None else positions
+        output = []
+        final_index = int(through // detector.grid_seconds)
+        for index in range(detector.index + 1, final_index + 1):
+            second = index * detector.grid_seconds
+            now = T0 + timedelta(seconds=second)
+            for position in positions:
+                for quantity, value in zip(
+                    (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
+                ):
+                    detector.accept(measurement(
+                        position, quantity, None if (position, quantity) in missing else value,
+                        second, source=source, measured=now,
+                    ))
+            output += detector.advance(now, enabled=True)
+        return output
+
     def _segment(self, detector, duration, before, after=None, *, positions=None,
                  missing=(), heating=False, source=None, stop_when=None):
         """Continuous linear measurement inputs; detector windows stay configured."""
@@ -481,7 +552,7 @@ class DetectorTests(unittest.TestCase):
                     + max(detector.p["door_window_seconds"], detector.p["door_humidity_seconds"]))
 
     def _open_for_ventilation(self, detector, *, positions=None, heating=False):
-        """Short opening: a measured 2 °C loss, insufficient for ventilation."""
+        """Short opening followed by a temperature plateau, without continuing cooling."""
         positions = detector.positions if positions is None else positions
         events = self._segment(detector, self._settling_time(detector), (80, 40),
                                positions=positions, heating=heating)
@@ -772,122 +843,369 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual([item.kind for item in events].count(Kind.PERSON_STRONG), 1)
 
 
-    def test_two_sensor_water_loss_confirms_without_the_legacy_open_duration(self):
-        observed = []
-        detector = Detector(detection_parameters(), T0, observer=observed.append)
-        events = self._open_for_ventilation(detector)
-        events += self._segment(detector, 20, (78, 38), (74, 20))
-        ventilation = next(item for item in events if item.kind is Kind.VENTILATION)
-        self.assertLess((ventilation.detected_at - detector.opened_at).total_seconds(), detector.p["vent_hold_seconds"])
-        trace = next(row for row in observed if Kind.VENTILATION in row["signals"])
-        metric = trace["metrics"]["upper"]
-        self.assertGreaterEqual(metric["ventilation_temperature_loss"], detector.p["vent_drop_upper"])
-        self.assertGreaterEqual(metric["ventilation_absolute_humidity_loss"], detector.p["vent_absolute_humidity_loss_percent"] / 100)
+    def test_water_plateau_with_falling_temperature_confirms_for_original_positions(self):
+        for positions in ((Position.UPPER,), (Position.UPPER, Position.LOWER)):
+            with self.subTest(positions=positions):
+                detector = self._ventilation_detector(positions=positions)
+                _, plateau, end, values = self._ventilation_curve(detector)
+                events = self._feed_ventilation(detector, plateau, values)
+                self.assertTrue(detector.open)
+                self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+                events += self._feed_ventilation(detector, end, values)
+                ventilation = [item for item in events if item.kind == Kind.VENTILATION]
+                self.assertEqual(len(ventilation), 1)
+                self.assertEqual(ventilation[0].channels,
+                                 tuple(position.value for position in positions))
+                self.assertGreater(ventilation[0].trace_at, T0 + timedelta(seconds=plateau))
+                self.assertEqual(ventilation[0].effective_at, ventilation[0].trace_at)
+                self.assertTrue(detector.ventilated)
+                self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events])
+
+    def test_continued_water_loss_and_flat_rh_are_not_a_water_plateau(self):
+        prepared = self._ventilation_detector()
+        _, plateau, end, values = self._ventilation_curve(prepared)
+        events = self._feed_ventilation(prepared, plateau, values)
+        self.assertTrue(prepared.open)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
+        for tail in ("fall", "rh_plateau"):
+            with self.subTest(tail=tail):
+                detector = deepcopy(prepared, {id(prepared.p): prepared.p})
+                _, _, _, continued = self._ventilation_curve(detector, water_tail=tail)
+                found = self._feed_ventilation(detector, end, continued)
+                self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+                self.assertFalse(detector.ventilated)
+                final_t, final_h = continued(end)
+                plateau_t, plateau_h = continued(plateau)
+                self.assertLess(final_t, plateau_t)
+                self.assertLess(absolute_humidity(final_t, final_h),
+                                absolute_humidity(plateau_t, plateau_h))
+                if tail == "rh_plateau":
+                    self.assertEqual(final_h, plateau_h)
 
 
     def test_gap_pauses_two_position_ventilation_and_same_sources_can_resume_it(self):
         detector = self._ventilation_detector()
-        events = self._open_for_ventilation(detector)
-        events += self._segment(detector, 20, (78, 38), (74, 20),
-                                missing=((Position.LOWER, Quantity.TEMPERATURE), (Position.LOWER, Quantity.HUMIDITY)))
+        _, plateau, end, values = self._ventilation_curve(detector)
+        pending_at = plateau + (detector.p["curve_original_samples"] - 1) * detector.grid_seconds
+        events = self._feed_ventilation(detector, pending_at, values)
+        self.assertIn("original_ventilation", detector.door_episode)
+        opening, old_epochs = detector.door_episode, detector._original_context()
+        gap = pending_at + detector.grid_seconds
+        events += self._feed_ventilation(detector, gap, values, missing=(
+            (Position.LOWER, Quantity.TEMPERATURE), (Position.LOWER, Quantity.HUMIDITY),
+        ))
+        self.assertNotIn("original_ventilation", detector.door_episode)
+        self.assertIs(detector.door_episode, opening)
+        self.assertNotEqual(detector._original_context(), old_epochs)
+        events += self._feed_ventilation(detector, end, values)
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
-        events += self._segment(detector, detector.p["median_seconds"] + 1, (74, 20))
+        # A plateau after the gap cannot reuse the old falling window. Replay
+        # only the new physical fall and plateau, shifted from the current pair.
+        begin, _, new_end, fresh = self._ventilation_curve(detector)
+        anchor_t, anchor_h = values(end)
+        fresh_t, fresh_h = fresh(begin)
+        water_scale = absolute_humidity(anchor_t, anchor_h) / absolute_humidity(fresh_t, fresh_h)
+
+        def reacquired(second):
+            temperature, humidity = fresh(second - end + begin)
+            shifted_t = temperature + anchor_t - fresh_t
+            water = absolute_humidity(temperature, humidity) * water_scale
+            return shifted_t, self._humidity_for_water(shifted_t, water)
+
+        events += self._feed_ventilation(detector, end + new_end - begin, reacquired)
         self.assertEqual([item.kind for item in events].count(Kind.VENTILATION), 1)
+        self.assertIs(detector.door_episode, opening)
+        self.assertEqual(detector.door_episode["positions"], detector.positions)
 
 
-    def test_ventilation_reference_precedes_the_first_delayed_feature_window(self):
-        detector = self._ventilation_detector()
-        self._segment(detector, self._settling_time(detector), (80, 40))
-        self._segment(detector, 20, (80, 40), (78, 40))
-        # The temperature hint exists before the later humidity loss qualifies the mixed route.
-        self._segment(detector, 20, (78, 40), (76, 38))
-        self.assertTrue(detector.open)
-        for position in detector.positions:
-            self.assertGreater(detector.baseline[position]["temperature"], 78)
+    def test_delayed_humidity_fall_opens_without_inventing_a_water_plateau(self):
+        for delay in ("outside_temperature_turn", "one_original"):
+            with self.subTest(humidity_delay=delay):
+                traces = []
+                detector = Detector(detection_parameters(), T0, observer=traces.append)
+                step = detector.grid_seconds
+                if delay == "outside_temperature_turn":
+                    events = self._segment(detector, self._settling_time(detector), (80, 40))
+                    begin = detector.index + 1
+                    events += self._segment(detector, 20, (80, 40), (78, 40))
+                    events += self._segment(detector, 20, (78, 40), (76, 38))
+                    turns = (begin, begin + 20)
+                    # At the later RH fall, both T windows have the same
+                    # negative slope. This input does not assert an opening.
+                else:
+                    begin, _, end, values = self._ventilation_curve(detector, water_tail="fall")
+
+                    def delayed_humidity(second):
+                        # RH starts one original later while the negative T
+                        # turn remains in the original windows.
+                        return values(second)[0], values(max(0, second - step))[1]
+
+                    events = self._feed_ventilation(detector, end, delayed_humidity)
+                    turns = (begin, begin + step)
+                diagnostic = self._door_failure_message(
+                    events, traces, input_turns_s=turns,
+                    original_forms=[
+                        ((row["at"] - T0).total_seconds(), row.get("original_forms"),
+                         row["decisions"].get("door_open"))
+                        for row in traces
+                        if begin <= (row["at"] - T0).total_seconds()
+                        <= turns[-1] + 2 * detector.p["curve_original_samples"] * step
+                    ],
+                )
+                self.assertNotIn(Kind.VENTILATION, [item.kind for item in events], msg=diagnostic)
+                if delay == "one_original":
+                    self.assertTrue(detector.open, msg=diagnostic)
+                    self.assertEqual([item.kind for item in events].count(Kind.DOOR_OPEN), 1,
+                                     msg=diagnostic)
+                    self.assertEqual(detector.door_episode["positions"], detector.positions,
+                                     msg=diagnostic)
+                    self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in events], msg=diagnostic)
 
 
-    def test_recovery_pauses_ventilation_before_the_close_hold_completes(self):
-        detector = self._ventilation_detector()
-        events = self._open_for_ventilation(detector)
-        # Temperature has fallen sufficiently, but constant water content prevents ventilation.
-        water = absolute_humidity(78, 38)
-        for _ in range(20):
-            second = detector.index + 1
-            temperature = 78 - .2 * (_ + 1)
-            events += sample(detector, second, temperature, self._humidity_for_water(temperature, water))
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
-        # A fresh recovering temperature trend must pause ventilation before the close timer is due.
-        recovery = []
-        for _ in range(ceil(detector.p["door_window_seconds"] + detector.p["median_seconds"] + detector.p["door_close_hold_seconds"]) + 1):
-            second = detector.index + 1
-            temperature += .15
-            recovery += sample(detector, second, temperature, self._humidity_for_water(temperature, water))
-            self.assertTrue(detector.open)
-            if detector.diagnostic["conditions"].get("door_close"):
-                break
-        self.assertTrue(detector.diagnostic["conditions"].get("door_close"))
-        self.assertNotIn(Kind.DOOR_CLOSE, [item.kind for item in recovery])
-        self.assertTrue(detector.diagnostic["conditions"].get("ventilation_recovery"))
-        self.assertNotIn(Kind.VENTILATION, [item.kind for item in recovery])
+    def test_temperature_plateau_or_recovery_does_not_confirm_ventilation(self):
+        prepared = self._ventilation_detector()
+        _, plateau, end, values = self._ventilation_curve(prepared)
+        self._feed_ventilation(prepared, plateau, values)
+        for tail in ("plateau", "recovery"):
+            with self.subTest(temperature=tail):
+                detector = deepcopy(prepared, {id(prepared.p): prepared.p})
+                _, _, _, counterform = self._ventilation_curve(detector, temperature_tail=tail)
+                found = self._feed_ventilation(detector, end, counterform)
+                self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+                if tail == "recovery":
+                    self.assertIn(Kind.DOOR_CLOSE, [item.kind for item in found])
 
 
-    def test_single_sensor_keeps_the_legacy_open_duration(self):
+    def test_oscillating_water_cannot_supply_a_constant_plateau(self):
         detector = self._ventilation_detector(positions=(Position.UPPER,))
-        events = self._open_for_ventilation(detector)
-        events += self._segment(detector, 20, (78, 38), (74, 20))
-        events += self._segment(detector, detector.p["vent_hold_seconds"], (74, 20))
-        ventilation = [item for item in events if item.kind is Kind.VENTILATION]
-        self.assertEqual(len(ventilation), 1)
-        self.assertGreaterEqual((ventilation[0].detected_at - detector.opened_at).total_seconds(), detector.p["vent_hold_seconds"])
+        begin, plateau, end, values = self._ventilation_curve(detector)
+        events = self._feed_ventilation(detector, plateau, values)
+        initial_water = absolute_humidity(*values(begin))
+        settled_water = absolute_humidity(*values(plateau))
+        count = detector.p["curve_original_samples"]
+
+        def oscillating(second):
+            temperature, _ = values(second)
+            offset = ((second - plateau) // detector.grid_seconds - 1) % count
+            # A symmetric U-shaped window has zero fitted slope while its
+            # measured water values cannot share a constant uncertainty band.
+            water = settled_water + (initial_water - settled_water) * (
+                offset - (count - 1) / 2
+            ) ** 2 / count
+            return temperature, self._humidity_for_water(temperature, water)
+
+        events += self._feed_ventilation(detector, end, oscillating)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
 
 
     def test_runtime_positions_confirm_one_position_available_when_the_door_opens(self):
         """Die Runtime behält beide Rollen, obwohl unten vor der Öffnung fehlt."""
-        detector = Detector(parameters(), T0)
-        events = []
-        for second in range(360):
-            temperature = 80 if second < 120 else 80 - .2 * (second - 120)
-            humidity = 20 if second < 120 else 20 - .08 * (second - 120)
-            detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, temperature, second))
-            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, humidity, second))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
-        ventilation = [event for event in events if event.kind is Kind.VENTILATION]
-        self.assertEqual([event.kind for event in events].count(Kind.DOOR_OPEN), 1)
-        self.assertEqual(len(ventilation), 1)
-        self.assertEqual(ventilation[0].channels, ("upper",))
-        self.assertGreaterEqual((ventilation[0].detected_at - detector.opened_at).total_seconds(), detector.p["vent_hold_seconds"])
-        self.assertIn("lower_unavailable", detector.faults)
+        prepared = Detector(parameters(), T0)
+        _, plateau, end, values = self._ventilation_curve(prepared)
+        initial = self._feed_ventilation(prepared, plateau, values, positions=(Position.UPPER,))
+        self.assertEqual(prepared.positions, (Position.UPPER, Position.LOWER))
+        self.assertTrue(prepared.open)
+        self.assertEqual(prepared.door_episode["positions"], (Position.UPPER,))
+        step = prepared.grid_seconds
+        pending_at = plateau + (prepared.p["curve_original_samples"] - 1) * step
+        lower_stamp = T0 + timedelta(seconds=plateau + step)
+        lower_temperature = values(plateau)[0]
+        lower_noise = prepared.p["curve_original_noise_temperature_lower"]
+
+        for interleave in ("none", "unavailable", "same_stamp_correction"):
+            with self.subTest(lower=interleave):
+                detector = deepcopy(prepared, {id(prepared.p): prepared.p})
+                opening = detector.door_episode
+                events = list(initial)
+
+                def report_lower(target, second):
+                    if interleave == "none":
+                        return
+                    now = T0 + timedelta(seconds=second)
+                    if interleave == "unavailable":
+                        self.assertTrue(target.accept(measurement(
+                            Position.LOWER, Quantity.TEMPERATURE, None, second, measured=now,
+                        )))
+                        return
+                    if second == plateau + step:
+                        self.assertTrue(target.accept(measurement(
+                            Position.LOWER, Quantity.TEMPERATURE, lower_temperature, second,
+                            measured=lower_stamp,
+                        )))
+                    self.assertTrue(target.accept(measurement(
+                        Position.LOWER, Quantity.TEMPERATURE,
+                        lower_temperature + (second - plateau) / step * lower_noise / 2,
+                        second, measured=lower_stamp,
+                    )))
+
+                for second in range(plateau + step, end + step, step):
+                    now = T0 + timedelta(seconds=second)
+                    for quantity, value in zip(
+                        (Quantity.TEMPERATURE, Quantity.HUMIDITY), values(second), strict=True,
+                    ):
+                        self.assertTrue(detector.accept(measurement(
+                            Position.UPPER, quantity, value, second, measured=now,
+                        )))
+                    # An unbound role arrives after both fresh Upper originals.
+                    report_lower(detector, second)
+                    events += detector.advance(now, enabled=True)
+                    if second != pending_at:
+                        continue
+                    self.assertIn("original_ventilation", opening)
+                    self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
+                    if interleave == "none":
+                        continue
+                    isolated = deepcopy(detector, {id(detector.p): detector.p})
+                    candidate = isolated.door_episode["original_ventilation"]
+                    received = second + step
+                    report_lower(isolated, received)
+                    found = isolated.advance(T0 + timedelta(seconds=received), enabled=True)
+                    self.assertIs(isolated.door_episode["original_ventilation"], candidate)
+                    self.assertNotIn(Kind.VENTILATION, [event.kind for event in found])
+                    # A correction of the bound Upper role still discards it.
+                    received += step
+                    self.assertTrue(isolated.accept(measurement(
+                        Position.UPPER, Quantity.HUMIDITY,
+                        values(second)[1] + isolated.p["curve_original_noise_humidity_upper"] / 2,
+                        received, measured=now,
+                    )))
+                    found += isolated.advance(T0 + timedelta(seconds=received), enabled=True)
+                    self.assertNotIn("original_ventilation", isolated.door_episode)
+                    self.assertNotIn(Kind.VENTILATION, [event.kind for event in found])
+
+                ventilation = [event for event in events if event.kind is Kind.VENTILATION]
+                self.assertEqual([event.kind for event in events].count(Kind.DOOR_OPEN), 1)
+                self.assertEqual(len(ventilation), 1)
+                self.assertEqual(ventilation[0].channels, ("upper",))
+                self.assertIs(detector.door_episode, opening)
+                self.assertEqual(opening["positions"], (Position.UPPER,))
+                self.assertIn("lower_unavailable", detector.faults)
 
     def test_used_single_position_source_change_cannot_confirm_the_opening(self):
         detector = Detector(parameters(), T0)
-        events = []
-        for second in range(360):
-            temperature = 80 if second < 120 else 80 - .2 * (second - 120)
-            humidity = 20 if second < 120 else 20 - .08 * (second - 120)
-            source = "sensor.upper" if second < 150 else "sensor.upper_replaced"
-            detector.accept(measurement(Position.UPPER, Quantity.TEMPERATURE, temperature, second, source))
-            detector.accept(measurement(Position.UPPER, Quantity.HUMIDITY, humidity, second, source))
-            events += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        _, plateau, end, values = self._ventilation_curve(detector)
+        events = self._feed_ventilation(detector, plateau, values, positions=(Position.UPPER,))
+        events += self._feed_ventilation(detector, end, values, positions=(Position.UPPER,),
+                                         source="sensor.upper_replaced")
         self.assertIn(Kind.DOOR_OPEN, [event.kind for event in events])
         self.assertNotIn(Kind.VENTILATION, [event.kind for event in events])
         self.assertTrue(detector.ventilation_degraded)
 
     def test_lost_position_during_open_door_cannot_fall_back_to_single_sensor_proof(self):
         detector = self._ventilation_detector()
-        events = self._open_for_ventilation(detector)
-        events += self._segment(detector, 20, (78, 38), (74, 20), positions=(Position.UPPER,))
-        duration = detector.p["sensor_timeout_seconds"] + detector.p["vent_hold_seconds"] + 1
-        events += self._segment(detector, duration, (74, 20), positions=(Position.UPPER,))
+        _, plateau, end, values = self._ventilation_curve(detector)
+        events = self._feed_ventilation(detector, plateau, values)
+        events += self._feed_ventilation(detector, end + detector.p["sensor_timeout_seconds"],
+                                         values, positions=(Position.UPPER,))
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
-        self.assertIn(Position.LOWER, detector.baseline)
+        self.assertEqual(detector.door_episode["positions"], detector.positions)
 
 
     def test_source_replacement_during_opening_invalidates_its_reference(self):
         detector = self._ventilation_detector()
-        events = self._open_for_ventilation(detector)
-        events += self._segment(detector, 20, (78, 38), (74, 20), source="sensor.replaced")
+        _, plateau, end, values = self._ventilation_curve(detector)
+        events = self._feed_ventilation(detector, plateau, values)
+        events += self._feed_ventilation(detector, end, values, source="sensor.replaced")
         self.assertNotIn(Kind.VENTILATION, [item.kind for item in events])
         self.assertIn(Position.UPPER, detector.ventilation_invalid)
+
+    def test_ventilation_needs_new_paired_originals_not_ticks_or_same_stamp_corrections(self):
+        detector = self._ventilation_detector()
+        _, plateau, _, values = self._ventilation_curve(detector)
+        step = detector.grid_seconds
+        pending_at = plateau + (detector.p["curve_original_samples"] - 1) * step
+        found = self._feed_ventilation(detector, pending_at, values)
+        self.assertIn("original_ventilation", detector.door_episode)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        for position in detector.positions:
+            self.assertLessEqual(5 * step,
+                                 detector.p[f"curve_original_gap_humidity_{position.value}_seconds"])
+            self.assertLessEqual(4 * step,
+                                 detector.p[f"curve_original_gap_temperature_{position.value}_seconds"])
+
+        def report(received, measured, quantities, *, correction=False):
+            pair = dict(zip((Quantity.TEMPERATURE, Quantity.HUMIDITY), values(measured), strict=True))
+            for position in detector.positions:
+                for quantity in quantities:
+                    value = pair[quantity]
+                    if correction and quantity == Quantity.HUMIDITY:
+                        value += detector.p[f"curve_original_noise_humidity_{position.value}"] / 2
+                    self.assertTrue(detector.accept(measurement(
+                        position, quantity, value, received,
+                        measured=T0 + timedelta(seconds=measured),
+                    )))
+            found.extend(detector.advance(T0 + timedelta(seconds=received), enabled=True))
+
+        found += detector.advance(T0 + timedelta(seconds=pending_at + step), enabled=True)
+        report(pending_at + 2 * step, pending_at, (Quantity.TEMPERATURE, Quantity.HUMIDITY))
+        report(pending_at + 3 * step, pending_at, (Quantity.TEMPERATURE, Quantity.HUMIDITY),
+               correction=True)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        report(pending_at + 4 * step, pending_at + 4 * step, (Quantity.TEMPERATURE,))
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        # New RH has no right-hand T partner yet. It must remain pending rather
+        # than supply freshness by skipping to a previously paired RH original.
+        report(pending_at + 5 * step, pending_at + 5 * step, (Quantity.HUMIDITY,))
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        report(pending_at + 6 * step, pending_at + 6 * step, (Quantity.TEMPERATURE,))
+        ventilation = [item for item in found if item.kind == Kind.VENTILATION]
+        self.assertEqual(len(ventilation), 1)
+        self.assertEqual(ventilation[0].trace_at, T0 + timedelta(seconds=pending_at + 6 * step))
+
+    def test_original_gap_discards_the_pending_water_plateau(self):
+        detector = self._ventilation_detector()
+        _, plateau, _, values = self._ventilation_curve(detector)
+        step = detector.grid_seconds
+        pending_at = plateau + (detector.p["curve_original_samples"] - 1) * step
+        found = self._feed_ventilation(detector, pending_at, values)
+        self.assertIn("original_ventilation", detector.door_episode)
+        gap = max(detector.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+                  for position in detector.positions)
+        received = pending_at + (ceil(gap / step) + 1) * step
+        self.assertLess(received - pending_at, detector.p["sensor_timeout_seconds"])
+        epochs = detector._original_context()
+        for second in range(pending_at + step, received, step):
+            temperature, _ = values(second)
+            for position in detector.positions:
+                detector.accept(measurement(position, Quantity.TEMPERATURE, temperature, second,
+                                            measured=T0 + timedelta(seconds=second)))
+            found += detector.advance(T0 + timedelta(seconds=second), enabled=True)
+        found += self._feed_ventilation(detector, received, values)
+        self.assertNotIn("original_ventilation", detector.door_episode)
+        self.assertEqual(detector._original_context(), epochs)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+
+    def test_earlier_ventilation_precedes_later_close_within_one_original_batch(self):
+        detector = self._ventilation_detector()
+        _, plateau, _, values = self._ventilation_curve(detector)
+        count, step = detector.p["curve_original_samples"], detector.grid_seconds
+        pending_at = plateau + (count - 1) * step
+        found = self._feed_ventilation(detector, pending_at, values)
+        self.assertIn("original_ventilation", detector.door_episode)
+        self.assertNotIn(Kind.VENTILATION, [item.kind for item in found])
+        interval = step / (2 * count + 4)
+        first_at = pending_at + interval
+        first_t, first_h = values(first_at)
+        water = absolute_humidity(first_t, first_h)
+        opening_temperature_loss = values(0)[0] - values(plateau)[0]
+        for index in range(2 * count + 3):
+            second = first_at + index * interval
+            temperature = first_t + opening_temperature_loss * index / (2 * count + 2)
+            humidity = self._humidity_for_water(temperature, water)
+            for position in detector.positions:
+                for quantity, value in ((Quantity.TEMPERATURE, temperature),
+                                        (Quantity.HUMIDITY, humidity)):
+                    self.assertTrue(detector.accept(measurement(
+                        position, quantity, value, second,
+                        measured=T0 + timedelta(seconds=second),
+                    )))
+        batch = detector.advance(T0 + timedelta(seconds=pending_at + step), enabled=True)
+        doors = [item for item in batch if item.kind in (Kind.VENTILATION, Kind.DOOR_CLOSE)]
+        self.assertEqual([item.kind for item in doors], [Kind.VENTILATION, Kind.DOOR_CLOSE])
+        self.assertLessEqual(doors[0].effective_at, doors[1].effective_at)
+        self.assertEqual(doors[0].trace_at, doors[1].trace_at)
+        self.assertFalse(detector.open)
+        self.assertIsNone(detector.door_episode)
 
 
     def test_door_with_delayed_humidity_drop_during_continuous_heating(self):
@@ -1521,7 +1839,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         points, shapes, _, _ = self._scenario(merged=False)
         peak = self.begin + self.width
         fall = peak + self.width
-        cold = self.temperature - 2 * max(self.p["vent_drop_upper"], self.p["vent_drop_lower"])
+        cold = trace(85)[0]
         temperatures = [(0, self.temperature), (self.begin, self.temperature), (peak, cold)]
         self.assertLess(absolute_humidity(cold, self.peak),
                         absolute_humidity(self.temperature, self.baseline))
@@ -2236,18 +2554,32 @@ class InfusionLifecycleTests(unittest.TestCase):
         next_rise = close_end + self.p["infusion_window_seconds"] + self.p["median_seconds"]
         next_peak = next_rise + self.width
         next_fall = next_peak + self.width
-        # These inputs exceed the unchanged two-position ventilation losses.
-        cold = self.temperature - 2 * max(self.p["vent_drop_upper"], self.p["vent_drop_lower"])
-        dry = self.baseline * (1 - 2 * self.p["vent_absolute_humidity_loss_percent"] / 100)
+        # Reuse the same physical opening as the detector's water-form tests.
+        fixture = DetectorTests()
+        _, fixture_plateau, _, fixture_values = fixture._ventilation_curve(
+            Detector(self.parameters, T0),
+        )
+        initial_t, initial_h = fixture_values(0)
+        fallen_t, fallen_h = fixture_values(fixture_plateau)
+        cold = self.temperature + fallen_t - initial_t
+        dry = self.level + fallen_h - initial_h
+        close_temperature = cold + (cold - self.temperature) * (close_start - door_bottom) / self.width
+        plateau_water = absolute_humidity(cold, dry)
+        close_humidity = fixture._humidity_for_water(close_temperature, plateau_water)
         points = [
             (0, self.baseline), (self.begin, self.baseline), (first_peak, self.peak),
             (first_fall, self.level), (door_start, self.level),
-            (door_bottom, dry), (close_start, dry),
+            (door_bottom, dry), (close_start, close_humidity),
             (close_end, self.level), (next_rise, self.level), (next_peak, self.peak),
             (next_fall, self.level),
         ]
         temperatures = [(0, self.temperature), (door_start, self.temperature),
-                        (door_bottom, cold), (close_start, cold), (close_end, self.temperature)]
+                        (door_bottom, cold), (close_start, close_temperature),
+                        (close_end, self.temperature)]
+        points = [(second, fixture._humidity_for_water(
+            self._value(temperatures, second), plateau_water,
+        ) if door_bottom <= second <= close_start else self._value(points, second))
+            for second in range(0, next_fall + self.step, self.step)]
         shapes = [self._shape("rise", self.begin, first_peak),
                   self._shape("decay", first_peak, first_fall),
                   self._shape("rise", next_rise, next_peak),

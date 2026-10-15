@@ -325,7 +325,6 @@
           "parameters_presence_strong": "Deutliche Personenhinweise",
           "parameters_presence_weak": "Schwache Personenhinweise nach Eintritt",
           "parameters_infusion": "Aufgusserkennung",
-          "parameters_ventilation": "Lüften und Gangende",
           "init": "Zurück zur Übersicht"
         }
       },
@@ -333,11 +332,37 @@
         "title": "Messwerte",
         "data": {
           "median_seconds": "Glättungszeit für Messausreißer",
-          "sensor_timeout_seconds": "Höchstalter der Messwerte"
+          "sensor_timeout_seconds": "Höchstalter der Messwerte",
+          "curve_original_open_contrast": "Öffnungskontrast der Originalkurven",
+          "curve_original_new_infusion_contrast": "Anstiegskontrast für eine neue Aufgussepisode",
+          "curve_original_continuation_contrast": "Anstiegskontrast für eine Aufgussfortsetzung",
+          "curve_original_background_slope": "Normierte Feuchtesteigung des neuen Hintergrunds",
+          "curve_original_background_residual": "Normierter Feuchterestfehler des neuen Hintergrunds",
+          "curve_original_noise_temperature_upper": "Empirische Rauschskala der Temperatur oben",
+          "curve_original_noise_humidity_upper": "Empirische Rauschskala der Feuchte oben",
+          "curve_original_noise_temperature_lower": "Empirische Rauschskala der Temperatur unten",
+          "curve_original_noise_humidity_lower": "Empirische Rauschskala der Feuchte unten",
+          "curve_original_gap_temperature_upper_seconds": "Empirischer Originalabstand der Temperatur oben",
+          "curve_original_gap_humidity_upper_seconds": "Empirischer Originalabstand der Feuchte oben",
+          "curve_original_gap_temperature_lower_seconds": "Empirischer Originalabstand der Temperatur unten",
+          "curve_original_gap_humidity_lower_seconds": "Empirischer Originalabstand der Feuchte unten"
         },
         "data_description": {
           "median_seconds": "Glättet Temperatur und Feuchte für Tür- und Personensignale sowie die Berechnung des Wassergehalts.",
-          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung."
+          "sensor_timeout_seconds": "Ältere Messwerte werden nicht mehr verwendet. Fehlt dadurch die Temperatur für die Regelung, pausiert die Heizung.",
+          "curve_original_open_contrast": "Empirische Grenze für den normierten Öffnungsformkontrast aus den Abfällen aller vier Kanäle und den negativen Temperatur-Steigungswechseln. Bestätigung erfordert einen strikt größeren Kontrast und neue Originale aller vier Rollen; der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_new_infusion_contrast": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg ohne laufende Aufgussepisode. Ein strikt größerer Kontrast liefert den starken Anstiegsbeleg für ein neues Vorkommnis; Wasserbeleg, Originalneuheit und nachfolgender Abfall bleiben erforderlich. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_continuation_contrast": "Empirische Grenze für den normierten gemeinsamen Feuchteanstieg innerhalb einer laufenden Aufgussepisode. Ein strikt größerer Kontrast liefert den starken Beleg einer weiteren Komponente derselben Episode; Wasserbeleg, Originalneuheit und nachfolgender Abfall bleiben erforderlich. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_background_slope": "Empirische Obergrenze für den größten Betrag der normierten aktuellen Feuchtesteigungen oben und unten beim Nachweis eines neuen Hintergrunds. Sie gilt einschließlich der Grenze; die Steigungen des Vorgängerfensters werden dafür nicht begrenzt. Der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_background_residual": "Empirische Obergrenze für den größten normierten absoluten linearen Restfehler beider Feuchtekanäle im aktuellen und vorherigen disjunkten Originalfenster. Sie gilt einschließlich der Grenze als Formprüfung des neuen Hintergrunds; der Wert ist keine Wahrscheinlichkeit.",
+          "curve_original_noise_temperature_upper": "Medianbetrag der Dreipunktresiduen der oberen Originaltemperatur in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen und lineare Restfehler. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_noise_humidity_upper": "Medianbetrag der Dreipunktresiduen der oberen Originalfeuchte in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen, lineare Restfehler und Feuchterholung. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_noise_temperature_lower": "Medianbetrag der Dreipunktresiduen der unteren Originaltemperatur in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen und lineare Restfehler. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_noise_humidity_lower": "Medianbetrag der Dreipunktresiduen der unteren Originalfeuchte in den Trainingsdaten. Normiert Steigungs-Störungsgrenzen, lineare Restfehler und Feuchterholung. Die empirische Skala enthält auch reale kurze Krümmung und ist keine unabhängig bestimmte Sensorfehlergrenze.",
+          "curve_original_gap_temperature_upper_seconds": "Maximaler Trainingsabstand der oberen Temperaturoriginale als empirischer Stützbereich. Begrenzt Abstände innerhalb des Zwei-Fenster-Blocks und vom jüngsten Original zum Auswertungszeitpunkt. Eine Überschreitung macht die Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_gap_humidity_upper_seconds": "Maximaler Trainingsabstand der oberen Feuchteoriginale als empirischer Stützbereich. Begrenzt Abstände innerhalb des Zwei-Fenster-Blocks und vom jüngsten Original zum Auswertungszeitpunkt. Eine Überschreitung macht die Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_gap_temperature_lower_seconds": "Maximaler Trainingsabstand der unteren Temperaturoriginale als empirischer Stützbereich. Begrenzt Abstände innerhalb des Zwei-Fenster-Blocks und vom jüngsten Original zum Auswertungszeitpunkt. Eine Überschreitung macht die Formauswertung unbekannt; sie ist keine Sensorausfallfrist.",
+          "curve_original_gap_humidity_lower_seconds": "Maximaler Trainingsabstand der unteren Feuchteoriginale als empirischer Stützbereich. Begrenzt Abstände innerhalb des Zwei-Fenster-Blocks und vom jüngsten Original zum Auswertungszeitpunkt. Eine Überschreitung macht die Formauswertung unbekannt; sie ist keine Sensorausfallfrist."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"
@@ -349,8 +374,8 @@
           "door_humidity_seconds": "Vergleichszeit für den Feuchteabfall"
         },
         "data_description": {
-          "door_window_seconds": "Zeitraum für den geglätteten Temperaturtrend in der Diagnose und den anfänglichen Temperaturbezug. Bestimmt zusammen mit der Feuchtevergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen und den Versatz der Lüftungsbasis.",
-          "door_humidity_seconds": "Zeitraum für die Änderung der relativen Luftfeuchte in der Diagnose. Bestimmt zusammen mit der Temperaturvergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen und den Versatz der Lüftungsbasis."
+          "door_window_seconds": "Zeitraum für den geglätteten Temperaturtrend in der Diagnose und den anfänglichen Temperaturbezug. Bestimmt zusammen mit der Feuchtevergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen.",
+          "door_humidity_seconds": "Zeitraum für die Änderung der relativen Luftfeuchte in der Diagnose. Bestimmt zusammen mit der Temperaturvergleichszeit den zulässigen zeitlichen Abstand zusammengehöriger Kurvenänderungen."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"
@@ -422,25 +447,6 @@
         },
         "data_description": {
           "infusion_window_seconds": "Zeitraum für den Anstiegsvergleich der relativen Luftfeuchte und des Wassergehalts sowie den jüngsten Niveauvergleich nach der Feuchtespitze. Bestimmt außerdem den zulässigen zeitlichen Abstand zusammengehöriger Aufgussänderungen."
-        },
-        "description": "{description}",
-        "submit": "Speichern und zurück"
-      },
-      "parameters_ventilation": {
-        "title": "Lüften und Gangende",
-        "data": {
-          "vent_baseline_seconds": "Suchzeitraum für den Vergleich vor dem Lüften",
-          "vent_drop_upper": "Mindestabkühlung beim Lüften oben",
-          "vent_drop_lower": "Mindestabkühlung beim Lüften unten",
-          "vent_absolute_humidity_loss_percent": "Mindestabnahme des Wassergehalts",
-          "vent_hold_seconds": "Mindestöffnungszeit bei nur einer Messposition"
-        },
-        "data_description": {
-          "vent_baseline_seconds": "Bestimmt den Rückblick, aus dem das letzte vollständige Temperatur-/Feuchtepaar vor den Öffnungshinweisen als Vergleich gewählt wird.",
-          "vent_drop_upper": "Erforderlicher Temperaturverlust gegenüber dem gespeicherten Vergleich vor der Türöffnung.",
-          "vent_drop_lower": "Erforderlicher Temperaturverlust gegenüber dem gespeicherten Vergleich vor der Türöffnung.",
-          "vent_absolute_humidity_loss_percent": "Erforderlicher prozentualer Verlust gegenüber dem Wassergehalt vor der Türöffnung an allen beteiligten Messpositionen.",
-          "vent_hold_seconds": "Mit nur einer gültigen Messposition muss die Tür zusätzlich zu Temperatur- und Wasserverlust mindestens so lange offen sein."
         },
         "description": "{description}",
         "submit": "Speichern und zurück"

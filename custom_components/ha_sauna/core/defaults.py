@@ -97,11 +97,6 @@ _PARAMETER_KEYS = frozenset(
         "target_temperature_c",
         "temperature_gangs",
         "thermostat_cooldown_minutes",
-        "vent_absolute_humidity_loss_percent",
-        "vent_baseline_seconds",
-        "vent_drop_lower",
-        "vent_drop_upper",
-        "vent_hold_seconds",
         "warmup_drop_rise_ratio",
         "warmup_estimation_minutes",
         "warmup_fit_grace_window_ratio",
@@ -149,6 +144,11 @@ _LEGACY_PARAMETER_KEYS = frozenset(
         "door_close_hold_seconds",
         "infusion_humidity",
         "infusion_hold_seconds",
+        "vent_baseline_seconds",
+        "vent_drop_upper",
+        "vent_drop_lower",
+        "vent_absolute_humidity_loss_percent",
+        "vent_hold_seconds",
     ]
 )
 _COLOR_ROLES = frozenset(

@@ -7,6 +7,7 @@ come from ``Alle_Praefixmerkmale.csv.gz``. Only the four selected prefixes are
 evaluated, without recalibrating or replaying the complete recordings.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 import gzip
 import hashlib
@@ -23,6 +24,8 @@ from custom_components.ha_sauna.core.curve_change import (
     OriginalPositionWindows,
     original_contrasts,
     original_water_pair,
+    original_water_pair_support,
+    original_water_window,
     original_window,
 )
 from custom_components.ha_sauna.core.moisture import absolute_humidity
@@ -147,6 +150,38 @@ def linear_originals(values):
         for column, quantity in enumerate(("temperature", "humidity"))
     }
     return originals, step
+
+
+def water_arguments(values):
+    """Use the existing upper-position water support and error scales."""
+    return {
+        "temperature_scale": values["curve_original_noise_temperature_upper"],
+        "humidity_scale": values["curve_original_noise_humidity_upper"],
+        "max_gap_seconds": values["curve_original_gap_temperature_upper_seconds"],
+    }
+
+
+def water_envelope_originals(values, envelopes, ticks=None):
+    """Attach mathematical envelope criteria to real synchronous pair identities.
+
+    These rational density intervals exercise only window geometry. The water
+    formula and its actual bounds have their own independent pairing tests.
+    """
+    temperature, humidity = trace(0)
+    step = timedelta(seconds=min(
+        water_arguments(values)["max_gap_seconds"],
+        values["curve_original_gap_humidity_upper_seconds"],
+    ) / 4)
+    ticks = range(len(envelopes)) if ticks is None else ticks
+    pairs = []
+    for tick, (lower, upper) in zip(ticks, envelopes, strict=True):
+        stamp = ORIGIN + tick * step
+        pair = original_water_pair(
+            (stamp, humidity), ((stamp, temperature),), at=stamp,
+            **water_arguments(values),
+        )
+        pairs.append(replace(pair, lower_density=lower, upper_density=upper))
+    return tuple(pairs), step
 
 
 class OriginalCurveEvidenceTests(unittest.TestCase):
@@ -331,6 +366,227 @@ class OriginalCurveEvidenceTests(unittest.TestCase):
             (ORIGIN, arguments["humidity_scale"] / 2), (temperature_sample,),
             at=ORIGIN, **arguments,
         ))
+
+    def test_water_pair_support_distinguishes_waiting_from_invalid_neighbors(self):
+        values = Parameters({}).values
+        arguments = water_arguments(values)
+        temperature, humidity = trace(0)
+        step = timedelta(seconds=arguments["max_gap_seconds"] / 4)
+        before = (ORIGIN, temperature)
+        humidity_sample = (ORIGIN + step, humidity)
+        after = (ORIGIN + 2 * step, temperature)
+        temperatures = (before, after)
+        for evaluated_at in (humidity_sample[0], after[0] - timedelta.resolution):
+            with self.subTest(evaluated_at=evaluated_at):
+                support = original_water_pair_support(
+                    humidity_sample, temperatures, at=evaluated_at, **arguments,
+                )
+                self.assertEqual(support.status, "pending")
+                self.assertIsNone(support.pair)
+                self.assertIsNone(original_water_pair(
+                    humidity_sample, temperatures, at=evaluated_at, **arguments,
+                ))
+        ready = original_water_pair_support(
+            humidity_sample, temperatures, at=after[0], **arguments,
+        )
+        self.assertEqual(ready.status, "ready")
+        self.assertEqual(ready.pair, original_water_pair(
+            humidity_sample, temperatures, at=after[0], **arguments,
+        ))
+        self.assertEqual(ready.pair.temperature_before, before)
+        self.assertEqual(ready.pair.temperature_after, after)
+        too_far = (
+            ORIGIN + timedelta(seconds=arguments["max_gap_seconds"])
+            + timedelta.resolution, temperature,
+        )
+        invalid_neighbors = (
+            ("missing left", (after,)),
+            ("gap at right", (before, too_far)),
+            ("duplicate", (before, before, after)),
+            ("nonfinite immediate right", (
+                before, (after[0], float("nan")), (after[0] + step, temperature),
+            )),
+        )
+        for reason, samples in invalid_neighbors:
+            with self.subTest(reason=reason):
+                support = original_water_pair_support(
+                    humidity_sample, samples, at=too_far[0], **arguments,
+                )
+                self.assertEqual(support.status, "invalid")
+                self.assertIsNone(support.pair)
+                self.assertIsNone(original_water_pair(
+                    humidity_sample, samples, at=too_far[0], **arguments,
+                ))
+        left_gap = original_water_pair_support(
+            (too_far[0], humidity), (before,), at=too_far[0], **arguments,
+        )
+        self.assertEqual(left_gap.status, "invalid")
+
+    def test_water_window_irregular_geometry_matches_rational_extreme_bounds(self):
+        values = Parameters({}).values
+        # On t=(0,1,3), the independent OLS weights are
+        # (-2/7,-1/14,5/14). These fixed rational outcomes assess the
+        # implementation without reimplementing its OLS calculation.
+        envelopes = ((9, 11), (5, 9), (3.5, 4.5), (7.5, 8.5), (7, 9), (6, 10))
+        ticks = (0, 1, 3, 4, 5, 7)
+        pairs, step = water_envelope_originals(values, envelopes, ticks)
+        unit = step.total_seconds()
+        arguments = {
+            "count": len(envelopes) // 2,
+            "max_gap_seconds": values["curve_original_gap_humidity_upper_seconds"],
+            "at": pairs[-1].available_at,
+        }
+        support = original_water_window(pairs, **arguments)
+        self.assertEqual(support.status, "ready")
+        result = support.features
+        self.assertEqual(result.previous, pairs[:3])
+        self.assertEqual(result.current, pairs[3:])
+        self.assertEqual(result.start_at, pairs[0].humidity_sample[0])
+        self.assertEqual(result.newest_at, pairs[-1].humidity_sample[0])
+        self.assertEqual(result.available_at, pairs[-1].available_at)
+        self.assertAlmostEqual(result.b * unit, -27 / 14)
+        self.assertAlmostEqual(result.v * unit, 0)
+        self.assertAlmostEqual(result.e_minus * unit, 17 / 28)
+        self.assertAlmostEqual(result.e * unit, 13 / 14)
+        # Independent endpoint choices attain both interval extremes. The
+        # error is a worst-case envelope, with no root-sum-square assumption.
+        for densities, old_slope, current_slope in (
+            ((9, 5, 4.5, 7.5, 7, 10), -37 / 28, 13 / 14),
+            ((11, 9, 3.5, 8.5, 9, 6), -71 / 28, -13 / 14),
+        ):
+            endpoints = tuple(
+                replace(pair, lower_density=density, upper_density=density)
+                for pair, density in zip(pairs, densities, strict=True)
+            )
+            extreme = original_water_window(endpoints, **arguments)
+            self.assertEqual(extreme.status, "ready")
+            self.assertAlmostEqual(extreme.features.b * unit, old_slope)
+            self.assertAlmostEqual(extreme.features.v * unit, current_slope)
+            self.assertEqual(extreme.features.e, 0)
+            self.assertEqual(extreme.features.e_minus, 0)
+
+    def test_water_window_requires_common_level_despite_zero_oscillation_slope(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        significance = values["curve_original_significance"]
+        # Symmetry about the time midpoint gives zero OLS slope, even when
+        # the middle original's water level contradicts all other originals.
+        jump = 1 + 2 * significance
+        oscillation = tuple(
+            (8 + jump, 10 + jump) if index in (count // 2, (count - 1) // 2)
+            else (8, 10)
+            for index in range(count)
+        )
+        pairs, _ = water_envelope_originals(
+            values, ((8, 10),) * count + oscillation,
+        )
+        support = original_water_window(
+            pairs, count=count, at=pairs[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        )
+        self.assertEqual(support.status, "ready")
+        result = support.features
+        self.assertAlmostEqual(result.v, 0)
+        self.assertFalse(result.constant_compatible(significance))
+        self.assertGreater(*result.constant_bounds(significance))
+        self.assertGreater(result.constant_lower, result.constant_upper)
+        # A one-point intersection is sufficient; every observation can
+        # contain the same level even when their envelope middles differ.
+        touching = tuple(
+            replace(pair, lower_density=6 if index % 2 else 8,
+                    upper_density=8 if index % 2 else 10)
+            for index, pair in enumerate(pairs)
+        )
+        constant = original_water_window(
+            touching, count=count, at=touching[-1].available_at,
+            max_gap_seconds=values["curve_original_gap_humidity_upper_seconds"],
+        ).features
+        self.assertEqual(constant.constant_bounds(1), (8, 8))
+        self.assertEqual((constant.constant_lower, constant.constant_upper), (8, 8))
+        self.assertTrue(constant.constant_compatible(1))
+        self.assertTrue(constant.constant_compatible(2))
+        self.assertFalse(constant.constant_compatible(0.5))
+        for invalid in (0, -1, True, float("nan"), float("inf")):
+            with self.subTest(significance=invalid):
+                with self.assertRaises(ValueError):
+                    constant.constant_bounds(invalid)
+
+    def test_water_window_keeps_exact_tail_and_never_skips_unknown_support(self):
+        values = Parameters({}).values
+        count = values["curve_original_samples"]
+        pairs, step = water_envelope_originals(values, ((8, 10),) * (2 * count + 1))
+        arguments = {
+            "count": count,
+            "max_gap_seconds": values["curve_original_gap_humidity_upper_seconds"],
+            "at": pairs[-1].available_at,
+        }
+        support = original_water_window(pairs, **arguments)
+        self.assertEqual(support.status, "ready")
+        self.assertEqual(support.features.previous, pairs[1:count + 1])
+        self.assertEqual(support.features.current, pairs[count + 1:])
+        self.assertEqual(original_water_window((), **arguments).status, "insufficient")
+        self.assertEqual(original_water_window(
+            pairs[2:], **arguments,
+        ).status, "insufficient")
+        waiting = replace(
+            pairs[-1],
+            temperature_after=(pairs[-1].available_at + step, trace(0)[0]),
+            available_at=pairs[-1].available_at + step,
+        )
+        pending = original_water_window(pairs[:-1] + (waiting,), **arguments)
+        self.assertEqual(pending.status, "pending")
+        self.assertIsNone(pending.features)
+        ready = original_water_window(
+            pairs[:-1] + (waiting,),
+            **{**arguments, "at": waiting.available_at},
+        )
+        self.assertEqual(ready.status, "ready")
+        self.assertEqual(ready.features.available_at, waiting.available_at)
+        # The caller owns receipt freshness and source continuity. A complete
+        # historical window does not expire while a later right T is pending.
+        self.assertEqual(original_water_window(
+            pairs, **{**arguments, "at": arguments["at"] + timedelta(
+                seconds=2 * arguments["max_gap_seconds"],
+            )},
+        ).status, "ready")
+        shift = timedelta(seconds=arguments["max_gap_seconds"]) + timedelta.resolution
+        shifted = tuple(replace(
+            pair,
+            humidity_sample=(pair.humidity_sample[0] + shift, pair.humidity_sample[1]),
+            temperature_before=(pair.temperature_before[0] + shift,
+                                pair.temperature_before[1]),
+            temperature_after=(pair.temperature_after[0] + shift,
+                               pair.temperature_after[1]),
+            available_at=pair.available_at + shift,
+        ) for pair in pairs[count + 1:])
+        variants = (
+            ("unknown final pair", pairs[:-1] + (None,)),
+            ("unknown interior pair", pairs[:count] + (None,) + pairs[count + 1:]),
+            ("duplicate original", pairs[:-1] + (pairs[-2],)),
+            ("reversed original", pairs[:-1] + (pairs[-3],)),
+            ("gap between windows", pairs[:count + 1] + shifted),
+            ("nonfinite bound", pairs[:-1] + (
+                replace(pairs[-1], upper_density=float("inf")),
+            )),
+            ("inverted envelope", pairs[:-1] + (
+                replace(pairs[-1], lower_density=11),
+            )),
+        )
+        for reason, samples in variants:
+            with self.subTest(reason=reason):
+                result = original_water_window(samples, **arguments)
+                self.assertEqual(result.status, "invalid")
+                self.assertIsNone(result.features)
+        invalid_arguments = (
+            {"count": True}, {"count": 1}, {"count": float("nan")},
+            {"max_gap_seconds": 0}, {"max_gap_seconds": float("inf")},
+            {"at": None},
+        )
+        for invalid in invalid_arguments:
+            with self.subTest(arguments=invalid):
+                self.assertEqual(original_water_window(
+                    pairs, **{**arguments, **invalid},
+                ).status, "invalid")
 
     def test_single_position_preserves_algebra_without_empirical_transfer(self):
         values = Parameters({}).values
