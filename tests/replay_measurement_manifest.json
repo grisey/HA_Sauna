@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "required": true,
+  "missing_data_policy": "fail",
+  "privacy": "Relative Empfangszeit, funktionale Rollen und unveränderte Messwerte; ursprüngliche Identitäten und Kalenderzeiten bleiben privat.",
+  "time_groups": [
+    {
+      "id": "R05",
+      "origin_recording": "R05",
+      "basis": "Eine gemeinsame relative Zeitachse erhält alle Messabstände und tatsächlichen Abschnittslücken; Abschnittsgrenzen erzeugen keinen Neustart.",
+      "source_sha256": [
+        "f105a371c85c494a58046f05211b76d948eb5d8105777b299215537682ccc122"
+      ],
+      "recordings": [
+        {
+          "id": "R05",
+          "origin_offset_s": 0.0
+        }
+      ]
+    },
+    {
+      "id": "R06",
+      "origin_recording": "R06",
+      "basis": "Eine gemeinsame relative Zeitachse erhält alle Messabstände und tatsächlichen Abschnittslücken; Abschnittsgrenzen erzeugen keinen Neustart.",
+      "source_sha256": [
+        "6cd299a6d8f65a73f60182ebe3218c208976caafda716bae65e925087e2e166e"
+      ],
+      "recordings": [
+        {
+          "id": "R06",
+          "origin_offset_s": 0.0
+        }
+      ]
+    },
+    {
+      "id": "R07",
+      "origin_recording": "R07",
+      "basis": "Eine gemeinsame relative Zeitachse erhält alle Messabstände und tatsächlichen Abschnittslücken; Abschnittsgrenzen erzeugen keinen Neustart.",
+      "source_sha256": [
+        "a3a77c1997bd97fcd7ed4fcf376f9d58dcc00b97b20b79381b1f107f75e7288a"
+      ],
+      "recordings": [
+        {
+          "id": "R07",
+          "origin_offset_s": 0.0
+        }
+      ]
+    }
+  ],
+  "sessions": [
+    {
+      "id": "R05",
+      "file": "fixtures/replay/R05.json",
+      "sha256": "df75834fd88bd7aa062ee29493a8361675c15e8e9986bf4791a8cf966f9c8670",
+      "samples_file": "fixtures/replay/R05.samples.jsonl.gz",
+      "samples_sha256": "f105a371c85c494a58046f05211b76d948eb5d8105777b299215537682ccc122",
+      "samples_count": 48346
+    },
+    {
+      "id": "R06",
+      "file": "fixtures/replay/R06.json",
+      "sha256": "52cefa98555f867d4dd85508add8bf975510a4bf56ae5d39c412a34c3d629a02",
+      "samples_file": "fixtures/replay/R06.samples.jsonl.gz",
+      "samples_sha256": "6cd299a6d8f65a73f60182ebe3218c208976caafda716bae65e925087e2e166e",
+      "samples_count": 33845
+    },
+    {
+      "id": "R07",
+      "file": "fixtures/replay/R07.json",
+      "sha256": "32116bfda8c83e27cd46ba0994d9a722f265c5d8b9a1d0a15b07c7b41713c3ad",
+      "samples_file": "fixtures/replay/R07.samples.jsonl.gz",
+      "samples_sha256": "a3a77c1997bd97fcd7ed4fcf376f9d58dcc00b97b20b79381b1f107f75e7288a",
+      "samples_count": 52236
+    }
+  ]
+}

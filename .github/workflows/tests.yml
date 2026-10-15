@@ -5,6 +5,14 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      detector_replay:
+        description: 'Run only productive detector measurement replays and their targeted harness checks'
+        type: boolean
+        default: false
+      detector_recordings:
+        description: 'Optional comma-separated measurement recording IDs; only complete time groups'
+        type: string
+        default: ''
       checks:
         description: 'Comma-separated checks: core,ha,browser,sessions; empty runs all'
         type: string
@@ -77,10 +85,16 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.proxy_calibration_analysis && 'proxy-calibration' || inputs.proxy_expectation_analysis && 'proxy-expectation-analysis' || inputs.proxy_candidate_analysis && 'proxy-candidate-analysis' || inputs.checks || 'all' }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.detector_replay && 'detector-replay' || inputs.proxy_calibration_analysis && 'proxy-calibration' || inputs.proxy_expectation_analysis && 'proxy-expectation-analysis' || inputs.proxy_candidate_analysis && 'proxy-candidate-analysis' || inputs.checks || 'all' }}
   cancel-in-progress: true
 jobs:
+  detector_replay:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.detector_replay }}
+    uses: ./.github/workflows/detector-replay.yml
+    with:
+      recordings: ${{ inputs.detector_recordings }}
   configuration:
+    if: ${{ !inputs.detector_replay }}
     # Bootstrap on the GitHub-hosted Linux provider; all run settings come from the catalogue.
     runs-on: ubuntu-latest
     outputs:
@@ -106,7 +120,7 @@ jobs:
           SAUNA_HA_TESTS: ${{ !inputs.proxy_calibration_analysis && inputs.ha_tests || '' }}
   core:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
+    if: ${{ !inputs.detector_replay && !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'core') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -143,7 +157,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   proxy_calibration_analysis:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_calibration_analysis }}
+    if: ${{ !inputs.detector_replay && github.event_name == 'workflow_dispatch' && inputs.proxy_calibration_analysis }}
     permissions:
       contents: read
       actions: read
@@ -210,7 +224,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   proxy_expectation_analysis:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
+    if: ${{ !inputs.detector_replay && github.event_name == 'workflow_dispatch' && inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     steps:
@@ -247,7 +261,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   proxy_candidate_analysis:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
+    if: ${{ !inputs.detector_replay && github.event_name == 'workflow_dispatch' && inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     steps:
@@ -299,7 +313,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   proxy_form_analysis:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
+    if: ${{ !inputs.detector_replay && github.event_name == 'workflow_dispatch' && inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -340,7 +354,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   curve_compare:
     needs: configuration
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
+    if: ${{ !inputs.detector_replay && github.event_name == 'workflow_dispatch' && inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.core }}
     steps:
@@ -489,7 +503,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   ha:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
+    if: ${{ !inputs.detector_replay && !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'ha') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.ha }}
     steps:
@@ -545,7 +559,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   sessions:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
+    if: ${{ !inputs.detector_replay && !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'sessions') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.sessions }}
     strategy:
@@ -591,7 +605,7 @@ jobs:
           retention-days: ${{ fromJSON(needs.configuration.outputs.settings).artifact_retention_days }}
   browser:
     needs: configuration
-    if: ${{ !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
+    if: ${{ !inputs.detector_replay && !inputs.curve_compare && !inputs.proxy_form_analysis && !inputs.proxy_candidate_analysis && !inputs.proxy_expectation_analysis && !inputs.proxy_calibration_analysis && contains(fromJSON(needs.configuration.outputs.checks), 'browser') }}
     runs-on: ${{ fromJSON(needs.configuration.outputs.settings).operating_system }}
     timeout-minutes: ${{ fromJSON(needs.configuration.outputs.settings).job_timeouts_minutes.browser }}
     steps:
