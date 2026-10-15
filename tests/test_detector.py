@@ -2,6 +2,7 @@
 import asyncio
 import unittest
 from collections import Counter
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import timedelta
@@ -16,8 +17,10 @@ from custom_components.ha_sauna.bindings import Bindings
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.curve_change import (
     CurveFeatures,
-    CurveLevelFeatures,
     CurveTrendFeatures,
+    OriginalPositionWindows,
+    original_contrasts,
+    original_water_pair,
 )
 from custom_components.ha_sauna.core.detector import Detector
 from custom_components.ha_sauna.core.models import Measurement, Position, Quantity
@@ -26,7 +29,12 @@ from custom_components.ha_sauna.core.moisture import (
     absolute_humidity,
     saturation_vapor_pressure,
 )
-from custom_components.ha_sauna.core.parameters import BY_KEY, EDITABLE_DEFINITIONS, Parameters
+from custom_components.ha_sauna.core.parameters import (
+    BY_KEY,
+    EDITABLE_DEFINITIONS,
+    ParameterError,
+    Parameters,
+)
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
 from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
@@ -1138,13 +1146,13 @@ class DetectorTests(unittest.TestCase):
 
 
 class InfusionLifecycleTests(unittest.TestCase):
-    """Controlled local math; acceptance, AH, event ownership and time stay real."""
+    """Declared form evidence; original windows, water and event ownership stay real."""
 
     def setUp(self):
         self.parameters = detection_parameters()
         self.p = self.parameters.values
         self.step = int(self.p["grid_seconds"])
-        self.side = self.p["curve_min_side_samples"]
+        self.side = self.p["curve_original_samples"]
         self.width = (2 * self.side + 2) * self.step
         self.begin = (
             ceil(max(
@@ -1220,32 +1228,86 @@ class InfusionLifecycleTests(unittest.TestCase):
             ),
         )
 
-    @staticmethod
-    def _math_level(samples, *, policy):
-        """Only an exactly settled supplied tail receives level evidence."""
-        if len(samples) < 2 * policy.min_side_samples:
-            return None
-        constant = all(value == samples[0][1] for _, value in samples)
-        return CurveLevelFeatures(
-            evidence="supports" if constant else "rejects",
-            start_at=samples[0][0], newest_at=samples[-1][0], count=len(samples),
-            noise_scale=0.0 if constant else 1.0,
-            level=sum(value for _, value in samples) / len(samples),
-            level_score=None if constant else 1.0,
-            trend_score=None if constant else 0.0,
-            score_gain=None if constant else -1.0,
-            trend_model=None if constant else "linear", exact_constant=constant,
+    def _original_forms(self, shapes, windows, *, expected_positions, humidity_minima=None):
+        """Declare directions on the real, causally available original support.
+
+        The production helper still combines the required positions. A missing
+        window remains unknown; varying tails without a declared form cannot
+        supply background evidence. No water pair or event state is fabricated.
+        """
+        strength = 2 * max(
+            self.p[key] for key in (
+                "curve_original_significance", "curve_original_open_contrast",
+                "curve_original_new_infusion_contrast",
+                "curve_original_continuation_contrast",
+                "curve_original_background_slope", "curve_original_background_residual",
+            )
+        )
+        declared = {}
+        for name in expected_positions:
+            if name not in windows:
+                return None
+            pair = windows[name]
+            selected = shapes[Position(name)] if isinstance(shapes, dict) else shapes
+            features = []
+            for quantity, window in (
+                (Quantity.TEMPERATURE, pair.temperature),
+                (Quantity.HUMIDITY, pair.humidity),
+            ):
+                compatible = [shape for shape in selected if (
+                    shape["quantity"] == quantity
+                    and self._at(shape["onset"] + self.side * self.step)
+                    <= window.newest_at <= self._at(shape["until"])
+                    and (shape["kind"] != "decay" or window.newest_at
+                         > self._at(shape["onset"] + self.side * self.step))
+                )]
+                current_constant = all(value == window.current[0][1]
+                                       for _, value in window.current)
+                if compatible:
+                    shape = max(compatible, key=lambda item: item["onset"])
+                    before, after = {
+                        "rise": (0, 1), "decay": (1, -1),
+                        "open": (0, -1), "close": (-1, 1),
+                    }[shape["kind"]]
+                    features.append(replace(
+                        window, v=after * strength * window.e,
+                        b=before * strength * window.e_minus, r=0.0,
+                    ))
+                else:
+                    features.append(replace(
+                        window, v=0.0, b=0.0,
+                        r=0.0 if current_constant else strength,
+                    ))
+            declared[name] = OriginalPositionWindows(*features)
+        return original_contrasts(
+            declared, expected_positions=expected_positions, humidity_minima=humidity_minima,
         )
 
-    def _patch_math(self, shapes):
-        return patch(
+    @contextmanager
+    def _patch_math(self, shapes, *, forms=None):
+        def historical_onset(samples, **kwargs):
+            selected = shapes
+            if isinstance(shapes, dict):
+                position = (Position.LOWER if samples and samples[0][1] <= self.peak / 2
+                            else Position.UPPER)
+                selected = shapes[position]
+            return self._math_curve(selected, samples, **kwargs)
+
+        # Legacy candidates only supply optional earlier onset anchors. The
+        # episode must independently qualify through the new original forms.
+        with patch(
             "custom_components.ha_sauna.core.detector.curve_change",
-            side_effect=lambda samples, **kwargs: self._math_curve(shapes, samples, **kwargs),
-        )
+            side_effect=historical_onset,
+        ), patch(
+            "custom_components.ha_sauna.core.detector.original_contrasts",
+            side_effect=forms or (lambda windows, **kwargs:
+                                  self._original_forms(shapes, windows, **kwargs)),
+        ):
+            yield
 
     def _send(self, detector, second, humidity, events, *, temperature=None,
               measured_second=None, humidity_source=None, controller=None,
-              detected_at=None):
+              detected_at=None, omit=()):
         temperature = self.temperature if temperature is None else temperature
         measured_at = self._at(second if measured_second is None else measured_second)
         now = self._at(second)
@@ -1256,6 +1318,8 @@ class InfusionLifecycleTests(unittest.TestCase):
             for quantity, value in (
                 (Quantity.TEMPERATURE, temperature), (Quantity.HUMIDITY, position_humidity),
             ):
+                if (position, quantity) in omit:
+                    continue
                 source = humidity_source if quantity == Quantity.HUMIDITY else None
                 self.assertTrue(detector.accept(measurement(
                     position, quantity, value, second, source=source, measured=measured_at,
@@ -1344,9 +1408,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         shapes = [self._shape("rise", self.begin, end)]
         detector = Detector(self.parameters, T0)
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
             self.assertEqual(detector._infusion_episode["phase"], "pending")
             self.assertIsNone(detector._infusion_episode["confirmed_at"])
@@ -1380,37 +1442,30 @@ class InfusionLifecycleTests(unittest.TestCase):
         ]
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
-        key = ("infusion", detector.positions, (Quantity.HUMIDITY,))
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
             self.assertEqual(detector._infusion_episode["phase"], "pending")
-            old = dict(detector._curve_proposal_status[key])
+            old = detector.infusion_episode
             self._feed(detector, expired, points, events)
             self.assertIsNone(detector._infusion_episode)
             self.assertEqual(self._infusions(events), [])
-            self.assertEqual(detector._curve_proposal_status[key]["status"], "invalid")
-            self.assertEqual(detector._curve_proposal_status[key]["reason"], "candidate_expired")
+            self.assertIsNone(detector._original_infusion_candidate)
             self._feed(detector, unrelated_fall, points, events)
             self.assertIsNone(detector._infusion_episode)
             self.assertEqual(self._infusions(events), [])
             first_rise = next_rise + self.side * self.step
             self._feed(detector, first_rise, points, events)
-            rise = detector.diagnostic["curve_candidates"]["infusion"]["upper"]["humidity"]
-            self.assertEqual(rise["onset_at"], self._at(next_rise))
-            self.assertIsNone(rise["fresh_newest_at"])
+            rise = detector._original_infusion_candidate
+            self.assertEqual(rise["onsets"][Position.UPPER], self._at(next_rise))
+            self.assertFalse(rise["strong"])
             self.assertIsNone(detector._infusion_episode)
             self._feed(detector, first_rise + self.step, points, events)
             self.assertEqual(detector._infusion_episode["phase"], "pending")
             self.assertEqual(detector._infusion_episode["onset_at"], self._at(next_rise))
-            self.assertTrue(set(old["candidate_ids"]).isdisjoint(
-                detector._curve_proposal_status[key]["candidate_ids"],
-            ))
+            self.assertNotEqual(detector.infusion_episode.bound_at, old.bound_at)
             first_decay = next_peak + self.side * self.step
             self._feed(detector, first_decay, points, events)
-            decay = detector.diagnostic["curve_candidates"]["infusion_decay"]["upper"]["humidity"]
-            self.assertIsNone(decay["fresh_newest_at"])
+            self.assertFalse(detector._original_infusion_candidate["fall_confirmed"])
             self.assertEqual(self._infusions(events), [])
             self._feed(detector, next_fall, points, events)
         infusions = self._infusions(events)
@@ -1420,27 +1475,132 @@ class InfusionLifecycleTests(unittest.TestCase):
 
     def test_global_rise_without_supported_original_direction_cannot_start_a_pulse(self):
         points, shapes, _, _ = self._scenario(merged=False)
-        level = CurveTrendFeatures(
-            direction=0, slope=0.0, noise_scale=0.0,
-            level_score=None, trend_score=None, score_gain=None,
-            exact_constant=True, exact_linear=False,
-        )
-        for trend in (None, level):
-            with self.subTest(after_trend=trend):
+        for evidence in ("unknown", "level"):
+            with self.subTest(original_direction=evidence):
                 detector = Detector(self.parameters, T0)
                 events = []
 
-                def evidence(samples, **kwargs):
-                    features = self._math_curve(shapes, samples, **kwargs)
-                    return (replace(features, after_trend=trend)
-                            if features is not None else None)
+                def forms(windows, **kwargs):
+                    contrasts = self._original_forms(shapes, windows, **kwargs)
+                    if evidence != "level" or contrasts is None:
+                        return None
+                    level = {
+                        name: replace(pair, humidity=replace(pair.humidity, v=0.0))
+                        for name, pair in contrasts.positions
+                    }
+                    return original_contrasts(level, **kwargs)
 
-                with patch(
-                    "custom_components.ha_sauna.core.detector.curve_change", side_effect=evidence,
-                ):
+                with self._patch_math(shapes, forms=forms):
                     self._feed(detector, self.begin + self.width, points, events)
                 self.assertEqual(self._infusions(events), [])
                 self.assertIsNone(detector._infusion_episode)
+
+    def test_unknown_water_pair_is_not_negative_and_complete_negative_pairing_rejects(self):
+        points, shapes, _, _ = self._scenario(merged=False)
+        peak = self.begin + self.width
+        fall = peak + self.width
+        cold = self.temperature - 2 * max(self.p["vent_drop_upper"], self.p["vent_drop_lower"])
+        temperatures = [(0, self.temperature), (self.begin, self.temperature), (peak, cold)]
+        self.assertLess(absolute_humidity(cold, self.peak),
+                        absolute_humidity(self.temperature, self.baseline))
+        base_at = self._at(self.begin + self.step)
+        pair_available = False
+
+        def water_pair(humidity_sample, temperature_samples, **kwargs):
+            if humidity_sample[0] == base_at and not pair_available:
+                return None
+            return original_water_pair(humidity_sample, temperature_samples, **kwargs)
+
+        detector = Detector(self.parameters, T0, (Position.UPPER,))
+        events = []
+        with self._patch_math(shapes), patch(
+            "custom_components.ha_sauna.core.detector.original_water_pair", side_effect=water_pair,
+        ):
+            self._feed(detector, fall, points, events, temperatures=temperatures)
+            component = detector._original_infusion_candidate
+            self.assertIsNotNone(component)
+            self.assertTrue(component["strong"])
+            self.assertTrue(component["support_end"])
+            self.assertFalse(component["qualified"])
+            self.assertEqual(component["bases"][Position.UPPER][0], base_at)
+            self.assertFalse(component["water"][Position.UPPER]["complete"])
+            self.assertIsNone(component["water"][Position.UPPER]["change"])
+            self.assertIsNone(detector.infusion_episode)
+            self.assertEqual(self._infusions(events), [])
+            pair_available = True
+            self._send(detector, fall + self.step, self.level, events, temperature=cold)
+        witness = component["water"][Position.UPPER]
+        self.assertTrue(witness["complete"])
+        self.assertLessEqual(witness["change"], 0)
+        self.assertIsNone(detector._original_infusion_candidate)
+        self.assertIsNone(detector.infusion_episode)
+        self.assertEqual(self._infusions(events), [])
+
+    def test_original_gap_between_grid_ticks_restarts_background_support(self):
+        count = int(BY_KEY["curve_original_samples"].minimum)
+        self.parameters = detection_parameters(
+            curve_original_samples=count,
+            curve_original_gap_humidity_upper_seconds=self.step / 4,
+        )
+        self.p = self.parameters.values
+        self.side = count
+        self.width = (2 * count + 2) * self.step
+        points, shapes, _, _ = self._scenario(merged=False)
+        first_background = self.begin + 2 * self.width + count * self.step
+
+        def forms(windows, **kwargs):
+            result = self._original_forms(shapes, windows, **kwargs)
+            if result is not None and min(
+                min(pair.temperature.newest_at, pair.humidity.newest_at)
+                for _, pair in result.positions
+            ) < self._at(first_background):
+                return replace(result, background_slope=2 * self.p["curve_original_background_slope"])
+            return result
+
+        detector = Detector(self.parameters, T0)
+        events = []
+        with self._patch_math(shapes, forms=forms):
+            cadence = self.step / 4
+            for tick in range(int(first_background / cadence) + 1):
+                second = tick * cadence
+                self._send(detector, second, self._value(points, second), events)
+            original = self._infusions(events)[0]
+            bound_at = detector.infusion_episode.bound_at
+            reference = detector._infusion_episode["original_background"]
+            self.assertIsNotNone(reference)
+            self.assertEqual(detector.infusion_episode.phase, "active")
+            # The withheld upper RH creates an unavailable prefix. Exactly 2K
+            # fresh RH originals then make the final window valid again before
+            # the next raster; that endpoint cannot bridge the hidden gap.
+            self._send(
+                detector, first_background + 3 * self.step / 8, self.level, events,
+                omit=((Position.UPPER, Quantity.HUMIDITY),),
+            )
+            recovery_step = self.step / (2 * (2 * count - 1))
+            for number in range(2 * count):
+                second = first_background + self.step / 2 + number * recovery_step
+                self._send(detector, second, self.level, events)
+            endpoint = detector._original_window_cache[Position.UPPER, Quantity.HUMIDITY][1]
+            self.assertIsNotNone(endpoint)
+            self.assertEqual(endpoint.newest_at, self._at(first_background + self.step))
+            self.assertEqual(detector.infusion_episode.phase, "active")
+            self.assertIsNone(detector.infusion_episode.level_end_at)
+            self.assertNotEqual(detector._infusion_episode["original_background"], reference)
+            self._send(detector, first_background + self.step + recovery_step,
+                       self.level, events)
+            events.extend(detector.advance(self._at(first_background + 2 * self.step), enabled=True))
+        self.assertEqual(detector.infusion_episode.phase, "ended")
+        self.assertEqual(detector.infusion_episode.bound_at, bound_at)
+        self.assertIs(detector.infusion_episode.confirmed_detection, original)
+        self.assertEqual(self._infusions(events), [original])
+
+    def test_original_sample_count_requires_capacity_for_both_windows(self):
+        count = self.p["curve_original_samples"]
+        accepted = Parameters({"curve_original_samples": count, "curve_max_points": 2 * count})
+        self.assertEqual(accepted.values["curve_max_points"], 2 * count)
+        with self.assertRaises(ParameterError) as invalid:
+            Parameters({"curve_original_samples": count, "curve_max_points": 2 * count - 1})
+        self.assertEqual(invalid.exception.key, "curve_max_points")
 
     def test_peak_and_fresh_fall_confirm_the_original_onset_for_all_consumers(self):
         points, shapes, _, _ = self._scenario(merged=False)
@@ -1452,9 +1612,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
         controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, peak, points, events, controller=controller)
             self.assertEqual(detector._infusion_episode["phase"], "pending")
             self.assertEqual(self._infusions(events), [])
@@ -1488,9 +1646,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         detector = Detector(self.parameters, T0)
         events = []
         self.assertIsNone(detector.infusion_episode)
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, self.begin + (self.side + 1) * self.step, points, events)
             pending = detector.infusion_episode
             self.assertEqual(pending.phase, "pending")
@@ -1513,7 +1669,9 @@ class InfusionLifecycleTests(unittest.TestCase):
             with patch.multiple(
                 "custom_components.ha_sauna.core.detector",
                 **dict.fromkeys(("curve_change", "curve_form", "curve_level",
-                                 "curve_recovery", "curve_trend"), DEFAULT),
+                                 "curve_recovery", "curve_trend", "original_window",
+                                 "original_contrasts", "original_thermal_contrasts",
+                                 "original_water_pair"), DEFAULT),
             ) as calculations:
                 active = detector.infusion_episode
                 self.assertEqual(active, detector.infusion_episode)
@@ -1530,19 +1688,19 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertEqual(active.confirmed_at, original.detected_at)
             self.assertIsNone(active.level_end_at)
             self._feed(
-                detector, fall_two + self.p["infusion_window_seconds"] + 2 * self.step,
+                detector, fall_two + (self.side + 1) * self.step,
                 points, events,
             )
         self.assertEqual(len(self._infusions(events)), 1)
         self.assertEqual(detector._infusion_episode["phase"], "ended")
-        self.assertEqual(detector._infusion_episode["end_basis"], "decay_and_level")
+        self.assertEqual(detector._infusion_episode["end_basis"], "original_background")
         ended = detector.infusion_episode
         self.assertEqual(ended.phase, "ended")
         self.assertEqual(ended.bound_at, pending.bound_at)
         self.assertIs(ended.confirmed_detection, original)
         self.assertEqual(ended.level_end_at,
-                         self._at(fall_two + self.p["infusion_window_seconds"] + self.step))
-        self.assertEqual(ended.end_basis, "decay_and_level")
+                         self._at(fall_two + self.side * self.step))
+        self.assertEqual(ended.end_basis, "original_background")
         self.assertEqual(ended.last_rise_at,
                          tuple((position, self._at(rise_two)) for position in detector.positions))
         for snapshot, phase in ((pending, "pending"), (active, "active")):
@@ -1557,10 +1715,10 @@ class InfusionLifecycleTests(unittest.TestCase):
     def test_upper_peak_preserves_lower_tail_until_shared_level_and_next_infusion(self):
         first_peak = self.begin + self.width
         first_fall = first_peak + self.width
-        upper_rise = first_fall + (self.side + 1) * self.step
+        upper_rise = first_fall + max(1, self.side - 2) * self.step
         upper_peak = upper_rise + self.width
         upper_fall = upper_peak + self.width
-        settled = upper_fall + self.p["infusion_window_seconds"] + 2 * self.step
+        settled = upper_fall + (self.side + 1) * self.step
         next_rise = settled + (self.side + 3) * self.step
         next_peak = next_rise + self.width
         next_fall = next_peak + self.width
@@ -1590,10 +1748,7 @@ class InfusionLifecycleTests(unittest.TestCase):
             self._shape("decay", upper_peak, upper_fall),
         ]
 
-        def evidence(samples, **kwargs):
-            shapes = (common_shapes if samples and samples[0][1] <= self.peak / 2
-                      else upper_shapes)
-            return self._math_curve(shapes, samples, **kwargs)
+        position_shapes = {Position.UPPER: upper_shapes, Position.LOWER: common_shapes}
 
         for paused in (False, True):
             with self.subTest(paused=paused):
@@ -1604,25 +1759,24 @@ class InfusionLifecycleTests(unittest.TestCase):
                 controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
                 controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
                 events = []
-                with patch(
-                    "custom_components.ha_sauna.core.detector.curve_change", side_effect=evidence,
-                ), patch(
-                    "custom_components.ha_sauna.core.detector.curve_level",
-                    side_effect=self._math_level,
-                ):
+                with self._patch_math(position_shapes):
                     self._feed(detector, first_fall - self.step, points, events,
                                controller=controller)
                     self.assertEqual(len(self._infusions(events)), 1)
                     self.assertEqual(detector._infusion_episode["phase"], "active")
                     first_episode = detector.infusion_episode
-                    lower_decay = detector._infusion_episode["decays"][Position.LOWER]
-                    self.assertEqual(lower_decay.onset_at, self._at(first_peak))
+                    first_component = detector._infusion_episode["original_component"]
+                    lower_decay = dict(first_component["fall_windows"])["lower"].humidity
+                    self.assertEqual(first_component["peaks"][Position.LOWER][0],
+                                     self._at(first_peak))
+                    self.assertTrue(all(value < self.peak / 2
+                                        for _, value in lower_decay.current))
                     first_gang = controller.session.timeline.active
                     self.assertIsNotNone(first_gang)
                     self.assertEqual(len(first_gang.infusion_events), 1)
                     if paused:
-                        # A global gap removes both decays. Afterwards the lower
-                        # position can recover a fresh level without a new peak.
+                        # A global gap interrupts the shared background proof.
+                        # The lower position can recover without a new peak.
                         self._send(detector, first_fall, None, events, controller=controller)
                         interrupted = detector.infusion_episode
                         self.assertEqual(interrupted.interrupted_positions, detector.positions)
@@ -1632,28 +1786,33 @@ class InfusionLifecycleTests(unittest.TestCase):
                     episode = detector._infusion_episode
                     self.assertEqual(episode["phase"], "active")
                     self.assertIsNone(episode["level_end_at"])
-                    self.assertNotIn(Position.UPPER, episode["decays"])
+                    self.assertIsNone(episode["original_background"])
                     self.assertEqual(len(self._infusions(events)), 1)
                     self.assertEqual(episode["onset_at"], self._at(self.begin))
                     if not paused:
-                        preserved = episode["decays"][Position.LOWER]
-                        self.assertEqual(preserved.candidate_id, lower_decay.candidate_id)
-                        self.assertEqual(preserved.original_points, lower_decay.original_points)
-                    lower_level = episode["levels"][Position.LOWER]
-                    self.assertIsNotNone(lower_level["fresh_newest_at"])
+                        preserved = dict(episode["original_component"]["fall_windows"])["lower"]
+                        self.assertEqual(preserved.humidity, lower_decay)
+                    lower_level = detector._original_window_cache[
+                        Position.LOWER, Quantity.HUMIDITY
+                    ][1]
+                    self.assertTrue(all(value == self.level / 2
+                                        for _, value in lower_level.current))
                     self.assertEqual(len(controller.session.timeline.active.infusion_events), 1)
                     self.assertEqual(len([item for item in controller.consumer_events
                                           if item.kind == "infusion"]), 1)
-                    # The upper position still needs its own falling originals
-                    # and a fresh level before the shared episode can end.
+                    # The upper tail must also settle; a fresh shared original
+                    # background is required before the episode can end.
                     self._feed(detector, settled, points, events, controller=controller)
                     episode = detector._infusion_episode
                     self.assertEqual(episode["phase"], "ended")
-                    self.assertEqual(episode["decays"][Position.UPPER].onset_at, self._at(upper_peak))
+                    self.assertEqual(episode["end_basis"], "original_background")
                     self.assertGreater(episode["level_end_at"], self._at(upper_peak))
-                    for position in detector.positions:
-                        level = episode["levels"][position]
-                        self.assertGreater(level["fresh_newest_at"], level["first_newest_at"])
+                    end_windows = dict(episode["original_end_windows"])
+                    self.assertEqual(tuple(end_windows), ("upper", "lower"))
+                    for name, pair in end_windows.items():
+                        expected = self.level if name == "upper" else self.level / 2
+                        self.assertTrue(all(value == expected for _, value in pair.humidity.current))
+                        self.assertGreater(pair.humidity.newest_at, self._at(upper_peak))
                     self.assertEqual(len(self._infusions(events)), 1)
                     ended_episode = detector.infusion_episode
                     self._feed(detector, next_fall, points, events, controller=controller)
@@ -1700,9 +1859,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         ]
         detector = Detector(self.parameters, T0)
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, rise_two - self.step, points, events)
             self.assertEqual(detector._infusion_episode["phase"], "ended")
             level_end = detector._infusion_episode["level_end_at"]
@@ -1721,15 +1878,13 @@ class InfusionLifecycleTests(unittest.TestCase):
         first = self.begin + self.side * self.step
         first_decay = self.begin + self.width + self.side * self.step
         confirmed = self.begin + 2 * self.width
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, first, points, events)
             self.assertEqual(self._infusions(events), [])
             self.assertIsNone(detector.infusion_episode)
-            status = detector.diagnostic["curve_candidates"]["infusion"]["upper"]["humidity"]
-            self.assertEqual(status["first_newest_at"], self._at(first))
-            self.assertIsNone(status["fresh_newest_at"])
+            status = detector._original_infusion_candidate
+            self.assertEqual(status["received_at"], self._at(first))
+            self.assertFalse(status["strong"])
             events.extend(detector.advance(self._at(first + self.step), enabled=True))
             self._send(detector, first + 2 * self.step, self._value(points, first), events,
                        measured_second=first)
@@ -1744,9 +1899,8 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertEqual(pending.bound_at, self._at(first + 4 * self.step))
             self.assertIsNone(pending.confirmed_detection)
             self._feed(detector, first_decay, points, events)
-            decay = detector.diagnostic["curve_candidates"]["infusion_decay"]["upper"]["humidity"]
-            self.assertEqual(decay["first_newest_at"], self._at(first_decay))
-            self.assertIsNone(decay["fresh_newest_at"])
+            self.assertFalse(detector._original_infusion_candidate["fall_confirmed"])
+            self.assertNotIn("fall_windows", detector._original_infusion_candidate)
             events.extend(detector.advance(self._at(first_decay + self.step), enabled=True))
             self._send(detector, first_decay + 2 * self.step,
                        self._value(points, first_decay), events, measured_second=first_decay)
@@ -1782,21 +1936,23 @@ class InfusionLifecycleTests(unittest.TestCase):
         points, shapes, _, _ = self._scenario(merged=False)
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
-        first = self.begin + 2 * self.width + self.p["infusion_window_seconds"]
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        first = self.begin + 2 * self.width + (self.side - 1) * self.step
+        invalid_change = 2 * self.side * self.p["curve_original_noise_humidity_upper"] * max(
+            self.p["curve_original_background_slope"],
+            self.p["curve_original_background_residual"],
+        )
+        with self._patch_math(shapes):
             self._feed(detector, first, points, events)
-            witness = detector._infusion_episode["levels"][Position.UPPER]
-            self.assertEqual(witness["first_newest_at"], self._at(first))
-            self.assertIsNone(witness["fresh_newest_at"])
+            witness = detector._infusion_episode["original_background"]
+            self.assertEqual(witness, (("upper", self._at(first), self._at(first)),))
+            self.assertIsNone(detector._infusion_episode["level_end_at"])
             events.extend(detector.advance(self._at(first + self.step), enabled=True))
-            self._send(detector, first + 2 * self.step, self.level - .1, events,
+            self._send(detector, first + 2 * self.step, self.level - invalid_change, events,
                        measured_second=first)
             self._send(detector, first + 3 * self.step, self.level, events,
                        measured_second=first)
             self.assertEqual(detector._infusion_episode["phase"], "active")
-            self.assertEqual(detector._infusion_episode["levels"], {})
+            self.assertIsNone(detector._infusion_episode["original_background"])
             self._send(detector, first + 4 * self.step, self.level, events)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertIsNone(detector._infusion_episode["level_end_at"])
@@ -1823,9 +1979,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         observed = []
         detector = Detector(self.parameters, T0, observer=observed.append)
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, gap - self.step, points, events)
             self._send(detector, gap, None, events)
             self.assertEqual(detector._infusion_episode["phase"], "active")
@@ -1833,21 +1987,27 @@ class InfusionLifecycleTests(unittest.TestCase):
             self._feed(detector, next_rise - self.step, points, events,
                        humidity_source="sensor.recovered_humidity")
             self.assertEqual(detector._infusion_episode["phase"], "ended")
-            self.assertEqual(detector._infusion_episode["end_basis"], "level_after_interruption")
+            self.assertEqual(detector._infusion_episode["end_basis"], "original_background")
             self.assertEqual(detector._infusion_episode["decays"], {})
+            self.assertTrue(detector.infusion_episode.interrupted_positions)
+            self.assertTrue(all(
+                value == self.level for _, pair in
+                detector._infusion_episode["original_end_windows"]
+                for _, value in pair.humidity.current
+            ))
             self.assertEqual(len(self._infusions(events)), 1)
             self._feed(detector, next_fall, points, events,
                        humidity_source="sensor.recovered_humidity")
         self.assertEqual(len(self._infusions(events)), 2)
         self.assertTrue(any(
-            row["conditions"].get("infusion_level_after_interruption") is True
+            row["decisions"]["infusion_background"]["result"] is True
             for row in observed
         ))
 
     def test_door_context_assigns_a_new_infusion_to_the_next_real_gang(self):
         first_peak = self.begin + self.width
         first_fall = first_peak + self.width
-        door_start = first_fall + (self.side + 2) * self.step
+        door_start = first_fall + max(1, self.side - 2) * self.step
         door_bottom = door_start + self.width
         close_start = door_bottom + max(
             self.p["infusion_window_seconds"], self.p["median_seconds"],
@@ -1888,9 +2048,7 @@ class InfusionLifecycleTests(unittest.TestCase):
         controller.process(event("initial-open", Kind.DOOR_OPEN, 0))
         controller.process(event("initial-close", Kind.DOOR_CLOSE, 0))
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, door_start - self.step, points, events,
                        temperatures=temperatures, controller=controller)
             self.assertEqual(detector._infusion_episode["phase"], "active")
@@ -1918,22 +2076,24 @@ class InfusionLifecycleTests(unittest.TestCase):
 
     def test_corrected_ended_tail_keeps_the_next_peak_in_the_same_infusion(self):
         points, shapes, _, _ = self._scenario(merged=False)
-        ended = self.begin + 2 * self.width + self.p["infusion_window_seconds"] + self.step
+        ended = self.begin + 2 * self.width + self.side * self.step
         next_rise = ended + 3 * self.step
         next_peak = next_rise + self.width
         shapes = shapes[:2] + [self._shape("rise", next_rise, next_peak)]
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        invalid_change = 2 * self.side * self.p["curve_original_noise_humidity_upper"] * max(
+            self.p["curve_original_background_slope"],
+            self.p["curve_original_background_residual"],
+        )
+        with self._patch_math(shapes):
             self._feed(detector, ended, points, events)
             self.assertEqual(detector._infusion_episode["phase"], "ended")
             ended_episode = detector.infusion_episode
             self.assertEqual(ended_episode.level_end_at, self._at(ended))
             original = self._infusions(events)[0]
             self.assertIs(ended_episode.confirmed_detection, original)
-            self._send(detector, ended + self.step, self.level - .1, events,
+            self._send(detector, ended + self.step, self.level - invalid_change, events,
                        measured_second=ended)
             self.assertEqual(detector._infusion_episode["phase"], "active")
             self.assertIsNone(detector._infusion_episode["level_end_at"])
@@ -1942,7 +2102,7 @@ class InfusionLifecycleTests(unittest.TestCase):
             self.assertIs(reopened.confirmed_detection, original)
             self.assertIsNone(reopened.level_end_at)
             self.assertIsNone(reopened.end_basis)
-            continued = [(0, self.level - .1), (next_rise, self.level - .1),
+            continued = [(0, self.level - invalid_change), (next_rise, self.level - invalid_change),
                          (next_peak, self.peak)]
             self._feed(detector, next_peak, continued, events)
         self.assertEqual(len(self._infusions(events)), 1)
@@ -1951,22 +2111,20 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIs(detector.infusion_episode.confirmed_detection, original)
         self.assertEqual(ended_episode.phase, "ended")
         self.assertEqual(ended_episode.level_end_at, self._at(ended))
-        self.assertEqual(ended_episode.end_basis, "decay_and_level")
+        self.assertEqual(ended_episode.end_basis, "original_background")
 
     def test_late_rise_before_level_end_reopens_the_original_infusion(self):
         points, shapes, _, _ = self._scenario(merged=False)
         first_peak = self.begin + self.width
         confirmed = first_peak + (self.side + 1) * self.step
         received_at = self._at(confirmed + self.step)
-        ended = self.begin + 2 * self.width + self.p["infusion_window_seconds"] + self.step
+        ended = self.begin + 2 * self.width + self.side * self.step
         late_onset = ended - self.step
         second_peak = shapes[2]["until"]
         shapes = shapes[:2]
         detector = Detector(self.parameters, T0, (Position.UPPER,))
         events = []
-        with self._patch_math(shapes), patch(
-            "custom_components.ha_sauna.core.detector.curve_level", side_effect=self._math_level,
-        ):
+        with self._patch_math(shapes):
             self._feed(detector, confirmed - self.step, points, events)
             self.assertEqual(self._infusions(events), [])
             self._send(detector, confirmed, self._value(points, confirmed), events,
@@ -1995,9 +2153,11 @@ class InfusionLifecycleTests(unittest.TestCase):
         self.assertIs(continued.confirmed_detection, original)
         self.assertEqual(continued.confirmed_at, received_at)
         self.assertEqual(continued.last_rise_at, ((Position.UPPER, self._at(late_onset)),))
+        self.assertEqual(detector._infusion_episode["original_component"]["threshold"],
+                         self.p["curve_original_continuation_contrast"])
         self.assertIsNone(continued.level_end_at)
         self.assertIsNone(continued.end_basis)
         self.assertEqual(self._infusions(events), [original])
         self.assertEqual(ended_episode.phase, "ended")
         self.assertEqual(ended_episode.level_end_at, self._at(ended))
-        self.assertEqual(ended_episode.end_basis, "decay_and_level")
+        self.assertEqual(ended_episode.end_basis, "original_background")

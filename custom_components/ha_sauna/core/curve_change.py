@@ -17,17 +17,22 @@ Curved or unresolved sides cannot supply that additional counterevidence.
 A complete smooth fall and recovery is assessed by classifying the same
 polynomials and requiring independent directions on their original flanks.
 Its fitted minimum is geometry, never a physical event time.
+The separate fixed-original helpers expose two disjoint OLS windows, raw
+position contrasts and causally available water pairs. Their value scales and
+support limits come entirely from the caller; event identity stays outside.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import starmap
 from math import ceil, fsum, isfinite, log, sqrt, ulp
 from operator import mul
 from statistics import NormalDist, median
+
+from .moisture import absolute_humidity
 
 
 _MAD_NORMALIZATION = 1 / NormalDist().inv_cdf(0.75)
@@ -51,6 +56,398 @@ def _profile_number(value):
                 and isfinite(value))
     except OverflowError:
         return False
+
+
+@dataclass(frozen=True)
+class OriginalWindowFeatures:
+    """Two disjoint, consecutive original windows and their raw OLS evidence.
+
+    ``current`` and ``previous`` each retain exactly the requested K originals.
+    v/b and e/e_minus have input units per second; r/r_minus are maximum
+    absolute line residuals divided by the caller's positive value-unit scale.
+    Neither the scale nor its derived slope bound is a probability estimate.
+    The original times are mathematical support, never physical event times.
+    """
+
+    previous: tuple[tuple[datetime, float], ...]
+    current: tuple[tuple[datetime, float], ...]
+    scale: float
+    v: float
+    b: float
+    e: float
+    e_minus: float
+    mean: float
+    mean_minus: float
+    r: float
+    r_minus: float
+
+    @property
+    def start_at(self) -> datetime:
+        """Oldest original in the complete two-window support."""
+        return self.previous[0][0]
+
+    @property
+    def newest_at(self) -> datetime:
+        """Latest original used by the current window."""
+        return self.current[-1][0]
+
+
+@dataclass(frozen=True)
+class OriginalPositionWindows:
+    """The temperature and RH original windows of one configured position."""
+
+    temperature: OriginalWindowFeatures
+    humidity: OriginalWindowFeatures
+
+
+@dataclass(frozen=True)
+class OriginalThermalContrasts:
+    """Raw temperature-only B/W contrasts, independent of RH availability.
+
+    opening retains the temperature terms needed by the combined opening
+    contrast, so that their formulas have the same owner as B and W.
+    """
+
+    braking: float
+    warming_min: float
+    warming_max: float
+    opening: float
+
+    @property
+    def closing(self) -> float:
+        """The two E2 closing-form branches needing only temperature support."""
+        return max(min(self.braking, self.warming_max), self.warming_min)
+
+
+@dataclass(frozen=True)
+class OriginalContrasts:
+    """Raw min/max contrasts over exactly the caller's required positions.
+
+    The names correspond to O, B, W_min, W_max, R, F, Z, Z_r, U and C.
+    U and C exist only when the caller supplies every group-relative RH
+    minimum. A single position uses the same formulas over a smaller set;
+    this does not transfer a four-channel physical or empirical proof.
+    Retained position windows expose every original anchor to the caller.
+    """
+
+    positions: tuple[tuple[str, OriginalPositionWindows], ...]
+    opening: float
+    braking: float
+    warming_min: float
+    warming_max: float
+    rise: float
+    fall: float
+    background_slope: float
+    background_residual: float
+    humidity_recovery: float | None
+    closing: float | None
+
+
+@dataclass(frozen=True)
+class OriginalWaterPair:
+    """An RH original with its actual, already available T support and bounds.
+
+    available_at is the right T original's time on the input measurement axis,
+    not a device receipt time. For an exact T/RH timestamp match the two T
+    supports are the same original, and no later T observation is needed.
+    These density bounds alone neither qualify water nor identify an event.
+    """
+
+    humidity_sample: tuple[datetime, float]
+    temperature_before: tuple[datetime, float]
+    temperature_after: tuple[datetime, float]
+    temperature: float
+    lower_density: float
+    upper_density: float
+    available_at: datetime
+
+
+def _original_positive(value: object) -> bool:
+    return _profile_number(value) and value > 0
+
+
+def _original_window_valid(window: object) -> bool:
+    return (isinstance(window, OriginalWindowFeatures)
+            and all(_profile_number(value) for value in (
+                window.v, window.b, window.e, window.e_minus,
+                window.mean, window.mean_minus, window.r, window.r_minus,
+            ))
+            and all(_original_positive(value) for value in (
+                window.scale, window.e, window.e_minus,
+            ))
+            and window.r >= 0 and window.r_minus >= 0)
+
+
+def _original_line(
+    points: tuple[tuple[datetime, float], ...], scale: float,
+) -> tuple[float, float, float, float] | None:
+    """Return slope, slope error bound, mean and max-normalized residual."""
+    origin = points[0][0]
+    times = tuple((stamp - origin).total_seconds() for stamp, _ in points)
+    count = len(points)
+    mean_time = fsum(times) / count
+    mean_value = fsum(value for _, value in points) / count
+    centered_times = tuple(time - mean_time for time in times)
+    s_tt = fsum(time * time for time in centered_times)
+    if not _original_positive(s_tt):
+        return None
+    slope = fsum(
+        time * (value - mean_value)
+        for time, (_, value) in zip(centered_times, points, strict=True)
+    ) / s_tt
+    error = scale * (fsum(abs(time) for time in centered_times) / s_tt)
+    residual = max(
+        abs(value - mean_value - slope * time)
+        for time, (_, value) in zip(centered_times, points, strict=True)
+    ) / scale
+    result = (slope, error, mean_value, residual)
+    if not all(_profile_number(value) for value in result) or error <= 0:
+        return None
+    return result
+
+
+def original_window(
+    samples: Sequence[tuple[datetime, float]], *, count: int, scale: float,
+    max_gap_seconds: float, at: datetime,
+) -> OriginalWindowFeatures | None:
+    """Use the last 2K originals at or before at, without repairing their order.
+
+    Every adjacent gap in that block, including the boundary between windows,
+    and the age of its newest original must be within max_gap_seconds. Invalid
+    or insufficient support is unknown (None). No interpolation or resampling
+    takes place. Work and storage are O(K) for the causal prefix supplied by
+    the detector; an optional future suffix costs one visit per skipped point.
+    The caller retains source continuity and any earlier history validity.
+    """
+    try:
+        if (not isinstance(count, int) or isinstance(count, bool) or count < 2
+                or not _original_positive(scale)
+                or not _original_positive(max_gap_seconds)
+                or not isinstance(at, datetime)):
+            return None
+        selected = []
+        later = None
+        for stamp, value in reversed(samples):
+            if not isinstance(stamp, datetime):
+                return None
+            if later is not None and stamp >= later:
+                return None
+            later = stamp
+            if stamp > at:
+                continue
+            if not _profile_number(value):
+                return None
+            if selected and (
+                selected[-1][0] - stamp
+            ).total_seconds() > max_gap_seconds:
+                return None
+            selected.append((stamp, float(value)))
+            if len(selected) == 2 * count:
+                break
+        if len(selected) != 2 * count:
+            return None
+        if not 0 <= (at - selected[0][0]).total_seconds() <= max_gap_seconds:
+            return None
+        selected.reverse()
+        previous = tuple(selected[:count])
+        current = tuple(selected[count:])
+        old = _original_line(previous, scale)
+        new = _original_line(current, scale)
+        if old is None or new is None:
+            return None
+        return OriginalWindowFeatures(
+            previous=previous, current=current, scale=float(scale),
+            v=new[0], b=old[0], e=new[1], e_minus=old[1],
+            mean=new[2], mean_minus=old[2], r=new[3], r_minus=old[3],
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_thermal_contrasts(
+    temperatures: Mapping[str, OriginalWindowFeatures], *,
+    expected_positions: Sequence[str],
+) -> OriginalThermalContrasts | None:
+    """Aggregate E2 temperature terms over every required configured position.
+
+    Missing required temperature support or an invalid expected set yields
+    None. These terms need no humidity observation and make no event decision.
+    """
+    try:
+        expected = tuple(expected_positions)
+        if (not expected or any(not isinstance(position, str) for position in expected)
+                or len(set(expected)) != len(expected)):
+            return None
+        opening_terms = []
+        braking_terms = []
+        warming_terms = []
+        for position in expected:
+            temperature = temperatures[position]
+            if not _original_window_valid(temperature):
+                return None
+            slope_difference = temperature.v - temperature.b
+            difference_error = temperature.e + temperature.e_minus
+            if (not _profile_number(slope_difference)
+                    or not _original_positive(difference_error)):
+                return None
+            braking = slope_difference / difference_error
+            warming = temperature.v / temperature.e
+            if not all(_profile_number(value) for value in (braking, warming)):
+                return None
+            opening_terms.extend((-warming, -braking))
+            braking_terms.append(braking)
+            warming_terms.append(warming)
+        return OriginalThermalContrasts(
+            braking=min(braking_terms), warming_min=min(warming_terms),
+            warming_max=max(warming_terms), opening=min(opening_terms),
+        )
+    except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_contrasts(
+    windows: Mapping[str, OriginalPositionWindows], *,
+    expected_positions: Sequence[str],
+    humidity_minima: Mapping[str, float] | None = None,
+) -> OriginalContrasts | None:
+    """Aggregate raw E2/E3 contrasts, retaining every required position.
+
+    Missing required T/RH support or a missing supplied group minimum yields
+    None. The caller owns the expected position set and group-relative minima;
+    this function never silently reduces that set or manages event state.
+    """
+    try:
+        expected = tuple(expected_positions)
+        if (not expected or any(not isinstance(position, str) for position in expected)
+                or len(set(expected)) != len(expected)):
+            return None
+        positions = tuple((position, windows[position]) for position in expected)
+        if any(not isinstance(pair, OriginalPositionWindows) for _, pair in positions):
+            return None
+        thermal = original_thermal_contrasts(
+            {position: pair.temperature for position, pair in positions},
+            expected_positions=expected,
+        )
+        if thermal is None:
+            return None
+        opening_terms = []
+        humidity_terms = []
+        residual_terms = []
+        recovery_terms = []
+        for position, pair in positions:
+            humidity = pair.humidity
+            if not _original_window_valid(humidity):
+                return None
+            humidity_rise = humidity.v / humidity.e
+            opening_terms.append(-humidity_rise)
+            humidity_terms.append(humidity_rise)
+            residual_terms.extend((humidity.r, humidity.r_minus))
+            if humidity_minima is not None:
+                minimum = humidity_minima[position]
+                if not _profile_number(minimum):
+                    return None
+                recovery_difference = humidity.mean - minimum
+                recovery_scale = 2 * humidity.scale
+                if (not _profile_number(recovery_difference)
+                        or not _original_positive(recovery_scale)):
+                    return None
+                recovery_terms.append(recovery_difference / recovery_scale)
+        opening = min(thermal.opening, min(opening_terms))
+        braking = thermal.braking
+        warming_min, warming_max = thermal.warming_min, thermal.warming_max
+        rise, fall = min(humidity_terms), min(-value for value in humidity_terms)
+        background_slope = max(abs(value) for value in humidity_terms)
+        background_residual = max(residual_terms)
+        recovery = min(recovery_terms) if humidity_minima is not None else None
+        closing = (max(min(braking, recovery), thermal.closing)
+                   if recovery is not None else None)
+        numbers = (opening, braking, warming_min, warming_max, rise, fall,
+                   background_slope, background_residual)
+        if not all(_profile_number(value) for value in numbers):
+            return None
+        if recovery is not None and (
+            not _profile_number(recovery) or not _profile_number(closing)
+        ):
+            return None
+        return OriginalContrasts(
+            positions=positions, opening=opening, braking=braking,
+            warming_min=warming_min, warming_max=warming_max, rise=rise, fall=fall,
+            background_slope=background_slope, background_residual=background_residual,
+            humidity_recovery=recovery, closing=closing,
+        )
+    except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError):
+        return None
+
+
+def original_water_pair(
+    humidity_sample: tuple[datetime, float],
+    temperatures: Sequence[tuple[datetime, float]], *,
+    temperature_scale: float, humidity_scale: float,
+    max_gap_seconds: float, at: datetime,
+) -> OriginalWaterPair | None:
+    """Pair one RH original only with immediately neighboring T originals.
+
+    A bracket is usable only after its right original is available at at and
+    within the caller's support gap. Historical base pairs do not expire merely
+    because at advances; source/candidate continuity belongs to the detector.
+    The existing moisture function supplies both density bounds. Invalid error
+    envelopes are unknown, never clipped into an invented water observation.
+    """
+    try:
+        humidity_at, humidity = humidity_sample
+        if (not isinstance(at, datetime) or not isinstance(humidity_at, datetime)
+                or humidity_at > at or not _profile_number(humidity)
+                or not _original_positive(temperature_scale)
+                or not _original_positive(humidity_scale)
+                or not _original_positive(max_gap_seconds)):
+            return None
+        before = None
+        after = None
+        previous_at = None
+        for stamp, value in temperatures:
+            if not isinstance(stamp, datetime):
+                return None
+            if previous_at is not None and stamp <= previous_at:
+                return None
+            previous_at = stamp
+            if stamp > at:
+                break
+            if not _profile_number(value):
+                return None
+            point = (stamp, float(value))
+            if stamp == humidity_at:
+                before = after = point
+                break
+            if stamp < humidity_at:
+                before = point
+            else:
+                after = point
+                break
+        if before is None or after is None:
+            return None
+        gap = (after[0] - before[0]).total_seconds()
+        if not 0 <= gap <= max_gap_seconds:
+            return None
+        temperature = before[1]
+        if gap:
+            fraction = (humidity_at - before[0]).total_seconds() / gap
+            temperature += fraction * (after[1] - before[1])
+        lower = absolute_humidity(
+            temperature - temperature_scale, humidity - humidity_scale,
+        )
+        upper = absolute_humidity(
+            temperature + temperature_scale, humidity + humidity_scale,
+        )
+        if not all(_profile_number(value) for value in (temperature, lower, upper)):
+            return None
+        return OriginalWaterPair(
+            humidity_sample=(humidity_at, float(humidity)),
+            temperature_before=before, temperature_after=after,
+            temperature=temperature, lower_density=lower, upper_density=upper,
+            available_at=after[0],
+        )
+    except (AttributeError, IndexError, OverflowError, TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)

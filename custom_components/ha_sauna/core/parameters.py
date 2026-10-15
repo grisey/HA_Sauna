@@ -157,6 +157,8 @@ class Parameters:
                     continue
                 raise ParameterError(definition.key, "required")
             checked[definition.key] = definition.validate(values[definition.key])
+        if 2 * checked["curve_original_samples"] > checked["curve_max_points"]:
+            raise ParameterError("curve_max_points", "too_small")
         if checked["light_night_elevation_degrees"] >= checked["light_day_elevation_degrees"]:
             raise ParameterError("light_day_elevation_degrees", "too_small")
 

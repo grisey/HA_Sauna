@@ -30,6 +30,21 @@ _PARAMETER_KEYS = frozenset(
         "curve_max_candidates",
         "curve_max_points",
         "curve_min_side_samples",
+        "curve_original_background_residual",
+        "curve_original_background_slope",
+        "curve_original_continuation_contrast",
+        "curve_original_gap_humidity_lower_seconds",
+        "curve_original_gap_humidity_upper_seconds",
+        "curve_original_gap_temperature_lower_seconds",
+        "curve_original_gap_temperature_upper_seconds",
+        "curve_original_new_infusion_contrast",
+        "curve_original_noise_humidity_lower",
+        "curve_original_noise_humidity_upper",
+        "curve_original_noise_temperature_lower",
+        "curve_original_noise_temperature_upper",
+        "curve_original_open_contrast",
+        "curve_original_samples",
+        "curve_original_significance",
         "curve_robust_iterations",
         "curve_window_seconds",
         "door_humidity_seconds",
@@ -869,6 +884,8 @@ def validate_catalog(catalog):
                 raise ValueError(f"defaults.json: invalid divisor references for {key}")
             if values[divisor] <= 0 or values[key] % values[divisor]:
                 raise ValueError(f"defaults.json: {key} must be a multiple of {divisor}")
+    if values["curve_original_samples"] * 2 > values["curve_max_points"]:
+        raise ValueError("defaults.json: curve_max_points must fit two original sample windows")
     if values["light_night_elevation_degrees"] >= values["light_day_elevation_degrees"]:
         raise ValueError("defaults.json: night elevation must be below day elevation")
     instance = catalog["instance"]
