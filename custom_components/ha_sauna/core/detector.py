@@ -1941,7 +1941,7 @@ class Detector:
     ):
         """Nur einen zugleich vollständigen Satz als historischen Vorschlag halten."""
         if not positions:
-            return
+            return False
         key = (route, tuple(positions), tuple(quantities))
         context = (context, tuple(
             (position, tuple(
@@ -1982,7 +1982,7 @@ class Detector:
                     self._record_curve_proposal_check(
                         key, assembly_gates=assembly, assembly_result=False,
                     )
-                    return
+                    return False
                 candidates.append((candidate_key, candidate))
         onsets = [candidate.onset_at for _, candidate in candidates]
         window = self._curve_coherence_window(route)
@@ -1995,7 +1995,7 @@ class Detector:
             self._record_curve_proposal_check(
                 key, assembly_gates=assembly, assembly_result=False,
             )
-            return
+            return False
         if proposal is None:
             proposal = _CurveProposal(context, tuple(candidates), observed_at)
             self._curve_proposals[key] = proposal
@@ -2013,6 +2013,7 @@ class Detector:
         self._record_curve_proposal_check(
             key, assembly_gates=assembly, assembly_result=True,
         )
+        return True
 
     def _bind_close_evidence(self, positions, *, floor, now):
         """Den vollständigen T-Knick nach echter Originalfortbestätigung binden."""
@@ -3826,6 +3827,7 @@ class Detector:
         # Der vorhandene bedingte Heiz-Sonderweg behält seine eigene
         # kalibrierte Form und Zulassung im selben Türbestand.
         thermal_opening = thermal_toggle = False
+        thermal_proposal_complete = False
         heating_candidates = {}
         if not self.open and enabled and self.heating_since is not None:
             for position in curve_positions:
@@ -3860,7 +3862,7 @@ class Detector:
             )
             if thermal_opening:
                 heating_floor = max(curve_floor, self.heating_since)
-                self._remember_curve_proposal(
+                thermal_proposal_complete = self._remember_curve_proposal(
                     "door_open_heating", episode["positions"], (Quantity.TEMPERATURE,),
                     floor=heating_floor,
                     context=(self._curve_door_context, episode["started_at"],
@@ -3989,17 +3991,45 @@ class Detector:
                 )
                 emit(Kind.VENTILATION)
         elif not self.open and (mixed_toggle or thermal_toggle):
+            onset_route = "door_open" if mixed_toggle else "door_open_heating"
+            onset_quantities = ((Quantity.TEMPERATURE, Quantity.HUMIDITY) if mixed_toggle else
+                                (Quantity.TEMPERATURE,))
+            combined_key = ("door_open", episode["positions"],
+                            (Quantity.TEMPERATURE, Quantity.HUMIDITY))
+            thermal_key = ("door_open_heating", episode["positions"], (Quantity.TEMPERATURE,))
+            thermal_proposal = self._curve_proposals.get(thermal_key)
+            thermal_attribution = bool(
+                mixed_toggle and thermal_opening
+                and combined_key not in self._curve_proposals
+                and self._curve_proposal_status.get(combined_key, {}).get("status")
+                in (None, "incomplete")
+                and thermal_proposal is not None and not thermal_proposal.ambiguous
+                and thermal_proposal_complete
+            )
+            if thermal_attribution:
+                # OLS bestätigt die Öffnung unabhängig. Nur der bereits
+                # vollständige aktuelle Heiz-Proposal liefert ihren Beginn.
+                onset_route, onset_quantities = "door_open_heating", (Quantity.TEMPERATURE,)
             open_floor = self._curve_closed_since
-            if thermal_toggle and not mixed_toggle and self.heating_since is not None:
+            if onset_route == "door_open_heating" and self.heating_since is not None:
                 open_floor = max(open_floor, self.heating_since)
             open_effective = self._curve_beginning(
-                "door_open" if mixed_toggle else "door_open_heating", episode["positions"],
-                (Quantity.TEMPERATURE, Quantity.HUMIDITY) if mixed_toggle else
-                (Quantity.TEMPERATURE,),
+                onset_route, episode["positions"], onset_quantities,
                 now, floor=open_floor,
                 kind=Kind.DOOR_OPEN, now=now, decision_at=decision_at,
                 onset_allowed=onset_allowed,
             )
+            onset_status = self._curve_proposal_status.get(
+                (onset_route, episode["positions"], onset_quantities), {},
+            )
+            trace["door_open_onset_attribution"] = {
+                "confirmation_basis": "original_ols" if mixed_toggle else "retained_heating_only",
+                "route": onset_route, "quantities": tuple(q.value for q in onset_quantities),
+                "thermal_fallback": thermal_attribution,
+                "used_proposal": (onset_status.get("status") == "consumed"
+                                  and onset_status.get("confirmed_at") == decision_at),
+                "effective_at": open_effective,
+            }
             self.open = True
             episode["opening_humidity"] = bool(mixed_toggle)
             episode["started_at"] = open_effective

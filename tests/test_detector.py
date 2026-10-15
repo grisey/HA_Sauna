@@ -2113,6 +2113,117 @@ class InfusionLifecycleTests(unittest.TestCase):
             for row in observed
         ))
 
+    def test_ols_opening_uses_only_an_eligible_thermal_onset_without_backdating_confirmation(self):
+        flank_seconds = self.p["curve_min_side_samples"] * self.step
+        ready = self.begin + flank_seconds
+        confirmed = ready + self.step
+        recognized_at = self._at(confirmed + 5 * self.step)
+        end = self.begin + self.width
+        initial_t, initial_h = trace(70)
+        falling_t, falling_h = trace(70 + self.step)
+        # Spread the existing fixture's first loss over the configured local
+        # model flank, leaving an observable onset before OLS confirmation.
+        temperatures = [(0, self.temperature), (self.begin, self.temperature),
+                        (end, self.temperature
+                         + (falling_t - initial_t) * self.width / flank_seconds)]
+        humidities = [(0, self.baseline), (self.begin, self.baseline),
+                      (end, self.baseline
+                       + (falling_h - initial_h) * self.width / flank_seconds)]
+        shapes = [
+            self._shape("open", self.begin, end, Quantity.TEMPERATURE),
+            self._shape("open", self.begin, end),
+        ]
+        prepared = Detector(self.parameters, T0)
+        prepared.report_heating(True, T0)
+        positions = prepared.positions
+        quantities = (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+        mixed_key = ("door_open", positions, quantities)
+        thermal_key = ("door_open_heating", positions, (Quantity.TEMPERATURE,))
+        events = []
+        # The declared local models supply onset attribution only. OLS sees
+        # the actual small falls, which have not confirmed the opening yet.
+        with self._patch_math(shapes, forms=original_contrasts):
+            self._feed(prepared, ready, humidities, events, temperatures=temperatures)
+            self.assertFalse(prepared.open)
+            self.assertNotIn(Kind.DOOR_OPEN, [item.kind for item in events])
+            self.assertIn(thermal_key, prepared._curve_proposals)
+            self.assertTrue(prepared._remember_curve_proposal(
+                "door_open", positions, quantities, floor=prepared._curve_closed_since,
+                context=(prepared._curve_door_context, prepared._curve_closed_since),
+                observed_at=self._at(ready),
+            ))
+            self.assertIn(mixed_key, prepared._curve_proposals)
+            # Reuse this single prefix for the routing guards. The next RH
+            # original has no local RH model and no new T confirmation.
+            shapes.pop()
+            for case in ("complete_thermal", "incomplete_thermal",
+                         "ambiguous_mixed", "controller_rejected_mixed"):
+                with self.subTest(case=case):
+                    detector = deepcopy(prepared, {id(prepared.p): prepared.p})
+                    if case == "ambiguous_mixed":
+                        detector._curve_proposals[mixed_key] = replace(
+                            detector._curve_proposals[mixed_key], ambiguous=True,
+                        )
+                        detector._curve_proposal_status[mixed_key].update(
+                            status="ambiguous", reason="competing_complete_proposal",
+                        )
+                    elif case == "controller_rejected_mixed":
+                        self.assertEqual(detector._curve_beginning(
+                            "door_open", positions, quantities, self._at(ready),
+                            floor=detector._curve_closed_since, kind=Kind.DOOR_OPEN,
+                            now=self._at(ready), decision_at=self._at(ready),
+                            onset_allowed=lambda *_: False,
+                        ), self._at(ready))
+                        self.assertEqual(
+                            detector._curve_proposal_status[mixed_key]["reason"],
+                            "controller_context",
+                        )
+                    else:
+                        detector._curve_proposals.pop(mixed_key)
+                        detector._curve_proposal_status.pop(mixed_key)
+                    for position in positions:
+                        detector._curve_candidates.pop(("door_open", position, Quantity.HUMIDITY))
+                    if case == "incomplete_thermal":
+                        detector._curve_candidates.pop((
+                            "door_open_heating", positions[-1], Quantity.TEMPERATURE,
+                        ))
+                        detector._curve_proposals.pop(thermal_key)
+                    found = []
+                    self._send(
+                        detector, confirmed, self._value(humidities, confirmed), found,
+                        omit=tuple((position, Quantity.TEMPERATURE) for position in positions),
+                        detected_at=recognized_at,
+                    )
+                    openings = [item for item in found if item.kind == Kind.DOOR_OPEN]
+                    self.assertEqual(len(openings), 1)
+                    opening = openings[0]
+                    uses_thermal = case == "complete_thermal"
+                    effective_at = self._at(self.begin if uses_thermal else confirmed)
+                    self.assertEqual(opening.effective_at, effective_at)
+                    self.assertEqual(opening.trace_at, self._at(confirmed))
+                    self.assertEqual(opening.detected_at, recognized_at)
+                    self.assertEqual(opening.channels, tuple(position.value for position in positions))
+                    self.assertTrue(detector.open)
+                    self.assertTrue(detector.door_episode["opening_humidity"])
+                    self.assertEqual(detector.opened_at, effective_at)
+                    self.assertEqual(detector.door_episode["started_at"], effective_at)
+                    diagnostic = detector.diagnostic
+                    self.assertTrue(diagnostic["decisions"]["door_open"]["result"])
+                    self.assertFalse(diagnostic["decisions"]["door_open_heating"]["result"])
+                    self.assertEqual(diagnostic["door_open_onset_attribution"], {
+                        "confirmation_basis": "original_ols",
+                        "route": "door_open_heating" if uses_thermal else "door_open",
+                        "quantities": (("temperature",) if uses_thermal else
+                                       ("temperature", "humidity")),
+                        "thermal_fallback": uses_thermal,
+                        "used_proposal": uses_thermal,
+                        "effective_at": effective_at,
+                    })
+                    if uses_thermal:
+                        proposal = detector._curve_proposal_status[thermal_key]
+                        self.assertEqual(proposal["confirmed_at"], recognized_at)
+                        self.assertEqual(proposal["consumed_onset_at"], self._at(self.begin))
+
     def test_door_context_assigns_a_new_infusion_to_the_next_real_gang(self):
         first_peak = self.begin + self.width
         first_fall = first_peak + self.width
