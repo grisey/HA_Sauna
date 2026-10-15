@@ -24,6 +24,11 @@ class ExtendedObservation:
     new_detail: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class RecipientAggregate:
+    sessions: tuple[SessionRecipients, ...]
+
+
 class ModelHandoffTests(unittest.TestCase):
     def setUp(self):
         self.context = HandoffContext("entry", "observation", T0)
@@ -117,6 +122,20 @@ class ModelHandoffTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ModelHandoff(context, None, replace(state, entry_id="other"))
 
+    def test_global_aggregate_preserves_entry_identities_without_a_common_claim(self):
+        state = RecipientAggregate((
+            SessionRecipients("entry", "first"),
+            SessionRecipients("other", "second"),
+        ))
+        context = HandoffContext(None, "global", T0)
+        handoff = ModelHandoff(context, state, state)
+        self.assertEqual(tuple(item.entry_id for item in handoff.after.sessions),
+                         ("entry", "other"))
+        with self.assertRaises(ValueError):
+            ModelHandoff(replace(context, entry_id="entry"), None, state)
+        with self.assertRaises(ValueError):
+            ModelHandoff(replace(context, session_id="first"), None, state)
+
     def test_complete_diagnostic_copy_keeps_unanticipated_fields(self):
         source = {"new-field": {"values": [1, 2]}, "when": T0, "missing": None}
         frozen = freeze_data(source)
@@ -162,3 +181,14 @@ class ModelHandoffTests(unittest.TestCase):
             FrozenMap((("same", 1), ("same", 2)))
         with self.assertRaises(TypeError):
             freeze_data({1: "not a field name"})
+
+    def test_direct_map_construction_retains_the_immutable_boundary(self):
+        with self.assertRaises(TypeError):
+            FrozenMap((("nested", ([],)),))
+        with self.assertRaises(ValueError):
+            FrozenMap((("nested", (float("inf"),)),))
+        original = {"nested": {"items": [{"value": 1}, {"value": 2}]}}
+        copied = freeze_data(original)
+        original["nested"]["items"][0]["value"] = 99
+        self.assertEqual(copied["nested"]["items"][0]["value"], 1)
+        self.assertEqual(copied["nested"]["items"][1]["value"], 2)

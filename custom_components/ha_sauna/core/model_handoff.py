@@ -75,18 +75,22 @@ def _has_type(value: object, annotation: object) -> bool:
     raise TypeError(f"Unsupported model field annotation: {annotation!r}")
 
 
-def require_immutable(value: object) -> None:
+def require_immutable(value: object, *, context: HandoffContext | None = None) -> None:
     """Reject live objects and mutable nested data, including inside dataclasses.
 
 This checks the handoff's structural boundary. The owning model remains
 responsible for its domain invariants; no business rules are reimplemented.
 """
+    checked = set()
+
     def check(item, ancestors):
         if _scalar(item):
             return
         identity = id(item)
         if identity in ancestors:
             raise ValueError("Cyclic model observations are not supported")
+        if identity in checked:
+            return
         ancestors.add(identity)
         try:
             if isinstance(item, (tuple, frozenset)):
@@ -100,29 +104,21 @@ responsible for its domain invariants; no business rules are reimplemented.
                     child = getattr(item, definition.name)
                     if not _has_type(child, annotations[definition.name]):
                         raise TypeError(f"Invalid model field: {type(item).__name__}.{definition.name}")
+                    if context is not None and child is not None:
+                        if (definition.name == "entry_id" and context.entry_id is not None
+                                and child != context.entry_id):
+                            raise ValueError("Handoff context and model entry differ")
+                        if (definition.name == "session_id" and context.session_id is not None
+                                and child != context.session_id):
+                            raise ValueError("Handoff context and model session differ")
                     check(child, ancestors)
             else:
                 raise TypeError(f"Mutable or unsupported model value: {type(item).__name__}")
         finally:
             ancestors.remove(identity)
+        checked.add(identity)
 
     check(value, set())
-
-
-def _check_scope(value: object, context: HandoffContext) -> None:
-    """A handoff cannot contradict an embedded model's owning identities."""
-    if isinstance(value, (tuple, frozenset)):
-        for child in value:
-            _check_scope(child, context)
-    elif is_dataclass(value) and not isinstance(value, type):
-        for definition in fields(value):
-            child = getattr(value, definition.name)
-            if definition.name == "entry_id" and child is not None and child != context.entry_id:
-                raise ValueError("Handoff context and model entry differ")
-            if (definition.name == "session_id" and context.session_id is not None
-                    and child is not None and child != context.session_id):
-                raise ValueError("Handoff context and model session differ")
-            _check_scope(child, context)
 
 
 @dataclass(frozen=True)
@@ -151,6 +147,13 @@ class FrozenMap(Mapping[str, object]):
             require_immutable(value)
         object.__setattr__(self, "_items", tuple(sorted(self._items)))
 
+    @classmethod
+    def _from_frozen(cls, items):
+        """Build only from entries already checked and copied by freeze_data."""
+        result = object.__new__(cls)
+        object.__setattr__(result, "_items", tuple(sorted(items)))
+        return result
+
     def __getitem__(self, key: str) -> object:
         for name, value in self._items:
             if name == key:
@@ -178,11 +181,15 @@ def freeze_data(value: object) -> object:
         ancestors.add(identity)
         try:
             if isinstance(item, Mapping):
-                if any(not isinstance(key, str) for key in item):
-                    raise TypeError("Observation map keys must be strings")
-                return FrozenMap(tuple(
-                    (key, freeze(child, ancestors)) for key, child in item.items()
-                ))
+                keys, items = set(), []
+                for key, child in item.items():
+                    if not isinstance(key, str):
+                        raise TypeError("Observation map keys must be strings")
+                    if key in keys:
+                        raise ValueError("Duplicate observation map key")
+                    keys.add(key)
+                    items.append((key, freeze(child, ancestors)))
+                return FrozenMap._from_frozen(items)
             if isinstance(item, (tuple, list)):
                 return tuple(freeze(child, ancestors) for child in item)
             if isinstance(item, (set, frozenset)):
@@ -201,20 +208,24 @@ class HandoffContext:
     ``observed_at`` dates this explicit handoff, not the effective time of every
     enclosed fact. Those source times remain in the original model values.
     IDs are not generated or interpreted as receipt acknowledgements here.
-    A supplied session reference scopes all enclosed facts to that session.
-    Cross-session aggregates use None and retain their own complete identities.
+    A supplied entry or session reference scopes all enclosed facts accordingly.
+    Cross-entry/session aggregates use None for the respective common scope and
+    retain their own complete identities. None never invents a common owner.
     """
 
-    entry_id: str
+    entry_id: str | None
     handoff_id: str
     observed_at: datetime
     actor: ActorRef | None = None
     session_id: str | None = None
 
     def __post_init__(self) -> None:
-        if any(not isinstance(value, str) or not value.strip()
-               for value in (self.entry_id, self.handoff_id)):
-            raise ValueError("Entry and handoff identities are required")
+        if not isinstance(self.handoff_id, str) or not self.handoff_id.strip():
+            raise ValueError("A handoff identity is required")
+        if self.entry_id is not None and (
+            not isinstance(self.entry_id, str) or not self.entry_id.strip()
+        ):
+            raise ValueError("A supplied entry reference must be nonempty")
         if not isinstance(self.observed_at, datetime):
             raise TypeError("A handoff observation time is required")
         object.__setattr__(self, "observed_at", utc(self.observed_at))
@@ -255,8 +266,9 @@ class ModelHandoff(Generic[Model]):
                 raise TypeError("A handoff requires a concrete model dataclass")
             if isinstance(state, ConsumerEvent):
                 raise TypeError("A ConsumerEvent requires its complete ConsumerEventOutput")
-            require_immutable(state)
-            _check_scope(state, self.context)
+        # Shared immutable submodels (including identical before/after values)
+        # are checked once, together with their owner scope.
+        require_immutable(states, context=self.context)
 
     @property
     def model_type(self) -> type[Model]:

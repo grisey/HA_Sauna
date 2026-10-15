@@ -8,6 +8,7 @@ restore data in this observation contract. Callers choose the capture boundary.
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from .contracts import ConsumerEvent, ControlInputs, PresenceReport
 from .configuration_model import ConfigurationModel
@@ -24,8 +25,8 @@ from .timeline import Gang
 class ConfigurationOutput:
     """Complete supplied options and the owner's existing capability model.
 
-    Construct with freeze_data(configuration.as_options()) and
-    ConfigurationModel.from_configuration(configuration, button_event_types).
+    Construct with freeze_data(configuration.as_options()) and the owner's
+    already calculated configuration_model, including its effective source.
     Options remain complete without another field allowlist or interpretation.
     """
 
@@ -130,6 +131,23 @@ class ControllerOutput:
             regulation_causes=tuple(owner.regulation_causes),
             regulation_inputs=owner.regulation_inputs,
         )
+
+
+@dataclass(frozen=True)
+class PresenceSourceSelectionSnapshot:
+    """Complete source-selection observation; never a controller input.
+
+    Values are supplied by the selection owner in the parallel presence work.
+    This contract neither selects a source nor introduces a fallback policy.
+    No first observation/change is represented by None in the respective field.
+    """
+
+    configured_source: Literal["proxy", "ha_presence"]
+    effective_source: Literal["proxy", "ha_presence"]
+    available: bool | None
+    availability_since: datetime | None
+    last_changed_at: datetime | None
+    last_processed_at: datetime | None
 
 
 @dataclass(frozen=True)

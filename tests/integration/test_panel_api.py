@@ -636,10 +636,15 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
 
     async def test_direct_presence_ids_are_private_in_live_and_archived_public_responses(self):
         import json
+        from copy import deepcopy
         from datetime import timedelta
 
+        from custom_components.ha_sauna.core.presentation_handoff import (
+            PanelSnapshot, PublicPanelSnapshot,
+        )
         from custom_components.ha_sauna.core.presence import binary_presence
         from custom_components.ha_sauna.core.timeline import Event, Kind
+        from custom_components.ha_sauna.presentation import public_state
 
         entity_id = "binary_sensor.private_presence"
         self.hass.states.async_set(entity_id, "off", {"device_class": "occupancy"})
@@ -687,6 +692,13 @@ class PanelAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(active["session_id"], session_id)
             async with admin.get(url + "/state") as response:
                 administrative = await response.json()
+            snapshot = PanelSnapshot.from_result(administrative)
+            self.assertEqual(snapshot.to_wire(), administrative)
+            self.assertEqual(
+                PublicPanelSnapshot.from_snapshot(snapshot).to_wire(),
+                public_state(deepcopy(administrative)),
+            )
+            self.assertEqual(PublicPanelSnapshot.from_result(state).to_wire(), state)
             raw_id = runtime.session.timeline.active.gang_id
             self.assertIn(entity_id, raw_id)
             self.assertEqual(administrative["session"]["timeline"]["active"]["gang_id"], raw_id)

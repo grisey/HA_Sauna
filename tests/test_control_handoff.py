@@ -8,10 +8,13 @@ from custom_components.ha_sauna.core.control_handoff import (
     ConfigurationOutput,
     ConsumerEventOutput,
     PresenceOutput,
+    PresenceSourceSelectionSnapshot,
 )
 from custom_components.ha_sauna.core.consumer_events import gang_changes
 from custom_components.ha_sauna.core.configuration_model import ConfigurationModel
-from custom_components.ha_sauna.core.model_handoff import freeze_data
+from custom_components.ha_sauna.core.model_handoff import (
+    HandoffContext, ModelHandoff, freeze_data,
+)
 from custom_components.ha_sauna.core.contracts import ConsumerEvent
 from custom_components.ha_sauna.core.notification_recipients import ActorRef
 from custom_components.ha_sauna.core.presence import (
@@ -26,6 +29,21 @@ from test_foundation import bindings, event, parameters
 
 
 class ControlHandoffTests(unittest.TestCase):
+    def test_source_selection_observation_does_not_choose_or_backdate_a_source(self):
+        initial = PresenceSourceSelectionSnapshot(
+            "ha_presence", "ha_presence", None, None, None, None,
+        )
+        selected = PresenceSourceSelectionSnapshot(
+            "ha_presence", "proxy", False, at(1), at(3), at(4),
+        )
+        handoff = ModelHandoff(HandoffContext("entry", "selection", at(5)), initial, selected)
+        self.assertIsNone(handoff.before.available)
+        self.assertEqual(handoff.after.configured_source, "ha_presence")
+        self.assertEqual(handoff.after.effective_source, "proxy")
+        self.assertEqual(handoff.after.availability_since, at(1))
+        self.assertEqual(handoff.after.last_changed_at, at(3))
+        self.assertEqual(handoff.after.last_processed_at, at(4))
+
     def test_configuration_copies_entire_existing_options_and_capability_model(self):
         configuration = Configuration(bindings(), parameters())
         options = configuration.as_options()

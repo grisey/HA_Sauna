@@ -24,6 +24,7 @@ from custom_components.ha_sauna.core.observation_handoff import (
     HeatingObservation,
     LightOutputSnapshot,
     LightQuantization,
+    LightQuantizerSnapshot,
     LightServiceResult,
     ObservedSource,
 )
@@ -193,6 +194,17 @@ class ObservationHandoffTests(unittest.TestCase):
             previous_handoff = observed
         self.assertEqual(observed.result, 0)
         self.assertIsNone(observed.next_value)
+
+    def test_quantizer_reset_is_observable_without_another_plan(self):
+        quantizer = LightQuantizer()
+        quantizer.quantize(LightPlan(30.6, True, False), 1)
+        before = LightQuantizerSnapshot.capture(quantizer)
+        quantizer.reset()
+        after = LightQuantizerSnapshot.capture(quantizer)
+        handoff = self.handoff(after, before)
+        self.assertIsNotNone(handoff.before.previous_value)
+        self.assertIsNone(handoff.after.previous_value)
+        self.assertIsNone(quantizer._previous)
 
     def test_quantization_checks_its_own_public_boundary(self):
         value = LightQuantization(LightPlan(30, True, False), None, 30, 1, 30)

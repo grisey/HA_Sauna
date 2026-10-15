@@ -11,7 +11,7 @@ from datetime import datetime
 from math import isfinite
 
 from .detector import Detection
-from .light_output import LightOutput, LightPlan
+from .light_output import LightOutput, LightPlan, LightQuantizer
 from .model_handoff import FrozenMap, freeze_data, require_immutable
 from .models import Measurement
 from .thermostat import Decision
@@ -60,6 +60,17 @@ def _tuple_of(value, expected):
         _instance(item, expected)
         freeze_data(item)
     return result
+
+
+@dataclass(frozen=True)
+class LightQuantizerSnapshot:
+    """Complete quantizer memory, including an explicit reset without a plan."""
+
+    previous_value: int | None
+
+    @classmethod
+    def capture(cls, owner: LightQuantizer):
+        return cls(owner._previous)
 
 
 @dataclass(frozen=True)
