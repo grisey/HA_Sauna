@@ -250,7 +250,7 @@ class SessionRun:
         )
         self.runtime = SaunaRuntime(configuration, lambda: self.now)
         self.producer_controller_trace = None
-        if case["id"] in TRACE_CASES:
+        if case.get("base_id", case["id"]) in TRACE_CASES:
             self._observe_controller_inputs()
         self.hass = SimpleNamespace(
             states=SimpleNamespace(get=self.states.get),
@@ -286,6 +286,7 @@ class SessionRun:
             "schema_version": 1,
             "fixture": {
                 "id": self.case["id"],
+                "base_id": self.case.get("base_id", self.case["id"]),
                 "path": str(self.case["_path"].relative_to(ROOT)),
                 "sha256": hashlib.sha256(self.case["_path"].read_bytes()).hexdigest(),
                 "presence_selection": self.case["configuration"]["presence_source"],
@@ -638,7 +639,7 @@ class SessionRun:
             "proxy_person_signal_count": sum(
                 event.kind in (Kind.PERSON_WEAK, Kind.PERSON_STRONG, Kind.INFUSION)
                 for s in all_sessions for event in s.timeline.processed
-            ) if c.presence_source == "proxy" else 0,
+            ) if r.configuration_model.presence_source == "proxy" else 0,
             "cooling_active": bool(session and session.after_run),
             "cooling_duration_s": cooling.required_seconds if cooling else None,
             "cooling_elapsed_s": cooling.elapsed_seconds if cooling else None,

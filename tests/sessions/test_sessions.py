@@ -12,14 +12,14 @@ from unittest.mock import patch
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.input_handoff import InputTiming, TemperatureInput
 
-from runner import ORIGIN, SessionRun, load_manifest
+from runner import ORIGIN, TRACE_CASES, SessionRun, load_manifest
 
 
 class CompleteSessionTests(unittest.TestCase):
     def test_consumer_error_dominates_evidence_error(self):
         self.assertEqual(platform.system(), "Linux", "Session tests run on Linux")
         fixture = next(case for case in load_manifest("scenario_manifest.json")
-                       if case["id"] == "G01")
+                       if case["base_id"] == "G01")
         value = TemperatureInput(None, None, InputTiming(None, None, None, ORIGIN))
         for fails in (True, False):
             with self.subTest(consumer_fails=fails):
@@ -29,6 +29,7 @@ class CompleteSessionTests(unittest.TestCase):
                                   side_effect=consumer_error) as original:
                     run = SessionRun(fixture)
                     self.addCleanup(run._temporary.cleanup)
+                    self.assertIsNotNone(run.producer_controller_trace)
                     with patch.object(run, "_record_controller_input",
                                       side_effect=evidence_error):
                         expected = consumer_error if fails else evidence_error
@@ -67,7 +68,17 @@ class CompleteSessionTests(unittest.TestCase):
                 run = SessionRun(case)
                 results, failure = [], None
                 try:
+                    expects_trace = case.get("base_id", case["id"]) in TRACE_CASES
+                    if expects_trace:
+                        self.assertIsNotNone(run.producer_controller_trace,
+                                             f"Missing trace for bound fixture {case['id']}")
                     asyncio.run(run.run())
+                    if expects_trace:
+                        trace = run.producer_controller_trace
+                        self.assertGreater(trace["call_counts"]["total"], 0)
+                        self.assertGreater(trace["call_counts"]["recorded"], 0)
+                        self.assertTrue(trace["rows"])
+                        self.assertTrue(trace["scope"]["runtime_consumer_connected"])
                     results = run.evaluate()
                 except Exception as error:
                     failure = f"{type(error).__name__}: {error}"

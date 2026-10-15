@@ -495,7 +495,7 @@ class SaunaRuntime:
                 if self.controller._last_at is None or at >= self.controller._last_at:
                     self.controller.advance(at, finish_confirmation_batch=True)
 
-            person_evidence_qualified = not self.configuration_model.direct_presence
+            person_evidence_qualified = self.configuration.presence_source != "ha_presence"
             detector.advance(
                 through,
                 enabled=self.session.operation_enabled,
@@ -792,7 +792,7 @@ class SaunaRuntime:
                   if event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) else None)
         result = self.controller.process(
             event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
-            person_evidence_qualified=not self.configuration_model.direct_presence,
+            person_evidence_qualified=self.configuration.presence_source != "ha_presence",
         )
         if result.changed:
             self._report_detector_heating(event.booking_at)

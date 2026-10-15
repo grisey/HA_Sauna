@@ -342,21 +342,24 @@ class ButtonRuntimeTests(unittest.TestCase):
             await pending
             return received_at
 
-        for heat in (False, None):
-            with self.subTest(heat=heat):
-                received_at = asyncio.run(short())
-                value = consume.call_args.args[0]
-                self.assertIs(value.heat, heat)
-                self.assertEqual(value.timing.effective_at, received_at)
-                self.assertEqual(value.timing.received_at, received_at)
-                self.assertIsNone(value.timing.first_usable_at)
-                self.assertEqual(value.timing.evaluated_at, self.now)
-                self.assertIs(self.runtime.controller.heater_override, heat)
-                self.assertEqual(self.runtime.controller.last_decision.at, self.now)
-                self.assertEqual(self.runtime.controller.last_decision.heat, heat is None)
-                self.assertTrue(self.runtime.session.operation_enabled)
-                self.assertEqual(self.runtime.session.session_id, identity)
-                self.assertEqual(self.runtime.session.timeline.session_started_at, started_at)
+        async def exercise():
+            for heat in (False, None):
+                with self.subTest(heat=heat):
+                    received_at = await short()
+                    value = consume.call_args.args[0]
+                    self.assertIs(value.heat, heat)
+                    self.assertEqual(value.timing.effective_at, received_at)
+                    self.assertEqual(value.timing.received_at, received_at)
+                    self.assertIsNone(value.timing.first_usable_at)
+                    self.assertEqual(value.timing.evaluated_at, self.now)
+                    self.assertIs(self.runtime.controller.heater_override, heat)
+                    self.assertEqual(self.runtime.controller.last_decision.at, self.now)
+                    self.assertEqual(self.runtime.controller.last_decision.heat, heat is None)
+                    self.assertTrue(self.runtime.session.operation_enabled)
+                    self.assertEqual(self.runtime.session.session_id, identity)
+                    self.assertEqual(self.runtime.session.timeline.session_started_at, started_at)
+
+        asyncio.run(exercise())
         self.assertEqual(consume.call_count, 2)
         self.assertIsNone(self.runtime.controller.heater_override_ends_at)
         self.assertEqual(self.runtime.controller.completed_sessions, ())

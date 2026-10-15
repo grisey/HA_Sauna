@@ -674,7 +674,8 @@ class DeviceFeedbackTests(unittest.TestCase):
         self.assertEqual(controller.temperature, target)
         self.assertEqual(controller._temperature_valid_until, value.valid_until)
         self.assertEqual(runtime.session.ready_at, evaluated_at)
-        self.assertFalse(controller.last_decision.heat)
+        self.assertTrue(controller.last_decision.heat)
+        self.assertEqual(controller.last_decision.reason, "hysteresis_band")
 
     def test_missing_and_stale_temperature_inputs_keep_unknown_and_no_receipt(self):
         runtime, adapter, _ = self.device()
