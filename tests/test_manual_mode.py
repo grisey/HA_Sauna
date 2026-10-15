@@ -144,10 +144,6 @@ class ManualModeTests(unittest.TestCase):
 
     def test_manual_entry_waits_for_minimum_and_exit_remains_possible_below_it(self):
         controller = self.controller()
-        controller.occupancy_required_for_gang_heat = True
-        controller.provisional_door_heat_allowed = False
-        controller.person_evidence_limits_cooling = False
-        controller.gang_start_interrupts_cooling = True
         minimum = controller.parameters.values["sauna_min_temperature_c"]
         controller.set_temperature(minimum - 1, at(0))
         controller.set_heater_override(True, at(1))

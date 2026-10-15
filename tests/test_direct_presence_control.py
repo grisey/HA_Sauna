@@ -1,4 +1,5 @@
 """Eintritt braucht beide Türkanten; Austritt Öffnung, Abwesenheit und Lüftung."""
+from dataclasses import replace
 import unittest
 
 from test_cooling import at, controller
@@ -12,10 +13,6 @@ from custom_components.ha_sauna.core.timeline import Confirmation, Door, Event, 
 class DirectPresenceControlTests(unittest.TestCase):
     def setUp(self):
         self.c = controller()
-        self.c.occupancy_required_for_gang_heat = True
-        self.c.provisional_door_heat_allowed = False
-        self.c.person_evidence_limits_cooling = False
-        self.c.gang_start_interrupts_cooling = True
 
     def report(self, state, second, *, effective=None, source=None):
         return self.c.consume_occupancy_input(selected_occupancy(binary_presence(
@@ -400,6 +397,46 @@ class DirectPresenceControlTests(unittest.TestCase):
         self.start()
         self.assertFalse(self.report("off", 5, effective=1))
         self.assertTrue(self.c.regulation_inputs.gang_heat_demand)
+
+
+    def test_state_gang_requires_current_known_available_qualified_assertion(self):
+        for occupancy, available, qualified, demand in (
+            ("present", True, True, True),
+            ("absent", True, True, True),
+            ("unknown", True, True, False),
+            ("unknown", False, True, False),
+            ("present", True, False, False),
+        ):
+            with self.subTest(occupancy=occupancy, available=available, qualified=qualified):
+                self.setUp()
+                self.start()
+                gang = self.c.session.timeline.active
+                value = selected_occupancy(binary_presence(
+                    "binary_sensor.presence", "on", at(4), at(4),
+                ), at(4))
+                self.c.consume_occupancy_input(replace(
+                    value, occupancy=occupancy, available=available,
+                    qualified_presence=qualified,
+                ))
+                self.assertEqual(self.c.regulation_inputs.gang_heat_demand, demand)
+                self.assertEqual(self.c.session.timeline.active.gang_id, gang.gang_id)
+                if not demand:
+                    self.assertNotEqual(self.c.last_decision.reason, "gang_heat_demand")
+
+    def test_unqualified_projection_preserves_qualified_entry_history(self):
+        self.c.set_temperature(self.c.parameters.values["sauna_min_temperature_c"] - 1, at(0))
+        self.door(Kind.DOOR_OPEN, 1)
+        self.report("on", 2)
+        self.door(Kind.DOOR_CLOSE, 3)
+        history = tuple(self.c._direct_presence_history)
+        entry = self.c._presence_entry
+        value = selected_occupancy(binary_presence(
+            "binary_sensor.presence", "unknown", at(4), at(4),
+        ), at(4))
+        self.c.consume_occupancy_input(replace(value, qualified_presence=False))
+        self.assertEqual(tuple(self.c._direct_presence_history), history)
+        self.assertEqual(self.c._presence_entry, entry)
+        self.assertIsNone(self.c.session.timeline.active)
 
 
 class ProxyDoorControlTests(unittest.TestCase):

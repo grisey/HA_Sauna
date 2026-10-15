@@ -56,7 +56,7 @@ def event(key, kind, seconds, session="s"):
 def selected_occupancy(report, evaluated_at):
     """Pass an already selected report across the source-free control boundary."""
     return OccupancyInput(
-        report.occupancy, report.available, report.available, report.report_id,
+        report.occupancy, report.available, True, report.report_id,
         InputTiming(report.effective_at, report.received_at, None, evaluated_at),
     )
 

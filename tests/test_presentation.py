@@ -23,10 +23,6 @@ from custom_components.ha_sauna.presentation import (
 class PresentationTests(unittest.TestCase):
     def test_direct_presence_public_ids_preserve_live_archive_and_phase_references(self):
         sauna = controller()
-        sauna.occupancy_required_for_gang_heat = True
-        sauna.provisional_door_heat_allowed = False
-        sauna.person_evidence_limits_cooling = False
-        sauna.gang_start_interrupts_cooling = True
         presence_entity = "binary_sensor.private_presence"
         sauna.process(event("entry-open", Kind.DOOR_OPEN, 1))
         sauna.consume_occupancy_input(selected_occupancy(binary_presence(

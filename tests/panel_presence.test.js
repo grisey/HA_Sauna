@@ -86,12 +86,20 @@ panel.state.configuration_model.presence = {
   direct: true,
   observer: false,
 };
-panel.state.configuration_model.regulation_causes = ["gang_heat", "cooling"];
+panel.state.configuration_model.regulation_causes = [
+  "gang_heat",
+  "provisional_door_heat",
+  "cooling",
+];
 panel.state.presence.external["<sensor>"].reason = "unavailable";
 panel.state.presence.current = panel.state.presence.external["<sensor>"];
 const directDetail = panel.presenceDetails();
 assert.match(directDetail, /Präsenzsensor mit Türereignis/);
-assert.doesNotMatch(directDetail, /Beobachtete Quelle|Heizanforderung nach Türschluss/);
+assert.doesNotMatch(directDetail, /Beobachtete Quelle/);
+assert.match(
+  directDetail,
+  /Vorläufige Heizanforderung nach Türschluss[\s\S]*Aktiv/,
+);
 assert.match(directDetail, /Sensor nicht verfügbar/);
 assert.doesNotMatch(directDetail, /unavailable/);
 assert.doesNotMatch(detail, /Aktivierungsregeln sind offen|keine Wiedergabe/);

@@ -1,14 +1,90 @@
 """Direkte Präsenz über HA-Listener, Türzuordnung, Quellwechsel und Reload."""
 import asyncio
+import json
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from harness import create_sauna, start_hass
 
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
+from custom_components.ha_sauna.core.presence import ProxyPresenceSource, binary_presence
+from custom_components.ha_sauna.runtime import Configuration, SaunaRuntime
 
 
 class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_selected_proxy_reports_preserve_identity_without_durable_history(self):
+        runtime = self.entry.runtime_data
+        self.assertEqual(runtime.configuration.presence_source, "proxy")
+        now = runtime._clock()
+        report = ProxyPresenceSource.present(Event(
+            "original-person", "projection-only", Kind.PERSON_STRONG, now, now,
+        ))
+        history = tuple(runtime.controller._direct_presence_history)
+        runtime._record_presence(report)
+        occupancy = runtime.controller.direct_presence
+        self.assertEqual((occupancy.occupancy, occupancy.available, occupancy.qualified_presence),
+                         ("present", True, False))
+        self.assertEqual(occupancy.report_id, report.report_id)
+        self.assertEqual(occupancy.timing.effective_at, report.effective_at)
+        self.assertEqual(occupancy.timing.received_at, report.received_at)
+        self.assertEqual(tuple(runtime.controller._direct_presence_history), history)
+        self.assertIsNone(runtime.session)
+        runtime._record_presence(report)
+        self.assertIs(runtime.controller.direct_presence, occupancy)
+
+    async def test_selected_sources_share_door_heat_during_thermostat_pause(self):
+        configured = (await self.configure()).configuration
+        observations = []
+        for source in ("proxy", "ha_presence"):
+            now = datetime(2030, 1, 1, tzinfo=UTC)
+            options = configured.as_options()
+            options["presence_source"] = source
+            options["program_mode"] = "constant"
+            options["parameters"] = {**options["parameters"], "target_temperature_c": 80}
+            runtime = SaunaRuntime(Configuration.from_options(options), clock=lambda: now)
+            await runtime.begin_session("source-neutral-door")
+            entity = configured.bindings.values["presence"]
+            await runtime.accept_presence(binary_presence(entity, "off", now, now))
+            target = runtime.controller.target_temperature
+            runtime.controller.set_temperature(target - 2, now)
+            await runtime.set_operation(True)
+            self.assertTrue(runtime.controller.last_decision.heat)
+            now += timedelta(seconds=runtime.configuration.parameters.seconds(
+                "minimum_heating_minutes") + 1)
+            runtime.controller.set_temperature(target + runtime.configuration.parameters.values[
+                "readiness_offset_c"], now)
+            await runtime.tick()
+            self.assertFalse(runtime.controller.last_decision.heat)
+            now += timedelta(seconds=1)
+            runtime.controller.set_temperature(target, now)
+            await runtime.tick()
+            before = runtime.controller.last_decision
+            self.assertEqual(before.reason, "thermostat_cooldown")
+            for name, kind in (("entry-open", Kind.DOOR_OPEN), ("entry-close", Kind.DOOR_CLOSE)):
+                now += timedelta(seconds=1)
+                await runtime.receive(Event(name, runtime.session.session_id, kind, now, now))
+            inputs = runtime.controller.regulation_inputs
+            decision = runtime.controller.last_decision
+            observed = {
+                "source": runtime.configuration_model.presence_source,
+                "temperature": target,
+                "before": {"heat": before.heat, "reason": before.reason},
+                "inputs": {"temporary_door_heat": inputs.temporary_door_heat,
+                           "gang_heat_demand": inputs.gang_heat_demand,
+                           "cooling": inputs.cooling},
+                "last_decision": {"at": decision.at.isoformat(), "heat": decision.heat,
+                                  "reason": decision.reason},
+            }
+            self.assertIsNone(runtime.session.timeline.active)
+            self.assertTrue(inputs.temporary_door_heat)
+            self.assertEqual((decision.heat, decision.reason), (True, "temporary_door_heat"))
+            observations.append(observed)
+            await runtime.close()
+        self.assertEqual({k: v for k, v in observations[0].items() if k != "source"},
+                         {k: v for k, v in observations[1].items() if k != "source"})
+        print("SOURCE_NEUTRAL_DOOR=" + json.dumps(observations, sort_keys=True, separators=(",", ":")))
+
     async def asyncSetUp(self):
         self.hass, self.temp = await start_hass()
         self.entry = await create_sauna(self.hass)
@@ -51,6 +127,9 @@ class PresenceRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 report = runtime.presence.external[source]
                 self.assertEqual((report.occupancy, report.available), (occupancy, available))
                 self.assertEqual(runtime.presence_status["current"], report)
+                selected = runtime.controller.direct_presence
+                self.assertTrue(selected.qualified_presence)
+                self.assertEqual((selected.occupancy, selected.available), (occupancy, available))
             self.assertEqual(tuple(runtime.controller.decisions), decisions)
             self.assertEqual(audio_calls, [])
             self.assertIsNone(runtime.session)

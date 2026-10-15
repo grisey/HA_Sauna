@@ -16,14 +16,18 @@ bestätigtes Schütz-AUS startet die Uhr und legt die berechnete Kühldauer samt
 Mindestdauer für diesen Kühlzyklus fest. Nur bestätigte AUS-Zeit zählt; Schütz-EIN oder
 unbekannte Rückmeldung pausieren die Uhr, ohne die Heizsperre aufzuheben.
 
-Ein mit direktem Präsenzsensor erkannter neuer Gang beendet die Kühlung sofort.
-Im Proxybetrieb begrenzt jedes erkannte Personensignal, einschließlich eines
-Aufgusses als Personenbeleg, die laufende Kühlung auf ihre Mindestgesamtdauer.
+Ein tatsächlich neuer, durch einen verfügbaren qualifizierten Belegungszustand
+bestätigter Eintritt beendet die Kühlung sofort. Eine Zustandsmeldung allein,
+ein vorläufiger Gang oder eine Bestätigung allein durch Aufguss genügt dafür nicht.
+Jeder neue zugelassene einmalige Personenbeleg, einschließlich eines
+Aufgusses als Personenbeleg, begrenzt die laufende Kühlung auf ihre Mindestgesamtdauer.
 Bereits bestätigte AUS-Zeit seit Kühlbeginn wird dabei vollständig angerechnet.
 Ist die Mindestdauer bereits erfüllt, endet die Kühlung mit diesem Signal;
 andernfalls bleibt nur die fehlende AUS-Zeit. Weitere Signale starten keine neue
 Frist und ziehen keine Zeit erneut ab. Ein Signal vor der Ausschaltbestätigung
 merkt diese Begrenzung für den tatsächlichen Kühlbeginn vor.
+Die erneute Projektion desselben Belegs, unbekannter Zustand oder fehlende
+Verfügbarkeit erzeugen keine weitere Kühlwirkung.
 
 Gangerkennung und Aufzeichnung laufen während der Kühlung weiter. Die Begrenzung
 setzt weder eine neue vollständige Türfolge noch eine Gangbestätigung voraus;

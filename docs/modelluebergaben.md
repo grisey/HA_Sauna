@@ -110,27 +110,32 @@ den qualifizierten Beleg für den übergebenen Belegungszustand, auch für
 Abwesenheit. Die Form enthält weder Ereignisse noch Quellenkennung, Entity
 oder eine vorweggenommene Gangentscheidung.
 
-Die Runtime prüft die vorhandene direkte Quellenwahl, gebundene Entity und
-Assertion vor dieser Grenze. Abgelehnte Meldungen erzeugen keine Abwesenheit.
+Die Runtime prüft Quellenwahl, gebundene Entity und Assertion vor dieser Grenze.
+Alle ausgewählten Meldungen passieren sie. Abgelehnte Meldungen erzeugen keine
+Abwesenheit.
 Verfügbare direkte EIN-/AUS-Belege sind qualifiziert; unknown und unavailable
 bleiben unbekannt beziehungsweise unverfügbar. Der Consumer lehnt doppelte
 Berichtsidentitäten und ältere effektive Meldungen weiterhin ab. Der
 angenommene ursprüngliche `PresenceReport` bleibt bei der Runtime für Anzeige
-und Archiv; der Controller hält den normalisierten Eingang.
+und Archiv; der Controller hält den normalisierten Eingang. Proxyreports bleiben
+unqualifiziert und bewahren Originalidentität, Zeiten und echte Verfügbarkeit.
+Sie erzeugen weder dauerhafte Belegungs- oder Abwesenheitshistorie noch eine
+erneute Ereigniswirkung. Unbekannt bedeutet keine beobachtete Abwesenheit.
 
-Vier konkrete Freigaben werden beim Konfigurationsowner aus den vorhandenen
-Policies gebildet und an den Controller übergeben:
+Nach der Annahme entscheiden Qualität, Verfügbarkeit, fachliche Zeiten und
+der vorhandene Tür-, Gang-, Temperatur- und Kühlbestand. Türfolge,
+Temperaturzulassung, Gangbestätigung und Gangende bleiben zentral beim
+bestehenden Gangowner. Die Bestätigungsart unterscheidet einmalige Belege von
+qualifizierter dauerhafter Belegung; zusätzliche Quellenfreigaben gibt es nicht.
+Die [Heizregeln](betrieb.md#heizpriorität) und
+[Kühlwirkungen](ofenkuehlung.md#kühlung-abwarten-oder-vorzeitig-beenden) beschreiben
+die daraus folgenden Anforderungen.
 
-| Freigabe | Fachliche Wirkung |
-| --- | --- |
-| `occupancy_required_for_gang_heat` | Gangheizbedarf verlangt aktuell verfügbaren qualifizierten Beleg. |
-| `provisional_door_heat_allowed` | Vorläufige Türwärme darf angefordert werden. |
-| `person_evidence_limits_cooling` | Zugelassener Personenbeleg darf Kühlung auf ihre Mindestdauer begrenzen. |
-| `gang_start_interrupts_cooling` | Tatsächlicher Gangbeginn darf Kühlung abbrechen. |
-
-Der Controller wertet dazu seinen aktuellen Regelmodus aus. Die Freigaben
-enthalten keine Quellart. Türfolge, Temperaturzulassung, Gangbestätigung und
-Gangende bleiben zentral beim bestehenden Gangowner.
+`regulation_causes` projiziert in Automatik die möglichen Ursachen
+`gang_heat`, `provisional_door_heat` und `cooling`, in Manuell keine.
+`cooling_presence_policy` beschreibt diesen gemeinsamen Belegvertrag mit
+`evidence_quality`, in Manuell mit `none`. Beide Projektionen sind passiv;
+sie enthalten weder die aktuelle Belegqualität noch zusätzliche Regelowner.
 
 Proxy-Personenbelege, Tür, Lüftung und Aufguss erreichen `Controller.process`
 weiterhin als originale `Event`-Objekte. Ihre Identitäten, Zeiten und

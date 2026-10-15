@@ -119,7 +119,7 @@ class PresenceRegressionTests(unittest.TestCase):
 
                 await report("unknown", 6, "selected-unknown")
                 self.assertEqual(runtime.controller.direct_presence.occupancy, "unknown")
-                self.assertFalse(runtime.controller.direct_presence.qualified_presence)
+                self.assertTrue(runtime.controller.direct_presence.qualified_presence)
                 self.assertFalse(runtime.controller.regulation_inputs.gang_heat_demand)
                 self.assertEqual(runtime.session.timeline.active.gang_id, gang.gang_id)
 

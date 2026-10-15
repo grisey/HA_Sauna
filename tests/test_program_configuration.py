@@ -72,10 +72,10 @@ class _NativeButtonRuntime(SaunaRuntime):
 
 
 class ProgramConfigurationTests(unittest.TestCase):
-    def test_configuration_exposes_source_bound_cooling_policy(self):
+    def test_configuration_exposes_source_neutral_regulation(self):
         for mode, source, policy in (
-            ("automatic", "ha_presence", "direct_gang_start"),
-            ("automatic", "proxy", "proxy_person_minimum"),
+            ("automatic", "ha_presence", "evidence_quality"),
+            ("automatic", "proxy", "evidence_quality"),
             ("manual", "ha_presence", "none"),
             ("manual", "proxy", "none"),
         ):
@@ -87,11 +87,15 @@ class ProgramConfigurationTests(unittest.TestCase):
                 )
                 self.assertEqual(model.cooling_presence_policy, policy)
                 self.assertEqual(model.as_dict()["cooling_presence_policy"], policy)
-                interrupts = policy == "direct_gang_start"
-                self.assertEqual(model.gang_start_interrupts_cooling, interrupts)
-                self.assertEqual(
-                    model.as_dict()["gang_start_interrupts_cooling"], interrupts,
+                causes = (
+                    ("gang_heat", "provisional_door_heat", "cooling")
+                    if mode == "automatic" else ()
                 )
+                self.assertEqual(model.regulation_causes, causes)
+                self.assertEqual(
+                    model.as_dict()["regulation_causes"], causes,
+                )
+                self.assertNotIn("gang_start_interrupts_cooling", model.as_dict())
 
     def test_live_target_only_preserves_named_program_options_and_archive(self):
         async def exercise(directory):

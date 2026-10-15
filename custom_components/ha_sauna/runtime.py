@@ -293,17 +293,12 @@ class SaunaRuntime:
     ) -> None:
         self.configuration = configuration
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
-        model = ConfigurationModel.from_configuration(configuration)
         self.controller = Controller(
             configuration.parameters,
             program_mode=configuration.program_mode,
             control_mode=configuration.control_mode,
             temperature_steps=configuration.temperature_steps,
             decision_clock=lambda: self._clock(),
-            occupancy_required_for_gang_heat=model.occupancy_required_for_gang_heat,
-            provisional_door_heat_allowed=model.provisional_door_heat_allowed,
-            person_evidence_limits_cooling=model.person_evidence_limits_cooling,
-            gang_start_interrupts_cooling=model.gang_start_can_interrupt_cooling,
         )
         self._lock = asyncio.Lock()
         self._tick_pending = False
@@ -738,6 +733,10 @@ class SaunaRuntime:
     def _record_presence(self, report, *, session_id=None):
         if not self.presence.accept(report):
             return
+        if self.configuration.presence_source == "proxy" and report.source == "proxy":
+            # Projection of an original event is not durable occupancy evidence.
+            # In particular unknown/retraction never asserts absence.
+            self._consume_presence_report(report, qualified=False)
         if session_id is None and self.session is not None:
             session_id = self.session.session_id
         event = ConsumerEvent(
@@ -746,6 +745,25 @@ class SaunaRuntime:
         )
         if self._publish_consumer(event) and self.archive:
             self.archive.append("presence", report.received_at, report, event.session_id)
+
+    def _consume_presence_report(self, report, *, qualified, defer_evaluation=False):
+        accepted = self.controller.consume_occupancy_input(
+            OccupancyInput(
+                occupancy=report.occupancy,
+                available=report.available,
+                qualified_presence=qualified,
+                report_id=report.report_id,
+                timing=InputTiming(
+                    effective_at=report.effective_at,
+                    received_at=report.received_at,
+                    first_usable_at=None,
+                    evaluated_at=self._clock(),
+                ),
+            ),
+            defer_evaluation=defer_evaluation,
+        )
+        if accepted:
+            self._selected_presence_report = report
 
     async def accept_presence(self, report):
         """Serialize direct occupancy through the same controller and output cycle."""
@@ -760,23 +778,9 @@ class SaunaRuntime:
                 and report.assertion == "direct_presence"
             )
             if selected:
-                accepted = self.controller.consume_occupancy_input(
-                    OccupancyInput(
-                        occupancy=report.occupancy,
-                        available=report.available,
-                        qualified_presence=report.available,
-                        report_id=report.report_id,
-                        timing=InputTiming(
-                            effective_at=report.effective_at,
-                            received_at=report.received_at,
-                            first_usable_at=None,
-                            evaluated_at=self._clock(),
-                        ),
-                    ),
-                    defer_evaluation=direct,
+                self._consume_presence_report(
+                    report, qualified=True, defer_evaluation=direct,
                 )
-                if accepted:
-                    self._selected_presence_report = report
             if direct:
                 # Catch-up recognition must use the report already received by
                 # this callback, without advancing past queued device inputs.

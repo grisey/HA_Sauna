@@ -125,8 +125,10 @@ class DoorInput:
 class OccupancyInput:
     """Occupancy admitted by its owner, independently of evidence provenance.
 
-    qualified_presence says that the occupancy
-    assertion itself is qualified, including a qualified absent assertion. It
+    qualified_presence identifies qualified durable state evidence, including
+    a qualified absent assertion. A durable observer retains this quality
+    during unknown/unavailable; available separately describes usability.
+    Projections of one-time person evidence remain unqualified. This field
     does not decide gang confirmation, entry, exit, or the relevant door context.
     The gang/controller owner retains those decisions.
 
