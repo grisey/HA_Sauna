@@ -526,34 +526,39 @@ class DirectPresenceRuntimeTests(unittest.TestCase):
             await runtime.receive(Event("entry-close", sid, Kind.DOOR_CLOSE, clock[0], clock[0]))
             gang_id = runtime.session.timeline.active.gang_id
 
-            # Reuse the regular detector windows and a continuous opening curve.
-            # The later water-loss samples remain queued until the new presence arrives.
+            # Reuse the opening's water fall; its later plateau with continuing
+            # cooling stays queued until the new presence arrives.
             fixture = DetectorTests()
             detector = fixture._ventilation_detector()
-            found = fixture._open_for_ventilation(detector)
+            _, plateau, end, values = fixture._ventilation_curve(detector)
+            found = fixture._feed_ventilation(detector, plateau, values)
+            self.assertTrue(detector.open)
             self.assertFalse(any(item.kind == Kind.VENTILATION for item in found))
             runtime.detector = detector
-            opening_end = detector.index
+            opening_end = plateau
+            opening_index = detector.index
             clock[0] = T0 + timedelta(seconds=opening_end)
-            runtime.controller.set_temperature(78, clock[0])
+            runtime.controller.set_temperature(values(plateau)[0], clock[0])
             for index, item in enumerate(found):
                 await runtime.receive(Event(f"fixture:{index}", sid, item.kind,
                                             item.effective_at, clock[0]))
             self.assertEqual(runtime.session.timeline.door, Door.OPEN)
             await presence("off", opening_end + .2, opening_end + .2)
             self.assertIsNotNone(runtime.session.timeline.active)
-            ramp_seconds = 20
-            for offset in range(1, ramp_seconds + 1):
-                fraction = offset / ramp_seconds
+            step = detector.grid_seconds
+            for second in range(plateau + step, end + step, step):
+                temperature, humidity = values(second)
                 for position in (Position.UPPER, Position.LOWER):
                     self.assertTrue(detector.accept(measurement(
-                        position, Quantity.TEMPERATURE, 78 - 4 * fraction, opening_end + offset)))
+                        position, Quantity.TEMPERATURE, temperature, second,
+                        measured=T0 + timedelta(seconds=second))))
                     self.assertTrue(detector.accept(measurement(
-                        position, Quantity.HUMIDITY, 38 - 18 * fraction, opening_end + offset)))
-            self.assertEqual(detector.index, opening_end)
-            self.assertEqual(len(detector.pending), 4 * ramp_seconds)
+                        position, Quantity.HUMIDITY, humidity, second,
+                        measured=T0 + timedelta(seconds=second))))
+            self.assertEqual(detector.index, opening_index)
+            self.assertEqual(len(detector.pending), 4 * ((end - plateau) // step))
 
-            received = opening_end + ramp_seconds + 1
+            received = end + 1
             await presence(state, opening_end + .7, received)
             ventilation = [item for item in runtime.session.timeline.processed
                            if item.kind == Kind.VENTILATION]

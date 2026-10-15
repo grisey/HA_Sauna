@@ -12,7 +12,7 @@ aus Temperatur und Feuchte.
 | Durchlüften | Nach Austrittsöffnung Nachweis für das Gangende | Gemeinsam mit zugehöriger Abwesenheit Nachweis für das Gangende |
 
 **Sensoren und Erkennung** in der Integrationskonfiguration trennt
-Messwertaufbereitung, Türerkennung, Personenerkennung, Aufgüsse und Lüftung. Personenschwellen und
+Messwertaufbereitung, Türerkennung, Personenerkennung und Aufgüsse. Personenschwellen und
 Aufgussbestätigungsfrist erscheinen nur beim indirekten Verfahren.
 Ihre gespeicherten Werte bleiben beim Verfahrenswechsel erhalten.
 Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
@@ -21,8 +21,9 @@ Die Übergangsregeln beschreibt die [Gangerkennung](gangmodell.md).
 
 Die gemeinsame Türerkennung und die Aufgusserkennung verwenden je Messkanal
 die letzten `2K` Originalmessungen: ein aktuelles Fenster und sein unmittelbar
-vorhergehendes, disjunktes Fenster mit jeweils `K` Punkten. In jedem Fenster
-wird eine Gerade durch gewöhnliche kleinste Quadrate (OLS) bestimmt. Für
+vorhergehendes, disjunktes Fenster mit jeweils `K` Punkten. Die Lüftungsform
+verwendet dieselbe Fensteraufteilung für kausal gepaarte Wasserbelege. In jedem
+Fenster wird eine Gerade durch gewöhnliche kleinste Quadrate (OLS) bestimmt. Für
 Originale `(t_i, y_i)` mit Mittelwerten `t̄`, `ȳ` gilt:
 
 ```text
@@ -252,33 +253,81 @@ führt, ersetzen Personensignale ihn nicht.
 Die absolute Feuchte wird aus frischen, gültigen Temperatur-/Feuchtepaaren
 berechnet und als Diagnosewert je Messposition bereitgestellt.
 
-Beim ersten Öffnungshinweis wird eine vollständige Messung aus der Zeit davor
-als Referenz gespeichert. Durchlüften erfordert die eingestellten Verluste an
-Temperatur und absolutem Wassergehalt; der Wasserverlust ist ein relativer Anteil.
-Diese Verlustschwellen und die Mindestöffnungsdauer bei einer Position bleiben
-Katalogbedingungen. Ein fallender Kurvenverlauf allein ersetzt sie nicht.
+Die Lüftungsform wird bei allen erkannten Türvorgängen gleich ausgewertet,
+unabhängig von einem laufenden Gang und der Präsenzquelle. Während eines Gangs
+unterscheidet sie die kurze Öffnung vom Durchlüften als Nachweis für das
+Gangende; außerhalb eines Gangs wird sie statistisch erfasst.
 
-| Zu Beginn gültige Positionen | Bestätigung |
-| --- | --- |
-| Zwei | Beide ursprünglichen Positionen erreichen die Verlustschwellen |
-| Eine | Verlustschwellen erreicht und Mindestöffnungsdauer verstrichen |
+Der Nachweis benötigt nach der Öffnung einen vorherigen Fall des absoluten
+Wassergehalts und dessen aufgelösten Übergang in ein konstantes Niveau, während
+die Temperatur weiter signifikant fällt. Dazu werden an jeder anfangs
+gebundenen Messposition die letzten genau `2K` aufeinanderfolgenden
+Feuchteoriginale mit ihren kausalen Temperaturpartnern verwendet. Die Paarung
+und ihre Dichtehüllen `ρ⁻`, `ρ⁺` entsprechen der Wasserqualifikation beim
+Aufguss; fehlende oder ungültige Paare werden nicht übersprungen.
 
-Eine Messlücke pausiert den Vergleich mit unveränderter Referenz. Er setzt sich
-mit denselben gültigen Quellen fort; ein Quellenwechsel verwirft die Referenz.
-Temperaturerholung beginnt die Schließprüfung und beendet einen noch offenen
-Lüftungsnachweis.
+Für die Hüllmitte `m_i = (ρ⁻_i + ρ⁺_i)/2` und Halbbreite
+`a_i = (ρ⁺_i − ρ⁻_i)/2` werden die Steigungen `b_ρ`, `v_ρ` der beiden
+`K`-Fenster durch OLS bestimmt. Ihre Grenzen folgen aus den einzelnen Hüllen:
 
-Ein bestätigter Lüftungsnachweis bleibt seiner Austrittsöffnung auch nach
-Türschluss zugeordnet. Ob damit ein Gang endet, bestimmt die
-[Gangerkennung](gangmodell.md); bei direkter Präsenzführung gehört dazu außerdem
-eine gültige Abwesenheitsmeldung.
+```text
+E_ρ = Σ|t_i − t̄| · a_i / S_tt
+```
+
+Mit der entsprechenden Grenze `E⁻_ρ` des Vorgängerfensters gelten je Position
+`p` die folgenden Bedingungen. Die Hüllenschnittmenge bezieht sich auf das
+aktuelle Fenster:
+
+```text
+−b_ρp                 > s E⁻_ρp
+v_ρp − b_ρp           > s (E_ρp + E⁻_ρp)
+|v_ρp|                ≤ s E_ρp
+max_i(m_pi − s a_pi)  ≤ min_i(m_pi + s a_pi)
+−v_Tp                 > s E_Tp
+```
+
+Die ersten beiden Bedingungen belegen Fall und Abflachung beim Binden des
+Lüftungskandidaten. Die letzten drei müssen bis zur Bestätigung erhalten
+bleiben: aktuelle Wassersteigung im Fehlerband, Verträglichkeit aller
+aktuellen Hüllen mit einem gemeinsamen konstanten Niveau und weiter fallende
+Temperatur. Eine flache relative Feuchte oder eine bloß kleine OLS-Steigung
+des Wassergehalts genügt nicht. Die Hüllen und ihre Steigungsgrenzen beruhen
+auf den angenommenen Wertstörungen; sie sind keine Ereigniswahrscheinlichkeit.
+
+Die Bestätigung benötigt an sämtlichen anfangs gebundenen Positionen spätere
+Temperatur- und Feuchteoriginale mit vollständiger Wasserpaarung. Für eine
+oder zwei Positionen gilt dieselbe Form ohne zusätzliche Mindestöffnungsdauer
+oder feste Temperatur- und Wasserverlustschwelle. Die fünf historischen
+Lüftungsparameter bleiben für ältere Archive und Referenzadapter im
+[Parameterkatalog](../custom_components/ha_sauna/defaults.json); sie bestimmen
+den aktuellen Nachweis nicht.
+
+Die Auswertung folgt der Reihenfolge der empfangenen Originale. Eine bereits
+bestätigbare Schließung hat am selben Eingangspräfix Vorrang vor dem
+Lüftungsnachweis. Ein an einem früheren Präfix bestätigtes Durchlüften und ein
+späterer Türschluss bleiben auch innerhalb desselben Rasters zwei Ereignisse.
+Für Unterbrechungen und Korrekturen gelten die
+[Regeln bei Messlücken](#erkennungen-bei-messlücken-prüfen).
+
+Ein bestätigter Lüftungsnachweis bleibt seiner Türöffnung auch nach
+Türschluss zugeordnet. Ob damit ein Gang endet und welche Regelwirkung folgt,
+bestimmt die [Gangerkennung](gangmodell.md); bei direkter Präsenzführung gehört
+dazu außerdem eine gültige Abwesenheitsmeldung.
 
 ## Erkennungen bei Messlücken prüfen
 
 Personenhaltezähler beginnen nach einem Wechsel oder Ausfall der beteiligten
 vollständigen Messpositionen neu. Unbestätigte Kurvennachweise bleiben an ihre
-jeweiligen Quellenabschnitte gebunden. Für die Lüftungsreferenz gilt die
-beschriebene Pausenregel.
+jeweiligen Quellenabschnitte gebunden.
+
+Bei der Lüftungsform bleibt das reguläre Warten auf einen rechten
+Temperaturpartner offen und liefert keine Bestätigung. Eine Messlücke, ein
+Quellenwechsel oder eine Korrektur tragender Originale verwirft die davon
+abhängigen Stützen und den unbestätigten Kandidaten. Mit denselben Quellen
+können im noch offenen Türvorgang Fall und Abflachung aus zusammenhängenden
+Originalen erneut vollständig belegt werden. Ein tatsächlicher Wechsel der
+anfangs gebundenen Quellen erlaubt diesen Wiedererwerb für dieselbe Öffnung
+nicht.
 
 Ein noch unbestätigter Aufgusskandidat wird bei einem Bruch seiner Quellen
 oder seines Tür- und Betriebskontexts verworfen. Seine zeitliche Gültigkeit ist
@@ -310,7 +359,10 @@ zur Grenze auf der erfüllenden Seite. Jeder Abstand gehört zu genau dieser
 Bedingung; die Abstände werden nicht zu einer Gesamtwahrscheinlichkeit addiert.
 
 Die Originalformen weisen Öffnungs- und Schließkontrast sowie die
-Anstiegs-, Fall- und Hintergrundbedingungen aus. Beim Aufguss werden der
+Anstiegs-, Fall- und Hintergrundbedingungen aus. Beim Durchlüften werden
+Wasserfall, Abflachung, aktuelles Fehlerband, konstante Hüllenverträglichkeit
+und fallende Temperatur getrennt geführt; offene Paarungen und die spätere
+Bestätigung bleiben erkennbar. Beim Aufguss werden der
 gespeicherte starke Anstiegsbeleg, die aktuelle Steigung, die verfügbare
 Wasserqualifikation und der nach der Spitze belegte Abfall getrennt geführt.
 Ein passender Kontrast ohne die erforderlichen späteren Originale genügt nicht

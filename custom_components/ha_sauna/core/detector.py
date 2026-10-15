@@ -1,5 +1,6 @@
 """Kausaler laufender Tür-/Gangdetektor ohne HA, NumPy oder Recorderwissen."""
 
+from bisect import bisect_left, bisect_right
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -21,6 +22,8 @@ from .curve_change import (
     original_contrasts,
     original_thermal_contrasts,
     original_water_pair,
+    original_water_pair_support,
+    original_water_window,
     original_window,
 )
 from .models import Measurement, Position, Quantity
@@ -299,6 +302,8 @@ class Detector:
         series["last_original_version"] = None
         series["last_original_received_at"] = None
         series["epoch"] += 1
+        if self.door_episode is not None and position in self.door_episode["positions"]:
+            self._reset_original_ventilation(self.door_episode, "original_epoch_changed")
         self._curve_recovery_evidence.pop((position, quantity), None)
         episode = self._infusion_episode
         if (
@@ -401,6 +406,7 @@ class Detector:
         if corrected:
             if self.door_episode is not None and position in self.door_episode["positions"]:
                 self.door_episode.pop("original_close", None)
+                self._reset_original_ventilation(self.door_episode, "original_corrected")
                 if quantity == Quantity.HUMIDITY:
                     # Das laufende Mittelminimum hat ohne seine korrigierte
                     # Stütze keinen weiterhin belastbaren RH-Erholungsbeleg.
@@ -504,13 +510,303 @@ class Detector:
             for position, pair in contrasts.positions
         )
 
-    def _original_door_evidence(self, prefixes, channels, now, trace):
-        """OLS-Formen im vorhandenen Türbestand falten; hier nichts emittieren."""
+    @staticmethod
+    def _reset_original_ventilation(episode, reason, *, water=True):
+        episode.pop("original_ventilation", None)
+        if water:
+            episode.pop("original_ventilation_water", None)
+        episode["original_ventilation_reset_reason"] = reason
+
+    def _original_ventilation_windows(self, episode, prefix):
+        """Nur neue RH-Originale kausal paaren; offene rechte Partner abwarten."""
+        positions = episode["positions"]
+        context = self._original_bound_context(prefix.context, positions)
+        if episode.get("original_ventilation_context") != context:
+            self._reset_original_ventilation(episode, "original_epoch_changed")
+            episode["original_ventilation_context"] = context
+            opening_floor = self._curve_open_effective_at or self.opened_at or self.origin
+            episode["original_ventilation_floor"] = max(
+                opening_floor, *(self._curve_series[position, quantity]["started_at"] or opening_floor
+                                 for position in positions
+                                 for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)),
+            )
+        floor = episode["original_ventilation_floor"]
+        states = episode.setdefault("original_ventilation_water", {})
+        points = {position: (temperature, humidity)
+                  for position, temperature, humidity in prefix.points}
+        features, support = {}, {}
+        waiting = False
+        count = self.p["curve_original_samples"]
+        limit = self.p["curve_max_points"]
+        for position in positions:
+            temperatures, humidities = points[position]
+            state = states.setdefault(position, {
+                "pending": deque(), "pairs": deque(maxlen=2 * count),
+                "last_rh_at": None, "features": None, "window_status": None,
+            })
+            if state["last_rh_at"] is None:
+                first = max(
+                    len(humidities) - 2 * count,
+                    bisect_left(humidities, floor, key=lambda point: point[0]),
+                )
+            else:
+                first = bisect_right(humidities, state["last_rh_at"], key=lambda point: point[0])
+            humidity_gap = self.p[f"curve_original_gap_humidity_{position.value}_seconds"]
+            for point in humidities[first:]:
+                if (state["last_rh_at"] is not None
+                        and (point[0] - state["last_rh_at"]).total_seconds() > humidity_gap):
+                    return "invalid", {}, {"reason": "humidity_original_gap", "position": position.value}
+                if len(state["pending"]) >= limit:
+                    return "invalid", {}, {"reason": "water_pair_pending_overflow", "position": position.value}
+                state["pending"].append(point)
+                state["last_rh_at"] = point[0]
+            changed = False
+            paired_counterform = False
+            while state["pending"]:
+                point = state["pending"][0]
+                right = bisect_left(temperatures, point[0], key=lambda sample: sample[0])
+                if right < len(temperatures) and temperatures[right][0] == point[0]:
+                    bracket = temperatures[right:right + 1]
+                elif right == 0:
+                    bracket = temperatures[:1]
+                elif right == len(temperatures):
+                    bracket = temperatures[-1:]
+                else:
+                    bracket = temperatures[right - 1:right + 1]
+                paired = original_water_pair_support(
+                    point, bracket,
+                    temperature_scale=self.p[f"curve_original_noise_temperature_{position.value}"],
+                    humidity_scale=self.p[f"curve_original_noise_humidity_{position.value}"],
+                    max_gap_seconds=self.p[f"curve_original_gap_temperature_{position.value}_seconds"],
+                    at=prefix.received_at,
+                )
+                if paired.status == "pending":
+                    waiting = True
+                    break
+                if paired.status != "ready" or paired.pair.temperature_before[0] < floor:
+                    return "invalid", {}, {
+                        "reason": paired.reason or "water_support_before_opening_segment",
+                        "position": position.value,
+                    }
+                state["pending"].popleft()
+                state["pairs"].append(paired.pair)
+                changed = True
+                window = original_water_window(
+                    tuple(state["pairs"]), count=count,
+                    max_gap_seconds=humidity_gap, at=prefix.received_at,
+                )
+                state["window_status"], state["features"] = window.status, window.features
+                if window.status == "invalid":
+                    return "invalid", {}, {"reason": window.reason, "position": position.value}
+                if window.features is not None:
+                    significance = self.p["curve_original_significance"]
+                    if (abs(window.features.v) > significance * window.features.e
+                            or not window.features.constant_compatible(significance)):
+                        # Ein neuer T-Partner kann mehrere wartende RH-Paare
+                        # zugleich liefern. Keine innere Gegenform überspringen.
+                        paired_counterform = True
+                        self._reset_original_ventilation(episode, "paired_water_counterform", water=False)
+            if not changed and state["window_status"] is None:
+                state["window_status"] = "insufficient"
+            water = state["features"]
+            if water is not None:
+                features[position] = water
+                last = water.current[-1]
+                support[position.value] = {
+                    "rh_window_start_at": water.start_at, "rh_newest_at": water.newest_at,
+                    "partner_available_at": water.available_at,
+                    "left_temperature_at": last.temperature_before[0],
+                    "right_temperature_at": last.temperature_after[0],
+                    "pending_count": len(state["pending"]),
+                    "pending_rh_at": state["pending"][0][0] if state["pending"] else None,
+                    "paired_count": len(state["pairs"]),
+                    "paired_counterform_seen": paired_counterform,
+                }
+            else:
+                support[position.value] = {
+                    "paired_count": len(state["pairs"]), "pending_count": len(state["pending"]),
+                    "pending_rh_at": state["pending"][0][0] if state["pending"] else None,
+                }
+        status = "pending" if waiting else "ready" if len(features) == len(positions) else "insufficient"
+        return status, features, support
+
+    def _original_ventilation_evidence(
+        self, prefix, channels, now, decision_at, trace, emit, *, closing, close_value=None,
+    ):
+        """AH-Fall→Plateau im vorhandenen Türvorgang, vor späteren Präfixen."""
+        episode = self.door_episode
+        if episode is None or not self.open or self.ventilated:
+            return
+        positions = episode["positions"]
+        record = {
+            "prefix_received_at": prefix.received_at, "decision_at": decision_at, "raster_at": now,
+            "positions": tuple(position.value for position in positions),
+            "candidate_at": None, "water_status": "unknown",
+            "close_same_prefix": closing, "close_contrast": close_value,
+        }
+        trace["original_ventilation"] = record
+        trace["checks"]["ventilation"] = True
+        sources_coherent = all(
+            position in channels and position not in self.ventilation_invalid
+            and tuple(self._curve_series[position, quantity]["source"]
+                      for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY))
+            == episode["sources"][position]
+            for position in positions
+        )
+        if not sources_coherent or not self._original_prefix_valid(prefix, positions):
+            self._reset_original_ventilation(episode, "opening_sources_or_originals_unavailable")
+            record["reset_reason"] = episode["original_ventilation_reset_reason"]
+            _decision(trace, "ventilation", None, {
+                "opening_sources_coherent": _gate(sources_coherent),
+            }, evaluated=False, reason="opening_sources_or_originals_unavailable")
+            return
+        if not prefix.original:
+            # Gebundene Korrekturen/Lücken werden bereits beim Eingang
+            # entwertet. Ein fremdes Nichtoriginal ist weder ihre Gegenform
+            # noch eine neue Bestätigungsstütze.
+            candidate = episode.get("original_ventilation")
+            record.update(
+                candidate_at=candidate["received_at"] if candidate is not None else None,
+                candidate_originals=candidate["newest"] if candidate is not None else (),
+            )
+            _decision(trace, "ventilation", None, {
+                "new_original_prefix": _gate(False),
+            }, evaluated=False, reason="no_new_original_prefix")
+            return
+        windows = dict(prefix.windows)
+        if any(position.value not in windows for position in positions):
+            self._reset_original_ventilation(episode, "corrected_or_unknown_original_window")
+            record["reset_reason"] = episode["original_ventilation_reset_reason"]
+            _decision(trace, "ventilation", None, {}, evaluated=False,
+                      reason="corrected_or_unknown_original_window")
+            return
+        status, water_windows, support = self._original_ventilation_windows(episode, prefix)
+        record.update(
+            water_status=status, support=support,
+            support_floor=episode["original_ventilation_floor"],
+            epochs=tuple((position.value, epochs) for position, epochs
+                         in episode["original_ventilation_context"]),
+            reset_reason=episode.get("original_ventilation_reset_reason"),
+        )
+        if status == "invalid":
+            self._reset_original_ventilation(episode, support.get("reason", "invalid_water_support"))
+            record["reset_reason"] = episode["original_ventilation_reset_reason"]
+            _decision(trace, "ventilation", None, {}, evaluated=False,
+                      reason=episode["original_ventilation_reset_reason"])
+            return
+        if len(water_windows) != len(positions):
+            _decision(trace, "ventilation", None, {}, evaluated=False,
+                      reason="pending_water_pair" if status == "pending" else "insufficient_water_originals")
+            return
+        if any(windows[position.value].temperature.current[0][0]
+               < episode["original_ventilation_floor"] for position in positions):
+            self._reset_original_ventilation(episode, "temperature_support_before_opening_segment", water=False)
+            record["reset_reason"] = episode["original_ventilation_reset_reason"]
+            _decision(trace, "ventilation", None, {}, evaluated=False,
+                      reason="temperature_support_before_opening_segment")
+            return
+        significance = self.p["curve_original_significance"]
+        gates = {"opening_sources_coherent": _gate(sources_coherent)}
+        initial = maintained = True
+        newest = []
+        for position in positions:
+            water = water_windows[position]
+            temperature = windows[position.value].temperature
+            lower, upper = water.constant_bounds(significance)
+            comparisons = {
+                "previous_water_fall": _gate(
+                    -water.b > significance * water.e_minus, value=-water.b, operator=">",
+                    threshold=significance * water.e_minus, unit="g/m³/s",
+                ),
+                "current_water_flat": _gate(
+                    abs(water.v) <= significance * water.e, value=abs(water.v), operator="<=",
+                    threshold=significance * water.e, unit="g/m³/s",
+                ),
+                "water_fall_braking": _gate(
+                    water.v - water.b > significance * (water.e + water.e_minus),
+                    value=water.v - water.b, operator=">",
+                    threshold=significance * (water.e + water.e_minus), unit="g/m³/s",
+                ),
+                "constant_water_level_compatible": _gate(
+                    lower <= upper, value=lower, operator="<=", threshold=upper, unit="g/m³",
+                ),
+                "temperature_still_falling": _gate(
+                    -temperature.v > significance * temperature.e, value=-temperature.v,
+                    operator=">", threshold=significance * temperature.e, unit="°C/s",
+                ),
+            }
+            gates.update({f"{position.value}:{name}": gate for name, gate in comparisons.items()})
+            hold = all(comparisons[key]["result"] for key in (
+                "current_water_flat", "constant_water_level_compatible", "temperature_still_falling",
+            ))
+            maintained &= hold
+            initial &= hold and comparisons["previous_water_fall"]["result"] and comparisons["water_fall_braking"]["result"]
+            newest.append((position.value, temperature.newest_at, water.newest_at))
+            support[position.value]["temperature_newest_at"] = temperature.newest_at
+            trace["metrics"].setdefault(position.value, {}).update(
+                ventilation_water_slope=water.v, ventilation_previous_water_slope=water.b,
+                ventilation_water_slope_error=water.e,
+                ventilation_previous_water_slope_error=water.e_minus,
+                ventilation_water_constant_lower=lower, ventilation_water_constant_upper=upper,
+                ventilation_temperature_slope=temperature.v,
+                ventilation_temperature_slope_error=temperature.e,
+            )
+        if not maintained:
+            self._reset_original_ventilation(episode, "water_or_temperature_counterform", water=False)
+        candidate = episode.get("original_ventilation")
+        confirmed = False
+        if candidate is None:
+            if initial and status == "ready":
+                candidate = {
+                    "received_at": prefix.received_at, "newest": tuple(newest),
+                    "context": episode["original_ventilation_context"],
+                    "water_windows": tuple(water_windows.items()),
+                }
+                episode["original_ventilation"] = candidate
+        else:
+            previous = {name: (temperature, humidity) for name, temperature, humidity in candidate["newest"]}
+            fresh = all(temperature > previous[name][0] and humidity > previous[name][1]
+                        for name, temperature, humidity in newest)
+            confirmed = maintained and status == "ready" and fresh
+            gates["later_paired_originals_for_all_roles"] = _gate(fresh)
+        record.update(
+            initial_form=initial, maintained_form=maintained,
+            candidate_at=candidate["received_at"] if candidate is not None else None,
+            candidate_originals=candidate["newest"] if candidate is not None else (),
+            close_same_prefix=closing, close_contrast=close_value, confirmable=confirmed,
+            close_conflict=(close_value is not None and close_value > significance
+                            and (initial or confirmed)),
+        )
+        gates.update(
+            paired_suffix_complete=_gate(status == "ready"),
+            same_prefix_close_has_priority=_gate(not closing),
+            bound_initial_water_transition=_gate(candidate is not None),
+            current_close_contrast=_gate(
+                close_value > significance if close_value is not None else None,
+                value=close_value, operator=">", threshold=significance, unit="contrast",
+            ),
+        )
+        proven = confirmed and not closing
+        trace["conditions"].update(
+            ventilation_sources_coherent=sources_coherent, ventilation_proven=proven,
+            ventilation_close_conflict=record["close_conflict"],
+        )
+        _decision(trace, "ventilation", proven, gates)
+        if proven:
+            record["confirmation_received_at"] = prefix.received_at
+            self.ventilated = True
+            self._curve_ventilation_at = now
+            self._clear_curve_route("door_close", keep_status=True, reason="ventilation_after_onset")
+            self._reset_original_ventilation(episode, "confirmed")
+            emit(Kind.VENTILATION, event_channels=positions)
+
+    def _original_door_evidence(self, prefixes, channels, now, decision_at, trace, emit):
+        """Türformen und Lüftung kausal im einzigen Türbestand fortschreiben."""
         opening = closing = close_candidate = False
         closing_positions = ()
         opening_value = closing_value = None
         significance = self.p["curve_original_significance"]
-        for prefix in prefixes:
+        for index, prefix in enumerate(prefixes):
             episode = self.door_episode
             positions = episode["positions"] if episode is not None else channels
             context = self._original_bound_context(prefix.context, positions)
@@ -523,6 +819,9 @@ class Detector:
                 if not self._original_prefix_valid(
                     prefix, closing_positions, (Quantity.TEMPERATURE,),
                 ):
+                    self._original_ventilation_evidence(
+                        prefix, channels, now, decision_at, trace, emit, closing=False,
+                    )
                     continue
             elif not complete_prefix:
                 continue
@@ -604,6 +903,9 @@ class Detector:
                         position: pair.humidity.mean for position, pair in contrasts.positions
                     }
                     forms["confirmation_received_at"] = prefix.received_at
+                    # Die äußere Aktion bestätigt dieselbe Öffnung. Spätere
+                    # bereits empfangene Präfixe danach nicht verschlucken.
+                    self._original_prefixes.extend(prefixes[index + 1:])
                     break
                 continue
             if episode is None:
@@ -623,6 +925,9 @@ class Detector:
             if thermal is None:
                 episode.pop("original_close", None)
                 closing_value = None
+                self._original_ventilation_evidence(
+                    prefix, channels, now, decision_at, trace, emit, closing=False,
+                )
                 continue
             if minima is None and same_opening_sources and contrasts is not None:
                 episode["original_humidity_minima"] = {
@@ -661,7 +966,27 @@ class Detector:
                 )
                 if closing:
                     forms["confirmation_received_at"] = prefix.received_at
-                    break
+            self._original_ventilation_evidence(
+                prefix, channels, now, decision_at, trace, emit, closing=closing,
+                close_value=closing_value,
+            )
+            if closing:
+                break
+        episode = self.door_episode
+        if episode is not None and self.open and episode.get("original_ventilation"):
+            if any(
+                not self._curve_series[position, quantity]["points"]
+                or (now - self._curve_series[position, quantity]["points"][-1][0]).total_seconds()
+                > self.p[f"curve_original_gap_{quantity.value}_{position.value}_seconds"]
+                for position in episode["positions"]
+                for quantity in (Quantity.TEMPERATURE, Quantity.HUMIDITY)
+            ):
+                self._reset_original_ventilation(episode, "stale_original_roles")
+                trace["original_ventilation"] = {
+                    "decision_at": decision_at, "raster_at": now, "candidate_at": None,
+                    "water_status": "unknown", "reset_reason": "stale_original_roles",
+                }
+                _decision(trace, "ventilation", None, {}, evaluated=False, reason="stale_original_roles")
         _decision(trace, "door_open", opening if not self.open else None, {
             "original_window_contrast": _gate(
                 opening_value > self.p["curve_original_open_contrast"]
@@ -3282,7 +3607,7 @@ class Detector:
         return state
 
     def _remember_ventilation_baseline(self, position):
-        """Die letzte vollständige Vorherprobe als quellengebundene Referenz merken."""
+        """Historischen Vorhervergleich für Diagnose halten, ohne Erkennungsgate."""
         feature_window = int(
             max(self.p["door_window_seconds"], self.p["door_humidity_seconds"])
             / self.grid_seconds
@@ -3364,120 +3689,6 @@ class Detector:
         if position in episode["invalid"]:
             return None
         return frame
-
-    def _ventilation_proof(self, channels, now, trace):
-        """Temperatur- und Wasserverlust gegen die beim Öffnen fixierte Referenz."""
-        evidence = {}
-        unavailable = {}
-        for position in self.ventilation_positions:
-            if position not in channels:
-                # Eine kurze Lücke pausiert nur diesen Vergleich; die beim
-                # ersten Hinweis gemerkte Referenz bleibt für die Rückkehr.
-                evidence[position] = None
-                unavailable[position] = "episode_position_unavailable"
-                continue
-            frame = self.frames[position][-1]
-            baseline = self.baseline.get(position)
-            current_water = self._absolute_humidity(frame)
-            if (
-                baseline is None
-                or position in self.ventilation_invalid
-                or current_water is None
-                or (frame.get("Ts"), frame.get("Hs")) != baseline["sources"]
-            ):
-                if position in self.ventilation_invalid or (
-                    baseline is not None
-                    and (frame.get("Ts"), frame.get("Hs")) != baseline["sources"]
-                ):
-                    self.ventilation_degraded = True
-                evidence[position] = None
-                unavailable[position] = (
-                    "opening_baseline_unavailable" if baseline is None else
-                    "opening_source_invalidated" if position in self.ventilation_invalid else
-                    "absolute_humidity_unavailable" if current_water is None else
-                    "opening_source_changed"
-                )
-                continue
-            temperature_loss = baseline["temperature"] - frame["Tm"]
-            water_loss = (
-                (baseline["absolute_humidity"] - current_water)
-                / baseline["absolute_humidity"]
-                if baseline["absolute_humidity"] > 0
-                else None
-            )
-            evidence[position] = (temperature_loss, water_loss)
-            trace["metrics"][position.value].update(
-                ventilation_temperature_loss=temperature_loss,
-                ventilation_absolute_humidity_loss=water_loss,
-            )
-
-        dual_sensor = (
-            len(self.ventilation_positions) == 2 and not self.ventilation_degraded
-        )
-        single_sensor = (
-            len(self.ventilation_positions) == 1 and not self.ventilation_degraded
-        )
-        gates = {}
-        for position in self.ventilation_positions:
-            current = evidence.get(position)
-            drop = current[0] if current is not None else None
-            loss = current[1] if current is not None else None
-            gates[f"{position.value}:temperature_loss"] = _gate(
-                drop >= self.p[f"vent_drop_{position.value}"] if drop is not None else None,
-                value=drop, operator=">=", threshold=self.p[f"vent_drop_{position.value}"],
-                unit="°C", reference="opening_baseline_temperature_minus_current",
-                reason=unavailable.get(position),
-            )
-            gates[f"{position.value}:water_loss"] = _gate(
-                loss >= self.p["vent_absolute_humidity_loss_percent"] / 100
-                if loss is not None else None,
-                value=loss, operator=">=",
-                threshold=self.p["vent_absolute_humidity_loss_percent"] / 100,
-                unit="fraction", reference="opening_baseline_relative_absolute_humidity_loss",
-                reason=unavailable.get(position) or (
-                    "nonpositive_baseline_absolute_humidity" if loss is None else None
-                ),
-            )
-        temperature_drop = all(
-            gates[f"{position.value}:temperature_loss"]["result"]
-            for position in self.ventilation_positions
-        )
-        water_loss = all(
-            gates[f"{position.value}:water_loss"]["result"]
-            for position in self.ventilation_positions
-        )
-        duration = (now - self.opened_at).total_seconds()
-        time_held = duration >= self.p[
-            "vent_hold_seconds"
-        ]
-        proven = (
-            temperature_drop
-            and water_loss
-            and (dual_sensor or (single_sensor and time_held))
-        )
-        trace["conditions"].update(
-            ventilation_temperature_drop=temperature_drop,
-            ventilation_water_loss=water_loss,
-            ventilation_time_held=time_held if not dual_sensor else None,
-            ventilation_sources_coherent=not self.ventilation_degraded,
-            ventilation_proven=proven,
-        )
-        trace["checks"]["ventilation"] = True
-        gates.update(
-            sources_coherent=_gate(not self.ventilation_degraded),
-            required_position_count=_gate(
-                dual_sensor or single_sensor, value=len(self.ventilation_positions),
-                operator="in", threshold=(1, 2), reference="opening_episode_positions",
-            ),
-            single_sensor_hold=_gate(
-                time_held if not dual_sensor else None,
-                value=duration, operator=">=", threshold=self.p["vent_hold_seconds"],
-                unit="s", reference="time_since_confirmed_opening",
-                reason="not_required_with_two_coherent_positions" if dual_sensor else None,
-            ),
-        )
-        _decision(trace, "ventilation", proven, gates)
-        return proven
 
     def advance(
         self, at, *, enabled, allowed=None, on_detection=None,
@@ -3611,6 +3822,7 @@ class Detector:
             if self.door_episode is not None:
                 self.door_episode.pop("original_open", None)
                 self.door_episode.pop("original_close", None)
+                self._reset_original_ventilation(self.door_episode, "original_prefix_overflow")
         self._curve_fit_cache = {}
         self._curve_proposal_checks = {}
         if operation_restarted:
@@ -3895,7 +4107,7 @@ class Detector:
                             reference="heating_started_at",
                         )
         mixed_toggle, closing, close_toggle, closing_positions = self._original_door_evidence(
-            prefixes, channels, now, trace,
+            prefixes, channels, now, decision_at, trace, emit,
         )
         episode = self.door_episode
         mixed_opening = bool(episode and episode.get("original_open")) if not self.open else None
@@ -3935,12 +4147,13 @@ class Detector:
                     "opening_episode": _gate(episode is not None),
                 }, evaluated=False,
                           reason="door_closed" if not self.open else "opening_episode_missing")
-        _decision(trace, "ventilation", None, {}, evaluated=False, reason=(
-            "door_closed" if not self.open else
-            "already_proven_for_opening" if self.ventilated else
-            "door_close_takes_precedence" if close_toggle or closing else
-            "awaiting_opening_loss_comparison"
-        ))
+        if trace["decisions"]["ventilation"].get("reason") == "route_not_reached":
+            _decision(trace, "ventilation", None, {}, evaluated=False, reason=(
+                "door_closed" if not self.open else
+                "already_proven_for_opening" if self.ventilated else
+                "door_close_takes_precedence" if close_toggle else
+                "awaiting_original_water_form"
+            ))
         trace["conditions"].update(
             door_open=mixed_opening if not self.open else None,
             door_heating=thermal_opening if not self.open else None,
@@ -3979,17 +4192,9 @@ class Detector:
             self.ventilation_invalid = set()
             self.door_episode = None
         elif self.open and closing:
-            # Der belegte Erholungsknick pausiert den Lüftungsnachweis schon
-            # vor seiner Bestätigung durch weitere Originalmessungen.
+            # Den aktuellen Schließkandidaten weiter diagnostizieren; die
+            # Lüftungsentscheidung ist bereits präfixkausal erfolgt.
             trace["conditions"]["ventilation_recovery"] = True
-        elif self.open and not self.ventilated:
-            if self._ventilation_proof(channels, now, trace):
-                self.ventilated = True
-                self._curve_ventilation_at = now
-                self._clear_curve_route(
-                    "door_close", keep_status=True, reason="ventilation_after_onset",
-                )
-                emit(Kind.VENTILATION)
         elif not self.open and (mixed_toggle or thermal_toggle):
             onset_route = "door_open" if mixed_toggle else "door_open_heating"
             onset_quantities = ((Quantity.TEMPERATURE, Quantity.HUMIDITY) if mixed_toggle else
