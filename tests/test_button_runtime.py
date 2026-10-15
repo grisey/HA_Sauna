@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
+from model_input_evidence import emit_model_input_evidence
+
 from custom_components.ha_sauna.bindings import ROLES, Bindings
 from custom_components.ha_sauna.core.parameters import Parameters
 from custom_components.ha_sauna.core.timeline import Event, Kind
@@ -142,6 +144,292 @@ class ButtonRuntimeTests(unittest.TestCase):
                 self._start_with_temperature()
                 asyncio.run(gesture(duration))
                 self.assertEqual(self.runtime.session.operation_enabled, duration < threshold)
+
+    def test_operation_input_preserves_waiting_command_receipt_and_session(self):
+        async def command(enabled, wait):
+            received_at = self.now
+            await self.runtime._lock.acquire()
+            pending = asyncio.create_task(self.runtime.set_operation(enabled))
+            await asyncio.sleep(0)
+            self.now += timedelta(seconds=wait)
+            self.runtime._lock.release()
+            result = await pending
+            return received_at, result
+
+        self.runtime.controller.set_temperature(70, self.now)
+        consume = Mock(wraps=self.runtime.controller.consume_operation_input)
+        self.runtime.controller.consume_operation_input = consume
+
+        received_start, started = asyncio.run(command(True, 5))
+        started_at = self.now
+        identity = started.session_id
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.timeline.session_started_at, started_at)
+        self.now += timedelta(seconds=1)
+        received_stop, stopped = asyncio.run(command(False, 5))
+        self.assertEqual(stopped.session_id, identity)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertFalse(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.operation_off_at, self.now)
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+        for call, enabled, received_at, evaluated_at in zip(
+            consume.call_args_list, (True, False), (received_start, received_stop),
+            (started_at, self.now), strict=True,
+        ):
+            value = call.args[0]
+            self.assertEqual(value.enabled, enabled)
+            self.assertIsNone(value.session_id)
+            self.assertEqual(value.timing.effective_at, received_at)
+            self.assertEqual(value.timing.received_at, received_at)
+            self.assertIsNone(value.timing.first_usable_at)
+            self.assertEqual(value.timing.evaluated_at, evaluated_at)
+
+    def test_button_operation_input_keeps_receipt_separate_from_evaluation(self):
+        consume = Mock(wraps=self.runtime.controller.consume_operation_input)
+        self.runtime.controller.consume_operation_input = consume
+        self.runtime.controller.set_temperature(70, self.now)
+        received_start = self.now
+        self.now += timedelta(seconds=10)
+        started_at = self.now
+        asyncio.run(self.runtime._handle_button_event(
+            "long", self.now, received_at=received_start,
+        ))
+        identity = self.runtime.session.session_id
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.timeline.session_started_at, started_at)
+        received_stop = self.now + timedelta(seconds=1)
+        self.now += timedelta(seconds=10)
+        asyncio.run(self.runtime._handle_button_event(
+            "long", self.now, received_at=received_stop,
+        ))
+        self.assertFalse(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertEqual(self.runtime.session.operation_off_at, self.now)
+        self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
+        for call, received_at, evaluated_at in zip(
+            consume.call_args_list, (received_start, received_stop),
+            (started_at, self.now), strict=True,
+        ):
+            value = call.args[0]
+            self.assertIsNone(value.session_id)
+            self.assertEqual(value.timing.effective_at, received_at)
+            self.assertEqual(value.timing.received_at, received_at)
+            self.assertIsNone(value.timing.first_usable_at)
+            self.assertEqual(value.timing.evaluated_at, evaluated_at)
+
+    def test_button_mode_input_keeps_delayed_manual_and_automatic_session_effects(self):
+        consume = Mock(wraps=self.runtime.controller.consume_control_mode_input)
+        self.runtime.controller.consume_control_mode_input = consume
+        override = Mock(wraps=self.runtime.controller.consume_heater_override_input)
+        self.runtime.controller.consume_heater_override_input = override
+        self.runtime.controller.set_temperature(
+            self.runtime.configuration.parameters.values["sauna_min_temperature_c"], self.now,
+        )
+        previous_session_id = (
+            self.runtime.session.session_id if self.runtime.session else None
+        )
+        received_manual = self.now
+        self.now += timedelta(seconds=10)
+        manual_at = self.now
+        asyncio.run(self.runtime._handle_button_event(
+            "short", manual_at, received_at=received_manual,
+        ))
+        emit_model_input_evidence(
+            self.id() + "/manual", self.runtime,
+            [consume.call_args.args[0], override.call_args.args[0]],
+            previous_session_id=previous_session_id,
+        )
+        identity = self.runtime.session.session_id
+        self.assertEqual(self.runtime.controller.control_mode, "manual")
+        self.assertTrue(self.runtime.controller.heater_override)
+        self.assertTrue(self.runtime.controller.last_decision.heat)
+        self.assertEqual(self.runtime.session.timeline.session_started_at, manual_at)
+        received_automatic = self.now + timedelta(seconds=1)
+        self.now += timedelta(seconds=10)
+        automatic_at = self.now
+        asyncio.run(self.runtime._handle_button_event(
+            "long", automatic_at, received_at=received_automatic,
+        ))
+        emit_model_input_evidence(
+            self.id() + "/automatic", self.runtime, [consume.call_args.args[0]],
+            previous_session_id=identity,
+        )
+        self.assertEqual(self.runtime.controller.control_mode, "automatic")
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertTrue(self.runtime.controller.last_decision.heat)
+        self.assertTrue(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertEqual(self.runtime.session.timeline.session_started_at, manual_at)
+        self.assertEqual(self.runtime.session.base_phases[-1].at, automatic_at)
+        self.assertEqual(self.runtime.session.base_phases[-1].phase, "aufheizen")
+        self.assertEqual(self.runtime.controller.completed_sessions, ())
+        override.assert_called_once()
+        value = override.call_args.args[0]
+        self.assertIs(value.heat, True)
+        self.assertEqual(value.timing.effective_at, received_manual)
+        self.assertEqual(value.timing.received_at, received_manual)
+        self.assertIsNone(value.timing.first_usable_at)
+        self.assertEqual(value.timing.evaluated_at, manual_at)
+        for call, mode, received_at, evaluated_at in zip(
+            consume.call_args_list, ("manual", "automatic"),
+            (received_manual, received_automatic), (manual_at, automatic_at), strict=True,
+        ):
+            value = call.args[0]
+            self.assertEqual(value.mode, mode)
+            self.assertEqual(value.timing.effective_at, received_at)
+            self.assertEqual(value.timing.received_at, received_at)
+            self.assertIsNone(value.timing.first_usable_at)
+            self.assertEqual(value.timing.evaluated_at, evaluated_at)
+
+    def test_waiting_override_commands_keep_three_choices_and_automatic_session(self):
+        self.runtime.controller.set_temperature(60, self.now)
+        self._event("long")
+        identity = self.runtime.session.session_id
+        started_at = self.runtime.session.timeline.session_started_at
+        duration = self.runtime.configuration.parameters.seconds("manual_override_minutes")
+        consume = Mock(wraps=self.runtime.controller.consume_heater_override_input)
+        self.runtime.controller.consume_heater_override_input = consume
+
+        async def command(heat):
+            received_at = self.now
+            await self.runtime._lock.acquire()
+            pending = asyncio.create_task(self.runtime.set_heater_override(heat))
+            await asyncio.sleep(0)
+            self.now += timedelta(seconds=5)
+            self.runtime._lock.release()
+            return received_at, await pending
+
+        for heat in (True, False, None):
+            with self.subTest(heat=heat):
+                received_at, decision = asyncio.run(command(heat))
+                emit_model_input_evidence(
+                    self.id(), self.runtime, [consume.call_args.args[0]],
+                    previous_session_id=identity,
+                )
+                self.assertEqual(decision.at, self.now)
+                self.assertEqual(decision.heat, heat is not False)
+                self.assertEqual(
+                    decision.heat, self.runtime.controller.last_decision.heat,
+                )
+                self.assertIs(self.runtime.controller.heater_override, heat)
+                self.assertTrue(self.runtime.session.operation_enabled)
+                self.assertEqual(self.runtime.session.session_id, identity)
+                self.assertEqual(self.runtime.session.timeline.session_started_at, started_at)
+                value = consume.call_args.args[0]
+                self.assertIs(value.heat, heat)
+                self.assertEqual(value.timing.effective_at, received_at)
+                self.assertEqual(value.timing.received_at, received_at)
+                self.assertIsNone(value.timing.first_usable_at)
+                self.assertEqual(value.timing.evaluated_at, self.now)
+                if heat is None:
+                    self.assertIsNone(self.runtime.controller.heater_override_ends_at)
+                    self.assertEqual(
+                        decision.heat, self.runtime.controller.automatic_decision.heat,
+                    )
+                else:
+                    self.assertEqual(
+                        self.runtime.controller.heater_override_ends_at,
+                        self.now + timedelta(seconds=duration),
+                    )
+        self.assertEqual(consume.call_count, 3)
+        self.assertEqual(self.runtime.controller.completed_sessions, ())
+
+    def test_waiting_button_override_off_and_auto_keep_receipt_and_decision(self):
+        self.runtime.controller.set_temperature(60, self.now)
+        self._event("long")
+        identity = self.runtime.session.session_id
+        started_at = self.runtime.session.timeline.session_started_at
+        consume = Mock(wraps=self.runtime.controller.consume_heater_override_input)
+        self.runtime.controller.consume_heater_override_input = consume
+
+        async def short():
+            received_at = self.now
+
+            async def deliver():
+                async with self.runtime._lock:
+                    await self.runtime._handle_button_event(
+                        "short", self.now, received_at=received_at,
+                    )
+                    await self.runtime._cycle()
+
+            await self.runtime._lock.acquire()
+            pending = asyncio.create_task(deliver())
+            await asyncio.sleep(0)
+            self.now += timedelta(seconds=5)
+            self.runtime._lock.release()
+            await pending
+            return received_at
+
+        async def exercise():
+            for heat in (False, None):
+                with self.subTest(heat=heat):
+                    received_at = await short()
+                    emit_model_input_evidence(
+                        self.id(), self.runtime, [consume.call_args.args[0]],
+                        previous_session_id=identity,
+                    )
+                    value = consume.call_args.args[0]
+                    self.assertIs(value.heat, heat)
+                    self.assertEqual(value.timing.effective_at, received_at)
+                    self.assertEqual(value.timing.received_at, received_at)
+                    self.assertIsNone(value.timing.first_usable_at)
+                    self.assertEqual(value.timing.evaluated_at, self.now)
+                    self.assertIs(self.runtime.controller.heater_override, heat)
+                    self.assertEqual(self.runtime.controller.last_decision.at, self.now)
+                    self.assertEqual(self.runtime.controller.last_decision.heat, heat is None)
+                    self.assertTrue(self.runtime.session.operation_enabled)
+                    self.assertEqual(self.runtime.session.session_id, identity)
+                    self.assertEqual(self.runtime.session.timeline.session_started_at, started_at)
+
+        asyncio.run(exercise())
+        self.assertEqual(consume.call_count, 2)
+        self.assertIsNone(self.runtime.controller.heater_override_ends_at)
+        self.assertEqual(self.runtime.controller.completed_sessions, ())
+
+    def test_override_return_without_receipt_does_not_reuse_earlier_command_time(self):
+        self.runtime.controller.set_temperature(60, self.now)
+        self._event("long")
+        identity = self.runtime.session.session_id
+        asyncio.run(self.runtime.set_heater_override(False))
+        self.assertFalse(self.runtime.controller.last_decision.heat)
+        consume = Mock(wraps=self.runtime.controller.consume_heater_override_input)
+        self.runtime.controller.consume_heater_override_input = consume
+        self.now += timedelta(seconds=5)
+
+        decision = self.runtime._set_heater_override(None, self.now)
+
+        self.assertTrue(decision.heat)
+        self.assertEqual(decision.at, self.now)
+        self.assertIsNone(self.runtime.controller.heater_override)
+        self.assertIsNone(self.runtime.controller.heater_override_ends_at)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        value = consume.call_args.args[0]
+        self.assertIsNone(value.heat)
+        self.assertIsNone(value.timing.effective_at)
+        self.assertIsNone(value.timing.received_at)
+        self.assertIsNone(value.timing.first_usable_at)
+        self.assertEqual(value.timing.evaluated_at, self.now)
+
+    def test_timer_derived_operation_has_no_invented_receipt(self):
+        self._use_binary_input()
+        self._event("long")
+        identity = self.runtime.session.session_id
+        consume = Mock(wraps=self.runtime.controller.consume_operation_input)
+        self.runtime.controller.consume_operation_input = consume
+        self._event("on")
+        self.now += timedelta(
+            seconds=self.runtime.configuration.parameters.values["button_hold_seconds"],
+        )
+        asyncio.run(self.runtime.tick())
+        value = consume.call_args.args[0]
+        self.assertFalse(value.enabled)
+        self.assertIsNone(value.timing.effective_at)
+        self.assertIsNone(value.timing.received_at)
+        self.assertIsNone(value.timing.first_usable_at)
+        self.assertEqual(value.timing.evaluated_at, self.now)
+        self.assertFalse(self.runtime.session.operation_enabled)
+        self.assertEqual(self.runtime.session.session_id, identity)
+        self.assertEqual(self.runtime.controller.light_after_run.session_id, identity)
 
     def test_automatic_idle_heater_command_requires_explicit_mode_change(self):
         with self.assertRaisesRegex(ValueError, "Saunabetrieb"):

@@ -656,6 +656,7 @@ async def async_set_temperature_steps(hass, entry, values):
 async def async_set_control_mode(hass, entry, mode):
     """Switch controller mode and save the matching configuration atomically."""
     runtime = entry.runtime_data
+    received_at = runtime._clock()
     async with runtime.serialized():
         runtime._require_open()
         if runtime.reconfiguring:
@@ -664,7 +665,7 @@ async def async_set_control_mode(hass, entry, mode):
             )
         if not isinstance(mode, str) or mode not in {"automatic", "manual"}:
             raise ValueError("Ungültiger Betriebsmodus")
-        configuration = runtime._set_control_mode(mode)
+        configuration = runtime._set_control_mode(mode, received_at=received_at)
         hass.config_entries.async_update_entry(
             entry, options=configuration.as_options()
         )

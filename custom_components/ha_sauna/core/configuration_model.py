@@ -20,29 +20,18 @@ _SUBGROUP_SOURCES = {
 }
 
 
-def regulation_causes(control_mode, presence_source):
+def regulation_causes(control_mode):
     """Automatische Regelursachen; Messung und Erkennung bleiben davon getrennt."""
     if control_mode != "automatic":
         return ()
-    return (
-        ("gang_heat", "cooling") if presence_source == "ha_presence"
-        else ("gang_heat", "provisional_door_heat", "cooling")
-    )
+    return ("gang_heat", "provisional_door_heat", "cooling")
 
 
-def cooling_presence_policy(control_mode, presence_source):
-    """Gemeinsame Wirkung der führenden Personenquelle auf laufende Kühlung."""
+def cooling_presence_policy(control_mode):
+    """Passive Beschreibung der belegabhängigen Kühlwirkung."""
     if control_mode != "automatic":
         return "none"
-    return (
-        "direct_gang_start" if presence_source == "ha_presence"
-        else "proxy_person_minimum"
-    )
-
-
-def gang_start_interrupts_cooling(control_mode, presence_source):
-    """Nur ein direkter Gangbeginn beendet die Kühlung ohne Mindestrestzeit."""
-    return cooling_presence_policy(control_mode, presence_source) == "direct_gang_start"
+    return "evidence_quality"
 
 
 @dataclass(frozen=True)
@@ -188,15 +177,11 @@ class ConfigurationModel:
 
     @property
     def regulation_causes(self):
-        return regulation_causes(self.control_mode, self.presence_source)
-
-    @property
-    def gang_start_interrupts_cooling(self):
-        return gang_start_interrupts_cooling(self.control_mode, self.presence_source)
+        return regulation_causes(self.control_mode)
 
     @property
     def cooling_presence_policy(self):
-        return cooling_presence_policy(self.control_mode, self.presence_source)
+        return cooling_presence_policy(self.control_mode)
 
     def parameter_applicable(self, definition):
         if isinstance(definition, str):
@@ -229,7 +214,6 @@ class ConfigurationModel:
             "power_sensor_configured": self.power_sensor_configured,
             "button": self.button.as_dict(),
             "regulation_causes": self.regulation_causes,
-            "gang_start_interrupts_cooling": self.gang_start_interrupts_cooling,
             "cooling_presence_policy": self.cooling_presence_policy,
         }
 

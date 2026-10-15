@@ -33,13 +33,16 @@ Im Automatikbetrieb gilt, von oben nach unten:
 2. Angeforderte oder laufende [Ofenkühlung](ofenkuehlung.md): Ofen AUS.
 3. Ausdrückliche vorübergehende Ofenwahl, solange sie gilt.
 4. Aktiver Gang: durchgehende Heizanforderung, auch oberhalb der Thermostatgrenze.
-5. Geeigneter Türschluss bei Gangerkennung aus Temperatur und Feuchte: Mindestheizhilfe.
+5. Geeigneter Türschluss: Mindestheizhilfe.
 6. Thermostat einschließlich Mindestheizzeit und Heizpause.
 
-Bei Gangerkennung aus Temperatur und Feuchte gilt die Ganganforderung schon ab
-der vorläufigen Erkennung.
-Bei direkter Präsenz setzt sie einen bestätigten Gang voraus; Quellausfall nimmt
-nur diese zusätzliche Heizanforderung zurück, ohne den Gang zu beenden.
+Bei vorläufigen und durch Aufguss bestätigten Gängen gilt die Ganganforderung
+aus dem aktiven Gang. Bei Bestätigung durch einen qualifizierten Belegungszustand
+setzt sie weiterhin einen aktuellen verfügbaren qualifizierten Zustandsbeleg
+voraus. Unbekannter Zustand oder fehlende Verfügbarkeit nimmt nur diese
+zusätzliche Heizanforderung zurück, ohne den Gang zu beenden. Qualifizierte
+Abwesenheit allein beendet weder Gang noch Ganganforderung; das Gangende folgt
+den bestehenden Tür- und Lüftungsregeln.
 
 Die Türhilfe fordert nach einem geeigneten Türschluss zusätzliches Heizen an.
 Dafür müssen Öffnung und anschließender Schluss zu demselben Vorgang
@@ -47,8 +50,9 @@ bei Betrieb-EIN in Aufheizen oder Bereit gehören. Bei Türschluss muss die
 Mindesttemperatur erreicht sein. Gangbeginn oder Kühlung verwerfen diesen Vorgang.
 Bis zur tatsächlichen Heizbestätigung bleibt die
 Anforderung widerrufbar, danach gilt die Mindestheizzeit. Betrieb-AUS und
-manuelles Ofen-AUS verwerfen die Türanforderung. Direkte Präsenzführung verwendet
-keine Türhilfe.
+manuelles Ofen-AUS verwerfen die Türanforderung. Die Türhilfe gilt auch bei
+direkter Präsenzführung. Schutz, Heizfreigabe und Temperaturgültigkeit bleiben
+maßgeblich.
 
 ## Licht während der Sitzung und beim Ausschalten
 

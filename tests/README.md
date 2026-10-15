@@ -2,10 +2,12 @@
 
 [Arbeitsregeln zur Prüfung](../AGENTS.md#prüfung)
 
-Tests laufen ausschließlich unter Linux. Die maßgeblichen Versionen,
+Tests laufen ausschließlich unter Linux in GitHub Actions auf GitHub-gehosteten
+Runnern. Die maßgeblichen Versionen,
 Abhängigkeiten und Zeitgrenzen stehen in der
 [CI-Konfiguration](../.github/workflows/tests.yml). Alle folgenden Befehle werden
-vom Repository-Hauptverzeichnis aus und jeweils als eigener Prozess ausgeführt.
+in diesen GitHub-Jobs vom Repository-Hauptverzeichnis aus und jeweils als eigener
+Prozess ausgeführt. Lokale oder per Remote-Shell gestartete Tests sind nicht vorgesehen.
 Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 ## Prüfebenen
@@ -21,7 +23,7 @@ Für jeden Prozess wird sein tatsächlicher Exitcode festgehalten.
 
 ## Fachkern und JavaScript
 
-Fachkern und Panelmethoden werden wie in der CI ausgeführt:
+Fachkern und Panelmethoden werden in GitHub Actions ausgeführt:
 
 ```sh
 python -m unittest discover -s tests -v
@@ -30,6 +32,43 @@ python -m unittest discover -s tests -v
 ```sh
 node --test tests/panel_*.test.js
 ```
+
+Die Benachrichtigungsgrundformen werden durch `test_notification_recipients.py`
+und `test_notification_exchange.py` im Fachkernlauf erfasst. Die synthetischen
+Eingaben prüfen Identität, gemeinsame Eignungsvalidierung, Mengenbildung und
+Nachrichtenzuordnung. Diese Prüfungen enthalten keinen HA-Adapter und belegen
+weder Empfang noch Rückmeldungen eines tatsächlichen Companion-Clients.
+
+Die [Modellübergaben](../docs/modelluebergaben.md) werden durch
+`test_model_handoff.py`, `test_control_handoff.py`,
+`test_observation_handoff.py`, `test_thermal_handoff.py`,
+`test_input_handoff.py`, `test_interaction_handoff.py`,
+`test_system_handoff.py` und `test_presentation_handoff.py` mit vorhandenen
+Kern-, Archiv- und Vorschaufixtures geprüft. Der vorhandene Integrationstest
+`test_direct_presence_ids_are_private_in_live_and_archived_public_responses`
+in `integration/test_panel_api.py` prüft zusätzlich die vollständige Übernahme
+einer echten StateView-HTTP-Antwort und die unveränderte öffentliche Projektion.
+Die Fälle verwenden tatsächliche Modellrückgaben und prüfen vollständige Belege,
+Identitätsbindung, Feldtypen und Ablösung veränderlicher Quelldaten. Die
+explizite Übergabe an einen Testverbraucher belegt den Datenvertrag; eine
+automatische Ereignissammlung oder ein Benachrichtigungsablauf ist nicht
+Bestandteil dieser Prüfungen.
+Die Taster- und Korrelationsfälle prüfen auch, dass eine Beobachtung den
+nächsten tatsächlichen Verarbeitungsschritt nicht verbraucht. Quellenfreie
+Eingangsformen bewahren unbekannte Werte, unterscheidbare Vorkommnisse und
+separate Zeiten. Die identische Übergabe zweier explizit gewählter Fachwerte
+belegt keine bereits implementierte Quellenwahl oder Controllerumstellung.
+
+Der HA-Job legt mit `HA_SAUNA_HANDOFF_EVIDENCE` zusätzlich das Artefakt
+`ha-system-forms/system-forms.json` an. Es enthält die vollständigen tatsächlichen
+Admin-/Public-StateView-, `Archive.read`- und Archiv-API-Rückgaben einschließlich
+Verlaufsprojektion sowie ihre Form-/Wirewerte. Das Manifest nennt Testfall,
+isolierte synthetische HA-Fixture und ausgecheckten GitHub-Commit. Jede
+Beobachtung benennt ihren Erzeuger und die verwendete Form; Original und
+Wirewert bleiben direkt vergleichbar. Die Aufbewahrung in Actions beträgt
+sieben Tage. Diese Werte belegen die Übernahme vorhandener Produzentenwerte,
+keinen angeschlossenen Laufzeitverbraucher und keine reale Geräte- oder
+Companion-Verbindung.
 
 Szenarien und die gebundenen realen Replay-Aufzeichnungen sind im Checkout enthalten.
 Die Manifeste binden Daten und Bewertungen durch Prüfsummen. Fehlende oder
@@ -83,8 +122,35 @@ SAUNA_SESSION_EVIDENCE=/tmp/ha-sauna-sessions python -m unittest discover -s tes
 
 `SAUNA_SESSION_EVIDENCE` speichert pro Lauf jede gebundene Bewertung mit Sollwert,
 Ist-Abweichung, Bedienfolge und ausgegebenen Diensten. Die CI führt jede gebundene
-Grund-ID einschließlich sämtlicher Varianten aus. Für die Fehlersuche auf Linux kann
+Grund-ID einschließlich sämtlicher Varianten aus. Für die Fehlersuche in GitHub Actions kann
 `SAUNA_SESSION_CASE` einzelne IDs auswählen.
+
+Die vorhandenen synthetischen Fälle `G01` und `G01-proxy` enthalten zusätzlich
+`producer_controller_trace`. Transparente Wrapper beobachten ausschließlich
+tatsächliche `consume_*_input`-Aufrufe des Controllers; Rückgaben und FIFO bleiben
+erhalten. Die Auswahl behält die erste Wert-/Unknown-Kategorie je Consumer und
+Änderungen diskreter Steuerzustände. Fortlaufende Temperatur-, Zeit- und
+Energieänderungen allein erzeugen keine weitere Zeile. Gesamt-, gespeicherte und
+ausgelassene Aufrufzahlen sind getrennt ausgewiesen; dies ist kein vollständiges
+Aufrufprotokoll. Jede gespeicherte Zeile zeigt den tatsächlichen Producer,
+normalisierten Input einschließlich `null` und Originalzeiten sowie die
+unmittelbar beobachtete kleine Controllerfolge. Der referenzierte abgeschlossene
+Verarbeitungsschritt zeigt anschließend Heat/Grund, Phase, Gang, letztes
+Heizintervall, Energieaggregat, Kühlbeginn und Bedienzustand. Bestehende
+Originalereignisse bleiben in `detections` und `consumer_events` des Fallartefakts.
+IDs werden nur im Trace durch stabile lokale Aliase in Reihenfolge ihres ersten
+Auftretens ersetzt; Produktwerte bleiben unverändert. Der Trace verwendet die
+gebundene virtuelle Uhr und deterministische JSON-Serialisierung.
+
+`run-metadata.json` trennt PR-Head und dessen Tree vom tatsächlich ausgecheckten
+Commit und Tree und nennt deren Vergleich, Ref, Run, Versuch, Job und Fall.
+`process.log`, `exit-code.txt` und `process-completion.json` belegen den eigenen
+Testprozess und seine Rückkehr; bei Abbruch vor Prozessende fehlt der
+Abschlussbeleg. Der endgültige Jobstatus steht zusätzlich in GitHub Actions.
+Die Sitzungsartefakte belegen synthetische Fixtures mit ersetztem HA-Transport,
+keine Hardware- oder Companionausführung. `runtime_consumer_connected` ist nur
+bei tatsächlich beobachteten Eingangsaufrufen wahr. Der getrennte
+Systemformnachweis bleibt ein Formnachweis ohne diese Laufzeitaussage.
 
 [`coverage_ownership.json`](coverage_ownership.json) bindet entfernte
 Fachduplikate an ihre Sitzungsbewertungen. Ein Metatest prüft, dass die genannten
@@ -132,7 +198,7 @@ Ofenwahl. Die Lichtwerte folgen der produktiven Lichtplanung. „Steuerung folge
 führt die simulierte Ofenrückmeldung nach; „Ein“, „Aus“ und „Unbekannt“ halten sie
 fest. Beendete Sitzungen bleiben bis zum Zurücksetzen des Szenarios im Verlauf.
 Nicht angebundene Einstellungsaktionen zeigen eine
-Fehlermeldung. Automatisierte Prüfungen laufen weiterhin ausschließlich unter Linux.
+Fehlermeldung. Automatisierte Prüfungen laufen ausschließlich in GitHub Actions.
 
 ## Sitzungsverlauf im Browser
 

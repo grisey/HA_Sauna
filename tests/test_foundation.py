@@ -11,6 +11,7 @@ import unittest
 from custom_components.ha_sauna.bindings import BindingError, Bindings, ROLES, ROLE_BY_KEY, metadata_error, validate_metadata
 from custom_components.ha_sauna.core.controller import Controller
 from custom_components.ha_sauna.core.defaults import section
+from custom_components.ha_sauna.core.input_handoff import InputTiming, OccupancyInput
 from custom_components.ha_sauna.core.models import Deadline, HeatingTime, Measurement, Position, Quantity, Session
 from custom_components.ha_sauna.core.parameters import BY_KEY, DEFINITIONS, ParameterError, Parameters
 from custom_components.ha_sauna.core.timeline import Confirmation, Event, Kind
@@ -50,6 +51,14 @@ def metadata(binding):
 def event(key, kind, seconds, session="s"):
     at = T0 + timedelta(seconds=seconds)
     return Event(key, session, kind, at, at)
+
+
+def selected_occupancy(report, evaluated_at):
+    """Pass an already selected report across the source-free control boundary."""
+    return OccupancyInput(
+        report.occupancy, report.available, True, report.report_id,
+        InputTiming(report.effective_at, report.received_at, None, evaluated_at),
+    )
 
 
 class ParameterTests(unittest.TestCase):

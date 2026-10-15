@@ -29,6 +29,14 @@ from .core.contracts import ConsumerEvent, PresenceReport
 from .core.controller import Controller, Result
 from .core.defaults import instance_default
 from .core.detector import Detector
+from .core.input_handoff import (
+    ControlModeInput,
+    HeaterOverrideInput,
+    InputTiming,
+    OccupancyInput,
+    OperationInput,
+    TemperatureInput,
+)
 from .core.models import Position, Session
 from .core.parameters import BY_KEY, Parameters
 from .core.presence import PresenceProjection, ProxyPresenceSource
@@ -291,8 +299,6 @@ class SaunaRuntime:
             control_mode=configuration.control_mode,
             temperature_steps=configuration.temperature_steps,
             decision_clock=lambda: self._clock(),
-            presence_source=configuration.presence_source,
-            presence_entity=configuration.bindings.values.get("presence"),
         )
         self._lock = asyncio.Lock()
         self._tick_pending = False
@@ -316,6 +322,7 @@ class SaunaRuntime:
         self._archive_signature = None
         self._saved_decisions = 0
         self.presence = PresenceProjection()
+        self._selected_presence_report = None
         self.presence_adapter = None
         self._saved_consumer_events = 0
         self._consumer_ids = set()
@@ -483,15 +490,20 @@ class SaunaRuntime:
                 if self.controller._last_at is None or at >= self.controller._last_at:
                     self.controller.advance(at, finish_confirmation_batch=True)
 
+            person_evidence_qualified = self.configuration.presence_source != "ha_presence"
             detector.advance(
                 through,
                 enabled=self.session.operation_enabled,
-                allowed=self.controller.recognition_allowed,
+                allowed=lambda kind: self.controller.recognition_allowed(
+                    kind, person_evidence_qualified=person_evidence_qualified,
+                ),
                 on_detection=detected,
                 heating_intervals=lambda: self.session.heating.intervals,
                 heating_gates=self._detector_heating_gates,
                 recognition_context=self.controller.recognition_context_at,
-                allowed_at=self.controller.recognition_allowed_at,
+                allowed_at=lambda kind, at: self.controller.recognition_allowed_at(
+                    kind, at, person_evidence_qualified=person_evidence_qualified,
+                ),
                 before_sample=before_sample,
                 after_sample=after_sample,
                 include_current=include_current,
@@ -576,12 +588,16 @@ class SaunaRuntime:
                 # including repeated roles at one time. The detector still gets
                 # all same-time channels before any control edge is booked.
                 item[2] = (
-                    regulation.value if regulation is not None else None,
+                    regulation,
                     self.device.regulation_valid_until(regulation),
                 )
             # Recognition consumes the same final received raster as the
             # detector. Thermostat/readiness and control edges retain FIFO.
-            with self.controller.recognition_temperature_raster(*packet[-1][2]):
+            final_regulation, final_valid_until = packet[-1][2]
+            with self.controller.recognition_temperature_raster(
+                final_regulation.value if final_regulation is not None else None,
+                final_valid_until,
+            ):
                 for event, originals, regulation_input in packet:
                     self._sync_detector()
                     # Original provenance follows the received FIFO, including a
@@ -596,8 +612,19 @@ class SaunaRuntime:
                     action_at = max(received_at, self.controller._last_at or received_at)
                     # Book only the received regulation input here. Protection
                     # monitoring and actuator output remain in the wall-time cycle.
-                    temperature, valid_until = regulation_input
-                    self.controller.set_temperature(temperature, action_at, valid_until=valid_until)
+                    regulation, valid_until = regulation_input
+                    self.controller.consume_temperature_input(TemperatureInput(
+                        value=regulation.value if regulation is not None else None,
+                        valid_until=valid_until,
+                        timing=InputTiming(
+                            effective_at=(regulation.measured_at or regulation.received_at
+                                          if regulation is not None else None),
+                            received_at=(regulation.received_at
+                                         if regulation is not None else None),
+                            first_usable_at=None,
+                            evaluated_at=action_at,
+                        ),
+                    ))
                     entity_id = event.data["entity_id"]
                     for role, source in self.device.bindings.items():
                         if source == entity_id and role not in measurement_roles:
@@ -620,8 +647,13 @@ class SaunaRuntime:
                             self._record_physical_rejection(error)
                     elif action is not None:
                         try:
-                            self._prepare_operation(action, physical=True, at=action_at)
-                            self._set_operation(action, at=action_at, refresh_device=False)
+                            self._prepare_operation(
+                                action, physical=True, at=action_at, received_at=received_at,
+                            )
+                            self._set_operation(
+                                action, at=action_at, received_at=received_at,
+                                refresh_device=False,
+                            )
                         except ValueError as error:
                             self._record_physical_rejection(error)
                     self._sync_detector()
@@ -701,6 +733,10 @@ class SaunaRuntime:
     def _record_presence(self, report, *, session_id=None):
         if not self.presence.accept(report):
             return
+        if self.configuration.presence_source == "proxy" and report.source == "proxy":
+            # Projection of an original event is not durable occupancy evidence.
+            # In particular unknown/retraction never asserts absence.
+            self._consume_presence_report(report, qualified=False, defer_evaluation=True)
         if session_id is None and self.session is not None:
             session_id = self.session.session_id
         event = ConsumerEvent(
@@ -710,6 +746,25 @@ class SaunaRuntime:
         if self._publish_consumer(event) and self.archive:
             self.archive.append("presence", report.received_at, report, event.session_id)
 
+    def _consume_presence_report(self, report, *, qualified, defer_evaluation=False):
+        accepted = self.controller.consume_occupancy_input(
+            OccupancyInput(
+                occupancy=report.occupancy,
+                available=report.available,
+                qualified_presence=qualified,
+                report_id=report.report_id,
+                timing=InputTiming(
+                    effective_at=report.effective_at,
+                    received_at=report.received_at,
+                    first_usable_at=None,
+                    evaluated_at=self._clock(),
+                ),
+            ),
+            defer_evaluation=defer_evaluation,
+        )
+        if accepted:
+            self._selected_presence_report = report
+
     async def accept_presence(self, report):
         """Serialize direct occupancy through the same controller and output cycle."""
         async with self._lock:
@@ -717,9 +772,15 @@ class SaunaRuntime:
                 return
             self._record_presence(report)
             direct = self.configuration_model.direct_presence
-            accepted = self.controller.observe_direct_presence(
-                report, self._clock(), defer_evaluation=direct,
+            selected = (
+                direct
+                and report.source == self.configuration.bindings.values.get("presence")
+                and report.assertion == "direct_presence"
             )
+            if selected:
+                self._consume_presence_report(
+                    report, qualified=True, defer_evaluation=direct,
+                )
             if direct:
                 # Catch-up recognition must use the report already received by
                 # this callback, without advancing past queued device inputs.
@@ -728,19 +789,15 @@ class SaunaRuntime:
                         await self._drain_device_inputs()
                         self._deliver_detection(self._clock())
                     await self._run_cycle()
-            elif accepted:
-                await self._run_cycle()
             self.notify()
 
     def _process_event(self, event, *, defer_confirmation=False, recognition_at=None):
         report = (ProxyPresenceSource.present(event)
                   if event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK) else None)
-        # The source adapter retains the event identity and both original times.
-        result = (self.controller.process_presence(
-            report, event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
-        ) if report is not None else self.controller.process(
+        result = self.controller.process(
             event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
-        ))
+            person_evidence_qualified=self.configuration.presence_source != "ha_presence",
+        )
         if result.changed:
             self._report_detector_heating(event.booking_at)
         if report is not None and result.changed:
@@ -810,7 +867,7 @@ class SaunaRuntime:
     def presence_status(self):
         model = self.configuration_model
         return {
-            "current": (self.controller.direct_presence
+            "current": (self._selected_presence_report
                         if model.direct_presence
                         else self.presence.current),
             "external": (
@@ -977,7 +1034,10 @@ class SaunaRuntime:
                 "Einstellungen können erst nach Ende der Saunasitzung geändert werden"
             )
 
-    def _set_operation(self, enabled, *, preserve_button=False, at=None, refresh_device=True):
+    def _set_operation(
+        self, enabled, *, preserve_button=False, at=None, received_at=None,
+        refresh_device=True,
+    ):
         at = self._clock() if at is None else at
         if enabled and self.reconfiguring:
             raise ValueError(
@@ -1003,7 +1063,16 @@ class SaunaRuntime:
             "Saunabetrieb %s angefordert.",
             "einschalten" if enabled else "ausschalten",
         )
-        result = self.controller.set_operation(enabled, at)
+        result = self.controller.consume_operation_input(OperationInput(
+            enabled=enabled,
+            session_id=None,
+            timing=InputTiming(
+                effective_at=received_at,
+                received_at=received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
         self._report_detector_heating(at)
         if enabled:
             self._button_start_hold_session_id = None
@@ -1016,7 +1085,7 @@ class SaunaRuntime:
                 self.save_configuration(self.configuration)
         return result
 
-    def _prepare_operation(self, enabled, *, physical=False, at=None):
+    def _prepare_operation(self, enabled, *, physical=False, at=None, received_at=None):
         at = self._clock() if at is None else at
         if enabled and self.reconfiguring:
             raise ValueError(
@@ -1029,7 +1098,7 @@ class SaunaRuntime:
         )
         if manual_transition:
             self._set_control_mode(
-                "automatic", at=at,
+                "automatic", at=at, received_at=received_at,
                 restore_program=self.configuration.button_program == "current",
             )
             self.log.info(
@@ -1087,7 +1156,7 @@ class SaunaRuntime:
         if self.device:
             self.device.values = parameters.values
 
-    def _toggle_button_heater_override(self, now, *, refresh_device=True):
+    def _toggle_button_heater_override(self, now, *, received_at=None, refresh_device=True):
         """Toggle the physical-button override while the runtime lock is held."""
         if self.device and refresh_device:
             self.device.refresh(now)
@@ -1096,7 +1165,9 @@ class SaunaRuntime:
             not self.controller.automatic_operation_enabled
             and self.controller.control_mode != "manual"
         ):
-            self._set_control_mode("manual", preserve_light=True, at=now)
+            self._set_control_mode(
+                "manual", preserve_light=True, at=now, received_at=received_at,
+            )
             if self.save_configuration:
                 self.save_configuration(self.configuration)
         # The current model has only the active Ofenkühlung (`after_run`).
@@ -1109,9 +1180,9 @@ class SaunaRuntime:
             self.controller.heater_override is not None
             and self.controller.control_mode != "manual"
         ):
-            return self._set_heater_override(None, now)
+            return self._set_heater_override(None, now, received_at=received_at)
         if self.controller.control_mode != "manual" and cooling_or_after_run:
-            return self._set_heater_override(True, now)
+            return self._set_heater_override(True, now, received_at=received_at)
         if self.controller.control_mode == "manual":
             # A thermostat may currently be satisfied (contactor OFF) while
             # remaining enabled. The button toggles its enabled state.
@@ -1124,7 +1195,7 @@ class SaunaRuntime:
             if current is None and self.controller.last_decision is not None:
                 current = self.controller.last_decision.heat
         value = not bool(current)
-        return self._set_heater_override(value, now)
+        return self._set_heater_override(value, now, received_at=received_at)
 
     def _reset_button_gestures(self):
         if getattr(self, "device", None) is not None:
@@ -1166,19 +1237,22 @@ class SaunaRuntime:
             event, enabled, gesture_at, supports_hold_feedback=supports_hold_feedback,
         ):
             await self._apply_button_action(
-                action, now, refresh_device=refresh_device,
+                action, now, received_at=received_at, refresh_device=refresh_device,
             )
 
-    async def _apply_button_action(self, action, now, *, refresh_device=True):
+    async def _apply_button_action(
+        self, action, now, *, received_at=None, refresh_device=True,
+    ):
         """Apply a semantic button action; caller owns ``_lock``."""
         if action in (START_STANDARD_PROGRAM, START_HOLD):
             if self._button_hold_session_id is not None:
                 if self.device:
                     self.device.finish_button_hold_light(self._button_hold_session_id)
                 self._button_hold_session_id = None
-            self._prepare_operation(True, physical=True, at=now)
+            self._prepare_operation(True, physical=True, at=now, received_at=received_at)
             self._set_operation(
                 True, preserve_button=True, at=now, refresh_device=refresh_device,
+                received_at=received_at,
             )
             if action == START_HOLD:
                 self._button_start_hold_session_id = self.session.session_id
@@ -1193,11 +1267,20 @@ class SaunaRuntime:
                 self.device.finish_button_hold_light(session_id)
         elif action == HEATER_TOGGLE_OVERRIDE:
             self._toggle_button_heater_override(
-                now, refresh_device=refresh_device,
+                now, received_at=received_at, refresh_device=refresh_device,
             )
         elif action == END_HOLD and self.session is not None:
             session_id = self.session.session_id
-            self.controller.set_operation(False, now)
+            self.controller.consume_operation_input(OperationInput(
+                enabled=False,
+                session_id=None,
+                timing=InputTiming(
+                    effective_at=received_at,
+                    received_at=received_at,
+                    first_usable_at=None,
+                    evaluated_at=now,
+                ),
+            ))
             self._button_hold_session_id = session_id
             if self.device:
                 self.device.begin_button_hold_light(session_id)
@@ -1211,18 +1294,28 @@ class SaunaRuntime:
                 if light is not None and light.session_id == session_id:
                     self.controller.start_session_light(session_id, now)
             elif self.session is not None:
-                self.controller.set_operation(False, now)
+                self.controller.consume_operation_input(OperationInput(
+                    enabled=False,
+                    session_id=None,
+                    timing=InputTiming(
+                        effective_at=received_at,
+                        received_at=received_at,
+                        first_usable_at=None,
+                        evaluated_at=now,
+                    ),
+                ))
 
     async def set_operation(self, enabled: bool):
+        received_at = self._clock()
         async with self.serialized():
             self._require_open()
             self._prepare_operation(enabled)
-            result = self._set_operation(enabled)
+            result = self._set_operation(enabled, received_at=received_at)
             await self._cycle()
             return result
 
     def _set_control_mode(
-        self, mode, *, preserve_light=False, restore_program=True, at=None,
+        self, mode, *, preserve_light=False, restore_program=True, at=None, received_at=None,
     ):
         """Apply a mode and its output initialization while holding the lock."""
         at = self._clock() if at is None else at
@@ -1232,7 +1325,15 @@ class SaunaRuntime:
             )
         previous_mode = self.controller.control_mode
         previous_session = self.session
-        self.controller.set_control_mode(mode, at)
+        self.controller.consume_control_mode_input(ControlModeInput(
+            mode=mode,
+            timing=InputTiming(
+                effective_at=received_at,
+                received_at=received_at,
+                first_usable_at=None,
+                evaluated_at=at,
+            ),
+        ))
         if previous_mode != mode and previous_session is not None and self.archive:
             # Keep the manual/current configuration as its own revision before
             # the same recording continues under the newly selected mode.
@@ -1348,6 +1449,7 @@ class SaunaRuntime:
 
     async def set_heater_override(self, value: bool | None):
         """Apply a manual heater selection through the serialized runtime path."""
+        received_at = self._clock()
         async with self.serialized():
             self._require_open()
             now = self._clock()
@@ -1364,18 +1466,26 @@ class SaunaRuntime:
                 and self.controller.heater_override in (None, value)
             ):
                 return self.controller.last_decision
-            decision = self._set_heater_override(value, now)
+            decision = self._set_heater_override(value, now, received_at=received_at)
             await self._cycle()
             return decision
 
-    def _set_heater_override(self, value, now):
+    def _set_heater_override(self, value, now, *, received_at=None):
         """UI and physical inputs share command validation and archive assignment."""
         try:
             self._validate_heater_override(value)
         except ValueError as error:
             raise HeaterOverrideRejected(str(error)) from error
         previous_id = self.session.session_id if self.session else None
-        decision = self.controller.set_heater_override(value, now)
+        decision = self.controller.consume_heater_override_input(HeaterOverrideInput(
+            heat=value,
+            timing=InputTiming(
+                effective_at=received_at,
+                received_at=received_at,
+                first_usable_at=None,
+                evaluated_at=now,
+            ),
+        ))
         if value is True and self.device:
             self.device.faults.pop("start_rejected", None)
         self.log.info("heater_override", "Manuelle Heizwahl: %s.", value)
@@ -1534,7 +1644,16 @@ class SaunaRuntime:
                 failures.append(error)
             if self.device:
                 try:
-                    self.controller.set_operation(False, self._clock())
+                    self.controller.consume_operation_input(OperationInput(
+                        enabled=False,
+                        session_id=None,
+                        timing=InputTiming(
+                            effective_at=None,
+                            received_at=None,
+                            first_usable_at=None,
+                            evaluated_at=self._clock(),
+                        ),
+                    ))
                     # The shutdown decision and any gang end belong to the
                     # still-open originating archive, including a retry.
                     self._publish_controller_events()

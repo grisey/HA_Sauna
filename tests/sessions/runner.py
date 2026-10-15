@@ -14,11 +14,14 @@ import hashlib
 import json
 import math
 import sqlite3
+import sys
 from bisect import bisect_right
 from collections import Counter
 from contextlib import closing
 from copy import deepcopy
+from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -54,6 +57,11 @@ BINDINGS = {
     "presence": "binary_sensor.fixture_presence",
     "control_input": "event.fixture_button",
 }
+TRACE_CASES = {"G01", "G01-proxy"}
+TRACE_CONSUMERS = (
+    "temperature", "heating_feedback", "contactor_feedback", "power_feedback",
+    "occupancy", "operation", "control_mode", "heater_override",
+)
 
 
 def read_json(path):
@@ -241,6 +249,9 @@ class SessionRun:
             button_session_gesture=spec.get("button_session_gesture", "long"),
         )
         self.runtime = SaunaRuntime(configuration, lambda: self.now)
+        self.producer_controller_trace = None
+        if case.get("base_id", case["id"]) in TRACE_CASES:
+            self._observe_controller_inputs()
         self.hass = SimpleNamespace(
             states=SimpleNamespace(get=self.states.get),
             services=SimpleNamespace(async_call=self.service),
@@ -263,6 +274,197 @@ class SessionRun:
             "elevation": spec.get("sun_elevation", 10 if spec.get("daylight") else -10),
         })
         self._temporary = TemporaryDirectory(prefix="sauna-session-")
+
+    def _observe_controller_inputs(self):
+        """Observe existing calls, without feeding values or changing their FIFO."""
+        self._trace_aliases = {}
+        self._trace_categories = set()
+        self._trace_previous_control = None
+        self._trace_sequence = 0
+        self._trace_active = True
+        self.producer_controller_trace = {
+            "schema_version": 1,
+            "fixture": {
+                "id": self.case["id"],
+                "base_id": self.case.get("base_id", self.case["id"]),
+                "path": str(self.case["_path"].relative_to(ROOT)),
+                "sha256": hashlib.sha256(self.case["_path"].read_bytes()).hexdigest(),
+                "presence_selection": self.case["configuration"]["presence_source"],
+                "origin": ORIGIN.isoformat(),
+            },
+            "scope": {
+                "synthetic_fixture": True,
+                "ha_transport_replaced": True,
+                "hardware_verified": False,
+                "companion_verified": False,
+                "runtime_consumer_connected": False,
+            },
+            "selection": (
+                "First input value/unknown category per consumer and discrete control "
+                "changes; continuous temperature, elapsed time and energy changes "
+                "alone are omitted. Counts include every actual call, in call order."
+            ),
+            "call_counts": {"total": 0, "recorded": 0, "omitted": 0},
+            "identity_projection": (
+                "Existing IDs are replaced only in this trace by case/kind/first-seen "
+                "ordinal aliases; no product IDs or inputs are modified."
+            ),
+            "calls_by_consumer": {},
+            "rows": [],
+            "completed_steps": [],
+        }
+        for kind in TRACE_CONSUMERS:
+            name = f"consume_{kind}_input"
+            original = getattr(self.runtime.controller, name)
+
+            def observe(value, *args, _original=original, _name=name, **kwargs):
+                failure = None
+                consumer_error = None
+                try:
+                    return _original(value, *args, **kwargs)
+                except BaseException as error:
+                    consumer_error = error
+                    failure = f"{type(error).__name__}: {error}"
+                    raise
+                finally:
+                    if self._trace_active:
+                        try:
+                            caller = sys._getframe(1)
+                            producer = (f"{caller.f_globals['__name__']}."
+                                        f"{caller.f_code.co_qualname}")
+                            self._record_controller_input(
+                                _name, value, kwargs, producer, failure,
+                            )
+                        except BaseException as evidence_error:
+                            if consumer_error is None:
+                                raise
+                            consumer_error.add_note(
+                                f"Input evidence recording also failed: "
+                                f"{type(evidence_error).__name__}: {evidence_error}"
+                            )
+
+            setattr(self.runtime.controller, name, observe)
+
+    def _record_controller_input(self, name, value, options, producer, failure):
+        trace = self.producer_controller_trace
+        self._trace_sequence += 1
+        counts = trace["calls_by_consumer"].setdefault(
+            name, {"total": 0, "recorded": 0, "omitted": 0},
+        )
+        counts["total"] += 1
+        trace["call_counts"]["total"] += 1
+        trace["scope"]["runtime_consumer_connected"] = True
+        # Categories retain unknown distinctly; varying numbers do not
+        # reproduce an entire measurement curve in the compact trace.
+        category = (name, tuple(
+            (field.name, item if item is None or isinstance(item, (bool, Enum))
+             or (isinstance(item, str) and not field.name.endswith("_id"))
+             else type(item).__name__)
+            for field in fields(value)
+            if field.name not in ("timing", "valid_until")
+            for item in (getattr(value, field.name),)
+        ))
+        state = self._trace_control()
+        discrete = {key: item for key, item in state.items()
+                    if key not in ("energy", "heating_elapsed_seconds", "decision_at")}
+        reasons = []
+        if category not in self._trace_categories:
+            reasons.append("first_input_category")
+        if discrete != self._trace_previous_control:
+            reasons.append("discrete_control_change")
+        if failure is not None:
+            reasons.append("consumer_exception")
+        self._trace_categories.add(category)
+        self._trace_previous_control = discrete
+        disposition = "recorded" if reasons else "omitted"
+        counts[disposition] += 1
+        trace["call_counts"][disposition] += 1
+        if reasons:
+            trace["rows"].append({
+                "sequence": self._trace_sequence,
+                "consumer": name,
+                "producer": producer,
+                "t": self.seconds,
+                "retained_because": reasons,
+                "input": self._trace_value(value),
+                "consumer_options": self._trace_value(options),
+                "consumer_error": failure,
+                "after_consumer": state,
+                "completed_step": None,
+            })
+
+    def _trace_value(self, value, name=None):
+        if value is None:
+            return None
+        if name in ("session_id", "report_id", "gang_id", "phase_id"):
+            aliases = self._trace_aliases.setdefault(name, {})
+            if value not in aliases:
+                aliases[value] = f"{self.case['id']}/{name}/{len(aliases) + 1}"
+            return aliases[value]
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Enum):
+            return value.value
+        if is_dataclass(value):
+            return {field.name: self._trace_value(getattr(value, field.name), field.name)
+                    for field in fields(value)}
+        if isinstance(value, dict):
+            return {key: self._trace_value(item, key) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [self._trace_value(item) for item in value]
+        return value
+
+    def _trace_control(self):
+        c = self.runtime.controller
+        session = c.session or (c.completed_sessions[-1] if c.completed_sessions else None)
+        active = session.timeline.active if session else None
+        heating = session.heating if session else None
+        cooling = session.after_run if session else None
+        decision = c.last_decision
+        return self._trace_value({
+            "session_id": session.session_id if session else None,
+            "recording": c.session is not None,
+            "operation_enabled": session.operation_enabled if session else None,
+            "control_mode": c.control_mode,
+            "heater_override": c.heater_override,
+            "phase": c.phase,
+            "heat": decision.heat if decision else None,
+            "heat_reason": decision.reason if decision else None,
+            "decision_at": decision.at if decision else None,
+            "gang_id": active.gang_id if active else None,
+            "gang_count": session.timeline.gang_count if session else 0,
+            "heating_feedback": heating.reported_heating if heating else None,
+            "contactor_feedback": c.contactor,
+            "heating_interval_count": len(heating.intervals) if heating else 0,
+            "last_heating_interval": (heating.intervals[-1]
+                                      if heating and heating.intervals else None),
+            "heating_elapsed_seconds": heating.elapsed_seconds if heating else None,
+            "energy": session.energy if session else None,
+            "cooling": ({
+                "phase_id": cooling.phase_id,
+                "requested_at": cooling.requested_at,
+                "started_at": cooling.started_at,
+                "pending_start": cooling.pending_start,
+            } if cooling else None),
+        })
+
+    def _complete_trace_step(self, observation):
+        trace = self.producer_controller_trace
+        if trace is None:
+            return
+        pending = []
+        for row in reversed(trace["rows"]):
+            if row["completed_step"] is not None:
+                break
+            pending.append(row)
+        if pending:
+            index = len(trace["completed_steps"]) + 1
+            for row in pending:
+                row["completed_step"] = index
+            trace["completed_steps"].append({
+                "index": index, "t": self.seconds, "observation": observation,
+                "control": self._trace_control(),
+            })
 
     @staticmethod
     def save_options(entry, *, options):
@@ -437,7 +639,7 @@ class SessionRun:
             "proxy_person_signal_count": sum(
                 event.kind in (Kind.PERSON_WEAK, Kind.PERSON_STRONG, Kind.INFUSION)
                 for s in all_sessions for event in s.timeline.processed
-            ) if c.presence_source == "proxy" else 0,
+            ) if r.configuration_model.presence_source == "proxy" else 0,
             "cooling_active": bool(session and session.after_run),
             "cooling_duration_s": cooling.required_seconds if cooling else None,
             "cooling_elapsed_s": cooling.elapsed_seconds if cooling else None,
@@ -496,6 +698,7 @@ class SessionRun:
             for role in ("heater", "light"):
                 self.device.ingest(role, self.states[BINDINGS[role]], self.now, initial=True)
             self.device.refresh(self.now)
+            self._complete_trace_step("initial_refresh")
             await self.runtime.start_archive(Path(self._temporary.name) / "sessions.sqlite", "fixture")
             for t, _, _, kind, payload in events:
                 if t < 0:
@@ -522,6 +725,7 @@ class SessionRun:
                             raise AssertionError(f"Expected rejection at {t}: {payload['name']}")
                 else:
                     await self.runtime.tick()
+                self._complete_trace_step(kind)
                 if transition_checks:
                     # Observe the completed input handler before its simulated
                     # actuator acknowledgement or any subsequent timer step.
@@ -541,6 +745,7 @@ class SessionRun:
                             "counter_after": after[counter],
                         })
                 await self.feedback()
+                self._complete_trace_step("simulated_actuator_acknowledgement")
                 if kind == "tick":
                     self.snapshots.append(self.snapshot())
             self.runtime.persist()
@@ -554,6 +759,8 @@ class SessionRun:
             if preservation_before is not None:
                 self._verify_preserved_measurements(samples, stored, preservation_before)
         finally:
+            self._complete_trace_step("fixture_end_before_teardown")
+            self._trace_active = False
             # Preserve the state at failure/end before adapter teardown can
             # close an unfinished session and obscure the original failure.
             self.final_sessions = [plain(s) for s in self.runtime.controller.completed_sessions]

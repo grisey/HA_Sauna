@@ -10,14 +10,19 @@ from math import isfinite
 from uuid import uuid4
 
 from . import energy, heating, thermostat
-from .configuration_model import (
-    cooling_presence_policy,
-    gang_start_interrupts_cooling,
-    regulation_causes,
-)
 from .consumer_events import gang_changes
-from .contracts import BasePhaseMark, ContactorMark, ControlInputs, PresenceReport
+from .contracts import BasePhaseMark, ContactorMark, ControlInputs
 from .defaults import instance_default
+from .input_handoff import (
+    ContactorFeedbackInput,
+    ControlModeInput,
+    HeaterOverrideInput,
+    HeatingFeedbackInput,
+    OccupancyInput,
+    OperationInput,
+    PowerFeedbackInput,
+    TemperatureInput,
+)
 from .models import (
     Deadline,
     Energy,
@@ -51,7 +56,7 @@ class PresenceEntry:
     """Belegter Eintritt; der Gang kann noch auf die Mindesttemperatur warten."""
 
     closure: Event
-    presence: PresenceReport
+    presence: OccupancyInput
 
 
 class Controller:
@@ -65,18 +70,12 @@ class Controller:
         control_mode: str = instance_default("control_mode"),
         temperature_steps: tuple[float, ...] | None = None,
         decision_clock: Callable[[], datetime] | None = None,
-        presence_source: str = "proxy",
-        presence_entity: str | None = None,
     ) -> None:
         if program_mode not in PROGRAM_MODES:
             raise ValueError("Ungültiger Temperaturprogrammmodus")
         if control_mode not in CONTROL_MODES:
             raise ValueError("Ungültiger Betriebsmodus")
-        if presence_source not in ("proxy", "ha_presence"):
-            raise ValueError("Ungültige Präsenzquelle")
-        self.presence_source = presence_source
-        self.presence_entity = presence_entity
-        self.direct_presence = None
+        self.direct_presence: OccupancyInput | None = None
         self._direct_presence_history = []
         self._direct_presence_catchup = 0
         self._presence_entry: PresenceEntry | None = None
@@ -121,6 +120,35 @@ class Controller:
         self._gang_temperature_gates = []
         self._confirmation_batches = 0
         self._delivery_received_at = None
+
+    def consume_temperature_input(self, value: TemperatureInput) -> None:
+        return self.set_temperature(
+            value.value, value.timing.evaluated_at, valid_until=value.valid_until,
+        )
+
+    def consume_heating_feedback_input(self, value: HeatingFeedbackInput) -> None:
+        return self.report_heating(value.heating, value.timing.evaluated_at)
+
+    def consume_contactor_feedback_input(self, value: ContactorFeedbackInput) -> None:
+        return self.report_contactor(value.contactor, value.timing.evaluated_at)
+
+    def consume_power_feedback_input(self, value: PowerFeedbackInput) -> None:
+        return self.report_power(
+            value.power_w, value.valid_until, value.timing.evaluated_at,
+        )
+
+    def consume_operation_input(self, value: OperationInput) -> Session | None:
+        return self.set_operation(
+            value.enabled, value.timing.evaluated_at, session_id=value.session_id,
+        )
+
+    def consume_control_mode_input(self, value: ControlModeInput) -> None:
+        return self.set_control_mode(value.mode, value.timing.evaluated_at)
+
+    def consume_heater_override_input(
+        self, value: HeaterOverrideInput,
+    ) -> thermostat.Decision | None:
+        return self.set_heater_override(value.heat, value.timing.evaluated_at)
 
     @contextmanager
     def _delivery(self, received_at):
@@ -201,7 +229,8 @@ class Controller:
         if self._session is not None and self._session.timeline.entry_cycle_available:
             presence_before = min(at, self._session.timeline.anchor.effective_at)
         past = [index for index, report in enumerate(self._direct_presence_history)
-                if report.effective_at <= presence_before]
+                if report.timing.effective_at is not None
+                and report.timing.effective_at <= presence_before]
         if past:
             self._direct_presence_history = self._direct_presence_history[past[-1]:]
 
@@ -212,7 +241,7 @@ class Controller:
             and self.recognition_context_at(at)[2] == self._recognition_gates[-1][0]
         )
 
-    def recognition_allowed_at(self, kind, at):
+    def recognition_allowed_at(self, kind, at, *, person_evidence_qualified=True):
         """An old permitted sample must also belong to today's active stretch."""
         return (
             self._recognition_context_current(at)
@@ -222,7 +251,9 @@ class Controller:
                  or (self._gang_temperature_blocked_at(at) is None
                      and self._gang_entry_start_at(self._session.timeline) is not None
                      and at >= self._gang_entry_start_at(self._session.timeline)))
-            and self.recognition_allowed(kind)
+            and self.recognition_allowed(
+                kind, person_evidence_qualified=person_evidence_qualified,
+            )
         )
 
     @property
@@ -836,35 +867,19 @@ class Controller:
             self._evaluate(at, decision_session_id=decision_session_id)
         return self._session
 
-    def process_presence(
-        self, report, event, *, defer_confirmation=False, recognition_at=None,
-    ):
-        """Proxy occupancy is the source boundary for unchanged gang assignment.
-
-        Direct reports are observed by the runtime only until their gang rules
-        are decided. No infusion or gang is converted into presence evidence.
-        """
-        if (
-            report.source != "proxy" or report.assertion != "provisional_proxy"
-            or report.occupancy != "present" or not report.available
-            or event.kind not in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
-            or (report.source_ref, report.effective_at, report.received_at)
-            != (event.event_id, event.effective_at, event.detected_at)
-        ):
-            raise ValueError("Keine passende führende Proxy-Präsenzmeldung")
-        return self.process(
-            event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
-        )
-
     def process(
         self, event: Event, *, defer_confirmation=False, recognition_at=None,
+        person_evidence_qualified=True,
     ) -> Result:
         with self._delivery(event.detected_at):
             return self._process(
                 event, defer_confirmation=defer_confirmation, recognition_at=recognition_at,
+                person_evidence_qualified=person_evidence_qualified,
             )
 
-    def _process(self, event, *, defer_confirmation, recognition_at):
+    def _process(
+        self, event, *, defer_confirmation, recognition_at, person_evidence_qualified,
+    ):
         if self._session is None:
             raise ValueError("Ereignis ohne Session")
         previous = self._session
@@ -929,6 +944,7 @@ class Controller:
             blocked = "recognition_context_changed"
         cooling_person_signal = bool(
             blocked is None
+            and person_evidence_qualified
             and event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION)
             and self._proxy_cooling_evidence_allowed(
                 recognition_at or event.effective_at
@@ -947,11 +963,11 @@ class Controller:
             blocked = self._proxy_entry_blocked(
                 previous.timeline, event.booking_at, event.effective_at,
             )
-        if self.presence_source == "ha_presence" and (
+        if not person_evidence_qualified and (
             event.kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK)
             or (event.kind == Kind.INFUSION and previous.timeline.active is None)
         ):
-            blocked = "direct_presence_leads"
+            blocked = "person_evidence_unqualified"
         if blocked:
             self._session = replace(
                 previous,
@@ -977,7 +993,12 @@ class Controller:
             self._presence_entry = None
         if previous.timeline.active is None and timeline.active is not None:
             self._presence_entry = None
-            if gang_start_interrupts_cooling(self.control_mode, self.presence_source):
+            if (self.control_mode == "automatic"
+                    and timeline.active.recognition_kind == Kind.PRESENCE_CONFIRMED
+                    and self.direct_presence is not None
+                    and self.direct_presence.available
+                    and self.direct_presence.qualified_presence
+                    and self.direct_presence.occupancy == "present"):
                 self._abort_after_run(event.booking_at)
         if (previous.active_gang_temperature_id is not None
                 and (timeline.active is None
@@ -1053,13 +1074,13 @@ class Controller:
         self.advance(event.booking_at, inclusive_confirmation=not defer_confirmation)
         return Result(self._session, True, "gang_model_updated", event.event_id)
 
-    def recognition_allowed(self, kind: Kind) -> bool:
+    def recognition_allowed(self, kind: Kind, *, person_evidence_qualified=True) -> bool:
         """Freigabe für Gangzuordnung oder die laufende Proxykühlung."""
         session = self._session
         if session is None or not session.operation_enabled:
             return False
         active = session.timeline.active
-        if self.presence_source == "ha_presence":
+        if not person_evidence_qualified:
             return kind == Kind.INFUSION and active is not None
         if kind in (Kind.PERSON_STRONG, Kind.PERSON_WEAK, Kind.INFUSION):
             if self._proxy_cooling_evidence_allowed():
@@ -1080,8 +1101,7 @@ class Controller:
         phase = session.after_run if session else None
         if (
             phase is None or not session.operation_enabled
-            or cooling_presence_policy(self.control_mode, self.presence_source)
-            != "proxy_person_minimum"
+            or self.control_mode != "automatic"
         ):
             return False
         if at is not None and at < (phase.requested_at or phase.started_at):
@@ -1467,7 +1487,9 @@ class Controller:
 
     @property
     def regulation_causes(self):
-        return regulation_causes(self.control_mode, self.presence_source)
+        if self.control_mode != "automatic":
+            return ()
+        return ("gang_heat", "provisional_door_heat", "cooling")
 
     @property
     def regulation_inputs(self):
@@ -1476,15 +1498,17 @@ class Controller:
         return ControlInputs(
             gang_heat_demand=bool(
                 "gang_heat" in causes and session and session.timeline.active
-                and (self.presence_source == "proxy" or (
+                and (session.timeline.active.recognition_kind != Kind.PRESENCE_CONFIRMED or (
                     self.direct_presence is not None and self.direct_presence.available
+                    and self.direct_presence.qualified_presence
+                    and self.direct_presence.occupancy != "unknown"
                 ))
             ),
             temporary_door_heat=(
                 "provisional_door_heat" in causes and self._door_request_pending
             ),
             # Cooling has priority for its remaining confirmed OFF time.
-            # Proxy person evidence caps that time; direct entry ends it.
+            # One-time evidence caps that time; qualified state entry ends it.
             cooling=bool("cooling" in causes and session and session.after_run),
         )
 
@@ -1535,28 +1559,33 @@ class Controller:
         self._session = replace(session, thermostat=state)
         return decision
 
-    def observe_direct_presence(self, report, at, *, defer_evaluation=False):
-        """Use only the selected entity; absence alone never finishes a round."""
-        if (self.presence_source != "ha_presence"
-                or report.source != self.presence_entity
-                or report.assertion != "direct_presence"):
-            return False
+    def consume_occupancy_input(
+        self, value: OccupancyInput, *, defer_evaluation=False,
+    ) -> bool:
+        """Observe selected occupancy; entry and exit remain timeline decisions."""
         previous = self.direct_presence
+        effective_at = value.timing.effective_at
         if previous is not None and (
-            report.report_id == previous.report_id
-            or report.effective_at < previous.effective_at
+            (value.report_id is not None and value.report_id == previous.report_id)
+            or (effective_at is not None and previous.timing.effective_at is not None
+                and effective_at < previous.timing.effective_at)
         ):
             return False
+        at = value.timing.evaluated_at
         if not defer_evaluation:
             self.advance(at, evaluate=False)
-        self.direct_presence = report
-        self._direct_presence_history.append(report)
-        if (self._presence_entry is not None
-                and report.effective_at >= self._presence_entry.closure.effective_at
-                and (not report.available or report.occupancy != "present")):
+        self.direct_presence = value
+        # Only state assertions own entry/exit history. One-time projections
+        # can describe the current input but cannot rewrite that history.
+        if value.qualified_presence:
+            self._direct_presence_history.append(value)
+        if (value.qualified_presence and self._presence_entry is not None
+                and effective_at is not None
+                and effective_at >= self._presence_entry.closure.effective_at
+                and (not value.available or value.occupancy != "present")):
             self._presence_entry = None
         if self._session is None:
-            self._direct_presence_history = [report]
+            self._direct_presence_history = [value] if value.qualified_presence else []
         if not defer_evaluation:
             self._evaluate(at)
         return True
@@ -1578,13 +1607,18 @@ class Controller:
         )
         report = (
             next((report for report in reversed(self._direct_presence_history)
-                  if report.effective_at <= closure.effective_at
-                  and report.received_at <= self._received_at(at)), None)
-            if closure is not None else self.direct_presence
+                  if report.timing.effective_at is not None
+                  and report.timing.effective_at <= closure.effective_at
+                  and report.timing.received_at is not None
+                  and report.timing.received_at <= self._received_at(at)), None)
+            if closure is not None else (
+                self._direct_presence_history[-1] if self._direct_presence_history else None
+            )
         )
-        if (self.presence_source != "ha_presence" or session is None
-                or not session.operation_enabled or report is None
-                or not report.available or report.received_at > self._received_at(at)):
+        if (session is None or not session.operation_enabled or report is None
+                or not report.available or not report.qualified_presence
+                or report.timing.effective_at is None or report.timing.received_at is None
+                or report.timing.received_at > self._received_at(at)):
             if session is None or not session.operation_enabled:
                 self._presence_entry = None
             return False
@@ -1611,9 +1645,12 @@ class Controller:
                 # The occupancy observed at entry must persist while waiting.
                 # A later ON cannot revive an entry interrupted by OFF/unknown.
                 if any(
-                    item.effective_at >= entry.closure.effective_at
-                    and item.received_at <= self._received_at(at)
-                    and (not item.available or item.occupancy != "present")
+                    item.timing.effective_at is not None
+                    and item.timing.effective_at >= entry.closure.effective_at
+                    and item.timing.received_at is not None
+                    and item.timing.received_at <= self._received_at(at)
+                    and (not item.available or not item.qualified_presence
+                         or item.occupancy != "present")
                     for item in self._direct_presence_history
                 ):
                     self._presence_entry = None
@@ -1621,7 +1658,7 @@ class Controller:
             kind = Kind.PRESENCE_CONFIRMED
             source, report = entry.closure, entry.presence
         else:
-            effective = t.presence_exit_at(report.effective_at)
+            effective = t.presence_exit_at(report.timing.effective_at)
             if (self._direct_presence_catchup
                     or report.occupancy != "absent"
                     or effective is None):
